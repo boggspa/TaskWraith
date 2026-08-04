@@ -1535,7 +1535,7 @@ describe('decodeBridgeActionPayload', () => {
       expect(payloadIsMutating(payload)).toBe(true)
     })
 
-    it('decodes lane-scoped Trusted Session updates', () => {
+    it('decodes lane-scoped Full Access updates', () => {
       const { payload } = decodeBridgeActionPayload(
         encode({
           kind: 'setTrustedSession',
@@ -1561,7 +1561,7 @@ describe('decodeBridgeActionPayload', () => {
       expect(payloadIsMutating(payload)).toBe(true)
     })
 
-    it('rejects incomplete workspace-consent and Trusted Session updates', () => {
+    it('rejects incomplete workspace-consent and Full Access updates', () => {
       expect(
         decodeBridgeActionPayload(
           encode({ kind: 'setRemoteWorkspaceAccess', workspaceId: 'ws-1' })

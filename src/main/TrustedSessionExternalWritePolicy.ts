@@ -3,7 +3,7 @@ import type { EnsembleRunIdentity, EffectiveRunPermissions, ProviderId } from '.
 import type { TrustedSessionScope } from './TrustedSessionGrants'
 
 /**
- * Trusted Session is a live, task-scoped host-authority grant. An external
+ * Full Access is a live, task-scoped host-authority grant. An external
  * write is therefore automatic only for the matching active chat/lane—not for
  * global runs, unrelated providers, or a merely write-capable posture.
  */

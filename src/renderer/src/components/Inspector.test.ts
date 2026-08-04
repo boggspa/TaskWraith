@@ -288,7 +288,7 @@ describe('Inspector capabilities', () => {
     expect(safetyHtml).toContain('Ensemble safety')
     expect(safetyHtml).toContain('Speaker lock')
     expect(safetyHtml).toContain('Provider setup')
-    expect(safetyHtml).toContain('Read-Only/Recon')
+    expect(safetyHtml).toContain('Ask')
     expect(safetyHtml).not.toContain('Codex safety')
   })
 

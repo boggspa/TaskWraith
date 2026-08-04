@@ -40,7 +40,7 @@ const UNATTENDED_LEVEL_OPTIONS: ReadonlyArray<{
 }> = [
   { level: 'safe', label: 'Safe (read-only)' },
   { level: 'default', label: 'Default permissions' },
-  { level: 'full_access', label: 'Full Workspace Access' }
+  { level: 'full_access', label: 'Full Access' }
 ]
 
 export function WorkflowComposeControls({

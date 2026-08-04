@@ -231,7 +231,7 @@ export interface ComposerServiceDeps {
   /**
    * In-memory, main-owned host-trust receipt. A renderer-selected
    * `permissionPresetId: 'full_access'` is only honored when this says the
-   * current chat/lane has an active Trusted Session.
+   * current chat/lane has an active Full Access grant.
    */
   isTrustedSessionGranted?: (scope: TrustedSessionScope) => boolean
 }
@@ -629,7 +629,7 @@ export class ComposerService {
             // are distinguished ONLY by workflowMode (the renderer derives the
             // same 'read_only' vs 'plan' label from it). The Plan row
             // (workflowMode 'plan') resolves the `plan` instrument tier; the
-            // Read-Only/Recon row (workflowMode 'normal') the strict floor. Both
+            // Ask row (workflowMode 'normal') the strict floor. Both
             // keep readOnly:true so the signed posture still clears the clamp.
             presetId: workflowMode === 'plan' ? 'plan' : 'read_only'
           })

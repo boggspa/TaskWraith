@@ -670,7 +670,7 @@ describe('ComposerService', () => {
     expect(payload.workflowMode).toBe('normal')
     expect(payload.composer.workflowMode).toBe('normal')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
-    // Posture split: the Read-Only/Recon row resolves the strict floor preset —
+    // Posture split: the Ask row resolves the strict floor preset —
     // no elevation path (subthread/canvas denied).
     expect(payload.effectivePermissions?.presetId).toBe('read_only')
     expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
@@ -695,7 +695,7 @@ describe('ComposerService', () => {
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
-    // The Plan row is now genuinely distinct from Read-Only/Recon: canvas/media/
+    // The Plan row is now genuinely distinct from Ask: canvas/media/
     // subthread are approval-queued (the W7 instrument tier)…
     expect(payload.effectivePermissions?.presetId).toBe('plan')
     expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('ask')
@@ -1264,7 +1264,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     )
     expect(staleFullAccessPayload.effectivePermissions?.readOnly).toBe(false)
     expect(staleFullAccessPayload.effectivePermissions?.presetId).toBe('workspace_write')
-    // Non-durable Full Access clamps to Workspace Write (auto-allow shell/file
+    // Non-durable Full Access clamps to Full WS Access (auto-allow shell/file
     // for the run; sandbox drop still requires durable full_access + trust).
     expect(staleFullAccessPayload.effectivePermissions?.agenticServices.shellCommands).toBe(
       'allow'

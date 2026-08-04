@@ -15,7 +15,7 @@ Select **Code**, then click the **+** ("New workflow") button in the sidebar's *
 2. If Ensemble mode is enabled in Settings, set **Ensemble** to **On** or **Off** before saving. Switching modes converts the same idle draft and keeps any prompt you've already typed.
 3. Set **Cadence** to **Manual** (run it yourself) or **Every** with a number of minutes for recurring runs.
 4. Set **Max runs per day** to cap how often the workflow can fire.
-5. Choose **Unattended permissions** — Safe (read-only), Default permissions, or Full Workspace Access — for runs that happen without you present.
+5. Choose **Unattended permissions** — Safe (read-only), Default permissions, or Full Access — for runs that happen without you present.
 6. Type the prompt the agent should run each time, then send it. This save acts as creation: the prompt and settings become a saved workflow, and no run is dispatched from this first send.
 
 ## Tips & related

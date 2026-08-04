@@ -115,7 +115,7 @@ function boundedPreset(request: RunQueueRequestSnapshot): PermissionPresetId {
   }
   const requested = request.permissionPresetId
   if (!requested || !PERMISSION_PRESETS.has(requested)) return 'default'
-  // Trusted Session is deliberately non-durable. A Stack may preserve write
+  // Full Access is deliberately non-durable. A Stack may preserve write
   // authority, but it cannot preserve host-wide Full Access after this turn.
   return requested === 'full_access' ? 'workspace_write' : requested
 }

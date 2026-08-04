@@ -1349,7 +1349,7 @@ export function approvalModeFromPayload(payload: BridgeActionPayload): string | 
   // or :'full_access' and resolves to auto_edit on the Mac. Gate it as auto_edit
   // here so downstream posture resolution sees the real authority tier rather
   // than a lower approvalMode such as 'default'. Downstream, full_access still
-  // needs a scoped Trusted Session receipt before host sandboxing is dropped.
+  // needs a scoped Full Access receipt before host sandboxing is dropped.
   if (
     'permissionPresetId' in payload &&
     typeof (payload as { permissionPresetId?: unknown }).permissionPresetId === 'string' &&

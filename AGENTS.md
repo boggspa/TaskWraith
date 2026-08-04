@@ -627,7 +627,7 @@ results. Delegations from one parent run share a join group; required workers
 gate quorum, optional workers do not, and the bounded debounce produces one
 coalesced parent wake. These controls remain internal so the advertised MCP
 catalogue and seat prompt prefix stay stable. Async delegated runs inherit a
-capped permission posture but never inherit Trusted Session.
+capped permission posture but never inherit Full Access.
 
 ### Audit trail
 
@@ -734,7 +734,7 @@ runs only when explicitly delegated.
   mutations must use the existing Boss- or Captain-authorized
   `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
   writeScopes=...)` path.
-- BG lanes never inherit Trusted Session and cannot own Boss, Captain, Work
+- BG lanes never inherit Full Access and cannot own Boss, Captain, Work
   Session lead/manager, synthesizer, or broad fan-out authority.
 - Normal completion waits for live/reserved BG lanes. Cancellation and failure
   preserve the terminal fast-close semantics and stop those lanes immediately.
@@ -997,8 +997,8 @@ demands):**
       a model plus provider-compatible reasoning controls at spawn. Recall
       inherits those controls and rejects model/effort mutation. The rest of
       the composer surface is not exposed as delegation tool args.
-    - Async delegated runs can never become Trusted Session, even when the
-      invoking parent currently has a Trusted Session grant.
+    - Async delegated runs can never become Full Access, even when the
+      invoking parent currently has a Full Access grant.
     - Fresh tool-capable seats use TaskWraith's progressive gateway MCP profile:
       a small directly advertised surface plus `capability_search` /
       `capability_invoke` for the remaining eligible catalogue. A resumable

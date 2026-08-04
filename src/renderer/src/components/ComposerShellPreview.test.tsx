@@ -158,13 +158,13 @@ describe('ComposerShellPreview — single metadata source', () => {
     const samples: Array<
       [ComposerStyle, string, string, string, string]
     > = [
-      ['codex', 'codex', '5.5', 'full_access', 'Full Workspace Access'],
+      ['codex', 'codex', '5.5', 'full_access', 'Full Access'],
       ['claude', 'claude', 'Opus 5', 'plan', 'Plan'],
-      ['cursor', 'cursor', 'Composer 2.5', 'default', 'Default Approval'],
-      ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Default Approval'],
-      ['gemini', 'gemini', 'Pro 3.1', 'default', 'Default Approval'],
+      ['cursor', 'cursor', 'Composer 2.5', 'default', 'Accept Edits'],
+      ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Accept Edits'],
+      ['gemini', 'gemini', 'Pro 3.1', 'default', 'Accept Edits'],
       ['kimi', 'kimi', 'K2.7 Coding', 'read_only', 'Read workspace'],
-      ['default', 'codex', 'Auto', 'default', 'Default Approval'],
+      ['default', 'codex', 'Auto', 'default', 'Accept Edits'],
       ['terminal', 'codex', 'Shell', 'default', 'Ask before tools']
     ]
 

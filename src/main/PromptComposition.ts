@@ -266,9 +266,9 @@ export function sanitizeTaskWraithMcpPromptClaims(
 }
 
 /**
- * Read-Only/Recon posture steer (spike 2 of
+ * Ask posture steer (spike 2 of
  * docs/ensemble-posture-fanout-preamble-design.md). Plan-mode runs skip the
- * runtime preamble entirely, which previously left a solo Read-Only/Recon
+ * runtime preamble entirely, which previously left a solo Ask
  * turn with ZERO posture text — while several providers' native plan personas
  * (activated because both presets share `approvalMode: 'plan'`) pushed
  * plan-shaped output. Modeled on GROK_READ_ONLY_PROMPT_PREAMBLE plus the
@@ -278,7 +278,7 @@ export function sanitizeTaskWraithMcpPromptClaims(
  * providers that still conflate the two.
  */
 export const TASKWRAITH_RECON_STEER_NOTE = [
-  'TaskWraith read-only recon turn: you are running under a Read-Only/Recon posture (review/investigation), NOT Plan-authoring mode.',
+  'TaskWraith read-only recon turn: you are running under an Ask posture (review/investigation), NOT Plan-authoring mode.',
   'Answer the request directly and in place: report findings, evidence (cite files/lines where relevant), and risks.',
   'Do not draft a step-by-step implementation plan, do not present a plan for approval, and do not stop to ask whether to proceed — this turn IS the deliverable.',
   'Writes and shell mutations are unavailable on this turn: if a change would be needed, describe what you would change and why instead of attempting it.'
@@ -849,7 +849,7 @@ export interface ComposeRunPromptInput {
   approvalMode: string
   /** Chat workflow mode for the run ('plan' = Plan workflow, 'normal'
    * otherwise). Gates the read-only recon steer: only an EXPLICIT 'normal'
-   * paired with `approvalMode === 'plan'` (i.e. Read-Only/Recon, which shares
+   * paired with `approvalMode === 'plan'` (i.e. Ask, which shares
    * the plan approvalMode wire value) injects it. Absent = unknown legacy
    * caller = no steer, preserving pre-spike behavior. Also picks the
    * plan-vs-recon variant of the Ollama tier workflow hint. */
@@ -1244,7 +1244,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     runtimePreambleInjected = true
   }
 
-  // (3b) Read-Only/Recon steer — mutually exclusive with the runtime preamble
+  // (3b) Ask steer — mutually exclusive with the runtime preamble
   // (which requires approvalMode !== 'plan'). Fires per-turn because posture
   // can change turn-to-turn via the composer picker. Ollama is excluded: its
   // approvalMode is force-'plan' on every run (the tool tier is its real

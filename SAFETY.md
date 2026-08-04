@@ -11,7 +11,7 @@ checklist for changes that add or widen app authority.
 
 ## Default User Posture
 
-- Prefer Read-only/Recon or Plan workflow for first-run and unfamiliar
+- Prefer Ask or Plan workflow for first-run and unfamiliar
   workspaces.
 - Make broad grants explicit and visible: full-workspace, yolo, unattended
   workflow, remote allowlist, and local-model run profiles or full-surface
@@ -29,11 +29,11 @@ checklist for changes that add or widen app authority.
 - **Workspace Confinement**: Workspace operations are scoped to the explicitly
   selected workspace directory wherever the provider adapter can enforce that
   boundary.
-- **Approval Modes**: Read-only planning, default approval, and provider-specific
+- **Approval Modes**: The read-only Plan and Ask postures, Accept Edits, and provider-specific
   edit modes are surfaced explicitly. Broad allow-all/session trust states must
   be user-selected and remain visible/auditable. Plan workflow's markdown-plan
   artifact save is a narrow product-managed carve-out under validated workspace
-  paths; it is not a grant for ordinary read-only/recon tool calls to write
+  paths; it is not a grant for ordinary Ask/read-only tool calls to write
   files.
 - **Trust Visibility**: Trust and workspace status are shown in-app so users can
   inspect what a provider is allowed to do before starting a run.

@@ -2525,7 +2525,7 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       if (result.reason) return { executed: false, message: result.reason }
       return {
         executed: true,
-        message: `Trusted Session ${result.enabled ? 'enabled' : 'disabled'} for this lane.`,
+        message: `Full Access ${result.enabled ? 'enabled' : 'disabled'} for this lane.`,
         data: {
           threadId: action.threadId,
           provider: action.provider,
@@ -2537,7 +2537,7 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      return { executed: false, message: `Trusted Session update failed: ${message}` }
+      return { executed: false, message: `Full Access update failed: ${message}` }
     }
   }
 

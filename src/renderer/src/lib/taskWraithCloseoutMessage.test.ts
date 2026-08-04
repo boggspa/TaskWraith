@@ -871,13 +871,13 @@ Next action:
       '| Participant | Provider | Model | Reasoning | Permissions | Turns | Tokens | Status |'
     )
     expect(closeout.content).toContain(
-      '| [@Builder](ensemble-dm://p1) | Codex | GPT-5.6-Sol | Ultra | Workspace Write | 2 | 2k | ✅ |'
+      '| [@Builder](ensemble-dm://p1) | Codex | GPT-5.6-Sol | Ultra | Full WS Access | 2 | 2k | ✅ |'
     )
     expect(closeout.content).toContain(
-      '| [@Reviewer](ensemble-dm://p2) | Claude | Fable 5 | Max | Read-Only/Recon | 1 | 500 | ✅ |'
+      '| [@Reviewer](ensemble-dm://p2) | Claude | Fable 5 | Max | Ask | 1 | 500 | ✅ |'
     )
     expect(closeout.content).toContain(
-      '| [@Cursor](ensemble-dm://p3) | Cursor | Composer 2.5 Fast | — | Default Approval | 0 | — | 💤 |'
+      '| [@Cursor](ensemble-dm://p3) | Cursor | Composer 2.5 Fast | — | Accept Edits | 0 | — | 💤 |'
     )
     expect(closeout.content).toContain(
       '| [@Kimi](ensemble-dm://p4) | Kimi | K2.7 Coding | Thinking | Plan | 1 | ~300 | ❌ |'
@@ -1028,7 +1028,7 @@ Next action:
 
     expect(closeout.content).not.toContain('Participants:')
     expect(closeout.content).toContain(
-      '| [@Lead](ensemble-dm://seat) | Claude → Codex | Fable 5 → GPT-5.6-Sol | Ultracode → High | Default Approval → Workspace Write → Read-Only/Recon | 3 | — | ✅ |'
+      '| [@Lead](ensemble-dm://seat) | Claude → Codex | Fable 5 → GPT-5.6-Sol | Ultracode → High | Accept Edits → Full WS Access → Ask | 3 | — | ✅ |'
     )
     expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 3 | — | **1** |')
   })

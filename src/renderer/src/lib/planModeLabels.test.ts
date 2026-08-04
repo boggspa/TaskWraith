@@ -7,7 +7,7 @@ import {
 } from './planModeLabels'
 
 describe('composerPermissionOptions', () => {
-  it('offers all five presets in order, including separate write and Trusted Session', () => {
+  it('offers all five presets in order, including separate write and Full Access', () => {
     expect(composerPermissionOptions().map((o) => o.value)).toEqual([
       'plan',
       'read_only',
@@ -17,13 +17,13 @@ describe('composerPermissionOptions', () => {
     ])
   })
 
-  it('keeps Workspace Write and Trusted Session as separate selectable presets', () => {
+  it('keeps Full WS Access and Full Access as separate selectable presets', () => {
     // It was accidentally dropped from the ensemble picker; both solo + ensemble
     // read this single list, so this guards against it going missing again.
     const workspaceWrite = composerPermissionOptions().find((o) => o.value === 'workspace_write')
     const full = composerPermissionOptions().find((o) => o.value === 'full_access')
-    expect(workspaceWrite?.label).toBe('Workspace Write')
-    expect(full?.label).toBe('Trusted Session')
+    expect(workspaceWrite?.label).toBe('Full WS Access')
+    expect(full?.label).toBe('Full Access')
   })
 })
 

@@ -383,7 +383,7 @@ export function getEnsembleReasoningOptions(
  * row and dispatch does not depend on provider-native defaults drifting.
  *
  * Every live provider seeds with `permissionPresetId: 'default'` (the
- * "Default Approval" preset). A freshly added participant is fully
+ * "Accept Edits" preset). A freshly added participant is fully
  * deterministic — model, reasoning, thinking, approval — regardless of which
  * participant happened to be selected when the user hit "+". Roster presets
  * and the Agent Pool are the only paths that carry participant config over.
@@ -436,7 +436,7 @@ export function getDefaultEnsembleParticipantConfig(
         serviceTier: 'standard'
       }
     case 'grok':
-      // Default Approval like every other seed; the Grok seat itself is
+      // Accept Edits like every other seed; the Grok seat itself is
       // still toolless at dispatch, so the preset only matters if the user
       // later swaps the row to a tool-capable provider config.
       return {

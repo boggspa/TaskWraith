@@ -19,7 +19,7 @@ function jsonObject(value: unknown): JsonObject {
  * the same reusable permission ceiling. Every field in the original v1
  * contract remains byte-for-byte compatible.
  *
- * Trusted Session is an ephemeral renderer-turn capability. Even if stale or
+ * Full Access is an ephemeral renderer-turn capability. Even if stale or
  * hostile persisted content says otherwise, a durable graph template always
  * binds `sessionTrust` as false.
  */

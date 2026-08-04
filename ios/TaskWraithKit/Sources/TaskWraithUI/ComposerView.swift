@@ -128,10 +128,10 @@ struct Composer: View {
     private var approvalDisplayLabel: String {
         switch approvalMode {
         case "plan": return "Plan"
-        case "read_only": return "Read-Only/Recon"
-        case "workspace_write": return "Workspace Write"
-        case "full_access": return "Trusted Session"
-        default: return "Default Approval"
+        case "read_only": return "Ask"
+        case "workspace_write": return "Full WS Access"
+        case "full_access": return "Full Access"
+        default: return "Accept Edits"
         }
     }
     @State private var selectedProvider: String = "claude"
@@ -625,7 +625,7 @@ struct Composer: View {
             // tells the truth instead of offering a dead picker).
             HStack(spacing: 3) {
                 Image(systemName: "eye")
-                Text("Read-Only/Recon")
+                Text("Ask")
             }
             .font(twComposerFont(shell.fontDesign, .caption2))
             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -637,16 +637,16 @@ struct Composer: View {
                     Label("Plan", systemImage: "list.bullet.clipboard")
                 }
                 Button { selectPermissionPreset("read_only") } label: {
-                    Label("Read-Only/Recon", systemImage: "eye")
+                    Label("Ask", systemImage: "eye")
                 }
                 Button { selectPermissionPreset("default") } label: {
-                    Label("Default Approval", systemImage: "checkmark.shield")
+                    Label("Accept Edits", systemImage: "checkmark.shield")
                 }
                 Button { selectPermissionPreset("workspace_write") } label: {
-                    Label("Workspace Write", systemImage: "pencil.and.outline")
+                    Label("Full WS Access", systemImage: "pencil.and.outline")
                 }
                 Button { selectPermissionPreset("full_access") } label: {
-                    Label("Trusted Session", systemImage: "bolt.fill")
+                    Label("Full Access", systemImage: "bolt.fill")
                 }
             } label: {
                 HStack(spacing: 3) {
@@ -1414,7 +1414,7 @@ struct TrustedSessionConsentSheet: View {
             Image(systemName: "bolt.shield.fill")
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(Color(hex: 0xDC2626))
-            Text("Start a Trusted Session?")
+            Text("Start Full Access?")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(TWTheme.textPrimary)
             Text(
@@ -1428,7 +1428,7 @@ struct TrustedSessionConsentSheet: View {
             .font(.footnote)
             .foregroundStyle(TWTheme.textMuted)
             Toggle(
-                "I understand this lane receives Trusted Session authority",
+                "I understand this lane receives Full Access authority",
                 isOn: $acknowledged
             )
             .font(.footnote.weight(.medium))
@@ -1439,7 +1439,7 @@ struct TrustedSessionConsentSheet: View {
                     .disabled(isBusy)
                 Spacer()
                 Button(action: onConfirm) {
-                    if isBusy { ProgressView() } else { Text("Start Trusted Session") }
+                    if isBusy { ProgressView() } else { Text("Start Full Access") }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color(hex: 0xDC2626))

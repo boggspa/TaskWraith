@@ -30,13 +30,13 @@ export interface StaleTrustedSessionDemotionPatch {
 }
 
 /**
- * Trusted Session grants live only in main-process memory, but the remembered
+ * Full Access grants live only in main-process memory, but the remembered
  * composer selection (`permissionPresetId: 'full_access'`) persists across
- * relaunches. Without reconciliation the picker keeps claiming Trusted Session
+ * relaunches. Without reconciliation the picker keeps claiming Full Access
  * while ComposerService silently downgrades the composed posture to
  * workspace_write — the run is safe, but the UI lies about the active
- * authority. Returns the same demotion patch the explicit "stop Trusted
- * Session" picker action applies, or null when the selection is already
+ * authority. Returns the same demotion patch the explicit "stop Full
+ * Access" picker action applies, or null when the selection is already
  * truthful (not full_access, or the grant is live).
  */
 export function staleTrustedSessionDemotionPatch(

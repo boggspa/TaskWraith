@@ -248,7 +248,7 @@ function runTemplateContent(
     ? {
         ...prepared.request,
         // A durable graph step may execute after the originating renderer turn
-        // and must never inherit the composer's ephemeral Trusted Session.
+        // and must never inherit the composer's ephemeral Full Access.
         sessionTrust: false
       }
     : undefined

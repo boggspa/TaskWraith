@@ -8403,9 +8403,10 @@
  * Lifted to a SHELL-AGNOSTIC default so TaskWraith native / Claude /
  * Gemini / Kimi shells all read with the same affordance:
  *
- *   Plan / Read-only       → blue  (#6fb6ff dark / #1976d2 light)
- *   Default Approval       → no tint (neutral chip palette)
- *   Full Workspace Access  → dark red  (#ef4444 dark / #b91c1c light)
+ *   Plan / Ask       → blue  (#6fb6ff dark / #1976d2 light)
+ *   Accept Edits     → no tint (neutral chip palette)
+ *   Full WS Access   → amber (#f59e0b)
+ *   Full Access      → dark red  (#ef4444 dark / #b91c1c light)
  *
  * Dark red replaces the previous orange — red signals "elevated
  * power, audit before sending" more universally than orange does.
@@ -8494,7 +8495,7 @@
 
 /*
  * Codex shell override — restore the original orange identity
- * for "Full Workspace Access" (`auto_edit`). The shell-agnostic
+ * for "Full WS Access" (`auto_edit`). The shell-agnostic
  * default is dark red; Codex's chrome historically tinted this
  * chip orange (#ffa45c / #d97706) which matches the real Codex
  * app's "Full access" badge colour. Keep that for users who
@@ -11270,8 +11271,8 @@
  * light-theme trigger cleanup carries `rgba(29,29,31,0.86) !important`
  * which would otherwise paint over these per-mode tints.
  *
- * Shell-agnostic to match the base rules. Plan → fully
- * saturated blue (#1976d2). Full Workspace Access → deep red
+ * Shell-agnostic to match the base rules. Plan/Ask → fully
+ * saturated blue (#1976d2). Full Access → deep red
  * (#b91c1c) — dark enough to contrast on the light surface
  * while still reading as a red-warning rather than just
  * accent. Codex shell + TaskWraith native + Claude + Gemini +

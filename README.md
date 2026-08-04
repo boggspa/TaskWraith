@@ -106,7 +106,7 @@ automation. The default expectation is explicit user control: select a workspace
 choose a run posture, review approvals, inspect activity, and check diffs before
 committing generated work.
 
-New users should start with a scratch repository in Read-only/Recon or Plan
+New users should start with a scratch repository in Ask or Plan
 workflow. Plan workflow is not general write access: it can save a narrow
 markdown plan artifact under a validated workspace path for the proposed-plan
 handoff, but ordinary file edits, shell commands, and tool writes still require a
@@ -212,7 +212,7 @@ user choices, and the exact data boundary.
   for the Electron shell gallery.
 - **Plan Workflow**: Plan runs keep the provider in a read-only execution
   posture while allowing a product-managed markdown plan file to be written under
-  validated workspace paths. Read-only/Recon runs do not get that artifact-write
+  validated workspace paths. Ask runs do not get that artifact-write
   carve-out.
 - **Ensemble Threads**: Multi-agent shared work sessions with named provider
   participants, role/order control, turn-bound or continuous orchestration,

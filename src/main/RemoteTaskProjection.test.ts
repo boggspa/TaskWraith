@@ -398,7 +398,7 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
-  it('projects Mac-authoritative thread permission and Trusted Session state', () => {
+  it('projects Mac-authoritative thread permission and Full Access state', () => {
     const card = buildRemoteTaskCard(
       chat({
         workflowMode: 'plan',
@@ -1423,7 +1423,7 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
     ])
   })
 
-  it('projects participant runtime profile and live Trusted Session receipt separately', () => {
+  it('projects participant runtime profile and live Full Access receipt separately', () => {
     const source = ensembleChat()
     const state = buildRemoteEnsembleState(source, {
       trustedSessionParticipantIds: new Set(['p2'])

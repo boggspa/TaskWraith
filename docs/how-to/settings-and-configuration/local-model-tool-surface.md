@@ -28,5 +28,5 @@ Local models run through Ollama use the same TaskWraith capability catalog and p
 ## Tips & related
 - [Provider tools tab](provider-tools-tab.md) — audit the full TaskWraith tool catalog and per-provider bridge status.
 - [Providers tab](providers-tab.md) — sign in and check runtime health for Ollama and the cloud providers.
-- [Provider, model, and permissions pickers](../composer/provider-model-permissions-pickers.md) — choose the run's Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session posture.
+- [Provider, model, and permissions pickers](../composer/provider-model-permissions-pickers.md) — choose the run's Plan, Ask, Accept Edits, Full WS Access, or Full Access posture.
 - [Providers tab](providers-tab.md) — configure the Ollama endpoint and default local model.

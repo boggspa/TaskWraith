@@ -144,7 +144,7 @@ export function ProposedPlanApprovalModal({
           {isEnsemble && (
             <>
               {' '}
-              Approving lets all participants continue with Default Approval.
+              Approving lets all participants continue with Accept Edits.
             </>
           )}
         </p>

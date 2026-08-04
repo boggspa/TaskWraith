@@ -15,9 +15,9 @@ describe('chat popout authority projection', () => {
     expect(shouldPersistApprovalElevationAck(false)).toBe(true)
   })
 
-  it('explains disabled Trusted Session and workspace trust controls in a chat popout', () => {
+  it('explains disabled Full Access and workspace trust controls in a chat popout', () => {
     expect(chatPopoutAuthorityDisabledReason(true, 'trusted-session')).toBe(
-      'Open this chat in the main window to change Trusted Session.'
+      'Open this chat in the main window to change Full Access.'
     )
     expect(chatPopoutAuthorityDisabledReason(true, 'workspace-trust')).toBe(
       'Open this chat in the main window to change workspace trust.'
@@ -39,7 +39,7 @@ describe('chat popout authority projection', () => {
     expect(composerContext).toContain('trustedSessionMutationDisabledReason')
     expect(composerContext).toContain('workspaceTrustMutationDisabledReason')
     expect(composerSource).toContain('disabledReason: trustedSessionMutationDisabledReason')
-    expect(composerSource).toContain("'Trusted Session in main window'")
+    expect(composerSource).toContain("'Full Access in main window'")
     expect(composerSource).toContain("'Trust in main window'")
   })
 

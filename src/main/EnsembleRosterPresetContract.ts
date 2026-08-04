@@ -115,7 +115,7 @@ export function safeRosterPermissionPresetId(
   ) {
     return value
   }
-  // Trusted Session is live lane authority, not portable roster configuration.
+  // Full Access is live lane authority, not portable roster configuration.
   if (value === 'full_access') return 'workspace_write'
   return undefined
 }

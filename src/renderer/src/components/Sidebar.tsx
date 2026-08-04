@@ -5182,7 +5182,7 @@ export function Sidebar({
                         : null
                     const unattendedElevationLabel =
                       unattendedElevation?.level === 'full_access'
-                        ? 'Full Workspace Access'
+                        ? 'Full Access'
                         : 'Default'
                     return (
                       <div key={workflow.id} className="sidebar-workflow-block">

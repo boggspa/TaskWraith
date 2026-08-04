@@ -1036,7 +1036,7 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     })
   })
 
-  it('updates a lane-scoped Trusted Session receipt through setTrustedSessionFn', async () => {
+  it('updates a lane-scoped Full Access receipt through setTrustedSessionFn', async () => {
     const setTrustedSessionFn = vi.fn().mockResolvedValue({ enabled: true })
     const executor = new MainProcessActionExecutor({ cancelRunFn, setTrustedSessionFn })
     const result = await executor.executeSetTrustedSession(sample.setTrustedSession)
@@ -1052,10 +1052,10 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     })
   })
 
-  it('does not claim a Trusted Session update when the Mac rejects its lane', async () => {
+  it('does not claim a Full Access update when the Mac rejects its lane', async () => {
     const setTrustedSessionFn = vi.fn().mockResolvedValue({
       enabled: false,
-      reason: 'Trusted Session provider does not match this lane.'
+      reason: 'Full Access provider does not match this lane.'
     })
     const executor = new MainProcessActionExecutor({ cancelRunFn, setTrustedSessionFn })
     const result = await executor.executeSetTrustedSession(sample.setTrustedSession)

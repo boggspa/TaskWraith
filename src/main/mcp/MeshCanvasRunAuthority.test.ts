@@ -34,7 +34,7 @@ function permissions(
 }
 
 describe('meshCanvasParticipantCanRequestAccess', () => {
-  it('exposes Mesh Canvas directly for Default Approval so the call can prompt', () => {
+  it('exposes Mesh Canvas directly for Accept Edits so the call can prompt', () => {
     const effective = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',

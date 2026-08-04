@@ -1614,10 +1614,10 @@ function extractEnsembleDelegationAuditItems(props: InspectorProps, providers: P
 }
 
 function permissionPresetLabel(presetId?: string | null): string {
-  if (presetId === 'read_only') return 'Read-Only/Recon'
+  if (presetId === 'read_only') return 'Ask'
   if (presetId === 'plan') return 'Plan'
   if (presetId === 'workspace_write') return 'Workspace write'
-  if (presetId === 'full_access') return 'Trusted Session'
+  if (presetId === 'full_access') return 'Full Access'
   if (presetId === 'custom') return 'Custom'
   if (presetId === 'default') return 'Default'
   return 'Default'

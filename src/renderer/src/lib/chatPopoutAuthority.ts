@@ -1,7 +1,7 @@
 export type ChatPopoutAuthorityMutation = 'trusted-session' | 'workspace-trust'
 
 const CHAT_POPOUT_AUTHORITY_REASONS: Record<ChatPopoutAuthorityMutation, string> = {
-  'trusted-session': 'Open this chat in the main window to change Trusted Session.',
+  'trusted-session': 'Open this chat in the main window to change Full Access.',
   'workspace-trust': 'Open this chat in the main window to change workspace trust.'
 }
 

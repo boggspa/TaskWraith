@@ -24,12 +24,12 @@ make "many people use it" a substitute for your own evaluation.
 Recommended posture:
 
 1. Try a scratch repository first.
-2. Run in Read-only/Recon or Plan workflow first.
+2. Run in Ask or Plan workflow first.
 3. Review the activity log, approval ledger, and generated diffs.
 4. Move to meaningful workspaces only after several low-risk sessions behave as
    expected.
 
-Plan workflow is distinct from Read-only/Recon. It still uses a read-only
+Plan workflow is distinct from Ask. It still uses a read-only
 execution posture for ordinary provider tools, but it can save a narrow markdown
 plan artifact under a validated workspace path so you can approve or edit that
 plan later. It does not allow arbitrary file edits, shell commands, or other
@@ -73,7 +73,7 @@ Use this path when evaluating TaskWraith for the first time:
 1. Create or clone a disposable repository.
 2. Open that repository as the selected workspace.
 3. Use a provider you already trust and understand.
-4. Pick Read-only/Recon or Plan workflow. Avoid full-workspace, yolo,
+4. Pick Ask or Plan workflow. Avoid full-workspace, yolo,
    auto-edit, or broad session grants.
 5. Ask for a non-mutating task, such as "summarize the project layout" or "find
    likely test entry points."

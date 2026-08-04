@@ -23,7 +23,7 @@ export interface TrustHandlerDeps {
    */
   assertSenderCanCheckWorkspaceTrust: (event: IpcMainInvokeEvent, workspacePath: string) => void
   /**
-   * A chat popout may render its own composer's scoped Trusted Session state,
+   * A chat popout may render its own composer's scoped Full Access state,
    * but it may not probe another chat/workspace. The injected main-owned
    * assertion binds the sender identity to the requested scope.
    */

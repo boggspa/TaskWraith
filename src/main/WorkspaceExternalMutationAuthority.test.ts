@@ -79,7 +79,7 @@ describe('WorkspaceExternalMutationAuthorityIssuer', () => {
     )
   })
 
-  it('falls back to exact Trusted Session authority when no signed grant exists', () => {
+  it('falls back to exact Full Access authority when no signed grant exists', () => {
     const isTrustedSessionWriteAuthorized = vi.fn(() => true)
     const issuer = new WorkspaceExternalMutationAuthorityIssuer(
       dependencies({ isTrustedSessionWriteAuthorized })
@@ -114,7 +114,7 @@ describe('WorkspaceExternalMutationAuthorityIssuer', () => {
     )
   })
 
-  it('binds Trusted Session authority to the exact ensemble participant and lane', () => {
+  it('binds Full Access authority to the exact ensemble participant and lane', () => {
     const isTrustedSessionWriteAuthorized = vi.fn(() => true)
     const issuer = new WorkspaceExternalMutationAuthorityIssuer(
       dependencies({ isTrustedSessionWriteAuthorized })
@@ -156,7 +156,7 @@ describe('WorkspaceExternalMutationAuthorityIssuer', () => {
     })
   })
 
-  it('prefers the signed grant without consulting Trusted Session', () => {
+  it('prefers the signed grant without consulting Full Access', () => {
     const isTrustedSessionWriteAuthorized = vi.fn(() => true)
     const issuer = new WorkspaceExternalMutationAuthorityIssuer(
       dependencies({

@@ -125,7 +125,7 @@ describe('host-rerun continuation identity + history join', () => {
     expect(continuation).toContain('handoffSourceRunId: approvalRunId')
     // No turn/start under R0 inside the continuation helper.
     expect(continuation).not.toContain("'turn/start'")
-    // Automatic continuation is never Trusted Session.
+    // Automatic continuation is never Full Access.
     expect(continuation).toContain('const sessionTrust = false')
   })
 })

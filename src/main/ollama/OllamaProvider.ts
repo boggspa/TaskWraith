@@ -2767,7 +2767,7 @@ export async function runOllamaProvider(
       'ollama',
       payload.workspace,
       // Tier retirement (2026-07): report the run's actual permission role, not a
-      // hardcoded 'plan' — Ollama now honors Plan/Read-Only/Default/Full like
+      // hardcoded 'plan' — Ollama now honors Plan/Ask/Accept Edits/Full Access like
       // every provider, so capability warnings must reflect the real posture.
       payload.approvalMode || 'default',
       route

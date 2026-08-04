@@ -825,7 +825,7 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     // exact workflow-occurrence comparisons do not discard valid elevation.
     workflowMode: normalizeChatWorkflowMode(input.workflowMode),
     // Persisted workflows are unattended authority. Legacy renderer-authored
-    // Trusted Session flags are discarded during every read/normalization.
+    // Full Access flags are discarded during every read/normalization.
     sessionTrust: false,
     imageAttachments: Array.isArray(input.imageAttachments) ? input.imageAttachments : [],
     externalPathGrants: input.externalPathGrants,

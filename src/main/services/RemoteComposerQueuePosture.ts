@@ -85,7 +85,7 @@ function remoteComposerQueuePermissionPresetId(
 ): PermissionPresetId | undefined {
   if (workflowMode === 'plan') return 'plan'
   if (approvalMode === 'plan') return 'read_only'
-  // Trusted Session is a live, main-owned host-trust receipt. A queued remote
+  // Full Access is a live, main-owned host-trust receipt. A queued remote
   // prompt may carry the old `full_access` value, but it cannot freeze host
   // access unless the desktop has an active scoped receipt at queue time.
   if (permissionPresetId === 'full_access') {

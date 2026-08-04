@@ -94,7 +94,7 @@ describe('resolveEffectiveRunPermissions', () => {
       expect(resolved.approvalMode).toBe('plan')
       expect(resolved.readOnly).toBe(true)
       // Web-read allowance (2026-07): web_search/web_fetch/github_ci_status are non-mutating and
-      // permitted under Read-Only/Plan for ALL providers. networkAccess gates only
+      // permitted under Ask/Plan for ALL providers. networkAccess gates only
       // the web_read tool class, never file/shell — the write/shell floor below is
       // untouched. The global-deny kill switch and preview-risk models still force
       // 'deny' ahead of the preset (covered by the deny-path tests below).
@@ -146,7 +146,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('deny')
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
     // ASK, not allow. canvasEval is non-grantable, so this prompts on EVERY
-    // call and no grant/preset/Trusted Session can promote it.
+    // call and no grant/preset/Full Access can promote it.
     expect(resolved.agenticServices.canvasEval).toBe('ask')
   })
 
@@ -161,7 +161,7 @@ describe('resolveEffectiveRunPermissions', () => {
 
     expect(policyFor('read_only')).toBe('deny')
     expect(policyFor('plan')).toBe('ask')
-    // Persisted pre-Sketch settings omit the optional key; Default Approval
+    // Persisted pre-Sketch settings omit the optional key; Accept Edits
     // still adopts the intentional prompt-free fallback.
     expect(policyFor('default')).toBe('allow')
     expect(policyFor('workspace_write')).toBe('allow')

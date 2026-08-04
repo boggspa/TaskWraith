@@ -1,5 +1,5 @@
 /*
- * CombinedPermissionsPicker — replaces the standalone Default-approval
+ * CombinedPermissionsPicker — replaces the standalone Accept-Edits
  * native <select> + the standalone "Tool Grants" pill in the above-bar
  * with one combined chip + a two-column popover (Permission mode on
  * the left, Tool Grants on the right).
@@ -82,7 +82,7 @@ interface CombinedPermissionsPickerProps {
    * directly writing the preset.
    */
   onStartTrustedSession?: () => void
-  /** Downgrade the selected lane out of Trusted Session. */
+  /** Downgrade the selected lane out of Full Access. */
   onStopTrustedSession?: () => void
   /**
    * When true, the open popover re-anchors to the trigger on scroll/resize.
@@ -345,12 +345,12 @@ export function CombinedPermissionsPicker({
             disabled={selectedPermission === 'full_access'}
             title={
               selectedPermission === 'full_access'
-                ? 'Trusted Session must be enabled per participant.'
+                ? 'Full Access must be enabled per participant.'
                 : "Copy this participant's permission mode and tool grants to every ensemble participant"
             }
           >
             {selectedPermission === 'full_access'
-              ? 'Apply to all disabled for Trusted Session'
+              ? 'Apply to all disabled for Full Access'
               : 'Apply to all participants'}
           </button>
         ) : null}

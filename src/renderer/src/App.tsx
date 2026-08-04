@@ -1449,7 +1449,7 @@ function App(): React.JSX.Element {
   // media promote target below, membership-derived chrome) recompute.
   const [projectsRevision, setProjectsRevision] = useState(0)
   useEffect(() => subscribeProjects(() => setProjectsRevision((tick) => tick + 1)), [])
-  // Legacy process-wide YOLO visibility. New Trusted Session is lane-scoped;
+  // Legacy process-wide YOLO visibility. New Full Access is lane-scoped;
   // this state only lets the composer show/stop an old global auto-approval
   // switch if one is active inside the current process.
   const [sessionYoloMode, setSessionYoloModeState] = useState<{
@@ -2157,7 +2157,7 @@ function App(): React.JSX.Element {
   const [cursorFastMode, setCursorFastMode] = useState<boolean>(false)
   const [approvalMode, setApprovalMode] = useState<string>('default')
   // Permission-mode ELEVATION warning sheet. When a picker raise needs a
-  // failsafe (Tier 1 → Default Approval, shown once per workspace+provider;
+  // failsafe (Tier 1 → Accept Edits, shown once per workspace+provider;
   // Tier 2 → write/full access, shown every time), we defer the original
   // apply into `apply()` and stash the decision here; the sheet's confirm runs
   // `apply()` (and records the Tier-1 ack), cancel drops it (mode never raised).
@@ -2860,7 +2860,7 @@ function App(): React.JSX.Element {
     },
     [currentChat?.appChatId]
   )
-  // Set of (workspace|provider) keys whose Tier-1 "raise to Default Approval"
+  // Set of (workspace|provider) keys whose Tier-1 "raise to Accept Edits"
   // elevation notice has already been acknowledged, derived from the persisted
   // `approvalModeElevationAcknowledgements` settings Record. Fed into
   // `decideApprovalElevation` so an acknowledged workspace+provider isn't
@@ -6138,7 +6138,7 @@ function App(): React.JSX.Element {
       providerModelOption?.defaultReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
     // Tier retirement (2026-07): Ollama chats resolve their permission role the
     // same way as every provider — the persisted per-chat approvalMode, else the
-    // snapshot/composer default ('default' = Default Approval out of the box). No
+    // snapshot/composer default ('default' = Accept Edits out of the box). No
     // more force-'plan'; the Ollama tier ladder that used to govern tools is gone.
     const resolvedApprovalMode = resolveChatApprovalMode({
       metadataApprovalMode:
@@ -14449,7 +14449,7 @@ function App(): React.JSX.Element {
           const redacted = redactLog(JSON.stringify(rawLogPayloadForStringify(event.data), null, 2))
           // This lane is heuristic text sniffing over EVERY raw event: any
           // tool output that merely contained "access denied" / "needs
-          // access to" popped the attachment modal — Trusted Session runs
+          // access to" popped the attachment modal — Full Access runs
           // saw it constantly. The modal's contract: only a READ-ONLY
           // posture blocked from an attachment OUTSIDE the workspace needs
           // the prompt; write postures already hold the access, and real
@@ -21552,7 +21552,7 @@ function App(): React.JSX.Element {
   const sidePermissionOptions: PermissionOption[] = [
     { value: 'plan', label: PLAN_LABEL },
     { value: 'read_only', label: READ_ONLY_RECON_LABEL },
-    { value: 'default', label: 'Default Approval' },
+    { value: 'default', label: 'Accept Edits' },
     {
       value: 'workspace_write',
       label: WORKSPACE_WRITE_LABEL,
@@ -26974,7 +26974,7 @@ function App(): React.JSX.Element {
           return
         }
         // Re-run the focused-pane transition against the canonical chat. This
-        // clears Trusted Session, stops any old-workspace persistent provider,
+        // clears Full Access, stops any old-workspace persistent provider,
         // and drops stale diff/run presentation before the new workspace owns
         // the focused renderer.
         handleFocusMultiviewPane(_paneIndex, chatId)
@@ -27079,7 +27079,7 @@ function App(): React.JSX.Element {
         chat: paneChat,
         prompt: panePrompt,
         claimProjectReferenceContext: true,
-        // Trusted Session is a focused-renderer grant, not pane-owned state.
+        // Full Access is a focused-renderer grant, not pane-owned state.
         // A resting pane must never inherit it from whichever chat is focused.
         sessionTrust:
           paneIndex === multiview.focusedPaneIndex && currentChatIdRef.current === chatId
@@ -28149,7 +28149,7 @@ function App(): React.JSX.Element {
     const paneWelcomeCopy = buildWelcomeCopy({
       workspaceName: viewerWorkspaceName,
       providerLabel: viewerProviderLabel,
-      permissionModeLabel: 'Default Approval',
+      permissionModeLabel: 'Accept Edits',
       isGlobalChat: viewerIsGlobalChat,
       nowHour: new Date().getHours(),
       userName: settings?.userName,
@@ -29362,7 +29362,7 @@ function App(): React.JSX.Element {
       const paneWelcomeCopy = buildWelcomeCopy({
         workspaceName: viewerWorkspaceName,
         providerLabel: viewerProviderLabel,
-        permissionModeLabel: 'Default Approval',
+        permissionModeLabel: 'Accept Edits',
         isGlobalChat: viewerIsGlobalChat,
         nowHour: new Date().getHours(),
         userName: settings?.userName,

@@ -37,7 +37,7 @@ import { isCursorGrok45ModelId } from '../../../shared/grok45Models'
 // collapse, which is fine for ephemeral live edits but not persisted data).
 export const PERMISSION_PRESET_OPTIONS: PermissionOption[] = [
   { value: 'read_only', label: READ_ONLY_RECON_LABEL },
-  { value: 'default', label: 'Default approval' },
+  { value: 'default', label: 'Accept Edits' },
   { value: 'workspace_write', label: WORKSPACE_WRITE_LABEL }
 ]
 

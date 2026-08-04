@@ -41,7 +41,7 @@ describe('staleTrustedSessionDemotionPatch', () => {
     })
   })
 
-  it('leaves a live Trusted Session untouched', () => {
+  it('leaves a live Full Access untouched', () => {
     expect(
       staleTrustedSessionDemotionPatch({
         rememberedPresetId: 'full_access',

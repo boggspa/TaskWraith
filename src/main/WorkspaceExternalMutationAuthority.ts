@@ -73,7 +73,7 @@ export interface WorkspaceExternalMutationAuthorityIssueInput<
 
 /**
  * Issues operation-scoped external-write receipts after main has established
- * either a validated signed grant or an exact Trusted Session authority.
+ * either a validated signed grant or an exact Full Access authority.
  *
  * The returned receipt is bound to provider, run, target and the complete
  * mutation fingerprint by WorkspaceLockRuntime's receipt builders.

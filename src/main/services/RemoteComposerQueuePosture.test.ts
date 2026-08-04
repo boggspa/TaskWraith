@@ -85,7 +85,7 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
     )
   })
 
-  it('downgrades a queued Full-access composer prompt without Trusted Session', () => {
+  it('downgrades a queued Full-access composer prompt without Full Access', () => {
     const signRunPermissionPosture = vi.fn(() => 'd'.repeat(64))
 
     const snapshot = buildRemoteComposerQueuePermissionPosture({
@@ -113,7 +113,7 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
     )
   })
 
-  it('freezes a signed full_access posture only with Trusted Session', () => {
+  it('freezes a signed full_access posture only with Full Access', () => {
     const signRunPermissionPosture = vi.fn(() => 'd'.repeat(64))
 
     const snapshot = buildRemoteComposerQueuePermissionPosture({
@@ -142,7 +142,7 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
     )
   })
 
-  it('freezes Workspace Write exactly for queued remote prompts', () => {
+  it('freezes Full WS Access exactly for queued remote prompts', () => {
     const signRunPermissionPosture = vi.fn(() => 'e'.repeat(64))
 
     const snapshot = buildRemoteComposerQueuePermissionPosture({

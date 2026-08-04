@@ -7,7 +7,7 @@ import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { CombinedPermissionsPicker } from './CombinedPermissionsPicker'
 
 const permissionOptions = [
-  { value: 'default', label: 'Default Approval' },
+  { value: 'default', label: 'Accept Edits' },
   { value: 'plan', label: 'Plan Mode' }
 ]
 
@@ -48,7 +48,7 @@ describe('CombinedPermissionsPicker', () => {
   it('shows a workspace grant count in the trigger', () => {
     const html = renderPicker(new Set(['fileChanges']))
 
-    expect(html).toContain('Default Approval')
+    expect(html).toContain('Accept Edits')
     expect(html).toContain('composer-combined-picker-trigger-suffix')
     expect(html).toContain('1 grant')
     expect(html).toContain('data-permission-value="default"')
@@ -57,7 +57,7 @@ describe('CombinedPermissionsPicker', () => {
   it('omits the grant-count suffix after the Settings revoke state removes the grant', () => {
     const html = renderPicker(new Set())
 
-    expect(html).toContain('Default Approval')
+    expect(html).toContain('Accept Edits')
     expect(html).not.toContain('composer-combined-picker-trigger-suffix')
   })
 

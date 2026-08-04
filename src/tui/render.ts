@@ -53,12 +53,12 @@ function compactLabel(value: string | undefined, fallback = '—'): string {
 function permissionLabel(value: string | undefined): string {
   const normalized = terminalLabel(value).trim()
   const known: Record<string, string> = {
-    workspace_write: 'Workspace Write',
-    read_only: 'Read-only',
+    workspace_write: 'Full WS Access',
+    read_only: 'Ask',
     full_access: 'Full Access',
     auto_edit: 'Auto Edit',
-    plan: 'Plan · Read-only',
-    default: 'Ask'
+    plan: 'Plan',
+    default: 'Accept Edits'
   }
   return known[normalized.toLowerCase()] ?? compactLabel(normalized)
 }

@@ -49,9 +49,9 @@ context, so extra participants add cost and noise as well as perspective.
 Start with **Boss + Captain + one Specialist**. Add a second Specialist only
 when the task crosses domains, and add one **Outsider** when independent dissent
 is worth the extra turn. Keep one write-capable seat by default; give review and
-outsider seats Read-only posture until the task requires more. Cursor seats run
+outsider seats the read-only Ask posture until the task requires more. Cursor seats run
 with the same TaskWraith policy and grant controls for mediated tools; start
-outsider Cursor seats Read-only for the same least-authority reason as any other
+outsider Cursor seats in Ask for the same least-authority reason as any other
 provider.
 
 - **Delivery (3–4):** Boss, Captain/writer, test Specialist, optional Outsider.

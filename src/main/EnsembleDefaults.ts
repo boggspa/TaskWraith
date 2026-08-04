@@ -24,7 +24,7 @@ import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
  * default panel keeps a curated writer/reader split (codex is the lone
  * writer; the rest are read-only recon seats, which read-only fan-out
  * depends on). Participants ADDED later via the chip strip / roster
- * editor instead seed uniformly with 'default' (Default Approval) from
+ * editor instead seed uniformly with 'default' (Accept Edits) from
  * `getDefaultEnsembleParticipantConfig` — fully deterministic, no
  * inheritance from whichever chip was selected.
  */

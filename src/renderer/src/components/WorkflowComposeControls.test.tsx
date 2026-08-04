@@ -26,18 +26,18 @@ describe('WorkflowComposeControls — unattended permissions', () => {
     expect(html).toContain('Unattended permissions')
     expect(html).toContain('Safe (read-only)')
     expect(html).toContain('Default permissions')
-    expect(html).toContain('Full Workspace Access')
+    expect(html).toContain('Full Access')
   })
 
   it('defaults to Safe (the safe button is the active one)', () => {
     const html = renderControls({ unattendedLevel: 'safe' })
     expect(html).toMatch(/class="is-active"[^>]*>Safe \(read-only\)</)
-    expect(html).not.toMatch(/class="is-active"[^>]*>Full Workspace Access</)
+    expect(html).not.toMatch(/class="is-active"[^>]*>Full Access</)
   })
 
   it('marks the chosen non-safe level active', () => {
     const html = renderControls({ unattendedLevel: 'full_access' })
-    expect(html).toMatch(/class="is-active"[^>]*>Full Workspace Access</)
+    expect(html).toMatch(/class="is-active"[^>]*>Full Access</)
     expect(html).not.toMatch(/class="is-active"[^>]*>Safe \(read-only\)</)
   })
 })

@@ -1,8 +1,8 @@
-export const READ_ONLY_RECON_LABEL = 'Read-Only/Recon'
+export const READ_ONLY_RECON_LABEL = 'Ask'
 export const PLAN_LABEL = 'Plan'
-export const DEFAULT_APPROVAL_LABEL = 'Default Approval'
-export const WORKSPACE_WRITE_LABEL = 'Workspace Write'
-export const TRUSTED_SESSION_LABEL = 'Trusted Session'
+export const DEFAULT_APPROVAL_LABEL = 'Accept Edits'
+export const WORKSPACE_WRITE_LABEL = 'Full WS Access'
+export const TRUSTED_SESSION_LABEL = 'Full Access'
 
 /**
  * Permission preset options offered by the composer's permission picker — used

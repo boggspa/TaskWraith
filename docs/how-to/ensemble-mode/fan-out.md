@@ -31,4 +31,4 @@ In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row o
 - [Create an Ensemble Chat](create-ensemble-chat.md) — start an ensemble chat before this toggle becomes available.
 - [Participant Chip Strip](participant-chip-strip.md) — manage which participants are read-only vs. writer-capable, which determines what each fan-out lane can do.
 - Normal round completion waits for live BG lanes, while Stop/cancellation closes immediately and cancels them with the rest of the round.
-- BG lanes never inherit Trusted Session and cannot own Boss/Captain/synthesizer authority.
+- BG lanes never inherit Full Access and cannot own Boss/Captain/synthesizer authority.

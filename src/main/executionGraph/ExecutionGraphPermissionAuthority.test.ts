@@ -244,7 +244,7 @@ describe('ExecutionGraphPermissionAuthority', () => {
   it('downgrades non-durable Full Access to workspace write', () => {
     const posture = build(request({ permissionPresetId: 'full_access', sessionTrust: true }))
     expect(posture.presetId).toBe('workspace_write')
-    // Workspace Write auto-allows shell/file for the run; sandbox drop still
+    // Full WS Access auto-allows shell/file for the run; sandbox drop still
     // requires the full_access preset (isFullShellAccessGranted).
     expect(posture.agenticServices?.shellCommands).toBe('allow')
   })

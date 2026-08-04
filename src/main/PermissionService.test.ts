@@ -848,7 +848,7 @@ describe('PermissionService', () => {
   })
 
   // Posture conformance across the REAL resolver → gate-settings → decision
-  // chain (no mocks): the contract behind "honor Workspace Write without a
+  // chain (no mocks): the contract behind "honor Full WS Access without a
   // second grant". The 2026-07-21 00:21–01:00 regression session showed the
   // failure mode this fences: preset entries overriding the user's globals back
   // to a grant-gated policy, with the grant store unable to satisfy it —

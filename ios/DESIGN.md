@@ -36,8 +36,8 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
 - **Remote workspace access is provider-agnostic** — one durable grant exposes
   the workspace to every provider the Mac currently admits. Provider admission
   remains dynamic (including consent/credential-gated AntiGravity), while the
-  thread's Plan / Read-Only / Default Approval / Workspace Write / Trusted
-  Session posture stays a separate per-thread choice.
+  thread's Plan / Ask / Accept Edits / Full WS Access / Full Access
+  posture stays a separate per-thread choice.
 
 ## Current state (iOS 0.1.0 build 82; desktop 1.8.8 baseline)
 
@@ -1162,8 +1162,8 @@ every time.
   model catalog after quota-risk consent and Gemini API setup; it is not added
   to the static provider set.
 - Solo and Ensemble permission controls expose the desktop's exact five tiers:
-  Plan, Read-Only/Recon, Default Approval, Workspace Write, and Trusted Session.
-  Trusted Session remains a separate process-lifetime, exact-lane receipt with
+  Plan, Ask, Accept Edits, Full WS Access, and Full Access.
+  Full Access remains a separate process-lifetime, exact-lane receipt with
   its own acknowledgement and confirmation; a workspace grant never mints it.
 
 ## Current follow-ups

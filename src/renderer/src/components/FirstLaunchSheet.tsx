@@ -858,18 +858,18 @@ export function FirstLaunchSheet({
               <span className="first-launch-sheet-safety-label">Start cautious, dial up</span>
               <div className="first-launch-sheet-safety-chips">
                 <span className="first-launch-sheet-safety-chip">Plan</span>
-                <span className="first-launch-sheet-safety-chip">Read-Only/Recon</span>
-                <span className="first-launch-sheet-safety-chip">Default Approval</span>
-                <span className="first-launch-sheet-safety-chip">Workspace Write</span>
-                <span className="first-launch-sheet-safety-chip">Trusted Session</span>
+                <span className="first-launch-sheet-safety-chip">Ask</span>
+                <span className="first-launch-sheet-safety-chip">Accept Edits</span>
+                <span className="first-launch-sheet-safety-chip">Full WS Access</span>
+                <span className="first-launch-sheet-safety-chip">Full Access</span>
               </div>
             </div>
           </div>
           <p className="first-launch-sheet-prose">
             Runs start inside the workspace boundary — files outside the project are off-limits
-            unless you allow a path. Plan and Read-Only/Recon stay cautious; Default Approval keeps
-            file actions visible; Workspace Write removes per-action prompts inside the project;
-            and lane-scoped Trusted Session is the highest local authority. Plan-authoring mode can still
+            unless you allow a path. Plan and Ask stay cautious; Accept Edits keeps
+            file actions visible; Full WS Access removes per-action prompts inside the project;
+            and lane-scoped Full Access is the highest local authority. Plan-authoring mode can still
             use approval-gated instruments like canvas, media, and sub-thread delegation when you
             allow them, but it does not grant ordinary file mutation by itself.
           </p>
@@ -1001,9 +1001,9 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Permission picker colour-codes the authority.</strong> Plan-authoring mode is
-              separate from Read-Only/Recon: Plan drafts for approval, Default Approval keeps
-              actions visible, Workspace Write removes per-action prompts inside the project, and
-              Trusted Session is lane-scoped host authority. Approval-gated instruments remain
+              separate from Ask: Plan drafts for approval, Accept Edits keeps
+              actions visible, Full WS Access removes per-action prompts inside the project, and
+              Full Access is lane-scoped host authority. Approval-gated instruments remain
               explicit. Check the selected posture before you hit Enter.
             </li>
             <li>

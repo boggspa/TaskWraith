@@ -513,7 +513,7 @@ private struct RosterParticipantConfigFields: View {
 /// panel with the preset rows — same Liquid Glass language as the picker
 /// itself, keeping permissions participant-scoped without a full field row.
 struct RosterPermissionSidecarPicker: View {
-    /// nil = "default" (Default approval).
+    /// nil = "default" (Accept Edits).
     @Binding var permissionPresetId: String?
     var accent: Color = TWTheme.chroma1
     var onChanged: () -> Void = {}
@@ -528,7 +528,7 @@ struct RosterPermissionSidecarPicker: View {
 
     // Desktop permission colour-coding (08-theme-picker-overrides.css,
     // shell-agnostic block): Plan / Read-only → blue, Default → neutral,
-    // Workspace Write → amber, Trusted Session → dark red. The selected
+    // Full WS Access → amber, Full Access → dark red. The selected
     // checkmark and the closed trigger adopt the same tier tint so the
     // colour identity reads across closed + open states.
     private static let tierBlue = Color(hex: 0x6FB6FF)
@@ -540,25 +540,25 @@ struct RosterPermissionSidecarPicker: View {
         let short: String
         let label: String
         let systemImage: String
-        /// nil = neutral (Default approval keeps the untinted palette).
+        /// nil = neutral (Accept Edits keeps the untinted palette).
         var tint: Color? = nil
     }
 
     private static let tiers: [Tier] = [
         Tier(
-            id: "plan", short: "Plan", label: "Plan workflow",
+            id: "plan", short: "Plan", label: "Plan",
             systemImage: "list.clipboard", tint: tierBlue),
         Tier(
-            id: "read_only", short: "Read", label: "Read-Only/Recon",
+            id: "read_only", short: "Ask", label: "Ask",
             systemImage: "lock.shield", tint: tierBlue),
         Tier(
-            id: "default", short: "Ask", label: "Default approval",
+            id: "default", short: "Accept", label: "Accept Edits",
             systemImage: "checkmark.shield"),
         Tier(
-            id: "workspace_write", short: "Write", label: "Workspace Write",
+            id: "workspace_write", short: "Full WS", label: "Full WS Access",
             systemImage: "pencil.and.outline", tint: tierAmber),
         Tier(
-            id: "full_access", short: "Trust", label: "Trusted Session",
+            id: "full_access", short: "Full", label: "Full Access",
             systemImage: "bolt.shield", tint: tierRed),
     ]
 

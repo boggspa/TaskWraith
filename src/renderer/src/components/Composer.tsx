@@ -1316,7 +1316,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       true
     )
     if (!grantResult?.enabled) {
-      window.alert(grantResult?.error || 'Trusted Session could not be started for this lane.')
+      window.alert(grantResult?.error || 'Full Access could not be started for this lane.')
       return
     }
     setTrustedSessionConfirmOpen(false)
@@ -1338,9 +1338,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     }
   }
 
-  // Trusted Session grants are process-lifetime (main-memory only), but the
+  // Full Access grants are process-lifetime (main-memory only), but the
   // remembered solo selection persists `full_access` across relaunches. Without
-  // this reconcile the picker keeps showing Trusted Session while
+  // this reconcile the picker keeps showing Full Access while
   // ComposerService silently downgrades every composed run to workspace_write.
   // Demote the remembered selection so the picker tells the truth; re-arming is
   // one click through the confirm sheet. Ensemble seats keep per-participant
@@ -4698,7 +4698,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           />
                         )}
 
-                        {/* Legacy process-wide auto-approval indicator. New Trusted Session
+                        {/* Legacy process-wide auto-approval indicator. New Full Access
                           elevation is lane-scoped and does not enable this switch, but
                           the stop chip remains visible if an older/remote path turned it on. */}
                         {sessionYoloMode.enabled && (
@@ -5668,7 +5668,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       )}
                     </div>
                   )}
-                  {/* Trusted Session is lane-scoped: the current ensemble participant or solo
+                  {/* Full Access is lane-scoped: the current ensemble participant or solo
                     chat receives the signed full_access preset, then this request is
                     accepted once. It deliberately does not enable process-wide YOLO or
                     mint a hidden matching-service session grant via acceptForSession. */}
@@ -5683,7 +5683,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         disabled={Boolean(trustedSessionMutationDisabledReason)}
                         title={
                           trustedSessionMutationDisabledReason ||
-                          'Raise only this chat or selected participant to Trusted Session, then approve this request once. Other lanes are unchanged.'
+                          'Raise only this chat or selected participant to Full Access, then approve this request once. Other lanes are unchanged.'
                         }
                         onClick={() => {
                           if (trustedSessionMutationDisabledReason) return
@@ -5692,8 +5692,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         }}
                       >
                         {trustedSessionMutationDisabledReason
-                          ? 'Trusted Session in main window'
-                          : 'Start Trusted Session...'}
+                          ? 'Full Access in main window'
+                          : 'Start Full Access...'}
                       </PillButton>
                     )}
                   {(pendingAgentApproval.actions || ['decline']).includes('decline') && (

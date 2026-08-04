@@ -3528,10 +3528,10 @@ function SettingsProviderPauseControls({
                   }
                 >
                   <option value="">Use chat default</option>
-                  <option value="default">Default Approval</option>
+                  <option value="default">Accept Edits</option>
                   <option value="plan">Plan</option>
                   <option value="auto_edit">Auto Edit</option>
-                  <option value="full_access">Trusted Session</option>
+                  <option value="full_access">Full Access</option>
                 </select>
               </label>
             </>
@@ -7663,7 +7663,7 @@ export function SettingsPanel({
                         Whether agents can open and navigate websites in the sandboxed Canvas
                         Browser (no clicking or typing — that stays under Canvas interaction).
                         Default &apos;ask&apos; prompts and can be granted per session or workspace;
-                        Read-Only (Recon) and Plan ask on every navigation.
+                        Ask and Plan prompt on every navigation.
                       </small>
                     </span>
                     <select

@@ -2625,7 +2625,7 @@
   transform: none;
 }
 
-/* Permission picker (Plan / Default approval) — plain text */
+/* Permission picker (Plan / Accept Edits) — plain text */
 [data-composer-style="gemini"] [data-composer-control="permission"] {
   background: transparent;
   border: 0;
@@ -3853,7 +3853,7 @@
 }
 
 /* ============================================================
- * NATIVE-SHELL POSTURE PILL — "Full Workspace Access" (auto_edit)
+ * NATIVE-SHELL POSTURE PILL — "Full WS Access" (auto_edit)
  * RED → AMBER, via the maintainer's rim-highlight idiom (a9d5482)
  * --------------------------------------------------------------
  * The permission chip is a POSTURE indicator, not an error: it

@@ -138,7 +138,7 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   // likely to want it — plan is the reviewing/inspecting posture, and eval is
   // sometimes the only way to express a check the structured canvas verbs
   // cannot. ASK is not a weakening: `canvasEval` is non-grantable
-  // (`isNonGrantableService`), so no grant, preset or Trusted Session can ever
+  // (`isNonGrantableService`), so no grant, preset or Full Access can ever
   // promote this to an automatic allow — it re-prompts on EVERY call, the
   // script is shown only on the transient desktop approval, and
   // `preserveExplicitDeny` still lets the global kill switch force it back to
@@ -156,7 +156,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     approvalMode: 'plan',
     agenticServices: READ_ONLY_AGENTIC_SERVICES,
     // Web reads (web_search/web_fetch/github_ci_status) are non-mutating retrospection — a
-    // Read-Only/Recon seat may reach the live web. networkAccess gates ONLY the
+    // Ask seat may reach the live web. networkAccess gates ONLY the
     // web_read tool class (isNetworkAccessBlockedTool); it never touches the
     // file/shell/mcp approval gates, so this is a pure read-capability
     // expansion. The previewRiskModel guard (resolver l.263) and the global
@@ -182,7 +182,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     id: 'workspace_write',
     label: 'Workspace write',
     approvalMode: 'auto_edit',
-    // Selecting Workspace Write IS the user's run-level authorization for
+    // Selecting Full WS Access IS the user's run-level authorization for
     // in-workspace shell / file / media edits. Policy value 'workspace' still
     // means "prompt until a separate standing workspace grant exists", which
     // double-taxed users: they chose the preset and still got a card on every
@@ -195,7 +195,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     //   - external-path detection force-prompts (never auto-allows escapes)
     //   - canvasEval / mediaRecording stay non-grantable ask/deny
     //   - isFullShellAccessGranted still requires presetId === 'full_access',
-    //     so Workspace Write never drops provider sandboxing to danger-full-access
+    //     so Full WS Access never drops provider sandboxing to danger-full-access
     //   - preview-risk models clamp these services back to 'ask'
     agenticServices: {
       shellCommands: 'allow',
@@ -241,7 +241,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // even Full access must NOT auto-allow capture; it stays at its default-deny
       // so every (future) mic/camera capture still prompts/denies.
       mediaEditing: 'allow',
-      // Browser navigation is grantable; Trusted Session auto-allows it (it
+      // Browser navigation is grantable; Full Access auto-allows it (it
       // already auto-allows the strictly-more-powerful mcpTools surface).
       webBrowsing: 'allow'
     },
@@ -466,8 +466,8 @@ function servicesFromSettings(
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
-    // First-class Sketch edits are intentionally prompt-free at Default
-    // Approval. Read-only/Plan presets override this base value above.
+    // First-class Sketch edits are intentionally prompt-free at Accept
+    // Edits. Ask/Plan presets override this base value above.
     sketchCanvas: normalizePolicy(settings?.sketchCanvas, 'allow'),
     meshCanvas: normalizePolicy(settings?.meshCanvas, 'ask'),
     crossThreadRead: normalizePolicy(settings?.crossThreadRead, 'ask'),

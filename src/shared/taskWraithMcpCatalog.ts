@@ -244,8 +244,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_eval',
   // Canvas Browser navigation — goto/back/forward/reload/stop on the chat's
   // sandboxed web canvas, auto-opening one when none is open. Gated by the
-  // dedicated webBrowsing service: ask + grantable under Default Approval,
-  // per-invocation ask under Read-Only (Recon) and Plan. Never actuation:
+  // dedicated webBrowsing service: ask + grantable under Accept Edits,
+  // per-invocation ask under Ask and Plan. Never actuation:
   // click/fill/eval keep their own stricter services.
   'canvas_navigate',
   'canvas_close',

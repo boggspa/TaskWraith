@@ -47,7 +47,7 @@ export interface ThreadMessageElevationGrounds {
    * effective permissions, so a forged or unsigned posture has already been
    * clamped to read_only before it can get here. */
   fullAccess: boolean
-  /** A live, task-scoped Trusted Session grant matching this chat/provider/
+  /** A live, task-scoped Full Access grant matching this chat/provider/
    * workspace — not merely a write-capable posture. */
   trustedSession: boolean
   /**

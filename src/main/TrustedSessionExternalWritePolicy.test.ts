@@ -79,7 +79,7 @@ describe('canAutoApproveTrustedSessionExternalWrite', () => {
     ).toBe(false)
   })
 
-  it('passes the participant and lane identity into the Trusted Session check', () => {
+  it('passes the participant and lane identity into the Full Access check', () => {
     const candidate = input({
       ensembleRun: {
         roundId: 'round-1',

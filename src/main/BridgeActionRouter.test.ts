@@ -774,7 +774,7 @@ describe('BridgeActionRouter', () => {
       })
     })
 
-    it('workspace-gates Trusted Session independently from thread posture', async () => {
+    it('workspace-gates Full Access independently from thread posture', async () => {
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
       const trusted = Buffer.from(
@@ -818,7 +818,7 @@ describe('BridgeActionRouter', () => {
       expect(calls).toHaveLength(1)
     })
 
-    it('always permits a gated conditional-provider Trusted Session revocation', async () => {
+    it('always permits a gated conditional-provider Full Access revocation', async () => {
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({
         allowlist: seedAllowlist(),

@@ -3,7 +3,7 @@ import Testing
 
 @testable import TaskWraithKit
 
-@Suite("Workspace grant and Trusted Session parity")
+@Suite("Workspace grant and Full Access parity")
 struct WorkspaceGrantParityTests {
     private func payload(_ params: [String: Any]) throws -> [String: Any] {
         let base64 = try #require(params["payloadBase64"] as? String)
@@ -27,7 +27,7 @@ struct WorkspaceGrantParityTests {
         #expect(payload["expiresAt"] as? Int != nil)
     }
 
-    @Test("Trusted Session consent identifies one exact participant lane")
+    @Test("Full Access consent identifies one exact participant lane")
     func trustedSessionPayload() throws {
         let encoded = BridgeAction.setTrustedSession(
             workspaceId: "ws-1",
@@ -62,7 +62,7 @@ struct WorkspaceGrantParityTests {
         #expect(summary.capabilities == nil)
     }
 
-    @Test("grant and Trusted Session acknowledgements decode authoritatively")
+    @Test("grant and Full Access acknowledgements decode authoritatively")
     func acknowledgementDataDecodes() throws {
         let grant = try JSONDecoder().decode(
             BridgeActionAck.self,

@@ -1326,7 +1326,7 @@ describe('composeRunPrompt read-only recon steer', () => {
     providerLabel: 'Kimi'
   }
 
-  it('injects the recon steer for a plan-approvalMode run on a NORMAL workflow (Read-Only/Recon)', () => {
+  it('injects the recon steer for a plan-approvalMode run on a NORMAL workflow (Ask)', () => {
     const result = composeRunPrompt({
       ...base,
       provider: 'kimi',

@@ -15729,7 +15729,7 @@ Next action:
     completeDispatchedRun(harness, 0)
   })
 
-  it('keeps an explicit locked-writer BG lane below Trusted Session', async () => {
+  it('keeps an explicit locked-writer BG lane below Full Access', async () => {
     const previous = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
     const isTrustedSessionGranted = vi.fn(() => true)

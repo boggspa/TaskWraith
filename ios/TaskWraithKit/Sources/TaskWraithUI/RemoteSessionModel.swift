@@ -7027,7 +7027,7 @@ public final class RemoteSessionModel: ObservableObject {
             })
     }
 
-    /// Grant/revoke the exact Mac-side Trusted Session lane. The completion is
+    /// Grant/revoke the exact Mac-side Full Access lane. The completion is
     /// host-authoritative; callers must not switch their UI to full_access until
     /// it returns true.
     public func setTrustedSession(
@@ -7063,7 +7063,7 @@ public final class RemoteSessionModel: ObservableObject {
                 ensembleParticipantId: ensembleParticipantId,
                 runtimeProfileId: resolvedRuntimeProfileId),
             timeoutMs: 12_000,
-            successLabel: enabled ? "Trusted Session enabled." : "Trusted Session disabled.",
+            successLabel: enabled ? "Full Access enabled." : "Full Access disabled.",
             navigateOnAck: false,
             onAckResult: { accepted, ack in
                 guard accepted, let data = ack?.result,

@@ -74,7 +74,7 @@ export function effectiveAgenticSettings(
         effective.canvasInteraction
       ),
       // Sketch edits have their own ladder: Recon deny, Plan ask, and
-      // Default/Workspace Write/Trusted Session allow. Preserve global deny.
+      // Default/Full WS Access/Full Access allow. Preserve global deny.
       sketchCanvas: preserveCurrentDeny(current.sketchCanvas, effective.sketchCanvas),
       // Mesh Canvas is its own authoring/import service. Preserve a Recon
       // deny through this main-owned effective-policy rebuild.
@@ -137,7 +137,7 @@ export function resolveNativeApprovalPreflightDecision(args: {
    */
   neverAutoAllow?: boolean
   /**
-   * A live Trusted Session matched the exact chat/provider/lane and the
+   * A live Full Access matched the exact chat/provider/lane and the
    * request is an external write from that active task. This narrowly lifts
    * the ordinary external-path prompt for Full Access only.
    */

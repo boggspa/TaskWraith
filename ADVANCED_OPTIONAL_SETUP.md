@@ -67,7 +67,7 @@ For a first test, start with a smaller model such as `qwen3:4b-instruct` or
 `granite4.1:3b`. Larger models need more disk, RAM, and patience.
 
 Ollama uses the same permission presets as cloud providers. Start in
-Read-only/Recon or Plan workflow; file edits, shell commands, network tools,
+Ask or Plan workflow; file edits, shell commands, network tools,
 delegation, and publishing follow the selected permission posture and approval
 policy. The Ollama run profile controls local-model prompting/runtime behavior,
 not a separate safety-tier ladder.
@@ -275,7 +275,7 @@ as well.
 For cautious users, enable optional surfaces in this order:
 
 1. Core provider CLI/API setup in a scratch workspace.
-2. Local Ollama testing in Read-only/Recon or Plan workflow.
+2. Local Ollama testing in Ask or Plan workflow.
 3. Optional provider sign-ins and API-key tools such as Kimi or image generation.
 4. iOS Remote on the same LAN.
 5. Tailscale for off-LAN iOS Remote.

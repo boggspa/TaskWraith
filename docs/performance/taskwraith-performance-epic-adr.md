@@ -149,7 +149,7 @@ Dual-read is mandatory until Boss declares cutover complete (see §6).
 | **D0 ephemeral** | Working telemetry, typing/elapsed clocks, FX state | No disk | Never claim durable |
 | **D1 soft stream** | Token deltas, partial assistant text, tool progress previews | Memory + coalesced journal append; fsync deferred | UI may show; crash may lose trailing unflushed window ≤ coalesce budget |
 | **D2 user/terminal** | User messages, terminal run outcomes (`done`/`failed`/`cancelled`), explicit cancel; round-start / accept / terminal checkpoints | Journal append + **fsync** before durable ACK | Safe to treat as recovered after crash |
-| **D3 approval / grant / trust** | Approvals, permission grants, Trusted Session edges, history-deletion intent | Existing ledger barriers **or** stronger; never behind soft coalesce | Must survive crash/restart; fail-closed if incomplete |
+| **D3 approval / grant / trust** | Approvals, permission grants, Full Access edges, history-deletion intent | Existing ledger barriers **or** stronger; never behind soft coalesce | Must survive crash/restart; fail-closed if incomplete |
 | **D4 export/audit raw** | Full tool raw, provider forensic payloads | Content-addressed detail/blob segments; not hot chat document | Lazy load; export assembles full ordered view; **authoritative bytes never truncated** |
 
 **Boss freeze #4 — D1 coalescer initial policy:**

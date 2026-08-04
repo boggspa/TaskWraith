@@ -2677,7 +2677,7 @@ const mcpBrowserConsoleBuffer: Array<{
   url?: string
 }> = []
 
-// Legacy process-wide YOLO state. New user-facing Trusted Session is
+// Legacy process-wide YOLO state. New user-facing Full Access is
 // lane-scoped and backed by `trustedSessionGrants`; enabling this global switch
 // now fails closed in setSessionYoloMode(true). We keep the state/read/disable
 // path so older windows or remote-control clients can observe/stop a leftover
@@ -2734,7 +2734,7 @@ function setSessionYoloMode(enabled: boolean): {
       ...getSessionYoloMode(),
       managedBlocked: true,
       managedReason:
-        'Process-wide YOLO has been replaced by lane-scoped Trusted Session. Start Trusted Session from the permission picker for the specific chat or participant.'
+        'Process-wide YOLO has been replaced by lane-scoped Full Access. Start Full Access from the permission picker for the specific chat or participant.'
     }
   }
   if (sessionYoloState.enabled === enabled) return getSessionYoloMode()
@@ -2765,11 +2765,11 @@ function resolveTrustedSessionScope(
 ): { ok: true; scope: TrustedSessionScope } | { ok: false; error: string } {
   const chatId =
     typeof rawScope?.chatId === 'string' && rawScope.chatId.trim() ? rawScope.chatId.trim() : ''
-  if (!chatId) return { ok: false, error: 'Trusted Session needs a chat id.' }
+  if (!chatId) return { ok: false, error: 'Full Access needs a chat id.' }
   const chat = AppStore.getChat(chatId)
-  if (!chat) return { ok: false, error: 'Trusted Session chat was not found.' }
+  if (!chat) return { ok: false, error: 'Full Access chat was not found.' }
   if (chat.scope === 'global' || !chat.workspacePath) {
-    return { ok: false, error: 'Trusted Session is only available for workspace chats.' }
+    return { ok: false, error: 'Full Access is only available for workspace chats.' }
   }
 
   const requestedParticipantId =
@@ -2780,7 +2780,7 @@ function resolveTrustedSessionScope(
     ? chat.ensemble?.participants.find((entry) => entry.id === requestedParticipantId)
     : undefined
   if (requestedParticipantId && !participant) {
-    return { ok: false, error: 'Trusted Session participant was not found.' }
+    return { ok: false, error: 'Full Access participant was not found.' }
   }
 
   let provider: ProviderId
@@ -2806,10 +2806,10 @@ function resolveTrustedSessionScope(
       provider = assertLiveProviderId(candidate)
     }
   } catch {
-    return { ok: false, error: 'Trusted Session provider is not available.' }
+    return { ok: false, error: 'Full Access provider is not available.' }
   }
   if (rawScope?.provider && rawScope.provider !== provider) {
-    return { ok: false, error: 'Trusted Session provider does not match this lane.' }
+    return { ok: false, error: 'Full Access provider does not match this lane.' }
   }
   const authoritativeRuntimeProfileId = participant
     ? participant.runtimeProfileId || undefined
@@ -2823,7 +2823,7 @@ function resolveTrustedSessionScope(
     requestedRuntimeProfileId: rawScope?.runtimeProfileId
   })
   if (!runtimeProfile.ok) {
-    return { ok: false, error: 'Trusted Session runtime profile does not match this lane.' }
+    return { ok: false, error: 'Full Access runtime profile does not match this lane.' }
   }
 
   return {
@@ -5124,7 +5124,7 @@ const threadMessageAccessResolver = createThreadMessageAccessResolver({
     const consent = chat?.ensemble?.bossmanAutoApprovals
     return {
       fullAccess: isFullShellAccessGranted(ctx.effectivePermissions),
-      // Task-scoped Trusted Session for THIS chat/provider/workspace, not a
+      // Task-scoped Full Access for THIS chat/provider/workspace, not a
       // merely write-capable posture.
       trustedSession: Boolean(
         context.appChatId &&
@@ -9003,7 +9003,7 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
         parent.provider === 'gemini'
           ? (parent.linkedGeminiSessionId ?? null)
           : (parent.linkedProviderSessionId ?? null),
-      // Automatic coordination is never a Trusted Session.
+      // Automatic coordination is never Full Access.
       sessionTrust: false,
       ...(continuationEffectivePermissions
         ? { effectivePermissions: continuationEffectivePermissions }
@@ -19759,7 +19759,7 @@ async function tryRunClaudeSdk(
           cwd: payload.workspace!,
           model: model === 'default' ? undefined : model,
           // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
-          // Read-Only/Recon seats run in DEFAULT permission mode instead of
+          // Ask seats run in DEFAULT permission mode instead of
           // Claude Code's native plan mode: plan mode installs a plan-shaped
           // system prompt (+ ExitPlanMode) that turns review/recon turns into
           // plan artifacts. Write containment does not change: every tool call
@@ -29484,7 +29484,7 @@ async function continueCodexAfterHostRerun(
 
   const model = approvalRunState?.state?.model || approval.model || runChat?.requestedModel
   const reasoningEffort = approvalRunState?.state?.reasoningEffort || approval.reasoningEffort
-  // Automatic host-rerun continuation is never Trusted Session.
+  // Automatic host-rerun continuation is never Full Access.
   const sessionTrust = false
   const approvalMode = approvalRunState?.state?.approvalMode || 'default'
   const externalPathGrants = approvalRunState?.state?.externalPathGrants
@@ -37792,7 +37792,7 @@ async function executeGeminiMcpTool(
         approvalMode: delegatedApprovalMode,
         ...delegationSettings.runPayload,
         // Async workers inherit/cap permissions below, but never inherit a
-        // Trusted Session grant from the invoking parent.
+        // Full Access grant from the invoking parent.
         sessionTrust: false,
         externalPathGrants: subThreadEffectivePermissions.externalPathGrants,
         runtimeProfileId: inheritableRuntimeProfileId,
@@ -39972,7 +39972,7 @@ if (isGeminiMcpBridgeProcess) {
           validateChatWorkspaceIdentity(chat.appChatId, workspace)
           const request = content.request as unknown as RunQueueRequestSnapshot
           if (request.scope !== 'workspace' || request.sessionTrust !== false) {
-            throw new Error('Persisted graph run template cannot retain Trusted Session.')
+            throw new Error('Persisted graph run template cannot retain Full Access.')
           }
           if (
             request.scheduledTaskId ||
@@ -41108,7 +41108,7 @@ if (isGeminiMcpBridgeProcess) {
               ...(workflowMode === 'plan' ? { workflowMode } : {}),
               // Preserve the user's top-tier request for audit/projection; the
               // signed permissionPosture above clamps it to workspace_write unless
-              // a live Trusted Session receipt exists at queue time.
+              // a live Full Access receipt exists at queue time.
               ...(action.permissionPresetId === 'full_access' ||
               action.permissionPresetId === 'workspace_write'
                 ? { permissionPresetId: action.permissionPresetId }
@@ -41471,12 +41471,12 @@ if (isGeminiMcpBridgeProcess) {
         },
         setTrustedSessionFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
-          if (!chat) return { enabled: false, reason: 'Trusted Session chat was not found.' }
+          if (!chat) return { enabled: false, reason: 'Full Access chat was not found.' }
           const chatWorkspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
           if (chatWorkspaceId !== action.workspaceId) {
             return {
               enabled: false,
-              reason: 'Trusted Session chat does not belong to the requested workspace.'
+              reason: 'Full Access chat does not belong to the requested workspace.'
             }
           }
           const result = setTrustedSession(
@@ -53976,7 +53976,7 @@ if (isGeminiMcpBridgeProcess) {
         if (isMainRendererSender(event)) return
         assertRendererChatScope(event, requireNonEmptyString(scope?.chatId, 'Chat id'))
         const chat = AppStore.getChat(scope.chatId)
-        if (!chat) throw new Error('Trusted Session chat could not be resolved.')
+        if (!chat) throw new Error('Full Access chat could not be resolved.')
         const primaryWorkspace = resolveChatPrimaryWorkspace(
           chat,
           AppStore.getWorkspaces(),
@@ -53985,7 +53985,7 @@ if (isGeminiMcpBridgeProcess) {
         const requestedWorkspacePath = scope.workspacePath?.trim() || ''
         if (!primaryWorkspace) {
           if (requestedWorkspacePath) {
-            throw new Error('Global chat Trusted Session scope cannot name a workspace.')
+            throw new Error('Global chat Full Access scope cannot name a workspace.')
           }
           return
         }
@@ -53993,7 +53993,7 @@ if (isGeminiMcpBridgeProcess) {
           !requestedWorkspacePath ||
           canonicalPath(requestedWorkspacePath) !== canonicalPath(primaryWorkspace.path)
         ) {
-          throw new Error('Trusted Session workspace does not match the owning chat.')
+          throw new Error('Full Access workspace does not match the owning chat.')
         }
         assertRendererFilesystemScope(event, {
           capability: 'workspace-diff',

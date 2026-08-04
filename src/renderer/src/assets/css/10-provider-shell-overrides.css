@@ -1126,7 +1126,7 @@
  * (The rest of the Claude shell is already theme-correct under
  * EW76/EW77/EW78.)
  *
- *  (a) The Permissions ("Default Approval") and Model/Reasoning
+ *  (a) The Permissions ("Accept Edits") and Model/Reasoning
  *      ("5.5 Medium") triggers both carry
  *      `.composer-combined-picker-trigger`. The model chip fills
  *      from `--panel-bg` — which EW76 sets OPPOSITE to the page
@@ -2414,7 +2414,7 @@
   transform: none;
 }
 
-/* Permission picker (Plan / Default approval) — plain text. */
+/* Permission picker (Plan / Accept Edits) — plain text. */
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="permission"] {
   background: transparent;
   border: 0;

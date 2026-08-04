@@ -475,9 +475,9 @@ export type AgenticServiceId =
   | 'mediaRecording'
   // Canvas Browser navigation (canvas_navigate: open/goto/back/forward/reload/
   // stop on the sandboxed web-preview surface). A DEDICATED grant bucket —
-  // grantable like crossThreadRead under Default Approval — kept separate from
+  // grantable like crossThreadRead under Accept Edits — kept separate from
   // `canvasInteraction` so approving read-class browsing never grants click/fill
-  // actuation, and separate from `mcpTools` so Read-Only (Recon) and Plan can
+  // actuation, and separate from `mcpTools` so Ask and Plan can
   // offer it as a per-invocation ASK instrument (user decision 2026-08-04)
   // instead of the generic read-only hard-deny reroute.
   | 'webBrowsing'
@@ -2584,7 +2584,7 @@ export interface AppSettings {
    * Permission-mode ELEVATION warning acknowledgements. Keyed by
    * `${workspacePath}|${provider}` (see `approvalElevationAckKey` in
    * `src/renderer/src/lib/approvalElevation.ts`); a `true` value means the
-   * Tier-1 "raise to Default Approval" notice has been confirmed once for that
+   * Tier-1 "raise to Accept Edits" notice has been confirmed once for that
    * (workspace, provider) and should not be shown again. Tier-2 (Full Workspace
    * Access) is never suppressed and never recorded here. Optional so older
    * settings files round-trip without the field.

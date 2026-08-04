@@ -73,7 +73,7 @@ export function describeWorkflowAuthorityForNativeConfirmation(
 }
 
 function permissionLabel(level: Exclude<UnattendedElevationLevel, 'safe'>): string {
-  return level === 'full_access' ? 'Full Workspace Access' : 'Default Approval'
+  return level === 'full_access' ? 'Full Access' : 'Accept Edits'
 }
 
 export function buildWorkflowElevationConfirmationOptions(

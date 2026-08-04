@@ -64,10 +64,10 @@ export class TrustedSessionGrantStore {
   grant(scope: TrustedSessionScope): TrustedSessionSetResult {
     const normalized = normalizeScope(scope)
     if (!normalized.chatId) {
-      return { enabled: false, error: 'Trusted Session needs a chat id.' }
+      return { enabled: false, error: 'Full Access needs a chat id.' }
     }
     if (!normalized.provider) {
-      return { enabled: false, error: 'Trusted Session needs a provider.' }
+      return { enabled: false, error: 'Full Access needs a provider.' }
     }
     const grant: TrustedSessionGrant = {
       ...normalized,

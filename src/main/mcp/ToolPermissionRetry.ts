@@ -496,8 +496,8 @@ const DIRECT_USER_ACCEPT_ACTIONS = new Set<AgentApprovalAction>([
 /**
  * The ordinary shell-service gate is the authority for an opaque host command.
  * A direct approval has shown the exact command; an automatic approval has
- * resolved through the run's signed policy, session/workspace grant, Trusted
- * Session, or another audited user-configured authority. Either must be reused
+ * resolved through the run's signed policy, session/workspace grant, Full
+ * Access, or another audited user-configured authority. Either must be reused
  * by lock admission or TaskWraith asks twice and turns an explicit Shell
  * Commands grant back into an every-call prompt.
  *

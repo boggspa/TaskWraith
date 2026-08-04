@@ -7,7 +7,7 @@ import type { EffectiveRunPermissions } from './store/types'
  * `read_only` (Recon) and `plan` share the same `approvalMode: 'plan'`
  * WIRE value and both carry `readOnly: true`, so provider adapters that
  * key their native PLAN persona off `approvalMode === 'plan'` turn every
- * Read-Only/Recon turn into a plan-shaped turn. But the two presets are
+ * Ask turn into a plan-shaped turn. But the two presets are
  * NOT identical: after the posture split they resolve to DISTINCT service
  * maps (see `DEFAULT_PERMISSION_PRESETS` in EffectiveRunPermissions.ts) —
  * `plan` relaxes the instrument services (canvasInteraction / sketchCanvas /
@@ -26,7 +26,7 @@ import type { EffectiveRunPermissions } from './store/types'
  *
  *   - `workflowMode` — solo composer picker: 'plan' = Plan workflow
  *     (ComposerService stamps presetId 'plan' — the instrument tier),
- *     'normal' = Read-Only/Recon (presetId 'read_only' — the strict floor).
+ *     'normal' = Ask (presetId 'read_only' — the strict floor).
  *     `normalizeAgentRunPayload` forces 'normal' when the clamp downgrades
  *     an unverifiable posture, so downgraded runs read as recon: containment
  *     is unchanged (the effectivePermissions service denies do the

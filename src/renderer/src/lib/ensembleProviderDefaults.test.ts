@@ -32,7 +32,7 @@ function participant(overrides: Partial<EnsembleParticipant> = {}): EnsemblePart
 
 describe('getDefaultEnsembleParticipantConfig', () => {
   // Every live provider seeds new participants with the 'default'
-  // (Default Approval) preset — deterministic, never inherited from the
+  // (Accept Edits) preset — deterministic, never inherited from the
   // selected chip. Roster presets / Agent Pool are the only inheritance
   // paths; the seeded default panel (EnsembleDefaults.ts) keeps its own
   // curated writer/reader split and is pinned in EnsembleDefaults.test.ts.

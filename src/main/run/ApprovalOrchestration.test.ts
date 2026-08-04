@@ -294,7 +294,7 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('registerGeminiTool')
   })
 
-  it('(e2) auto-allows an external write only when the active Trusted Session scope confirms it', async () => {
+  it('(e2) auto-allows an external write only when the active Full Access scope confirms it', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     setResolution(deps, order, { policy: 'allow', decision: 'allow' })

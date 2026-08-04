@@ -66,7 +66,7 @@ Graph-owned queue rows remain main-only after release: MAIN reserves the chat,
 revalidates authority, leases the row, composes the provider prompt, registers
 the transcript, and dispatches the provider adapter. The renderer cannot lease,
 compose, dispatch, or replace the graph binding, provider, model snapshot,
-runtime profile, or signed permission posture. Trusted Session is ephemeral and
+runtime profile, or signed permission posture. Full Access is ephemeral and
 is never durable graph authority; a requested Full Access posture is reduced to
 the durable workspace-write ceiling.
 

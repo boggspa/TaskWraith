@@ -413,7 +413,7 @@ export function applyCursorWriteModeConfig(
   // shell/write stay available, sandbox-bounded — the both-stacks directive);
   // read-only seats deny only the native mutators (Shell/Write) so the
   // read-only posture holds on the native stack as well as the broker.
-  // Full Workspace Access expands what the signed TaskWraith broker may do in
+  // Full WS Access expands what the signed TaskWraith broker may do in
   // the canonical workspace. It never authorizes Cursor's opaque native tools
   // to open arbitrary host paths under `--force`.
   void options?.fullAccess

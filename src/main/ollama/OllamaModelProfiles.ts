@@ -426,7 +426,7 @@ export function ollamaLocalToolSystemPrompt(
  *     Plan workflow (or, in an ensemble, when this seat is the designated
  *     plan owner of a plan-workflow chat).
  *   - 'recon' — findings-shaped hint: search/read, then report findings in
- *     place. Correct for Read-Only/Recon posture, which is review posture,
+ *     place. Correct for Ask posture, which is review posture,
  *     not plan ownership (spike 2 of
  *     docs/ensemble-posture-fanout-preamble-design.md — the plan-drafting
  *     hint on read-only tiers was TaskWraith's own self-inflicted source of

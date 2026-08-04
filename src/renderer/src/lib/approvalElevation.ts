@@ -2,7 +2,7 @@
  * Pure decision logic for the permission-mode ELEVATION warning sheets.
  *
  * Storage-agnostic on purpose: the caller owns where the "already acknowledged
- * Default approval" set is persisted (an AppSettings map keyed by
+ * Accept Edits" set is persisted (an AppSettings map keyed by
  * workspace+provider) and just passes it in. This module only decides *whether*
  * to warn and at *which tier*, so it is trivially unit-testable. Live callers:
  * the composer permission picker (solo AND ensemble-participant raises, in
@@ -10,7 +10,7 @@
  * instead), and the side-chat picker (MainAppLayout.tsx).
  *
  * Tiers (mirrors the Claude / Codex desktop failsafes):
- *  - Tier 1 — raising up to Default Approval ('default'): a small, reassuring
+ *  - Tier 1 — raising up to Accept Edits ('default'): a small, reassuring
  *    notice, shown ONCE per (workspace, provider).
  *  - Tier 2 — raising up to a write-capable preset (`workspace_write` or
  *    `full_access`, both provider `auto_edit`): a larger, stern notice, shown
@@ -79,7 +79,7 @@ export function decideApprovalElevation(
     return { tier: 2, ackKey, persistAckOnConfirm: false }
   }
 
-  // Tier 1 — landing on Default Approval. Warn once per (workspace, provider).
+  // Tier 1 — landing on Accept Edits. Warn once per (workspace, provider).
   if (to === 'default') {
     if (acknowledgedDefault.has(ackKey)) return null
     return { tier: 1, ackKey, persistAckOnConfirm: true }

@@ -18,7 +18,7 @@ function nonEmptyString(value: unknown): string | undefined {
  * The desktop's remembered composer selection wins, then the latest run for
  * this provider, then the same first matching workspace profile shown by the desktop
  * picker. Keeping grant, projection, queue, and dispatch on this one resolver
- * prevents a Trusted Session receipt from being minted for a different profile
+ * prevents a Full Access receipt from being minted for a different profile
  * than the run it is meant to authorize.
  */
 export function resolveRemoteSoloRuntimeProfileId(

@@ -159,7 +159,7 @@ describe('registerTrustHandlers', () => {
     expect(deps.getSessionYoloMode).not.toHaveBeenCalled()
   })
 
-  it('delegates scoped Trusted Session reads and writes', async () => {
+  it('delegates scoped Full Access reads and writes', async () => {
     const deps = createDeps({
       getTrustedSession: vi.fn(() => ({
         enabled: true,
@@ -199,7 +199,7 @@ describe('registerTrustHandlers', () => {
     expect(deps.setTrustedSession).toHaveBeenCalledWith(scope, false)
   })
 
-  it('allows a Test1 chat popout to read only its own Trusted Session scope', () => {
+  it('allows a Test1 chat popout to read only its own Full Access scope', () => {
     const test1Popout = { sender: { id: 101 } }
     const ownScope = {
       chatId: 'test1-chat',
@@ -213,7 +213,7 @@ describe('registerTrustHandlers', () => {
           scope.chatId !== ownScope.chatId ||
           scope.workspacePath !== ownScope.workspacePath
         ) {
-          throw new Error('Renderer cannot read another Trusted Session scope.')
+          throw new Error('Renderer cannot read another Full Access scope.')
         }
       }),
       getTrustedSession: vi.fn(() => ({ enabled: true }))
@@ -224,7 +224,7 @@ describe('registerTrustHandlers', () => {
     expect(deps.getTrustedSession).toHaveBeenCalledWith(ownScope)
   })
 
-  it('denies a Test1 popout from global YOLO reads or enabling YOLO or Trusted Session', () => {
+  it('denies a Test1 popout from global YOLO reads or enabling YOLO or Full Access', () => {
     const test1Popout = { sender: { id: 101 } }
     const deps = createDeps({
       assertMainRendererSender: vi.fn(() => {
@@ -252,11 +252,11 @@ describe('registerTrustHandlers', () => {
     expect(deps.setTrustedSession).not.toHaveBeenCalled()
   })
 
-  it('denies a Test1 popout before disclosing another chat Trusted Session grant', () => {
+  it('denies a Test1 popout before disclosing another chat Full Access grant', () => {
     const test1Popout = { sender: { id: 101 } }
     const deps = createDeps({
       assertSenderCanReadTrustedSession: vi.fn(() => {
-        throw new Error('Renderer cannot read another Trusted Session scope.')
+        throw new Error('Renderer cannot read another Full Access scope.')
       })
     })
     registerTrustHandlers(deps)
@@ -267,7 +267,7 @@ describe('registerTrustHandlers', () => {
         provider: 'codex',
         workspacePath: '/Users/chrisizatt/Documents/Test 3'
       })
-    ).toThrow('Renderer cannot read another Trusted Session scope.')
+    ).toThrow('Renderer cannot read another Full Access scope.')
     expect(deps.getTrustedSession).not.toHaveBeenCalled()
   })
 })

@@ -389,7 +389,7 @@ export const GATEWAY_V7_MCP_ADVERTISE_TOOLS = Object.freeze([
 /**
  * A separate immutable v7 birth catalogue for a participant whose CURRENT
  * signed run posture does not deny Mesh Canvas. This only changes discovery:
- * promptable Default Approval runs receive the direct surface, while every mesh
+ * promptable Accept Edits runs receive the direct surface, while every mesh
  * call remains checked against that current participant/run posture at
  * dispatch. A persisted provider-session receipt is compatibility evidence,
  * never a permission grant.

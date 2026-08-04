@@ -142,7 +142,7 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   workflowMode?: 'normal' | 'plan'
   /** Optional permission-preset override for single-provider composer runs.
    * `workspace_write` is workspace-bounded auto-edit; `full_access` is honored
-   * only when the Mac already has a scoped Trusted Session receipt. The Mac
+   * only when the Mac already has a scoped Full Access receipt. The Mac
    * re-derives + signs the posture, so it is a user-intent grant, not an
    * unsigned escalation. Mirrors how a paired device sets a participant's
    * permissionPresetId on the ensemble roster. */
@@ -968,7 +968,7 @@ export interface BridgeSetRemoteWorkspaceAccessAction extends BridgeActionMetada
   enabled: boolean
 }
 
-/** Lane-scoped Trusted Session grant/revoke. The Mac resolves the canonical
+/** Lane-scoped Full Access grant/revoke. The Mac resolves the canonical
  * chat/workspace/provider lane before touching its in-memory receipt store. */
 export interface BridgeSetTrustedSessionAction extends BridgeActionMetadata {
   kind: 'setTrustedSession'

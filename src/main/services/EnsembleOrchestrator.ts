@@ -15434,7 +15434,7 @@ export class EnsembleOrchestrator {
       // An explicit target is an operator-authored routing decision. In
       // read_only mode its configured seat posture is immaterial because the
       // actual lane dispatch below is rebuilt with the signed read_only preset,
-      // ignores overrides, and disallows Trusted Session. Broad/all discovery
+      // ignores overrides, and disallows Full Access. Broad/all discovery
       // remains restricted to participants already configured as read-only.
       targets.push(participant)
     }
@@ -18767,7 +18767,7 @@ export class EnsembleOrchestrator {
    * permissions, exactly as a serial rotation turn would resolve them — no
    * read-only clamp, no eligibility filtering. All safety clamps inside
    * resolveParticipantPermissions (unattended-round HMAC clamp) still
-   * apply; background seats still never inherit a Trusted Session. */
+   * apply; background seats still never inherit Full Access. */
   private resolveFanoutOwnDispatchPermissions(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,

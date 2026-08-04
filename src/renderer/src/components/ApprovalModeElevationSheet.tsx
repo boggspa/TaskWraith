@@ -5,8 +5,8 @@ import type { ApprovalElevationTier } from '../lib/approvalElevation'
 /**
  * Permission-mode ELEVATION warning sheet (mirrors the Claude / Codex desktop
  * failsafes). Shown when the user raises the approval mode:
- *  - Tier 1 → Default Approval: small, reassuring (shown once per workspace+provider).
- *  - Tier 2 → Workspace Write / Trusted Session: larger, stern, with an explicit
+ *  - Tier 1 → Accept Edits: small, reassuring (shown once per workspace+provider).
+ *  - Tier 2 → Full WS Access / Full Access: larger, stern, with an explicit
  *    "I understand the risks" confirm gate.
  *
  * Presentational + storage-agnostic: the decision (which tier, whether to show,
@@ -56,7 +56,7 @@ export function ApprovalModeElevationSheetSurface({
   const where = workspaceLabel && workspaceLabel.trim() !== '' ? workspaceLabel : 'this workspace'
   const isFull = tier === 2
   const isHostFullAccess = isFull && permissionPresetId === 'full_access'
-  const elevatedLabel = isHostFullAccess ? 'Trusted Session' : 'Workspace Write'
+  const elevatedLabel = isHostFullAccess ? 'Full Access' : 'Full WS Access'
   const canConfirm = !isFull || acknowledged
 
   return (
@@ -87,7 +87,7 @@ export function ApprovalModeElevationSheetSurface({
               and delete files in {where} <strong>without approving each action</strong>.
               {isHostFullAccess
                 ? ' For providers with host-shell support, it may also remove workspace sandboxing for this chat or lane so local signing or keychain-backed tools can run.'
-                : ' It remains workspace-scoped; use Trusted Session only when the lane needs host-level shell authority.'}
+                : ' It remains workspace-scoped; use Full Access only when the lane needs host-level shell authority.'}
             </p>
             <p className="creative-approval-modal-description approval-elevation-caution">
               {isHostFullAccess
@@ -109,7 +109,7 @@ export function ApprovalModeElevationSheetSurface({
           </>
         ) : (
           <p className="creative-approval-modal-description">
-            In Default Approval, {name} can create, edit, and delete files in {where}. You still see
+            In Accept Edits, {name} can create, edit, and delete files in {where}. You still see
             every change and can drop back to Read-only at any time. This notice shows once per
             workspace.
           </p>

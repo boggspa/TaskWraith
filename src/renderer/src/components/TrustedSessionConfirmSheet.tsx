@@ -37,15 +37,15 @@ export function TrustedSessionConfirmSheet({
       >
         <header className="creative-approval-modal-header">
           <span className="creative-approval-modal-eyebrow" aria-hidden>
-            Trusted Session
+            Full Access
           </span>
           <h2 id="trusted-session-title" className="creative-approval-modal-title">
-            Start a Trusted Session for {subjectLabel}?
+            Start Full Access for {subjectLabel}?
           </h2>
         </header>
 
         <p className="creative-approval-modal-description">
-          Trusted Session raises only this chat or participant lane to TaskWraith&apos;s highest local
+          Full Access raises only this chat or participant lane to TaskWraith&apos;s highest local
           authority. It may allow shell commands without the workspace sandbox, signing or
           keychain-backed tools, and files outside the workspace when the provider adapter supports
           it.
@@ -81,11 +81,11 @@ export function TrustedSessionConfirmSheet({
           <button
             type="button"
             className="creative-approval-modal-approve-once"
-            title={`Start a Trusted Session for ${subjectLabel}.`}
+            title={`Start Full Access for ${subjectLabel}.`}
             onClick={onConfirm}
             disabled={!acknowledged}
           >
-            Start Trusted Session
+            Start Full Access
           </button>
         </footer>
       </div>

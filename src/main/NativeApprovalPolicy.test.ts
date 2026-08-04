@@ -426,7 +426,7 @@ describe('resolveNativeApprovalPreflightDecision', () => {
     ).toMatchObject({ kind: 'ask', policy: 'allow' })
   })
 
-  it('auto-allows a task-scoped Trusted Session external write after deny and non-grantable guards', () => {
+  it('auto-allows a task-scoped Full Access external write after deny and non-grantable guards', () => {
     expect(
       resolveNativeApprovalPreflightDecision({
         resolution: resolution('allow', 'allow'),
@@ -436,7 +436,7 @@ describe('resolveNativeApprovalPreflightDecision', () => {
     ).toMatchObject({ kind: 'allow', reason: 'trusted_session', scope: 'session' })
   })
 
-  it('does not let a Trusted Session external write override an explicit deny or non-grantable tool', () => {
+  it('does not let a Full Access external write override an explicit deny or non-grantable tool', () => {
     expect(
       resolveNativeApprovalPreflightDecision({
         resolution: resolution('deny'),

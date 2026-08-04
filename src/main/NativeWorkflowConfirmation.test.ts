@@ -119,7 +119,7 @@ describe('describeWorkflowAuthorityForNativeConfirmation', () => {
       name: `${'x'.repeat(180)}\n\u061c\u200e\u202eFull Access\u0000`,
       template: {
         ...base.template,
-        approvalMode: 'default\nFull Workspace Access\u202e'
+        approvalMode: 'default\nFull Access\u202e'
       }
     })
 
@@ -129,7 +129,7 @@ describe('describeWorkflowAuthorityForNativeConfirmation', () => {
     )
     expect(elevation.title).toBe('Authorize unattended workflow')
     expect(elevation.message).toBe(
-      'Authorize Full Workspace Access for this unattended workflow?'
+      'Authorize Full Access for this unattended workflow?'
     )
     expect(elevation.message).not.toContain(malicious.name)
     for (const control of ['\u0000', '\u061c', '\u200e', '\u202e']) {
@@ -141,7 +141,7 @@ describe('describeWorkflowAuthorityForNativeConfirmation', () => {
       malicious,
       'default'
     )
-    expect(runNow.message).toBe('Run this workflow now with Default Approval?')
+    expect(runNow.message).toBe('Run this workflow now with Accept Edits?')
     expect(runNow.message).not.toContain(malicious.name)
   })
 })

@@ -37,7 +37,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     // permissionPresetId is pinned EXPLICITLY here, not against
     // getDefaultEnsembleParticipantConfig: the seeded panel keeps a curated
     // writer/reader split (codex lone writer, read-only recon seats) while
-    // chip-strip adds seed uniformly with 'default' (Default Approval).
+    // chip-strip adds seed uniformly with 'default' (Accept Edits).
     const config = createDefaultEnsembleConfig()
     const rolesByProvider = Object.fromEntries(
       config.participants.map((participant) => [

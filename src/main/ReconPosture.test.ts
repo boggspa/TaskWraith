@@ -4,7 +4,7 @@ import { isReconRunPosture } from './ReconPosture'
 const readOnlySlice = { presetId: 'read_only', readOnly: true } as const
 
 describe('isReconRunPosture', () => {
-  it('recognizes a solo Read-Only/Recon run (plan approvalMode, normal workflow, read_only preset)', () => {
+  it('recognizes a solo Ask run (plan approvalMode, normal workflow, read_only preset)', () => {
     expect(
       isReconRunPosture({
         approvalMode: 'plan',
@@ -15,7 +15,7 @@ describe('isReconRunPosture', () => {
   })
 
   it('keeps Plan-workflow runs plan-shaped even though the preset is byte-identical read_only', () => {
-    // Solo "Plan" picker and solo "Read-Only/Recon" picker both stamp
+    // Solo "Plan" picker and solo "Ask" picker both stamp
     // presetId 'read_only'; workflowMode is the only differentiator.
     expect(
       isReconRunPosture({

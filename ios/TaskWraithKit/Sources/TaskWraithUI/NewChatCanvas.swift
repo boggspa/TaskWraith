@@ -240,7 +240,7 @@ private struct WorkspaceAccessConsentSheet: View {
             .font(.callout)
             .foregroundStyle(TWTheme.textSecondary)
             Text(
-                "The grant persists until you revoke it in Settings → Environments/Workspaces. Thread permissions—Plan, Read-Only/Recon, Default Approval, Workspace Write, and Trusted Session—remain separate. External publishing remains separately controlled."
+                "The grant persists until you revoke it in Settings → Environments/Workspaces. Thread permissions—Plan, Ask, Accept Edits, Full WS Access, and Full Access—remain separate. External publishing remains separately controlled."
             )
             .font(.footnote)
             .foregroundStyle(TWTheme.textMuted)

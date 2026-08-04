@@ -74,7 +74,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
       return {
         providerLabel: 'Codex',
         modelLabel: 'GPT-5.5',
-        permissionLabel: 'Full Workspace Access',
+        permissionLabel: 'Full Access',
         placeholder: 'Ask Codex anything. @ to use plugins or mention files'
       }
     case 'chatgpt':
@@ -84,7 +84,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
       return {
         providerLabel: 'ChatGPT',
         modelLabel: 'GPT-5.6-Sol',
-        permissionLabel: 'Default Approval',
+        permissionLabel: 'Accept Edits',
         placeholder: 'Message ChatGPT'
       }
     case 'claude':
@@ -102,21 +102,21 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
       return {
         providerLabel: 'Cursor',
         modelLabel: 'Composer 2.5',
-        permissionLabel: 'Default Approval',
+        permissionLabel: 'Accept Edits',
         placeholder: 'Enter prompt for Cursor…'
       }
     case 'grok':
       return {
         providerLabel: 'Grok',
         modelLabel: 'Grok Composer 2.5 Fast',
-        permissionLabel: 'Default Approval',
+        permissionLabel: 'Accept Edits',
         placeholder: 'What do you want to know?'
       }
     case 'gemini':
       return {
         providerLabel: 'Gemini',
         modelLabel: 'Pro 3.1',
-        permissionLabel: 'Default Approval',
+        permissionLabel: 'Accept Edits',
         placeholder: 'Ask Gemini'
       }
     case 'kimi':
@@ -156,7 +156,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
       return {
         providerLabel: 'TaskWraith',
         modelLabel: 'Auto',
-        permissionLabel: 'Default Approval',
+        permissionLabel: 'Accept Edits',
         placeholder: 'Ask anything...'
       }
   }

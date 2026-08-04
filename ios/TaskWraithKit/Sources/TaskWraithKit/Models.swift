@@ -3081,7 +3081,7 @@ public enum BridgeAction {
         ])
     }
 
-    /// Grant/revoke the Mac's process-lifetime Trusted Session receipt for one
+    /// Grant/revoke the Mac's process-lifetime Full Access receipt for one
     /// exact solo or Ensemble participant lane.
     public static func setTrustedSession(
         workspaceId: String, threadId: String, provider: String, enabled: Bool,

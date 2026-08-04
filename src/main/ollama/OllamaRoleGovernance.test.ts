@@ -127,7 +127,7 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
     expect(readOnly.agenticServices.fileChanges).toBe('deny')
     expect(readOnly.readOnly).toBe(true)
     expect(workspaceWrite.externalPathGrants).toEqual([grant])
-    // Workspace Write is the run-level opt-in: file/shell auto-allow without a
+    // Full WS Access is the run-level opt-in: file/shell auto-allow without a
     // second standing grant (path containment + elevated services still gate).
     expect(workspaceWrite.agenticServices.fileChanges).toBe('allow')
     expect(workspaceWrite.readOnly).toBe(false)
@@ -145,7 +145,7 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
 
   it('PROMPTS (never silently auto-executes) file edits and shell under default with no grant', () => {
     // default preset carries no service overrides -> falls to global policy, exactly
-    // like every other provider's Default Approval. No standing grant => prompt.
+    // like every other provider's Accept Edits. No standing grant => prompt.
     expect(gateDecision('default', 'fileChanges')).toBe('ask')
     expect(gateDecision('default', 'shellCommands')).toBe('ask')
     // The solo composer sends no preset for a plain 'default'/'auto_edit' run
@@ -158,7 +158,7 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
     // Default still needs an explicit standing grant (or Accept for workspace).
     expect(gateDecision('default', 'shellCommands', { grant: true })).toBe('allow')
     expect(gateDecision('default', 'fileChanges')).toBe('ask')
-    // Workspace Write is the product opt-in for in-workspace shell/file — the
+    // Full WS Access is the product opt-in for in-workspace shell/file — the
     // preset itself is the authorization; no separate standing grant required.
     expect(gateDecision('workspace_write', 'fileChanges')).toBe('allow')
     expect(gateDecision('workspace_write', 'shellCommands')).toBe('allow')
