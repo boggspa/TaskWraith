@@ -51,6 +51,7 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_fill',
   'canvas_annotate',
   'canvas_eval',
+  'canvas_navigate',
   'canvas_close'
 ] as const
 
@@ -808,6 +809,66 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             ...result,
             ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
             tool: toolName
+          })
+        }
+        case 'canvas_navigate': {
+          const url = asOptString(args.url)
+          const rawAction = asOptString(args.action)
+          const action =
+            rawAction === 'back' ||
+            rawAction === 'forward' ||
+            rawAction === 'reload' ||
+            rawAction === 'stop'
+              ? rawAction
+              : undefined
+          if (rawAction && !action) {
+            return fail(toolName, `Unsupported action "${rawAction}". Use back/forward/reload/stop.`)
+          }
+          if ((url && action) || (!url && !action)) {
+            return fail(toolName, 'Provide exactly one of `url` or `action`.')
+          }
+          // Resolve the target: explicit canvasId → the chat's most recent open
+          // web canvas → (goto only) auto-open a fresh browser canvas.
+          let targetId = canvasId
+          if (!targetId) {
+            const webSessions = controller
+              .list(ctx)
+              .filter((session) => session.driver === 'web' && session.status === 'active')
+            targetId = webSessions.at(-1)?.canvasId
+          }
+          if (!targetId) {
+            if (!url) {
+              return fail(
+                toolName,
+                'No open web canvas to control. Navigate to a `url` first (this opens the Canvas Browser automatically).'
+              )
+            }
+            const viewport = resolveViewport({ width: args.width, height: args.height })
+            const opened = await controller.open({ driver: 'web', url, viewport }, ctx)
+            const state = controller.status(opened.canvasId, ctx)
+            return jsonResult({
+              ok: true,
+              tool: toolName,
+              canvasId: opened.canvasId,
+              opened: true,
+              url: redactUrlQuery(opened.url),
+              title: opened.title,
+              isLoading: state?.isLoading ?? false,
+              canGoBack: state?.canGoBack ?? false,
+              canGoForward: state?.canGoForward ?? false
+            })
+          }
+          const state = await controller.navigate(targetId, { url, action }, ctx)
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            canvasId: targetId,
+            opened: false,
+            url: redactUrlQuery(state.url),
+            title: state.title,
+            isLoading: state.isLoading,
+            canGoBack: state.canGoBack,
+            canGoForward: state.canGoForward
           })
         }
         case 'canvas_close': {

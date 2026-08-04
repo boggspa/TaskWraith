@@ -242,6 +242,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // P2 arbitrary eval (RCE) — runs agent-supplied JS in the page. Signed-elevated:
   // gated via the canvasEval service (never auto-allowed), egress-cut while running.
   'canvas_eval',
+  // Canvas Browser navigation — goto/back/forward/reload/stop on the chat's
+  // sandboxed web canvas, auto-opening one when none is open. Gated by the
+  // dedicated webBrowsing service: ask + grantable under Default Approval,
+  // per-invocation ask under Read-Only (Recon) and Plan. Never actuation:
+  // click/fill/eval keep their own stricter services.
+  'canvas_navigate',
   'canvas_close',
   // Mesh Canvas — declarative, provider-agnostic 3D scene construction and
   // presentation. Normal gateway seats discover this specialist surface with

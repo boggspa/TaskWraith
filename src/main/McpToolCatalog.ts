@@ -4129,6 +4129,39 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_navigate',
+      description:
+        "Browse the web in the TaskWraith Canvas Browser: navigate the chat's sandboxed web canvas to an absolute http(s) `url`, or step its history with `action` (back / forward / reload / stop). With a `url` and no open web canvas, one is opened automatically — use this to show the user a website, preview a page, or research the live web, then read it with canvas_snapshot. Returns the settled URL, title, and chrome state (isLoading / canGoBack / canGoForward). Navigation only: clicking and typing stay under canvas_click / canvas_fill (Canvas interaction), and scripts under canvas_eval. Gated by the Browser navigation service — Default Approval prompts and is grantable; Read-Only (Recon) and Plan prompt on every call. Private-network hosts stay blocked unless allowlisted at open; link-local/metadata are always blocked.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: {
+            type: 'string',
+            description:
+              "Web canvas to drive (from canvas_open / canvas_list / a previous canvas_navigate). Omit to use the chat's most recent open web canvas, or to auto-open one when navigating to a url."
+          },
+          url: {
+            type: 'string',
+            description:
+              'Absolute http(s) URL to load. Provide exactly one of `url` or `action`.'
+          },
+          action: {
+            type: 'string',
+            enum: ['back', 'forward', 'reload', 'stop'],
+            description: 'History/chrome verb to apply instead of loading a url.'
+          },
+          width: { type: 'number', description: 'Viewport width when auto-opening (CSS px).' },
+          height: { type: 'number', description: 'Viewport height when auto-opening (CSS px).' }
+        }
+      }
+    },
+    {
       name: 'canvas_close',
       description: 'Close a Canvas session and free its preview window. Gated.',
       annotations: {

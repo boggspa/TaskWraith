@@ -225,19 +225,38 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
 ])
 
 /**
- * Tools advertised to a READ-ONLY / plan seat: TASKWRAITH_MCP_TOOLS ∩
- * MCP_AUTO_ALLOWED_TOOLS — the advertised universe narrowed to read/search plus
- * coordination-state updates. Single source of truth (DERIVED, never
- * hand-listed), so a mutating workspace/shell/destructive app tool can never
- * appear here unless it is also wrongly added to MCP_AUTO_ALLOWED_TOOLS — which
- * the SAFETY INVARIANT test forbids. The Gemini read-only --allowed-tools
- * allowlist, the Grok and Cursor read-only safe-subset bridges, the Mistral
- * safe-tool gate, and the Ollama read_only tool tier are all built from this
- * set, so every read-only seat advertises an identical surface.
+ * Recon-tier instrument tools: the approval-gated instruments a `read_only`
+ * (Recon) seat may REACH that remain outside MCP_AUTO_ALLOWED_TOOLS. Today this
+ * is exactly Canvas Browser navigation (user decision 2026-08-04): read-class
+ * browsing in the sandboxed preview surface — the same reach web_fetch already
+ * has prompt-free — offered to Recon as a per-invocation ASK instead of the
+ * old silent unavailability. CRITICAL INVARIANT (mirrors the plan-instrument
+ * tier below): nothing here is auto-allowed, so every call still hits the host
+ * approval gate; advertising makes it REACHABLE and approval-queued, NEVER
+ * auto-run. Its dedicated `webBrowsing` service resolves to ASK under
+ * read_only/plan with grant-immunity (isPlanInstrumentGrantHold), and the
+ * global kill switch still forces deny. DERIVED, never hand-listed.
  */
-export const READ_ONLY_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
-  TASKWRAITH_MCP_TOOLS.filter((tool) => MCP_AUTO_ALLOWED_TOOLS.has(tool))
-)
+export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> =
+  Object.freeze(TASKWRAITH_MCP_TOOLS.filter((tool) => tool === 'canvas_navigate'))
+
+/**
+ * Tools advertised to a READ-ONLY / plan seat: (TASKWRAITH_MCP_TOOLS ∩
+ * MCP_AUTO_ALLOWED_TOOLS) — the advertised universe narrowed to read/search
+ * plus coordination-state updates — PLUS the recon-tier gated instruments
+ * above. DERIVED, never hand-listed, so a mutating workspace/shell/destructive
+ * app tool can never appear here unless it is also wrongly added to
+ * MCP_AUTO_ALLOWED_TOOLS (SAFETY INVARIANT test) or wrongly promoted to the
+ * recon instrument tier (its own invariant test). The Gemini read-only
+ * --allowed-tools allowlist, the Grok and Cursor read-only safe-subset
+ * bridges, the Mistral safe-tool gate, and the Ollama read_only tool tier are
+ * all built from this set, so every read-only seat advertises an identical
+ * surface.
+ */
+export const READ_ONLY_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze([
+  ...TASKWRAITH_MCP_TOOLS.filter((tool) => MCP_AUTO_ALLOWED_TOOLS.has(tool)),
+  ...RECON_INSTRUMENT_ADVERTISE_TOOLS
+])
 
 /**
  * Is this bare tool name in the read-only advertise subset? The bridge uses this

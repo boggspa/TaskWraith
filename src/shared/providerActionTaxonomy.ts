@@ -1722,6 +1722,20 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'attached-application',
     'application-resource'
   ),
+  // Browser navigation rides its DEDICATED webBrowsing service (never the
+  // generic mcpTools) so the read-only gate's mcpTools→shellCommands reroute
+  // cannot fire: Recon/Plan resolve it straight to the preset's per-invocation
+  // ASK. Orchestration class like canvas_resize — it retargets the preview
+  // surface but mutates no workspace state; egress follows the url argument.
+  canvas_navigate: tool(
+    'orchestration',
+    'webBrowsing',
+    'application.mutate',
+    'canvas',
+    'host-state',
+    'application-resource',
+    'url-argument'
+  ),
   canvas_close: tool(
     'orchestration',
     'mcpTools',

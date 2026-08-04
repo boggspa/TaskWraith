@@ -4,7 +4,7 @@ import {
   READ_ONLY_MCP_ADVERTISE_TOOLS
 } from '../mcp/McpAutoAllowedTools'
 import {
-  GATEWAY_V9_MCP_DIRECT_TOOLS,
+  GATEWAY_V10_MCP_DIRECT_TOOLS,
   taskWraithGatewayDirectToolNamesForProfile
 } from '../mcp/McpToolProfiles'
 import type { OllamaToolControlTier, TaskWraithMcpProfileId } from '../store/types'
@@ -80,13 +80,14 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
 
 /**
  * Ollama shares the exact immutable direct membership of
- * `taskwraith-gateway-v9`. Keep this as an alias, not a copied list: the profile
- * declaration is the single authority for the compact tools every fresh
- * gateway session sees. The full catalogue remains callable through the two
- * capability gateway tools, with Ollama's legacy `tool_help` kept alongside.
- * Resumed seats pass their pinned profile id to retain older direct membership.
+ * `taskwraith-gateway-v10` (an exact clone of v9's direct surface). Keep this
+ * as an alias, not a copied list: the profile declaration is the single
+ * authority for the compact tools every fresh gateway session sees. The full
+ * catalogue remains callable through the two capability gateway tools, with
+ * Ollama's legacy `tool_help` kept alongside. Resumed seats pass their pinned
+ * profile id to retain older direct membership.
  */
-export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V9_MCP_DIRECT_TOOLS
+export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V10_MCP_DIRECT_TOOLS
 
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
 const READ_ONLY_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(
@@ -119,7 +120,9 @@ export function ollamaAdvertisedToolNames(
         ? 'taskwraith-gateway-v8'
         : options.taskWraithMcpProfileId === 'taskwraith-gateway-v9-mesh'
           ? 'taskwraith-gateway-v9'
-          : options.taskWraithMcpProfileId
+          : options.taskWraithMcpProfileId === 'taskwraith-gateway-v10-mesh'
+            ? 'taskwraith-gateway-v10'
+            : options.taskWraithMcpProfileId
   const directNames = localProfileId
     ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
     : OLLAMA_ADVERTISED_TOOL_NAMES

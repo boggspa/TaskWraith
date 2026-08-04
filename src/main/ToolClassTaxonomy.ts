@@ -212,6 +212,10 @@ function networkUrlArgumentIsRemote(
     if (args.driver === 'device') return false
     return isRemoteHttpUrl(args.url)
   }
+  if (effectiveToolName === 'canvas_navigate') {
+    // History/reload/stop verbs carry no url; only a remote goto is egress.
+    return isRemoteHttpUrl(args.url)
+  }
   return false
 }
 

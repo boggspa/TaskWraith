@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
-import { GATEWAY_V9_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V9_MCP_DIRECT_TOOLS, GATEWAY_V10_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
   isOllamaToolControlTier,
@@ -12,11 +12,11 @@ import {
 } from './OllamaToolTiers'
 
 describe('Ollama tool surface governance', () => {
-  it('uses the exact immutable fresh gateway-v9 direct membership', () => {
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V9_MCP_DIRECT_TOOLS)
+  it('uses the exact immutable fresh gateway-v10 direct membership', () => {
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V10_MCP_DIRECT_TOOLS)
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(41)
-    expect(ollamaAdvertisedToolNames()).toEqual([...GATEWAY_V9_MCP_DIRECT_TOOLS])
-    for (const name of GATEWAY_V9_MCP_DIRECT_TOOLS) {
+    expect(ollamaAdvertisedToolNames()).toEqual([...GATEWAY_V10_MCP_DIRECT_TOOLS])
+    for (const name of GATEWAY_V10_MCP_DIRECT_TOOLS) {
       expect(isOllamaAdvertisedTool(name)).toBe(true)
     }
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toEqual(

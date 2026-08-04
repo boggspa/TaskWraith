@@ -815,6 +815,8 @@ export type TaskWraithMcpProfileId =
   // changing either v8 direct birth catalogue.
   | 'taskwraith-gateway-v9'
   | 'taskwraith-gateway-v9-mesh'
+  | 'taskwraith-gateway-v10'
+  | 'taskwraith-gateway-v10-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

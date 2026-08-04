@@ -11,11 +11,11 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 181 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 182 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
-Run a shell command in the active TaskWraith workspace after TaskWraith approval policy allows it.
+Run proven read-only workspace commands; opaque or mutating effects require audited host approval.
 
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: command
@@ -815,7 +815,7 @@ Store a preferred delegation role/instructions for a provider on the active chat
 
 ## ensemble_yield
 
-In Ensemble Mode, explicitly pass this participant turn to the next participant. Optional reason explains why; optional target names the participant/provider that should speak next.
+In Ensemble Mode, explicitly pass this participant turn to the next participant. Optional reason explains why; optional target names the participant/provider that should speak next. While any fan-out lane or dispatch remains unsettled, a configured Boss/Captain may yield only to another available Boss/Captain: a targetless or non-manager handoff is acknowledged as held without ending the current authority turn. Use ensemble_await and ensemble_lane_result when listed to monitor and synthesize the wave; normal serial routing resumes after every lane settles.
 
 - Access: read-only (no approval needed)
 - Required args: none
@@ -1046,11 +1046,11 @@ Emit a structured brief from a parallel fan-out lane. The next serial writer/syn
 
 ## blackboard_post
 
-Post a durable Blackboard entry/poll. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced or retired.
+Post a Blackboard entry/poll. Optional ttlMinutes makes it self-delete after 1 minute–7 days; otherwise it is durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.
 
 - Access: read-only (no approval needed)
 - Required args: key, value
-- Optional args: pollOptions, category, scope
+- Optional args: pollOptions, category, scope, ttlMinutes
 - Example: `{"taskwraith_tool":{"name":"blackboard_post","arguments":{"key":"text","value":"text"}}}`
 
 ## blackboard_read
@@ -1267,6 +1267,15 @@ Run human-approved agent-supplied JavaScript inside the Canvas preview page and 
 - Access: signed-elevated — denied under Read-Only; approval-gated under Plan and prompts every permitted call with exact desktop review
 - Required args: canvasId, script
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_eval","arguments":{"canvasId":"text","script":"text"}}}}`
+
+## canvas_navigate
+
+Browse the web in the TaskWraith Canvas Browser: navigate the chat's sandboxed web canvas to an absolute http(s) `url`, or step its history with `action` (back / forward / reload / stop). With a `url` and no open web canvas, one is opened automatically — use this to show the user a website, preview a page, or research the live web, then read it with canvas_snapshot. Returns the settled URL, title, and chrome state (isLoading / canGoBack / canGoForward). Navigation only: clicking and typing stay under canvas_click / canvas_fill (Canvas interaction), and scripts under canvas_eval. Gated by the Browser navigation service — Default Approval prompts and is grantable; Read-Only (Recon) and Plan prompt on every call. Private-network hosts stay blocked unless allowlisted at open; link-local/metadata are always blocked.
+
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: canvasId, url, action, width, height
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_navigate","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_close
 

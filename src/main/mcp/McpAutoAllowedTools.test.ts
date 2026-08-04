@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { MEDIA_EDITING_TOOLS } from '../TaskWraithMcpTools'
+import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
   MCP_APP_STATE_MUTATION_TOOLS,
   MCP_ENSEMBLE_PARTICIPATION_TOOLS,
   PLAN_INSTRUMENT_ADVERTISE_TOOLS,
   READ_ONLY_MCP_ADVERTISE_TOOLS,
+  RECON_INSTRUMENT_ADVERTISE_TOOLS,
   isPlanAdvertisedTool,
   isReadOnlyAdvertisedTool
 } from './McpAutoAllowedTools'
@@ -197,10 +199,27 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
-  it('is a strict subset of the gate-skip set (every advertised tool is auto-allowed)', () => {
+  it('every advertised tool is auto-allowed OR a declared recon instrument (nothing else)', () => {
     const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
+    const reconInstruments = new Set<string>(RECON_INSTRUMENT_ADVERTISE_TOOLS)
     for (const tool of READ_ONLY_MCP_ADVERTISE_TOOLS) {
-      expect(autoAllowedTools.has(tool)).toBe(true)
+      expect(autoAllowedTools.has(tool) || reconInstruments.has(tool)).toBe(true)
+    }
+  })
+
+  it('RECON INSTRUMENT INVARIANT: exactly canvas_navigate, host-gated via webBrowsing', () => {
+    // The recon tier is the ONE deliberate exception to "read_only advertises
+    // only auto-allowed tools" (user decision 2026-08-04). Growing it is a
+    // capability-governance decision, not a convenience: update this test only
+    // alongside an explicit user-approved widening.
+    expect([...RECON_INSTRUMENT_ADVERTISE_TOOLS]).toEqual(['canvas_navigate'])
+    const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
+    for (const tool of RECON_INSTRUMENT_ADVERTISE_TOOLS) {
+      // Never auto-allowed: reaching it must queue the host approval gate.
+      expect(autoAllowedTools.has(tool)).toBe(false)
+      // Its dedicated service keeps it clear of the read-only
+      // mcpTools→shellCommands hard-deny reroute so the preset's ASK governs.
+      expect(TASKWRAITH_TOOL_ACTIONS[tool].service).toBe('webBrowsing')
     }
   })
 })
@@ -282,6 +301,16 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
     }
+  })
+
+  it('advertises Canvas Browser navigation to read_only as an approval-queued instrument', () => {
+    expect(isReadOnlyAdvertisedTool('canvas_navigate')).toBe(true)
+    // Reaching it is not running it: it must never join the gate-skip set.
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_navigate')).toBe(false)
+    // Opening/closing surfaces and screenshots stay off the recon surface.
+    expect(isReadOnlyAdvertisedTool('canvas_open')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_screenshot')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_close')).toBe(false)
   })
 
   it('advertises Sketch open/get to read_only while keeping updates gated', () => {

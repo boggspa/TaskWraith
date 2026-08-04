@@ -164,6 +164,159 @@ describe('executeCanvasTool', () => {
     expect(result.isError).toBe(true)
   })
 
+  it('canvas_navigate drives an explicit canvasId through controller.navigate', async () => {
+    const navigated: Array<{ id: string; input: unknown }> = []
+    const controller = fakeController({
+      navigate: async (id, input) => {
+        navigated.push({ id, input })
+        return {
+          url: 'https://example.test/page',
+          title: 'Example',
+          isLoading: false,
+          canGoBack: true,
+          canGoForward: false
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_navigate',
+      { canvasId: 'c9', url: 'https://example.test/page?token=SECRET' },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(navigated).toEqual([
+      { id: 'c9', input: { url: 'https://example.test/page?token=SECRET', action: undefined } }
+    ])
+    expect(result.structuredContent?.opened).toBe(false)
+    expect(result.structuredContent?.canGoBack).toBe(true)
+    // Tool results redact the query from the settled URL.
+    expect(JSON.stringify(result.structuredContent)).not.toContain('SECRET')
+  })
+
+  it('canvas_navigate reuses the most recent open web canvas when canvasId is omitted', async () => {
+    const navigated: string[] = []
+    const controller = fakeController({
+      list: () => [
+        {
+          canvasId: 'w1',
+          driver: 'web',
+          url: 'https://a.test',
+          title: 'A',
+          status: 'active',
+          viewport: { width: 1280, height: 800 },
+          createdAt: 't0',
+          updatedAt: 't1'
+        },
+        {
+          canvasId: 'sk1',
+          driver: 'sketch',
+          url: 'sketch://sk1',
+          title: 'Sketch',
+          status: 'active',
+          viewport: { width: 1280, height: 800 },
+          createdAt: 't0',
+          updatedAt: 't2'
+        },
+        {
+          canvasId: 'w2',
+          driver: 'web',
+          url: 'https://b.test',
+          title: 'B',
+          status: 'active',
+          viewport: { width: 1280, height: 800 },
+          createdAt: 't1',
+          updatedAt: 't3'
+        }
+      ],
+      navigate: async (id) => {
+        navigated.push(id)
+        return {
+          url: 'https://b.test/next',
+          title: 'B2',
+          isLoading: true,
+          canGoBack: true,
+          canGoForward: false
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_navigate',
+      { action: 'reload' },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(navigated).toEqual(['w2'])
+    expect(result.structuredContent?.canvasId).toBe('w2')
+  })
+
+  it('canvas_navigate auto-opens the Canvas Browser for a url when no web canvas is open', async () => {
+    const opens: unknown[] = []
+    const controller = fakeController({
+      list: () => [],
+      open: async (input) => {
+        opens.push(input)
+        return { canvasId: 'fresh1', url: input.url || '', title: 'T', viewport: { width: 1280, height: 800 } }
+      },
+      status: () => ({
+        canvasId: 'fresh1',
+        driver: 'web',
+        url: 'https://example.test',
+        title: 'T',
+        status: 'active',
+        viewport: { width: 1280, height: 800 },
+        createdAt: 't0',
+        updatedAt: 't0',
+        isLoading: false,
+        canGoBack: false,
+        canGoForward: false
+      })
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_navigate',
+      { url: 'https://example.test' },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(opens).toEqual([
+      {
+        driver: 'web',
+        url: 'https://example.test',
+        viewport: { width: 1280, height: 800 }
+      }
+    ])
+    expect(result.structuredContent?.opened).toBe(true)
+    expect(result.structuredContent?.canvasId).toBe('fresh1')
+  })
+
+  it('canvas_navigate refuses a history action with no open web canvas, and bad input shapes', async () => {
+    const controller = fakeController({ list: () => [] })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const noCanvas = await executeCanvasTool('canvas_navigate', { action: 'back' }, ctx, 'claude')
+    expect(noCanvas.isError).toBe(true)
+    const both = await executeCanvasTool(
+      'canvas_navigate',
+      { url: 'https://a.test', action: 'back' },
+      ctx,
+      'claude'
+    )
+    expect(both.isError).toBe(true)
+    const neither = await executeCanvasTool('canvas_navigate', {}, ctx, 'claude')
+    expect(neither.isError).toBe(true)
+    const badAction = await executeCanvasTool(
+      'canvas_navigate',
+      { action: 'teleport' },
+      ctx,
+      'claude'
+    )
+    expect(badAction.isError).toBe(true)
+  })
+
   it('raw canvas_open explicitly refuses a window driver and never forwards opaque target fields', async () => {
     let seen: unknown = null
     const controller = fakeController({

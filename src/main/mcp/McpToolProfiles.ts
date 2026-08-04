@@ -464,6 +464,35 @@ export const GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v10 makes Canvas Browser navigation (canvas_navigate) discoverable
+ * through capability search. It stays hidden rather than direct — browsing is
+ * a specialist surface like the rest of the canvas family — and both direct
+ * catalogues remain exact clones of their immutable v9 predecessors, so a
+ * receipted pre-v10 session never sees a tool appear mid-session.
+ */
+export const GATEWAY_V10_ADDED_TOOL_NAMES = Object.freeze([
+  'canvas_navigate'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V10_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V9_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V10_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V10_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V10_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V9_MESH_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V10_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -674,6 +703,16 @@ export const GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V9_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+export const GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V10_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V10_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -686,6 +725,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v10-mesh') return GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v10') return GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v9-mesh') return GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v9') return GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v8-mesh') return GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES
@@ -705,6 +746,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v10-mesh') return GATEWAY_V10_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v10') return GATEWAY_V10_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v9-mesh') return GATEWAY_V9_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v9') return GATEWAY_V9_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v8-mesh') return GATEWAY_V8_MESH_MCP_DIRECT_TOOLS
@@ -763,7 +806,11 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v9 adds permission retry through discovery without growing either direct
   // catalogue.
   'taskwraith-gateway-v9': GATEWAY_V9_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v9-mesh': GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v9-mesh': GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
+  // v10 adds Canvas Browser navigation through discovery without growing
+  // either direct catalogue.
+  'taskwraith-gateway-v10': GATEWAY_V10_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v10-mesh': GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */

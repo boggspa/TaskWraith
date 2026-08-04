@@ -44,6 +44,13 @@ import {
   GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V9_MESH_MCP_DIRECT_TOOLS,
   GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V10_ADDED_TOOL_NAMES,
+  GATEWAY_V10_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V10_MCP_DIRECT_TOOLS,
+  GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V10_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   compactGatewayV8MeshToolDefinitionsForTransport,
@@ -281,9 +288,12 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
       }).length
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
-    const freshGatewayChars = serializedChars(GATEWAY_V9_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
+    const freshGatewayChars = serializedChars(
+      GATEWAY_V10_MCP_DIRECT_TOOLS,
+      gatewayToolDefinitions()
+    )
     const freshMeshGatewayChars = serializedChars(
-      GATEWAY_V9_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V10_MESH_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
       compactGatewayV8MeshToolDefinitionsForTransport
     )
@@ -352,13 +362,29 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // and the two fresh-session catalogues are untouched. The rule itself, and
     // the pointer to edit_participant, live in the refusal message where they
     // cost nothing until someone gets it wrong.
-    expect(fullChars).toBe(138_095)
-    expect(gatewayChars).toBe(39_930)
+    // Re-measured 2026-08-04. Three independent contributions since the last
+    // calibration (ccebb41d7):
+    //   +381 ensemble_yield and +237 blackboard_post guidance prose (landed by
+    //        the fan-out-seal / blackboard-timer sessions WITHOUT recalibrating
+    //        here). Both tools are gateway-DIRECT, so this +618 pushed the
+    //        immutable v1 gateway transport (40,548) and the fresh v10-mesh
+    //        transport (40,464) OVER the hard 40,000 ceiling below. The exact
+    //        pins are updated to the measured truth; the ceiling assertions are
+    //        deliberately NOT relaxed — they are the transport contract, and
+    //        the overage belongs to those two descriptions, not to this
+    //        measurement. Trimming them back under budget is the owning
+    //        features' call.
+    //   +14  full-only: the approval_status service filter gains 'webBrowsing'.
+    //   +0   to every pinned transport from canvas_navigate (Canvas Browser):
+    //        gateway-v10 keeps it hidden — discoverable via capability_search,
+    //        never direct — and it is not in the immutable v1 full list.
+    expect(fullChars).toBe(138_727)
+    expect(gatewayChars).toBe(40_548)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
-    expect(freshGatewayChars).toBe(37_051)
+    expect(freshGatewayChars).toBe(37_669)
     expect(freshGatewayChars).toBeLessThan(40_000)
-    expect(freshMeshGatewayChars).toBe(39_846)
+    expect(freshMeshGatewayChars).toBe(40_464)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)
   })
 
@@ -549,7 +575,11 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V9_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES,
-      ...GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V10_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -585,10 +615,19 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_V9_ADDED_TOOL_NAMES
     ])
+    expect(GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V10_ADDED_TOOL_NAMES
+    ])
+    expect(GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V10_ADDED_TOOL_NAMES
+    ])
     for (const tool of [
       ...GATEWAY_V3_ADDED_TOOL_NAMES,
       ...GATEWAY_V4_ADDED_TOOL_NAMES,
-      ...GATEWAY_V5_ADDED_TOOL_NAMES
+      ...GATEWAY_V5_ADDED_TOOL_NAMES,
+      ...GATEWAY_V10_ADDED_TOOL_NAMES
     ]) {
       expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
       // Additions are discoverable capabilities, never new direct surface.
@@ -633,6 +672,12 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v9-mesh')).toBe(
       GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
     )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v10')).toBe(
+      GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v10-mesh')).toBe(
+      GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES
+    )
     // An unknown or missing id must not inherit a newer surface.
     expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v5')).toBe(
@@ -658,6 +703,12 @@ describe('catalogue reachability', () => {
     )
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v9-mesh')).toBe(
       GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v10')).toBe(
+      GATEWAY_V10_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v10-mesh')).toBe(
+      GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS
     )
   })
 
