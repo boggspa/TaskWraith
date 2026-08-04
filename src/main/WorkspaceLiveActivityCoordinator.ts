@@ -144,12 +144,14 @@ export class WorkspaceLiveActivityCoordinator {
 
   reconcile(
     cards: readonly RemoteTaskCard[],
-    gitSnapshots: ReadonlyMap<string, WorkspaceActivityGitSnapshot>
+    gitSnapshots?: ReadonlyMap<string, WorkspaceActivityGitSnapshot>
   ): void {
     this.cards = [...cards]
-    this.gitSnapshots.clear()
-    for (const [workspaceId, snapshot] of gitSnapshots) {
-      this.gitSnapshots.set(workspaceId, snapshot)
+    if (gitSnapshots) {
+      this.gitSnapshots.clear()
+      for (const [workspaceId, snapshot] of gitSnapshots) {
+        this.gitSnapshots.set(workspaceId, snapshot)
+      }
     }
 
     const now = this.now()

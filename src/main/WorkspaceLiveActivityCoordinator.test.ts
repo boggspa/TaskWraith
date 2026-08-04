@@ -170,4 +170,28 @@ describe('workspace Live Activity reconciliation', () => {
     )
     expect(fanout.onTaskCard).not.toHaveBeenCalled()
   })
+
+  it('retains watcher-owned Git truth across later card reconciliation', () => {
+    const fanout = fanoutSpy()
+    const coordinator = new WorkspaceLiveActivityCoordinator({ fanout, now: () => 100 })
+    coordinator.updateGitSnapshot('workspace-secret', {
+      counts: { changed: 7 },
+      lineStats: { additions: 44, deletions: 5 },
+      ahead: 8,
+      behind: 2
+    })
+
+    coordinator.reconcile([card('a', 'running'), card('b', 'running')])
+
+    expect(fanout.onWorkspaceActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filesChanged: 7,
+        additions: 44,
+        deletions: 5,
+        ahead: 8,
+        behind: 2,
+        hasGitSnapshot: true
+      })
+    )
+  })
 })
