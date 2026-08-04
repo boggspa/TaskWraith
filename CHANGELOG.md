@@ -6,6 +6,34 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## Unreleased
+
+### The Canvas is now a first-class browser
+
+The Canvas web preview grew real browser chrome. Web canvases in the right dock
+get a single-pane browser: back and forward with live history depth, reload
+that flips to stop while a page loads, an editable address bar that accepts
+`example.com` or `localhost:3000` as readily as a full URL, a secure-page
+indicator, a loading shimmer, and one-click open in your default browser.
+Links that ask for a new window navigate the pane in place — nothing escapes
+the canvas. Every navigation still passes the same hardened policy the preview
+always had: http(s) only, link-local and cloud-metadata addresses blocked,
+private hosts only by allowlist, an isolated ephemeral session, and no
+downloads or permission prompts.
+
+Agents meet the same browser through one new verb, `canvas_navigate` — go to a
+URL (auto-opening the Canvas Browser when none is open), back, forward, reload,
+or stop — made for presentation walk-throughs, website previews, and live web
+research, then reading the page with the existing snapshot tools. It is
+governed by a new dedicated **Browser navigation** permission service: Default
+Approval prompts and can be granted for a session or workspace, Read-Only
+(Recon) and Plan now offer browsing as a per-invocation ask instead of a silent
+dead end (grants never auto-allow it there), Trusted Session auto-allows, and
+the global kill switch still wins everywhere. Clicking, typing, and script
+evaluation are untouched — they keep their own stricter Canvas interaction and
+signed-elevated eval gates. Navigations are audited with query-redacted URLs,
+and your own address-bar driving is never metered against agent budgets.
+
 ## 1.9.2 - 2026-07-31
 
 1.9.1 opened a terminal hatch into the workshop; 1.9.2 gives every entrance the
