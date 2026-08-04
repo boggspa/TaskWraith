@@ -4,13 +4,14 @@ import UIKit
 #endif
 
 /// Selectable home-screen app-icon variants. Mirror of `AppIconVariant` in
-/// `src/shared/iconVariants.ts`. Each non-`regular` case maps to an alternate
-/// appiconset declared via `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES`; the
-/// system auto-renders each set's Dark/Tinted appearance, so theme-awareness of
-/// the alternate icon needs no per-appearance runtime code.
+/// `src/shared/iconVariants.ts` (drift-guarded by `iconVariants.test.ts`).
+/// Monoline (v2 art) is the PRIMARY appiconset — `nil` alternate — so fresh
+/// installs never trigger the system alternate-icon alert. Each other case maps
+/// to an alternate appiconset declared via
+/// `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES`; the system auto-renders each
+/// set's Dark/Tinted appearance, so theme-awareness needs no runtime code.
 public enum TWAppIconVariant: String, CaseIterable, Identifiable {
     case regular
-    case wwdc26
     case monoline
     case glass
 
@@ -19,9 +20,8 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
     /// Alternate-icon name for `setAlternateIconName`; `nil` = the primary icon.
     public var alternateIconName: String? {
         switch self {
-        case .regular: return nil
-        case .wwdc26: return "AppIcon-WWDC26"
-        case .monoline: return "AppIcon-Monoline"
+        case .monoline: return nil
+        case .regular: return "AppIcon-Regular"
         case .glass: return "AppIcon-Glass"
         }
     }
@@ -29,7 +29,6 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
     public var label: String {
         switch self {
         case .regular: return "Regular"
-        case .wwdc26: return "WWDC26"
         case .monoline: return "Monoline"
         case .glass: return "Glass"
         }
@@ -39,19 +38,15 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
     public var thumbnailAssetName: String {
         switch self {
         case .regular: return "app-icon-regular"
-        case .wwdc26: return "app-icon-wwdc26"
         case .monoline: return "app-icon-monoline"
         case .glass: return "app-icon-glass"
         }
     }
 
-    public var isLimitedTime: Bool { self == .wwdc26 }
-
-    /// Variants to OFFER now. Applies the WWDC26 gate (OFFER surface only).
-    public static func available(now: Date = Date()) -> [TWAppIconVariant] {
-        allCases.filter { variant in
-            variant == .wwdc26 ? TWAppIconAvailability.isWWDC26Available(now: now) : true
-        }
+    /// Variants to OFFER in the picker. All variants are always offered (the
+    /// limited-time WWDC26 variant and its availability gate were retired).
+    public static func available() -> [TWAppIconVariant] {
+        allCases
     }
 }
 
@@ -59,15 +54,16 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
 ///
 /// State lives in a STANDALONE UserDefaults key (`tw.appIcon`) — NOT on
 /// `TWThemeStore` — so changing the icon does not bump `revision` and tear down
-/// RootView (the swap is an OS-level change with no in-app repaint). Reads are
-/// ungated, so a grandfathered WWDC26 choice keeps applying past the cutoff.
+/// RootView (the swap is an OS-level change with no in-app repaint). A stale
+/// persisted `wwdc26` fails the raw-value init and falls back to the default,
+/// which reconciles the retired icon back to the primary.
 public enum TWAppIconController {
     private static let defaultsKey = "tw.appIcon"
 
-    /// The stored choice (defaults to `.regular`).
+    /// The stored choice (defaults to `.monoline`, the primary icon).
     public static var selected: TWAppIconVariant {
         let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
-        return TWAppIconVariant(rawValue: raw) ?? .regular
+        return TWAppIconVariant(rawValue: raw) ?? .monoline
     }
 
     /// Persist + apply a user selection.

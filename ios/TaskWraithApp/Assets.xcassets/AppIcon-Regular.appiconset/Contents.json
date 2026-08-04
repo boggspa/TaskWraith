@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "TaskWraith Monoline-iOS-Default-1024x1024@1x.png",
+      "filename" : "AppIcon-Regular.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "TaskWraith App Icon png-iOS-Default-1024x1024@1x.png",
+      "filename" : "AppIcon-Regular-Dark.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +25,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "AppIcon-Tinted.png",
+      "filename" : "AppIcon-Regular-Tinted.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
