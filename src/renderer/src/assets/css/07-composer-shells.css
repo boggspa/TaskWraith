@@ -3355,12 +3355,27 @@
 }
 
 .child-agent-thread {
+  /* Provider accent fallback chain: identity color (inline var) wins, then
+   * the provider brand color from the data-provider rules below, then the
+   * app accent. Keeps the settled one-liner provider-relevant the same way
+   * fan-out lane headers are. */
+  --subagent-accent: var(--agent-identity-color, var(--subagent-provider-color, var(--accent)));
   margin: 6px 0 4px 24px;
   border-radius: var(--radius-md);
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--subagent-accent) 22%, transparent);
+  background: color-mix(in srgb, var(--subagent-accent) 4%, transparent);
   overflow: hidden;
 }
+.child-agent-thread[data-provider='claude'] { --subagent-provider-color: var(--provider-claude-color, #b16105); }
+.child-agent-thread[data-provider='codex'] { --subagent-provider-color: var(--provider-codex-color, #705aff); }
+.child-agent-thread[data-provider='gemini'] { --subagent-provider-color: var(--provider-gemini-color, #346eec); }
+.child-agent-thread[data-provider='kimi'] { --subagent-provider-color: var(--provider-kimi-color, #0073e6); }
+.child-agent-thread[data-provider='grok'] { --subagent-provider-color: var(--provider-grok-color, #757575); }
+.child-agent-thread[data-provider='cursor'] { --subagent-provider-color: var(--provider-cursor-color, #8d7312); }
+.child-agent-thread[data-provider='ollama'] { --subagent-provider-color: var(--provider-ollama-color, #1a8562); }
+.child-agent-thread[data-provider='mistral'] { --subagent-provider-color: var(--provider-mistral-color); }
+.child-agent-thread[data-provider='pi'] { --subagent-provider-color: var(--provider-pi-color); }
+.child-agent-thread[data-provider='antigravity'] { --subagent-provider-color: var(--provider-antigravity-color); }
 .child-agent-thread.state-running {
   border-color: color-mix(in srgb, var(--tool-running) 38%, transparent);
   background: color-mix(in srgb, var(--tool-running) 5%, transparent);
@@ -3370,8 +3385,22 @@
   background: color-mix(in srgb, var(--danger) 5%, transparent);
 }
 .child-agent-thread.state-completed {
-  border-color: color-mix(in srgb, var(--success) 26%, transparent);
-  background: color-mix(in srgb, var(--success) 4%, transparent);
+  border-color: color-mix(in srgb, var(--subagent-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--subagent-accent) 5%, transparent);
+}
+.child-agent-thread.state-completed .child-agent-thread-name {
+  color: color-mix(in srgb, var(--subagent-accent) 72%, var(--text-primary) 28%);
+}
+
+/* Sub-agent spawn waves get their own live viewport, a sibling of the
+ * thinking/tool viewports rather than content buried inside them. Chrome is
+ * intentionally lighter than the tool viewport: the agent cards carry their
+ * own borders, so the wave frame only needs a whisper of separation. */
+.activity-subagent-viewport {
+  border-color: color-mix(in srgb, var(--accent) 14%, var(--panel-border));
+}
+.activity-subagent-viewport .child-agent-thread {
+  margin-left: 0;
 }
 
 .child-agent-thread-header {

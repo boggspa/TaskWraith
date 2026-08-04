@@ -29,7 +29,10 @@ import {
   prettyPrintJson,
   unwrapMcpEnvelope
 } from '../lib/ToolParser'
-import { deriveChildAgentThreadsFromActivities } from '../lib/ChildAgentThreads'
+import {
+  deriveChildAgentThreadsFromActivities,
+  isChildAgentSpawnActivity
+} from '../lib/ChildAgentThreads'
 import { isClaudeWorkflowToolName } from '../../../shared/claudeWorkflow'
 import { isCodexReviewToolName } from '../../../shared/codexReview'
 import { isCodexMultiAgentToolName } from '../../../shared/codexMultiAgent'
@@ -198,7 +201,7 @@ export type ActivityTimelineItem =
   | { type: 'activity'; activity: ToolActivity }
   | { type: 'compact-group'; id: string; activities: ToolActivity[] }
 
-export type ActivityTimelineSegmentKind = 'thinking' | 'tools'
+export type ActivityTimelineSegmentKind = 'thinking' | 'tools' | 'agent'
 
 export interface ActivityTimelineSegment {
   id: string
@@ -1458,6 +1461,11 @@ function isGroupableActivity(activity: ToolActivity): boolean {
   if (activity.workflowSummary || isClaudeWorkflowToolName(activity.toolName)) return false
   if (activity.reviewSummary || isCodexReviewToolName(activity.toolName)) return false
   if (activity.multiAgentSummary || isCodexMultiAgentToolName(activity.toolName)) return false
+  // Sub-agent spawn anchors (Task / Agent / invoke_agent …) carry the
+  // ChildAgentThreadCard hang-off and seed their own subagent viewport
+  // segment — sweeping one into a "used N tools" group would both hide the
+  // card and defeat the anchor-id segment split.
+  if (isChildAgentSpawnActivity(activity)) return false
   return true
 }
 
@@ -1512,7 +1520,11 @@ export function buildTimelineItems(activities: ToolActivity[]): ActivityTimeline
   return items
 }
 
-function timelineItemKind(item: ActivityTimelineItem): ActivityTimelineSegmentKind {
+function timelineItemKind(
+  item: ActivityTimelineItem,
+  agentAnchorIds?: ReadonlySet<string>
+): ActivityTimelineSegmentKind {
+  if (item.type === 'activity' && agentAnchorIds?.has(item.activity.id)) return 'agent'
   return item.type === 'activity' && isThinkingTraceActivity(item.activity) ? 'thinking' : 'tools'
 }
 
@@ -1520,10 +1532,20 @@ function timelineItemActivities(item: ActivityTimelineItem): ToolActivity[] {
   return item.type === 'compact-group' ? item.activities : [item.activity]
 }
 
-export function buildTimelineSegments(items: ActivityTimelineItem[]): ActivityTimelineSegment[] {
+/**
+ * `agentAnchorIds` — activity ids that anchor a ChildAgentThread (sub-agent
+ * spawns). Those items segment as kind 'agent' so the live render gives them
+ * their OWN viewport, outside the thinking/tool hierarchy; consecutive
+ * anchors merge into one spawn-wave segment, mirroring how ensemble fan-out
+ * lanes share one wave viewport.
+ */
+export function buildTimelineSegments(
+  items: ActivityTimelineItem[],
+  agentAnchorIds?: ReadonlySet<string>
+): ActivityTimelineSegment[] {
   const segments: ActivityTimelineSegment[] = []
   for (const item of items) {
-    const kind = timelineItemKind(item)
+    const kind = timelineItemKind(item, agentAnchorIds)
     const activities = timelineItemActivities(item)
     const current = segments[segments.length - 1]
     if (current && current.kind === kind) {
@@ -2622,9 +2644,15 @@ export function ActivityStack({
   // cap, remounting the keyed per-segment viewports mid-stream — the
   // long-thinking "flash". sliceTimelineSegmentsToTail keeps full-timeline
   // segment identity while capping rendered items.
+  // Sub-agent spawn anchors segment as kind 'agent' so each spawn wave gets
+  // its own viewport instead of being buried inside a tool-call viewport.
+  const agentAnchorIds = useMemo(
+    () => new Set(threadByParentId.keys()),
+    [threadByParentId]
+  )
   const fullTimelineSegments = useMemo(
-    () => (liveViewportEnabled ? buildTimelineSegments(timelineItems) : []),
-    [liveViewportEnabled, timelineItems]
+    () => (liveViewportEnabled ? buildTimelineSegments(timelineItems, agentAnchorIds) : []),
+    [liveViewportEnabled, timelineItems, agentAnchorIds]
   )
   const collapseCapActive =
     liveViewportEnabled &&
@@ -2801,9 +2829,17 @@ export function ActivityStack({
         {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
         {timelineSegments.map((segment, index) => {
           const isThinkingSegment = segment.kind === 'thinking'
+          // Sub-agent spawn waves stand apart from the thinking/tool
+          // hierarchy — their viewport collapses to the one-liner agent
+          // cards after the wave settles, mirroring fan-out lane viewports.
+          const isAgentSegment = segment.kind === 'agent'
           const className = [
             liveActivityViewportClassName,
-            isThinkingSegment ? 'activity-thinking-trace-viewport' : 'activity-tool-call-viewport'
+            isAgentSegment
+              ? 'activity-subagent-viewport'
+              : isThinkingSegment
+                ? 'activity-thinking-trace-viewport'
+                : 'activity-tool-call-viewport'
           ]
             .filter(Boolean)
             .join(' ')
@@ -2819,14 +2855,34 @@ export function ActivityStack({
               collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
               expanded={liveViewportExpanded}
               onExpandedChange={setLiveViewportExpanded}
-              label={isThinkingSegment ? 'Thinking traces' : liveActivityViewportLabel}
+              label={
+                isAgentSegment
+                  ? 'Agents'
+                  : isThinkingSegment
+                    ? 'Thinking traces'
+                    : liveActivityViewportLabel
+              }
               expandLabel={
-                isThinkingSegment ? 'Expand thinking traces' : liveActivityViewportExpandLabel
+                isAgentSegment
+                  ? 'Expand agents'
+                  : isThinkingSegment
+                    ? 'Expand thinking traces'
+                    : liveActivityViewportExpandLabel
               }
               collapseLabel={
-                isThinkingSegment ? 'Collapse thinking traces' : liveActivityViewportCollapseLabel
+                isAgentSegment
+                  ? 'Collapse agents'
+                  : isThinkingSegment
+                    ? 'Collapse thinking traces'
+                    : liveActivityViewportCollapseLabel
               }
-              jumpLabel={isThinkingSegment ? 'Jump to latest thinking' : liveActivityViewportJumpLabel}
+              jumpLabel={
+                isAgentSegment
+                  ? 'Jump to latest agent activity'
+                  : isThinkingSegment
+                    ? 'Jump to latest thinking'
+                    : liveActivityViewportJumpLabel
+              }
             >
               {index === 0 && pinnedLiveContent}
               <div className="activity-timeline-live-inner">
@@ -2948,6 +3004,27 @@ function ChildAgentThreadCard({
   shimmerNow?: number
 }) {
   const [expanded, setExpanded] = useState(thread.state === 'running')
+  // Fan-out-viewport rule: a lane collapses to its one-liner once settled.
+  // Track the previous state so only real transitions drive auto-collapse /
+  // auto-expand — a user's manual toggle after settle sticks (the effect
+  // won't fire again without another state change).
+  const previousStateRef = useRef(thread.state)
+  useEffect(() => {
+    const previous = previousStateRef.current
+    previousStateRef.current = thread.state
+    if (previous === thread.state) return
+    if (thread.state === 'running') {
+      setExpanded(true)
+      return
+    }
+    if (
+      thread.state === 'completed' ||
+      thread.state === 'failed' ||
+      thread.state === 'cancelled'
+    ) {
+      setExpanded(false)
+    }
+  }, [thread.state])
   const interactivityLabel = childAgentInteractivityLabel(thread.interactivity)
   const stateLabel = childAgentStateLabel(thread.state)
 
@@ -2962,6 +3039,7 @@ function ChildAgentThreadCard({
     <div
       className={`child-agent-thread state-${thread.state} interactivity-${thread.interactivity}`}
       data-agent-id={thread.id}
+      data-provider={thread.provider}
       style={
         identityColor
           ? ({ ['--agent-identity-color' as string]: identityColor } as Record<string, string>)

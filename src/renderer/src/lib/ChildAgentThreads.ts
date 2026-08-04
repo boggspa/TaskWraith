@@ -19,7 +19,13 @@ const TASK_TOOL_NAMES = new Set([
   'collabtoolcall'
 ])
 
-function isTaskActivity(activity: ToolActivity): boolean {
+/**
+ * True when the activity is a sub-agent SPAWN anchor (Task / Agent /
+ * invoke_agent …). Exported so ActivityStack can keep spawn anchors out of
+ * "used N tools" compact groups and segment them into their own subagent
+ * viewport lane.
+ */
+export function isChildAgentSpawnActivity(activity: ToolActivity): boolean {
   // The 'task' category in ToolParser also covers intent / progress markers
   // (update_topic, summary, progress, codex_reasoning, codex_plan,
   // kimi_thinking, etc.) — those are NOT sub-agent spawns and shouldn't be
@@ -27,6 +33,8 @@ function isTaskActivity(activity: ToolActivity): boolean {
   const name = (activity.toolName || '').toLowerCase().trim()
   return TASK_TOOL_NAMES.has(name)
 }
+
+const isTaskActivity = isChildAgentSpawnActivity
 
 function getParamString(
   params: Record<string, unknown> | undefined,

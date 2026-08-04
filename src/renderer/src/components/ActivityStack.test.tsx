@@ -1557,6 +1557,84 @@ describe('sliceTimelineSegmentsToTail (stable viewport identity under the collap
   })
 })
 
+describe('subagent viewport (agent segments outside the thinking/tool hierarchy)', () => {
+  function makeAgentSpawnActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
+    return {
+      id: 'agent-spawn-1',
+      toolName: 'agent',
+      displayName: 'Used agent',
+      category: 'task',
+      status: 'running',
+      parameters: { description: 'Audit the CSS shards', subagent_type: 'coder' },
+      ...overrides
+    } as ToolActivity
+  }
+
+  it('splits an agent anchor into its own agent segment between tool segments', () => {
+    const items = buildTimelineItems([
+      makeWriteActivity({ id: 'w-0' }),
+      makeAgentSpawnActivity(),
+      makeWriteActivity({ id: 'w-1', parameters: { file_path: '/repo/src/bar.ts' } })
+    ])
+    const segments = buildTimelineSegments(items, new Set(['agent-spawn-1']))
+    expect(segments.map((segment) => segment.kind)).toEqual(['tools', 'agent', 'tools'])
+    expect(segments[1].activities.map((activity) => activity.id)).toEqual(['agent-spawn-1'])
+  })
+
+  it('keeps consecutive agent anchors in ONE spawn-wave segment', () => {
+    const items = buildTimelineItems([
+      makeAgentSpawnActivity({ id: 'agent-a' }),
+      makeAgentSpawnActivity({ id: 'agent-b' })
+    ])
+    const segments = buildTimelineSegments(items, new Set(['agent-a', 'agent-b']))
+    expect(segments.map((segment) => segment.kind)).toEqual(['agent'])
+    expect(segments[0].activities).toHaveLength(2)
+  })
+
+  it('renders the child-agent card inside its own subagent viewport, not the tool viewport', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeWriteActivity({ id: 'w-0' }), makeAgentSpawnActivity()]}
+        provider="claude"
+        liveActivityViewport
+      />
+    )
+    expect(html).toContain('activity-subagent-viewport')
+    // The write activity's tool viewport precedes the agent viewport and must
+    // NOT contain the child-agent card — it lives in its own top-level
+    // viewport, outside the thinking/tool hierarchy.
+    const toolViewportHtml = html.slice(
+      html.indexOf('activity-tool-call-viewport'),
+      html.indexOf('activity-subagent-viewport')
+    )
+    expect(toolViewportHtml).not.toContain('child-agent-thread')
+    expect(html.slice(html.indexOf('activity-subagent-viewport'))).toContain('child-agent-thread')
+  })
+
+  it('renders a settled subagent as a collapsed one-liner carrying the provider accent hook', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeAgentSpawnActivity({
+            id: 'agent-done',
+            status: 'success',
+            endedAt: '2026-05-26T17:01:00Z',
+            durationMs: 60_000,
+            resultSummary: 'Audit complete.'
+          })
+        ]}
+        provider="claude"
+        liveActivityViewport
+      />
+    )
+    // Collapsed one-liner: header only, no expanded body.
+    expect(html).toContain('child-agent-thread state-completed')
+    expect(html).not.toContain('child-agent-thread-body')
+    // Provider accent hook rides the card root next to the agent id.
+    expect(html).toContain('data-agent-id="agent-done" data-provider="claude"')
+  })
+})
+
 describe('liveThinkingTraceRenderBody (bounded live thinking render)', () => {
   it('passes short bodies and settled runs through untouched', () => {
     expect(liveThinkingTraceRenderBody('short trace', true)).toEqual({
