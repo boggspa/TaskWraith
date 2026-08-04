@@ -498,6 +498,7 @@ import { type BridgeApnsPusher } from './BridgeApnsPusher'
 import type { Http2ApnsPusher } from './Http2ApnsPusher'
 import { LiveActivityTokenStore } from './LiveActivityTokenStore'
 import { LiveActivityPushFanout } from './LiveActivityPushFanout'
+import { WorkspaceLiveActivityCoordinator } from './WorkspaceLiveActivityCoordinator'
 import { BridgeApnsTokenStore } from './BridgeApnsTokenStore'
 import { RemoteAttentionApnsFanout } from './RemoteAttentionApnsFanout'
 import { RemoteTaskCompletionNotificationTracker } from './RemoteNotificationPolicy'
@@ -2473,60 +2474,6 @@ function maybeNotifyRemoteTaskCompletion(taskCard: RemoteTaskCard): void {
 }
 
 /**
- * Keep a phone's Live Activity fresh once it can no longer update its own.
- *
- * CONTAINMENT: unlike the completion push above, a Live Activity payload CANNOT
- * be sealed — ActivityKit decodes it itself and there is no NSE hook. So NOTHING
- * from `rich` may cross into it: no title, no preview, no path. Only the counts
- * and status below, and `buildLiveActivityContentState` drops anything else.
- *
- * No-ops for every thread with no registered activity, which is nearly all of
- * them — one Map miss per projected card.
- */
-function maybeUpdateLiveActivity(taskCard: RemoteTaskCard): void {
-  // `runStartedAt` is the REAL run start, which beats the phone's "when I first
-  // noticed" — a phone that connected mid-run has been understating elapsed.
-  const startedAtMs = taskCard.runStartedAt ? Date.parse(taskCard.runStartedAt) : Number.NaN
-  liveActivityPushFanout.onTaskCard({
-    id: taskCard.id,
-    status: taskCard.status,
-    runId: taskCard.runId,
-    provider: taskCard.provider,
-    isEnsemble: taskCard.chatKind === 'ensemble',
-    startedAtUnix: Number.isFinite(startedAtMs) ? Math.floor(startedAtMs / 1000) : undefined,
-    filesChanged: taskCard.diffSummary?.filesChanged,
-    additions: taskCard.diffSummary?.additions,
-    deletions: taskCard.diffSummary?.deletions,
-    seats:
-      taskCard.chatKind === 'ensemble'
-        ? taskCard.ensembleState?.participants?.map((p) => ({
-            provider: p.provider,
-            phase: liveSeatPhase(p.status)
-          }))
-        : undefined
-  })
-}
-
-/** Mirrors `TWRunActivityPlanner.seatPhase(forParticipantStatus:)` on the phone.
- *  A seat that has not started maps to `running` — "not finished" — which is
- *  what the finished/total bar counts. */
-function liveSeatPhase(status: string | undefined): string {
-  switch (status) {
-    case 'completed':
-    case 'done':
-      return 'complete'
-    case 'failed':
-    case 'error':
-      return 'failed'
-    case 'skipped':
-    case 'cancelled':
-      return 'cancelled'
-    default:
-      return 'running'
-  }
-}
-
-/**
  * Cancel every outstanding question tied to a run. Called when the
  * orchestrator finalises a run (success / failure / cancellation) so
  * a leftover question modal can't keep the user confused after the
@@ -3093,6 +3040,9 @@ const liveActivityPushFanout = new LiveActivityPushFanout({
   log: (line) => {
     console.log(line)
   }
+})
+const workspaceLiveActivityCoordinator = new WorkspaceLiveActivityCoordinator({
+  fanout: liveActivityPushFanout
 })
 let remoteAttentionApnsFanoutRef: RemoteAttentionApnsFanout | null = null
 /** The Mac's 32-byte identity seed (set when the bridge identity loads). Used to
@@ -40362,6 +40312,7 @@ if (isGeminiMcpBridgeProcess) {
         workspacePath,
         payload
       })
+      workspaceLiveActivityCoordinator.updateGitSnapshot(workspaceId, snapshot)
       return payload
     }
     const pushRemoteGitSnapshotDelta = (workspaceId: string): void => {
@@ -40405,6 +40356,7 @@ if (isGeminiMcpBridgeProcess) {
       const workspacePath = remoteGitWorkspacePath(canonical)
       if (!workspacePath) {
         remoteGitSnapshotCache.delete(canonical)
+        workspaceLiveActivityCoordinator.removeGitSnapshot(canonical)
         if (options.broadcast !== false) publishRemoteGitSnapshotCache(canonical)
         return
       }
@@ -40413,6 +40365,7 @@ if (isGeminiMcpBridgeProcess) {
         cacheRemoteGitSnapshot(canonical, workspacePath, result.data)
       } else {
         remoteGitSnapshotCache.delete(canonical)
+        workspaceLiveActivityCoordinator.removeGitSnapshot(canonical)
       }
       if (options.broadcast !== false) publishRemoteGitSnapshotCache(canonical)
     }
@@ -41235,7 +41188,8 @@ if (isGeminiMcpBridgeProcess) {
                 activityRef: action.activityRef,
                 token: action.token,
                 env: action.env,
-                threadId: action.threadId
+                threadId: action.threadId,
+                workspaceId: action.workspaceId
               })
             } else {
               // No token = the phone ended this activity. Forget it, or we keep
@@ -44662,6 +44616,7 @@ if (isGeminiMcpBridgeProcess) {
       const costDisplay = remoteCostDisplayOptions()
       const attentionCounts = pendingRemoteAttentionCounts(approvalCards, questionCards)
       const envelopes: RemoteProjectionEnvelope[] = []
+      const liveActivityCards: RemoteTaskCard[] = []
       envelopes.push(
         buildRemoteProjectionEnvelope({
           kind: 'shellAppearance',
@@ -44734,7 +44689,7 @@ if (isGeminiMcpBridgeProcess) {
         const capabilities =
           taskCard.capabilities ?? remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
         maybeNotifyRemoteTaskCompletion(taskCard)
-        maybeUpdateLiveActivity(taskCard)
+        liveActivityCards.push(taskCard)
         envelopes.push(
           buildRemoteProjectionEnvelope({
             kind: 'taskCard',
@@ -44835,6 +44790,7 @@ if (isGeminiMcpBridgeProcess) {
           )
         }
       }
+      workspaceLiveActivityCoordinator.reconcile(liveActivityCards)
 
       for (const approval of approvalCards) {
         envelopes.push(
