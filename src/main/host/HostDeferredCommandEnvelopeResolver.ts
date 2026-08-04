@@ -17,6 +17,14 @@
  *    fields match input.
  * 4. Execute H exactly once and return verified command + H result.
  *
+ * Steps 1-3 are the public synchronous `verifyCommand`, which never reaches the
+ * executor on ANY path; step 4 is `executeCommand`, which calls `verifyCommand`
+ * exactly once and invokes the injected executor exactly once, only on
+ * `verified`, using the SAME decoded command object verification returned. The
+ * split exists so a later deferred-allow composer can reuse this
+ * security-critical verification without duplicating it and without H. It
+ * changes no observable `executeCommand` behavior.
+ *
  * Any unavailable/notfound/incomplete/mismatch returns body-free explicit
  * indeterminate with zero H calls. Quarantine only when the correct actor
  * and envelope are safely identified. Never markConsumed, never accept/cast
@@ -85,6 +93,19 @@ export type HostDeferredCommandEnvelopeResolverResult =
   | { kind: 'indeterminate'; code: HostDeferredCommandEnvelopeResolverIndeterminateCode }
   | { kind: 'already_terminal'; receiptStatus: HostCommandReceiptStatus }
 
+/**
+ * Result of zero-H verification.
+ *
+ * `verified` carries the decoded command that `executeCommand` hands to the
+ * executor unchanged. Callers MUST execute that exact object and never a
+ * re-decode: fingerprint/identity drift between verification and execution
+ * would defeat the whole envelope check.
+ */
+export type HostDeferredCommandEnvelopeResolverVerifyResult =
+  | { kind: 'verified'; command: HostCommand }
+  | { kind: 'indeterminate'; code: HostDeferredCommandEnvelopeResolverIndeterminateCode }
+  | { kind: 'already_terminal'; receiptStatus: HostCommandReceiptStatus }
+
 /** Narrow injected envelope store port — actor-bound lookup + quarantine only. */
 export interface HostDeferredCommandEnvelopeResolverEnvelopePort {
   getByCommandId(
@@ -144,6 +165,34 @@ export class HostDeferredCommandEnvelopeResolver {
   async executeCommand(
     input: HostDeferredCommandEnvelopeResolverInput
   ): Promise<HostDeferredCommandEnvelopeResolverResult> {
+    const verified = this.verifyCommand(input)
+    if (verified.kind !== 'verified') {
+      return verified
+    }
+
+    // 7) Execute H exactly once, with the exact object verification decoded.
+    //
+    // `command.actor` is provably the validated input actor: correlation
+    // required envelope.actor === input actor on actorId/clientId/clientClass,
+    // and body identity required command.actor === envelope.actor on those same
+    // three fields, so the two are character-identical by transitivity.
+    const result = await this.executor.execute(verified.command, {
+      actor: verified.command.actor
+    })
+
+    return { kind: 'executed', command: verified.command, result }
+  }
+
+  /**
+   * Steps 1-6, with ZERO executor calls on every path.
+   *
+   * Synchronous by construction: every injected verification port is
+   * synchronous and there is nothing to await, which makes "never reaches H"
+   * structural rather than incidental.
+   */
+  verifyCommand(
+    input: HostDeferredCommandEnvelopeResolverInput
+  ): HostDeferredCommandEnvelopeResolverVerifyResult {
     // 1) Validate input shape.
     const validated = validateInput(input)
     if (!validated.ok) {
@@ -372,12 +421,7 @@ export class HostDeferredCommandEnvelopeResolver {
       )
     }
 
-    // 7) Execute H exactly once.
-    const result = await this.executor.execute(verifiedCommand, {
-      actor: validated.value.actor
-    })
-
-    return { kind: 'executed', command: verifiedCommand, result }
+    return { kind: 'verified', command: verifiedCommand }
   }
 
   private indeterminateAfterQuarantine(
@@ -385,7 +429,7 @@ export class HostDeferredCommandEnvelopeResolver {
     deferredId: string,
     actor: HostActorIdentity,
     quarantineCode: HostDeferredCommandEnvelopeQuarantineCode
-  ): HostDeferredCommandEnvelopeResolverResult {
+  ): { kind: 'indeterminate'; code: HostDeferredCommandEnvelopeResolverIndeterminateCode } {
     let result: HostDeferredCommandEnvelopeTransitionResult
     try {
       result = this.envelopeStore.markQuarantined(deferredId, actor, quarantineCode)

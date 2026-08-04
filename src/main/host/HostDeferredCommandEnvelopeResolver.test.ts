@@ -26,7 +26,8 @@ import {
   type HostDeferredCommandEnvelopeResolverReceiptPort,
   type HostDeferredCommandEnvelopeResolverInput,
   type HostDeferredCommandEnvelopeResolverIndeterminateCode,
-  type HostDeferredCommandEnvelopeResolverResult
+  type HostDeferredCommandEnvelopeResolverResult,
+  type HostDeferredCommandEnvelopeResolverVerifyResult
 } from './HostDeferredCommandEnvelopeResolver'
 
 const ACTOR: HostActorIdentity = {
@@ -1010,5 +1011,472 @@ describe('HostDeferredCommandEnvelopeResolver', () => {
       }
     })
     expectIndeterminate(result, 'envelope_actor_mismatch')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// verifyCommand — the zero-H verification split
+// ---------------------------------------------------------------------------
+
+function makeHarness(overrides?: {
+  envelope?: Partial<HostDeferredCommandEnvelopeResolverEnvelopePort>
+  receipt?: Partial<HostDeferredCommandEnvelopeResolverReceiptPort>
+}) {
+  const markQuarantined =
+    overrides?.envelope?.markQuarantined ??
+    vi.fn().mockReturnValue({ kind: 'updated', state: 'quarantined' })
+  const executeMock = vi.fn().mockImplementation(async () => succeedResult())
+  const executor: Pick<HostBridgeCommandExecutor, 'execute'> = { execute: executeMock }
+  const resolver = new HostDeferredCommandEnvelopeResolver({
+    envelopeStore: mockEnvelopePort({ ...overrides?.envelope, markQuarantined }),
+    receiptStore: mockReceiptPort(overrides?.receipt),
+    executor
+  })
+  return { resolver, markQuarantined, executeMock }
+}
+
+type NonVerifiedExpectation =
+  | { kind: 'indeterminate'; code: HostDeferredCommandEnvelopeResolverIndeterminateCode }
+  | { kind: 'already_terminal'; receiptStatus: HostCommandReceiptStatus }
+
+interface VerifyScenario {
+  name: string
+  input: HostDeferredCommandEnvelopeResolverInput
+  /** Factory so every scenario run gets its OWN spies — shared mocks would make counts lie. */
+  overrides?: () => {
+    envelope?: Partial<HostDeferredCommandEnvelopeResolverEnvelopePort>
+    receipt?: Partial<HostDeferredCommandEnvelopeResolverReceiptPort>
+  }
+  expected: NonVerifiedExpectation
+  /** Quarantine asymmetry is the contract: only actor-confirmed verification failures rewrite. */
+  quarantines: boolean
+}
+
+function withEnvelopeRecord(
+  record: HostDeferredCommandEnvelopeRecord
+): () => { envelope: Partial<HostDeferredCommandEnvelopeResolverEnvelopePort> } {
+  return () => ({
+    envelope: { getByCommandId: vi.fn().mockReturnValue({ kind: 'found', record }) }
+  })
+}
+
+function withEnvelopeLookup(
+  lookup: HostDeferredCommandEnvelopeLookupResult
+): () => { envelope: Partial<HostDeferredCommandEnvelopeResolverEnvelopePort> } {
+  return () => ({
+    envelope: { getByCommandId: vi.fn().mockReturnValue(lookup) }
+  })
+}
+
+function withReceiptLookup(
+  lookup: HostCommandReceiptLookupResult
+): () => { receipt: Partial<HostDeferredCommandEnvelopeResolverReceiptPort> } {
+  return () => ({
+    receipt: { getByCommandId: vi.fn().mockReturnValue(lookup) }
+  })
+}
+
+function withReceipt(
+  overrides: Partial<HostCommandReceiptRecord>
+): () => { receipt: Partial<HostDeferredCommandEnvelopeResolverReceiptPort> } {
+  return withReceiptLookup({ kind: 'found', receipt: makeReceiptRecord(overrides) })
+}
+
+const TERMINAL_STATUSES: HostCommandReceiptStatus[] = [
+  'succeeded',
+  'failed',
+  'denied',
+  'cancelled',
+  'conflict'
+]
+
+function nonVerifiedScenarios(): VerifyScenario[] {
+  const originalFingerprint = fingerprintHostCommand(makeCommand()).fingerprint
+  const driftedCommand = makeCommand({ target: { threadId: 'thread-2' } })
+  const foreignCommand = makeCommand({ commandId: '99999999-9999-4999-8999-999999999999' })
+  const foreignFingerprint = fingerprintHostCommand(foreignCommand).fingerprint
+
+  return [
+    // --- Input validation (no store was ever consulted) ---------------------
+    {
+      name: 'null input',
+      input: null as any,
+      expected: { kind: 'indeterminate', code: 'envelope_corrupt' },
+      quarantines: false
+    },
+    {
+      name: 'deferredId is not a UUID',
+      input: validInput({ deferredId: 'not-a-uuid' }),
+      expected: { kind: 'indeterminate', code: 'envelope_corrupt' },
+      quarantines: false
+    },
+    {
+      name: 'input carries an unknown field',
+      input: { ...validInput(), unexpected: true } as any,
+      expected: { kind: 'indeterminate', code: 'envelope_corrupt' },
+      quarantines: false
+    },
+    {
+      name: 'idempotency key is bound to another client',
+      input: validInput({
+        idempotencyKey: 'desktop:other-client:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      }),
+      expected: { kind: 'indeterminate', code: 'envelope_actor_mismatch' },
+      quarantines: false
+    },
+
+    // --- Envelope load ------------------------------------------------------
+    {
+      name: 'envelope store unavailable',
+      input: validInput(),
+      overrides: withEnvelopeLookup({ kind: 'unavailable' }),
+      expected: { kind: 'indeterminate', code: 'store_unavailable' },
+      quarantines: false
+    },
+    {
+      name: 'envelope lookup throws',
+      input: validInput(),
+      overrides: () => ({
+        envelope: {
+          getByCommandId: vi.fn(() => {
+            throw new Error('secret envelope body')
+          })
+        }
+      }),
+      expected: { kind: 'indeterminate', code: 'store_unavailable' },
+      quarantines: false
+    },
+    {
+      name: 'envelope not found',
+      input: validInput(),
+      overrides: withEnvelopeLookup({ kind: 'not_found' }),
+      expected: { kind: 'indeterminate', code: 'envelope_not_found' },
+      quarantines: false
+    },
+    {
+      name: 'envelope actor mismatch',
+      input: validInput(),
+      overrides: withEnvelopeLookup({ kind: 'actor_mismatch' }),
+      expected: { kind: 'indeterminate', code: 'envelope_actor_mismatch' },
+      quarantines: false
+    },
+    {
+      name: 'consumed envelope is never rewritten',
+      input: validInput(),
+      overrides: withEnvelopeRecord(makeEnvelopeRecord({ state: 'consumed' })),
+      expected: { kind: 'indeterminate', code: 'envelope_not_stored' },
+      quarantines: false
+    },
+    {
+      name: 'quarantined envelope is never rewritten',
+      input: validInput(),
+      overrides: withEnvelopeRecord(
+        makeEnvelopeRecord({ state: 'quarantined', command: undefined })
+      ),
+      expected: { kind: 'indeterminate', code: 'envelope_not_stored' },
+      quarantines: false
+    },
+    {
+      name: 'stored envelope without a body',
+      input: validInput(),
+      overrides: withEnvelopeRecord(makeEnvelopeRecord({ command: undefined } as any)),
+      expected: { kind: 'indeterminate', code: 'envelope_body_missing' },
+      quarantines: true
+    },
+
+    // --- Correlation --------------------------------------------------------
+    {
+      name: 'deferredId correlation mismatch',
+      input: validInput({ deferredId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }),
+      expected: { kind: 'indeterminate', code: 'envelope_correlation_mismatch' },
+      quarantines: true
+    },
+    {
+      name: 'challengeId correlation mismatch',
+      input: validInput({ challengeId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' }),
+      expected: { kind: 'indeterminate', code: 'envelope_correlation_mismatch' },
+      quarantines: true
+    },
+
+    // --- Durable body re-decode / refingerprint -----------------------------
+    {
+      name: 'undecodable stored body',
+      input: validInput(),
+      overrides: withEnvelopeRecord(
+        makeEnvelopeRecord({ command: { ...makeCommand(), type: 'bad' } as any })
+      ),
+      expected: { kind: 'indeterminate', code: 'command_decode_failed' },
+      quarantines: true
+    },
+    {
+      name: 'stored body with invalid arguments',
+      input: validInput(),
+      overrides: withEnvelopeRecord(
+        makeEnvelopeRecord({ command: makeCommand({ arguments: { unexpected: true } as never }) })
+      ),
+      expected: { kind: 'indeterminate', code: 'command_validation_failed' },
+      quarantines: true
+    },
+    {
+      name: 'recomputed fingerprint differs from the envelope',
+      input: validInput({ commandFingerprint: originalFingerprint }),
+      overrides: withEnvelopeRecord(
+        makeEnvelopeRecord({
+          commandFingerprint: originalFingerprint,
+          command: driftedCommand
+        })
+      ),
+      expected: { kind: 'indeterminate', code: 'command_fingerprint_mismatch' },
+      quarantines: true
+    },
+    {
+      name: 'stored body identity differs from the envelope',
+      input: validInput({ commandFingerprint: foreignFingerprint }),
+      overrides: withEnvelopeRecord(
+        makeEnvelopeRecord({
+          commandFingerprint: foreignFingerprint,
+          command: foreignCommand
+        })
+      ),
+      expected: { kind: 'indeterminate', code: 'command_identity_mismatch' },
+      quarantines: true
+    },
+
+    // --- Receipt ------------------------------------------------------------
+    {
+      name: 'receipt not found',
+      input: validInput(),
+      overrides: withReceiptLookup({ kind: 'not_found' }),
+      expected: { kind: 'indeterminate', code: 'receipt_not_found' },
+      quarantines: true
+    },
+    {
+      name: 'receipt lookup throws',
+      input: validInput(),
+      overrides: () => ({
+        receipt: {
+          getByCommandId: vi.fn(() => {
+            throw new Error('secret receipt body')
+          })
+        }
+      }),
+      expected: { kind: 'indeterminate', code: 'store_unavailable' },
+      quarantines: false
+    },
+    {
+      name: 'receipt actor mismatch',
+      input: validInput(),
+      overrides: withReceiptLookup({ kind: 'actor_mismatch' }),
+      expected: { kind: 'indeterminate', code: 'receipt_actor_mismatch' },
+      quarantines: false
+    },
+    {
+      name: 'receipt incomplete',
+      input: validInput(),
+      overrides: withReceiptLookup({ kind: 'incomplete' }),
+      expected: { kind: 'indeterminate', code: 'receipt_incomplete' },
+      quarantines: true
+    },
+    {
+      name: 'receipt correlation mismatch',
+      input: validInput(),
+      overrides: withReceipt({ commandId: '99999999-9999-4999-8999-999999999999' }),
+      expected: { kind: 'indeterminate', code: 'receipt_correlation_mismatch' },
+      quarantines: true
+    },
+    {
+      name: 'receipt already indeterminate',
+      input: validInput(),
+      overrides: withReceipt({ status: 'indeterminate' }),
+      expected: { kind: 'indeterminate', code: 'receipt_already_indeterminate' },
+      quarantines: false
+    },
+    {
+      name: 'receipt status unrecognized',
+      input: validInput(),
+      overrides: withReceipt({ status: 'weird' as any }),
+      expected: { kind: 'indeterminate', code: 'receipt_not_pending' },
+      quarantines: false
+    },
+    {
+      name: 'pending receipt is not deferred',
+      input: validInput(),
+      overrides: withReceipt({ authority: { decision: 'allowed', reason: 'already authorized' } }),
+      expected: { kind: 'indeterminate', code: 'receipt_not_deferred' },
+      quarantines: true
+    },
+
+    // --- Terminal receipts: resolved already, and never quarantined ---------
+    ...TERMINAL_STATUSES.map((receiptStatus) => ({
+      name: `receipt already ${receiptStatus}`,
+      input: validInput(),
+      overrides: withReceipt({ status: receiptStatus }),
+      expected: { kind: 'already_terminal' as const, receiptStatus },
+      quarantines: false
+    }))
+  ]
+}
+
+describe('HostDeferredCommandEnvelopeResolver.verifyCommand', () => {
+  // --- The anti-vacuous proof ----------------------------------------------
+  //
+  // A "zero H calls" assertion is worthless unless the SAME spy is also proven
+  // to record a call. This test drives one resolver through both methods and
+  // watches the counter go 0 → 1, so a mis-wired executor cannot pass it.
+
+  it('makes zero H calls verifying and exactly one executing, on one live spy', async () => {
+    const { resolver, executeMock } = makeHarness()
+
+    const verified = resolver.verifyCommand(validInput())
+    expect(verified.kind).toBe('verified')
+    expect(executeMock).toHaveBeenCalledTimes(0)
+
+    const executed = await resolver.executeCommand(validInput())
+    expect(executed.kind).toBe('executed')
+    expect(executeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('is synchronous, so no executor call can hide behind an await', () => {
+    const { resolver, executeMock } = makeHarness()
+    const verified: HostDeferredCommandEnvelopeResolverVerifyResult =
+      resolver.verifyCommand(validInput())
+
+    expect(verified).not.toBeInstanceOf(Promise)
+    expect(verified.kind).toBe('verified')
+    expect(executeMock).not.toHaveBeenCalled()
+  })
+
+  // --- executeCommand delegates: one verification, one execution ------------
+
+  it('executeCommand verifies exactly once and executes the exact verified object', async () => {
+    const { resolver, executeMock } = makeHarness()
+    const verifySpy = vi.spyOn(resolver, 'verifyCommand')
+
+    const result = await resolver.executeCommand(validInput())
+
+    expect(verifySpy).toHaveBeenCalledTimes(1)
+    expect(executeMock).toHaveBeenCalledTimes(1)
+
+    const verified = verifySpy.mock.results[0]?.value as
+      | HostDeferredCommandEnvelopeResolverVerifyResult
+      | undefined
+    expect(verified?.kind).toBe('verified')
+
+    // Object identity, not deep equality: a re-decode between verify and
+    // execute would hand over an equal-but-different command and let
+    // fingerprint/identity drift straight past the envelope check.
+    if (verified?.kind === 'verified' && result.kind === 'executed') {
+      expect(executeMock.mock.calls[0]?.[0]).toBe(verified.command)
+      expect(result.command).toBe(verified.command)
+    }
+  })
+
+  it('executes with the validated actor and a body whose fingerprint still matches', async () => {
+    const { resolver, executeMock } = makeHarness()
+
+    await resolver.executeCommand(validInput())
+
+    const [passedCommand, passedOptions] = executeMock.mock.calls[0] ?? []
+    expect(passedOptions).toEqual({ actor: ACTOR })
+    expect(fingerprintHostCommand(passedCommand).fingerprint).toBe(validInput().commandFingerprint)
+  })
+
+  it('returns the verification result itself when verification does not pass', async () => {
+    const { resolver } = makeHarness({
+      receipt: { getByCommandId: vi.fn().mockReturnValue({ kind: 'not_found' }) }
+    })
+    const verifySpy = vi.spyOn(resolver, 'verifyCommand')
+
+    const result = await resolver.executeCommand(validInput())
+
+    // Same object, not merely the same shape — nothing re-wraps or re-maps the
+    // non-verified outcome on its way out of executeCommand.
+    expect(result).toBe(verifySpy.mock.results[0]?.value)
+  })
+
+  // --- The full non-verified matrix ----------------------------------------
+
+  it('returns the same body-free outcome as executeCommand, with zero H, on every non-verified path', async () => {
+    const scenarios = nonVerifiedScenarios()
+    expect(scenarios).toHaveLength(30)
+
+    for (const scenario of scenarios) {
+      const verifyHarness = makeHarness(scenario.overrides?.())
+      const verified = verifyHarness.resolver.verifyCommand(scenario.input)
+
+      expect(verified, scenario.name).toEqual(scenario.expected)
+      expect(verifyHarness.executeMock, scenario.name).not.toHaveBeenCalled()
+
+      // executeCommand must remain byte-compatible with the pre-split module:
+      // identical outcome, still zero H.
+      const executeHarness = makeHarness(scenario.overrides?.())
+      const executed = await executeHarness.resolver.executeCommand(scenario.input)
+
+      expect(executed, scenario.name).toEqual(scenario.expected)
+      expect(executeHarness.executeMock, scenario.name).not.toHaveBeenCalled()
+    }
+  })
+
+  it('preserves the quarantine asymmetry exactly', async () => {
+    for (const scenario of nonVerifiedScenarios()) {
+      const { resolver, markQuarantined } = makeHarness(scenario.overrides?.())
+      resolver.verifyCommand(scenario.input)
+
+      if (scenario.quarantines) {
+        expect(markQuarantined, scenario.name).toHaveBeenCalledTimes(1)
+      } else {
+        expect(markQuarantined, scenario.name).not.toHaveBeenCalled()
+      }
+    }
+  })
+
+  it('never quarantines or executes H for a receipt that is already terminal', async () => {
+    for (const receiptStatus of TERMINAL_STATUSES) {
+      const { resolver, markQuarantined, executeMock } = makeHarness(
+        withReceipt({ status: receiptStatus })()
+      )
+
+      const verified = resolver.verifyCommand(validInput())
+
+      expect(verified, receiptStatus).toEqual({ kind: 'already_terminal', receiptStatus })
+      expect(markQuarantined, receiptStatus).not.toHaveBeenCalled()
+      expect(executeMock, receiptStatus).not.toHaveBeenCalled()
+    }
+  })
+
+  it('surfaces quarantine_failed without executing H when quarantine itself fails', () => {
+    const { resolver, executeMock } = makeHarness({
+      envelope: {
+        markQuarantined: vi.fn(() => {
+          throw new Error('secret quarantine body')
+        })
+      },
+      receipt: { getByCommandId: vi.fn().mockReturnValue({ kind: 'not_found' }) }
+    })
+
+    const verified = resolver.verifyCommand(validInput())
+
+    expect(verified).toEqual({ kind: 'indeterminate', code: 'quarantine_failed' })
+    expect(JSON.stringify(verified)).not.toContain('secret quarantine body')
+    expect(executeMock).not.toHaveBeenCalled()
+  })
+
+  // --- Body-free reporting --------------------------------------------------
+
+  it('leaks no store error text and no command body through any non-verified result', async () => {
+    for (const scenario of nonVerifiedScenarios()) {
+      const { resolver } = makeHarness(scenario.overrides?.())
+      const verified = resolver.verifyCommand(scenario.input)
+      const serialised = JSON.stringify(verified)
+
+      expect(serialised, scenario.name).not.toContain('secret')
+      expect(serialised, scenario.name).not.toContain('thread-1')
+      expect(serialised, scenario.name).not.toContain('host.command')
+
+      const keys = Object.keys(verified).sort()
+      expect(keys, scenario.name).toEqual(
+        verified.kind === 'already_terminal' ? ['kind', 'receiptStatus'] : ['code', 'kind']
+      )
+    }
   })
 })
