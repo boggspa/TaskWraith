@@ -41,17 +41,20 @@ tier.
 
 ## Remaining slices (dependency order) with mechanism anchors
 
-### B — externalPublish tier split (owner ruling 2)
-`externalPublishPolicyDecision` (src/main/index.ts ~4966) reads the GLOBAL
-setting only (`AppStore.getSettings().agenticServices?.externalPublish ?? 'ask'`)
-— run posture never reaches it. Work: thread the invoking run's post-clamp
-effectivePermissions/presetId into the publish decision; auto-allow iff preset ∈
-{workspace_write, full_access} AND global isn't 'deny'; keep ASK for default;
-keep phone-issued runs + BG lanes + reroute-downgraded postures at ASK. Keep the
-receipts ledger writing on every auto-allow (audit trail replaces the prompt).
-Update the "Push — needs Accept External publishing" UX copy for the two write
-tiers. Tests: red-first at the decision unit + an ApprovalOrchestration case per
-tier; assert the HMAC clamp still forces ASK for unsigned postures.
+### B — externalPublish tier split (owner ruling 2) — VERIFIED ALREADY HELD, pinned 2026-08-04
+Measured on master: the ruling's target state was already the implemented
+behavior. The approval gate (ApprovalOrchestration ~505) keeps externalPublish
+approval-only ONLY for read_only/plan via `isPostureApprovalOnlyService`; the
+workspace_write and full_access presets carry `externalPublish: 'allow'`, which
+auto-allows through the normal audited policy path; `default` resolves the
+global 'ask'. `externalPublishPolicyDecision` (index.ts ~4966) is the RECEIPTS
+layer, not the prompt — it only hard-denies on global 'deny' and stamps the
+audit reason; publish receipts are written by the executors regardless of how
+approval was obtained (WorkspaceToolExecutors beginExternalPublishReceipt).
+The earlier "non-grantable per-action publish gate" memory described the
+pre-1.8.6 state and is stale. Pinned by the externalPublish ladder test in
+EffectiveRunPermissions.test.ts (per-preset policy + hold membership +
+global-deny survival). No code change required.
 
 ### C — Ask/Plan ask-semantics inversion (the core; biggest blast radius)
 Today (posture split, docs in EffectiveRunPermissions.ts): `read_only` is the

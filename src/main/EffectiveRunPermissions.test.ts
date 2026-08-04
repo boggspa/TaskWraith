@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isFullShellAccessGranted,
   isPlanInstrumentGrantHold,
+  isPostureApprovalOnlyService,
   resolveEffectiveRunPermissions
 } from './EffectiveRunPermissions'
 import type { AppSettings, ExternalPathGrant } from './store/types'
@@ -179,6 +180,43 @@ describe('resolveEffectiveRunPermissions', () => {
       presetId: 'full_access'
     })
     expect(globallyDenied.agenticServices.sketchCanvas).toBe('deny')
+  })
+
+  it('pins the externalPublish ladder: auto at Full WS Access/Full Access, ask below (owner ruling 2026-08-04)', () => {
+    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+      resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: settings(),
+        presetId
+      }).agenticServices.externalPublish
+
+    expect(policyFor('read_only')).toBe('ask')
+    expect(policyFor('plan')).toBe('ask')
+    expect(policyFor('default')).toBe('ask')
+    expect(policyFor('workspace_write')).toBe('allow')
+    expect(policyFor('full_access')).toBe('allow')
+
+    // read_only/plan additionally carry the posture hold so grants/session-YOLO
+    // can never zero-click a publish there; default/write tiers do not.
+    expect(isPostureApprovalOnlyService('read_only', 'externalPublish')).toBe(true)
+    expect(isPostureApprovalOnlyService('plan', 'externalPublish')).toBe(true)
+    expect(isPostureApprovalOnlyService('default', 'externalPublish')).toBe(false)
+    expect(isPostureApprovalOnlyService('workspace_write', 'externalPublish')).toBe(false)
+    expect(isPostureApprovalOnlyService('full_access', 'externalPublish')).toBe(false)
+
+    const globallyDenied = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticServices: {
+          ...settings().agenticServices,
+          externalPublish: 'deny'
+        }
+      }),
+      presetId: 'full_access'
+    })
+    expect(globallyDenied.agenticServices.externalPublish).toBe('deny')
   })
 
   it('pins the file-changes ladder: Accept Edits auto-accepts in-workspace edits', () => {
