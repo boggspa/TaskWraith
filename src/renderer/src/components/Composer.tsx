@@ -115,6 +115,7 @@ import type { SideSlashCommand } from '../lib/SideSlashCommand'
 import { lastRetryableEnsembleUserPrompt } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
+import { agentApprovalEnsembleAttribution } from '../lib/agentApprovalAttribution'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
@@ -1274,6 +1275,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     ? resolveApprovalTimeoutMs(pendingAgentApproval, approvalTimeouts)
     : null
   const approvalCancelPresentation = agentApprovalCancelPresentation(pendingAgentApproval)
+  const approvalEnsembleAttribution = agentApprovalEnsembleAttribution(
+    pendingAgentApproval?.preview
+  )
 
   const confirmTrustedSessionForLane = async (): Promise<void> => {
     if (trustedSessionMutationDisabledReason) {
@@ -5488,6 +5492,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     })()}
                   </span>
                 </div>
+                {approvalEnsembleAttribution && (
+                  <section
+                    className="composer-permission-attribution"
+                    aria-label="Ensemble permission request attribution"
+                  >
+                    <span className="composer-permission-attribution-label">Requested by</span>
+                    <strong>{approvalEnsembleAttribution.role}</strong>
+                    <span className="composer-permission-attribution-detail">
+                      {getProviderLabel(pendingAgentApproval.provider)} · Ensemble participant
+                      {approvalEnsembleAttribution.stageRole
+                        ? ` · ${approvalEnsembleAttribution.stageRole}`
+                        : ''}
+                      {approvalEnsembleAttribution.order
+                        ? ` · seat ${approvalEnsembleAttribution.order}`
+                        : ''}
+                    </span>
+                  </section>
+                )}
                 {agentApprovalCountdownMs != null && (
                   <div
                     id="composer-agent-approval-countdown"

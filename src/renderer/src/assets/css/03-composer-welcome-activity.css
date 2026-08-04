@@ -8798,6 +8798,37 @@ button.composer-run-timecode.is-open {
   letter-spacing: 0.04em;
 }
 
+.composer-permission-attribution {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.composer-permission-attribution-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer-permission-attribution strong {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.composer-permission-attribution-detail {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
 .composer-permission-message {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
