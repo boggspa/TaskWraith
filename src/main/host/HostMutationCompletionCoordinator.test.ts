@@ -61,7 +61,8 @@ function receipt(status: HostCommandReceiptRecord['status']): HostCommandReceipt
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:00:00.000Z',
     generation: POS.generation,
-    cursor: POS.cursor
+    cursor: POS.cursor,
+    ...(status === 'indeterminate' ? { errorCode: 'deferred_envelope_unavailable' as const } : {})
   }
 }
 
@@ -94,16 +95,31 @@ function openCoordinator(overrides: Partial<Ports> = {}): {
     getPosition: overrides.getPosition ?? vi.fn(() => ({ ...POS })),
     completeReceipt:
       overrides.completeReceipt ??
-      vi.fn((input: HostCommandReceiptCompleteInput) => receipt(input.status)),
+      vi.fn((input: HostCommandReceiptCompleteInput) => {
+        const rec = receipt(input.status)
+        if (input.position) {
+          rec.generation = input.position.generation
+          rec.cursor = input.position.cursor
+        }
+        return rec
+      }),
     markIndeterminate:
       overrides.markIndeterminate ??
       vi.fn(
         (
-          _input: HostCommandReceiptMarkIndeterminateInput
-        ): HostCommandReceiptMarkIndeterminateResult => ({
-          kind: 'marked',
-          receipt: receipt('indeterminate')
-        })
+          input: HostCommandReceiptMarkIndeterminateInput
+        ): HostCommandReceiptMarkIndeterminateResult => {
+          const rec = receipt('indeterminate')
+          if (input.position) {
+            rec.generation = input.position.generation
+            rec.cursor = input.position.cursor
+          }
+          rec.errorCode = input.errorCode
+          return {
+            kind: 'marked',
+            receipt: rec
+          }
+        }
       ),
     ...(overrides.markEnvelopeConsumed !== undefined
       ? { markEnvelopeConsumed: overrides.markEnvelopeConsumed }
@@ -257,7 +273,12 @@ describe('HostMutationCompletionCoordinator', () => {
       completeReceipt: vi.fn((input: HostCommandReceiptCompleteInput) => {
         order.push('complete')
         expect(input.position).toEqual(POS_PUBLISHED)
-        return receipt(input.status)
+        const rec = receipt(input.status)
+        if (input.position) {
+          rec.generation = input.position.generation
+          rec.cursor = input.position.cursor
+        }
+        return rec
       }),
       markEnvelopeConsumed: vi.fn(() => {
         order.push('envelope')
@@ -564,12 +585,16 @@ describe('HostMutationCompletionCoordinator', () => {
     assertBodyFree(result)
   })
 
-  it('markIndeterminate already_indeterminate is idempotent success', () => {
+  it('markIndeterminate already_indeterminate returns durable receipt position and errorCode', () => {
+    const durableReceipt = receipt('indeterminate')
+    durableReceipt.generation = 7
+    durableReceipt.cursor = 99
+    durableReceipt.errorCode = 'deferred_effects_partial'
     const { coordinator } = openCoordinator({
       markIndeterminate: vi.fn(
         (): HostCommandReceiptMarkIndeterminateResult => ({
           kind: 'already_indeterminate',
-          receipt: receipt('indeterminate')
+          receipt: durableReceipt
         })
       )
     })
@@ -585,8 +610,8 @@ describe('HostMutationCompletionCoordinator', () => {
       })
     ).toEqual({
       kind: 'indeterminate',
-      errorCode: 'deferred_receipt_uncertain',
-      position: POS
+      errorCode: 'deferred_effects_partial',
+      position: { generation: 7, cursor: 99 }
     })
   })
 
@@ -698,6 +723,356 @@ describe('HostMutationCompletionCoordinator', () => {
       mutation: { kind: 'observed', execution: CANCELLED, effects: [] }
     }) as Extract<HostMutationCompletionResult, { kind: 'completed' }>
     expect(emptyResult.position).toEqual({ generation: 2, cursor: 7 })
+  })
+
+  it('same-terminal replay returns durable position when it differs from candidate', () => {
+    const envelope = vi.fn(() => ({ kind: 'existing' as const }))
+    // Durable receipt has a different generation/cursor than the candidate.
+    const durableCompleted = receipt('succeeded')
+    durableCompleted.generation = 5
+    durableCompleted.cursor = 77
+    const { coordinator } = openCoordinator({
+      completeReceipt: vi.fn(() => durableCompleted),
+      markEnvelopeConsumed: envelope
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+    })
+    expect(result).toEqual({
+      kind: 'completed',
+      status: 'succeeded',
+      position: { generation: 5, cursor: 77 },
+      envelope: 'existing'
+    })
+    expect(envelope).toHaveBeenCalledTimes(1)
+  })
+
+  it('completed result uses durable record status, not candidate', () => {
+    // Store returns existing 'failed' on a 'succeeded' completion attempt
+    // (idempotent cross-status mismatch handled by store, but if store
+    //  returns different-status record, coordinator treats it as anomaly).
+    const differentStatus = receipt('failed')
+    const { coordinator } = openCoordinator({
+      completeReceipt: vi.fn(() => differentStatus)
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'complete_refused' })
+  })
+
+  it('completed result with wrong commandId in record → anomaly, zero envelope', () => {
+    const envelope = vi.fn(() => ({ kind: 'updated' as const }))
+    const wrongId = receipt('succeeded')
+    wrongId.commandId = '99999999-9999-4999-8999-999999999999'
+    const { coordinator } = openCoordinator({
+      completeReceipt: vi.fn(() => wrongId),
+      markEnvelopeConsumed: envelope
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'complete_refused' })
+    expect(envelope).not.toHaveBeenCalled()
+  })
+
+  it('completed result with NaN generation → anomaly, zero envelope', () => {
+    const envelope = vi.fn(() => ({ kind: 'updated' as const }))
+    const badRecord = receipt('succeeded')
+    badRecord.generation = NaN
+    const { coordinator } = openCoordinator({
+      completeReceipt: vi.fn(() => badRecord),
+      markEnvelopeConsumed: envelope
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'complete_refused' })
+    expect(envelope).not.toHaveBeenCalled()
+  })
+
+  it('completed result with negative cursor → anomaly', () => {
+    const badRecord = receipt('succeeded')
+    badRecord.cursor = -1
+    const { coordinator } = openCoordinator({
+      completeReceipt: vi.fn(() => badRecord)
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+      })
+    ).toEqual({ kind: 'anomaly', reason: 'complete_refused' })
+  })
+
+  it('indeterminate receipt with wrong commandId → anomaly', () => {
+    const wrongId = receipt('indeterminate')
+    wrongId.commandId = '99999999-9999-4999-8999-999999999999'
+    const { coordinator } = openCoordinator({
+      markIndeterminate: vi.fn(
+        (): HostCommandReceiptMarkIndeterminateResult => ({
+          kind: 'marked',
+          receipt: wrongId
+        })
+      )
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: {
+          kind: 'observation_failed',
+          execution: FAILED,
+          effects: [],
+          reason: 'diff_incoherent'
+        }
+      })
+    ).toEqual({ kind: 'anomaly', reason: 'mark_indeterminate_refused' })
+  })
+
+  it('indeterminate receipt with non-indeterminate status → anomaly', () => {
+    const notIndeterminate = receipt('succeeded' as never)
+    const { coordinator } = openCoordinator({
+      markIndeterminate: vi.fn(
+        (): HostCommandReceiptMarkIndeterminateResult => ({
+          kind: 'marked',
+          receipt: notIndeterminate
+        })
+      )
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: {
+          kind: 'observation_failed',
+          execution: FAILED,
+          effects: [],
+          reason: 'diff_incoherent'
+        }
+      })
+    ).toEqual({ kind: 'anomaly', reason: 'mark_indeterminate_refused' })
+  })
+
+  it('indeterminate receipt with invalid errorCode → anomaly', () => {
+    const badCode = receipt('indeterminate')
+    badCode.errorCode = 'not_a_valid_code'
+    const { coordinator } = openCoordinator({
+      markIndeterminate: vi.fn(
+        (): HostCommandReceiptMarkIndeterminateResult => ({
+          kind: 'marked',
+          receipt: badCode
+        })
+      )
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: {
+          kind: 'observation_failed',
+          execution: FAILED,
+          effects: [],
+          reason: 'diff_incoherent'
+        }
+      })
+    ).toEqual({ kind: 'anomaly', reason: 'mark_indeterminate_refused' })
+  })
+
+  it('indeterminate receipt with NaN generation → anomaly', () => {
+    const badRecord = receipt('indeterminate')
+    badRecord.generation = NaN
+    const { coordinator } = openCoordinator({
+      markIndeterminate: vi.fn(
+        (): HostCommandReceiptMarkIndeterminateResult => ({
+          kind: 'marked',
+          receipt: badRecord
+        })
+      )
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: {
+          kind: 'observation_failed',
+          execution: FAILED,
+          effects: [],
+          reason: 'diff_incoherent'
+        }
+      })
+    ).toEqual({ kind: 'anomaly', reason: 'mark_indeterminate_refused' })
+  })
+
+  it('negative position from getPosition → host_unavailable, zero receipt mutation', () => {
+    const { coordinator, ports } = openCoordinator({
+      getPosition: vi.fn(() => ({ generation: 0, cursor: -1 }))
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+      })
+    ).toEqual({ kind: 'host_unavailable' })
+    expect(ports.completeReceipt).not.toHaveBeenCalled()
+  })
+
+  it('fractional position from getPosition → host_unavailable', () => {
+    const { coordinator, ports } = openCoordinator({
+      getPosition: vi.fn(() => ({ generation: 3, cursor: 3.5 }))
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+      })
+    ).toEqual({ kind: 'host_unavailable' })
+    expect(ports.completeReceipt).not.toHaveBeenCalled()
+  })
+
+  it('NaN position from getPosition → host_unavailable', () => {
+    const { coordinator, ports } = openCoordinator({
+      getPosition: vi.fn(() => ({ generation: NaN, cursor: 0 }))
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: { kind: 'observed', execution: SUCCESS, effects: [] }
+      })
+    ).toEqual({ kind: 'host_unavailable' })
+    expect(ports.completeReceipt).not.toHaveBeenCalled()
+  })
+
+  it('Infinity position from publisher → anomaly, zero receipt mutation', () => {
+    const { coordinator, ports } = openCoordinator({
+      publishEffects: vi.fn(
+        (): HostDomainDeltaPublishResult => ({
+          kind: 'published',
+          position: { generation: Infinity, cursor: 0 },
+          count: 1,
+          results: []
+        })
+      )
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [EFFECT] }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'publish_threw' })
+    expect(ports.completeReceipt).not.toHaveBeenCalled()
+  })
+
+  it('invalid publisher rejected position → anomaly', () => {
+    const { coordinator, ports } = openCoordinator({
+      publishEffects: vi.fn(
+        (): HostDomainDeltaPublishResult => ({
+          kind: 'rejected',
+          reason: 'validation_failed',
+          failures: [],
+          position: { generation: 0, cursor: -1 }
+        })
+      )
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [EFFECT] }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'publish_threw' })
+    expect(ports.markIndeterminate).not.toHaveBeenCalled()
+  })
+
+  it('invalid publisher partial position → anomaly', () => {
+    const { coordinator, ports } = openCoordinator({
+      publishEffects: vi.fn(
+        (): HostDomainDeltaPublishResult => ({
+          kind: 'partial',
+          position: { generation: 0, cursor: 0.5 },
+          publishedCount: 0,
+          results: [],
+          failedAtIndex: 0,
+          failure: { kind: 'store_error', detail: 'err' }
+        })
+      )
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [EFFECT] }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'publish_threw' })
+    expect(ports.markIndeterminate).not.toHaveBeenCalled()
+  })
+
+  it('invalid publisher store_error non-null position → anomaly', () => {
+    const { coordinator, ports } = openCoordinator({
+      publishEffects: vi.fn(
+        (): HostDomainDeltaPublishResult => ({
+          kind: 'store_error',
+          detail: 'err',
+          position: { generation: NaN, cursor: 0 }
+        })
+      )
+    })
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: { kind: 'observed', execution: SUCCESS, effects: [EFFECT] }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'publish_threw' })
+    expect(ports.markIndeterminate).not.toHaveBeenCalled()
+  })
+
+  it('malformed observed execution shape → anomaly, zero port calls', () => {
+    const { coordinator, ports } = openCoordinator()
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: {
+        kind: 'observed',
+        execution: null as never,
+        effects: []
+      }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'invalid_command_id' })
+    expect(ports.publishEffects).not.toHaveBeenCalled()
+    expect(ports.completeReceipt).not.toHaveBeenCalled()
+    expect(ports.markIndeterminate).not.toHaveBeenCalled()
+  })
+
+  it('malformed observed effects non-array → anomaly, zero port calls', () => {
+    const { coordinator, ports } = openCoordinator()
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: {
+        kind: 'observed',
+        execution: SUCCESS,
+        effects: null as never
+      }
+    })
+    expect(result).toEqual({ kind: 'anomaly', reason: 'invalid_command_id' })
+    expect(ports.publishEffects).not.toHaveBeenCalled()
+    expect(ports.completeReceipt).not.toHaveBeenCalled()
+  })
+
+  it('already_indeterminate receipt with missing errorCode → anomaly', () => {
+    const noCode = receipt('indeterminate')
+    delete (noCode as Record<string, unknown>).errorCode
+    const { coordinator } = openCoordinator({
+      markIndeterminate: vi.fn(
+        (): HostCommandReceiptMarkIndeterminateResult => ({
+          kind: 'already_indeterminate',
+          receipt: noCode
+        })
+      )
+    })
+    expect(
+      coordinator.complete({
+        commandId: COMMAND_ID,
+        mutation: {
+          kind: 'observation_failed',
+          execution: FAILED,
+          effects: [],
+          reason: 'diff_incoherent'
+        }
+      })
+    ).toEqual({ kind: 'anomaly', reason: 'mark_indeterminate_refused' })
   })
 
   it('production module has no Authority/AppStore/E/resolver/bootstrap/root imports', () => {

@@ -20,13 +20,14 @@
 
 import type { HostCursorPosition } from '../../shared/hostProtocol'
 import type { HostBridgeCommandExecutorResult } from './HostBridgeCommandExecutor'
-import type {
-  HostCommandReceiptCompleteInput,
-  HostCommandReceiptIndeterminateCode,
-  HostCommandReceiptMarkIndeterminateInput,
-  HostCommandReceiptMarkIndeterminateResult,
-  HostCommandReceiptRecord,
-  HostCommandReceiptTerminalStatus
+import {
+  HOST_COMMAND_RECEIPT_INDETERMINATE_CODES,
+  type HostCommandReceiptCompleteInput,
+  type HostCommandReceiptIndeterminateCode,
+  type HostCommandReceiptMarkIndeterminateInput,
+  type HostCommandReceiptMarkIndeterminateResult,
+  type HostCommandReceiptRecord,
+  type HostCommandReceiptTerminalStatus
 } from './HostCommandReceiptStore'
 import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type { HostObservedMutationResult } from './HostObservedMutationExecutor'
@@ -116,6 +117,21 @@ function toReceiptPosition(position: HostCursorPosition): {
 
 function clonePosition(position: HostCursorPosition): HostCursorPosition {
   return { generation: position.generation, cursor: position.cursor }
+}
+
+function isValidPosition(position: unknown): position is HostCursorPosition {
+  if (!position || typeof position !== 'object') return false
+  const p = position as HostCursorPosition
+  return (
+    typeof p.generation === 'number' &&
+    typeof p.cursor === 'number' &&
+    Number.isFinite(p.generation) &&
+    Number.isFinite(p.cursor) &&
+    Number.isInteger(p.generation) &&
+    Number.isInteger(p.cursor) &&
+    p.generation >= 0 &&
+    p.cursor >= 0
+  )
 }
 
 /**
@@ -214,6 +230,13 @@ export class HostMutationCompletionCoordinator {
     execution: HostBridgeCommandExecutorResult,
     effects: readonly HostDomainEffectDto[]
   ): HostMutationCompletionResult {
+    // Defensive guard: malformed internal input → closed anomaly, zero port calls.
+    if (!execution || typeof execution !== 'object' || typeof execution.status !== 'string') {
+      return { kind: 'anomaly', reason: 'invalid_command_id' }
+    }
+    if (!Array.isArray(effects)) {
+      return { kind: 'anomaly', reason: 'invalid_command_id' }
+    }
     const status = execution.status
     if (status !== 'succeeded' && status !== 'failed' && status !== 'cancelled') {
       return { kind: 'anomaly', reason: 'invalid_command_id' }
@@ -241,7 +264,10 @@ export class HostMutationCompletionCoordinator {
     }
 
     switch (publishResult.kind) {
-      case 'published':
+      case 'published': {
+        if (!isValidPosition(publishResult.position)) {
+          return { kind: 'anomaly', reason: 'publish_threw' }
+        }
         return this.finalizeTerminal(
           commandId,
           status,
@@ -249,22 +275,34 @@ export class HostMutationCompletionCoordinator {
           executionFields(execution),
           { consumeEnvelope: true }
         )
-      case 'rejected':
+      }
+      case 'rejected': {
+        if (!isValidPosition(publishResult.position)) {
+          return { kind: 'anomaly', reason: 'publish_threw' }
+        }
         return this.promoteIndeterminateAt(
           commandId,
           clonePosition(publishResult.position),
           'deferred_effects_unavailable'
         )
-      case 'partial':
+      }
+      case 'partial': {
+        if (!isValidPosition(publishResult.position)) {
+          return { kind: 'anomaly', reason: 'publish_threw' }
+        }
         return this.promoteIndeterminateAt(
           commandId,
           clonePosition(publishResult.position),
           'deferred_effects_partial'
         )
+      }
       case 'store_error': {
         if (publishResult.position === null) {
           // Unknown journal advance — leave pending for reopen promotion.
           return { kind: 'host_unavailable' }
+        }
+        if (!isValidPosition(publishResult.position)) {
+          return { kind: 'anomaly', reason: 'publish_threw' }
         }
         return this.promoteIndeterminateAt(
           commandId,
@@ -309,12 +347,30 @@ export class HostMutationCompletionCoordinator {
       return { kind: 'anomaly', reason: 'complete_refused' }
     }
 
+    // Validate returned durable record: commandId, status, and position must be
+    // honest. On idempotent same-terminal replay the store returns the original
+    // durable record whose generation/cursor may differ from the candidate.
+    if (
+      record.commandId !== commandId ||
+      record.status !== status ||
+      !isValidPosition({ generation: record.generation, cursor: record.cursor })
+    ) {
+      return { kind: 'anomaly', reason: 'complete_refused' }
+    }
+
+    const durablePosition: HostCursorPosition = {
+      generation: record.generation as number,
+      cursor: record.cursor as number
+    }
+    const durableStatus: HostCommandReceiptTerminalStatus =
+      record.status as HostCommandReceiptTerminalStatus
+
     // Envelope only after durable terminal complete (incl. idempotent replay).
     if (!options.consumeEnvelope || !this.markEnvelopeConsumed) {
       return {
         kind: 'completed',
-        status,
-        position: clonePosition(position)
+        status: durableStatus,
+        position: clonePosition(durablePosition)
       }
     }
 
@@ -332,8 +388,8 @@ export class HostMutationCompletionCoordinator {
     // Envelope anomaly must not rewrite the receipt outcome.
     return {
       kind: 'completed',
-      status,
-      position: clonePosition(position),
+      status: durableStatus,
+      position: clonePosition(durablePosition),
       envelope
     }
   }
@@ -364,10 +420,29 @@ export class HostMutationCompletionCoordinator {
     }
 
     if (result.kind === 'marked' || result.kind === 'already_indeterminate') {
+      const receipt = result.receipt
+      // Validate receipt identity, indeterminate status, durable position,
+      // and closed error code. On idempotent already_indeterminate replay the
+      // store returns the original durable receipt whose position/errorCode
+      // may differ from the candidate.
+      if (
+        receipt.commandId !== commandId ||
+        receipt.status !== 'indeterminate' ||
+        !isValidPosition({ generation: receipt.generation, cursor: receipt.cursor }) ||
+        typeof receipt.errorCode !== 'string' ||
+        !HOST_COMMAND_RECEIPT_INDETERMINATE_CODES.has(
+          receipt.errorCode as HostCommandReceiptIndeterminateCode
+        )
+      ) {
+        return { kind: 'anomaly', reason: 'mark_indeterminate_refused' }
+      }
       return {
         kind: 'indeterminate',
-        errorCode,
-        position: clonePosition(position)
+        errorCode: receipt.errorCode as HostCommandReceiptIndeterminateCode,
+        position: {
+          generation: receipt.generation as number,
+          cursor: receipt.cursor as number
+        }
       }
     }
     return { kind: 'anomaly', reason: 'mark_indeterminate_refused' }
@@ -376,14 +451,7 @@ export class HostMutationCompletionCoordinator {
   private readPosition(): HostCursorPosition | null {
     try {
       const position = this.getPosition()
-      if (
-        !position ||
-        typeof position !== 'object' ||
-        typeof position.generation !== 'number' ||
-        typeof position.cursor !== 'number' ||
-        !Number.isFinite(position.generation) ||
-        !Number.isFinite(position.cursor)
-      ) {
+      if (!isValidPosition(position)) {
         return null
       }
       return clonePosition(position)
