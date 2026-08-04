@@ -99,6 +99,13 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       truncated: false
     }),
     reload: async () => {},
+    navigate: async (_id, input) => ({
+      url: input.url || 'https://example.test/after',
+      title: 'T',
+      isLoading: false,
+      canGoBack: input.action !== 'back',
+      canGoForward: input.action === 'back'
+    }),
     close: async () => {},
     ...over
   }

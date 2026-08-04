@@ -404,6 +404,28 @@ export interface CanvasSessionHandle {
   viewport: CanvasViewport
 }
 
+/** Chrome-style history verbs for the web driver's browser surface. */
+export type CanvasNavigationAction = 'back' | 'forward' | 'reload' | 'stop'
+
+/** One navigation request: exactly one of `url` (absolute http/https) or `action`. */
+export interface CanvasNavigateInput {
+  url?: string
+  action?: CanvasNavigationAction
+}
+
+/**
+ * Live navigation state of a web canvas — what browser chrome renders (address
+ * bar, back/forward, spinner). Ephemeral UI state, never persisted as-is: the
+ * durable session record stores only the query-redacted URL + title.
+ */
+export interface CanvasNavState {
+  url: string
+  title: string
+  isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
 /**
  * The internal driver contract — NOT the MCP surface. CanvasService talks to a
  * driver; the MCP tools talk to CanvasService. Drivers are injected so the
@@ -428,6 +450,14 @@ export interface CanvasDriver {
   evaluate(args: { script: string }): Promise<CanvasEvalResult>
   /** Re-navigate the surface to its current page (web: webContents.reload). */
   reload(): Promise<void>
+  /**
+   * Browser-style navigation (web driver only). A driver that does not host a
+   * navigable page leaves this undefined; CanvasService then refuses the verb
+   * with a typed error instead of a silent no-op.
+   */
+  navigate?(input: CanvasNavigateInput): Promise<CanvasNavState>
+  /** Live chrome state (web driver only). Synchronous read of the surface. */
+  navState?(): CanvasNavState
   close(): Promise<void>
 }
 
@@ -441,6 +471,10 @@ export interface CanvasSessionSummary {
   viewport: CanvasViewport
   createdAt: string
   updatedAt: string
+  /** Live browser-chrome state; present only for open web-driver sessions. */
+  isLoading?: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
 }
 
 /** Persisted session record (audit / history). */
@@ -480,6 +514,7 @@ export type CanvasEventKind =
   | 'eval.started'
   | 'eval.completed'
   | 'reload'
+  | 'navigation'
 
 /**
  * Audit event. `detail` is REDACTED, structured metadata only — never pixel
@@ -549,6 +584,12 @@ export interface CanvasController {
     ctx: CanvasCallContext
   ): Promise<CanvasEvalResult>
   reload(canvasId: string, ctx: CanvasCallContext): Promise<void>
+  /** Browser navigation on a web canvas (goto/back/forward/reload/stop). */
+  navigate(
+    canvasId: string,
+    input: CanvasNavigateInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasNavState>
   close(canvasId: string, ctx: CanvasCallContext): Promise<void>
 }
 

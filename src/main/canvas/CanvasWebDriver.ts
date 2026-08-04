@@ -39,6 +39,8 @@ import type {
   CanvasEvalResult,
   CanvasFrame,
   CanvasMark,
+  CanvasNavigateInput,
+  CanvasNavState,
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
@@ -69,6 +71,8 @@ const EVAL_EGRESS_HOLD_MS = 300
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const LOAD_TIMEOUT_MS = 20000
+// History/reload settle wait — deliberately short and non-fatal (see settleAfter).
+const NAV_SETTLE_TIMEOUT_MS = 8000
 
 const DEFAULT_INSPECT_STYLES = [
   'color',
@@ -622,6 +626,13 @@ export interface CanvasWebDriverDeps {
   createSurface?: (opts: CanvasSurfaceOptions) => CanvasHostSurface
   /** Injectable DNS seam for SSRF/rebinding tests. Production uses dns.lookup. */
   resolveHost?: CanvasResolveHost
+  /**
+   * Live browser-chrome state stream (address bar / back-forward / spinner).
+   * Ephemeral: consumers must not persist raw URLs from it.
+   */
+  onNavState?: (state: CanvasNavState) => void
+  /** Fired once per committed main-frame / in-page navigation (url settled). */
+  onNavigationCommitted?: (state: CanvasNavState) => void
 }
 
 type SnapshotScriptResult = Omit<CanvasElementTree, 'capturedAt' | 'inputEpoch'> & {
@@ -663,12 +674,16 @@ export class CanvasWebDriver implements CanvasDriver {
   private readonly mainInputEpochByTrustedEpoch = new Map<number, number>()
   /** Epoch-ms until which the human owns the surface. */
   private userActiveUntil = 0
+  private readonly onNavState?: (state: CanvasNavState) => void
+  private readonly onNavigationCommitted?: (state: CanvasNavState) => void
 
   constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
     // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
     this.partition = `canvas-${sessionId}`
     this.createSurface = deps.createSurface ?? createBrowserWindowSurface
     this.resolveHost = deps.resolveHost
+    this.onNavState = deps.onNavState
+    this.onNavigationCommitted = deps.onNavigationCommitted
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -734,8 +749,26 @@ export class CanvasWebDriver implements CanvasDriver {
     this.surface = surface
     const wc = surface.webContents
 
-    // Block popups / window.open — no new windows escape the canvas.
-    wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+    // Single-page-browser popup policy: no new window EVER escapes the canvas,
+    // but a target=_blank / window.open link navigates THIS surface in place
+    // (when the URL passes the same open-gate policy), matching what a user
+    // expects from a one-pane browser. A rejected URL is simply dropped.
+    wc.setWindowOpenHandler((details) => {
+      const verdict = validateCanvasUrl(details.url || '', this.allowlist)
+      if (verdict.ok && verdict.normalizedUrl && !this.closeRequested) {
+        void wc.loadURL(verdict.normalizedUrl).catch(() => {
+          // Load failures surface through did-fail-load / nav-state; never throw here.
+        })
+      }
+      return { action: 'deny' }
+    })
+    // Main-frame navigation gate for IN-PAGE causes (link clicks, meta refresh,
+    // page scripts): the per-request SSRF hook below already cancels blocked
+    // http(s) requests, but only will-navigate can refuse a scheme change
+    // (file:, chrome:, custom protocols) before Chromium commits it.
+    wc.on('will-navigate', (event, url) => {
+      if (!validateCanvasUrl(url || '', this.allowlist).ok) event.preventDefault()
+    })
     this.hardenSession(wc)
     // The origin allowlist is enforced per-request in attachNetwork via
     // webRequest.onBeforeRequest (covers the main frame, subframes, subresources
@@ -751,6 +784,7 @@ export class CanvasWebDriver implements CanvasDriver {
     })
     this.attachNetwork(wc)
     this.attachUserInputWatch(wc)
+    this.attachNavigationWatch(wc)
     surface.onClosed(() => {
       if (this.surface === surface) this.surface = null
     })
@@ -849,6 +883,137 @@ export class CanvasWebDriver implements CanvasDriver {
       // Older Electron without 'input-event'. The guard then never engages;
       // the element preconditions and the serialization lock still apply.
     }
+  }
+
+  /**
+   * Browser-chrome state stream. Every signal here is a cheap sync read at
+   * event time; consumers throttle/render, and nothing raw is persisted (the
+   * committed callback's consumer redacts before any durable write).
+   */
+  private attachNavigationWatch(wc: WebContents): void {
+    if (!this.onNavState && !this.onNavigationCommitted) return
+    const emitState = (): void => {
+      if (this.closeRequested || !this.surface || this.surface.isDestroyed()) return
+      try {
+        this.onNavState?.(this.navState())
+      } catch {
+        // A chrome listener must never break the page lifecycle.
+      }
+    }
+    const emitCommitted = (): void => {
+      if (this.closeRequested || !this.surface || this.surface.isDestroyed()) return
+      try {
+        this.onNavigationCommitted?.(this.navState())
+      } catch {
+        // Same: navigation bookkeeping is advisory to the driver.
+      }
+      emitState()
+    }
+    wc.on('did-start-loading', emitState)
+    wc.on('did-stop-loading', emitState)
+    wc.on('page-title-updated', emitState)
+    wc.on('did-navigate', emitCommitted)
+    wc.on('did-navigate-in-page', emitCommitted)
+  }
+
+  navState(): CanvasNavState {
+    const surface = this.requireSurface()
+    const wc = surface.webContents
+    let canGoBack = false
+    let canGoForward = false
+    try {
+      canGoBack = wc.navigationHistory.canGoBack()
+      canGoForward = wc.navigationHistory.canGoForward()
+    } catch {
+      // History may be unavailable mid-teardown; report a chrome-safe default.
+    }
+    let isLoading = false
+    try {
+      isLoading = wc.isLoading()
+    } catch {
+      // Same teardown tolerance.
+    }
+    return {
+      url: wc.getURL() || '',
+      title: surface.getTitle(),
+      isLoading,
+      canGoBack,
+      canGoForward
+    }
+  }
+
+  async navigate(input: CanvasNavigateInput): Promise<CanvasNavState> {
+    const surface = this.requireSurface()
+    const wc = surface.webContents
+    const action = input.action
+    const rawUrl = (input.url || '').trim()
+    if ((rawUrl && action) || (!rawUrl && !action)) {
+      throw new Error('Provide exactly one of `url` or `action` to navigate.')
+    }
+    if (rawUrl) {
+      // Same open-gate + DNS policy as the initial load: http(s) only,
+      // link-local/metadata blocked, private hosts only via the allowlist.
+      const verdict = validateCanvasUrl(rawUrl, this.allowlist)
+      if (!verdict.ok || !verdict.normalizedUrl) {
+        throw new Error(verdict.reason || 'Canvas URL was rejected.')
+      }
+      await assertCanvasDnsAllowed(verdict.normalizedUrl, this.allowlist, this.resolveHost)
+      if (this.closeRequested) {
+        throw new Error('Canvas navigation was cancelled because the driver was closed.')
+      }
+      await this.loadUrl(wc, verdict.normalizedUrl)
+      return this.navState()
+    }
+    if (action === 'stop') {
+      try {
+        wc.stop()
+      } catch {
+        // Nothing loading is a normal outcome.
+      }
+      return this.navState()
+    }
+    if (action === 'reload') {
+      await this.settleAfter(wc, () => wc.reload())
+      return this.navState()
+    }
+    const history = wc.navigationHistory
+    if (action === 'back') {
+      if (!history.canGoBack()) throw new Error('Nothing earlier in this canvas history.')
+      await this.settleAfter(wc, () => history.goBack())
+      return this.navState()
+    }
+    if (!history.canGoForward()) throw new Error('Nothing later in this canvas history.')
+    await this.settleAfter(wc, () => history.goForward())
+    return this.navState()
+  }
+
+  /**
+   * Kick a history/reload navigation and wait for it to settle. Unlike the
+   * initial open, a settle miss is NOT an error: SPA history steps commit with
+   * no load events at all, so the timeout falls through to the live state.
+   */
+  private settleAfter(wc: WebContents, kick: () => void): Promise<void> {
+    return new Promise<void>((resolvePromise) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        wc.removeListener('did-stop-loading', finish)
+        wc.removeListener('did-navigate', finish)
+        wc.removeListener('did-navigate-in-page', finish)
+        resolvePromise()
+      }
+      const timer = setTimeout(finish, NAV_SETTLE_TIMEOUT_MS)
+      wc.on('did-stop-loading', finish)
+      wc.on('did-navigate', finish)
+      wc.on('did-navigate-in-page', finish)
+      try {
+        kick()
+      } catch {
+        finish()
+      }
+    })
   }
 
   private attachNetwork(wc: WebContents): void {

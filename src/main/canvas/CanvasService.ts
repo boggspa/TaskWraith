@@ -30,6 +30,8 @@ import type {
   CanvasFrame,
   CanvasInspectInput,
   CanvasMark,
+  CanvasNavigateInput,
+  CanvasNavState,
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
@@ -65,6 +67,10 @@ export interface CanvasServiceDeps {
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
+      /** Live browser-chrome state stream for the web driver (ephemeral). */
+      onNavState?: (state: CanvasNavState) => void
+      /** Committed main-frame / in-page navigation (url settled). */
+      onNavigationCommitted?: (state: CanvasNavState) => void
     }
   ) => CanvasDriver
   store: CanvasStore
@@ -72,10 +78,23 @@ export interface CanvasServiceDeps {
   now: () => string
   /** Broadcast an audit event to the renderer (already persisted by the service). */
   broadcast?: (event: CanvasEventRecord) => void
+  /**
+   * Push ephemeral browser-chrome state (address bar / back-forward / spinner)
+   * to the renderer. NEVER persisted here: the durable record keeps only the
+   * query-redacted URL + title via the committed-navigation path.
+   */
+  broadcastNavState?: (payload: CanvasNavStateBroadcast) => void
   logger?: Pick<Console, 'warn' | 'error'>
   maxInteractionsPerSession?: number
   maxEvalsPerSession?: number
   historyParticipants?: readonly CanvasHistoryParticipant[]
+}
+
+export interface CanvasNavStateBroadcast {
+  canvasId: string
+  chatId?: string
+  workspacePath?: string
+  state: CanvasNavState
 }
 
 interface LiveSession {
@@ -457,6 +476,40 @@ export class CanvasService implements CanvasController {
     }
   }
 
+  /**
+   * Keep the durable session record truthful as the web surface navigates —
+   * whoever caused the navigation (tool verb, user link click, redirect). Only
+   * the query-redacted URL + title are written, and only when they actually
+   * changed, so an SPA's chatty in-page transitions don't grind the store.
+   */
+  private recordNavigationCommitted(
+    canvasId: string,
+    generation: number,
+    ctx: CanvasCallContext,
+    state: CanvasNavState
+  ): void {
+    if (
+      generation !== this.generation ||
+      this.canvasGenerations.get(canvasId) !== generation ||
+      this.contextHistoryBlocked(ctx)
+    ) {
+      return
+    }
+    const session = this.sessions.get(canvasId)
+    // During the initial load the session is still pending; open() writes the
+    // settled record itself, so there is nothing to update yet.
+    if (!session || session.generation !== generation) return
+    const url = redactUrlQuery(state.url)
+    const title = state.title
+    if (session.record.url === url && session.record.title === title) return
+    session.record = { ...session.record, url, title, updatedAt: this.deps.now() }
+    try {
+      this.deps.store.upsertSession(session.record)
+    } catch (err) {
+      this.deps.logger?.warn?.(`canvas: failed to persist navigation update: ${String(err)}`)
+    }
+  }
+
   async open(
     input: CanvasOpenInput,
     ctx: CanvasCallContext
@@ -595,7 +648,33 @@ export class CanvasService implements CanvasController {
                 this.persistSketchDocument(sketchScope, document)
               }
             }
-          : undefined
+          : undefined,
+        ...(driverKind === 'web'
+          ? {
+              onNavState: (state: CanvasNavState) => {
+                if (
+                  generation !== this.generation ||
+                  this.canvasGenerations.get(canvasId) !== generation ||
+                  this.contextHistoryBlocked(ctx)
+                ) {
+                  return
+                }
+                try {
+                  this.deps.broadcastNavState?.({
+                    canvasId,
+                    chatId: ctx.chatId,
+                    workspacePath: ctx.workspacePath,
+                    state
+                  })
+                } catch {
+                  // Chrome state is advisory; the renderer may be gone.
+                }
+              },
+              onNavigationCommitted: (state: CanvasNavState) => {
+                this.recordNavigationCommitted(canvasId, generation, ctx, state)
+              }
+            }
+          : {})
       })
     } catch (error) {
       if (this.canvasGenerations.get(canvasId) === generation) {
@@ -721,6 +800,24 @@ export class CanvasService implements CanvasController {
     }
   }
 
+  /** Summary of a LIVE session, enriched with browser-chrome state when available. */
+  private liveSummary(session: LiveSession): CanvasSessionSummary {
+    const summary = toSummary(session.record)
+    if (session.record.driver === 'web') {
+      try {
+        const nav = session.driver.navState?.()
+        if (nav) {
+          summary.isLoading = nav.isLoading
+          summary.canGoBack = nav.canGoBack
+          summary.canGoForward = nav.canGoForward
+        }
+      } catch {
+        // Surface may be tearing down; the plain record summary still stands.
+      }
+    }
+    return summary
+  }
+
   list(ctx: CanvasCallContext): CanvasSessionSummary[] {
     if (this.contextHistoryBlocked(ctx)) return []
     return [...this.sessions.values()]
@@ -730,7 +827,7 @@ export class CanvasService implements CanvasController {
           this.canvasGenerations.get(session.record.id) === session.generation &&
           this.owns(session.record, ctx)
       )
-      .map((session) => toSummary(session.record))
+      .map((session) => this.liveSummary(session))
   }
 
   status(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary | null {
@@ -741,7 +838,7 @@ export class CanvasService implements CanvasController {
       live.generation === this.generation &&
       this.canvasGenerations.get(canvasId) === live.generation
     ) {
-      return this.owns(live.record, ctx) ? toSummary(live.record) : null
+      return this.owns(live.record, ctx) ? this.liveSummary(live) : null
     }
     const persisted = this.deps.store.getSession(canvasId)
     return persisted && this.owns(persisted, ctx) ? toSummary(persisted) : null
@@ -1134,6 +1231,37 @@ export class CanvasService implements CanvasController {
     await session.driver.reload()
     this.assertLiveAfterAwait(canvasId, session, ctx, 'reload')
     this.emit(canvasId, 'reload', ctx)
+  }
+
+  /**
+   * Browser navigation on a web canvas. Serialized with the other page
+   * interactions (a navigation mid-click would invalidate the precondition a
+   * pending actuation just checked) and charged against the same per-session
+   * interaction budget. The audit detail records the SETTLED, query-redacted
+   * URL — never the raw address.
+   */
+  async navigate(
+    canvasId: string,
+    input: CanvasNavigateInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasNavState> {
+    return this.serializeInteraction(canvasId, async () => {
+      const session = this.require(canvasId, ctx)
+      if (!session.driver.navigate) {
+        throw new Error(
+          'Only web canvases support navigation. Open one first (canvas_navigate with a url does this automatically).'
+        )
+      }
+      this.chargeInteraction(session)
+      this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')
+      const state = await session.driver.navigate(input)
+      this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')
+      this.emit(canvasId, 'navigation', ctx, {
+        via: input.url ? 'goto' : input.action,
+        url: redactUrlQuery(state.url)
+      })
+      return state
+    })
   }
 
   async close(canvasId: string, ctx: CanvasCallContext): Promise<void> {

@@ -16,6 +16,8 @@ import type {
   CanvasEventRecord,
   CanvasFrame,
   CanvasMark,
+  CanvasNavigateInput,
+  CanvasNavState,
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
@@ -152,6 +154,26 @@ class FakeDriver implements CanvasDriver {
   reloaded = false
   async reload(): Promise<void> {
     this.reloaded = true
+  }
+  currentNav: CanvasNavState = {
+    url: 'http://localhost:3000/?token=secret',
+    title: 'Fake',
+    isLoading: false,
+    canGoBack: false,
+    canGoForward: false
+  }
+  navigateCalls: CanvasNavigateInput[] = []
+  async navigate(input: CanvasNavigateInput): Promise<CanvasNavState> {
+    this.navigateCalls.push(input)
+    if (input.url) {
+      this.currentNav = { ...this.currentNav, url: input.url, canGoBack: true }
+    } else if (input.action === 'back') {
+      this.currentNav = { ...this.currentNav, canGoBack: false, canGoForward: true }
+    }
+    return this.currentNav
+  }
+  navState(): CanvasNavState {
+    return this.currentNav
   }
   async close(): Promise<void> {
     this.closeCalls += 1
@@ -1033,5 +1055,155 @@ describe('CanvasService', () => {
     expect(store.getSession(b.canvasId)?.chatId).toBe('B')
     expect(store.listEvents(a.canvasId)).toEqual([])
     expect(store.listEvents(b.canvasId).map((entry) => entry.kind)).toContain('session.opened')
+  })
+})
+
+describe('CanvasService browser navigation', () => {
+  let dir: string
+  let store: CanvasStore
+  let fake: FakeDriver
+  let events: CanvasEventRecord[]
+  let navBroadcasts: Array<{ canvasId: string; chatId?: string; state: CanvasNavState }>
+  let service: CanvasService
+  let lastDriverOpts: Parameters<CanvasServiceDeps['createDriver']>[2]
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'canvas-nav-'))
+    store = new CanvasStore(dir)
+    fake = new FakeDriver()
+    events = []
+    navBroadcasts = []
+    lastDriverOpts = undefined
+    let seq = 0
+    service = new CanvasService({
+      createDriver: (_kind, _sessionId, opts) => {
+        lastDriverOpts = opts
+        return fake
+      },
+      store,
+      uuid: () => `id-${++seq}`,
+      now: () => '2026-08-04T00:00:00.000Z',
+      broadcast: (event) => events.push(event),
+      broadcastNavState: (payload) => navBroadcasts.push(payload),
+      maxInteractionsPerSession: 3
+    })
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('navigates a web canvas, audits the redacted settled URL, and returns chrome state', async () => {
+    const opened = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    const state = await service.navigate(
+      opened.canvasId,
+      { url: 'https://example.test/page?session=SECRET' },
+      { chatId: 'A', provider: 'claude' }
+    )
+    expect(fake.navigateCalls).toEqual([{ url: 'https://example.test/page?session=SECRET' }])
+    expect(state.canGoBack).toBe(true)
+    const nav = events.find((event) => event.kind === 'navigation')
+    expect(nav?.detail?.via).toBe('goto')
+    // Audit records the settled URL with the query REDACTED.
+    expect(nav?.detail?.url).toBe('https://example.test/page')
+    expect(String(nav?.detail?.url)).not.toContain('SECRET')
+  })
+
+  it('routes history actions through the driver and audits the action verb', async () => {
+    const opened = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    await service.navigate(opened.canvasId, { action: 'back' }, { chatId: 'A' })
+    expect(fake.navigateCalls).toEqual([{ action: 'back' }])
+    const nav = events.filter((event) => event.kind === 'navigation').at(-1)
+    expect(nav?.detail?.via).toBe('back')
+  })
+
+  it('refuses navigation for a driver without a navigable page', async () => {
+    // Simulate a non-web driver surface (html/image/sketch/device/window):
+    // shadow the prototype method with an own undefined property.
+    Object.defineProperty(fake, 'navigate', { value: undefined, configurable: true })
+    const opened = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    await expect(
+      service.navigate(opened.canvasId, { url: 'https://example.test' }, { chatId: 'A' })
+    ).rejects.toThrow(/Only web canvases/)
+  })
+
+  it('charges the shared interaction budget (navigation cannot bypass the actuation cap)', async () => {
+    const opened = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    await service.navigate(opened.canvasId, { url: 'https://a.test' }, { chatId: 'A' })
+    await service.navigate(opened.canvasId, { url: 'https://b.test' }, { chatId: 'A' })
+    await service.navigate(opened.canvasId, { url: 'https://c.test' }, { chatId: 'A' })
+    await expect(
+      service.navigate(opened.canvasId, { url: 'https://d.test' }, { chatId: 'A' })
+    ).rejects.toThrow(/interaction budget/)
+  })
+
+  it('keeps the durable record truthful on committed navigation — query-redacted, change-only', async () => {
+    const opened = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    lastDriverOpts?.onNavigationCommitted?.({
+      url: 'https://example.test/docs?token=SECRET',
+      title: 'Docs',
+      isLoading: false,
+      canGoBack: true,
+      canGoForward: false
+    })
+    const record = store.getSession(opened.canvasId)
+    expect(record?.url).toBe('https://example.test/docs')
+    expect(record?.title).toBe('Docs')
+    expect(JSON.stringify(record)).not.toContain('SECRET')
+  })
+
+  it('broadcasts ephemeral chrome state with chat attribution and enriches live summaries', async () => {
+    const opened = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    lastDriverOpts?.onNavState?.({
+      url: 'https://example.test/loading',
+      title: 'Loading…',
+      isLoading: true,
+      canGoBack: true,
+      canGoForward: false
+    })
+    expect(navBroadcasts).toHaveLength(1)
+    expect(navBroadcasts[0]).toMatchObject({
+      canvasId: opened.canvasId,
+      chatId: 'A',
+      state: { isLoading: true, canGoBack: true }
+    })
+
+    fake.currentNav = {
+      url: 'https://example.test/loading',
+      title: 'Loading…',
+      isLoading: true,
+      canGoBack: true,
+      canGoForward: false
+    }
+    const summary = service.status(opened.canvasId, { chatId: 'A' })
+    expect(summary?.isLoading).toBe(true)
+    expect(summary?.canGoBack).toBe(true)
+    expect(summary?.canGoForward).toBe(false)
+  })
+
+  it('stops broadcasting and recording after the chat history is cleared', async () => {
+    const opened = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    const authority = { chatIds: ['A'] }
+    try {
+      await service.beginAuthorityHistoryClear(authority)
+    } finally {
+      service.endAuthorityHistoryClear(authority)
+    }
+    lastDriverOpts?.onNavState?.({
+      url: 'https://late.test',
+      title: 'Late',
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false
+    })
+    lastDriverOpts?.onNavigationCommitted?.({
+      url: 'https://late.test',
+      title: 'Late',
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false
+    })
+    expect(navBroadcasts).toHaveLength(0)
+    expect(store.getSession(opened.canvasId)).toBeNull()
   })
 })
