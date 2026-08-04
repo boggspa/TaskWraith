@@ -270,6 +270,22 @@ describe('HostDeferredCommandEnvelopeResolver', () => {
     expectIndeterminate(result, 'store_unavailable')
   })
 
+  it('fails closed without executing H when envelope lookup throws', async () => {
+    const executor = mockExecutor()
+    const result = await execute(validInput(), {
+      envelope: {
+        getByCommandId: vi.fn(() => {
+          throw new Error('secret envelope body')
+        }),
+        markQuarantined: vi.fn()
+      },
+      executor
+    })
+    expectIndeterminate(result, 'store_unavailable')
+    expect(JSON.stringify(result)).not.toContain('secret envelope body')
+    expect(executor.execute).not.toHaveBeenCalled()
+  })
+
   // --- Envelope not found ---------------------------------------------------
 
   it('returns envelope_not_found when envelope is not found', async () => {
@@ -493,13 +509,34 @@ describe('HostDeferredCommandEnvelopeResolver', () => {
     expectIndeterminate(result, 'receipt_not_found')
   })
 
-  it('returns receipt_actor_mismatch when receipt actor does not match', async () => {
+  it('fails closed without executing H when receipt lookup throws', async () => {
+    const executor = mockExecutor()
     const result = await execute(validInput(), {
       receipt: {
+        getByCommandId: vi.fn(() => {
+          throw new Error('secret receipt body')
+        })
+      },
+      executor
+    })
+    expectIndeterminate(result, 'store_unavailable')
+    expect(JSON.stringify(result)).not.toContain('secret receipt body')
+    expect(executor.execute).not.toHaveBeenCalled()
+  })
+
+  it('returns receipt_actor_mismatch without quarantining or executing H', async () => {
+    const markQuarantined = vi.fn()
+    const executor = mockExecutor()
+    const result = await execute(validInput(), {
+      envelope: { markQuarantined },
+      receipt: {
         getByCommandId: vi.fn().mockReturnValue({ kind: 'actor_mismatch' })
-      }
+      },
+      executor
     })
     expectIndeterminate(result, 'receipt_actor_mismatch')
+    expect(markQuarantined).not.toHaveBeenCalled()
+    expect(executor.execute).not.toHaveBeenCalled()
   })
 
   it('returns receipt_incomplete when receipt is incomplete', async () => {
@@ -727,7 +764,73 @@ describe('HostDeferredCommandEnvelopeResolver', () => {
     expectIndeterminate(result, 'receipt_not_deferred')
   })
 
+  it('quarantines actor-confirmed receipt inconsistencies without executing H', async () => {
+    const cases: Array<{
+      code: HostDeferredCommandEnvelopeResolverIndeterminateCode
+      lookup: HostCommandReceiptLookupResult
+    }> = [
+      { code: 'receipt_not_found', lookup: { kind: 'not_found' } },
+      { code: 'receipt_incomplete', lookup: { kind: 'incomplete' } },
+      {
+        code: 'receipt_correlation_mismatch',
+        lookup: {
+          kind: 'found',
+          receipt: makeReceiptRecord({
+            commandId: '99999999-9999-4999-8999-999999999999'
+          })
+        }
+      },
+      {
+        code: 'receipt_not_deferred',
+        lookup: {
+          kind: 'found',
+          receipt: makeReceiptRecord({
+            authority: { decision: 'allowed', reason: 'already authorized' }
+          })
+        }
+      }
+    ]
+
+    for (const testCase of cases) {
+      const markQuarantined = vi.fn().mockReturnValue({ kind: 'updated', state: 'quarantined' })
+      const executor = mockExecutor()
+      const result = await execute(validInput(), {
+        envelope: { markQuarantined },
+        receipt: {
+          getByCommandId: vi.fn().mockReturnValue(testCase.lookup)
+        },
+        executor
+      })
+
+      expectIndeterminate(result, testCase.code)
+      expect(markQuarantined).toHaveBeenCalledWith(
+        'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        ACTOR,
+        'verification_failed'
+      )
+      expect(executor.execute).not.toHaveBeenCalled()
+    }
+  })
+
   // --- Quarantine failure ---------------------------------------------------
+
+  it('returns quarantine_failed without executing H when quarantine throws', async () => {
+    const executor = mockExecutor()
+    const result = await execute(validInput(), {
+      envelope: {
+        markQuarantined: vi.fn(() => {
+          throw new Error('secret quarantine body')
+        })
+      },
+      receipt: {
+        getByCommandId: vi.fn().mockReturnValue({ kind: 'not_found' })
+      },
+      executor
+    })
+    expectIndeterminate(result, 'quarantine_failed')
+    expect(JSON.stringify(result)).not.toContain('secret quarantine body')
+    expect(executor.execute).not.toHaveBeenCalled()
+  })
 
   it('surfaces quarantine_failed without executing H', async () => {
     const executor = mockExecutor()

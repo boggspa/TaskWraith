@@ -151,10 +151,15 @@ export class HostDeferredCommandEnvelopeResolver {
     }
 
     // 2) Actor-bound envelope load.
-    const envelopeResult = this.envelopeStore.getByCommandId(
-      validated.value.commandId,
-      validated.value.actor
-    )
+    let envelopeResult: HostDeferredCommandEnvelopeLookupResult
+    try {
+      envelopeResult = this.envelopeStore.getByCommandId(
+        validated.value.commandId,
+        validated.value.actor
+      )
+    } catch {
+      return { kind: 'indeterminate', code: 'store_unavailable' }
+    }
 
     if (envelopeResult.kind === 'unavailable') {
       return { kind: 'indeterminate', code: 'store_unavailable' }
@@ -257,7 +262,6 @@ export class HostDeferredCommandEnvelopeResolver {
     if (
       verifiedCommand.commandId !== envelopeRecord.commandId ||
       verifiedCommand.idempotencyKey !== envelopeRecord.idempotencyKey ||
-      verifiedCommand.name !== envelopeRecord.commandName ||
       verifiedCommand.actor.actorId !== envelopeRecord.actor.actorId ||
       verifiedCommand.actor.clientId !== envelopeRecord.actor.clientId ||
       verifiedCommand.actor.clientClass !== envelopeRecord.actor.clientClass
@@ -271,19 +275,34 @@ export class HostDeferredCommandEnvelopeResolver {
     }
 
     // 6) Actor-bound receipt lookup.
-    const receiptResult = this.receiptStore.getByCommandId(
-      validated.value.commandId,
-      validated.value.actor
-    )
+    let receiptResult: HostCommandReceiptLookupResult
+    try {
+      receiptResult = this.receiptStore.getByCommandId(
+        validated.value.commandId,
+        validated.value.actor
+      )
+    } catch {
+      return { kind: 'indeterminate', code: 'store_unavailable' }
+    }
 
     if (receiptResult.kind === 'not_found') {
-      return { kind: 'indeterminate', code: 'receipt_not_found' }
+      return this.indeterminateAfterQuarantine(
+        'receipt_not_found',
+        envelopeRecord.deferredId,
+        validated.value.actor,
+        'verification_failed'
+      )
     }
     if (receiptResult.kind === 'actor_mismatch') {
       return { kind: 'indeterminate', code: 'receipt_actor_mismatch' }
     }
     if (receiptResult.kind === 'incomplete') {
-      return { kind: 'indeterminate', code: 'receipt_incomplete' }
+      return this.indeterminateAfterQuarantine(
+        'receipt_incomplete',
+        envelopeRecord.deferredId,
+        validated.value.actor,
+        'verification_failed'
+      )
     }
 
     const receipt = receiptResult.receipt
@@ -300,7 +319,12 @@ export class HostDeferredCommandEnvelopeResolver {
       receipt.actor.actorId === undefined ||
       receipt.actor.clientClass === undefined
     ) {
-      return { kind: 'indeterminate', code: 'receipt_incomplete' }
+      return this.indeterminateAfterQuarantine(
+        'receipt_incomplete',
+        envelopeRecord.deferredId,
+        validated.value.actor,
+        'verification_failed'
+      )
     }
 
     const targetId = singleTargetId(verifiedCommand)
@@ -314,7 +338,12 @@ export class HostDeferredCommandEnvelopeResolver {
       receipt.target.kind !== fingerprintResult.targetKind ||
       receipt.target.id !== targetId
     ) {
-      return { kind: 'indeterminate', code: 'receipt_correlation_mismatch' }
+      return this.indeterminateAfterQuarantine(
+        'receipt_correlation_mismatch',
+        envelopeRecord.deferredId,
+        validated.value.actor,
+        'verification_failed'
+      )
     }
 
     // Terminal receipts are already resolved and must never reach H.
@@ -335,7 +364,12 @@ export class HostDeferredCommandEnvelopeResolver {
       return { kind: 'indeterminate', code: 'receipt_not_pending' }
     }
     if (receipt.authority.decision !== 'deferred') {
-      return { kind: 'indeterminate', code: 'receipt_not_deferred' }
+      return this.indeterminateAfterQuarantine(
+        'receipt_not_deferred',
+        envelopeRecord.deferredId,
+        validated.value.actor,
+        'verification_failed'
+      )
     }
 
     // 7) Execute H exactly once.
@@ -352,7 +386,12 @@ export class HostDeferredCommandEnvelopeResolver {
     actor: HostActorIdentity,
     quarantineCode: HostDeferredCommandEnvelopeQuarantineCode
   ): HostDeferredCommandEnvelopeResolverResult {
-    const result = this.envelopeStore.markQuarantined(deferredId, actor, quarantineCode)
+    let result: HostDeferredCommandEnvelopeTransitionResult
+    try {
+      result = this.envelopeStore.markQuarantined(deferredId, actor, quarantineCode)
+    } catch {
+      return { kind: 'indeterminate', code: 'quarantine_failed' }
+    }
     if (
       (result.kind === 'updated' || result.kind === 'existing') &&
       result.state === 'quarantined'
