@@ -256,10 +256,10 @@ export function CanvasComposerButton({
                 }}
               >
                 <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
-                  Web Canvas
+                  Browser
                 </div>
                 <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                  Open a running app or dev server.
+                  Open a website, your dev server, or a running app.
                 </div>
                 <CanvasPaneLauncher onOpen={(url) => void handleOpen(url)} />
               </div>

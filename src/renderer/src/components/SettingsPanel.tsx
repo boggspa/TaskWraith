@@ -2503,6 +2503,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'canvas_fill',
     'canvas_annotate',
     'canvas_eval',
+    'canvas_navigate',
     'canvas_close',
     'mesh_scene_create',
     'mesh_scene_list',

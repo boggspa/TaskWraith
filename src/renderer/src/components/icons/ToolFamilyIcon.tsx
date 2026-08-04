@@ -307,6 +307,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'canvas_fill':
     case 'canvas_annotate':
     case 'canvas_eval':
+    case 'canvas_navigate':
     case 'canvas_close':
       return 'canvas'
     // Mesh Canvas is its own surface (3D scene service + dock viewer), not the

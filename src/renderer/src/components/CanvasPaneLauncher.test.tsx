@@ -3,11 +3,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 
 describe('CanvasPaneLauncher (static render)', () => {
-  it('renders a URL field (defaulting) and an open button', () => {
+  it('renders an address field with browser placeholder and an open button', () => {
     const html = renderToStaticMarkup(<CanvasPaneLauncher onOpen={() => {}} />)
-    expect(html).toContain('value="http://localhost:3000"')
-    expect(html).toContain('aria-label="Canvas URL"')
-    expect(html).toContain('Open web canvas')
+    expect(html).toContain('placeholder="https://example.com or localhost:3000"')
+    expect(html).toContain('aria-label="Browser URL"')
+    expect(html).toContain('Open browser')
   })
 
   // The open action is the shared rim pill, not a bare native button.
@@ -18,10 +18,17 @@ describe('CanvasPaneLauncher (static render)', () => {
     expect(html).toContain('canvas-pane-launcher-open')
   })
 
-  it('disables the open action when the URL is blank', () => {
-    const blank = renderToStaticMarkup(<CanvasPaneLauncher onOpen={() => {}} defaultUrl="   " />)
+  it('disables the open action until the address normalizes to a web URL', () => {
+    const blank = renderToStaticMarkup(<CanvasPaneLauncher onOpen={() => {}} />)
     expect(blank).toContain('disabled')
-    const filled = renderToStaticMarkup(<CanvasPaneLauncher onOpen={() => {}} />)
+    const nonsense = renderToStaticMarkup(
+      <CanvasPaneLauncher onOpen={() => {}} defaultUrl="not a url" />
+    )
+    expect(nonsense).toContain('disabled')
+    // Scheme-less dev-server addresses count as navigable (http:// is assumed).
+    const filled = renderToStaticMarkup(
+      <CanvasPaneLauncher onOpen={() => {}} defaultUrl="localhost:3000" />
+    )
     expect(filled).not.toContain('disabled')
   })
 

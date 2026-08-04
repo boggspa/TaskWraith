@@ -265,3 +265,126 @@
   font: 10px/1.4 system-ui, sans-serif;
   opacity: 0.45;
 }
+
+/* ---------------------------------------------------------------------------
+   Canvas Browser chrome — the single-pane browser treatment for web canvases.
+   Same corporate-clean language as the rest of the dock: neutral surfaces,
+   hairline borders, opacity hovers; the only "color" is the loading shimmer. */
+
+.canvas-browser-chrome {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+}
+
+.canvas-browser-nav-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.68;
+}
+
+.canvas-browser-nav-button:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.canvas-browser-nav-button:disabled {
+  cursor: default;
+  opacity: 0.26;
+}
+
+.canvas-browser-address {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 12px;
+  background: var(--input-bg, rgba(127, 127, 127, 0.07));
+  overflow: hidden;
+}
+
+.canvas-browser-address:focus-within {
+  border-color: var(--border-strong, rgba(127, 127, 127, 0.5));
+  background: var(--input-bg-focus, rgba(127, 127, 127, 0.04));
+}
+
+.canvas-browser-address-scheme {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.55;
+}
+
+.canvas-browser-address-scheme.is-secure {
+  opacity: 0.7;
+}
+
+.canvas-browser-address-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: 11.5px/1.3 system-ui, sans-serif;
+  padding: 0;
+  text-overflow: ellipsis;
+}
+
+.canvas-browser-address-input::placeholder {
+  color: inherit;
+  opacity: 0.42;
+}
+
+/* Indeterminate loading shimmer along the address bar's bottom hairline. */
+.canvas-browser-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.5px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent, #6e8bff) 35%,
+    var(--accent, #6e8bff) 65%,
+    transparent 100%
+  );
+  background-size: 60% 100%;
+  background-repeat: no-repeat;
+  animation: canvas-browser-progress-slide 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes canvas-browser-progress-slide {
+  0% {
+    background-position: -60% 0;
+  }
+  100% {
+    background-position: 160% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-browser-progress {
+    animation: none;
+    background-size: 100% 100%;
+    opacity: 0.55;
+  }
+}

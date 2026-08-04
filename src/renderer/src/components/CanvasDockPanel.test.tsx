@@ -156,11 +156,11 @@ describe('isHostOccluded', () => {
 describe('CanvasDockPanel (static render)', () => {
   it('renders both launchers when the chat has no dock sessions', () => {
     const html = renderToStaticMarkup(<CanvasDockPanel chatId="chat-empty" />)
-    expect(html).toContain('Web canvas')
-    expect(html).toContain('Open a running app or dev server.')
+    expect(html).toContain('Browser')
+    expect(html).toContain('Open a website, your dev server, or a running app in a sandboxed pane.')
     expect(html).toContain('Sketch canvas')
     expect(html).toContain('Open sketch canvas')
-    expect(html).toContain('aria-label="Canvas URL"')
+    expect(html).toContain('aria-label="Browser URL"')
     // No sessions → no pill strip, no embedded pane host, no + toggle.
     expect(html).not.toContain('canvas-dock-tab ')
     expect(html).not.toContain('canvas-pane-host')

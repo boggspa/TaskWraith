@@ -12,9 +12,11 @@
  * whose backing canvas is gone (app restart).
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { CanvasBrowserChrome } from './CanvasBrowserChrome'
 import { CanvasPane } from './CanvasPane'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 import { friendlyCanvasError } from './CanvasComposerButton'
+import { isNavigableCanvasUrl } from '../lib/canvasBrowserUrl'
 import {
   consumeMeshCanvasOpenRequest,
   getPendingMeshCanvasOpenRequest,
@@ -162,6 +164,9 @@ export interface CanvasDockSummary {
   url: string
   title: string
   status: string
+  isLoading?: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
 }
 
 /** Defensive decode of a canvas summary that crossed the IPC bridge. */
@@ -174,7 +179,10 @@ export function toCanvasDockSummary(value: unknown): CanvasDockSummary | null {
     driver: typeof raw.driver === 'string' ? raw.driver : 'web',
     url: typeof raw.url === 'string' ? raw.url : '',
     title: typeof raw.title === 'string' ? raw.title : '',
-    status: typeof raw.status === 'string' ? raw.status : ''
+    status: typeof raw.status === 'string' ? raw.status : '',
+    ...(typeof raw.isLoading === 'boolean' ? { isLoading: raw.isLoading } : {}),
+    ...(typeof raw.canGoBack === 'boolean' ? { canGoBack: raw.canGoBack } : {}),
+    ...(typeof raw.canGoForward === 'boolean' ? { canGoForward: raw.canGoForward } : {})
   }
 }
 
@@ -541,8 +549,10 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       {launcherVisible && (
         <div className="canvas-dock-launcher">
           <div className="canvas-dock-launcher-group">
-            <div className="canvas-dock-launcher-title">Web canvas</div>
-            <div className="canvas-dock-launcher-hint">Open a running app or dev server.</div>
+            <div className="canvas-dock-launcher-title">Browser</div>
+            <div className="canvas-dock-launcher-hint">
+              Open a website, your dev server, or a running app in a sandboxed pane.
+            </div>
             <CanvasPaneLauncher onOpen={openWeb} />
           </div>
           <div className="canvas-dock-launcher-divider" />
@@ -582,6 +592,23 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
             })}
             url={activeSummary?.url}
             overlayGuard
+            chrome={
+              active.kind === 'web' && isNavigableCanvasUrl(activeSummary?.url) ? (
+                <CanvasBrowserChrome
+                  key={active.canvasId}
+                  chatId={chatId}
+                  canvasId={active.canvasId}
+                  initialState={{
+                    url: activeSummary?.url ?? '',
+                    title: activeSummary?.title ?? '',
+                    isLoading: activeSummary?.isLoading === true,
+                    canGoBack: activeSummary?.canGoBack === true,
+                    canGoForward: activeSummary?.canGoForward === true
+                  }}
+                  onNavigateError={(message) => setError(friendlyCanvasError(message))}
+                />
+              ) : undefined
+            }
             actions={
               <button
                 type="button"

@@ -85,6 +85,12 @@ export interface CanvasPaneProps {
   /** Extra toolbar affordances (e.g. the dock panel's pop-out button). */
   actions?: ReactNode
   /**
+   * Full browser chrome (CanvasBrowserChrome) rendered in place of the plain
+   * title readout — the web-canvas "single-page browser" treatment. Actions
+   * and close still render to its right.
+   */
+  chrome?: ReactNode
+  /**
    * Hide the floating view whenever other DOM paints over the host region.
    * The dock panel needs this: its surface switcher popover and app modals
    * would otherwise render UNDER the always-on-top WebContentsView.
@@ -92,7 +98,15 @@ export interface CanvasPaneProps {
   overlayGuard?: boolean
 }
 
-export function CanvasPane({ canvasId, title, url, onClose, actions, overlayGuard }: CanvasPaneProps) {
+export function CanvasPane({
+  canvasId,
+  title,
+  url,
+  onClose,
+  actions,
+  chrome,
+  overlayGuard
+}: CanvasPaneProps) {
   const hostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -184,13 +198,17 @@ export function CanvasPane({ canvasId, title, url, onClose, actions, overlayGuar
           font: '12px/1.4 system-ui, sans-serif'
         }}
       >
-        <span
-          className="canvas-pane-title"
-          title={url}
-          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
-        >
-          {title || url || 'Canvas'}
-        </span>
+        {chrome ? (
+          <div style={{ flex: 1, minWidth: 0 }}>{chrome}</div>
+        ) : (
+          <span
+            className="canvas-pane-title"
+            title={url}
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
+          >
+            {title || url || 'Canvas'}
+          </span>
+        )}
         {actions}
         {onClose ? (
           <button

@@ -1,11 +1,13 @@
 /**
- * CanvasPaneLauncher — the empty-pane affordance for opening a live web Canvas in
- * a multiview pane. A URL field + button; on submit it hands the (trimmed) URL to
- * the host, which calls window.api.canvas.openEmbedded and assigns the returned
- * canvasId to this pane.
+ * CanvasPaneLauncher — the empty-pane affordance for opening the Canvas
+ * Browser in a multiview pane or the dock. A URL field + button; on submit it
+ * normalizes address-bar input (scheme-less "example.com" / "localhost:3000"
+ * included) and hands the absolute URL to the host, which calls
+ * window.api.canvas.openEmbedded and assigns the returned canvasId to this pane.
  */
 import { useState } from 'react'
 import { PillButton } from './PillButton'
+import { normalizeBrowserUrlInput } from '../lib/canvasBrowserUrl'
 
 export interface CanvasPaneLauncherProps {
   onOpen: (url: string) => void
@@ -13,10 +15,10 @@ export interface CanvasPaneLauncherProps {
 }
 
 export function CanvasPaneLauncher({ onOpen, defaultUrl }: CanvasPaneLauncherProps) {
-  const [url, setUrl] = useState(defaultUrl ?? 'http://localhost:3000')
-  const trimmed = url.trim()
+  const [url, setUrl] = useState(defaultUrl ?? '')
+  const normalized = normalizeBrowserUrlInput(url)
   const submit = (): void => {
-    if (trimmed) onOpen(trimmed)
+    if (normalized) onOpen(normalized)
   }
   return (
     <div className="canvas-pane-launcher" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -28,8 +30,11 @@ export function CanvasPaneLauncher({ onOpen, defaultUrl }: CanvasPaneLauncherPro
         onKeyDown={(e) => {
           if (e.key === 'Enter') submit()
         }}
-        placeholder="http://localhost:3000"
-        aria-label="Canvas URL"
+        placeholder="https://example.com or localhost:3000"
+        aria-label="Browser URL"
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
         style={{ minWidth: 0, flex: 1 }}
       />
       {/* Shared rim pill (PillButton → .segmented-control-action), not a bare
@@ -42,11 +47,11 @@ export function CanvasPaneLauncher({ onOpen, defaultUrl }: CanvasPaneLauncherPro
         size="compact"
         className="canvas-pane-launcher-open"
         onClick={submit}
-        // Submit already no-ops on an empty URL — disabling just makes that
-        // visible, using the shared disabled treatment.
-        disabled={!trimmed}
+        // Submit already no-ops on a non-navigable address — disabling just
+        // makes that visible, using the shared disabled treatment.
+        disabled={!normalized}
       >
-        Open web canvas
+        Open browser
       </PillButton>
     </div>
   )
