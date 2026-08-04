@@ -418,6 +418,7 @@ import {
   type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
 import { applyRemoteMessageFeedback } from './RemoteMessageFeedback'
+import { handleRemoteTranscriptMessageDeletion } from './RemoteTranscriptMessageDeletionHost'
 import { ensembleSpeakerForMessage } from './EnsemblePrompt'
 import { extractRunId, extractThreadId } from './BridgeRunEventSink'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
@@ -41981,6 +41982,18 @@ if (isGeminiMcpBridgeProcess) {
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
           return { ok: true, feedback: nextMessage.metadata?.feedback ?? null }
         },
+        deleteTranscriptMessageFn: async (action) =>
+          handleRemoteTranscriptMessageDeletion(action, {
+            getChat: (threadId) => AppStore.getChat(threadId),
+            canonicalWorkspaceId: canonicalRemoteWorkspaceId,
+            listPendingQuestionIds: (threadId) =>
+              remoteQuestionRegistry
+                .listPending({ threadId })
+                .map((question) => question.questionId),
+            saveChat: (chat) => AppStore.saveChat(chat),
+            broadcastChatUpdated,
+            pushRemoteThreadSnapshot
+          }),
         toggleMessagePinFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, error: 'Thread not found' }
@@ -44247,6 +44260,7 @@ if (isGeminiMcpBridgeProcess) {
         externalPublish: false,
         pin: false,
         yolo: false,
+        deleteMessage: false,
         cancelRound: false,
         skipActiveParticipant: false,
         wakeNow: false,
@@ -44283,6 +44297,7 @@ if (isGeminiMcpBridgeProcess) {
         externalPublish: capabilities.has('externalPublish'),
         pin: capabilities.has('pin'),
         yolo: capabilities.has('yolo'),
+        deleteMessage: capabilities.has('deleteMessage'),
         cancelRound: capabilities.has('cancel'),
         skipActiveParticipant: capabilities.has('steer'),
         wakeNow: capabilities.has('steer'),
