@@ -1053,7 +1053,7 @@ describe('HostMutationCompletionCoordinator', () => {
 
   it('already_indeterminate receipt with missing errorCode → anomaly', () => {
     const noCode = receipt('indeterminate')
-    delete (noCode as Record<string, unknown>).errorCode
+    delete (noCode as unknown as Record<string, unknown>).errorCode
     const { coordinator } = openCoordinator({
       markIndeterminate: vi.fn(
         (): HostCommandReceiptMarkIndeterminateResult => ({
