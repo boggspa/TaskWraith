@@ -250,10 +250,10 @@ function actorSummary(actor: WorkProvenanceActor): string {
 }
 
 function provenanceRowTitle(row: WorkspaceProvenanceRow): string {
-  if (row.kind === 'unknown') return 'Unclaimed dirty paths'
+  if (row.kind === 'unknown') return 'Unclaimed changes'
   const labels = row.contributors.map((contributor) => actorLabel(contributor.actor))
   if (labels.length === 0) {
-    return row.kind === 'shared' ? 'Shared attribution' : 'Contributor outside projection window'
+    return row.kind === 'shared' ? 'Shared attribution' : 'Contributor outside the tracked window'
   }
   if (row.kind === 'shared') {
     return labels.length === 1
@@ -264,7 +264,7 @@ function provenanceRowTitle(row: WorkspaceProvenanceRow): string {
 }
 
 function provenanceRowSubtitle(row: WorkspaceProvenanceRow): string {
-  if (row.kind === 'unknown') return 'No contributor evidence for these current bytes'
+  if (row.kind === 'unknown') return 'No contributor evidence for these changes'
   const current = row.contributors.filter(isCurrentContributor).length
   const predecessors = row.contributors.filter((contributor) =>
     contributorRelationships(contributor).includes('predecessor')
@@ -278,9 +278,56 @@ function provenanceRowSubtitle(row: WorkspaceProvenanceRow): string {
   return `${row.contributors.length} contributors`
 }
 
-function stateLabel(row: WorkspaceProvenanceRow): string {
+/* The class names stay keyed on the raw classifier vocabulary; only the
+ * rendered text and tooltips use these display labels. */
+const STATE_DISPLAY: Record<string, { label: string; title: string }> = {
+  live: { label: 'Live', title: 'Backed by a live TaskWraith lane right now' },
+  runtime: { label: 'Running', title: 'Backed by a running TaskWraith session' },
+  decayed: { label: 'Ended', title: 'The contributing session has ended; its evidence remains' },
+  absent: { label: 'Inactive', title: 'No live backing remains for this evidence' },
+  observed: { label: 'Observed', title: 'Recorded evidence without a liveness signal' },
+  unclaimed: { label: 'Unclaimed', title: 'No TaskWraith contributor claims these changes' }
+}
+
+const CONFIDENCE_DISPLAY: Record<WorkProvenanceConfidence, { label: string; title: string }> = {
+  exact: { label: 'Exact match', title: 'Current bytes match the recorded claim exactly' },
+  'observed-native': {
+    label: 'Direct',
+    title: 'Observed directly from a TaskWraith-run operation'
+  },
+  'correlated-claim': {
+    label: 'Correlated',
+    title: 'A recorded claim correlates with these changes'
+  },
+  ambiguous: {
+    label: 'Ambiguous',
+    title: "More than one contributor's evidence overlaps these changes"
+  },
+  unknown: { label: 'No evidence', title: 'No contributor evidence ties these changes to a run' }
+}
+
+function stateKey(row: WorkspaceProvenanceRow): string {
   if (row.kind === 'unknown') return 'unclaimed'
   return row.liveness ?? 'observed'
+}
+
+const STATUS_WORDS: Record<string, string> = {
+  M: 'modified',
+  A: 'added',
+  D: 'deleted',
+  R: 'renamed',
+  C: 'copied',
+  U: 'conflicted',
+  T: 'type changed'
+}
+
+function describePathStatus(path: WorkProvenanceAttributionPath): string {
+  const raw = path.status.trim()
+  if (path.untracked || raw === '??') return 'untracked'
+  const words = [...new Set(raw.split(''))]
+    .map((code) => STATUS_WORDS[code])
+    .filter((word): word is string => Boolean(word))
+  return words.join(' + ') || raw || 'modified'
 }
 
 function actorIdentifiers(actor: WorkProvenanceActor): Array<[string, string]> {
@@ -301,12 +348,12 @@ function ProvenanceDiff({ row }: { row: WorkspaceProvenanceRow }): React.JSX.Ele
     const untracked = row.paths.filter((path) => path.untracked).length
     return (
       <span className="workspace-provenance-diff is-unavailable">
-        {untracked > 0 ? `${NUMBER_FORMAT.format(untracked)} untracked` : 'No numstat'}
+        {untracked > 0 ? `${NUMBER_FORMAT.format(untracked)} untracked` : 'No line counts'}
       </span>
     )
   }
   return (
-    <span className="workspace-provenance-diff" aria-label="Disjoint attributed working tree diff">
+    <span className="workspace-provenance-diff" aria-label="Line changes attributed to this row">
       <span className="workspace-stats-addition">
         <DigitOdometer value={row.additions} sign="+" />
       </span>
@@ -339,16 +386,24 @@ const WorkspaceProvenanceRowView = memo(function WorkspaceProvenanceRowView({
   const recoveries = row.workItems.flatMap((item) => (item.recovery ? [item.recovery] : []))
 
   return (
-    <details className={`workspace-provenance-row state-${stateLabel(row)}`}>
+    <details className={`workspace-provenance-row state-${stateKey(row)}`}>
       <summary>
-        <span className="workspace-provenance-state">{stateLabel(row)}</span>
-        <span className="workspace-provenance-identity">
+        <span className="workspace-provenance-state" title={STATE_DISPLAY[stateKey(row)]?.title}>
+          {STATE_DISPLAY[stateKey(row)]?.label ?? stateKey(row)}
+        </span>
+        <span
+          className="workspace-provenance-identity"
+          title={`${provenanceRowTitle(row)} — ${provenanceRowSubtitle(row)}`}
+        >
           <strong>{provenanceRowTitle(row)}</strong>
           <small>{provenanceRowSubtitle(row)}</small>
         </span>
         <ProvenanceDiff row={row} />
-        <span className={`workspace-provenance-confidence confidence-${row.confidence}`}>
-          {row.confidence}
+        <span
+          className={`workspace-provenance-confidence confidence-${row.confidence}`}
+          title={CONFIDENCE_DISPLAY[row.confidence]?.title}
+        >
+          {CONFIDENCE_DISPLAY[row.confidence]?.label ?? row.confidence}
         </span>
         <span className="workspace-provenance-paths" title={pathPreview}>
           {pathPreview}
@@ -362,12 +417,12 @@ const WorkspaceProvenanceRowView = memo(function WorkspaceProvenanceRowView({
             <p key={`${row.key}:${path.path}`}>
               <code>{path.path}</code>
               <small>
-                {path.status.trim() || 'modified'}
+                {describePathStatus(path)}
                 {path.renamedFrom ? ` · renamed from ${path.renamedFrom}` : ''}
                 {path.additions === null || path.deletions === null
                   ? path.untracked
-                    ? ' · untracked'
-                    : ' · binary or unavailable numstat'
+                    ? ''
+                    : ' · binary or no line counts'
                   : ` · +${NUMBER_FORMAT.format(path.additions)} −${NUMBER_FORMAT.format(path.deletions)}`}
               </small>
             </p>

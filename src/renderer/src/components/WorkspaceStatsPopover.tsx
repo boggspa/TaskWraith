@@ -283,7 +283,7 @@ export function WorkspaceStatsPanel({
             snapshot ? (
               <span
                 className="workspace-stats-diff"
-                aria-label={`${snapshot.lineStats.additions} additions and ${snapshot.lineStats.deletions} deletions`}
+                aria-label={`${formatCount(snapshot.lineStats.additions, 'addition')} and ${formatCount(snapshot.lineStats.deletions, 'deletion')}`}
               >
                 <span className="workspace-stats-addition">
                   <DigitOdometer value={snapshot.lineStats.additions} sign="+" />
@@ -298,12 +298,12 @@ export function WorkspaceStatsPanel({
           }
           detail={
             snapshot
-              ? `${formatCount(snapshot.counts.changed, 'changed path')} · ${formatCount(snapshot.counts.untracked, 'new')}`
+              ? `${formatCount(snapshot.counts.changed, 'changed path')} · ${NUMBER_FORMAT.format(snapshot.counts.untracked)} untracked`
               : 'Waiting for the authorized Git snapshot'
           }
           note={
             snapshot
-              ? `${formatCount(snapshot.counts.staged, 'staged')} · ${formatCount(snapshot.counts.unstaged, 'unstaged')}`
+              ? `${NUMBER_FORMAT.format(snapshot.counts.staged)} staged · ${NUMBER_FORMAT.format(snapshot.counts.unstaged)} unstaged`
               : undefined
           }
         />
@@ -322,11 +322,17 @@ export function WorkspaceStatsPanel({
               <span className="workspace-stats-divergence">
                 <span className="workspace-stats-ahead">
                   <span aria-hidden>↑</span>
-                  <DigitOdometer value={ahead} ariaLabel={`${ahead} commits ahead`} />
+                  <DigitOdometer
+                    value={ahead}
+                    ariaLabel={`${formatCount(ahead, 'commit')} ahead`}
+                  />
                 </span>
                 <span className="workspace-stats-behind">
                   <span aria-hidden>↓</span>
-                  <DigitOdometer value={behind} ariaLabel={`${behind} commits behind`} />
+                  <DigitOdometer
+                    value={behind}
+                    ariaLabel={`${formatCount(behind, 'commit')} behind`}
+                  />
                 </span>
               </span>
             )
@@ -502,8 +508,8 @@ function formatOptionalNumber(value: number | null | undefined, loading: boolean
   return loading ? 'Loading…' : 'Unavailable'
 }
 
-function formatCount(value: number, singular: string): string {
-  return `${NUMBER_FORMAT.format(value)} ${singular}${value === 1 ? '' : 's'}`
+function formatCount(value: number, singular: string, plural = `${singular}s`): string {
+  return `${NUMBER_FORMAT.format(value)} ${value === 1 ? singular : plural}`
 }
 
 function branchAndWorktreeDetail(stats: GitWorkspaceStats | null, loading: boolean): string {
@@ -511,7 +517,7 @@ function branchAndWorktreeDetail(stats: GitWorkspaceStats | null, loading: boole
     typeof stats?.localBranchCount === 'number' &&
     typeof stats?.attachedWorktreeCount === 'number'
   ) {
-    return `${formatCount(stats.localBranchCount, 'local branch')} · ${formatCount(stats.attachedWorktreeCount, 'worktree')}`
+    return `${formatCount(stats.localBranchCount, 'local branch', 'local branches')} · ${formatCount(stats.attachedWorktreeCount, 'worktree')}`
   }
   return loading ? 'Reading local refs and worktrees' : 'Branch/worktree count unavailable'
 }
@@ -529,7 +535,7 @@ function activeDaysDetail(stats: GitWorkspaceStats | null, loading: boolean): st
   if (!stats || stats.activeDays === null) return 'Commit activity unavailable'
   if (stats.activeDays === 0) return 'No commit activity yet'
   if (stats.commitsPerActiveDay === null) return 'Commit-day count from bounded history'
-  return `~${NUMBER_FORMAT.format(Math.round(stats.commitsPerActiveDay))} commits per active day`
+  return `~${formatCount(Math.round(stats.commitsPerActiveDay), 'commit')} per active day`
 }
 
 function workLockSummary(

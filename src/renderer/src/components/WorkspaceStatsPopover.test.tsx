@@ -31,7 +31,7 @@ const stats: GitWorkspaceStats = {
   observedAt: '2026-08-03T19:00:00.000Z',
   coherent: true,
   totalCommits: 1,
-  localBranchCount: 1,
+  localBranchCount: 12,
   attachedWorktreeCount: 1,
   trackedLines: 1_223_743,
   activeDays: 1,
@@ -93,9 +93,12 @@ describe('WorkspaceStatsPopover', () => {
 
     expect(html).toContain('workspace-stats-ahead')
     expect(html).toContain('workspace-stats-behind')
-    expect(html).toContain('1 commits ahead')
+    expect(html).toContain('1 commit ahead')
     expect(html).toContain('0 commits behind')
     expect(html).toContain('No upstream · all history local')
+    expect(html).toContain('13 changed paths · 26 untracked')
+    expect(html).toContain('12 staged · 1 unstaged')
+    expect(html).toContain('12 local branches · 1 worktree')
     expect(html).toContain('1,223,743')
     expect(html).toContain('1 of 49')
     expect(html).toContain('No current work evidence')

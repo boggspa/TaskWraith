@@ -31,13 +31,22 @@
   box-sizing: border-box;
   width: 117.647059%;
   max-width: none;
-  max-height: min(76vh, 680px);
+  max-height: min(82vh, 720px);
   padding: 0;
   overflow: auto;
   overscroll-behavior: contain;
   text-align: left;
   transform: scale(var(--workspace-stats-scale));
   transform-origin: top right;
+}
+
+/* The side-chat menu shell (11-side-chat.css) paints every descendant span at
+ * var(--font-size-sm)/650, which outranks this shard's single-class span rules
+ * and inflates the dense stat typography. Spans inherit here instead; the
+ * popover-scoped rules below own the deliberate sizes. */
+.workspace-stats-popover span,
+.workspace-stats-popover small {
+  font-size: inherit;
 }
 
 .workspace-stats-header {
@@ -73,10 +82,9 @@
 
 .workspace-stats-eyebrow {
   color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .side-chat-layout-menu.workspace-stats-popover .workspace-stats-close {
@@ -128,8 +136,8 @@
 
 .workspace-stats-cell {
   min-width: 0;
-  min-height: 98px;
-  padding: 13px 16px 12px;
+  min-height: 102px;
+  padding: 14px 18px 13px;
   border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 68%, transparent);
 }
 
@@ -141,30 +149,29 @@
   border-bottom: 0;
 }
 
-.workspace-stats-cell-label {
+.workspace-stats-popover .workspace-stats-cell-label {
   display: block;
   color: var(--text-tertiary);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.095em;
-  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .workspace-stats-cell-value {
   display: block;
-  min-height: 25px;
+  min-height: 26px;
   margin-top: 7px;
   overflow: hidden;
   color: var(--text-primary);
   font-size: 20px;
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspace-stats-cell-detail,
-.workspace-stats-cell small {
+.workspace-stats-popover .workspace-stats-cell-detail,
+.workspace-stats-popover .workspace-stats-cell small {
   display: block;
   margin-top: 6px;
   overflow: hidden;
@@ -176,10 +183,17 @@
   white-space: nowrap;
 }
 
+/* Notes (for example the latest commit subject) get two lines before
+ * clamping instead of a single-line ellipsis; the title attribute still
+ * carries the full text. */
 .workspace-stats-cell small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   margin-top: 4px;
   color: var(--text-tertiary);
   font-size: 9px;
+  white-space: normal;
 }
 
 .workspace-stats-diff,
@@ -270,11 +284,11 @@
 
 .workspace-provenance-row > summary {
   display: grid;
-  grid-template-columns: 58px minmax(130px, 1.15fr) 72px 86px minmax(110px, 1fr) 8px;
+  grid-template-columns: 64px minmax(130px, 1.2fr) 72px 86px minmax(104px, 1fr) 8px;
   align-items: center;
   gap: 9px;
-  min-height: 42px;
-  padding: 7px 16px;
+  min-height: 44px;
+  padding: 8px 16px;
   cursor: pointer;
   list-style: none;
 }
@@ -289,15 +303,16 @@
   outline: none;
 }
 
-.workspace-provenance-state {
+.workspace-stats-popover .workspace-provenance-state {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  overflow: hidden;
   color: var(--text-secondary);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.075em;
-  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .workspace-provenance-state::before {
@@ -344,7 +359,7 @@
   font-size: 8px;
 }
 
-.workspace-provenance-diff {
+.workspace-stats-popover .workspace-provenance-diff {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
@@ -354,21 +369,21 @@
   white-space: nowrap;
 }
 
-.workspace-provenance-diff.is-unavailable {
+.workspace-stats-popover .workspace-provenance-diff.is-unavailable {
   color: var(--text-tertiary);
-  font-size: 8px;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 600;
 }
 
-.workspace-provenance-confidence {
+.workspace-stats-popover .workspace-provenance-confidence {
+  overflow: hidden;
   padding-left: 8px;
   border-left: 2px solid var(--text-tertiary);
   color: var(--text-secondary);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -392,7 +407,7 @@
   color: color-mix(in srgb, #ffc248 88%, var(--text-primary));
 }
 
-.workspace-provenance-paths {
+.workspace-stats-popover .workspace-provenance-paths {
   overflow: hidden;
   color: var(--text-tertiary);
   font-size: 8px;
@@ -417,7 +432,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  padding: 4px 16px 12px 83px;
+  padding: 4px 16px 12px 89px;
   background: color-mix(in srgb, var(--text-primary) 2%, transparent);
 }
 
@@ -434,9 +449,9 @@
 .workspace-provenance-details h4 {
   margin-bottom: 5px;
   color: var(--text-tertiary);
-  font-size: 8px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .workspace-provenance-details p {
@@ -474,8 +489,8 @@
   grid-template-columns: 8px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  min-height: 42px;
-  padding: 7px 16px;
+  min-height: 44px;
+  padding: 8px 16px;
   border-top: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
 }
 
@@ -554,8 +569,8 @@
   grid-template-columns: 8px minmax(128px, 1.1fr) auto minmax(140px, 1fr);
   align-items: center;
   gap: 10px;
-  min-height: 42px;
-  padding: 7px 16px;
+  min-height: 44px;
+  padding: 8px 16px;
   border-top: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
 }
 
@@ -594,17 +609,16 @@
   white-space: nowrap;
 }
 
-.workspace-stats-work-empty > span:last-child,
-.workspace-stats-work-lane-count {
+.workspace-stats-popover .workspace-stats-work-empty > span:last-child,
+.workspace-stats-popover .workspace-stats-work-lane-count {
   color: var(--text-tertiary);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
-.workspace-stats-work-lane-targets {
+.workspace-stats-popover .workspace-stats-work-lane-targets {
   min-width: 0;
   overflow: hidden;
   color: var(--text-secondary);
@@ -686,7 +700,7 @@
   }
 
   .workspace-provenance-row > summary {
-    grid-template-columns: 52px minmax(0, 1fr) 66px 78px 8px;
+    grid-template-columns: 58px minmax(0, 1fr) 66px 84px 8px;
   }
 
   .workspace-provenance-paths {
@@ -695,7 +709,7 @@
 
   .workspace-provenance-details {
     grid-template-columns: 1fr;
-    padding-left: 75px;
+    padding-left: 83px;
   }
 }
 
