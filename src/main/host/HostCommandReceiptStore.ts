@@ -177,16 +177,43 @@ export type HostCommandReceiptCompleteInput = {
 }
 
 /**
+ * Closed body-free vocabulary for explicit markIndeterminate promotion.
+ * Arbitrary prose/secret-shaped text is never persisted as an errorCode.
+ */
+export type HostCommandReceiptIndeterminateCode =
+  | 'deferred_envelope_unavailable'
+  | 'deferred_envelope_missing'
+  | 'deferred_envelope_actor_mismatch'
+  | 'deferred_envelope_verification_failed'
+  | 'deferred_effects_partial'
+  | 'deferred_effects_unavailable'
+  | 'deferred_receipt_uncertain'
+  | 'deferred_execution_may_have_begun'
+
+/** Runtime membership set for HostCommandReceiptIndeterminateCode. */
+export const HOST_COMMAND_RECEIPT_INDETERMINATE_CODES: ReadonlySet<HostCommandReceiptIndeterminateCode> =
+  new Set<HostCommandReceiptIndeterminateCode>([
+    'deferred_envelope_unavailable',
+    'deferred_envelope_missing',
+    'deferred_envelope_actor_mismatch',
+    'deferred_envelope_verification_failed',
+    'deferred_effects_partial',
+    'deferred_effects_unavailable',
+    'deferred_receipt_uncertain',
+    'deferred_execution_may_have_begun'
+  ])
+
+/**
  * Body-free input for explicit pending → recoverable-indeterminate promotion.
- * Callers supply only identity, sole-journal position, and a bounded static
+ * Callers supply only identity, sole-journal position, and a closed static
  * recovery/error code — never command args, tool output, or hidden reasoning.
  */
 export type HostCommandReceiptMarkIndeterminateInput = {
   commandId: string
   /** Required sole-journal position; validated before any mutation. */
   position: HostCommandReceiptPosition
-  /** Bounded static recovery/error code (non-empty after normalize). */
-  errorCode: string
+  /** Closed static recovery/error code from HostCommandReceiptIndeterminateCode. */
+  errorCode: HostCommandReceiptIndeterminateCode
   /** Optional clock override; defaults to the store clock. */
   updatedAt?: string
 }
@@ -607,9 +634,9 @@ export class HostCommandReceiptStore {
       return { kind: 'invalid', code: 'invalid_position' }
     }
 
-    let errorCode: string
+    let errorCode: HostCommandReceiptIndeterminateCode
     try {
-      errorCode = normalizeStaticErrorCode(input.errorCode)
+      errorCode = normalizeIndeterminateErrorCode(input.errorCode)
     } catch {
       return { kind: 'invalid', code: 'invalid_error_code' }
     }
@@ -956,16 +983,18 @@ function normalizePosition(value: HostCommandReceiptPosition): HostCommandReceip
   return { generation: value.generation, cursor: value.cursor }
 }
 
-/** Bounded static recovery/error code — non-empty, no free-form body text. */
-function normalizeStaticErrorCode(value: string): string {
+/**
+ * Closed indeterminate errorCode — exact Set membership only.
+ * Never trims/truncates arbitrary text into a valid code.
+ */
+function normalizeIndeterminateErrorCode(value: unknown): HostCommandReceiptIndeterminateCode {
   if (typeof value !== 'string') {
     throw new Error('HostCommandReceiptStore: errorCode is required')
   }
-  const trimmed = truncateText(value, MAX_KIND_CHARS)
-  if (!trimmed) {
+  if (!HOST_COMMAND_RECEIPT_INDETERMINATE_CODES.has(value as HostCommandReceiptIndeterminateCode)) {
     throw new Error('HostCommandReceiptStore: errorCode is invalid')
   }
-  return trimmed
+  return value as HostCommandReceiptIndeterminateCode
 }
 
 /** Exact actor match — both sides must carry full identity; incomplete never matches. */

@@ -8,25 +8,32 @@ import {
   hostCommandFingerprint,
   HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME,
   HOST_COMMAND_RECEIPT_JOURNAL_FILENAME,
+  HOST_COMMAND_RECEIPT_INDETERMINATE_CODES,
   type HostCommandReceiptActor,
   type HostCommandReceiptBeginInput,
+  type HostCommandReceiptIndeterminateCode,
+  type HostCommandReceiptMarkIndeterminateInput,
   type HostCommandReceiptPosition
 } from './HostCommandReceiptStore'
 
+const DEFAULT_INDETERMINATE_CODE: HostCommandReceiptIndeterminateCode =
+  'deferred_envelope_unavailable'
+
 function markInput(
-  overrides: Partial<{
-    commandId: string
-    position: HostCommandReceiptPosition
-    errorCode: string
-    updatedAt: string
-  }> = {}
-) {
+  overrides: {
+    commandId?: string
+    position?: HostCommandReceiptPosition
+    /** Allow invalid strings in rejection tests; runtime still validates. */
+    errorCode?: string
+    updatedAt?: string
+  } = {}
+): HostCommandReceiptMarkIndeterminateInput {
   return {
     commandId: 'cmd-1',
     position: { generation: 5, cursor: 99 },
-    errorCode: 'deferred_resolution_indeterminate',
+    errorCode: DEFAULT_INDETERMINATE_CODE,
     ...overrides
-  }
+  } as HostCommandReceiptMarkIndeterminateInput
 }
 
 const OWNER_ACTOR: HostCommandReceiptActor = {
@@ -686,7 +693,7 @@ describe('HostCommandReceiptStore', () => {
     expect(marked.receipt.recoveryState).toBe('recoverable-indeterminate')
     expect(marked.receipt.generation).toBe(5)
     expect(marked.receipt.cursor).toBe(99)
-    expect(marked.receipt.errorCode).toBe('deferred_resolution_indeterminate')
+    expect(marked.receipt.errorCode).toBe('deferred_envelope_unavailable')
     expect(marked.receipt.updatedAt).toBe(clock)
     expect(marked.receipt.completedAt).toBeUndefined()
     expect(marked.receipt).not.toHaveProperty('args')
@@ -716,7 +723,7 @@ describe('HostCommandReceiptStore', () => {
     const again = store.markIndeterminate(
       markInput({
         position: { generation: 9, cursor: 900 },
-        errorCode: 'other_code',
+        errorCode: 'deferred_effects_partial',
         updatedAt: '2026-08-03T18:00:00.000Z'
       })
     )
@@ -724,7 +731,7 @@ describe('HostCommandReceiptStore', () => {
     if (again.kind !== 'already_indeterminate') return
     expect(again.receipt.generation).toBe(5)
     expect(again.receipt.cursor).toBe(99)
-    expect(again.receipt.errorCode).toBe('deferred_resolution_indeterminate')
+    expect(again.receipt.errorCode).toBe('deferred_envelope_unavailable')
     expect(again.receipt.updatedAt).toBe(first.receipt.updatedAt)
     expect(readFileSync(journalPath, 'utf8')).toBe(before)
   })
@@ -834,7 +841,7 @@ describe('HostCommandReceiptStore', () => {
     expect(durable?.recoveryState).toBe('recoverable-indeterminate')
     expect(durable?.generation).toBe(7)
     expect(durable?.cursor).toBe(70)
-    expect(durable?.errorCode).toBe('deferred_resolution_indeterminate')
+    expect(durable?.errorCode).toBe('deferred_envelope_unavailable')
     expect(durable?.completedAt).toBeUndefined()
 
     // Explicit mark on already-durable indeterminate stays idempotent after reopen.
@@ -877,7 +884,76 @@ describe('HostCommandReceiptStore', () => {
     const journal = readFileSync(journalPath, 'utf8')
     expect(journal).not.toMatch(/password|token|secret|authorization|toolOutput|hiddenReasoning/i)
     expect(journal).toContain('"status":"indeterminate"')
-    expect(journal).toContain('"errorCode":"deferred_resolution_indeterminate"')
+    expect(journal).toContain('"errorCode":"deferred_envelope_unavailable"')
+  })
+
+  it.each([
+    {
+      label: 'prose',
+      errorCode: 'something went wrong while resolving the deferred command'
+    },
+    {
+      label: 'secret-shaped',
+      errorCode: 'password=hunter2;Authorization: Bearer secret-token-xyz'
+    },
+    {
+      label: 'control-chars',
+      errorCode: 'deferred_envelope_unavailable\nhidden-reasoning'
+    },
+    {
+      label: 'empty',
+      errorCode: ''
+    },
+    {
+      label: 'whitespace',
+      errorCode: '   '
+    },
+    {
+      label: 'overlength',
+      errorCode: `${'x'.repeat(200)}`
+    },
+    {
+      label: 'truncated-lookalike',
+      errorCode: 'deferred_envelope_unavailable_EXTRA_SECRET_PAYLOAD'
+    },
+    {
+      label: 'legacy-free-form',
+      errorCode: 'deferred_resolution_indeterminate'
+    }
+  ])('markIndeterminate rejects $label errorCode without journal mutation', ({ errorCode }) => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+
+    expect(store.markIndeterminate(markInput({ errorCode }))).toEqual({
+      kind: 'invalid',
+      code: 'invalid_error_code'
+    })
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+    expect(before).not.toContain(errorCode.trim() || 'never')
+  })
+
+  it('markIndeterminate accepts every closed indeterminate code exactly once', () => {
+    expect(HOST_COMMAND_RECEIPT_INDETERMINATE_CODES.size).toBe(8)
+    const store = openStore({ compactAfterRecords: 1000 })
+    let index = 0
+    for (const errorCode of HOST_COMMAND_RECEIPT_INDETERMINATE_CODES) {
+      index += 1
+      const commandId = `cmd-code-${index}`
+      const begun = store.begin(
+        baseInput({
+          commandId,
+          idempotencyKey: `idem-code-${index}`
+        })
+      )
+      expect(begun.kind).toBe('created')
+      const marked = store.markIndeterminate(markInput({ commandId, errorCode }))
+      expect(marked.kind).toBe('marked')
+      if (marked.kind !== 'marked') return
+      expect(marked.receipt.errorCode).toBe(errorCode)
+    }
   })
 
   it('persists denied status and authority evaluation', () => {
