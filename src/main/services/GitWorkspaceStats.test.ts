@@ -45,6 +45,24 @@ describe('GitWorkspaceStats', () => {
     })
   })
 
+  it('spans to the newest sampled commit when it post-dates the observation date', () => {
+    // Git emits commit days in the committer's local calendar while observedAt
+    // is UTC — in the hour after local midnight (or with future-timezone
+    // committers) the newest commit day post-dates the observation day.
+    expect(
+      summarizeGitCommitActivity({
+        stdout: '2026-08-05\n2026-08-05\n',
+        totalCommits: 2,
+        observedAt: '2026-08-04T23:15:00.000Z'
+      })
+    ).toEqual({
+      activeDays: 1,
+      historySpanDays: 1,
+      commitsPerActiveDay: 2,
+      historyTruncated: false
+    })
+  })
+
   it('marks activity aggregates partial when the history sample is bounded', () => {
     expect(
       summarizeGitCommitActivity({

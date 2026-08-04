@@ -73,10 +73,16 @@ export function summarizeGitCommitActivity(input: {
   }
 
   const oldestSampledDate = sampledDates[sampledDates.length - 1]
+  const newestSampledDate = sampledDates[0]
+  // Git emits commit days in the committer's local calendar while observedAt is
+  // UTC, so right after local midnight (or with future-timezone committers) the
+  // newest commit day can post-date the observation day. Span to whichever end
+  // is later; the YYYY-MM-DD shape makes the string compare safe.
   const observedDate = input.observedAt.slice(0, 10)
+  const spanEndDate = newestSampledDate > observedDate ? newestSampledDate : observedDate
   const historySpanDays = historyTruncated
     ? null
-    : inclusiveCalendarDaySpan(oldestSampledDate, observedDate)
+    : inclusiveCalendarDaySpan(oldestSampledDate, spanEndDate)
   const commitsPerActiveDay =
     historyTruncated || input.totalCommits === null || activeDays === 0
       ? null
