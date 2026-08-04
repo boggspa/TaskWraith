@@ -68,9 +68,14 @@ const {
 const { applyUnsupportedAnnotations, finalizePartialT2Report } = require('./unsupportedMetrics.cjs')
 const { buildT2SmokePlan, summarizeT2SmokePlan } = require('./t2SmokePlan.cjs')
 
+const { PERF_GATE_THRESHOLDS } = require('./perfGateThresholds.cjs')
+
 const DEFAULT_REPLAY_STALL_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL = 100
 const DEFAULT_REPLAY_PROGRESS_INTERVAL_MS = 10 * 1000
+const DEFAULT_WINDOWED_RATE_WINDOW_MS = PERF_GATE_THRESHOLDS.windowedRateWindowMs
+const DEFAULT_MIN_FREE_DISK_BYTES = PERF_GATE_THRESHOLDS.minFreeDiskBytes
+const DEFAULT_MAX_CAPTURE_PHASE_MS = PERF_GATE_THRESHOLDS.maxCapturePhaseMs
 
 /**
  * Atomic, explicitly non-authoritative phase/replay heartbeat.
@@ -129,6 +134,106 @@ function createT2ProgressJournal(options) {
     update,
     snapshot: () => state
   }
+}
+
+/**
+ * Check free disk space on the volume containing `dirPath`. Fails closed
+ * when statfs is unavailable or free space is below minFreeBytes.
+ *
+ * @param {string} dirPath
+ * @param {number} minFreeBytes
+ * @param {{ statfsSync?: Function }} [adapters]
+ * @returns {{ ok: boolean, freeBytes: number, minFreeBytes: number, note: string | null }}
+ */
+function checkDiskHeadroom(dirPath, minFreeBytes, adapters = {}) {
+  const statfsSync = 'statfsSync' in adapters ? adapters.statfsSync : fs.statfsSync
+  if (typeof statfsSync !== 'function') {
+    return {
+      ok: false,
+      freeBytes: 0,
+      minFreeBytes,
+      note: 'statfsSync unavailable — cannot verify disk headroom'
+    }
+  }
+  let stat
+  try {
+    stat = statfsSync(dirPath)
+  } catch (error) {
+    return {
+      ok: false,
+      freeBytes: 0,
+      minFreeBytes,
+      note: `statfsSync failed: ${String(error && error.message ? error.message : error)}`
+    }
+  }
+  if (!stat || typeof stat.bsize !== 'number' || typeof stat.bavail !== 'number') {
+    return {
+      ok: false,
+      freeBytes: 0,
+      minFreeBytes,
+      note: 'statfs returned incomplete data'
+    }
+  }
+  const freeBytes = stat.bsize * stat.bavail
+  const freeGib = (freeBytes / (1024 * 1024 * 1024)).toFixed(1)
+  const needGib = (minFreeBytes / (1024 * 1024 * 1024)).toFixed(0)
+  if (freeBytes < minFreeBytes) {
+    return {
+      ok: false,
+      freeBytes,
+      minFreeBytes,
+      note: `only ${freeGib} GiB free on artifact volume; need ≥${needGib} GiB`
+    }
+  }
+  return {
+    ok: true,
+    freeBytes,
+    minFreeBytes,
+    note: `${freeGib} GiB free (≥${needGib} GiB required)`
+  }
+}
+
+/**
+ * Sliding-window rate tracker — computes evt/s over the last windowMs.
+ *
+ * @param {number} windowMs
+ * @param {{ nowMs?: Function }} [options]
+ */
+function createWindowedRateTracker(windowMs, options = {}) {
+  const nowMs = options.nowMs || Date.now
+  /** @type {{ ts: number, completed: number }[]} */
+  let window = []
+  let lastCumulativeRate = 0
+
+  /** @param {number} completedEvents */
+  function push(completedEvents) {
+    const ts = nowMs()
+    window.push({ ts, completed: completedEvents })
+    // Trim entries older than windowMs
+    const cutoff = ts - windowMs
+    while (window.length > 1 && window[0].ts < cutoff) {
+      window.shift()
+    }
+    // Compute windowed rate
+    if (window.length >= 2) {
+      const first = window[0]
+      const last = window[window.length - 1]
+      const deltaMs = last.ts - first.ts
+      const deltaEvents = last.completed - first.completed
+      lastCumulativeRate = deltaMs > 0 ? (deltaEvents * 1000) / deltaMs : 0
+    }
+    return lastCumulativeRate
+  }
+
+  function snapshot() {
+    return {
+      windowedRateEvtPerSec: lastCumulativeRate,
+      windowSizeMs: windowMs,
+      windowPointCount: window.length
+    }
+  }
+
+  return { push, snapshot }
 }
 
 function parseArgs(argv) {
@@ -476,6 +581,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     safety: spawnPlan.safety
   }
   report.isolation = isolationVerification
+  report.diskHeadroom = null
+  report.captureDeadline = null
+  report.replayWindowedRate = null
 
   const progressJournal = willLaunch
     ? createT2ProgressJournal({
@@ -578,6 +686,27 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           instanceId: userDataResolved.sanitizedInstanceId
         },
         options.portAdapters || {}
+      )
+
+      setCapturePhase('disk_headroom_preflight', {}, { log: true })
+      const minFreeBytes =
+        options.minFreeDiskBytes == null ? DEFAULT_MIN_FREE_DISK_BYTES : options.minFreeDiskBytes
+      const headroomResult = checkDiskHeadroom(artifactDir, minFreeBytes, options.diskAdapters)
+      report.diskHeadroom = {
+        preflight: headroomResult,
+        preCapture: null,
+        minFreeBytes
+      }
+      if (!headroomResult.ok) {
+        const headroomErr = new Error(
+          `Disk headroom preflight failed: ${headroomResult.note || 'unknown'}`
+        )
+        headroomErr.code = 'T2_DISK_HEADROOM_PREFLIGHT'
+        throw headroomErr
+      }
+      updateProgress(
+        { diskHeadroomGib: (headroomResult.freeBytes / (1024 * 1024 * 1024)).toFixed(1) },
+        { log: true }
       )
 
       if (skipBuild) {
@@ -761,6 +890,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       }
       const replayStartedAtMs = replayNowMs()
       let lastPublishedAtMs = replayStartedAtMs
+      const windowedRateMs =
+        options.windowedRateWindowMs == null
+          ? DEFAULT_WINDOWED_RATE_WINDOW_MS
+          : options.windowedRateWindowMs
+      const windowedRate = createWindowedRateTracker(windowedRateMs, {
+        nowMs: replayNowMs
+      })
       setCapturePhase(
         'replay',
         {
@@ -795,6 +931,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           )
         },
         onProgress(info) {
+          // Always push to windowed-rate tracker (not just on publish cadence)
+          const win = windowedRate.push(info.completedEvents)
           const now = info.completedAtMs
           const shouldPublish =
             info.completedEvents === 1 ||
@@ -807,6 +945,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           const remainingEvents = Math.max(0, info.totalEvents - info.completedEvents)
           const etaMs =
             eventsPerSecond > 0 ? Math.round((remainingEvents / eventsPerSecond) * 1000) : null
+          // Windowed ETA uses the short-window rate for a more realistic projection
+          const windowedEtaMs =
+            win > 0 ? Math.round((remainingEvents / win) * 1000) : null
           lastPublishedAtMs = now
           updateProgress(
             {
@@ -822,7 +963,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
               },
               replayElapsedMs: elapsedMs,
               eventsPerSecond,
-              etaMs
+              etaMs,
+              windowedRateEvtPerSec: win,
+              windowedEtaMs,
+              windowedRateWindowMs: windowedRateMs
             },
             { log: true }
           )
@@ -838,38 +982,132 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         },
         { log: true }
       )
-      setCapturePhase('profiles_stop', {}, { log: true })
-      const rendererStopped = await rendererCpu.stop()
-      const mainStopped = await mainCpu.stop()
-      setCapturePhase('heap_snapshot', {}, { log: true })
-      const heapResult = await collectRendererHeapSnapshot(renderer, {
-        heapSnapshotPath: heapPath,
-        fs
-      })
 
-      const rendererCpuDigest = verifyArtifactFile(rendererCpuPath, { fs, minBytes: 32 })
-      const mainCpuDigest = verifyArtifactFile(mainCpuPath, { fs, minBytes: 32 })
-      const heapDigest = verifyArtifactFile(heapPath, {
-        fs,
-        minBytes: 64
-      })
+      // Re-check disk headroom before heavy capture I/O (profiles + heap may push near limit)
+      const preCaptureHeadroom = checkDiskHeadroom(artifactDir, minFreeBytes, options.diskAdapters)
+      report.diskHeadroom.preCapture = preCaptureHeadroom
+      if (!preCaptureHeadroom.ok) {
+        // Record but do not abort — we already launched; capture what we can
+        updateProgress(
+          {
+            diskHeadroomWarning: preCaptureHeadroom.note
+          },
+          { log: true }
+        )
+      }
+
+      // Capture-phase deadline: abort further capture steps if total exceeds maxCapturePhaseMs
+      const maxCapturePhaseMs =
+        options.maxCapturePhaseMs == null
+          ? DEFAULT_MAX_CAPTURE_PHASE_MS
+          : options.maxCapturePhaseMs
+      const captureStartedAtMs = replayNowMs()
+      let captureDeadlineExceeded = false
+      /** @type {string[]} */
+      const captureSkippedSteps = []
+
+      function hasCaptureDeadlineExpired() {
+        if (captureDeadlineExceeded) return true
+        const elapsed = replayNowMs() - captureStartedAtMs
+        if (elapsed >= maxCapturePhaseMs) {
+          captureDeadlineExceeded = true
+          return true
+        }
+        return false
+      }
+
+      setCapturePhase('profiles_stop', {}, { log: true })
+      /** @type {{ path?: string } | null} */
+      let rendererStopped = null
+      /** @type {{ path?: string } | null} */
+      let mainStopped = null
+      if (!hasCaptureDeadlineExpired()) {
+        rendererStopped = await rendererCpu.stop()
+        mainStopped = await mainCpu.stop()
+      } else {
+        captureSkippedSteps.push('profiles_stop')
+      }
+
+      setCapturePhase('heap_snapshot', {}, { log: true })
+      /** @type {{ chunkCount: number } | null} */
+      let heapResult = null
+      if (!hasCaptureDeadlineExpired()) {
+        heapResult = await collectRendererHeapSnapshot(renderer, {
+          heapSnapshotPath: heapPath,
+          fs
+        })
+      } else {
+        captureSkippedSteps.push('heap_snapshot')
+      }
+
+      /** @type {{ sha256?: string, bytes?: number } | null} */
+      let rendererCpuDigest = null
+      /** @type {{ sha256?: string, bytes?: number } | null} */
+      let mainCpuDigest = null
+      /** @type {{ sha256?: string, bytes?: number, chunkCount?: number } | null} */
+      let heapDigest = null
+
+      if (!captureDeadlineExceeded) {
+        rendererCpuDigest = verifyArtifactFile(rendererCpuPath, { fs, minBytes: 32 })
+        mainCpuDigest = verifyArtifactFile(mainCpuPath, { fs, minBytes: 32 })
+        heapDigest = verifyArtifactFile(heapPath, {
+          fs,
+          minBytes: 64
+        })
+      } else {
+        // Capture partial digests for whatever files exist
+        try {
+          rendererCpuDigest = verifyArtifactFile(rendererCpuPath, { fs, minBytes: 32 })
+        } catch (_) {
+          /* partial — ok under deadline */
+        }
+        try {
+          mainCpuDigest = verifyArtifactFile(mainCpuPath, { fs, minBytes: 32 })
+        } catch (_) {
+          /* partial */
+        }
+        try {
+          heapDigest = verifyArtifactFile(heapPath, { fs, minBytes: 64 })
+        } catch (_) {
+          /* partial */
+        }
+      }
 
       if (options.osAdapters) {
         sampleOsBundle(options.osAdapters, { occluded: false })
       }
 
       report.metrics.profiles = {
-        mainCpuProfilePath: mainStopped.path || mainCpuPath,
-        rendererCpuProfilePath: rendererStopped.path || rendererCpuPath,
+        mainCpuProfilePath: mainStopped && mainStopped.path ? mainStopped.path : mainCpuPath,
+        rendererCpuProfilePath:
+          rendererStopped && rendererStopped.path ? rendererStopped.path : rendererCpuPath,
         heapSnapshotPaths: [heapPath],
         digests: {
           mainCpu: mainCpuDigest,
           rendererCpu: rendererCpuDigest,
-          heap: { ...heapDigest, chunkCount: heapResult.chunkCount }
+          heap: heapDigest
+            ? { ...heapDigest, chunkCount: heapResult ? heapResult.chunkCount : 0 }
+            : null
         }
       }
-      profilesCaptured = true
-      setCapturePhase('capture_complete', {}, { log: true })
+      report.captureDeadline = {
+        maxCapturePhaseMs,
+        captureStartedAt: new Date(captureStartedAtMs).toISOString(),
+        captureEndedAt: new Date(replayNowMs()).toISOString(),
+        captureElapsedMs: replayNowMs() - captureStartedAtMs,
+        captureDeadlineExceeded,
+        captureSkippedSteps,
+        note: captureDeadlineExceeded
+          ? `Capture phase exceeded ${maxCapturePhaseMs}ms deadline — partial digests recorded; skipped: ${captureSkippedSteps.join(', ') || 'none'}`
+          : null
+      }
+      profilesCaptured = !captureDeadlineExceeded
+      report.replayWindowedRate = windowedRate ? windowedRate.snapshot() : null
+      setCapturePhase(
+        'capture_complete',
+        { captureDeadlineExceeded, captureElapsedMs: report.captureDeadline.captureElapsedMs },
+        { log: true }
+      )
     } catch (error) {
       launchError = error instanceof Error ? error : new Error(String(error))
       recordProgressFailure(launchError)
@@ -1069,7 +1307,12 @@ module.exports = {
   DEFAULT_REPLAY_STALL_TIMEOUT_MS,
   DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL,
   DEFAULT_REPLAY_PROGRESS_INTERVAL_MS,
+  DEFAULT_WINDOWED_RATE_WINDOW_MS,
+  DEFAULT_MIN_FREE_DISK_BYTES,
+  DEFAULT_MAX_CAPTURE_PHASE_MS,
   createT2ProgressJournal,
+  checkDiskHeadroom,
+  createWindowedRateTracker,
   parseArgs,
   runT2BaselineCli
 }

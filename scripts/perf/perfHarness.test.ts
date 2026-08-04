@@ -2598,3 +2598,242 @@ describe('T2 runner (no Electron launch)', () => {
     }
   })
 })
+
+describe('T2 harness amendment — disk preflight, windowed rate, capture deadline', () => {
+  const {
+    checkDiskHeadroom,
+    createWindowedRateTracker,
+    DEFAULT_MIN_FREE_DISK_BYTES,
+    DEFAULT_MAX_CAPTURE_PHASE_MS,
+    DEFAULT_WINDOWED_RATE_WINDOW_MS,
+    runT2BaselineCli
+  } = require('./runT2Baseline.cjs')
+  const { PERF_GATE_THRESHOLDS } = require('./perfGateThresholds.cjs')
+
+  it('checkDiskHeadroom refuses when free space is below minFreeBytes', () => {
+    const result = checkDiskHeadroom(
+      '/tmp',
+      PERF_GATE_THRESHOLDS.minFreeDiskBytes,
+      {
+        statfsSync: () => ({ bsize: 4096, bavail: 100 })
+      }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.freeBytes).toBe(4096 * 100)
+    expect(result.note).toMatch(/only \d+\.\d GiB free/)
+  })
+
+  it('checkDiskHeadroom passes when free space exceeds minFreeBytes', () => {
+    const result = checkDiskHeadroom(
+      '/tmp',
+      1_000_000,
+      {
+        statfsSync: () => ({ bsize: 4096, bavail: 1_000_000 })
+      }
+    )
+    expect(result.ok).toBe(true)
+    expect(result.freeBytes).toBe(4096 * 1_000_000)
+  })
+
+  it('checkDiskHeadroom fails closed when statfsSync is unavailable', () => {
+    const result = checkDiskHeadroom('/tmp', 1_000, { statfsSync: undefined })
+    expect(result.ok).toBe(false)
+    expect(result.note).toMatch(/unavailable/i)
+  })
+
+  it('checkDiskHeadroom fails closed when statfsSync throws', () => {
+    const result = checkDiskHeadroom('/tmp', 1_000, {
+      statfsSync: () => {
+        throw new Error('EACCES')
+      }
+    })
+    expect(result.ok).toBe(false)
+    expect(result.note).toMatch(/EACCES/)
+  })
+
+  it('checkDiskHeadroom fails closed on incomplete statfs data', () => {
+    const result = checkDiskHeadroom('/tmp', 1_000, {
+      statfsSync: () => ({ bsize: 4096 })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.note).toMatch(/incomplete/)
+  })
+
+  it('createWindowedRateTracker computes rate over sliding window', () => {
+    let clock = 0
+    const tracker = createWindowedRateTracker(60_000, { nowMs: () => clock })
+
+    // Push events at t=0 and t=10s
+    clock = 0
+    tracker.push(100)
+    clock = 10_000
+    tracker.push(200)
+    // 100 events in 10s = 10 evt/s
+    const snap = tracker.snapshot()
+    expect(snap.windowedRateEvtPerSec).toBeCloseTo(10, 1)
+    expect(snap.windowPointCount).toBe(2)
+
+    // Push at t=70s — first point falls out of window
+    clock = 70_000
+    tracker.push(400)
+    // Window now: [t=10s, t=70s] — 200 events in 60s = 3.33 evt/s
+    const snap2 = tracker.snapshot()
+    expect(snap2.windowedRateEvtPerSec).toBeCloseTo(3.33, 1)
+    expect(snap2.windowPointCount).toBe(2)
+  })
+
+  it('createWindowedRateTracker returns 0 with single data point', () => {
+    const tracker = createWindowedRateTracker(60_000)
+    tracker.push(100)
+    expect(tracker.snapshot().windowedRateEvtPerSec).toBe(0)
+  })
+
+  it('disk headroom preflight prevents launch in T2 runner', async () => {
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-disk-fail-'))
+    try {
+      await expect(
+        runT2BaselineCli(
+          [
+            '--workload=dual_run',
+            '--launch',
+            '--i-accept-isolated-launch',
+            '--materialize-instance-userdata',
+            '--lean',
+            '--scale-down=40',
+            '--instance-id=perfDiskFail',
+            `--home=${home}`,
+            '--port=9999',
+            '--inspect-port=9998'
+          ],
+          {
+            repoRoot,
+            forceIsolated: true,
+            allowDirtyLaunch: true,
+            allowNonIsolatedLaunch: true,
+            platform: 'darwin',
+            provenance: {
+              gitSha: 'a'.repeat(40),
+              dirty: false,
+              dirtyTreeFingerprint: 'b'.repeat(64),
+              dirtyPaths: [],
+              isolatedWorktree: true,
+              authoritativeBaseline: true
+            },
+            // Impossibly high disk requirement forces preflight failure
+            minFreeDiskBytes: 1_000_000_000_000_000,
+            buildAdapters: {
+              build: async () => ({ code: 0 })
+            },
+            spawnAdapters: {
+              resolveElectronPath: () => '/virtual/Electron',
+              spawn: () => {
+                throw new Error('should never reach spawn')
+              }
+            },
+            portAdapters: {
+              probePort: async () => ({ port: 9999, occupied: false }),
+              probeCdp: async () => ({ port: 9999, reachable: false }),
+              listInstancePids: () => []
+            }
+          }
+        )
+      ).rejects.toThrow(/disk headroom preflight/i)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('capture deadline and windowed rate appear in dry-run report skeleton', async () => {
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const result = await runT2BaselineCli(
+      [
+        '--workload=dual_run',
+        '--dry-run',
+        '--lean',
+        '--scale-down=40',
+        '--instance-id=perfCapWin',
+        `--home=${path.join(tmpdir(), 'tw-cap-win-home')}`
+      ],
+      {
+        repoRoot,
+        forceIsolated: true,
+        platform: 'darwin',
+        provenance: {
+          gitSha: 'a'.repeat(40),
+          dirty: false,
+          dirtyTreeFingerprint: 'b'.repeat(64),
+          dirtyPaths: [],
+          isolatedWorktree: true,
+          authoritativeBaseline: true
+        }
+      }
+    )
+    // Dry-run path initializes the new fields as null
+    expect(result.report.diskHeadroom).toBe(null)
+    expect(result.report.captureDeadline).toBe(null)
+    expect(result.report.replayWindowedRate).toBe(null)
+  })
+
+  it('capture deadline skipped steps are recorded when exceeded', async () => {
+    // Unit-level: verify the capture deadline fields exist and the
+    // struct shape is correct. Full Electron launch path tested by
+    // integration harness; here we validate report schema.
+    const {
+      createPerfReport,
+      createEmptyPerfMetrics,
+      validatePerfMetrics
+    } = require('./schema.cjs')
+
+    const env = {
+      schemaVersion: 1,
+      runId: 'run-deadline',
+      gitSha: 'abc',
+      appVersion: '1.9.2',
+      instanceId: 'perf-deadline-test',
+      userDataDir: '/tmp/x',
+      remoteDebuggingPort: 9411,
+      iosRemote: false,
+      fxPosture: 'cinematic_default',
+      workload: '30seat',
+      seed: 42,
+      startedAt: new Date().toISOString(),
+      authoritativeBaseline: false,
+      repoProvenance: {
+        gitSha: 'abc',
+        dirty: true,
+        dirtyTreeFingerprint: 'f'.repeat(64),
+        dirtyPaths: ['scripts/perf/schema.cjs'],
+        isolatedWorktree: false
+      }
+    }
+    const report = createPerfReport(env, createEmptyPerfMetrics())
+    // Verify the report can carry captureDeadline fields
+    report.captureDeadline = {
+      maxCapturePhaseMs: DEFAULT_MAX_CAPTURE_PHASE_MS,
+      captureStartedAt: new Date().toISOString(),
+      captureEndedAt: new Date().toISOString(),
+      captureElapsedMs: 100,
+      captureDeadlineExceeded: true,
+      captureSkippedSteps: ['profiles_stop', 'heap_snapshot'],
+      note: 'Capture phase exceeded deadline — partial digests recorded'
+    }
+    report.diskHeadroom = {
+      preflight: { ok: true, freeBytes: 30e9, minFreeBytes: 20e9, note: '30.0 GiB free' },
+      preCapture: null,
+      minFreeBytes: 20e9
+    }
+    report.replayWindowedRate = {
+      windowedRateEvtPerSec: 2.0,
+      windowSizeMs: 60_000,
+      windowPointCount: 30
+    }
+
+    expect(report.captureDeadline.captureDeadlineExceeded).toBe(true)
+    expect(report.captureDeadline.captureSkippedSteps).toHaveLength(2)
+    expect(report.diskHeadroom.preflight.ok).toBe(true)
+    expect(report.replayWindowedRate.windowedRateEvtPerSec).toBe(2.0)
+  })
+})

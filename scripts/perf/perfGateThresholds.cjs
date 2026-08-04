@@ -6,6 +6,7 @@
  */
 
 const BYTES_1_5_GIB = 1.5 * 1024 * 1024 * 1024
+const BYTES_20_GIB = 20 * 1024 * 1024 * 1024
 
 /** Minimum nontrivial profile / heap artifact size (bytes). */
 const MIN_PROFILE_BYTES = 256
@@ -31,11 +32,18 @@ const PERF_GATE_THRESHOLDS = Object.freeze({
   maxOccludedGpuUtilPct: 20,
   /** Zombie children over 500ms must be zero. */
   maxZombieOver500msCount: 0,
-  minProfileBytes: MIN_PROFILE_BYTES
+  minProfileBytes: MIN_PROFILE_BYTES,
+  /** Free disk space required on artifact volume before launch (bytes). */
+  minFreeDiskBytes: BYTES_20_GIB,
+  /** Max total wall-clock ms for the post-replay capture phase (profile stop + heap snapshot). */
+  maxCapturePhaseMs: 5 * 60 * 1000,
+  /** Sliding-window duration for windowed evt/s rate (ms). */
+  windowedRateWindowMs: 60 * 1000
 })
 
 module.exports = {
   BYTES_1_5_GIB,
+  BYTES_20_GIB,
   MIN_PROFILE_BYTES,
   PERF_GATE_THRESHOLDS
 }
