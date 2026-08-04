@@ -919,27 +919,53 @@ export class CanvasWebDriver implements CanvasDriver {
   navState(): CanvasNavState {
     const surface = this.requireSurface()
     const wc = surface.webContents
-    let canGoBack = false
-    let canGoForward = false
-    try {
-      canGoBack = wc.navigationHistory.canGoBack()
-      canGoForward = wc.navigationHistory.canGoForward()
-    } catch {
-      // History may be unavailable mid-teardown; report a chrome-safe default.
-    }
+    const history = this.readNavHistoryFlags(wc)
     let isLoading = false
     try {
       isLoading = wc.isLoading()
     } catch {
-      // Same teardown tolerance.
+      // Teardown tolerance: report a chrome-safe default.
     }
     return {
       url: wc.getURL() || '',
       title: surface.getTitle(),
       isLoading,
-      canGoBack,
-      canGoForward
+      canGoBack: history.canGoBack,
+      canGoForward: history.canGoForward
     }
+  }
+
+  /**
+   * Read back/forward availability across Electron versions. The modern
+   * `webContents.navigationHistory.{canGoBack,canGoForward}` is preferred, but
+   * on some builds it is not present on an embedded WebContentsView's
+   * webContents, so fall back to the (deprecated but still shipped) direct
+   * methods rather than silently reporting "no history" and greying the
+   * buttons on a page that plainly has history.
+   */
+  private readNavHistoryFlags(wc: WebContents): { canGoBack: boolean; canGoForward: boolean } {
+    const nav = (wc as unknown as { navigationHistory?: unknown }).navigationHistory as
+      | { canGoBack?: () => boolean; canGoForward?: () => boolean }
+      | undefined
+    let canGoBack = false
+    let canGoForward = false
+    if (nav && typeof nav.canGoBack === 'function' && typeof nav.canGoForward === 'function') {
+      try {
+        canGoBack = nav.canGoBack()
+        canGoForward = nav.canGoForward()
+        return { canGoBack, canGoForward }
+      } catch {
+        // Fall through to the legacy methods.
+      }
+    }
+    const legacy = wc as unknown as { canGoBack?: () => boolean; canGoForward?: () => boolean }
+    try {
+      if (typeof legacy.canGoBack === 'function') canGoBack = legacy.canGoBack()
+      if (typeof legacy.canGoForward === 'function') canGoForward = legacy.canGoForward()
+    } catch {
+      // History unavailable mid-teardown; chrome-safe defaults stand.
+    }
+    return { canGoBack, canGoForward }
   }
 
   async navigate(input: CanvasNavigateInput): Promise<CanvasNavState> {
@@ -976,15 +1002,30 @@ export class CanvasWebDriver implements CanvasDriver {
       await this.settleAfter(wc, () => wc.reload())
       return this.navState()
     }
-    const history = wc.navigationHistory
+    const flags = this.readNavHistoryFlags(wc)
     if (action === 'back') {
-      if (!history.canGoBack()) throw new Error('Nothing earlier in this canvas history.')
-      await this.settleAfter(wc, () => history.goBack())
+      if (!flags.canGoBack) throw new Error('Nothing earlier in this canvas history.')
+      await this.settleAfter(wc, () => this.goHistory(wc, 'back'))
       return this.navState()
     }
-    if (!history.canGoForward()) throw new Error('Nothing later in this canvas history.')
-    await this.settleAfter(wc, () => history.goForward())
+    if (!flags.canGoForward) throw new Error('Nothing later in this canvas history.')
+    await this.settleAfter(wc, () => this.goHistory(wc, 'forward'))
     return this.navState()
+  }
+
+  /** Version-tolerant history step, mirroring readNavHistoryFlags. */
+  private goHistory(wc: WebContents, direction: 'back' | 'forward'): void {
+    const nav = (wc as unknown as { navigationHistory?: unknown }).navigationHistory as
+      | { goBack?: () => void; goForward?: () => void }
+      | undefined
+    const modern = direction === 'back' ? nav?.goBack : nav?.goForward
+    if (typeof modern === 'function') {
+      modern.call(nav)
+      return
+    }
+    const legacy = wc as unknown as { goBack?: () => void; goForward?: () => void }
+    const fn = direction === 'back' ? legacy.goBack : legacy.goForward
+    if (typeof fn === 'function') fn.call(wc)
   }
 
   /**
