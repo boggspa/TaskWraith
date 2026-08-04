@@ -1,4 +1,13 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync } from 'fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  symlinkSync,
+  writeFileSync,
+  realpathSync
+} from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { createRequire } from 'module'
@@ -1778,14 +1787,18 @@ describe('T2 runner (no Electron launch)', () => {
           result: {
             value: {
               home: '/virt/home',
-              userData: '/virt/home/Library/Application Support/TaskWraith Dev x'
+              userData: '/virt/home/Library/Application Support/TaskWraith Dev x',
+              homeRealpath: '/virt/home',
+              userDataRealpath: '/virt/home/Library/Application Support/TaskWraith Dev x'
             }
           }
         })
       },
       {
         home: '/virt/home',
-        userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+        userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x',
+        homeRealpath: '/virt/home',
+        userDataRealpath: '/virt/home/Library/Application Support/TaskWraith Dev x'
       }
     )
     expect(match.ok).toBe(true)
@@ -1797,14 +1810,18 @@ describe('T2 runner (no Electron launch)', () => {
             result: {
               value: {
                 home: '/wrong',
-                userData: '/virt/home/Library/Application Support/TaskWraith Dev x'
+                userData: '/virt/home/Library/Application Support/TaskWraith Dev x',
+                homeRealpath: '/wrong',
+                userDataRealpath: '/virt/home/Library/Application Support/TaskWraith Dev x'
               }
             }
           })
         },
         {
           home: '/virt/home',
-          userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+          userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x',
+          homeRealpath: '/virt/home',
+          userDataRealpath: '/virt/home/Library/Application Support/TaskWraith Dev x'
         }
       )
     ).rejects.toThrow(/HOME mismatch/i)
@@ -1816,14 +1833,18 @@ describe('T2 runner (no Electron launch)', () => {
             result: {
               value: {
                 home: '/virt/home',
-                userData: '/other/TaskWraith Dev x'
+                userData: '/other/TaskWraith Dev x',
+                homeRealpath: '/virt/home',
+                userDataRealpath: '/other/TaskWraith Dev x'
               }
             }
           })
         },
         {
           home: '/virt/home',
-          userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+          userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x',
+          homeRealpath: '/virt/home',
+          userDataRealpath: '/virt/home/Library/Application Support/TaskWraith Dev x'
         }
       )
     ).rejects.toThrow(/userData.*mismatch/i)
@@ -1835,7 +1856,12 @@ describe('T2 runner (no Electron launch)', () => {
             throw new Error('protocol boom')
           }
         },
-        { home: '/virt/home', userDataPath: '/virt/home/x' }
+        {
+          home: '/virt/home',
+          userDataPath: '/virt/home/x',
+          homeRealpath: '/virt/home',
+          userDataRealpath: '/virt/home/x'
+        }
       )
     ).rejects.toThrow(/protocol failed/i)
   })
@@ -1983,12 +2009,19 @@ describe('T2 runner (no Electron launch)', () => {
             result: {
               value: {
                 home: path.resolve(home),
-                userData: expectedUserData
+                userData: expectedUserData,
+                homeRealpath: path.resolve(home),
+                userDataRealpath: expectedUserData
               }
             }
           })
         },
-        { home, userDataPath: expectedUserData }
+        {
+          home,
+          userDataPath: expectedUserData,
+          homeRealpath: path.resolve(home),
+          userDataRealpath: expectedUserData
+        }
       )
       expect(probe.ok).toBe(true)
       expect(probe.observedHome).toBe(path.resolve(home))
@@ -2026,6 +2059,241 @@ describe('T2 runner (no Electron launch)', () => {
       expect(dry.userDataPath).toBe(
         path.join(home, 'Library', 'Application Support', 'TaskWraith Dev perfFDry01')
       )
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('G: refuses symlink boundary/home escape and non-directory; proves canonical happy path', () => {
+    const {
+      assertFilesystemIsolatedHomeContainment,
+      prepareAuthoritativeIsolatedHome,
+      PERF_HOMES_DIRNAME
+    } = require('./isolatedHome.cjs')
+
+    const fakeRepo = mkdtempSync(path.join(tmpdir(), 'tw-t2-g-repo-'))
+    const realHome = path.join(tmpdir(), 'tw-t2-g-real-home')
+    mkdirSync(realHome, { recursive: true })
+    const outside = mkdtempSync(path.join(tmpdir(), 'tw-t2-g-outside-'))
+    try {
+      const boundary = path.join(fakeRepo, PERF_HOMES_DIRNAME)
+
+      // Symlinked boundary → host escape
+      symlinkSync(outside, boundary)
+      expect(() =>
+        assertFilesystemIsolatedHomeContainment({
+          home: path.join(boundary, 'nested'),
+          repoRoot: fakeRepo,
+          realHomedir: realHome,
+          createMissing: true
+        })
+      ).toThrow(/symlink component/i)
+      rmSync(boundary, { force: true })
+
+      // Non-directory component under boundary
+      mkdirSync(boundary, { recursive: true })
+      const fileAsHome = path.join(boundary, 'not-a-dir')
+      writeFileSync(fileAsHome, 'nope')
+      expect(() =>
+        assertFilesystemIsolatedHomeContainment({
+          home: fileAsHome,
+          repoRoot: fakeRepo,
+          realHomedir: realHome,
+          createMissing: false
+        })
+      ).toThrow(/non-directory component/i)
+      rmSync(fileAsHome, { force: true })
+
+      // Symlinked HOME escaping outside boundary
+      const escapeHome = path.join(boundary, 'escape-home')
+      symlinkSync(outside, escapeHome)
+      expect(() =>
+        assertFilesystemIsolatedHomeContainment({
+          home: escapeHome,
+          repoRoot: fakeRepo,
+          realHomedir: realHome,
+          createMissing: false
+        })
+      ).toThrow(/symlink component/i)
+      rmSync(escapeHome, { force: true })
+
+      // Symlinked ancestor under boundary escaping outside
+      const trapDir = path.join(boundary, 'trap')
+      mkdirSync(trapDir, { recursive: true })
+      const linkAncestor = path.join(trapDir, 'link')
+      symlinkSync(outside, linkAncestor)
+      expect(() =>
+        assertFilesystemIsolatedHomeContainment({
+          home: path.join(linkAncestor, 'leaf'),
+          repoRoot: fakeRepo,
+          realHomedir: realHome,
+          createMissing: true
+        })
+      ).toThrow(/symlink component/i)
+      rmSync(trapDir, { recursive: true, force: true })
+
+      // Canonical happy path
+      const safeHome = path.join(boundary, 'safe-home')
+      const prepared = prepareAuthoritativeIsolatedHome({
+        home: safeHome,
+        repoRoot: fakeRepo,
+        realHomedir: realHome
+      })
+      expect(prepared.home).toBe(path.resolve(safeHome))
+      expect(prepared.canonicalHome).toBe(realpathSync(safeHome))
+      expect(prepared.canonicalBoundary).toBe(realpathSync(boundary))
+      expect(prepared.canonicalRepoRoot).toBe(realpathSync(fakeRepo))
+      expect(prepared.canonicalHome.startsWith(prepared.canonicalBoundary + path.sep)).toBe(true)
+
+      mkdirSync(path.join(safeHome, 'Library', 'Application Support', 'TaskWraith Dev gOk'), {
+        recursive: true
+      })
+      const userDataPath = path.join(
+        safeHome,
+        'Library',
+        'Application Support',
+        'TaskWraith Dev gOk'
+      )
+      const withUserData = assertFilesystemIsolatedHomeContainment({
+        home: safeHome,
+        repoRoot: fakeRepo,
+        realHomedir: realHome,
+        userDataPath,
+        createMissing: false
+      })
+      expect(withUserData.canonicalUserData).toBe(realpathSync(userDataPath))
+      expect(
+        withUserData.canonicalUserData.startsWith(withUserData.canonicalHome + path.sep) ||
+          withUserData.canonicalUserData === withUserData.canonicalHome
+      ).toBe(true)
+    } finally {
+      rmSync(fakeRepo, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+      rmSync(realHome, { recursive: true, force: true })
+    }
+  })
+
+  it('G: runtime canonical mismatch prevents replay and still tears down exact child', async () => {
+    const kills = []
+    let replayCalled = false
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-g-mismatch-'))
+    try {
+      await expect(
+        runT2BaselineCli(
+          [
+            '--workload=dual_run',
+            '--launch',
+            '--i-accept-isolated-launch',
+            '--materialize-instance-userdata',
+            '--lean',
+            '--scale-down=40',
+            '--instance-id=perfGMis01',
+            `--home=${home}`,
+            '--port=9412',
+            '--inspect-port=9812',
+            '--max-replay-events=1'
+          ],
+          {
+            repoRoot,
+            forceIsolated: true,
+            allowDirtyLaunch: true,
+            allowNonIsolatedLaunch: true,
+            platform: 'darwin',
+            provenance: {
+              gitSha: 'a'.repeat(40),
+              dirty: false,
+              dirtyTreeFingerprint: 'b'.repeat(64),
+              dirtyPaths: [],
+              isolatedWorktree: true,
+              authoritativeBaseline: true
+            },
+            buildAdapters: {
+              build: async () => ({ code: 0 })
+            },
+            spawnAdapters: {
+              resolveElectronPath: () => '/virtual/Electron',
+              spawn: (cmd, _args, opts) => {
+                expect(opts.env.HOME).toBe(path.resolve(home))
+                const ee = new EventEmitter()
+                return Object.assign(ee, {
+                  pid: 8080,
+                  stdout: new EventEmitter(),
+                  stderr: new EventEmitter(),
+                  kill(sig) {
+                    kills.push(sig)
+                    queueMicrotask(() => ee.emit('exit', 0, sig))
+                    return true
+                  }
+                })
+              }
+            },
+            portAdapters: {
+              probePort: async (port) => ({ port, occupied: false }),
+              probeCdp: async () => ({ port: 9412, reachable: false }),
+              listInstancePids: () => []
+            },
+            portOwnershipAdapters: ownedPortAdapters(8080),
+            mainInspectorUrl: 'ws://127.0.0.1:9812/xxxxxxxx',
+            WebSocket: class FakeWs {
+              constructor() {
+                this.handlers = {}
+                queueMicrotask(() => this.handlers.open && this.handlers.open())
+              }
+              on(event, handler) {
+                this.handlers[event] = handler
+              }
+              send(data) {
+                const msg = JSON.parse(data)
+                queueMicrotask(() => {
+                  this.handlers.message(
+                    JSON.stringify({ id: msg.id, result: { ok: true, method: msg.method } })
+                  )
+                })
+              }
+              close() {}
+            },
+            cdpAdapters: {
+              httpGetJson: async (url) => {
+                if (String(url).includes('/json/version')) return { Browser: 'Fake/1' }
+                if (String(url).includes(':9812')) {
+                  return [{ webSocketDebuggerUrl: 'ws://127.0.0.1:9812/xxxxxxxx' }]
+                }
+                return [
+                  {
+                    type: 'page',
+                    id: 'p1',
+                    webSocketDebuggerUrl: 'ws://127.0.0.1:9412/devtools/page/p1'
+                  }
+                ]
+              }
+            },
+            verifyIsolatedHomeAndUserData: async (_inspector, expected) => {
+              expect(expected.homeRealpath).toBeTruthy()
+              expect(expected.userDataRealpath).toBeTruthy()
+              throw new Error(
+                `Refuse replay: HOME realpath mismatch (expected ${expected.homeRealpath}, observed /escaped/host/home)`
+              )
+            },
+            replayApi: {
+              getChat: async () => {
+                replayCalled = true
+                return null
+              },
+              saveChat: async () => {
+                replayCalled = true
+                return { ok: true }
+              }
+            },
+            terminateOptions: { waitMs: 20, sleep: async () => {} }
+          }
+        )
+      ).rejects.toThrow(/HOME realpath mismatch|Refuse replay/i)
+      expect(replayCalled).toBe(false)
+      expect(kills.length).toBeGreaterThan(0)
+      expect(kills[0]).toBe('SIGTERM')
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

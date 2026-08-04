@@ -36,6 +36,7 @@ const { collectRepoProvenance, detectAppVersion } = require('./repoProvenance.cj
 const { resolveUnpackagedDevUserDataPath, sanitizeDevInstanceId } = require('./devUserDataPath.cjs')
 const {
   resolveT2Home,
+  assertFilesystemIsolatedHomeContainment,
   verifyIsolatedHomeAndUserDataViaMainInspector
 } = require('./isolatedHome.cjs')
 const { assertLaunchPortsFree } = require('./portGuard.cjs')
@@ -125,8 +126,9 @@ Usage:
 Safety defaults:
   • Refuses Electron launch unless BOTH --launch and --i-accept-isolated-launch
   • Authoritative launch requires --home=<absolute> under <worktree>/perf-homes/ (never real os.homedir())
+  • Refuses symlink/non-directory components; realpath-bounds HOME + userData under the worktree boundary
   • Propagates that HOME into the Electron child; refuses --user-data-dir
-  • Before replay, main inspector must prove HOME + app.getPath('userData') match the materialized sibling
+  • Before replay, main inspector must prove lexical + canonical HOME/userData match the materialized sibling
   • Never targets production TaskWraith or shared "TaskWraith Dev"
   • Attaches only to the spawned child pid/ports; terminates only that child
   • Never auto-deletes artifacts
@@ -230,7 +232,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     repoRoot,
     willLaunch,
     realHomedir: options.realHomedir,
-    fallbackHome: options.home || os.homedir()
+    fallbackHome: options.home || os.homedir(),
+    fs: options.fs
   })
   const home = homeResolved.home
   const userDataResolved = resolveUnpackagedDevUserDataPath({
@@ -239,6 +242,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     platform: options.platform || process.platform,
     env: options.env || process.env
   })
+
+  /** @type {object|null} */
+  let homeContainment = homeResolved.containment
 
   const fxPosture = args.fxPosture || 'cinematic_default'
   if (!FX_POSTURES.includes(fxPosture)) {
@@ -292,6 +298,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       lean: Boolean(args.lean),
       scaleDown
     })
+    if (willLaunch && homeResolved.authoritativeHome) {
+      // Blocker G: re-prove component + canonical containment after materialize.
+      homeContainment = assertFilesystemIsolatedHomeContainment({
+        home,
+        repoRoot,
+        realHomedir: options.realHomedir,
+        userDataPath: userDataResolved.userDataPath,
+        fs: options.fs,
+        createMissing: false
+      })
+    }
   } else if (!args.dryRun && args.outDir) {
     materializeDir = path.resolve(String(args.outDir))
     materializeResult = materializePerfUserData({
@@ -324,6 +341,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     observedHome: null,
     expectedUserDataPath: userDataResolved.userDataPath,
     observedUserDataPath: null,
+    expectedHomeRealpath: homeContainment ? homeContainment.canonicalHome : null,
+    expectedUserDataRealpath: homeContainment ? homeContainment.canonicalUserData : null,
+    observedHomeRealpath: null,
+    observedUserDataRealpath: null,
     note: homeResolved.note
   }
 
@@ -431,6 +452,25 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }
       }
 
+      // Blocker G: re-prove containment immediately before Electron spawn.
+      if (homeResolved.authoritativeHome) {
+        homeContainment = assertFilesystemIsolatedHomeContainment({
+          home,
+          repoRoot,
+          realHomedir: options.realHomedir,
+          userDataPath: userDataResolved.userDataPath,
+          fs: options.fs,
+          createMissing: false
+        })
+        isolationVerification = {
+          ...isolationVerification,
+          expectedHomeRealpath: homeContainment.canonicalHome,
+          expectedUserDataRealpath: homeContainment.canonicalUserData,
+          note: 'pre-spawn realpath containment proved; awaiting main-inspector lexical+canonical match'
+        }
+        report.isolation = isolationVerification
+      }
+
       childSession = spawnExactElectronChild({
         spawnPlan,
         adapters: options.spawnAdapters || {}
@@ -458,24 +498,43 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         WebSocket: options.WebSocket
       })
 
-      // Blocker F: fail closed unless child HOME + userData match the materialized sibling.
+      // Blocker F+G: fail closed unless child lexical + canonical HOME/userData match.
+      const expectedHomeRealpath =
+        (homeContainment && homeContainment.canonicalHome) ||
+        isolationVerification.expectedHomeRealpath
+      const expectedUserDataRealpath =
+        (homeContainment && homeContainment.canonicalUserData) ||
+        isolationVerification.expectedUserDataRealpath
+      if (!expectedHomeRealpath || !expectedUserDataRealpath) {
+        throw new Error(
+          'Refuse replay: canonical HOME/userData realpaths required before inspector verification'
+        )
+      }
       const pathProbe =
         typeof options.verifyIsolatedHomeAndUserData === 'function'
           ? await options.verifyIsolatedHomeAndUserData(mainInspector, {
               home,
-              userDataPath: userDataResolved.userDataPath
+              userDataPath: userDataResolved.userDataPath,
+              homeRealpath: expectedHomeRealpath,
+              userDataRealpath: expectedUserDataRealpath
             })
           : await verifyIsolatedHomeAndUserDataViaMainInspector(mainInspector, {
               home,
-              userDataPath: userDataResolved.userDataPath
+              userDataPath: userDataResolved.userDataPath,
+              homeRealpath: expectedHomeRealpath,
+              userDataRealpath: expectedUserDataRealpath
             })
       isolationVerification = {
         ...isolationVerification,
         verified: true,
         observedHome: pathProbe.observedHome,
         observedUserDataPath: pathProbe.observedUserDataPath,
+        observedHomeRealpath: pathProbe.observedHomeRealpath || null,
+        observedUserDataRealpath: pathProbe.observedUserDataRealpath || null,
+        expectedHomeRealpath,
+        expectedUserDataRealpath,
         expression: pathProbe.expression,
-        note: 'main inspector proved isolated HOME + TaskWraith Dev <id> userData before replay'
+        note: 'main inspector proved lexical + canonical isolated HOME + TaskWraith Dev <id> userData before replay'
       }
       report.isolation = isolationVerification
       if (!skipBuild && provenance.authoritativeBaseline) {
