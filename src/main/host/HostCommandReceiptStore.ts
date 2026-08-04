@@ -243,6 +243,13 @@ export type HostCommandReceiptBeginResult =
    * Never includes the original receipt body.
    */
   | { kind: 'actor_denied' }
+  /**
+   * Protected anchors (pending + indeterminate) already consume maxRecords.
+   * Refused before any index or journal mutation. Exact command/idempotency
+   * replay and conflict paths remain available at capacity.
+   * Body-free — never exposes receipt/actor/target/body.
+   */
+  | { kind: 'capacity_refused' }
   | {
       kind: 'conflict'
       reason: 'idempotency_key_command_mismatch' | 'command_id_mismatch'
@@ -523,6 +530,13 @@ export class HostCommandReceiptStore {
       }
     }
 
+    // Refuse new distinct commands when protected anchors already consume
+    // maxRecords. Exact replay, conflict, and occupied-commandId paths above
+    // remain available at capacity. Refuse before any index or journal mutation.
+    if (this.countProtectedAnchors() >= this.maxRecords) {
+      return { kind: 'capacity_refused' }
+    }
+
     const createdAt = input.createdAt ?? this.now()
     const record: HostCommandReceiptRecord = {
       schemaVersion: HOST_COMMAND_RECEIPT_SCHEMA_VERSION,
@@ -692,6 +706,16 @@ export class HostCommandReceiptStore {
     return this.recordsByCommandId.size
   }
 
+  private countProtectedAnchors(): number {
+    let count = 0
+    for (const [, record] of this.recordsByCommandId) {
+      if (record.status === 'pending' || record.status === 'indeterminate') {
+        count += 1
+      }
+    }
+    return count
+  }
+
   private indexRecord(record: HostCommandReceiptRecord): void {
     this.recordsByCommandId.set(record.commandId, record)
     // Conflict receipts never claim or steal the idempotency-key mapping.
@@ -728,15 +752,26 @@ export class HostCommandReceiptStore {
 
     const selected = new Map<string, HostCommandReceiptRecord>()
 
-    // Phase 1: retain non-conflict owners newest-first (prefer original owners).
+    // Phase 1: retain ALL protected exactly-once anchors (pending/indeterminate)
+    // first, regardless of recency. Terminal receipts and conflicts must never
+    // displace these anchors.
     for (const record of sorted) {
+      if (record.status !== 'pending' && record.status !== 'indeterminate') continue
+      selected.set(record.commandId, record)
+    }
+
+    // Phase 2: retain non-conflict terminal owners newest-first within
+    // remaining capacity (after protected anchors).
+    for (const record of sorted) {
+      if (record.status === 'pending' || record.status === 'indeterminate') continue
       if (record.status === 'conflict') continue
+      if (selected.has(record.commandId)) continue
       if (selected.size >= this.maxRecords) break
       selected.set(record.commandId, record)
     }
 
-    // Phase 2: fill remaining slots with conflicts whose owners are retained.
-    // Never retain a conflict without its conflictCommandId owner in the set.
+    // Phase 3: fill any remaining slots with conflicts whose owners are
+    // retained. Never retain a conflict without its conflictCommandId owner.
     if (selected.size < this.maxRecords) {
       for (const record of sorted) {
         if (record.status !== 'conflict') continue
@@ -753,6 +788,15 @@ export class HostCommandReceiptStore {
 
   private writeCheckpointAndResetJournal(): void {
     const records = this.selectRecordsForRetention([...this.recordsByCommandId.values()])
+
+    // Fail closed: if protected anchors alone exceed maxRecords the retained
+    // set will be larger than the configured bound.  Do not rewrite evidence
+    // and do not return a silently compacted over-bound store.
+    if (records.length > this.maxRecords) {
+      throw new Error(
+        `HostCommandReceiptStore: protected anchor count (${records.length}) exceeds maxRecords (${this.maxRecords}); refusing compaction to preserve on-disk evidence`
+      )
+    }
 
     this.recordsByCommandId = new Map()
     this.commandIdByIdempotencyKey = new Map()
