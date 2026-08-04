@@ -40,10 +40,11 @@
   transform-origin: top right;
 }
 
-/* The side-chat menu shell (11-side-chat.css) paints every descendant span at
- * var(--font-size-sm)/650, which outranks this shard's single-class span rules
- * and inflates the dense stat typography. Spans inherit here instead; the
- * popover-scoped rules below own the deliberate sizes. */
+/* The side-chat menu shell (11-side-chat.css) defaults descendant span/small
+ * type via :where() rules. This popover is dense stat chrome, not a menu, so
+ * spans and smalls inherit instead and the popover-scoped rules below own the
+ * deliberate sizes — also guarding against future shell rules regaining
+ * specificity. */
 .workspace-stats-popover span,
 .workspace-stats-popover small {
   font-size: inherit;

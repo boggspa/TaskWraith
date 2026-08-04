@@ -38,6 +38,17 @@ describe('main-pane action popover CSS', () => {
     )
   })
 
+  it('keeps the shared span/small type defaults specificity-neutral so popover shards can override', () => {
+    const css = readSideChatCss()
+    const spanRule = cssBlockStartingAt(css, '.side-chat-layout-menu :where(span) {')
+    const smallRule = cssBlockStartingAt(css, '.side-chat-layout-menu :where(small) {')
+
+    expect(spanRule).toContain('font-size: var(--font-size-sm)')
+    expect(smallRule).toContain('font-size: var(--font-size-xs)')
+    expect(css).not.toMatch(/\.side-chat-layout-menu span\s*\{/)
+    expect(css).not.toMatch(/\.side-chat-layout-menu small\s*\{/)
+  })
+
   it('routes the Run preview-target menu through the shared glass chrome', () => {
     const app = readApp()
 

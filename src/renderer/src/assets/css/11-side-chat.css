@@ -2384,12 +2384,17 @@
   padding-top: 2px;
 }
 
-.side-chat-layout-menu span {
+/* Type defaults for the bare, unclassed <span>/<small> pairs inside menu
+ * items (fx/info corner menus, pane-preview targets). :where() keeps them
+ * specificity-neutral: popover shards built on this shell (for example
+ * 31-workspace-stats.css) can size their own classed typography without
+ * being outranked by the shell. */
+.side-chat-layout-menu :where(span) {
   font-size: var(--font-size-sm);
   font-weight: 650;
 }
 
-.side-chat-layout-menu small {
+.side-chat-layout-menu :where(small) {
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
