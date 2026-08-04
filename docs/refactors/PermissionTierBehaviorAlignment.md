@@ -143,6 +143,13 @@ Required, in one atomic slice because tests pin the pair:
   (networkAccess is a blunt gate); needs a shell-command/host classifier —
   design before promising.
 
+## Residue shared with the Isolate hold (99516962c)
+`neverAutoAllow` holds surface as plain approval cards (exact command +
+ensemble context; audit trail carries the disposition) with no hold-specific
+reason line. If a reason-surface is ever built for these holds, both the
+widened read_only (Ask) grant-hold and the Isolate pinned-Shared branch hold
+want a line naming WHY the prompt fired.
+
 ## Open items to re-confirm with Chris before slice C ships
 - The spec's per-tier tool tables are non-monotonic in places (e.g. the Accept
   Edits list omits Launch/Canvas/Mesh/IDE sections its prose auto-approves;
