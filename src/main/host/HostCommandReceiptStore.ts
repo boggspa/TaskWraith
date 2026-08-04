@@ -176,6 +176,38 @@ export type HostCommandReceiptCompleteInput = {
   position?: HostCommandReceiptPosition
 }
 
+/**
+ * Body-free input for explicit pending → recoverable-indeterminate promotion.
+ * Callers supply only identity, sole-journal position, and a bounded static
+ * recovery/error code — never command args, tool output, or hidden reasoning.
+ */
+export type HostCommandReceiptMarkIndeterminateInput = {
+  commandId: string
+  /** Required sole-journal position; validated before any mutation. */
+  position: HostCommandReceiptPosition
+  /** Bounded static recovery/error code (non-empty after normalize). */
+  errorCode: string
+  /** Optional clock override; defaults to the store clock. */
+  updatedAt?: string
+}
+
+/**
+ * Body-free result for markIndeterminate. Never returns unrestricted command
+ * bodies; success paths return only the compact durable receipt record.
+ */
+export type HostCommandReceiptMarkIndeterminateResult =
+  | { kind: 'marked'; receipt: HostCommandReceiptRecord }
+  | { kind: 'already_indeterminate'; receipt: HostCommandReceiptRecord }
+  | { kind: 'not_found' }
+  | {
+      kind: 'terminal_refused'
+      status: Exclude<HostCommandReceiptStatus, 'pending' | 'indeterminate'>
+    }
+  | {
+      kind: 'invalid'
+      code: 'invalid_command_id' | 'invalid_position' | 'invalid_error_code'
+    }
+
 export type HostCommandReceiptBeginResult =
   | { kind: 'created'; receipt: HostCommandReceiptRecord }
   | { kind: 'existing'; receipt: HostCommandReceiptRecord }
@@ -543,6 +575,87 @@ export class HostCommandReceiptStore {
     return cloneRecord(next)
   }
 
+  /**
+   * Explicit body-free promotion of a pending receipt to recoverable
+   * indeterminate. Refreshes generation/cursor from a validated sole-journal
+   * position. Does not set completedAt and never executes the command.
+   *
+   * - pending → indeterminate with recoveryState + errorCode (mutates once)
+   * - already indeterminate → idempotent, no rewrite
+   * - succeeded/failed/denied/cancelled/conflict → terminal_refused, no write
+   * - invalid commandId/position/errorCode → invalid, no write
+   * - missing commandId → not_found, no write
+   *
+   * Later complete() may still resolve recoverable indeterminate as before.
+   */
+  markIndeterminate(
+    input: HostCommandReceiptMarkIndeterminateInput
+  ): HostCommandReceiptMarkIndeterminateResult {
+    // Normalize all inputs before any lookup or mutation so invalid fields
+    // fail closed with zero journal writes.
+    let commandId: string
+    try {
+      commandId = normalizeId(input.commandId, 'commandId')
+    } catch {
+      return { kind: 'invalid', code: 'invalid_command_id' }
+    }
+
+    let position: HostCommandReceiptPosition
+    try {
+      position = normalizePosition(input.position)
+    } catch {
+      return { kind: 'invalid', code: 'invalid_position' }
+    }
+
+    let errorCode: string
+    try {
+      errorCode = normalizeStaticErrorCode(input.errorCode)
+    } catch {
+      return { kind: 'invalid', code: 'invalid_error_code' }
+    }
+
+    const current = this.recordsByCommandId.get(commandId)
+    if (!current) return { kind: 'not_found' }
+
+    if (current.status === 'indeterminate') {
+      // Idempotent: do not rewrite generation/cursor/errorCode/updatedAt.
+      return { kind: 'already_indeterminate', receipt: cloneRecord(current) }
+    }
+
+    if (
+      current.status === 'succeeded' ||
+      current.status === 'failed' ||
+      current.status === 'denied' ||
+      current.status === 'cancelled' ||
+      current.status === 'conflict'
+    ) {
+      return { kind: 'terminal_refused', status: current.status }
+    }
+
+    // Only pending reaches here (status union is exhaustive above).
+    const updatedAt =
+      typeof input.updatedAt === 'string' && input.updatedAt.trim()
+        ? truncateText(input.updatedAt, MAX_ID_CHARS)
+        : this.now()
+
+    const next: HostCommandReceiptRecord = {
+      ...current,
+      status: 'indeterminate',
+      recoveryState: 'recoverable-indeterminate',
+      generation: position.generation,
+      cursor: position.cursor,
+      errorCode,
+      updatedAt
+    }
+    // Explicit indeterminate is non-terminal: never stamp completedAt.
+    delete next.completedAt
+
+    this.indexRecord(next)
+    this.appendJournalEvent({ op: 'upsert', record: next })
+    this.maybeCompact()
+    return { kind: 'marked', receipt: cloneRecord(next) }
+  }
+
   /** Force compaction of journal into checkpoint, enforcing maxRecords. */
   compact(): void {
     this.writeCheckpointAndResetJournal()
@@ -841,6 +954,18 @@ function normalizePosition(value: HostCommandReceiptPosition): HostCommandReceip
     throw new Error('HostCommandReceiptStore: getPosition().cursor is invalid')
   }
   return { generation: value.generation, cursor: value.cursor }
+}
+
+/** Bounded static recovery/error code — non-empty, no free-form body text. */
+function normalizeStaticErrorCode(value: string): string {
+  if (typeof value !== 'string') {
+    throw new Error('HostCommandReceiptStore: errorCode is required')
+  }
+  const trimmed = truncateText(value, MAX_KIND_CHARS)
+  if (!trimmed) {
+    throw new Error('HostCommandReceiptStore: errorCode is invalid')
+  }
+  return trimmed
 }
 
 /** Exact actor match — both sides must carry full identity; incomplete never matches. */

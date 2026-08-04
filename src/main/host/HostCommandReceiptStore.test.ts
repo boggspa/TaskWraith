@@ -13,6 +13,22 @@ import {
   type HostCommandReceiptPosition
 } from './HostCommandReceiptStore'
 
+function markInput(
+  overrides: Partial<{
+    commandId: string
+    position: HostCommandReceiptPosition
+    errorCode: string
+    updatedAt: string
+  }> = {}
+) {
+  return {
+    commandId: 'cmd-1',
+    position: { generation: 5, cursor: 99 },
+    errorCode: 'deferred_resolution_indeterminate',
+    ...overrides
+  }
+}
+
 const OWNER_ACTOR: HostCommandReceiptActor = {
   clientId: 'client-tui-1',
   actorId: 'user-1',
@@ -652,6 +668,216 @@ describe('HostCommandReceiptStore', () => {
     })
     expect(resolved?.status).toBe('denied')
     expect(resolved?.recoveryState).toBeUndefined()
+  })
+
+  it('markIndeterminate promotes pending with sole-journal position and no completedAt', () => {
+    position = { generation: 2, cursor: 10 }
+    const store = openStore()
+    store.begin(baseInput())
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+
+    clock = '2026-08-03T17:00:20.000Z'
+    const marked = store.markIndeterminate(markInput())
+    expect(marked.kind).toBe('marked')
+    if (marked.kind !== 'marked') return
+
+    expect(marked.receipt.status).toBe('indeterminate')
+    expect(marked.receipt.recoveryState).toBe('recoverable-indeterminate')
+    expect(marked.receipt.generation).toBe(5)
+    expect(marked.receipt.cursor).toBe(99)
+    expect(marked.receipt.errorCode).toBe('deferred_resolution_indeterminate')
+    expect(marked.receipt.updatedAt).toBe(clock)
+    expect(marked.receipt.completedAt).toBeUndefined()
+    expect(marked.receipt).not.toHaveProperty('args')
+    expect(marked.receipt).not.toHaveProperty('toolOutput')
+
+    const after = readFileSync(journalPath, 'utf8')
+    expect(after.length).toBeGreaterThan(before.length)
+    expect(after).not.toMatch(/password|secret-token|hidden.?reasoning/i)
+
+    const found = expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+    expect(found?.generation).toBe(5)
+    expect(found?.cursor).toBe(99)
+    expect(found?.completedAt).toBeUndefined()
+  })
+
+  it('markIndeterminate is idempotent without journal rewrite once indeterminate', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    const first = store.markIndeterminate(markInput())
+    expect(first.kind).toBe('marked')
+    if (first.kind !== 'marked') return
+
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+    clock = '2026-08-03T17:00:30.000Z'
+
+    const again = store.markIndeterminate(
+      markInput({
+        position: { generation: 9, cursor: 900 },
+        errorCode: 'other_code',
+        updatedAt: '2026-08-03T18:00:00.000Z'
+      })
+    )
+    expect(again.kind).toBe('already_indeterminate')
+    if (again.kind !== 'already_indeterminate') return
+    expect(again.receipt.generation).toBe(5)
+    expect(again.receipt.cursor).toBe(99)
+    expect(again.receipt.errorCode).toBe('deferred_resolution_indeterminate')
+    expect(again.receipt.updatedAt).toBe(first.receipt.updatedAt)
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+  })
+
+  it.each([
+    { status: 'succeeded' as const },
+    { status: 'failed' as const },
+    { status: 'denied' as const },
+    { status: 'cancelled' as const }
+  ])('markIndeterminate refuses terminal $status without journal mutation', ({ status }) => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.complete({
+      commandId: 'cmd-1',
+      status,
+      ...(status === 'failed' || status === 'denied' ? { errorCode: 'x' } : {})
+    })
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+
+    const refused = store.markIndeterminate(markInput())
+    expect(refused).toEqual({ kind: 'terminal_refused', status })
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), status)
+  })
+
+  it('markIndeterminate refuses conflict receipts without journal mutation', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+    const conflictFp = hostCommandFingerprint({
+      type: 'composer.send',
+      targetKind: 'thread',
+      targetId: 'thread-other',
+      argsDigest: 'other'
+    })
+    const conflict = store.begin(
+      baseInput({
+        commandId: 'cmd-conflict',
+        commandFingerprint: conflictFp
+      })
+    )
+    expect(conflict.kind).toBe('conflict')
+    if (conflict.kind !== 'conflict') return
+
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+    const refused = store.markIndeterminate(markInput({ commandId: 'cmd-conflict' }))
+    expect(refused).toEqual({ kind: 'terminal_refused', status: 'conflict' })
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+  })
+
+  it.each([
+    {
+      label: 'invalid_command_id',
+      input: () => markInput({ commandId: '   ' }),
+      code: 'invalid_command_id' as const
+    },
+    {
+      label: 'invalid_position_generation',
+      input: () => markInput({ position: { generation: -1, cursor: 1 } }),
+      code: 'invalid_position' as const
+    },
+    {
+      label: 'invalid_position_cursor',
+      input: () => markInput({ position: { generation: 1, cursor: 1.5 } }),
+      code: 'invalid_position' as const
+    },
+    {
+      label: 'invalid_error_code',
+      input: () => markInput({ errorCode: '   ' }),
+      code: 'invalid_error_code' as const
+    }
+  ])('markIndeterminate returns $label with zero journal writes', ({ input, code }) => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+
+    expect(store.markIndeterminate(input())).toEqual({ kind: 'invalid', code })
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+  })
+
+  it('markIndeterminate returns not_found without writing when command is absent', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    expect(existsSync(journalPath)).toBe(false)
+
+    expect(store.markIndeterminate(markInput({ commandId: 'missing-cmd' }))).toEqual({
+      kind: 'not_found'
+    })
+    expect(existsSync(journalPath)).toBe(false)
+  })
+
+  it('markIndeterminate preserves across reopen/compaction and later complete can resolve', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    clock = '2026-08-03T17:00:40.000Z'
+    const marked = store.markIndeterminate(markInput({ position: { generation: 7, cursor: 70 } }))
+    expect(marked.kind).toBe('marked')
+    if (marked.kind !== 'marked') return
+
+    store.compact()
+    const reopened = openStore({ compactAfterRecords: 1000 })
+    const durable = expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+    expect(durable?.recoveryState).toBe('recoverable-indeterminate')
+    expect(durable?.generation).toBe(7)
+    expect(durable?.cursor).toBe(70)
+    expect(durable?.errorCode).toBe('deferred_resolution_indeterminate')
+    expect(durable?.completedAt).toBeUndefined()
+
+    // Explicit mark on already-durable indeterminate stays idempotent after reopen.
+    const again = reopened.markIndeterminate(markInput({ position: { generation: 8, cursor: 80 } }))
+    expect(again.kind).toBe('already_indeterminate')
+
+    clock = '2026-08-03T17:00:41.000Z'
+    const resolved = reopened.complete({
+      commandId: 'cmd-1',
+      status: 'failed',
+      errorCode: 'resolved_after_indeterminate',
+      position: { generation: 7, cursor: 71 }
+    })
+    expect(resolved?.status).toBe('failed')
+    expect(resolved?.recoveryState).toBeUndefined()
+    expect(resolved?.generation).toBe(7)
+    expect(resolved?.cursor).toBe(71)
+    expect(resolved?.completedAt).toBe(clock)
+
+    const afterResolve = openStore({ compactAfterRecords: 1000 })
+    expectFound(afterResolve.getByCommandId('cmd-1', OWNER_ACTOR), 'failed')
+  })
+
+  it('markIndeterminate keeps receipts body-free in serialized journal and result', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    const marked = store.markIndeterminate(markInput())
+    expect(marked.kind).toBe('marked')
+    if (marked.kind !== 'marked') return
+
+    const serialized = JSON.stringify(marked)
+    expect(serialized).not.toMatch(
+      /password|token|secret|authorization|toolOutput|hiddenReasoning/i
+    )
+    expect(marked.receipt).not.toHaveProperty('args')
+    expect(marked.receipt).not.toHaveProperty('toolOutput')
+    expect(marked.receipt).not.toHaveProperty('hiddenReasoning')
+
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const journal = readFileSync(journalPath, 'utf8')
+    expect(journal).not.toMatch(/password|token|secret|authorization|toolOutput|hiddenReasoning/i)
+    expect(journal).toContain('"status":"indeterminate"')
+    expect(journal).toContain('"errorCode":"deferred_resolution_indeterminate"')
   })
 
   it('persists denied status and authority evaluation', () => {
