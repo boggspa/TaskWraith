@@ -272,6 +272,7 @@ import {
 } from './FanoutCandidatePersistence'
 import { persistWatchedPrPatch } from './WatchedPrPersistence'
 import { persistChatGitWorkflowPatch } from './ChatGitWorkflowPersistence'
+import { ChatListIndexStore } from './ChatListIndexStore'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowInput } from '../../shared/chatGitWorkflow'
@@ -504,7 +505,8 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
   path.join(path.dirname(userDataPath), dirName)
 )
 const chatsDir = path.join(userDataPath, 'chats')
-const chatListIndexPath = path.join(userDataPath, 'chat-list-index.json')
+const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
+const chatListIndexStore = new ChatListIndexStore(userDataPath)
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
 const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
@@ -4167,8 +4169,7 @@ export class AppStore {
     runEventSequenceCache.clear()
     runEventHashCache.clear()
     this.chatRecordCache.clear()
-    this.chatListIndexCache = null
-    this.chatListIndexWriteAtByChatId.clear()
+    chatListIndexStore.clearCache()
     this.orphanSubThreadsReaped = false
     this.orphanSubThreadReapCandidates.clear()
     this.historyDeletionRunning = false
@@ -4929,10 +4930,10 @@ export class AppStore {
   static getChatList(workspaceId?: string): ChatListItem[] {
     if (!fs.existsSync(chatsDir)) return []
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
-    const existingIndex = this.readChatListIndexCached()
+    const existingIndex = chatListIndexStore.readAll()
     const nextIndex: Record<string, ChatListItem> = {}
     const items: ChatListItem[] = []
-    let dirty = false
+    const dirtyChatIds = new Set<string>()
 
     for (const file of files) {
       const chatId = path.basename(file, '.json')
@@ -4941,7 +4942,6 @@ export class AppStore {
       try {
         sourceStat = fs.statSync(chatPath)
       } catch {
-        dirty = true
         continue
       }
       let item: ChatListItem | undefined
@@ -4959,7 +4959,7 @@ export class AppStore {
         const chat = readJson<ChatRecord | null>(chatPath, null)
         if (chat) {
           item = this.toChatListItem(chat, sourceStat)
-          dirty = true
+          dirtyChatIds.add(chatId)
         }
       }
       if (!item) continue
@@ -4969,57 +4969,16 @@ export class AppStore {
       }
     }
 
-    if (Object.keys(existingIndex).length !== Object.keys(nextIndex).length) {
-      dirty = true
-    }
-    if (dirty) {
-      this.writeChatListIndex(nextIndex)
+    // Write only changed entries — O(delta), not O(all-chats).
+    for (const chatId of dirtyChatIds) {
+      chatListIndexStore.writeEntry(chatId, nextIndex[chatId])
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
-  private static chatListIndexCache: {
-    mtimeMs: number
-    size: number
-    index: Record<string, ChatListItem>
-  } | null = null
-
+  /** Per-chat write throttle — still used by shouldWriteChatListIndexItem
+   *  to avoid rewriting the list entry on every volatile field bump. */
   private static chatListIndexWriteAtByChatId = new Map<string, number>()
-
-  private static readChatListIndexCached(): Record<string, ChatListItem> {
-    let stat: fs.Stats
-    try {
-      stat = fs.statSync(chatListIndexPath)
-    } catch {
-      this.chatListIndexCache = null
-      return {}
-    }
-    const cached = this.chatListIndexCache
-    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-      return { ...cached.index }
-    }
-    const index = readJson<Record<string, ChatListItem>>(chatListIndexPath, {})
-    this.chatListIndexCache = { mtimeMs: stat.mtimeMs, size: stat.size, index }
-    return { ...index }
-  }
-
-  private static writeChatListIndex(index: Record<string, ChatListItem>): void {
-    writeJson(chatListIndexPath, index)
-    const now = Date.now()
-    for (const chatId of Object.keys(index)) {
-      this.chatListIndexWriteAtByChatId.set(chatId, now)
-    }
-    try {
-      const stat = fs.statSync(chatListIndexPath)
-      this.chatListIndexCache = {
-        mtimeMs: stat.mtimeMs,
-        size: stat.size,
-        index: { ...index }
-      }
-    } catch {
-      this.chatListIndexCache = null
-    }
-  }
 
   private static chatListItemJson(item: ChatListItem | undefined, includeVolatile: boolean): string {
     if (!item) return ''
@@ -6205,11 +6164,11 @@ export class AppStore {
     } catch {
       this.chatRecordCache.delete(normalizedChat.appChatId)
     }
-    const index = this.readChatListIndexCached()
+    const index = chatListIndexStore.readAll()
     const nextItem = this.toChatListItem(normalizedChat, postStat || undefined)
     if (this.shouldWriteChatListIndexItem(index[normalizedChat.appChatId], nextItem)) {
-      index[normalizedChat.appChatId] = nextItem
-      this.writeChatListIndex(index)
+      chatListIndexStore.writeEntry(normalizedChat.appChatId, nextItem)
+      this.chatListIndexWriteAtByChatId.set(normalizedChat.appChatId, Date.now())
     }
     try {
       this.harvestMessageFeedbackReceipts(previousChatForFeedback, normalizedChat)
@@ -6312,11 +6271,7 @@ export class AppStore {
       for (const chat of allChats) {
         if (chat.workspaceId === input.workspaceId) chatIds.add(chat.appChatId)
       }
-      const indexed = readJsonStrictIfPresent(chatListIndexPath)
-      const index = objectRecord(indexed)
-      if (indexed !== null && !index) {
-        throw new Error('Chat list index is invalid; workspace deletion cannot preserve siblings.')
-      }
+      const index = chatListIndexStore.readAll()
       for (const [chatId, itemValue] of Object.entries(index || {})) {
         const item = objectRecord(itemValue)
         if (item?.workspaceId === input.workspaceId && isSafeChatId(chatId)) chatIds.add(chatId)
@@ -6999,29 +6954,27 @@ export class AppStore {
     if (step === 'chat-list-index') {
       if (intent.kind === 'global') {
         removePathStrict(chatListIndexPath, 'chat list index')
-      } else {
-        const value = readJsonStrictIfPresent(chatListIndexPath)
-        if (value === null) return
-        const index = objectRecord(value)
-        if (!index) throw new Error('Chat list index is invalid.')
-        let changed = false
-        for (const chatId of intent.chatIds) {
-          if (Object.prototype.hasOwnProperty.call(index, chatId)) {
-            delete index[chatId]
-            changed = true
+        // Also remove per-chat summary directory.
+        try {
+          const summariesDir = path.join(userDataPath, 'chat-list-summaries')
+          if (fs.existsSync(summariesDir)) {
+            for (const file of fs.readdirSync(summariesDir)) {
+              fs.unlinkSync(path.join(summariesDir, file))
+            }
+            fs.rmdirSync(summariesDir)
           }
+        } catch {
+          // Best effort — summary file removal is non-fatal.
         }
-        if (Object.keys(index).length === 0) {
-          removePathStrict(chatListIndexPath, 'chat list index')
-        } else if (changed) {
-          writeJson(chatListIndexPath, index)
-        }
-        const verified = objectRecord(readJsonStrictIfPresent(chatListIndexPath))
-        if (verified && intent.chatIds.some((chatId) => chatId in verified)) {
+        chatListIndexStore.clearCache()
+      } else {
+        chatListIndexStore.removeEntries(intent.chatIds)
+        // Verify removal.
+        const verified = chatListIndexStore.readAll()
+        if (intent.chatIds.some((chatId) => chatId in verified)) {
           throw new Error('Chat list index still contains a target chat.')
         }
       }
-      this.chatListIndexCache = null
       for (const chatId of intent.chatIds) this.chatListIndexWriteAtByChatId.delete(chatId)
       return
     }
@@ -7112,7 +7065,7 @@ export class AppStore {
       throw new HistoryDeletionIncompleteError(intent.operationId, [journalFailure])
     }
 
-    this.chatListIndexCache = null
+    chatListIndexStore.clearCache()
     if (intent.kind === 'global') {
       this.chatRecordCache.clear()
       this.chatListIndexWriteAtByChatId.clear()

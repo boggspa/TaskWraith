@@ -13,14 +13,30 @@ vi.mock('electron', () => ({
 }))
 
 const chatsDir = join(userDataPath, 'chats')
-const chatListIndexPath = join(userDataPath, 'chat-list-index.json')
+const chatListIndexPath = join(userDataPath, 'chat-list-index.jsonl')
 
 function diskPath(chatId: string): string {
   return join(chatsDir, `${chatId}.json`)
 }
 
 function readChatListIndex(): Record<string, ChatRecord & { searchPreview?: string }> {
-  return JSON.parse(fs.readFileSync(chatListIndexPath, 'utf-8'))
+  const index: Record<string, ChatRecord & { searchPreview?: string }> = {}
+  const raw = fs.readFileSync(chatListIndexPath, 'utf-8')
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    try {
+      const rec = JSON.parse(trimmed)
+      if (rec.entry && rec.chatId) {
+        // Re-merge summaries for the test helper.
+        const summaryPath = join(userDataPath, 'chat-list-summaries', `${rec.chatId}.json`)
+        let summaries: Record<string, unknown> = {}
+        try { summaries = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) } catch { /* ok */ }
+        index[rec.chatId] = { ...rec.entry, ...summaries } as ChatRecord & { searchPreview?: string }
+      }
+    } catch { /* skip corrupt lines */ }
+  }
+  return index
 }
 
 function message(content: string): ChatRecord['messages'][number] {
@@ -210,7 +226,11 @@ describe('AppStore chat record cache', () => {
 
     const rawIndex = readChatListIndex()
     rawIndex[chat.appChatId].title = 'Edited index outside the store'
-    fs.writeFileSync(chatListIndexPath, JSON.stringify(rawIndex, null, 2))
+    // Write in JSONL format — one line per entry.
+    const lines = Object.entries(rawIndex).map(
+      ([id, entry]) => JSON.stringify({ chatId: id, entry: { ...entry, runsSummary: undefined, lastRun: undefined } }) + '\n'
+    )
+    fs.writeFileSync(chatListIndexPath, lines.join(''))
     const future = new Date(Date.now() + 5000)
     fs.utimesSync(chatListIndexPath, future, future)
 

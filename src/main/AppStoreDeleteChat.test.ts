@@ -15,7 +15,7 @@ vi.mock('electron', () => ({
 
 const runEventPath = (runId: string): string => join(userDataPath, 'run-events', `${runId}.jsonl`)
 const artifactDir = (runId: string): string => join(userDataPath, 'run-artifacts', runId)
-const chatListIndexPath = (): string => join(userDataPath, 'chat-list-index.json')
+const chatListIndexPath = (): string => join(userDataPath, 'chat-list-index.jsonl')
 const runQueuePath = (): string => join(userDataPath, 'run-queue.json')
 const runRecoveryPath = (): string => join(userDataPath, 'run-recovery.json')
 const approvalLedgerPath = (): string => join(userDataPath, 'approval-ledger.json')
