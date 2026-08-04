@@ -171,7 +171,12 @@ const SIDEBAR_USAGE_MIN_HEIGHT = 220
 const SIDEBAR_USAGE_MAX_HEIGHT = 1400
 const SIDEBAR_USAGE_RESIZE_STEP = 24
 const COMPACT_USAGE_BASE_PROVIDERS: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok']
-const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId, string>> = {
+/** Exported for the accent-lockstep test only: every provider that can render
+ *  a compact column must carry a `.model-usage-compact-cell.provider-<id>`
+ *  accent rule wired to a defined `--provider-<id>-color` token, or its cost
+ *  figures fall back to plain sidebar text (AGY/DeepSeek/Cerebras shipped in
+ *  exactly that state). */
+export const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId, string>> = {
   codex: 'Codex',
   claude: 'Claude',
   kimi: 'Kimi',

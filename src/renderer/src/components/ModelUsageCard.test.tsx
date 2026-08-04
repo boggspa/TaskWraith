@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   API_SPEND_RENDER_ORDER,
   ApiSpendProviderBlock,
+  COMPACT_USAGE_PROVIDER_LABELS,
   CompactModelUsageGrid,
   ModelUsageCard,
   type ModelUsageApiSpendOptions
@@ -778,5 +781,33 @@ describe('API spend roster lockstep', () => {
     const rendered = new Set(API_SPEND_RENDER_ORDER)
     const aggregated = API_SPEND_PROVIDER_ORDER.filter((provider) => !rendered.has(provider))
     expect(aggregated).toEqual([])
+  })
+})
+
+// The compact grid colours cost figures through per-provider
+// `--compact-quota-color` rules; a provider column with no rule silently falls
+// back to plain sidebar text — AGY, DeepSeek and Cerebras all shipped in
+// exactly that state while the expanded meters (which build
+// `var(--provider-<id>-color)` directly) were already tinted. Pin the full
+// column roster against both the accent rule and the token it points at.
+describe('compact grid accent lockstep', () => {
+  it('gives every compact column an accent rule wired to a defined brand token', () => {
+    const cardCss = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/ModelUsageCard.css'),
+      'utf8'
+    )
+    const themeCss = readFileSync(join(process.cwd(), 'src/renderer/src/styles/theme.css'), 'utf8')
+    for (const provider of Object.keys(COMPACT_USAGE_PROVIDER_LABELS)) {
+      const rule = new RegExp(
+        String.raw`\.model-usage-compact-cell\.provider-${provider}\s*\{[^}]*` +
+          String.raw`--compact-quota-color:\s*var\(--provider-${provider}-color\);`,
+        's'
+      )
+      expect(cardCss, `missing compact accent rule for ${provider}`).toMatch(rule)
+      expect(
+        themeCss.includes(`--provider-${provider}-color:`),
+        `missing brand token --provider-${provider}-color`
+      ).toBe(true)
+    }
   })
 })

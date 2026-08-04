@@ -587,6 +587,18 @@
   --compact-quota-color: var(--provider-mistral-color);
 }
 
+.model-usage-compact-cell.provider-antigravity {
+  --compact-quota-color: var(--provider-antigravity-color);
+}
+
+.model-usage-compact-cell.provider-deepseek {
+  --compact-quota-color: var(--provider-deepseek-color);
+}
+
+.model-usage-compact-cell.provider-cerebras {
+  --compact-quota-color: var(--provider-cerebras-color);
+}
+
 .model-usage-compact-cell.provider-mistral.is-estimated {
   opacity: 0.72;
   font-style: italic;
