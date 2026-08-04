@@ -249,9 +249,7 @@ describe('AppStoreHostAuthority', () => {
         commandExecutor
       }
     })
-    const aliases: ReadonlyArray<
-      Pick<HostCommand, 'name' | 'target' | 'arguments'>
-    > = [
+    const aliases: ReadonlyArray<Pick<HostCommand, 'name' | 'target' | 'arguments'>> = [
       { name: 'snapshot.get' as const, target: {}, arguments: {} },
       {
         name: 'deltas.since' as const,
