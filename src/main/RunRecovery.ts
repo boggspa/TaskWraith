@@ -1,6 +1,10 @@
 import { execFileSync } from 'child_process'
 import { ACTIVE_RUN_QUEUE_STATUSES, updateRunQueueJobRecord } from './RunQueue'
 import { isPersistedRunReapSnapshot } from './RunOrphanProcessReaper'
+import {
+  SOLO_STEER_TRANSCRIPT_PREPARATION,
+  midRunQueuedMessageId
+} from '../shared/midRunSteeringQueue'
 import type {
   RunQueueJob,
   RunRecoveryFilter,
@@ -136,12 +140,20 @@ function recoveryRecordForJob(
   }
 }
 
-function isExpiredSteerPromotingRun(
-  job: RunQueueJob,
-  recoveredAt: string
-): boolean {
+function isPreparedSoloSteerTranscriptBarrier(job: RunQueueJob): boolean {
+  return Boolean(
+    job.status === 'steer_promoting' &&
+    job.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION &&
+    job.promotionOwnerToken &&
+    job.promotionToken === job.promotionOwnerToken &&
+    job.request &&
+    job.queueMessageId === midRunQueuedMessageId(job.runId)
+  )
+}
+
+function isExpiredSteerPromotingRun(job: RunQueueJob, recoveredAt: string): boolean {
   void recoveredAt
-  return job.status === 'steer_promoting'
+  return job.status === 'steer_promoting' && !isPreparedSoloSteerTranscriptBarrier(job)
 }
 
 function recoverStaleSteerPromotingJob(

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS,
   buildAntigravityOfficialAgyPromptCapsule,
+  buildAntigravityOfficialAgyPromptCapsuleProjection,
   resolveEnsemblePromptTransportProfile
 } from './AntigravityEnsemblePromptProfile'
 
@@ -46,5 +47,83 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(prompt).toContain('outside-workspace path requires an explicit host grant/approval')
     expect(prompt).not.toContain('call blackboard_read')
     expect(prompt).not.toContain('Recent tagged transcript:')
+  })
+
+  it('preserves row identity through keep-tail and outer capsule bounds', () => {
+    const repeatedRow = '[User]\nIDENTICAL STEERING TEXT'
+    const filler = 'older context '.repeat(500)
+    const transcript = `${repeatedRow}\n\n${filler}\n\n${repeatedRow}`
+    const newerStart = transcript.length - repeatedRow.length
+    const projection = buildAntigravityOfficialAgyPromptCapsuleProjection(
+      {
+        participantLabel: 'AntiGravity / GemProWork #p7',
+        roundId: 'round-identity',
+        roleInstructions: 'Review the exact request.',
+        currentPrompt: 'CURRENT '.repeat(500),
+        roster: '1. AntiGravity / GemProWork',
+        authorityLines: [],
+        roleBoundaryLines: [],
+        roundPolicy: 'Turn-bound round.',
+        parallelPolicy: 'Read-only fan-out may run concurrently.',
+        dynamicState: 'Active goal: preserve exact delivery identity.',
+        transcript,
+        permissionRule: 'Use only the tools listed by this run.',
+        yieldExecutionCheck: 'Use only a listed lifecycle handoff.'
+      },
+      {
+        currentPromptMessageId: 'current-too-long',
+        transcriptRows: [
+          { messageId: 'older-identical', start: 0, end: repeatedRow.length },
+          {
+            messageId: 'newer-identical',
+            start: newerStart,
+            end: newerStart + repeatedRow.length
+          }
+        ]
+      }
+    )
+
+    expect(projection.prompt).toContain(repeatedRow)
+    expect(projection.suppliedMessageIds).toEqual(['newer-identical'])
+    expect(projection.suppliedMessageIds).not.toContain('current-too-long')
+  })
+
+  it('drops evidence for a row cut by the outer capsule budget', () => {
+    const row = '[User]\nLATEST STEER AT TRANSCRIPT TAIL'
+    const transcript = `${'old transcript '.repeat(400)}\n\n${row}`
+    const rowStart = transcript.length - row.length
+    const projection = buildAntigravityOfficialAgyPromptCapsuleProjection(
+      {
+        participantLabel: 'AntiGravity / GemProWork #p7',
+        roundId: 'round-outer-bound',
+        stageRole: 'Z'.repeat(4_000),
+        roleInstructions: 'R'.repeat(1_000),
+        currentPrompt: 'C'.repeat(3_000),
+        roster: 'O'.repeat(1_200),
+        authorityLines: ['A'.repeat(1_200)],
+        roleBoundaryLines: [],
+        roundPolicy: 'P'.repeat(900),
+        parallelPolicy: 'L'.repeat(700),
+        dynamicState: 'D'.repeat(1_800),
+        workspaceStanza: 'W'.repeat(600),
+        workspaceChurnStanza: 'H'.repeat(900),
+        scoutBriefs: 'S'.repeat(1_200),
+        blackboardSnapshot: 'B'.repeat(2_200),
+        seatSummary: 'E'.repeat(800),
+        transcript,
+        permissionRule: 'M'.repeat(900),
+        yieldExecutionCheck: 'Y'.repeat(700)
+      },
+      {
+        currentPromptMessageId: 'current-retained',
+        transcriptRows: [
+          { messageId: 'tail-cut-by-outer-cap', start: rowStart, end: transcript.length }
+        ]
+      }
+    )
+
+    expect(projection.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(projection.suppliedMessageIds).toContain('current-retained')
+    expect(projection.suppliedMessageIds).not.toContain('tail-cut-by-outer-cap')
   })
 })

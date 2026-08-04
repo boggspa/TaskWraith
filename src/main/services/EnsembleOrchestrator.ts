@@ -18,7 +18,7 @@ import {
 import type { TrustedSessionScope } from '../TrustedSessionGrants'
 import {
   buildEnsembleDynamicStateSnapshot,
-  buildEnsembleParticipantPrompt,
+  buildEnsembleParticipantPromptProjection,
   computeEnsemblePromptShellStamp,
   findUncoveredEnsemblePromptMessageIds,
   getOrderedEnsembleParticipants,
@@ -276,6 +276,11 @@ export type EnsembleQueuedSteerResult = {
   error?: string
 }
 
+interface MidRunSteeringAppendReceipt {
+  messageId: string
+  entryId: string
+}
+
 const ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
 const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>([
   'scout',
@@ -394,6 +399,15 @@ export interface EnsembleDispatchEvent {
   sender: Electron.WebContents
 }
 
+/**
+ * Main-owned evidence about the exact durable rows serialized into this
+ * provider prompt. It travels beside the payload rather than inside it so a
+ * renderer-authored AgentRunPayload cannot forge a steering delivery receipt.
+ */
+export interface EnsembleDispatchPromptEvidence {
+  suppliedMessageIds: readonly string[]
+}
+
 export interface EnsembleImageAttachment {
   id?: string
   path: string
@@ -464,8 +478,11 @@ export interface EnsembleOrchestratorDeps {
   dispatch: (
     payload: AgentRunPayload,
     event: EnsembleDispatchEvent,
-    observer?: RunDispatchObserver
+    observer?: RunDispatchObserver,
+    promptEvidence?: EnsembleDispatchPromptEvidence
   ) => Promise<{ dispatched: boolean; appRunId: string; failureMessage?: string }>
+  /** Injectable only to hold the real async prompt-preparation seam in tests. */
+  sampleWorkspaceChurn?: (workspacePath: string) => Promise<WorkspaceChurnSample | null>
   /**
    * Fan-out worktree isolation (fanoutIsolation === 'worktree'). Allocates
    * (or re-adopts) a per-LANE linked git worktree branched from the
@@ -593,7 +610,11 @@ export interface EnsembleOrchestratorDeps {
    * Main-owned transcript append + delivery-registry seam for a text-only
    * interjection absorbed into this still-live round.
    */
-  appendMidRunSteering?: (input: { chatId: string; roundId: string; text: string }) => void
+  appendMidRunSteering?: (input: {
+    chatId: string
+    roundId: string
+    text: string
+  }) => MidRunSteeringAppendReceipt
   /**
    * Registry ids that no participant prompt has carried yet. The orchestrator
    * uses the set only at the serial drain boundary; provider-specific live
@@ -3942,18 +3963,29 @@ export class EnsembleOrchestrator {
     roundId: string
     text: string
   }): EnsembleQueuedSteerResult {
+    return this.absorbMidRunSteeringWithReceipt(input).result
+  }
+
+  private absorbMidRunSteeringWithReceipt(input: {
+    chatId: string
+    roundId: string
+    text: string
+  }): { result: EnsembleQueuedSteerResult; receipt?: MidRunSteeringAppendReceipt } {
     const text = input.text.trim()
     if (!text || !this.canAbsorbMidRunSteering(input.chatId, input.roundId)) {
-      return { status: 'ignored', error: 'No active Ensemble round' }
+      return { result: { status: 'ignored', error: 'No active Ensemble round' } }
     }
     const runtime = this.roundsByChatId.get(input.chatId)!
     this.cancelWakeupsOnUserInput(runtime)
-    this.deps.appendMidRunSteering!({
+    const receipt = this.deps.appendMidRunSteering!({
       chatId: input.chatId,
       roundId: input.roundId,
       text
     })
-    return { status: 'steered', roundId: input.roundId }
+    return {
+      result: { status: 'steered', roundId: input.roundId },
+      receipt
+    }
   }
 
   startRound(input: {
@@ -4390,11 +4422,12 @@ export class EnsembleOrchestrator {
           })
         : null
     if (userFanout?.hasParticipantMention) {
-      const absorbed = this.absorbMidRunSteering({
+      const absorption = this.absorbMidRunSteeringWithReceipt({
         chatId: input.chatId,
         roundId: runtime.roundId,
         text: selected.prompt
       })
+      const absorbed = absorption.result
       if (absorbed.status === 'steered') {
         runtime.queuedPrompts = remainingQueue
         this.updateChatRound(input.chatId, (round) =>
@@ -4411,7 +4444,12 @@ export class EnsembleOrchestrator {
               .join(', ')}); no lane was started for that tag. Use a unique @role, @model, or @id.`
           )
         }
-        this.launchUserFanout(runtime, userFanout.targets, selected.prompt)
+        this.launchUserFanout(
+          runtime,
+          userFanout.targets,
+          selected.prompt,
+          absorption.receipt!.messageId
+        )
         return absorbed
       }
     }
@@ -13417,7 +13455,7 @@ export class EnsembleOrchestrator {
     // A prior attempt already failed for this round; do not retry per dispatch.
     if (runtime.workspaceChurnBaseline === null) return undefined
     try {
-      const sample = await sampleWorkspaceChurn(workspacePath)
+      const sample = await (this.deps.sampleWorkspaceChurn || sampleWorkspaceChurn)(workspacePath)
       if (!sample) {
         runtime.workspaceChurnBaseline = null
         return undefined
@@ -14002,8 +14040,16 @@ export class EnsembleOrchestrator {
       // prompt is composed — so the numbers describe the tree the seat is about
       // to act on, not the tree as it stood when the round opened.
       const workspaceChurnStanza = await this.resolveWorkspaceChurnStanza(runtime, dispatchChat)
-      const prompt = buildEnsembleParticipantPrompt({
-        chat: dispatchChat,
+      // `resolveWorkspaceChurnStanza` is an actual async boundary. A user steer
+      // can append a durable row while git is being sampled, so refresh ONLY
+      // the transcript-facing chat state afterwards. Permission/role/config
+      // authority remains the frozen dispatch snapshot above.
+      const latestPromptChat = this.deps.getChat(runtime.chatId)
+      const promptChat = latestPromptChat?.ensemble
+        ? { ...dispatchChat, messages: latestPromptChat.messages }
+        : dispatchChat
+      const promptProjection = buildEnsembleParticipantPromptProjection({
+        chat: promptChat,
         config: ensembleConfigForRound,
         participant,
         currentPrompt: resumeWakeup
@@ -14021,6 +14067,7 @@ export class EnsembleOrchestrator {
         effectiveApprovalMode: permissions.approvalMode,
         authorityRoutingCheckpoint: run.authorityRoutingCheckpoint
       })
+      const prompt = promptProjection.prompt
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({
         provider: participant.provider,
         effectivePermissions: permissions
@@ -14028,10 +14075,10 @@ export class EnsembleOrchestrator {
       const promptWithDiscordContext = `${shellRoutingPrompt}${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
-      const resumeFallbackPrompt =
+      const resumeFallbackProjection =
         slimTurn && (participant.provider === 'kimi' || participant.provider === 'codex')
-          ? `${shellRoutingPrompt}${buildEnsembleParticipantPrompt({
-              chat: dispatchChat,
+          ? buildEnsembleParticipantPromptProjection({
+              chat: promptChat,
               config: ensembleConfigForRound,
               participant,
               currentPrompt: runtime.prompt,
@@ -14045,10 +14092,21 @@ export class EnsembleOrchestrator {
               // Same dispatch, same evidence — reuse the sample rather than
               // re-shelling git for the resume-failure fallback.
               ...(workspaceChurnStanza ? { workspaceChurnStanza } : {})
-            })}${formatDiscordContextPromptAppendix(
+            })
+          : undefined
+      const resumeFallbackPrompt = resumeFallbackProjection
+        ? `${shellRoutingPrompt}${resumeFallbackProjection.prompt}${formatDiscordContextPromptAppendix(
               runtime.discordContextSnapshots
             )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
-          : undefined
+        : undefined
+      // The adapter may use either the slim prompt or its cold-session
+      // fallback. Receipt only rows present in BOTH possible prompts; that is
+      // the exact evidence guaranteed to have reached the accepted dispatch.
+      const suppliedMessageIds = resumeFallbackProjection
+        ? promptProjection.suppliedMessageIds.filter((messageId) =>
+            resumeFallbackProjection.suppliedMessageIds.includes(messageId)
+          )
+        : promptProjection.suppliedMessageIds
       // Slice D (1.0.3) — per-participant reasoning + speed + thinking
       // settings flow through the same AgentRunPayload fields the
       // composer uses for solo runs. Provider adapters already accept
@@ -14153,7 +14211,12 @@ export class EnsembleOrchestrator {
       let dispatchFailure: DispatchFailureReason | null = null
       run.transportDispatchState = 'pending'
       try {
-        dispatchedResult = await this.deps.dispatch(payload, { sender: runtime.sender })
+        dispatchedResult = await this.deps.dispatch(
+          payload,
+          { sender: runtime.sender },
+          undefined,
+          { suppliedMessageIds }
+        )
         run.transportDispatchState = dispatchedResult.dispatched ? 'accepted' : 'rejected'
       } catch (error) {
         // Adapter entry may publish a process/controller before rejecting. Stop
@@ -15207,7 +15270,8 @@ export class EnsembleOrchestrator {
   private launchUserFanout(
     runtime: ActiveRoundRuntime,
     requested: EnsembleParticipant[],
-    prompt: string
+    prompt: string,
+    sourceMessageId: string
   ): void {
     if (runtime.cancelled) return
     const chat = this.deps.getChat(runtime.chatId)
@@ -15263,7 +15327,12 @@ export class EnsembleOrchestrator {
       runtime.fanoutReservedParticipantIds.add(participant.id)
     }
 
-    const acceptedParticipantIds = this.dispatchUserFanout(runtime, participants, prompt)
+    const acceptedParticipantIds = this.dispatchUserFanout(
+      runtime,
+      participants,
+      prompt,
+      sourceMessageId
+    )
     runtime.userFanoutDispatchSettlements ??= new Map()
     const settlements = new Map<string, Promise<boolean>>()
     for (const participant of participants) {
@@ -15291,7 +15360,8 @@ export class EnsembleOrchestrator {
   private async dispatchUserFanout(
     runtime: ActiveRoundRuntime,
     participants: EnsembleParticipant[],
-    prompt: string
+    prompt: string,
+    sourceMessageId: string
   ): Promise<Set<string>> {
     const acceptedParticipantIds = new Set<string>()
     try {
@@ -15310,6 +15380,7 @@ export class EnsembleOrchestrator {
         prompt,
         label: 'User Fan-Out',
         promptAuthority: 'user',
+        userPromptSourceMessageId: sourceMessageId,
         dispatchOwnPermissions: true,
         acceptedRuns,
         waitForCompletion: false,
@@ -15574,6 +15645,9 @@ export class EnsembleOrchestrator {
        * user authority; all existing agent/orchestrator fan-out briefs retain
        * their lower-authority wrapper. */
       promptAuthority?: 'user' | 'orchestrator' | 'peer'
+      /** Exact durable source row for a user-directed prompt. Never recover
+       * this identity by comparing message content after an async barrier. */
+      userPromptSourceMessageId?: string
       forceReadOnlyDispatch?: boolean
       /** ensemble_fanout_all: each lane runs under the participant's OWN
        * normal-turn posture (unattended clamps included via
@@ -15785,27 +15859,23 @@ export class EnsembleOrchestrator {
               options.reason ? `\n\nReason: ${options.reason}` : ''
             }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, and active goal first.`
         : runtime.prompt
-      const promptChat =
-        promptAuthority === 'user' && explicitLanePrompt
-          ? (() => {
-              const sourceMessage = [...dispatchChat.messages]
-                .reverse()
-                .find(
-                  (message) =>
-                    message.role === 'user' &&
-                    message.metadata?.kind === 'midRunSteering' &&
-                    message.content.trim() === explicitLanePrompt
-                )
-              return sourceMessage
-                ? {
-                    ...dispatchChat,
-                    messages: dispatchChat.messages.filter(
-                      (message) => message.id !== sourceMessage.id
-                    )
-                  }
-                : dispatchChat
-            })()
-          : dispatchChat
+      const userPromptSourceMessage =
+        promptAuthority === 'user' && options.userPromptSourceMessageId
+          ? dispatchChat.messages.find(
+              (message) =>
+                message.id === options.userPromptSourceMessageId &&
+                message.role === 'user' &&
+                message.metadata?.kind === 'midRunSteering'
+            )
+          : undefined
+      const promptChat = userPromptSourceMessage
+        ? {
+            ...dispatchChat,
+            messages: dispatchChat.messages.filter(
+              (message) => message.id !== userPromptSourceMessage.id
+            )
+          }
+        : dispatchChat
       const chatContextTurns = this.deps.getSettings().chatContextTurns
       // Fan-out lanes receive a full briefing, but still participate in the
       // dynamic-state receipt protocol so a later resumed serial turn knows
@@ -15821,7 +15891,7 @@ export class EnsembleOrchestrator {
         dynamicStateVersion: dynamicStateSnapshot.version,
         priorDynamicStateReceipt: participant.promptDynamicStateVersion
       })
-      const promptText = buildEnsembleParticipantPrompt({
+      const promptProjection = buildEnsembleParticipantPromptProjection({
         // The same durable user row is presented as the current request below;
         // exclude only that exact row from this lane's history so the provider
         // sees the interjection once, while every other participant still sees
@@ -15830,6 +15900,9 @@ export class EnsembleOrchestrator {
         config: dispatchChat.ensemble!,
         participant,
         currentPrompt: promptForLane,
+        ...(userPromptSourceMessage
+          ? { currentPromptMessageId: userPromptSourceMessage.id }
+          : {}),
         currentPromptLabel: explicitLanePrompt
           ? promptAuthority === 'user'
             ? 'Current user-directed fan-out request:'
@@ -15845,6 +15918,8 @@ export class EnsembleOrchestrator {
         // lanes do not even share the workspace the sample would measure. The
         // serial turn that follows the pass reports the settled result instead.
       })
+      const promptText = promptProjection.prompt
+      const suppliedMessageIds = promptProjection.suppliedMessageIds
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({
         provider: participant.provider,
         effectivePermissions: permissions
@@ -16099,7 +16174,8 @@ export class EnsembleOrchestrator {
               dispatchOperation = this.deps.dispatch(
                 payload,
                 { sender: runtime.sender },
-                { onAdapterInvoked: acceptAdapterInvocation }
+                { onAdapterInvoked: acceptAdapterInvocation },
+                { suppliedMessageIds }
               )
             } catch (error) {
               void handleDispatchRejection(error).finally(settleDispatchStart)

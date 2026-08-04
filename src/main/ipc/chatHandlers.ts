@@ -81,6 +81,8 @@ export interface ChatHandlerDeps {
     next: ChatRecord,
     reason: string
   ) => void
+  /** Observe an accepted exact steer row even when local history is disabled. */
+  observeSoloSteerTranscriptRows: (chat: ChatRecord) => void
   broadcastThreadUpdate: (chatId: string | undefined) => void
   broadcastThreadList: () => void
   broadcastChatUpdated: (chat: ChatRecord) => void
@@ -242,6 +244,11 @@ function assertReadableWorkspace(
 }
 
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
+  const observeNoHistoryChat = (chat: ChatRecord): void => {
+    if (deps.getSettings().storeLocalChatHistory === false) {
+      deps.observeSoloSteerTranscriptRows(chat)
+    }
+  }
   ipcMain.handle('get-chats', (event, workspaceId?: string) => {
     const scope = deps.resolveSenderChatReadScope(event)
     assertReadableWorkspace(scope, workspaceId)
@@ -281,12 +288,14 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle('create-chat', (event, workspaceId: string, workspacePath: string) => {
     deps.assertSenderCanManageChatCollection(event, 'create-chat')
     const chat = deps.chatService.createChat(workspaceId, workspacePath)
+    observeNoHistoryChat(chat)
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
   })
   ipcMain.handle('create-global-chat', (event) => {
     deps.assertSenderCanManageChatCollection(event, 'create-global-chat')
     const chat = deps.chatService.createGlobalChat()
+    observeNoHistoryChat(chat)
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
   })
@@ -299,6 +308,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       }
       const configuredProviders = await deps.detectConfiguredProviders(deps.getSettings())
       const chat = deps.chatService.createEnsembleChat(args, configuredProviders)
+      observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }
@@ -319,6 +329,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-sub-thread')
       deps.assertParentChatCreationAllowed(args.parentChatId)
       const chat = deps.chatService.createSubThread(args)
+      observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }
@@ -345,6 +356,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-side-chat')
       deps.assertParentChatCreationAllowed(args.parentChatId)
       const chat = deps.chatService.createSideChat(args)
+      observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }
@@ -462,6 +474,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       deps.normalizeTranscriptMarkdownMediaForChat(chat)
     )
     const saved = deps.chatService.saveChat(normalized)
+    observeNoHistoryChat(saved)
     deps.broadcastChatUpdated(saved)
     deps.maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-save-chat')
     deps.broadcastThreadUpdate(saved?.appChatId)

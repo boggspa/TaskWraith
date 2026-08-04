@@ -82,7 +82,10 @@ export interface RunQueueHandlersDeps {
   getRunRecoveryRecords: (filter?: RunRecoveryFilter) => RunRecoveryRecord[]
   requestRunQueueJob: (
     job: unknown,
-    options?: { authorizedFilePaths?: string[] }
+    options?: {
+      authorizedFilePaths?: string[]
+      soloSteerTranscriptBarrier?: { ownerToken: string; queueMessageId: string }
+    }
   ) => RunQueueJob
   leaseRunQueueJob: (request: {
     runId?: string
@@ -221,7 +224,24 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
 
   ipcMain.handle('promote-queued-job-for-steer', async (event, input: PromoteQueuedJobForSteerInput) => {
     const scope = deps.resolveSenderRunQueueScope(event)
-    assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input?.runId || '' })
+    const prepareJob = input?.prepareJob
+    if (prepareJob) {
+      const prepareChatId = requestedJobChatId(prepareJob)
+      if (prepareJob.runId !== input.runId) {
+        throw new Error('Prepared steer run identity does not match its promotion request.')
+      }
+      if (input.provider && prepareJob.provider !== input.provider) {
+        throw new Error('Prepared steer provider does not match its promotion request.')
+      }
+      if (input.chatId && prepareChatId !== input.chatId) {
+        throw new Error('Prepared steer chat does not match its promotion request.')
+      }
+      if (scope.kind === 'chat' && prepareChatId !== scope.chatId) {
+        throw new Error('Renderer cannot prepare steer state for another chat.')
+      }
+    } else {
+      assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input?.runId || '' })
+    }
     if (scope.kind === 'chat' && input?.chatId !== undefined && input.chatId !== scope.chatId) {
       throw new Error('Renderer cannot promote run state for another chat.')
     }
@@ -242,7 +262,23 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
         cancelRequested: false
       } as const
     }
-    return coordinator.promoteQueuedJobForSteer(input)
+    // A prepared steer is a first-write authority boundary. The renderer may
+    // ask main to create it, but cannot choose the owner identity that makes
+    // the resulting barrier repairable after restart.
+    const ownerToken = prepareJob ? deps.randomUUID() : input?.ownerToken
+    if (prepareJob) {
+      deps.requestRunQueueJob(prepareJob, {
+        authorizedFilePaths: deps.resolveSenderAttachmentFilePaths(event),
+        soloSteerTranscriptBarrier: {
+          ownerToken: ownerToken!,
+          queueMessageId: input.queueMessageId || ''
+        }
+      })
+    }
+    return coordinator.promoteQueuedJobForSteer({
+      ...input,
+      ...(ownerToken ? { ownerToken } : {})
+    })
   })
 
   ipcMain.handle('lease-promoted-steer-job', async (event, input: LeasePromotedSteerInput) => {

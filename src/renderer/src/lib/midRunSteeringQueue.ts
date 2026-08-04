@@ -1,11 +1,38 @@
-import type { ChatKind, ChatMessage } from '../../../main/store/types'
+import type { ChatKind, ChatMessage, RunQueueJob } from '../../../main/store/types'
+import {
+  SOLO_STEER_TRANSCRIPT_PREPARATION,
+  midRunQueuedMessageId
+} from '../../../shared/midRunSteeringQueue'
+
+export { midRunQueuedMessageId } from '../../../shared/midRunSteeringQueue'
 
 export type MidRunQueuedMessageSource = 'scheduledRun' | 'soloSteer'
 
-const MID_RUN_QUEUED_MESSAGE_PREFIX = 'midrun-queued-user-'
-
-export function midRunQueuedMessageId(runId: string): string {
-  return `${MID_RUN_QUEUED_MESSAGE_PREFIX}${runId}`
+/**
+ * Durable half of the solo-steer transcript barrier. Restart repair requires
+ * the exact main-minted preparation kind and owner pair; renderer-supplied
+ * queue fields alone can never make an ordinary paused job runnable.
+ */
+export function isPreparedSoloSteerQueueJob(
+  job: Pick<
+    RunQueueJob,
+    | 'promotionOwnerToken'
+    | 'promotionToken'
+    | 'queueMessageId'
+    | 'request'
+    | 'runId'
+    | 'status'
+    | 'steerPreparationKind'
+  >
+): boolean {
+  return Boolean(
+    job.status === 'steer_promoting' &&
+    job.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION &&
+    job.promotionOwnerToken &&
+    job.promotionToken === job.promotionOwnerToken &&
+    job.request &&
+    job.queueMessageId === midRunQueuedMessageId(job.runId)
+  )
 }
 
 export function findMidRunQueuedMessage(

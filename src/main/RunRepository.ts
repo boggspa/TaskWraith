@@ -14,6 +14,7 @@ import type { RunQueueJobInput } from './RunQueue'
 import type { RunSession } from './RunManager'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import { AppStore } from './store'
+import { SOLO_STEER_TRANSCRIPT_PREPARATION } from '../shared/midRunSteeringQueue'
 
 type SteerQueueMetadata = {
   promotionOwnerToken?: string
@@ -22,6 +23,7 @@ type SteerQueueMetadata = {
   transitionVersion?: number
   promotedAt?: string
   queueMessageId?: string
+  steerPreparationKind?: RunQueueJob['steerPreparationKind']
 }
 
 type RunQueueJobStatusLike = RunQueueJob['status'] | 'steer_promoting'
@@ -265,7 +267,10 @@ export class RunRepository {
       if (ownerToken === input.ownerToken) {
         this.appendSteerLifecycleEvent({
           runId,
-          from: 'queued',
+          from:
+            candidate.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION
+              ? 'paused'
+              : 'queued',
           to: STEER_PROMOTING_STATUS,
           ownerToken: input.ownerToken,
           transitionVersion: candidate.transitionVersion,

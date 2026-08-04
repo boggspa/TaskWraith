@@ -14997,7 +14997,10 @@ function ensembleRoundLiveForSteerAbsorb(
  * round, hop, or provider session is disturbed. Callers gate on
  * `midRunSteeringAbsorbEligible`.
  */
-function appendEnsembleSteerIntoLiveRound(chatId: string, text: string): void {
+function appendEnsembleSteerIntoLiveRound(
+  chatId: string,
+  text: string
+): { messageId: string; entryId: string } {
   const chat = AppStore.getChat(chatId)
   if (!chat) {
     throw new Error('Ensemble steer target chat disappeared before absorption.')
@@ -15026,6 +15029,7 @@ function appendEnsembleSteerIntoLiveRound(chatId: string, text: string): void {
   // composes its turn once at dispatch and must wait for the boundary. Opt-in,
   // best-effort, and confirmed only by pi's own queue drain.
   attemptPiLiveSteerDelivery(chatId, entry)
+  return { messageId, entryId: entry.id }
 }
 
 /**
@@ -15089,7 +15093,7 @@ function seedScheduledSoloTranscript(
   owner: ScheduledOccurrenceOwner,
   payload: AgentRunPayload,
   executionWorkspacePath: string
-): void {
+): string | null {
   const chat = AppStore.getChat(owner.chatId)
   if (!chat || chat.chatKind === 'ensemble') {
     throw new Error('Scheduled solo transcript target is not a solo chat.')
@@ -15157,9 +15161,6 @@ function seedScheduledSoloTranscript(
     runs: [...(chat.runs || []), run],
     updatedAt: Date.now()
   })
-  if (steeringEntry) {
-    midRunSteeringRegistry.markDelivered(owner.chatId, [steeringEntry.id], timestamp)
-  }
   void captureWorkspaceSnapshot(executionWorkspacePath)
     .then((snapshot) => {
       const transcript = bridgeRunTranscripts.get(owner.ownerRunId)
@@ -15170,6 +15171,7 @@ function seedScheduledSoloTranscript(
     })
   bridgeBroadcasterRef?.broadcastThreadUpdated(updated.appChatId)
   pushRemoteThreadSnapshotForChat?.(updated)
+  return steeringEntry?.id || null
 }
 
 async function failScheduledSoloLaunchAfterTranscriptSeed(
@@ -15300,7 +15302,12 @@ async function dispatchDueScheduledTaskHeadless(
       }
     }
     transcriptSeeded = true
-    seedScheduledSoloTranscript(task, owner, composed, executionWorkspacePath)
+    const scheduledSteeringEntryId = seedScheduledSoloTranscript(
+      task,
+      owner,
+      composed,
+      executionWorkspacePath
+    )
     if (unsealedLaunchReason) {
       try {
         sendAgentCompatLine(
@@ -15325,6 +15332,13 @@ async function dispatchDueScheduledTaskHeadless(
     const result = await dispatch({ ...composed, scheduledTaskId: task.id } as AgentRunPayload, {
       sender: headlessRunSender
     })
+    if (result.dispatched && scheduledSteeringEntryId) {
+      midRunSteeringRegistry.markDelivered(
+        owner.chatId,
+        [scheduledSteeringEntryId],
+        new Date().toISOString()
+      )
+    }
     if (
       !result.dispatched &&
       scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) === owner
@@ -49226,6 +49240,8 @@ if (isGeminiMcpBridgeProcess) {
       detectConfiguredProviders: detectManagedRunConfiguredProviders,
       normalizeTranscriptMarkdownMediaForChat,
       maybeScheduleCodexNativeGoalSync,
+      observeSoloSteerTranscriptRows: (chat) =>
+        runQueueServiceRef?.observeSoloSteerTranscriptRows(chat),
       persistChatGitWorkflow: (chatId, gitWorkflow) =>
         AppStore.persistChatGitWorkflow(chatId, gitWorkflow),
       broadcastThreadUpdate,
@@ -52085,25 +52101,22 @@ if (isGeminiMcpBridgeProcess) {
           appRunId,
           attachments
         ),
-      dispatch: async (payload, event, observer) => {
-        // Mid-run steering delivery bookkeeping: a participant dispatched
-        // after an interjection arrived carries it inside its hop prompt's
-        // delta transcript. Snapshot the exact entries that existed when the
-        // prompt was dispatched, then mark only after the provider accepts it:
-        // a rejected dispatch is not delivery, and an entry arriving while the
-        // async preflight is in flight was not present in this prompt.
+      dispatch: async (payload, event, observer, promptEvidence) => {
+        // Mid-run steering delivery bookkeeping: the prompt builder reports
+        // the exact durable message ids that survived its bounded projection.
+        // Resolve those ids back to registry entries here, then mark only after
+        // the provider adapter accepts this dispatch. A visible row, a pending
+        // registry entry, or a row outside the actual prompt window is never a
+        // delivery receipt by itself.
         const steeringChatId = payload.appChatId
         const steeringParticipantId = payload.ensembleRun?.participantId
         const steeringEntryIds =
           steeringChatId && steeringParticipantId
-            ? midRunSteeringRegistry
-                .pendingForChat(steeringChatId)
-                .filter(
-                  (entry) =>
-                    !entry.deliveredAtIso &&
-                    !entry.deliveredToParticipantIds.includes(steeringParticipantId)
-                )
-                .map((entry) => entry.id)
+            ? midRunSteeringRegistry.pendingEntryIdsForSuppliedMessageIds(
+                steeringChatId,
+                steeringParticipantId,
+                promptEvidence?.suppliedMessageIds || []
+              )
             : []
         const scheduledRoundId = payload.ensembleRun?.roundId
         const scheduledRoundOwner = scheduledRoundId

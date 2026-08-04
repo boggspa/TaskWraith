@@ -237,6 +237,48 @@ describe('RunRecovery', () => {
     expect(recoveredJob.promotionToken).toBeUndefined()
   })
 
+  it('preserves a main-minted solo-steer transcript barrier for renderer repair', () => {
+    const prepared = job({
+      id: 'run-steer-prepared',
+      runId: 'run-steer-prepared',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'owner-1',
+      promotionToken: 'owner-1',
+      queueMessageId: 'midrun-queued-user-run-steer-prepared',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      request: {
+        prompt: 'Please also inspect the retry edge.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([prepared], recoveredAt, () => undefined)
+
+    expect(recovered.jobs[0]).toBe(prepared)
+    expect(recovered.records).toEqual([])
+  })
+
+  it('requeues a forged or incomplete solo-steer preparation marker', () => {
+    const malformed = job({
+      id: 'run-steer-forged',
+      runId: 'run-steer-forged',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'owner-1',
+      promotionToken: 'different-owner',
+      queueMessageId: 'midrun-queued-user-run-steer-forged',
+      steerPreparationKind: 'solo_steer_transcript_barrier'
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([malformed], recoveredAt, () => undefined)
+
+    expect(recovered.jobs[0].status).toBe('queued')
+    expect(recovered.jobs[0].recoveryReason).toBe('stale_steer_promoting_recovered')
+  })
+
   it('requeues steer_promoting jobs when promotion metadata is malformed', () => {
     const malformed = job({
       id: 'run-steer-malformed',

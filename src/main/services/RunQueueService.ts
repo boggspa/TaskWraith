@@ -30,6 +30,10 @@ import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
+import {
+  SOLO_STEER_TRANSCRIPT_PREPARATION,
+  midRunQueuedMessageId
+} from '../../shared/midRunSteeringQueue'
 
 const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'queued',
@@ -95,6 +99,30 @@ const AGENTIC_SERVICE_POLICIES = new Set<AgenticServicePolicy>([
   'allow',
   'deny'
 ])
+
+function isPreparedSoloSteerTranscriptBarrier(job: RunQueueJob | null): job is RunQueueJob {
+  return Boolean(
+    job &&
+    job.status === 'steer_promoting' &&
+    job.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION &&
+    job.promotionOwnerToken &&
+    job.promotionToken === job.promotionOwnerToken &&
+    job.request &&
+    job.queueMessageId === midRunQueuedMessageId(job.runId)
+  )
+}
+
+function hasExactSoloSteerTranscriptRow(chat: ChatRecord | null, job: RunQueueJob): boolean {
+  if (!chat || !job.chatId || chat.appChatId !== job.chatId || !job.queueMessageId) return false
+  return chat.messages.some(
+    (message) =>
+      message.id === job.queueMessageId &&
+      message.role === 'user' &&
+      message.metadata?.kind === 'midRunSteering' &&
+      message.metadata?.midRunQueueRunId === job.runId &&
+      message.metadata?.midRunQueueSource === 'soloSteer'
+  )
+}
 
 export interface RunQueueStore {
   getChat: (chatId: string) => ChatRecord | null
@@ -178,6 +206,11 @@ export interface RunQueuePrepareOptions {
   readonly authorizedFilePaths?: string[]
   /** Main-only graph correlation; never read from renderer input. */
   readonly executionGraph?: ExecutionGraphQueueBinding
+  /** Main-only first-write seal for a solo steer awaiting its transcript row. */
+  readonly soloSteerTranscriptBarrier?: {
+    ownerToken: string
+    queueMessageId: string
+  }
 }
 
 export type RunQueueAttachmentStageResult =
@@ -196,7 +229,46 @@ const DURABLE_ATTACHMENT_QUARANTINE_REASON =
  * out of the main process handler block.
  */
 export class RunQueueService {
+  private readonly observedEphemeralSoloSteerRows = new Set<string>()
+  private readonly observedEphemeralChatIdentities = new Map<
+    string,
+    Pick<ChatRecord, 'appChatId' | 'scope' | 'workspaceId' | 'workspacePath'>
+  >()
+
   constructor(private deps: RunQueueServiceDeps) {}
+
+  /**
+   * Main-owned acknowledgement for privacy mode, where save-chat is accepted
+   * but intentionally writes no chat file. The acknowledgement exists only in
+   * this process, is bound to an already-minted barrier, and cannot survive a
+   * crash; restart therefore remains fail-closed when no transcript is stored.
+   */
+  observeSoloSteerTranscriptRows(chat: ChatRecord): void {
+    // `save-chat` is the main-observed identity seam for no-history chats.
+    // Retain only routing fields (never transcript content) and cap the
+    // process-local registry; a restart intentionally forgets this authority.
+    if (!this.observedEphemeralChatIdentities.has(chat.appChatId)) {
+      this.observedEphemeralChatIdentities.set(chat.appChatId, {
+        appChatId: chat.appChatId,
+        scope: chat.scope,
+        workspaceId: chat.workspaceId,
+        workspacePath: chat.workspacePath
+      })
+    }
+    while (this.observedEphemeralChatIdentities.size > 256) {
+      const oldest = this.observedEphemeralChatIdentities.keys().next().value
+      if (typeof oldest !== 'string') break
+      this.observedEphemeralChatIdentities.delete(oldest)
+    }
+    for (const job of this.deps.appStore.getRunQueueJobs({
+      chatId: chat.appChatId,
+      statuses: ['steer_promoting']
+    })) {
+      if (isPreparedSoloSteerTranscriptBarrier(job) && hasExactSoloSteerTranscriptRow(chat, job)) {
+        this.observedEphemeralSoloSteerRows.add(this.soloSteerTranscriptReceiptKey(job))
+      }
+    }
+  }
 
   getJobs(filter?: RunQueueJobFilter): RunQueueJob[] {
     const jobs = this.deps
@@ -213,7 +285,38 @@ export class RunQueueService {
   }
 
   requestJob(input: unknown, options: RunQueuePrepareOptions = {}): RunQueueJob {
-    return this.deps.getRunRepository().saveRunQueueJob(this.prepareJob(input, options))
+    const prepared = this.prepareJob(input, options)
+    const barrier = options.soloSteerTranscriptBarrier
+    if (!barrier) {
+      const existing = this.deps.appStore.getRunQueueJob(prepared.runId)
+      if (isPreparedSoloSteerTranscriptBarrier(existing)) {
+        throw new Error(
+          'Prepared solo steer transcript barrier can only be released through its verified main boundary.'
+        )
+      }
+      return this.deps.getRunRepository().saveRunQueueJob(prepared)
+    }
+    const ownerToken = optionalString(barrier.ownerToken)
+    const queueMessageId = optionalString(barrier.queueMessageId)
+    if (
+      prepared.status !== 'paused' ||
+      !ownerToken ||
+      queueMessageId !== midRunQueuedMessageId(prepared.runId)
+    ) {
+      throw new Error('Solo steer transcript preparation was not main-authenticatable.')
+    }
+    const promotedAt = new Date().toISOString()
+    return this.deps.getRunRepository().saveRunQueueJob({
+      ...prepared,
+      status: 'steer_promoting',
+      promotionOwnerToken: ownerToken,
+      promotionToken: ownerToken,
+      promotionAttempt: 1,
+      transitionVersion: 1,
+      promotedAt,
+      queueMessageId,
+      steerPreparationKind: SOLO_STEER_TRANSCRIPT_PREPARATION
+    })
   }
 
   /**
@@ -323,6 +426,10 @@ export class RunQueueService {
     const candidate = this.deps.appStore.getRunQueueJob(runId)
     const safeCandidate = candidate ? this.quarantineUnsafePersistedAttachments(candidate) : null
     if (!safeCandidate || safeCandidate.status !== 'steer_promoting') return null
+    // This main-minted barrier is released only after main can observe its
+    // deterministic user row in the durable chat. A generic steer lease must
+    // never turn it into runnable work, even when the renderer knows the token.
+    if (isPreparedSoloSteerTranscriptBarrier(safeCandidate)) return null
     if (!this.deps.canLeaseJob(safeCandidate)) return null
     return this.deps.getRunRepository().leasePromotedSteerJob({
       runId,
@@ -344,12 +451,34 @@ export class RunQueueService {
       ? sanitizeRunQueueStatus(input.fallbackStatus, 'queued')
       : undefined
     if (!runId || !ownerToken || !reason) return null
-    return this.deps.getRunRepository().fallbackPromotedSteerJob({
+    const candidate = this.deps.appStore.getRunQueueJob(runId)
+    if (isPreparedSoloSteerTranscriptBarrier(candidate)) {
+      // Queueing is the dedicated release operation for a transcript barrier.
+      // Main verifies the exact deterministic row from the saved chat first;
+      // knowing the barrier token alone is intentionally insufficient.
+      if (
+        fallbackStatus !== 'queued' ||
+        !(
+          hasExactSoloSteerTranscriptRow(
+            candidate.chatId ? this.deps.appStore.getChat(candidate.chatId) : null,
+            candidate
+          ) ||
+          this.observedEphemeralSoloSteerRows.has(this.soloSteerTranscriptReceiptKey(candidate))
+        )
+      ) {
+        return null
+      }
+    }
+    const released = this.deps.getRunRepository().fallbackPromotedSteerJob({
       runId,
       ownerToken,
       reason,
       ...(fallbackStatus ? { fallbackStatus } : {})
     })
+    if (released && candidate) {
+      this.observedEphemeralSoloSteerRows.delete(this.soloSteerTranscriptReceiptKey(candidate))
+    }
+    return released
   }
 
   transitionJob(
@@ -359,10 +488,27 @@ export class RunQueueService {
   ): RunQueueJob | null {
     const nextStatus = sanitizeRunQueueStatus(status)
     if (nextStatus === 'steer_promoting') return null
-    return this.deps.getRunRepository().transitionRunQueueJob(runIdOrId, nextStatus, {
+    const candidate = this.deps.appStore.getRunQueueJob(runIdOrId)
+    if (
+      isPreparedSoloSteerTranscriptBarrier(candidate) &&
+      nextStatus !== 'cancelled' &&
+      nextStatus !== 'failed' &&
+      nextStatus !== 'completed'
+    ) {
+      return null
+    }
+    const transitioned = this.deps.getRunRepository().transitionRunQueueJob(runIdOrId, nextStatus, {
       statusReason: optionalString(partial?.statusReason),
       lastError: optionalString(partial?.lastError)
     })
+    if (transitioned && candidate) {
+      this.observedEphemeralSoloSteerRows.delete(this.soloSteerTranscriptReceiptKey(candidate))
+    }
+    return transitioned
+  }
+
+  private soloSteerTranscriptReceiptKey(job: RunQueueJob): string {
+    return `${job.chatId || ''}\u0000${job.runId}\u0000${job.queueMessageId || ''}`
   }
 
   persistSessionQueueState(session: RunSession | undefined): void {
@@ -378,20 +524,49 @@ export class RunQueueService {
     const provider = assertRunnableProviderId(record.provider)
     const runId = optionalString(record.runId) || optionalString(record.id) || randomUUID()
     const chatId = optionalString(record.chatId)
-    const chat = chatId ? this.deps.appStore.getChat(chatId) : null
-    const scope: ChatScope =
-      record.scope === 'global' || chatScope(chat) === 'global' ? 'global' : 'workspace'
+    const durableChat = chatId ? this.deps.appStore.getChat(chatId) : null
+    const chat =
+      durableChat || (chatId ? this.observedEphemeralChatIdentities.get(chatId) : undefined)
+    const requestedScope: ChatScope | undefined =
+      record.scope === 'global' || record.scope === 'workspace' ? record.scope : undefined
+    const observedScope = chat ? chatScope(chat) : undefined
+    if (requestedScope && observedScope && requestedScope !== observedScope) {
+      throw new Error('Run queue request scope does not match its chat.')
+    }
+    const scope: ChatScope = requestedScope || observedScope || 'workspace'
     let workspacePath: string | undefined
     let workspaceId: string | undefined
     if (scope === 'global') {
-      this.deps.requireGlobalChat(chatId, 'Run queue global chat')
+      if (durableChat) {
+        this.deps.requireGlobalChat(chatId, 'Run queue global chat')
+      } else if (!chat || chatScope(chat) !== 'global') {
+        throw new Error('Run queue global chat could not be resolved.')
+      }
     } else {
       workspacePath = this.deps.requireRegisteredWorkspace(
         requireNonEmptyString(record.workspacePath, 'Workspace')
       )
       const workspace = this.deps.findRegisteredWorkspace(workspacePath)
       workspaceId = workspace?.id || optionalString(record.workspaceId)
-      this.deps.validateChatWorkspaceIdentity(chatId, workspace)
+      if (!chatId) {
+        this.deps.validateChatWorkspaceIdentity(undefined, workspace)
+      } else if (durableChat) {
+        this.deps.validateChatWorkspaceIdentity(chatId, workspace)
+      } else {
+        if (!chat || !workspace || chatScope(chat) === 'global') {
+          throw new Error('Workspace-scoped run chat could not be resolved.')
+        }
+        const observedWorkspacePath = chat.workspacePath
+          ? this.deps.requireRegisteredWorkspace(chat.workspacePath, 'Chat workspace')
+          : undefined
+        if (
+          (!chat.workspaceId && !observedWorkspacePath) ||
+          (chat.workspaceId !== undefined && chat.workspaceId !== workspace.id) ||
+          (observedWorkspacePath !== undefined && observedWorkspacePath !== workspacePath)
+        ) {
+          throw new Error('Chat workspace does not match the selected workspace.')
+        }
+      }
     }
     const status = sanitizePublicRunQueueStatus(record.status, 'queued')
     const source = sanitizeRunQueueSource(record.source)

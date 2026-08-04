@@ -54,6 +54,27 @@ describe('MidRunSteeringRegistry', () => {
     expect(other).toHaveLength(1)
   })
 
+  it('maps only exact supplied transcript rows to pending registry entries', () => {
+    const registry = new MidRunSteeringRegistry()
+    const supplied = register(registry, { messageId: 'msg-supplied' })
+    register(registry, { messageId: 'msg-truncated' })
+
+    expect(
+      registry.pendingEntryIdsForSuppliedMessageIds('chat-1', 'seat-a', [
+        'msg-supplied',
+        'unrelated-row'
+      ])
+    ).toEqual([supplied.id])
+
+    registry.markEntriesDeliveredToParticipant('chat-1', 'seat-a', [supplied.id])
+    expect(
+      registry.pendingEntryIdsForSuppliedMessageIds('chat-1', 'seat-a', ['msg-supplied'])
+    ).toEqual([])
+    expect(
+      registry.pendingEntryIdsForSuppliedMessageIds('chat-1', 'seat-b', ['msg-supplied'])
+    ).toEqual([supplied.id])
+  })
+
   it('undeliveredToAnyParticipant reflects only untouched entries', () => {
     const registry = new MidRunSteeringRegistry()
     const a = register(registry, { messageId: 'msg-a' })

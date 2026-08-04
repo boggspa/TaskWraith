@@ -3,6 +3,7 @@ import {
   buildEnsembleDynamicStateSnapshot,
   buildDupProviderModelLabels,
   buildEnsembleParticipantPrompt,
+  buildEnsembleParticipantPromptProjection,
   buildParticipantTokenMap,
   computeEnsemblePromptShellStamp,
   ensembleSpeakerForMessage as buildEnsembleSpeaker,
@@ -335,14 +336,16 @@ describe('Ensemble prompt composition', () => {
       }
     }))
 
-    const prompt = buildEnsembleParticipantPrompt({
+    const projection = buildEnsembleParticipantPromptProjection({
       chat: shared,
       config,
       participant: antigravity,
       currentPrompt: 'Review the exact dispatch state and report the next safe action.',
+      currentPromptMessageId: 'agy-current-request',
       roundId: 'round-agy',
       chatContextTurns: 40
     })
+    const prompt = projection.prompt
 
     expect(prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
     expect(prompt).toContain('AntiGravity official agy context capsule')
@@ -352,6 +355,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('outside-workspace path requires an explicit host grant/approval')
     expect(prompt).not.toContain('call blackboard_read')
     expect(prompt).not.toContain('Recent tagged transcript:')
+    expect(projection.suppliedMessageIds).toContain('agy-current-request')
   })
 
   it('C2 T5: the Review-gates prompt block goal-scopes (other-goal / superseded / passed gates disappear)', () => {
@@ -851,7 +855,7 @@ describe('Ensemble prompt composition', () => {
       })
     ]
 
-    const prompt = buildEnsembleParticipantPrompt({
+    const projection = buildEnsembleParticipantPromptProjection({
       chat: shared,
       config: ensemble,
       participant: ensemble.participants[1],
@@ -859,9 +863,47 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1',
       chatContextTurns: 4
     })
+    const prompt = projection.prompt
 
     expect(prompt).toContain('[User]\nactually use the narrow test')
     expect(prompt).not.toContain('<external_contribution')
+    expect(projection.suppliedMessageIds).toContain('steer-host')
+  })
+
+  it('does not receipt a visible steer row that the bounded prompt omits', () => {
+    const shared = chat()
+    shared.messages = [
+      buildMidRunSteeringMessage({
+        id: 'steer-too-old',
+        content: 'OLD STEER THAT MUST REMAIN UNDELIVERED',
+        timestampIso: '2026-05-24T00:00:00.000Z',
+        author: HOST_MIDRUN_STEERING_AUTHOR
+      }),
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `newer-${index}`,
+        role: 'assistant' as const,
+        content: `newer row ${index} ${'x'.repeat(1_100)}`,
+        timestamp: `2026-05-24T00:00:${String(index + 1).padStart(2, '0')}.000Z`,
+        metadata: {
+          ensembleParticipantId: 'claude',
+          ensembleProvider: 'claude' as const,
+          ensembleRole: 'Reviewer'
+        }
+      }))
+    ]
+
+    const projection = buildEnsembleParticipantPromptProjection({
+      chat: shared,
+      config: { ...ensemble, ensembleContextChars: 5_000 },
+      participant: ensemble.participants[1],
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 20
+    })
+
+    expect(projection.prompt).not.toContain('OLD STEER THAT MUST REMAIN UNDELIVERED')
+    expect(projection.suppliedMessageIds).not.toContain('steer-too-old')
+    expect(projection.suppliedMessageIds).toContain('newer-7')
   })
 
   it('F8: an external flood is capped and cannot displace host history', () => {

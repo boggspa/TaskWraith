@@ -210,6 +210,7 @@ export function updateRunQueueJobRecord(
   }
   if (status !== 'steer_promoting') {
     next.promotedAt = undefined
+    next.steerPreparationKind = undefined
   }
   if (!RUN_QUEUE_NONTERMINAL_STATUS_SET[status]) {
     next.promotionAttempt = undefined

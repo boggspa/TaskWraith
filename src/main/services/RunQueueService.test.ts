@@ -187,7 +187,7 @@ function makeDeps(overrides: Partial<RunQueueServiceDeps> = {}): {
 }
 
 describe('RunQueueService', () => {
-  it('prepares a validated request snapshot without publishing a queue job', () => {
+  it('does not accept solo-steer preparation authority through generic queue creation', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
 
@@ -199,6 +199,8 @@ describe('RunQueueService', () => {
       chatId: 'chat-1',
       source: 'system',
       status: 'paused',
+      queueMessageId: 'midrun-queued-user-graph-template-probe',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
       request: {
         prompt: 'Continue with the next Stack step',
         selectedModelType: 'default',
@@ -218,8 +220,173 @@ describe('RunQueueService', () => {
       workspaceId: 'workspace-1',
       request: { prompt: 'Continue with the next Stack step' }
     })
+    expect(prepared.queueMessageId).toBeUndefined()
+    expect(prepared.steerPreparationKind).toBeUndefined()
     expect(prepared.dispatchReceipt?.receiptHash).toBeTruthy()
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('atomically mints a solo-steer barrier only through the main-owned option', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    const input = {
+      runId: 'solo-steer-1',
+      provider: 'codex',
+      workspacePath: '/repo',
+      workspaceId: 'workspace-1',
+      chatId: 'chat-1',
+      source: 'manual',
+      status: 'paused',
+      request: {
+        prompt: 'Please also inspect the restart boundary.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    }
+
+    const prepared = service.requestJob(input, {
+      soloSteerTranscriptBarrier: {
+        ownerToken: 'main-owner-1',
+        queueMessageId: 'midrun-queued-user-solo-steer-1'
+      }
+    })
+
+    expect(prepared).toMatchObject({
+      runId: 'solo-steer-1',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      promotionAttempt: 1,
+      transitionVersion: 1,
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier'
+    })
+    expect(repository.saveRunQueueJob).toHaveBeenCalledTimes(1)
+    expect(() =>
+      service.requestJob(input, {
+        soloSteerTranscriptBarrier: {
+          ownerToken: 'main-owner-1',
+          queueMessageId: 'renderer-chosen-row'
+        }
+      })
+    ).toThrow('Solo steer transcript preparation was not main-authenticatable.')
+  })
+
+  it('rejects generic queue creation that would overwrite a prepared solo-steer barrier', () => {
+    const barrier = makeJob({
+      runId: 'solo-steer-1',
+      provider: 'codex',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      request: {
+        prompt: 'Please also inspect the restart boundary.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => barrier) })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(() =>
+      service.requestJob({
+        runId: 'solo-steer-1',
+        provider: 'codex',
+        workspacePath: '/repo',
+        workspaceId: 'workspace-1',
+        chatId: 'chat-1',
+        source: 'manual',
+        status: 'queued'
+      })
+    ).toThrow(
+      'Prepared solo steer transcript barrier can only be released through its verified main boundary.'
+    )
+    expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('mints a barrier for a main-observed no-history workspace chat', () => {
+    const store = makeStore({
+      getChat: vi.fn(() => null),
+      getRunQueueJobs: vi.fn(() => [])
+    })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+    service.observeSoloSteerTranscriptRows(makeChat())
+
+    expect(
+      service.requestJob(
+        {
+          runId: 'private-solo-steer',
+          provider: 'codex',
+          workspacePath: '/repo',
+          workspaceId: 'workspace-1',
+          chatId: 'chat-1',
+          source: 'manual',
+          status: 'paused',
+          request: {
+            prompt: 'Keep this chat ephemeral.',
+            selectedModelType: 'default',
+            customModel: '',
+            approvalMode: 'default',
+            sessionTrust: false,
+            imageAttachments: []
+          }
+        },
+        {
+          soloSteerTranscriptBarrier: {
+            ownerToken: 'main-owner-private',
+            queueMessageId: 'midrun-queued-user-private-solo-steer'
+          }
+        }
+      )
+    ).toMatchObject({
+      runId: 'private-solo-steer',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      status: 'steer_promoting'
+    })
+    expect(deps.validateChatWorkspaceIdentity).not.toHaveBeenCalled()
+    expect(repository.saveRunQueueJob).toHaveBeenCalledTimes(1)
+
+    expect(() =>
+      service.requestJob({
+        runId: 'forged-global-steer',
+        provider: 'codex',
+        chatId: 'chat-1',
+        scope: 'global',
+        source: 'manual'
+      })
+    ).toThrow('Run queue request scope does not match its chat.')
+
+    const globalStore = makeStore({
+      getChat: vi.fn(() => null),
+      getRunQueueJobs: vi.fn(() => [])
+    })
+    const globalDeps = makeDeps({ appStore: globalStore })
+    const globalService = new RunQueueService(globalDeps.deps)
+    globalService.observeSoloSteerTranscriptRows(
+      makeChat({ scope: 'global', workspaceId: undefined, workspacePath: undefined })
+    )
+    expect(() =>
+      globalService.requestJob({
+        runId: 'forged-workspace-steer',
+        provider: 'codex',
+        chatId: 'chat-1',
+        scope: 'workspace',
+        workspaceId: 'workspace-1',
+        workspacePath: '/repo',
+        source: 'manual'
+      })
+    ).toThrow('Run queue request scope does not match its chat.')
   })
 
   it('accepts execution-graph correlation only through the main-owned options channel', () => {
@@ -1166,6 +1333,170 @@ describe('RunQueueService', () => {
       reason: 'lease failed',
       fallbackStatus: 'queued'
     })
+  })
+
+  it('keeps a solo-steer transcript barrier non-runnable until main verifies its durable row', () => {
+    const barrier = makeJob({
+      runId: 'solo-steer-1',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      request: {
+        prompt: 'Please also inspect the restart boundary.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({
+      getRunQueueJob: vi.fn(() => barrier),
+      getChat: vi.fn(() => makeChat({ messages: [] }))
+    })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(
+      service.leasePromotedSteerJob({ runId: barrier.runId, ownerToken: 'main-owner-1' })
+    ).toBeNull()
+    expect(
+      service.fallbackPromotedSteerJob({
+        runId: barrier.runId,
+        ownerToken: 'main-owner-1',
+        reason: 'renderer knows the token',
+        fallbackStatus: 'queued'
+      })
+    ).toBeNull()
+    expect(service.transitionJob(barrier.runId, 'queued')).toBeNull()
+    expect(service.transitionJob(barrier.runId, 'starting')).toBeNull()
+    expect(repository.leasePromotedSteerJob).not.toHaveBeenCalled()
+    expect(repository.fallbackPromotedSteerJob).not.toHaveBeenCalled()
+    expect(repository.transitionRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('releases a solo-steer transcript barrier only for its exact saved user row', () => {
+    const barrier = makeJob({
+      runId: 'solo-steer-1',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      request: {
+        prompt: 'Please also inspect the restart boundary.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({
+      getRunQueueJob: vi.fn(() => barrier),
+      getChat: vi.fn(() =>
+        makeChat({
+          messages: [
+            {
+              id: 'midrun-queued-user-solo-steer-1',
+              role: 'user',
+              content: 'Please also inspect the restart boundary.',
+              timestamp: '2026-05-16T00:00:01.000Z',
+              metadata: {
+                kind: 'midRunSteering',
+                midRunQueueRunId: 'solo-steer-1',
+                midRunQueueSource: 'soloSteer'
+              }
+            }
+          ]
+        })
+      )
+    })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(
+      service.fallbackPromotedSteerJob({
+        runId: barrier.runId,
+        ownerToken: 'main-owner-1',
+        reason: 'Durable transcript row verified.',
+        fallbackStatus: 'queued'
+      })
+    ).toEqual(
+      makeJob({
+        status: 'queued',
+        runId: 'solo-steer-1',
+        statusReason: 'Durable transcript row verified.'
+      })
+    )
+    expect(repository.fallbackPromotedSteerJob).toHaveBeenCalledWith({
+      runId: 'solo-steer-1',
+      ownerToken: 'main-owner-1',
+      reason: 'Durable transcript row verified.',
+      fallbackStatus: 'queued'
+    })
+  })
+
+  it('releases a no-history solo steer only after main observes the exact accepted row', () => {
+    const barrier = makeJob({
+      runId: 'private-solo-steer',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-private',
+      promotionToken: 'main-owner-private',
+      queueMessageId: 'midrun-queued-user-private-solo-steer',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      request: {
+        prompt: 'Keep this transcript ephemeral.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({
+      getRunQueueJob: vi.fn(() => barrier),
+      getRunQueueJobs: vi.fn(() => [barrier]),
+      getChat: vi.fn(() => null)
+    })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+    const release = () =>
+      service.fallbackPromotedSteerJob({
+        runId: barrier.runId,
+        ownerToken: 'main-owner-private',
+        reason: 'Accepted in no-history mode.',
+        fallbackStatus: 'queued'
+      })
+
+    expect(release()).toBeNull()
+    service.observeSoloSteerTranscriptRows(
+      makeChat({
+        messages: [
+          {
+            id: 'midrun-queued-user-private-solo-steer',
+            role: 'user',
+            content: 'Keep this transcript ephemeral.',
+            timestamp: '2026-05-16T00:00:01.000Z',
+            metadata: {
+              kind: 'midRunSteering',
+              midRunQueueRunId: 'private-solo-steer',
+              midRunQueueSource: 'soloSteer'
+            }
+          }
+        ]
+      })
+    )
+    expect(release()).toEqual(
+      makeJob({
+        status: 'queued',
+        runId: 'private-solo-steer',
+        statusReason: 'Accepted in no-history mode.'
+      })
+    )
+    expect(repository.fallbackPromotedSteerJob).toHaveBeenCalledTimes(1)
   })
 
   it('rejects promoted steer leases when the target chat is still busy', () => {

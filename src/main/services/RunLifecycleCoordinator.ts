@@ -67,6 +67,8 @@ export interface RunLifecycleCoordinatorDeps {
 
 export interface PromoteQueuedJobForSteerInput {
   runId: string
+  /** Dedicated first-write payload; only the promote-steer IPC may honor it. */
+  prepareJob?: Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>
   ownerToken?: string
   provider?: ProviderId
   chatId?: string

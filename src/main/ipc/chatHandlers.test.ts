@@ -122,6 +122,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     detectConfiguredProviders: vi.fn(async () => new Set(['codex'] as const)),
     normalizeTranscriptMarkdownMediaForChat: vi.fn((record: ChatRecord) => record),
     maybeScheduleCodexNativeGoalSync: vi.fn(),
+    observeSoloSteerTranscriptRows: vi.fn(),
     persistChatGitWorkflow: vi.fn(async (chatId: string) => chat(chatId, {})),
     broadcastThreadUpdate: vi.fn(),
     broadcastThreadList: vi.fn(),
@@ -704,6 +705,7 @@ describe('registerChatHandlers', () => {
 
     expect(deps.normalizeTranscriptMarkdownMediaForChat).toHaveBeenCalledWith(next)
     expect(deps.chatService.saveChat).toHaveBeenCalledWith(next)
+    expect(deps.observeSoloSteerTranscriptRows).not.toHaveBeenCalled()
     expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(
       expect.objectContaining({
         appChatId: 'chat-1',
@@ -721,6 +723,47 @@ describe('registerChatHandlers', () => {
       expect.objectContaining({ appChatId: 'chat-1' }),
       'workspace-1'
     )
+  })
+
+  it('records a main-observed steer row only when local chat history is disabled', () => {
+    const next = chat('chat-1', {
+      messages: [
+        {
+          id: 'midrun-queued-user-private-steer',
+          role: 'user',
+          content: 'Keep this row ephemeral.',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          metadata: {
+            kind: 'midRunSteering',
+            midRunQueueRunId: 'private-steer',
+            midRunQueueSource: 'soloSteer'
+          }
+        }
+      ]
+    })
+    const deps = createDeps({
+      getSettings: vi.fn(
+        () => ({ ensembleModeEnabled: true, storeLocalChatHistory: false }) as AppSettings
+      )
+    })
+    registerChatHandlers(deps)
+
+    handlerFor('save-chat')({} as any, next)
+
+    expect(deps.observeSoloSteerTranscriptRows).toHaveBeenCalledWith(next)
+  })
+
+  it('records fresh no-history chat identity at the main-owned creation boundary', () => {
+    const deps = createDeps({
+      getSettings: vi.fn(
+        () => ({ ensembleModeEnabled: true, storeLocalChatHistory: false }) as AppSettings
+      )
+    })
+    registerChatHandlers(deps)
+
+    const created = handlerFor('create-chat')({} as any, 'workspace-1', '/repo')
+
+    expect(deps.observeSoloSteerTranscriptRows).toHaveBeenCalledWith(created)
   })
 
   it('reports a stale save rejection without lending the canonical revision to queued writes', () => {

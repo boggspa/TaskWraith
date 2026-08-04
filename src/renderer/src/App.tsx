@@ -324,6 +324,8 @@ import {
 import {
   appendMidRunQueuedMessage,
   findMidRunQueuedMessage,
+  isPreparedSoloSteerQueueJob,
+  midRunQueuedMessageId,
   pendingMidRunQueuedMessageIds,
   shouldAppendDueScheduledRun
 } from './lib/midRunSteeringQueue'
@@ -12431,6 +12433,7 @@ function App(): React.JSX.Element {
    */
   type PromoteQueuedRunForSteerInput = {
     runId: string
+    prepareJob?: Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>
     provider?: ProviderId
     chatId?: string
     statusReason?: string
@@ -12537,14 +12540,14 @@ function App(): React.JSX.Element {
     ownerToken: string
     reason: string
     fallbackStatus?: 'queued' | 'cancelled' | 'failed'
-  }): Promise<{ ok?: boolean; status?: RunQueueJobStatus; reason?: string } | null> => {
+  }): Promise<{ ok?: boolean; jobStatus?: RunQueueJobStatus; reason?: string } | null> => {
     const maybeApi = window.api as {
       fallbackPromotedSteerJob?: (input: {
         runId: string
         ownerToken: string
         reason: string
         fallbackStatus?: 'queued' | 'cancelled' | 'failed'
-      }) => Promise<{ ok?: boolean; status?: RunQueueJobStatus; reason?: string }>
+      }) => Promise<{ ok?: boolean; jobStatus?: RunQueueJobStatus; reason?: string }>
     }
     if (typeof maybeApi.fallbackPromotedSteerJob !== 'function') return null
     try {
@@ -12723,19 +12726,19 @@ function App(): React.JSX.Element {
     ...(request.preserveComposer ? { preserveComposer: true } : {})
   })
 
-  const persistRunQueueJobForRequest = (
+  const buildRunQueueJobInputForRequest = (
     request: QueuedRunRequest,
     status: RunQueueJobStatus,
     statusReason?: string
-  ): Promise<RunQueueJob | null> => {
+  ): (Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>) | null => {
     const workspace =
       request.workspaceRecord || getWorkspaceForChat(request.chatRecord) || currentWorkspace
     const chat = request.chatRecord || currentChat
     const scope = request.scope || getChatScope(chat)
     const runId = request.appRunId
-    if (!runId || !chat) return Promise.resolve(null)
-    if (scope !== 'global' && !workspace) return Promise.resolve(null)
-    return window.api.requestRunQueueJob({
+    if (!runId || !chat) return null
+    if (scope !== 'global' && !workspace) return null
+    return {
       id: runId,
       runId,
       provider: request.provider,
@@ -12751,7 +12754,16 @@ function App(): React.JSX.Element {
       handoffSourceRunId: request.handoffSourceRunId,
       request: createRunQueueRequestSnapshot(request),
       ...(statusReason ? { statusReason } : {})
-    })
+    }
+  }
+
+  const persistRunQueueJobForRequest = (
+    request: QueuedRunRequest,
+    status: RunQueueJobStatus,
+    statusReason?: string
+  ): Promise<RunQueueJob | null> => {
+    const input = buildRunQueueJobInputForRequest(request, status, statusReason)
+    return input ? window.api.requestRunQueueJob(input) : Promise.resolve(null)
   }
 
   const updateRunQueueJobStatus = (
@@ -12776,9 +12788,13 @@ function App(): React.JSX.Element {
   const queuedRunRequestFromJob = (
     job: RunQueueJob,
     workspaceList: WorkspaceRecord[],
-    chatList: ChatRecord[]
+    chatList: ChatRecord[],
+    options: { allowPreparedSoloSteer?: boolean } = {}
   ): QueuedRunRequest | null => {
-    if (job.status !== 'queued' || !job.request) return null
+    const runnable =
+      job.status === 'queued' ||
+      Boolean(options.allowPreparedSoloSteer && isPreparedSoloSteerQueueJob(job))
+    if (!runnable || !job.request) return null
     const workspaceRecord = workspaceList.find(
       (workspace) => workspace.id === job.workspaceId || workspace.path === job.workspacePath
     )
@@ -12988,19 +13004,24 @@ function App(): React.JSX.Element {
   const rehydrateQueuedRuns = async (workspaceList: WorkspaceRecord[]) => {
     if (rehydratedRunQueueRef.current || typeof window.api.getRunQueueJobs !== 'function') return
     rehydratedRunQueueRef.current = true
-    const [jobs, recoveryRecords] = await Promise.all([
-      window.api.getRunQueueJobs({ statuses: ['queued'] }),
+    const [fetchedJobs, recoveryRecords] = await Promise.all([
+      window.api.getRunQueueJobs({ statuses: ['queued', 'steer_promoting'] }),
       typeof window.api.getRunRecoveryRecords === 'function'
         ? window.api.getRunRecoveryRecords({ limit: 100 })
         : Promise.resolve([])
     ])
+    const jobs = fetchedJobs.filter(
+      (job) => job.status === 'queued' || isPreparedSoloSteerQueueJob(job)
+    )
     // Only chats referenced by a queued job or a recovery record need their
     // full records here — this used to call getChats() and pull EVERY chat
     // transcript (tens of MB) across IPC during startup for a lookup that
     // typically touches zero or a handful of chats.
     const neededChatIds = new Set<string>()
     for (const job of jobs) {
-      if (job.status === 'queued' && job.chatId) neededChatIds.add(job.chatId)
+      if ((job.status === 'queued' || isPreparedSoloSteerQueueJob(job)) && job.chatId) {
+        neededChatIds.add(job.chatId)
+      }
     }
     for (const record of recoveryRecords) {
       if (record.chatId) neededChatIds.add(record.chatId)
@@ -13014,9 +13035,45 @@ function App(): React.JSX.Element {
     for (const chat of recoveredChatList) {
       chatByIdRef.current.set(chat.appChatId, chat)
     }
-    setRunQueueJobs(jobs)
-    const restoredRuns = jobs
-      .map((job) => queuedRunRequestFromJob(job, workspaceList, recoveredChatList))
+    const effectiveJobs = [...jobs]
+    for (const [index, job] of effectiveJobs.entries()) {
+      if (!isPreparedSoloSteerQueueJob(job)) continue
+      const request = queuedRunRequestFromJob(job, workspaceList, recoveredChatList, {
+        allowPreparedSoloSteer: true
+      })
+      if (!request) continue
+      const message = await appendMidRunQueuedRequestToTranscript(
+        request,
+        'soloSteer',
+        job.createdAt,
+        { persistImmediately: true }
+      )
+      if (!message) continue
+      const ownerToken = job.promotionOwnerToken
+      if (!ownerToken) continue
+      const released = await invokeFallbackPromotedSteerJob({
+        runId: job.runId,
+        ownerToken,
+        reason: 'Recovered a solo steer after its durable transcript barrier.',
+        fallbackStatus: 'queued'
+      }).catch(() => null)
+      if (released?.ok === true && released.jobStatus === 'queued') {
+        effectiveJobs[index] = {
+          ...job,
+          status: 'queued',
+          statusReason: 'Recovered a solo steer after its durable transcript barrier.',
+          promotionOwnerToken: undefined,
+          promotionToken: undefined,
+          steerPreparationKind: undefined
+        }
+      }
+    }
+    const durableChatList = recoveredChatList.map(
+      (chat) => chatByIdRef.current.get(chat.appChatId) || chat
+    )
+    setRunQueueJobs(effectiveJobs)
+    const restoredRuns = effectiveJobs
+      .map((job) => queuedRunRequestFromJob(job, workspaceList, durableChatList))
       .filter((request): request is QueuedRunRequest => Boolean(request))
     if (restoredRuns.length > 0) {
       setQueuedRuns((current) => {
@@ -13212,7 +13269,7 @@ function App(): React.JSX.Element {
   const queueRunRequest = (
     request: QueuedRunRequest,
     reason = 'Another task is currently active.'
-  ) => {
+  ): Promise<boolean> => {
     const queuedRequest = request.appRunId ? request : { ...request, appRunId: createAppRunId() }
     const targetChatId = queuedRequest.chatRecord?.appChatId
     const targetProvider = queuedRequest.provider
@@ -13264,7 +13321,7 @@ function App(): React.JSX.Element {
         type: 'info',
         content: `${getProviderLabel(targetProvider)} run was already queued for this request.`
       })
-      return
+      return Promise.resolve(false)
     }
     const knownRunQueueJobIds = collectRunQueueJobIds(runQueueJobsRef.current)
     const localQueuedRunsForChat = queuedRunsRef.current.filter(
@@ -13276,12 +13333,17 @@ function App(): React.JSX.Element {
       getQueuedDesktopRunJobs().filter((job) => job.chatId === targetChatId).length +
       localQueuedRunsForChat.length +
       1
-    void persistRunQueueJobForRequest(queuedRequest, 'queued', reason)
+    const persistence = persistRunQueueJobForRequest(
+      queuedRequest,
+      'queued',
+      reason
+    )
       .then((job) => {
         if (!job) {
           throw new Error('The queued run could not be persisted.')
         }
         settleProjectReferenceContextForRequest(queuedRequest, 'accepted')
+        return true
       })
       .catch((error) => {
         settleProjectReferenceContextForRequest(queuedRequest, 'rejected')
@@ -13292,12 +13354,14 @@ function App(): React.JSX.Element {
           type: 'stderr',
           content: `Failed to queue ${getProviderLabel(targetProvider)} run: ${redactLog(String(error))}`
         })
+        return false
       })
     setQueuedRuns((prev) => [...prev, queuedRequest])
     appendThreadRawLog(targetChatId, {
       type: 'info',
       content: `${getProviderLabel(targetProvider)} run queued (${queuePosition} waiting). ${reason}`
     })
+    return persistence
   }
   const queueRunRequestRef = useRef(queueRunRequest)
   queueRunRequestRef.current = queueRunRequest
@@ -13305,7 +13369,8 @@ function App(): React.JSX.Element {
   const appendMidRunQueuedRequestToTranscript = async (
     request: QueuedRunRequest,
     source: 'scheduledRun' | 'soloSteer',
-    timestampIso: string
+    timestampIso: string,
+    options: { persistImmediately?: boolean } = {}
   ): Promise<ChatMessage | null> => {
     const runId = request.appRunId
     const chatId = request.chatRecord?.appChatId
@@ -13313,7 +13378,16 @@ function App(): React.JSX.Element {
     const liveChat = chatByIdRef.current.get(chatId) || request.chatRecord
     if (!liveChat) return null
     const existing = findMidRunQueuedMessage(liveChat.messages || [], runId)
-    if (existing) return existing
+    if (existing) {
+      if (options.persistImmediately) {
+        try {
+          await window.api.saveChat(liveChat)
+        } catch {
+          return null
+        }
+      }
+      return existing
+    }
     if (midRunTranscriptAppendInFlightRef.current.has(runId)) return null
     midRunTranscriptAppendInFlightRef.current.add(runId)
     try {
@@ -13333,7 +13407,7 @@ function App(): React.JSX.Element {
       if (linkPreviews.length > 0) metadata.linkPreviews = linkPreviews
 
       let appendedMessage: ChatMessage | null = null
-      updateChatById(chatId, (chat) => {
+      const updatedChat = updateChatById(chatId, (chat) => {
         const result = appendMidRunQueuedMessage(chat.messages || [], {
           runId,
           content,
@@ -13353,6 +13427,14 @@ function App(): React.JSX.Element {
           updatedAt: Date.now()
         }
       })
+      if (options.persistImmediately) {
+        if (!appendedMessage || !updatedChat) return null
+        try {
+          await window.api.saveChat(updatedChat)
+        } catch {
+          return null
+        }
+      }
       if (appendedMessage && request.imageAttachments.length > 0) {
         void buildSubmittedImageThumbnailMetadata(request.imageAttachments)
           .then((imageThumbnailMetadata) => {
@@ -16505,17 +16587,110 @@ function App(): React.JSX.Element {
     }
     soloSteerInFlightChatIdsRef.current.add(targetChatId)
     try {
-      if (!request.existingPrompt) {
-        await appendMidRunQueuedRequestToTranscript(
-          request,
-          'soloSteer',
-          new Date().toISOString()
-        )
+      const arrivedAtIso = new Date().toISOString()
+      const steerRunId = request.appRunId
+      if (!steerRunId) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        appendThreadRawLog(targetChatId, {
+          type: 'stderr',
+          content: `Failed to queue ${getProviderLabel(request.provider)} steer without a durable run id.`
+        })
+        return
       }
-      queueRunRequest(
-        request,
+      const steeringMessageId = midRunQueuedMessageId(steerRunId)
+      const preparationReason =
         `Steer is waiting for the active ${getProviderLabel(request.provider)} turn to reach its natural boundary.`
+      const prepareJob = buildRunQueueJobInputForRequest(
+        request,
+        'paused',
+        preparationReason
       )
+      if (!prepareJob) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        appendThreadRawLog(targetChatId, {
+          type: 'stderr',
+          content: `Failed to prepare ${getProviderLabel(request.provider)} steer queue state.`
+        })
+        return
+      }
+      // First-write solo steering barrier: the dedicated promote IPC validates
+      // and persists this request already sealed as a main-owned, non-runnable
+      // transcript preparation. There is no renderer crash window containing
+      // a generic paused row that restart recovery might have to guess about.
+      const barrier = await invokePromoteQueuedRunForSteer({
+        runId: steerRunId,
+        prepareJob,
+        provider: request.provider,
+        chatId: targetChatId,
+        statusReason: 'Preparing the solo steer durable transcript barrier.',
+        queueMessageId: steeringMessageId
+      })
+      const barrierOwnerToken = barrier?.ownerToken
+      const barrierPrepared =
+        barrier?.ok === true &&
+        barrier.jobStatus === 'steer_promoting' &&
+        typeof barrierOwnerToken === 'string'
+      if (!barrierPrepared) {
+        setQueuedRuns((prev) =>
+          prev.filter((candidate) => candidate.appRunId !== steerRunId)
+        )
+        await window.api
+          .transitionRunQueueJob(steerRunId, 'failed', {
+            statusReason: 'Steering could not reserve its durable transcript barrier.',
+            lastError: barrier?.reason || 'The main-owned steer preparation was not minted.'
+          })
+          .catch(() => null)
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        appendThreadRawLog(targetChatId, {
+          type: 'stderr',
+          content: `Failed to prepare ${getProviderLabel(request.provider)} steer before persisting its transcript row.`
+        })
+        return
+      }
+      settleProjectReferenceContextForRequest(request, 'accepted')
+      setQueuedRuns((prev) =>
+        prev.some((candidate) => candidate.appRunId === steerRunId)
+          ? prev
+          : [...prev, request]
+      )
+      let steeringMessage: ChatMessage | null = null
+      steeringMessage = await appendMidRunQueuedRequestToTranscript(
+        request,
+        'soloSteer',
+        arrivedAtIso,
+        { persistImmediately: true }
+      )
+      const released = steeringMessage
+        ? await invokeFallbackPromotedSteerJob({
+            runId: steerRunId,
+            ownerToken: barrierOwnerToken!,
+            reason: preparationReason,
+            fallbackStatus: 'queued'
+          })
+        : null
+      if (released?.ok !== true || released.jobStatus !== 'queued') {
+        setQueuedRuns((prev) =>
+          prev.filter((candidate) => candidate.appRunId !== steerRunId)
+        )
+        const reverted = updateChatById(targetChatId, (chat) => ({
+          ...chat,
+          messages: chat.messages.filter((message) => message.id !== steeringMessageId),
+          updatedAt: Date.now()
+        }))
+        if (reverted) await window.api.saveChat(reverted).catch(() => {})
+        await window.api
+          .transitionRunQueueJob(steerRunId, 'failed', {
+            statusReason: 'Steering could not cross the durable transcript barrier.',
+            lastError: 'The queued steer was not made runnable.'
+          })
+          .catch(() => null)
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        appendThreadRawLog(targetChatId, {
+          type: 'stderr',
+          content: `Failed to queue ${getProviderLabel(request.provider)} steer after persisting its transcript row.`
+        })
+        return
+      }
       appendThreadRawLog(targetChatId, {
         type: 'info',
         content: `Steer appended to the transcript; the active ${getProviderLabel(

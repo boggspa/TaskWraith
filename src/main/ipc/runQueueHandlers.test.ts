@@ -603,6 +603,88 @@ describe('registerRunQueueHandlers', () => {
     })
   })
 
+  it('atomically creates a main-owned transcript barrier through the promote channel', async () => {
+    const coordinator = {
+      promoteQueuedJobForSteer: vi.fn(async (): Promise<PromoteQueuedJobForSteerResult> => ({
+        ok: true,
+        kind: 'dispatch-permission',
+        runId: 'run-new',
+        provider: 'codex',
+        ownerToken: 'fallback-token',
+        promotionToken: 'fallback-token',
+        jobStatus: 'steer_promoting',
+        request: defaultRequest,
+        cancelRequested: false
+      })),
+      leasePromotedSteerJob: vi.fn(),
+      fallbackPromotedSteerJob: vi.fn()
+    }
+    const deps = createDeps()
+    deps.getRunLifecycleCoordinator = vi.fn(() => coordinator)
+    registerRunQueueHandlers(deps)
+    const prepareJob = {
+      runId: 'run-new',
+      provider: 'codex' as const,
+      source: 'manual' as const,
+      status: 'paused' as const,
+      chatId: 'chat-1',
+      request: defaultRequest
+    }
+
+    const result = await handlerFor('promote-queued-job-for-steer')({}, {
+      runId: 'run-new',
+      provider: 'codex',
+      chatId: 'chat-1',
+      ownerToken: 'renderer-chosen-token',
+      queueMessageId: 'midrun-queued-user-run-new',
+      prepareJob
+    })
+
+    expect(result).toMatchObject({ ok: true, jobStatus: 'steer_promoting' })
+    expect(deps.requestRunQueueJob).toHaveBeenCalledWith(prepareJob, {
+      authorizedFilePaths: [],
+      soloSteerTranscriptBarrier: {
+        ownerToken: 'fallback-token',
+        queueMessageId: 'midrun-queued-user-run-new'
+      }
+    })
+    expect(coordinator.promoteQueuedJobForSteer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-new',
+        ownerToken: 'fallback-token',
+        prepareJob
+      })
+    )
+  })
+
+  it('rejects a prepared steer whose routed identities disagree before persistence', async () => {
+    const deps = createDeps()
+    deps.getRunLifecycleCoordinator = vi.fn(() => ({
+      promoteQueuedJobForSteer: vi.fn(),
+      leasePromotedSteerJob: vi.fn(),
+      fallbackPromotedSteerJob: vi.fn()
+    }))
+    registerRunQueueHandlers(deps)
+
+    await expect(
+      handlerFor('promote-queued-job-for-steer')({}, {
+        runId: 'run-new',
+        provider: 'codex',
+        chatId: 'chat-1',
+        queueMessageId: 'midrun-queued-user-run-new',
+        prepareJob: {
+          runId: 'another-run',
+          provider: 'codex',
+          source: 'manual',
+          status: 'paused',
+          chatId: 'chat-1',
+          request: defaultRequest
+        }
+      })
+    ).rejects.toThrow('Prepared steer run identity does not match')
+    expect(deps.requestRunQueueJob).not.toHaveBeenCalled()
+  })
+
   it('delegates run analyst requests to the bridge daemon when running and normalizes result', async () => {
     const deps = createDeps()
     const snapshot: RunAnalystSnapshot = {

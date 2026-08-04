@@ -104,6 +104,29 @@ export class MidRunSteeringRegistry {
     return [...(this.entriesByChatId.get(chatId) || [])]
   }
 
+  /**
+   * Resolve dispatch evidence back to registry ids without mutating state.
+   * The prompt builder speaks in durable transcript message ids; delivery
+   * bookkeeping speaks in ephemeral registry ids. Only their exact
+   * intersection is eligible for an accepted participant receipt.
+   */
+  pendingEntryIdsForSuppliedMessageIds(
+    chatId: string,
+    participantId: string,
+    suppliedMessageIds: readonly string[]
+  ): string[] {
+    if (suppliedMessageIds.length === 0) return []
+    const supplied = new Set(suppliedMessageIds)
+    return (this.entriesByChatId.get(chatId) || [])
+      .filter(
+        (entry) =>
+          supplied.has(entry.messageId) &&
+          !entry.deliveredAtIso &&
+          !entry.deliveredToParticipantIds.includes(participantId)
+      )
+      .map((entry) => entry.id)
+  }
+
   entryForScheduledTask(chatId: string, scheduledTaskId: string): MidRunSteeringEntry | null {
     return (
       (this.entriesByChatId.get(chatId) || []).find(

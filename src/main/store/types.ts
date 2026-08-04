@@ -15,6 +15,7 @@ import type {
   TaskWraithPluginReviewState
 } from '../../shared/plugins/PluginTypes'
 import type { ProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
+import type { SoloSteerTranscriptPreparation } from '../../shared/midRunSteeringQueue'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -5742,6 +5743,8 @@ export interface RunQueueJob {
   promotionAttempt?: number
   promotedAt?: string
   queueMessageId?: string
+  /** Main-minted while a solo steer waits for its durable transcript row. */
+  steerPreparationKind?: SoloSteerTranscriptPreparation
   priority: number
   attempt: number
   promptPreview?: string

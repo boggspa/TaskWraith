@@ -144,7 +144,29 @@ describe('scheduled headless dispatch integration', () => {
     )
     expect(
       ensembleDispatch.indexOf('scheduledOccurrenceOwners.bindEnsembleChildRun(')
-    ).toBeLessThan(ensembleDispatch.indexOf('dispatchMainOwnedScheduledOccurrence(payload, event)'))
+    ).toBeLessThan(
+      ensembleDispatch.indexOf('dispatchMainOwnedScheduledOccurrence(payload, event, observer)')
+    )
+  })
+
+  it('receipts only exact prompt-supplied steering rows after accepted ensemble dispatch', () => {
+    const ensembleDispatch = sourceBetween(
+      'ensembleOrchestratorRef = new EnsembleOrchestrator({',
+      'shouldPersistProviderSessionForRun,'
+    )
+    const exactLookup = ensembleDispatch.indexOf(
+      'pendingEntryIdsForSuppliedMessageIds('
+    )
+    const accepted = ensembleDispatch.indexOf('dispatchResult.dispatched &&')
+    const receipt = ensembleDispatch.indexOf(
+      'midRunSteeringRegistry.markEntriesDeliveredToParticipant('
+    )
+
+    expect(exactLookup).toBeGreaterThanOrEqual(0)
+    expect(ensembleDispatch).toContain('promptEvidence?.suppliedMessageIds || []')
+    expect(ensembleDispatch).not.toContain('.pendingForChat(steeringChatId)')
+    expect(accepted).toBeGreaterThan(exactLookup)
+    expect(receipt).toBeGreaterThan(accepted)
   })
 
   it('keeps only active root or child transports live during stall reconciliation', () => {
@@ -292,11 +314,17 @@ describe('scheduled headless dispatch integration', () => {
     const seal = solo.indexOf('const sealService = scheduledOccurrenceSealServiceRef')
     const seed = solo.indexOf('seedScheduledSoloTranscript(')
     const dispatch = solo.indexOf('const result = await dispatch(')
+    const steeringReceipt = solo.indexOf(
+      'midRunSteeringRegistry.markDelivered(',
+      dispatch
+    )
 
     expect(compose).toBeGreaterThanOrEqual(0)
     expect(seal).toBeGreaterThan(compose)
     expect(seed).toBeGreaterThan(seal)
     expect(dispatch).toBeGreaterThan(seed)
+    expect(steeringReceipt).toBeGreaterThan(dispatch)
+    expect(solo.slice(seed, dispatch)).not.toContain('midRunSteeringRegistry.markDelivered(')
     expect(solo).toContain('sealService.sealSoloOccurrence({')
     expect(solo).toContain(
       'Scheduled occurrence seal verification failed: ${sealOutcome.reason}'

@@ -84,7 +84,7 @@ import {
   resolveBoundedCompactionPrefixMessageIds
 } from './PromptComposition'
 import {
-  buildAntigravityOfficialAgyPromptCapsule,
+  buildAntigravityOfficialAgyPromptCapsuleProjection,
   resolveEnsemblePromptTransportProfile,
   type EnsemblePromptTransportProfile
 } from './antigravity/AntigravityEnsemblePromptProfile'
@@ -112,6 +112,8 @@ export interface BuildEnsemblePromptInput {
   participant: EnsembleParticipant
   currentPrompt: string
   currentPromptLabel?: string
+  /** Durable row rendered as `currentPrompt` instead of tagged transcript history. */
+  currentPromptMessageId?: string
   roundId: string
   chatContextTurns?: number
   /**
@@ -169,6 +171,20 @@ export interface BuildEnsemblePromptInput {
    * omits the section entirely.
    */
   workspaceChurnStanza?: string
+}
+
+/**
+ * Prompt text plus the exact durable transcript rows that survived every
+ * seat/window/transport bound and are therefore present in that text.
+ *
+ * The message ids are host evidence, not provider input: the orchestrator
+ * uses them to receipt a mid-run steer only after the dispatch adapter accepts
+ * this exact prompt. Keeping the legacy string builder as a wrapper preserves
+ * every existing caller while giving the dispatch seam a non-heuristic path.
+ */
+export interface EnsembleParticipantPromptProjection {
+  prompt: string
+  suppliedMessageIds: string[]
 }
 
 // v4 (capability-surface repair 2026-07): tool names are now conditional on
@@ -812,6 +828,12 @@ function permissionSurfaceRule(
 }
 
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
+  return buildEnsembleParticipantPromptProjection(input).prompt
+}
+
+export function buildEnsembleParticipantPromptProjection(
+  input: BuildEnsemblePromptInput
+): EnsembleParticipantPromptProjection {
   const orderedParticipants = getOrderedEnsembleParticipants(input.config, input.currentPrompt)
   const isOllamaParticipant = input.participant.provider === 'ollama'
   const promptTransportProfile =
@@ -1078,7 +1100,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // duplicate rendering of the user's round prompt. Keep that user row in
   // the transcript so lane participants retain the original objective.
   const excludeCurrentRoundUserPrompt = !input.currentPromptLabel
-  const transcript = buildTaggedTranscript(
+  const transcriptProjection = projectTaggedTranscript(
     seatTranscriptMessages,
     ollamaTranscriptBudget?.contextTurns ?? input.chatContextTurns ?? 6,
     participantTokens,
@@ -1090,6 +1112,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       ? { excludeEnsembleRoundPromptRoundId: input.roundId }
       : undefined
   )
+  const transcript = transcriptProjection.text
 
   if (promptTransportProfile === 'antigravity-official-agy') {
     const allEntries = input.config.blackboard || []
@@ -1111,28 +1134,38 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
         : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
-    return buildAntigravityOfficialAgyPromptCapsule({
-      participantLabel,
-      roundId: input.roundId,
-      stageRole: input.participant.stageRole,
-      roleInstructions: input.participant.instructions || 'Contribute a concise, useful response for your role.',
-      currentPrompt: sanitizeText(input.currentPrompt),
-      currentPromptLabel: input.currentPromptLabel,
-      roster,
-      authorityLines: authorityRoutingLines,
-      roleBoundaryLines,
-      roundPolicy: compactRoundPolicy,
-      parallelPolicy: compactParallelPolicy,
-      dynamicState: dynamicStateSnapshot.block,
-      workspaceStanza,
-      workspaceChurnStanza: input.workspaceChurnStanza,
-      scoutBriefs,
-      blackboardSnapshot,
-      seatSummary: seatSummaryBlock,
-      transcript,
-      permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
-      yieldExecutionCheck
-    })
+    return buildAntigravityOfficialAgyPromptCapsuleProjection(
+      {
+        participantLabel,
+        roundId: input.roundId,
+        stageRole: input.participant.stageRole,
+        roleInstructions:
+          input.participant.instructions ||
+          'Contribute a concise, useful response for your role.',
+        currentPrompt: sanitizeText(input.currentPrompt),
+        currentPromptLabel: input.currentPromptLabel,
+        roster,
+        authorityLines: authorityRoutingLines,
+        roleBoundaryLines,
+        roundPolicy: compactRoundPolicy,
+        parallelPolicy: compactParallelPolicy,
+        dynamicState: dynamicStateSnapshot.block,
+        workspaceStanza,
+        workspaceChurnStanza: input.workspaceChurnStanza,
+        scoutBriefs,
+        blackboardSnapshot,
+        seatSummary: seatSummaryBlock,
+        transcript,
+        permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+        yieldExecutionCheck
+      },
+      {
+        ...(input.currentPromptMessageId
+          ? { currentPromptMessageId: input.currentPromptMessageId }
+          : {}),
+        transcriptRows: transcriptProjection.suppliedRows
+      }
+    )
   }
 
   // Spike 5 — slim resumed-turn prompt. The caller has verified the seat's
@@ -1144,7 +1177,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // fan-out briefs, blackboard digest, the delta transcript (messages since
   // the seat's own last turn), and the current request.
   if (input.slimTurn) {
-    const deltaTranscript = buildTaggedTranscript(
+    const deltaTranscriptProjection = projectTaggedTranscript(
       input.chat.messages || [],
       ollamaTranscriptBudget?.contextTurns ?? input.chatContextTurns ?? 6,
       participantTokens,
@@ -1158,7 +1191,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
           }
         : { deltaOnly: true }
     )
-    return [
+    const deltaTranscript = deltaTranscriptProjection.text
+    const prompt = [
       'TaskWraith Ensemble Mode — resumed turn',
       '',
       `You are ${participantLabel}. Your provider session from your previous turns on this panel has been resumed; the roster, rules, and your role instructions are unchanged from the full briefing you already received. Address peers exactly as before.`,
@@ -1215,9 +1249,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       '',
       `Respond now as [${participantLabel}].`
     ].join('\n')
+    return participantPromptProjection(prompt, deltaTranscriptProjection, input)
   }
 
-  return [
+  const prompt = [
     'TaskWraith Ensemble Mode',
     '',
     activeConcurrentMode
@@ -1505,6 +1540,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '',
     `Respond now as [${participantLabel}].`
   ].join('\n')
+  return participantPromptProjection(prompt, transcriptProjection, input)
 }
 
 function sessionEventFingerprint(event: SessionActivityLedgerEntry): string {
@@ -1753,6 +1789,7 @@ interface TaggedTranscriptProjection {
   eligibleMessageIds: string[]
   suppliedMessageIds: string[]
   omittedMessageIds: string[]
+  suppliedRows: Array<{ messageId: string; start: number; end: number }>
 }
 
 function projectTaggedTranscript(
@@ -1833,7 +1870,7 @@ function projectTaggedTranscript(
   // context and truncation drops the OLDEST, not the newest. Output stays
   // chronological (unshift). For a non-truncated window this is identical to the
   // previous forward fill.
-  const lines: string[] = []
+  const lines: Array<{ text: string; messageId?: string }> = []
   const suppliedMessages: ChatMessage[] = []
   let used = 0
   let truncated = false
@@ -1911,7 +1948,7 @@ function projectTaggedTranscript(
       break
     }
     used += line.length
-    lines.unshift(line)
+    lines.unshift({ text: line, messageId: message.id })
     suppliedMessages.unshift(message)
   }
   if (externalDropped > 0) {
@@ -1919,45 +1956,48 @@ function projectTaggedTranscript(
     // was withheld rather than reason from a transcript it believes is
     // complete — and a host reading the prompt log should be able to tell a
     // flood happened. Count only; no content, no author.
-    lines.unshift(
-      `[${externalDropped} external collaborator contribution(s) withheld from this prompt: external-content budget reached.]`
-    )
+    lines.unshift({
+      text: `[${externalDropped} external collaborator contribution(s) withheld from this prompt: external-content budget reached.]`
+    })
   }
   if (truncated) {
-    lines.unshift('[Transcript truncated to fit Ensemble V1 context budget.]')
+    lines.unshift({ text: '[Transcript truncated to fit Ensemble V1 context budget.]' })
+  }
+  let rowOffset = 0
+  const suppliedRows: Array<{ messageId: string; start: number; end: number }> = []
+  for (const [index, line] of lines.entries()) {
+    if (line.messageId) {
+      suppliedRows.push({
+        messageId: line.messageId,
+        start: rowOffset,
+        end: rowOffset + line.text.length
+      })
+    }
+    rowOffset += line.text.length
+    if (index < lines.length - 1) rowOffset += 2
   }
   const suppliedSet = new Set(suppliedMessages)
   return {
-    text: lines.join('\n\n'),
+    text: lines.map((line) => line.text).join('\n\n'),
     eligibleMessageIds: filtered.map((message) => message.id),
     suppliedMessageIds: suppliedMessages.map((message) => message.id),
     omittedMessageIds: filtered
       .filter((message) => !suppliedSet.has(message))
-      .map((message) => message.id)
+      .map((message) => message.id),
+    suppliedRows
   }
 }
 
-function buildTaggedTranscript(
-  messages: ChatMessage[],
-  contextTurns: number,
-  participantTokens?: Map<string, string>,
-  contextChars?: number,
-  modelLabels?: Map<string, string>,
-  sinceParticipantId?: string,
-  options?: {
-    excludeEnsembleRoundPromptRoundId?: string
-    deltaOnly?: boolean
+function participantPromptProjection(
+  prompt: string,
+  transcript: TaggedTranscriptProjection,
+  input: BuildEnsemblePromptInput
+): EnsembleParticipantPromptProjection {
+  const suppliedMessageIds = [...transcript.suppliedMessageIds]
+  if (input.currentPromptMessageId && sanitizeText(input.currentPrompt)) {
+    suppliedMessageIds.push(input.currentPromptMessageId)
   }
-): string {
-  return projectTaggedTranscript(
-    messages,
-    contextTurns,
-    participantTokens,
-    contextChars,
-    modelLabels,
-    sinceParticipantId,
-    options
-  ).text
+  return { prompt, suppliedMessageIds }
 }
 
 function buildSeatCompactionSummaryBlock(participant: EnsembleParticipant): string {

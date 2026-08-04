@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
-import { EnsembleOrchestrator } from './EnsembleOrchestrator'
+import type { WorkspaceChurnSample } from '../WorkspaceChurn'
+import { EnsembleOrchestrator, type EnsembleDispatchPromptEvidence } from './EnsembleOrchestrator'
 
 const CHAT_ID = 'ensemble-chat'
 const STEER_TEXT = 'MID-RUN: verify the retry boundary too.'
@@ -60,27 +61,33 @@ function makeHarness(
       chatId: string,
       participantId: string
     ) => Promise<unknown> | undefined
+    sampleWorkspaceChurn?: (workspacePath: string) => Promise<WorkspaceChurnSample | null>
   } = {}
 ) {
   let chat = makeChat(options.participants)
   let counter = 0
+  let steeringCounter = 0
   let pendingEntryIds: string[] = []
   let boundaryDispatchCount = 0
   const rejectedParticipantIds = new Set<string>()
   const dispatched: AgentRunPayload[] = []
+  const promptEvidence: Array<EnsembleDispatchPromptEvidence | undefined> = []
   const accepted: boolean[] = []
   const cancelRun = vi.fn(async () => true)
   const getPendingMidRunSteeringEntryIds = vi.fn(() => [...pendingEntryIds])
   const appendMidRunSteering = vi.fn((input: { chatId: string; roundId: string; text: string }) => {
     expect(input.chatId).toBe(CHAT_ID)
     expect(input.roundId).toBe(chat.ensemble?.activeRound?.roundId)
-    pendingEntryIds = ['steer-entry-1']
+    steeringCounter += 1
+    const messageId = `steer-message-${steeringCounter}`
+    const entryId = `steer-entry-${steeringCounter}`
+    pendingEntryIds = [...pendingEntryIds, entryId]
     chat = {
       ...chat,
       messages: [
         ...chat.messages,
         {
-          id: 'steer-message-1',
+          id: messageId,
           role: 'user',
           content: input.text,
           timestamp: '2026-07-29T03:00:00.000Z',
@@ -88,6 +95,7 @@ function makeHarness(
         }
       ]
     }
+    return { messageId, entryId }
   })
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
@@ -101,8 +109,9 @@ function makeHarness(
         ensembleModeEnabled: true,
         chatContextTurns: 8
       }) as AppSettings,
-    dispatch: vi.fn(async (payload: AgentRunPayload) => {
+    dispatch: vi.fn(async (payload: AgentRunPayload, _event, _observer, evidence) => {
       dispatched.push(payload)
+      promptEvidence.push(evidence)
       const participantId = payload.ensembleRun?.participantId
       if (
         participantId &&
@@ -138,7 +147,8 @@ function makeHarness(
     nowIso: () => `2026-07-29T03:00:0${counter}.000Z`,
     appendMidRunSteering,
     getPendingMidRunSteeringEntryIds,
-    awaitPendingSeatCompaction: options.awaitPendingSeatCompaction
+    awaitPendingSeatCompaction: options.awaitPendingSeatCompaction,
+    sampleWorkspaceChurn: options.sampleWorkspaceChurn
   })
   return {
     get chat() {
@@ -149,7 +159,8 @@ function makeHarness(
     cancelRun,
     dispatched,
     getPendingMidRunSteeringEntryIds,
-    orchestrator
+    orchestrator,
+    promptEvidence
   }
 }
 
@@ -225,6 +236,46 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.dispatched).toHaveLength(3)
   })
 
+  it('refreshes the transcript after async churn sampling before receipting a steer', async () => {
+    const emptySample: WorkspaceChurnSample = { tracked: {}, untracked: {} }
+    let resolveSecondSample!: (sample: WorkspaceChurnSample | null) => void
+    const heldSecondSample = new Promise<WorkspaceChurnSample | null>((resolve) => {
+      resolveSecondSample = resolve
+    })
+    const sampleWorkspaceChurn = vi
+      .fn<(workspacePath: string) => Promise<WorkspaceChurnSample | null>>()
+      .mockResolvedValueOnce(emptySample)
+      .mockReturnValueOnce(heldSecondSample)
+    const harness = makeHarness({ sampleWorkspaceChurn })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Initial ensemble prompt.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    complete(harness, 0)
+    await vi.waitFor(() => expect(sampleWorkspaceChurn).toHaveBeenCalledTimes(2))
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: STEER_TEXT
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    resolveSecondSample(emptySample)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].prompt).toContain(STEER_TEXT)
+    expect(harness.promptEvidence[1]?.suppliedMessageIds).toContain('steer-message-1')
+
+    complete(harness, 1)
+    await vi.waitFor(() => {
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    })
+  })
+
   it('tries another eligible seat when the preferred boundary dispatch is rejected', async () => {
     const harness = makeHarness({ rejectFirstBoundaryDispatch: true })
     const roundId = await reachFinalLiveSeat(harness)
@@ -294,6 +345,11 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(
       harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
     ).toEqual(['claude', 'grok-bg'])
+    expect(
+      harness.promptEvidence
+        .slice(1, 3)
+        .every((evidence) => evidence?.suppliedMessageIds.includes('steer-message-1'))
+    ).toBe(true)
     for (const payload of harness.dispatched.slice(1)) {
       expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
       expect(payload.effectivePermissions?.readOnly).toBe(false)
@@ -687,6 +743,68 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(harness.dispatched).toHaveLength(2)
+
+    complete(harness, 1)
+    await vi.waitFor(() => {
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    })
+  })
+
+  it('carries the exact User Fan-Out source id across compaction with identical steers', async () => {
+    let releaseCompaction!: () => void
+    const compactionBarrier = new Promise<void>((resolve) => {
+      releaseCompaction = resolve
+    })
+    const awaitPendingSeatCompaction = vi.fn((_chatId: string, participantId: string) =>
+      participantId === 'claude' ? compactionBarrier : undefined
+    )
+    const harness = makeHarness({ awaitPendingSeatCompaction })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    complete(harness, 0)
+    await vi.waitFor(() =>
+      expect(awaitPendingSeatCompaction).toHaveBeenCalledWith(CHAT_ID, 'claude')
+    )
+
+    const prompt = '@Reviewer answer this identical interjection.'
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt,
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    expect(
+      harness.orchestrator.steerQueuedPrompt({
+        chatId: CHAT_ID,
+        index: 0,
+        textPrefix: prompt,
+        event: { sender: {} as Electron.WebContents }
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+    await vi.waitFor(() =>
+      expect(
+        awaitPendingSeatCompaction.mock.calls.filter(
+          ([, participantId]) => participantId === 'claude'
+        )
+      ).toHaveLength(2)
+    )
+
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: prompt
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    releaseCompaction()
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.promptEvidence[1]?.suppliedMessageIds).toContain('steer-message-2')
+    expect(harness.promptEvidence[1]?.suppliedMessageIds.at(-1)).toBe('steer-message-1')
 
     complete(harness, 1)
     await vi.waitFor(() => {
