@@ -5,6 +5,7 @@ import type {
   EnsembleParticipant,
   ProviderId
 } from '../../../main/store/types'
+import { normalizeEnsembleAuthority } from '../../../shared/ensembleAuthority'
 import { providerDisplayName } from '../lib/AgentInvocationPresentation'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { BlackboardPollControls } from './BlackboardPollControls'
@@ -175,9 +176,17 @@ export function resolveBlackboardAuthor(
   const participant: EnsembleParticipant | undefined = ensemble?.participants?.find(
     (candidate) => candidate.id === participantId
   )
-  const isBossman = Boolean(participantId && participantId === ensemble?.bossmanParticipantId)
+  const authorityState = normalizeEnsembleAuthority({
+    participants: ensemble?.participants || [],
+    bossmanParticipantId: ensemble?.bossmanParticipantId,
+    captainParticipantIds: ensemble?.captainParticipantIds,
+    secondInCommandParticipantId: ensemble?.secondInCommandParticipantId
+  })
+  const isBossman = Boolean(
+    participantId && participantId === authorityState.bossmanParticipantId
+  )
   const isCaptain =
-    !isBossman && Boolean(participantId && participantId === ensemble?.secondInCommandParticipantId)
+    !isBossman && Boolean(participantId && authorityState.captainParticipantIds.includes(participantId))
   if (participant) {
     const label =
       participant.role.trim() ||

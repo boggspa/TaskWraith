@@ -6,6 +6,7 @@ import type {
   EnsembleRoundParticipantState,
   ProviderId
 } from '../../../main/store/types'
+import { normalizeEnsembleAuthority } from '../../../shared/ensembleAuthority'
 import { formatContextTokens } from './contextWindows'
 import { formatCostAlwaysOn, type DisplayCurrency } from './formatCost'
 import { humaniseModelId } from './modelDisplayName'
@@ -413,10 +414,29 @@ export const buildEnsembleRoundTokenDetails = (
   const roundRuns = (chat?.runs || []).filter((run) => run.ensembleRoundId === round.roundId)
   const configuredParticipants = chat?.ensemble?.participants || []
   const configuredById = new Map(configuredParticipants.map((participant) => [participant.id, participant]))
-  const bossmanParticipantId = chat?.ensemble?.bossmanParticipantId
-  const secondInCommandParticipantId = chat?.ensemble?.secondInCommandParticipantId
-  const consumedRunIds = new Set<string>()
   const sortedParticipants = [...(round.participants || [])].sort((a, b) => a.order - b.order)
+  const authorityParticipants =
+    sortedParticipants.length > 0
+      ? sortedParticipants.map((participant) => ({
+          id: participant.participantId,
+          order: participant.order
+        }))
+      : configuredParticipants
+  const roundHasCaptainAuthority =
+    Array.isArray(round.captainParticipantIds) ||
+    typeof round.secondInCommandParticipantId === 'string'
+  const authorityState = normalizeEnsembleAuthority({
+    participants: authorityParticipants,
+    bossmanParticipantId: round.bossmanParticipantId ?? chat?.ensemble?.bossmanParticipantId,
+    captainParticipantIds: roundHasCaptainAuthority
+      ? round.captainParticipantIds
+      : chat?.ensemble?.captainParticipantIds,
+    secondInCommandParticipantId: roundHasCaptainAuthority
+      ? round.secondInCommandParticipantId
+      : chat?.ensemble?.secondInCommandParticipantId
+  })
+  const captainParticipantIds = new Set(authorityState.captainParticipantIds)
+  const consumedRunIds = new Set<string>()
 
   const sourceParticipants =
     sortedParticipants.length > 0
@@ -457,10 +477,10 @@ export const buildEnsembleRoundTokenDetails = (
       provider: participant.provider,
       providerClass,
       label,
-      isBossman: participant.participantId === bossmanParticipantId,
+      isBossman: participant.participantId === authorityState.bossmanParticipantId,
       isCaptain:
-        participant.participantId === secondInCommandParticipantId &&
-        participant.participantId !== bossmanParticipantId,
+        captainParticipantIds.has(participant.participantId) &&
+        participant.participantId !== authorityState.bossmanParticipantId,
       ...counts,
       tokensLabel: compactTokenLabel(counts.totalTokens),
       title: tokenTitle(label, counts.inputTokens, counts.outputTokens, counts.totalTokens)

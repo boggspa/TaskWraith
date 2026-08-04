@@ -66,87 +66,121 @@ describe('EnsembleParticipantsAboveRow', () => {
       confirmedAt: '2026-07-10T03:00:00.000Z'
     }
 
-    it('moves Boss and Captain atomically while preserving thread-wide consent', () => {
-      expect(
-        resolveEnsembleParticipantAuthorityPatch(
-          {
-            bossmanParticipantId: 'boss',
-            secondInCommandParticipantId: 'captain',
-            bossmanAutoApprovals: autoApprovals
-          },
-          'captain',
-          'boss'
-        )
-      ).toEqual({
-        bossmanParticipantId: 'captain',
-        secondInCommandParticipantId: undefined,
-        bossmanAutoApprovals: autoApprovals
-      })
+    const authorityParticipants = [
+      makeParticipant({ id: 'boss', order: 1 }),
+      makeParticipant({ id: 'captain-1', order: 2 }),
+      makeParticipant({ id: 'captain-2', order: 3 }),
+      makeParticipant({ id: 'captain-3', order: 4 }),
+      makeParticipant({ id: 'agent', order: 5 })
+    ]
 
+    it('moves Boss atomically while preserving the other Captains and consent', () => {
       expect(
         resolveEnsembleParticipantAuthorityPatch(
           {
             bossmanParticipantId: 'boss',
-            secondInCommandParticipantId: 'captain',
+            captainParticipantIds: ['captain-1', 'captain-2'],
+            secondInCommandParticipantId: 'captain-1',
             bossmanAutoApprovals: autoApprovals
           },
+          'captain-1',
           'boss',
-          'captain'
+          authorityParticipants
         )
       ).toEqual({
-        bossmanParticipantId: undefined,
-        secondInCommandParticipantId: 'boss',
+        bossmanParticipantId: 'captain-1',
+        captainParticipantIds: ['captain-2'],
+        secondInCommandParticipantId: 'captain-2',
         bossmanAutoApprovals: autoApprovals
       })
     })
 
-    it('clears only this participant authority and drops consent after the final leader', () => {
+    it('keeps exactly one Boss when a single-seat edit tries to demote it', () => {
       expect(
         resolveEnsembleParticipantAuthorityPatch(
           {
             bossmanParticipantId: 'boss',
-            secondInCommandParticipantId: 'captain',
+            captainParticipantIds: ['captain-1'],
+            secondInCommandParticipantId: 'captain-1',
             bossmanAutoApprovals: autoApprovals
           },
           'boss',
-          'agent'
+          'agent',
+          authorityParticipants
         )
       ).toEqual({
-        bossmanParticipantId: undefined,
-        secondInCommandParticipantId: 'captain',
+        bossmanParticipantId: 'boss',
+        captainParticipantIds: ['captain-1'],
+        secondInCommandParticipantId: 'captain-1',
         bossmanAutoApprovals: autoApprovals
-      })
-
-      expect(
-        resolveEnsembleParticipantAuthorityPatch(
-          {
-            bossmanParticipantId: undefined,
-            secondInCommandParticipantId: 'captain',
-            bossmanAutoApprovals: autoApprovals
-          },
-          'captain',
-          'agent'
-        )
-      ).toEqual({
-        bossmanParticipantId: undefined,
-        secondInCommandParticipantId: undefined,
-        bossmanAutoApprovals: undefined
       })
     })
 
-    it('normalizes malformed legacy authority overlap', () => {
+    it('adds Captains up to three, rejects a fourth, and mirrors roster order', () => {
+      const third = resolveEnsembleParticipantAuthorityPatch(
+        {
+          bossmanParticipantId: 'boss',
+          captainParticipantIds: ['captain-2', 'captain-1'],
+          secondInCommandParticipantId: 'captain-2',
+          bossmanAutoApprovals: autoApprovals
+        },
+        'captain-3',
+        'captain',
+        authorityParticipants
+      )
+      expect(third).toEqual({
+        bossmanParticipantId: 'boss',
+        captainParticipantIds: ['captain-1', 'captain-2', 'captain-3'],
+        secondInCommandParticipantId: 'captain-1',
+        bossmanAutoApprovals: autoApprovals
+      })
+      expect(
+        resolveEnsembleParticipantAuthorityPatch(
+          third,
+          'agent',
+          'captain',
+          authorityParticipants
+        )
+      ).toEqual(third)
+    })
+
+    it('lets a Captain clear itself without disturbing the other Captains', () => {
       expect(
         resolveEnsembleParticipantAuthorityPatch(
           {
-            bossmanParticipantId: 'leader',
-            secondInCommandParticipantId: 'leader',
+            bossmanParticipantId: 'boss',
+            captainParticipantIds: ['captain-1', 'captain-2', 'captain-3'],
+            secondInCommandParticipantId: 'captain-1',
+            bossmanAutoApprovals: autoApprovals
+          },
+          'captain-2',
+          'agent',
+          authorityParticipants
+        )
+      ).toEqual({
+        bossmanParticipantId: 'boss',
+        captainParticipantIds: ['captain-1', 'captain-3'],
+        secondInCommandParticipantId: 'captain-1',
+        bossmanAutoApprovals: autoApprovals
+      })
+    })
+
+    it('lets an explicit empty Captain array beat a stale scalar', () => {
+      expect(
+        resolveEnsembleParticipantAuthorityPatch(
+          {
+            bossmanParticipantId: 'boss',
+            captainParticipantIds: [],
+            secondInCommandParticipantId: 'captain-1',
             bossmanAutoApprovals: autoApprovals
           },
           'agent',
-          'agent'
+          'agent',
+          authorityParticipants
         )
       ).toEqual({
-        bossmanParticipantId: 'leader',
+        bossmanParticipantId: 'boss',
+        captainParticipantIds: [],
         secondInCommandParticipantId: undefined,
         bossmanAutoApprovals: autoApprovals
       })
@@ -197,7 +231,7 @@ describe('EnsembleParticipantsAboveRow', () => {
 
       expect(html).toContain('aria-label="Thread-wide Auto Approvals"')
       expect(html).toContain('aria-pressed="false"')
-      expect(html).toContain('Assign a Boss or Captain before enabling Auto Approvals.')
+      expect(html).toContain('Assign a Boss before enabling Auto Approvals.')
       expect(html).toMatch(/aria-label="Thread-wide Auto Approvals"[^>]*disabled=""/)
     })
 
@@ -379,6 +413,7 @@ describe('EnsembleParticipantsAboveRow', () => {
           }}
           rolePresetId="custom"
           hasLeadership={false}
+          captainAssignmentDisabled={false}
           disabled={false}
           onDetailsChange={() => undefined}
           onRolePresetIdChange={() => undefined}
@@ -422,6 +457,7 @@ describe('EnsembleParticipantsAboveRow', () => {
           }}
           rolePresetId="custom"
           hasLeadership={false}
+          captainAssignmentDisabled={false}
           disabled={false}
           onDetailsChange={() => undefined}
           onRolePresetIdChange={() => undefined}
@@ -677,20 +713,29 @@ describe('EnsembleParticipantsAboveRow', () => {
         mode: 'permission_preset_once' as const,
         confirmedAt: '2026-07-10T16:00:00.000Z'
       }
+      const participants = [
+        makeParticipant({ id: 'old-boss', order: 1 }),
+        makeParticipant({ id: 'captain', order: 2 }),
+        makeParticipant({ id: 'new-boss', order: 3 }),
+        makeParticipant({ id: 'new-agent', order: 4 })
+      ]
 
       expect(
         resolveEnsembleParticipantAddAuthorityPatch(
           {
             bossmanParticipantId: 'old-boss',
+            captainParticipantIds: ['captain'],
             secondInCommandParticipantId: 'captain',
             bossmanAutoApprovals: existingConsent
           },
           'new-boss',
           'boss',
+          participants,
           existingConsent
         )
       ).toEqual({
         bossmanParticipantId: 'new-boss',
+        captainParticipantIds: ['captain'],
         secondInCommandParticipantId: 'captain',
         bossmanAutoApprovals: existingConsent
       })
@@ -698,16 +743,19 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(
         resolveEnsembleParticipantAddAuthorityPatch(
           {
-            bossmanParticipantId: undefined,
+            bossmanParticipantId: 'old-boss',
+            captainParticipantIds: [],
             secondInCommandParticipantId: undefined,
             bossmanAutoApprovals: undefined
           },
           'new-agent',
           'agent',
-          existingConsent
+          participants,
+          undefined
         )
       ).toEqual({
-        bossmanParticipantId: undefined,
+        bossmanParticipantId: 'old-boss',
+        captainParticipantIds: [],
         secondInCommandParticipantId: undefined,
         bossmanAutoApprovals: undefined
       })
@@ -1171,11 +1219,11 @@ describe('EnsembleParticipantsAboveRow', () => {
         <EnsembleParticipantsAboveRow
           chat={chat}
           participantProjection={chat.ensemble!.participants.map((participant) =>
-            participant.id === 'ensemble-claude'
+            participant.id === 'ensemble-codex'
               ? { ...participant, role: 'Pending role' }
               : participant
           )}
-          selectedParticipantId="ensemble-claude"
+          selectedParticipantId="ensemble-codex"
         onSelectParticipant={() => undefined}
         onChatChange={() => undefined}
         onPatchParticipant={() => undefined}
@@ -1219,7 +1267,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('aria-hidden="true"')
   })
 
-  it('renders no crown when no Boss is assigned', () => {
+  it('recovers a single Boss crown for legacy config with no assigned Boss', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
       makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
@@ -1232,8 +1280,8 @@ describe('EnsembleParticipantsAboveRow', () => {
         onChatChange={() => undefined}
       />
     )
-    expect(html).not.toContain('ensemble-above-chip-crown')
-    expect(html).not.toContain('Boss')
+    expect(html.match(/ensemble-above-chip-crown/g) || []).toHaveLength(1)
+    expect(html).toContain('aria-label="Boss Explorer"')
   })
 
   it('renders a badged glyph per stage, including a terminal for BG, and no slot for Any', () => {
@@ -1335,7 +1383,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     }
   })
 
-  it('renders a silver Captain hat separately from Boss', () => {
+  it('renders all three Captain hats separately from Boss', () => {
     const chat = makeChat([
       makeParticipant({
         id: 'ensemble-claude',
@@ -1350,9 +1398,26 @@ describe('EnsembleParticipantsAboveRow', () => {
         role: 'Deputy',
         order: 2,
         stageRole: 'reviewer'
+      }),
+      makeParticipant({
+        id: 'ensemble-kimi',
+        provider: 'kimi',
+        role: 'Deputy 2',
+        order: 3
+      }),
+      makeParticipant({
+        id: 'ensemble-cursor',
+        provider: 'cursor',
+        role: 'Deputy 3',
+        order: 4
       })
     ])
     chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
+    chat.ensemble!.captainParticipantIds = [
+      'ensemble-codex',
+      'ensemble-kimi',
+      'ensemble-cursor'
+    ]
     chat.ensemble!.secondInCommandParticipantId = 'ensemble-codex'
     const html = renderToStaticMarkup(
       <EnsembleParticipantsAboveRow
@@ -1364,10 +1429,12 @@ describe('EnsembleParticipantsAboveRow', () => {
     )
     const bossCrownHits = html.match(/ensemble-above-chip-crown/g) || []
     expect(bossCrownHits.length).toBe(1)
-    expect(html).toContain('ensemble-above-chip-captain-hat')
+    expect(html.match(/ensemble-above-chip-captain-hat/g) || []).toHaveLength(3)
     expect(html).not.toContain('ensemble-above-chip-stage-icon')
     expect(html).toContain('aria-label="Boss Bossman"')
     expect(html).toContain('aria-label="Captain Deputy"')
+    expect(html).toContain('aria-label="Captain Deputy 2"')
+    expect(html).toContain('aria-label="Captain Deputy 3"')
   })
 
   describe('computeEnsembleChipRowDistribution', () => {

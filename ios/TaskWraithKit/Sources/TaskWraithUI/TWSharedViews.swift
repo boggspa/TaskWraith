@@ -6495,7 +6495,7 @@ public struct EditableRosterStrip: View {
     }
 
     private var remoteRoster: [RemoteSessionModel.RosterDraftEntry] {
-        (state?.roster ?? [])
+        let entries = (state?.roster ?? [])
             .sorted(by: RemoteEnsembleState.rosterEntryOrder)
             .map { entry in
                 RemoteSessionModel.RosterDraftEntry(
@@ -6517,6 +6517,12 @@ public struct EditableRosterStrip: View {
                     trustedSessionEnabled: entry.trustedSessionEnabled == true
                 )
             }
+        return EnsembleRosterAuthorityPolicy.hydrate(
+            entries,
+            bossmanParticipantId: state?.resolvedBossmanParticipantId,
+            captainParticipantIds: state.map(\.resolvedCaptainParticipantIds),
+            secondInCommandParticipantId: nil
+        )
     }
 
     /// Round status per participant id (active speaker ring, status dot).
@@ -6531,7 +6537,7 @@ public struct EditableRosterStrip: View {
     }
 
     private var draftHasLeadership: Bool {
-        draft.contains { $0.isBossman || $0.isSecondInCommand }
+        draft.contains { $0.isBossman }
     }
 
     private func toggleAutoApprovals(_ enabled: Bool) {
@@ -6752,7 +6758,13 @@ public struct EditableRosterStrip: View {
             RosterParticipantEditorPopover(
                 entry: draft.first { $0.id == entry.id } ?? entry,
                 catalogs: catalogs,
-                canRemove: draft.count > 1,
+                canRemove: EnsembleRosterAuthorityPolicy.canRemove(entry.id, from: draft),
+                bossDemotionDisabled: entry.isBossman,
+                captainAssignmentDisabled:
+                    EnsembleRosterAuthorityPolicy.captainAssignmentDisabled(
+                        for: entry.id, in: draft),
+                backgroundDisabled: !EnsembleRosterAuthorityPolicy.canBackground(
+                    entry.id, in: draft),
                 onApply: { applyLiveEdit($0) },
                 onRemove: { removeChip(id: entry.id) },
                 autoApprovals: autoApprovalsConfig,
@@ -6794,31 +6806,17 @@ public struct EditableRosterStrip: View {
         )
     }
 
-    /// Live-apply from the chip editor popover: boss/captain stay singular,
-    /// the entry is swapped in place, and the roster commits without closing
-    /// the popover (mirrors EnsembleRosterSheet.applyLiveEdit).
+    /// Live-apply from the chip editor without closing the popover. The shared
+    /// policy preserves every Captain and rejects removal of the configured Boss.
     private func applyLiveEdit(_ updated: RemoteSessionModel.RosterDraftEntry) {
-        var updated = updated
-        if updated.isBossman { updated.isSecondInCommand = false }
-        if updated.isSecondInCommand { updated.isBossman = false }
-        guard let index = draft.firstIndex(where: { $0.id == updated.id }) else { return }
-        if updated.isBossman {
-            for i in draft.indices {
-                draft[i].isBossman = draft[i].id == updated.id
-            }
-        }
-        if updated.isSecondInCommand {
-            for i in draft.indices {
-                draft[i].isSecondInCommand = draft[i].id == updated.id
-            }
-        }
-        draft[index] = updated
+        guard let next = EnsembleRosterAuthorityPolicy.applying(updated, to: draft) else { return }
+        draft = next
         commit()
     }
 
     private func removeChip(id: String) {
-        guard draft.count > 1 else { return }
-        draft.removeAll { $0.id == id }
+        guard let next = EnsembleRosterAuthorityPolicy.removing(id, from: draft) else { return }
+        draft = next
         editingChipId = nil
         commit()
     }
@@ -6880,6 +6878,9 @@ public struct EditableRosterStrip: View {
                 catalogs: catalogs,
                 threadAutoApprovalsEnabled: selectedAutoApprovals,
                 threadHasLeadership: draftHasLeadership,
+                captainAssignmentDisabled:
+                    draft.filter { $0.isSecondInCommand }.count
+                    >= EnsembleRosterAuthorityPolicy.maximumCaptainCount,
                 onAdd: { entry, stagedAutoApprovals in
                     addPopoverPresented = false
                     appendParticipant(entry)
@@ -6887,7 +6888,7 @@ public struct EditableRosterStrip: View {
                     // drafted Boss/Captain exists Mac-side first (actions are
                     // processed in send order).
                     if let stagedAutoApprovals,
-                        draft.contains(where: { $0.isBossman || $0.isSecondInCommand })
+                        draft.contains(where: { $0.isBossman })
                             || !stagedAutoApprovals
                     {
                         toggleAutoApprovals(stagedAutoApprovals)
@@ -6910,41 +6911,21 @@ public struct EditableRosterStrip: View {
 
     private func appendParticipant(_ entry: RemoteSessionModel.RosterDraftEntry) {
         guard draft.count < editableRosterMaxParticipants else { return }
-        // A newly-added Boss/Captain takes the singular flag over from any
-        // existing owner BEFORE the append (normalizeAuthorityMarkers keeps
-        // the FIRST match, which would otherwise strip the new seat).
-        if entry.isBossman {
-            for i in draft.indices { draft[i].isBossman = false }
-        }
-        if entry.isSecondInCommand {
-            for i in draft.indices { draft[i].isSecondInCommand = false }
-        }
-        draft.append(entry)
+        guard let next = EnsembleRosterAuthorityPolicy.appending(entry, to: draft) else { return }
+        draft = next
         commit()
     }
 
     private func commit() {
         guard !draft.isEmpty else { return }
-        normalizeAuthorityMarkers()
+        let normalized = EnsembleRosterAuthorityPolicy.normalize(draft)
+        guard EnsembleRosterAuthorityPolicy.hasConfiguredBoss(normalized) else { return }
+        draft = normalized
         pendingOrderIds = draft.map(\.id)
         model.updateEnsembleRoster(
             workspaceId: workspaceId, threadId: threadId, entries: draft)
     }
 
-    private func normalizeAuthorityMarkers() {
-        if let bossIndex = draft.firstIndex(where: { $0.isBossman }) {
-            for index in draft.indices where index != bossIndex {
-                draft[index].isBossman = false
-            }
-            draft[bossIndex].isSecondInCommand = false
-        }
-        if let captainIndex = draft.firstIndex(where: { $0.isSecondInCommand }) {
-            for index in draft.indices where index != captainIndex {
-                draft[index].isSecondInCommand = false
-            }
-            draft[captainIndex].isBossman = false
-        }
-    }
 }
 
 /// Drag-to-reorder drop delegate — reorders the draft live as the dragged

@@ -11,12 +11,12 @@ enum TranscriptNavigationAdapter {
         for state: RemoteEnsembleState?
     ) -> [TranscriptParticipantFilterItem] {
         guard let state, let roster = state.roster, !roster.isEmpty else { return [] }
+        let captainParticipantIds = Set(state.resolvedCaptainParticipantIds)
         let entries = roster.map { entry in
-            let isBoss = entry.isBossman == true || state.bossmanParticipantId == entry.id
+            let isBoss = state.resolvedBossmanParticipantId == entry.id
             let isCaptain =
                 !isBoss
-                && (entry.isSecondInCommand == true
-                    || state.secondInCommandParticipantId == entry.id)
+                && captainParticipantIds.contains(entry.id)
             return TranscriptParticipantFilterRosterEntry(
                 id: entry.id,
                 provider: entry.provider,

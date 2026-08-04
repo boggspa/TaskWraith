@@ -156,8 +156,9 @@ describe('buildEnsembleRoundTokenDetails', () => {
         })
       ],
       ensemble: {
-        bossmanParticipantId: 'scout',
-        secondInCommandParticipantId: 'worker',
+        bossmanParticipantId: 'worker',
+        captainParticipantIds: ['scout'],
+        secondInCommandParticipantId: 'scout',
         participants: [
           { id: 'worker', provider: 'codex', role: 'Worker', order: 1 },
           {
@@ -170,6 +171,9 @@ describe('buildEnsembleRoundTokenDetails', () => {
         ],
         activeRound: {
           roundId: 'r1',
+          bossmanParticipantId: 'scout',
+          captainParticipantIds: ['worker', 'reviewer'],
+          secondInCommandParticipantId: 'worker',
           participants: [
             {
               participantId: 'worker',
@@ -212,7 +216,7 @@ describe('buildEnsembleRoundTokenDetails', () => {
     ).toEqual([
       { label: 'Scout', isBossman: true, isCaptain: false },
       { label: 'Worker', isBossman: false, isCaptain: true },
-      { label: 'Reviewer', isBossman: false, isCaptain: false }
+      { label: 'Reviewer', isBossman: false, isCaptain: true }
     ])
     expect(details?.participants[0].providerClass).toBe('poolside')
     expect(details?.participants[0].totalTokens).toBe(350)

@@ -17,10 +17,13 @@ struct TranscriptNavigationAdapterTests {
                 """
                 {"threadId":"thread-1","active":false,
                  "bossmanParticipantId":"seat-boss",
-                 "secondInCommandParticipantId":"seat-captain",
+                 "captainParticipantIds":["seat-captain-3","seat-captain-1","seat-captain-2"],
+                 "secondInCommandParticipantId":"stale-captain",
                  "roster":[
-                   {"id":"seat-captain","provider":"kimi","role":"Captain","order":2},
-                   {"id":"seat-boss","provider":"codex","role":"Boss","order":1}
+                   {"id":"seat-captain-3","provider":"cursor","role":"Captain 3","order":4},
+                   {"id":"seat-captain-1","provider":"kimi","role":"Captain 1","order":2},
+                   {"id":"seat-boss","provider":"codex","role":"Boss","order":1},
+                   {"id":"seat-captain-2","provider":"claude","role":"Captain 2","order":3}
                  ]}
                 """.utf8
             )
@@ -29,10 +32,56 @@ struct TranscriptNavigationAdapterTests {
         let items = TranscriptNavigationAdapter.filterItems(for: state)
 
         #expect(items.map(\.key) == [
-            "participant:seat-boss", "participant:seat-captain", "system"
+            "participant:seat-boss", "participant:seat-captain-1",
+            "participant:seat-captain-2", "participant:seat-captain-3", "system",
         ])
         #expect(items[0].isBossman)
         #expect(items[1].isCaptain)
+        #expect(items[2].isCaptain)
+        #expect(items[3].isCaptain)
+    }
+
+    @Test func explicitEmptyCaptainArrayBeatsStaleScalarAndEntryFlag() throws {
+        let state = try JSONDecoder().decode(
+            RemoteEnsembleState.self,
+            from: Data(
+                """
+                {"bossmanParticipantId":"boss",
+                 "captainParticipantIds":[],
+                 "secondInCommandParticipantId":"captain",
+                 "roster":[
+                   {"id":"boss","provider":"codex","order":1},
+                   {"id":"captain","provider":"kimi","order":2,
+                    "isSecondInCommand":true}
+                 ]}
+                """.utf8
+            )
+        )
+
+        let items = TranscriptNavigationAdapter.filterItems(for: state)
+        #expect(items.first(where: { $0.key == "participant:captain" })?.isCaptain == false)
+    }
+
+    @Test func legacyScalarAndEntryFlagsRemainCompatibleWhenPluralIsAbsent() throws {
+        let state = try JSONDecoder().decode(
+            RemoteEnsembleState.self,
+            from: Data(
+                """
+                {"bossmanParticipantId":"boss",
+                 "secondInCommandParticipantId":"captain-2",
+                 "roster":[
+                   {"id":"boss","provider":"codex","order":1},
+                   {"id":"captain-1","provider":"kimi","order":2,
+                    "isSecondInCommand":true},
+                   {"id":"captain-2","provider":"claude","order":3}
+                 ]}
+                """.utf8
+            )
+        )
+
+        let captainKeys = TranscriptNavigationAdapter.filterItems(for: state)
+            .filter(\.isCaptain).map(\.key)
+        #expect(captainKeys == ["participant:captain-1", "participant:captain-2"])
     }
 
     @Test func filtersByDurableParticipantIdentityAndSystemFallback() throws {

@@ -2584,6 +2584,7 @@ export const TranscriptPanel = memo(
         currentChat?.chatKind,
         currentChat?.ensemble?.participants,
         currentChat?.ensemble?.bossmanParticipantId,
+        currentChat?.ensemble?.captainParticipantIds,
         currentChat?.ensemble?.secondInCommandParticipantId
       ]
     )

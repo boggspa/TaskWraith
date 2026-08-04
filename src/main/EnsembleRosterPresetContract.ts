@@ -8,6 +8,7 @@ import type {
   ProviderId
 } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { MAX_ENSEMBLE_CAPTAINS } from '../shared/ensembleAuthority'
 
 /**
  * Portable Ensemble roster-preset interchange contract.
@@ -139,6 +140,16 @@ export function isEnsembleRosterParticipantSnapshot(
 export function isEnsembleRosterPreset(value: unknown): value is EnsembleRosterPreset {
   if (!value || typeof value !== 'object') return false
   const entry = value as EnsembleRosterPreset
+  const bossIndexes = Array.isArray(entry.participants)
+    ? entry.participants
+        .map((participant, index) => (participant?.isBossman === true ? index : -1))
+        .filter((index) => index >= 0)
+    : []
+  const captainIndexes = Array.isArray(entry.participants)
+    ? entry.participants
+        .map((participant, index) => (participant?.isSecondInCommand === true ? index : -1))
+        .filter((index) => index >= 0)
+    : []
   return (
     typeof entry.id === 'string' &&
     entry.id.length > 0 &&
@@ -164,7 +175,10 @@ export function isEnsembleRosterPreset(value: unknown): value is EnsembleRosterP
     Array.isArray(entry.participants) &&
     entry.participants.length >= MIN_ROSTER_PRESET_PARTICIPANTS &&
     entry.participants.length <= MAX_ROSTER_PRESET_PARTICIPANTS &&
-    entry.participants.every(isEnsembleRosterParticipantSnapshot)
+    entry.participants.every(isEnsembleRosterParticipantSnapshot) &&
+    bossIndexes.length <= 1 &&
+    captainIndexes.length <= MAX_ENSEMBLE_CAPTAINS &&
+    captainIndexes.every((index) => !bossIndexes.includes(index))
   )
 }
 

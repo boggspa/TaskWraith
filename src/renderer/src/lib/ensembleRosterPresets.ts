@@ -23,6 +23,7 @@ import {
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName
 } from './ensembleProviderDefaults'
+import { normalizeEnsembleAuthority } from '../../../shared/ensembleAuthority'
 
 export {
   MAX_ROSTER_PRESET_PARTICIPANTS,
@@ -270,6 +271,7 @@ export function buildEnsembleRosterPresetFromConfig(
     participants: snapshotParticipantsForPreset(
       ensemble.participants || [],
       ensemble.bossmanParticipantId,
+      ensemble.captainParticipantIds,
       ensemble.secondInCommandParticipantId
     )
   }
@@ -284,15 +286,23 @@ export function buildEnsembleRosterPresetFromConfig(
 export function snapshotParticipantsForPreset(
   participants: EnsembleParticipant[],
   bossmanParticipantId?: string,
+  captainParticipantIds?: string[],
   secondInCommandParticipantId?: string
 ): EnsembleRosterParticipantSnapshot[] {
   const sorted = [...participants].sort((a, b) => a.order - b.order)
+  const authority = normalizeEnsembleAuthority({
+    participants: sorted,
+    bossmanParticipantId,
+    captainParticipantIds,
+    secondInCommandParticipantId
+  })
+  const captainIds = new Set(authority.captainParticipantIds)
   return sorted.map((participant, index) =>
     snapshotParticipant(
       participant,
       index + 1,
-      participant.id === bossmanParticipantId,
-      participant.id === secondInCommandParticipantId && participant.id !== bossmanParticipantId
+      participant.id === authority.bossmanParticipantId,
+      captainIds.has(participant.id)
     )
   )
 }
@@ -357,24 +367,21 @@ export function materializeParticipantsFromPresetWithBossman(
 ): {
   participants: EnsembleParticipant[]
   bossmanParticipantId?: string
+  captainParticipantIds: string[]
   secondInCommandParticipantId?: string
 } {
   const sorted = [...snapshots].sort((a, b) => a.order - b.order)
   const existing = new Set<string>()
-  let bossmanParticipantId: string | undefined
-  let secondInCommandParticipantId: string | undefined
+  let requestedBossmanParticipantId: string | undefined
+  const requestedCaptainParticipantIds: string[] = []
   const participants = sorted.map((snapshot, index) => {
     const id = nextParticipantId(existing, index + 1)
     existing.add(id)
-    if (snapshot.isBossman === true && !bossmanParticipantId) {
-      bossmanParticipantId = id
+    if (snapshot.isBossman === true && !requestedBossmanParticipantId) {
+      requestedBossmanParticipantId = id
     }
-    if (
-      snapshot.isSecondInCommand === true &&
-      !secondInCommandParticipantId &&
-      snapshot.isBossman !== true
-    ) {
-      secondInCommandParticipantId = id
+    if (snapshot.isSecondInCommand === true && snapshot.isBossman !== true) {
+      requestedCaptainParticipantIds.push(id)
     }
     return {
       id,
@@ -409,7 +416,17 @@ export function materializeParticipantsFromPresetWithBossman(
       linkedProviderSessionId: null
     }
   })
-  return { participants, bossmanParticipantId, secondInCommandParticipantId }
+  const authority = normalizeEnsembleAuthority({
+    participants,
+    bossmanParticipantId: requestedBossmanParticipantId,
+    captainParticipantIds: requestedCaptainParticipantIds
+  })
+  return {
+    participants,
+    bossmanParticipantId: authority.bossmanParticipantId,
+    captainParticipantIds: authority.captainParticipantIds,
+    secondInCommandParticipantId: authority.secondInCommandParticipantId
+  }
 }
 
 function cloneSnapshot(
@@ -485,20 +502,35 @@ export function saveEnsembleRosterPresetFromParticipants(
   if (!trimmed) {
     throw new Error('Preset name is required.')
   }
-  const bossmanIndex = participants.findIndex((participant) => participant.isBossman === true)
-  const secondInCommandIndex = participants.findIndex(
-    (participant, index) => participant.isSecondInCommand === true && index !== bossmanIndex
-  )
-  const snapshots: EnsembleRosterParticipantSnapshot[] = participants
-    .slice(0, MAX_ROSTER_PRESET_PARTICIPANTS)
-    .map((participant, index) => ({
+  const limitedParticipants = participants.slice(0, MAX_ROSTER_PRESET_PARTICIPANTS)
+  const authorityParticipants = limitedParticipants.map((participant, index) => ({
+    id: `roster-preset-participant-${index + 1}`,
+    order: index + 1,
+    stageRole: participant.stageRole
+  }))
+  const requestedBossmanParticipantId = authorityParticipants.find(
+    (_, index) => limitedParticipants[index].isBossman === true
+  )?.id
+  const requestedCaptainParticipantIds = authorityParticipants
+    .filter((_, index) => limitedParticipants[index].isSecondInCommand === true)
+    .map((participant) => participant.id)
+  const authority = normalizeEnsembleAuthority({
+    participants: authorityParticipants,
+    bossmanParticipantId: requestedBossmanParticipantId,
+    captainParticipantIds: requestedCaptainParticipantIds
+  })
+  const captainIds = new Set(authority.captainParticipantIds)
+  const snapshots: EnsembleRosterParticipantSnapshot[] = limitedParticipants.map(
+    (participant, index) => ({
       provider: participant.provider as ProviderId,
       enabled: participant.enabled ?? true,
       role: participant.role || '',
       instructions: participant.brief || '',
       order: index + 1,
-      ...(index === bossmanIndex ? { isBossman: true } : {}),
-      ...(index === secondInCommandIndex ? { isSecondInCommand: true } : {}),
+      ...(authorityParticipants[index].id === authority.bossmanParticipantId
+        ? { isBossman: true }
+        : {}),
+      ...(captainIds.has(authorityParticipants[index].id) ? { isSecondInCommand: true } : {}),
       ...(participant.model ? { model: participant.model } : {}),
       ...(safeRosterPermissionPresetId(participant.permissionPresetId)
         ? { permissionPresetId: safeRosterPermissionPresetId(participant.permissionPresetId) }
@@ -516,7 +548,8 @@ export function saveEnsembleRosterPresetFromParticipants(
       participant.stageRole === 'background'
         ? { stageRole: participant.stageRole }
         : {})
-    }))
+    })
+  )
   const now = Date.now()
   const preset: EnsembleRosterPreset = {
     id: newPresetId(now),
@@ -569,7 +602,7 @@ export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPre
     updatedAt: now,
     orchestrationMode: 'turn_bound',
     maxParticipants: DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS,
-    participants: snapshotParticipantsForPreset(seeded, boss.id, captain.id)
+    participants: snapshotParticipantsForPreset(seeded, boss.id, [captain.id], captain.id)
   }
   const presets = readRawPresets()
   presets.unshift(preset)

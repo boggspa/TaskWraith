@@ -48,9 +48,15 @@ const rosterChat = chatWith({
   participants: [
     participant({ id: 'ensemble-participant-1', role: 'Sol', provider: 'claude' }),
     participant({ id: 'ensemble-participant-2', role: '', provider: 'codex' }),
-    participant({ id: 'ensemble-participant-3', role: 'Terra', provider: 'grok' })
+    participant({ id: 'ensemble-participant-3', role: 'Terra', provider: 'grok' }),
+    participant({ id: 'ensemble-participant-4', role: 'Luna', provider: 'kimi' })
   ],
   bossmanParticipantId: 'ensemble-participant-1',
+  captainParticipantIds: [
+    'ensemble-participant-2',
+    'ensemble-participant-3',
+    'ensemble-participant-4'
+  ],
   secondInCommandParticipantId: 'ensemble-participant-3'
 })
 
@@ -75,6 +81,8 @@ describe('resolveBlackboardAuthor', () => {
     expect(author.label).toBe('Terra')
     expect(author.isCaptain).toBe(true)
     expect(author.isBossman).toBe(false)
+    expect(resolveBlackboardAuthor(rosterChat, 'ensemble-participant-2').isCaptain).toBe(true)
+    expect(resolveBlackboardAuthor(rosterChat, 'ensemble-participant-4').isCaptain).toBe(true)
   })
 
   it('maps the user, synthesizer, and system pseudo-authors', () => {

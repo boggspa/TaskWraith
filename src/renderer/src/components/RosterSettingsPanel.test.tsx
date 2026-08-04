@@ -108,6 +108,7 @@ describe('RosterSettingsPanel', () => {
         showApplyToAll
         isBossman={false}
         isSecondInCommand={false}
+        captainAssignmentDisabled={false}
         onMove={() => {}}
         onRemove={() => {}}
         onSetBossman={() => {}}
@@ -124,6 +125,55 @@ describe('RosterSettingsPanel', () => {
     expect(html).toContain('settings-roster-participant-content" hidden=""')
     expect(html).toContain('Enabled')
     expect(html).toContain('Role / nickname')
+  })
+
+  it('keeps the configured Boss and disables assigning a fourth Captain', () => {
+    const participants = materializeParticipantsFromPresetWithBossman(
+      createEmptyEnsembleRosterPreset('Authority panel').participants
+    ).participants
+    const renderRow = (
+      participant: (typeof participants)[number],
+      props: { isBossman: boolean; captainAssignmentDisabled: boolean; canRemove: boolean }
+    ): string =>
+      renderToStaticMarkup(
+        <RosterParticipantRow
+          participant={participant}
+          mentionParticipants={participants}
+          index={participant.order - 1}
+          total={participants.length}
+          canRemove={props.canRemove}
+          composerStyle="default"
+          grokAvailable={false}
+          cursorAvailable={false}
+          showApplyToAll
+          isBossman={props.isBossman}
+          isSecondInCommand={false}
+          captainAssignmentDisabled={props.captainAssignmentDisabled}
+          onMove={() => {}}
+          onRemove={() => {}}
+          onSetBossman={() => {}}
+          onSetSecondInCommand={() => {}}
+          onPatch={() => {}}
+          onFlush={() => {}}
+          onApplyPermissionsToAll={() => {}}
+          onSaveToPool={() => {}}
+        />
+      )
+
+    const bossHtml = renderRow(participants[0], {
+      isBossman: true,
+      captainAssignmentDisabled: false,
+      canRemove: false
+    })
+    expect(bossHtml).toContain('Every panel keeps exactly one Boss')
+    expect(bossHtml).toContain('Assign another Boss before removing this participant')
+
+    const cappedHtml = renderRow(participants[2], {
+      isBossman: false,
+      captainAssignmentDisabled: true,
+      canRemove: true
+    })
+    expect(cappedHtml).toContain('This panel already has 3 Captains')
   })
 
   it('renders stored Cursor seats as live editable roster rows', () => {
@@ -150,6 +200,7 @@ describe('RosterSettingsPanel', () => {
         showApplyToAll
         isBossman={false}
         isSecondInCommand={false}
+        captainAssignmentDisabled={false}
         onMove={() => {}}
         onRemove={() => {}}
         onSetBossman={() => {}}
@@ -194,6 +245,7 @@ describe('RosterSettingsPanel', () => {
         showApplyToAll
         isBossman={false}
         isSecondInCommand={false}
+        captainAssignmentDisabled={false}
         onMove={() => {}}
         onRemove={() => {}}
         onSetBossman={() => {}}
@@ -250,6 +302,7 @@ describe('RosterSettingsPanel', () => {
         showApplyToAll
         isBossman={false}
         isSecondInCommand={false}
+        captainAssignmentDisabled={false}
         onMove={() => {}}
         onRemove={() => {}}
         onSetBossman={() => {}}

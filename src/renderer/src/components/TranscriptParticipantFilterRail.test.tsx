@@ -56,6 +56,9 @@ function ensembleChat(
       enabled: true,
       maxParticipants: participants.length,
       bossmanParticipantId: 'boss',
+      captainParticipantIds: participants
+        .filter((participant) => participant.id.startsWith('captain'))
+        .map((participant) => participant.id),
       secondInCommandParticipantId: 'captain',
       participants
     }
@@ -97,6 +100,25 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).toContain('Remove transcript filter for Boss Lead (Codex, 1)')
     expect(html).toContain('Show only transcript messages from Captain Reviewer (Claude, 2)')
     expect(html).toContain('Remove transcript filter for system messages')
+  })
+
+  it('renders all three configured Captains', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptParticipantFilterRail
+        currentChat={ensembleChat([
+          participant({ id: 'boss', role: 'Boss', order: 1 }),
+          participant({ id: 'captain-1', role: 'First', order: 2 }),
+          participant({ id: 'captain-2', role: 'Second', order: 3 }),
+          participant({ id: 'captain-3', role: 'Third', order: 4 })
+        ])}
+        activeFilterKeys={new Set()}
+        scrollRef={createRef<HTMLDivElement>()}
+        contentRef={createRef<HTMLDivElement>()}
+        onToggleFilter={() => {}}
+      />
+    )
+
+    expect(html.match(/title="Captain"/g)).toHaveLength(3)
   })
 
   it('bottom-aligns an underfilled participant column above the system filter', () => {

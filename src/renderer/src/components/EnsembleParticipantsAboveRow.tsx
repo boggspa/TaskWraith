@@ -32,6 +32,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
+import {
+  MAX_ENSEMBLE_CAPTAINS,
+  normalizeEnsembleAuthority
+} from '../../../shared/ensembleAuthority'
 import type {
   ChatRecord,
   ComposerStyle,
@@ -160,50 +164,72 @@ const ENSEMBLE_PARTICIPANT_STAGE_OPTIONS: ReadonlyArray<{
 
 type EnsembleAuthorityPatch = Pick<
   NonNullable<ChatRecord['ensemble']>,
-  'bossmanParticipantId' | 'secondInCommandParticipantId' | 'bossmanAutoApprovals'
+  | 'bossmanParticipantId'
+  | 'captainParticipantIds'
+  | 'secondInCommandParticipantId'
+  | 'bossmanAutoApprovals'
 >
 
 /**
- * Atomically moves one participant between the three exclusive authority
- * roles. The ensemble stores singular Boss/Captain ids, so assigning either
- * role replaces its previous owner and Agent clears this participant's special
- * role. Thread-wide auto approval consent survives while any leader remains.
+ * Atomically moves one participant between the exclusive Boss role, the
+ * bounded Captain set, and ordinary Agent authority. Exactly one configured
+ * Boss is retained; Captains are canonicalized in roster order and capped at
+ * three. Thread-wide auto approval consent belongs to the configured Boss.
  */
 export function resolveEnsembleParticipantAuthorityPatch(
   state: EnsembleAuthorityPatch,
   participantId: string,
-  authority: EnsembleParticipantAuthority
+  authority: EnsembleParticipantAuthority,
+  participants: readonly EnsembleParticipant[]
 ): EnsembleAuthorityPatch {
-  let bossmanParticipantId = state.bossmanParticipantId
-  let secondInCommandParticipantId = state.secondInCommandParticipantId
+  const current = normalizeEnsembleAuthority({
+    participants,
+    bossmanParticipantId: state.bossmanParticipantId,
+    captainParticipantIds: state.captainParticipantIds,
+    secondInCommandParticipantId: state.secondInCommandParticipantId
+  })
+  let bossmanParticipantId = current.bossmanParticipantId
+  let captainParticipantIds = current.captainParticipantIds
 
-  // Normalize any malformed legacy overlap before applying the next choice.
-  // Boss remains authoritative when both ids point at the same participant.
-  if (
-    bossmanParticipantId &&
-    secondInCommandParticipantId === bossmanParticipantId
-  ) {
-    secondInCommandParticipantId = undefined
+  // Removing or demoting the only Boss is not a valid single-seat mutation.
+  // The user can still replace it atomically by assigning Boss to another seat.
+  if (participantId === bossmanParticipantId && authority !== 'boss') {
+    return {
+      bossmanParticipantId,
+      captainParticipantIds,
+      secondInCommandParticipantId: captainParticipantIds[0],
+      bossmanAutoApprovals: state.bossmanAutoApprovals
+    }
   }
 
   if (authority === 'boss') {
     bossmanParticipantId = participantId
-    if (secondInCommandParticipantId === participantId) secondInCommandParticipantId = undefined
+    captainParticipantIds = captainParticipantIds.filter((id) => id !== participantId)
   } else if (authority === 'captain') {
-    secondInCommandParticipantId = participantId
-    if (bossmanParticipantId === participantId) bossmanParticipantId = undefined
+    if (
+      !captainParticipantIds.includes(participantId) &&
+      captainParticipantIds.length < MAX_ENSEMBLE_CAPTAINS
+    ) {
+      captainParticipantIds = [...captainParticipantIds, participantId]
+    }
   } else {
-    if (bossmanParticipantId === participantId) bossmanParticipantId = undefined
-    if (secondInCommandParticipantId === participantId) secondInCommandParticipantId = undefined
+    captainParticipantIds = captainParticipantIds.filter((id) => id !== participantId)
   }
 
-  return {
+  const normalized = normalizeEnsembleAuthority({
+    participants,
     bossmanParticipantId,
-    secondInCommandParticipantId,
-    bossmanAutoApprovals:
-      bossmanParticipantId || secondInCommandParticipantId
-        ? state.bossmanAutoApprovals
-        : undefined
+    captainParticipantIds,
+    recoverBoss: false
+  })
+
+  return {
+    bossmanParticipantId: normalized.bossmanParticipantId,
+    captainParticipantIds: normalized.captainParticipantIds,
+    secondInCommandParticipantId: normalized.secondInCommandParticipantId,
+    bossmanAutoApprovals: normalized.bossmanParticipantId
+      ? state.bossmanAutoApprovals
+      : undefined
   }
 }
 
@@ -420,16 +446,16 @@ export function resolveEnsembleParticipantAddAuthorityPatch(
   state: EnsembleAuthorityPatch,
   participantId: string,
   authority: EnsembleParticipantAuthority,
+  participants: readonly EnsembleParticipant[],
   autoApprovals: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
 ): EnsembleAuthorityPatch {
   const authorityPatch = resolveEnsembleParticipantAuthorityPatch(
     state,
     participantId,
-    authority
+    authority,
+    participants
   )
-  const hasLeadership = Boolean(
-    authorityPatch.bossmanParticipantId || authorityPatch.secondInCommandParticipantId
-  )
+  const hasLeadership = Boolean(authorityPatch.bossmanParticipantId)
   return {
     ...authorityPatch,
     bossmanAutoApprovals: hasLeadership ? autoApprovals : undefined
@@ -1059,13 +1085,19 @@ export function EnsembleParticipantsAboveRow({
 
   if (chat.chatKind !== 'ensemble' || !chat.ensemble) return null
 
+  const configuredAuthority = normalizeEnsembleAuthority({
+    participants,
+    bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+    captainParticipantIds: chat.ensemble.captainParticipantIds,
+    secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId
+  })
+  const captainParticipantIdSet = new Set(configuredAuthority.captainParticipantIds)
   const activeRound = chat.ensemble.activeRound
   const isRoundRunning = isEnsembleActiveRoundDispatchLive(activeRound)
   const hasLeadership = participants.some(
     (participant) =>
       participant.stageRole !== 'background' &&
-      (participant.id === chat.ensemble?.bossmanParticipantId ||
-        participant.id === chat.ensemble?.secondInCommandParticipantId)
+      participant.id === configuredAuthority.bossmanParticipantId
   )
   const liveFanoutLanes = Object.values(activeRound?.lanes || {}).filter(isLiveFanoutLane)
   const canSkipReadFanout =
@@ -1096,6 +1128,12 @@ export function EnsembleParticipantsAboveRow({
       : null
 
   const updateParticipant = (id: string, patch: Partial<EnsembleParticipant>): void => {
+    if (
+      id === configuredAuthority.bossmanParticipantId &&
+      patch.stageRole === 'background'
+    ) {
+      return
+    }
     if (onPatchParticipant) {
       onPatchParticipant(id, patch)
       return
@@ -1133,6 +1171,14 @@ export function EnsembleParticipantsAboveRow({
     ) {
       return
     }
+    if (
+      (participantId === configuredAuthority.bossmanParticipantId && authority !== 'boss') ||
+      (authority === 'captain' &&
+        !captainParticipantIdSet.has(participantId) &&
+        configuredAuthority.captainParticipantIds.length >= MAX_ENSEMBLE_CAPTAINS)
+    ) {
+      return
+    }
     if (isRoundRunning) {
       onLiveRosterMutation?.({ action: 'set_authority', participantId, authority })
       return
@@ -1141,11 +1187,13 @@ export function EnsembleParticipantsAboveRow({
       resolveEnsembleParticipantAuthorityPatch(
         {
           bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+          captainParticipantIds: chat.ensemble?.captainParticipantIds,
           secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId,
           bossmanAutoApprovals: chat.ensemble?.bossmanAutoApprovals
         },
         participantId,
-        authority
+        authority,
+        participants
       )
     )
   }
@@ -1156,7 +1204,7 @@ export function EnsembleParticipantsAboveRow({
     }
     if (enabled) {
       const confirmed = window.confirm(
-        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
       )
       if (!confirmed) return
     }
@@ -1216,32 +1264,22 @@ export function EnsembleParticipantsAboveRow({
       MAX_ENSEMBLE_PARTICIPANTS,
       Math.max(preservedMax, nextParticipants.length)
     )
+    const orderedNextParticipants = nextParticipants.map((participant, index) => ({
+      ...participant,
+      order: index + 1
+    }))
     const authorityState = authorityOverride || {
       bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+      captainParticipantIds: chat.ensemble?.captainParticipantIds,
       secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId,
       bossmanAutoApprovals: chat.ensemble?.bossmanAutoApprovals
     }
-    const existingBossmanParticipantId = authorityState.bossmanParticipantId
-    const bossmanParticipantId =
-      existingBossmanParticipantId &&
-      nextParticipants.some(
-        (participant) =>
-          participant.id === existingBossmanParticipantId &&
-          participant.stageRole !== 'background'
-      )
-        ? existingBossmanParticipantId
-        : undefined
-    const existingSecondInCommandParticipantId = authorityState.secondInCommandParticipantId
-    const secondInCommandParticipantId =
-      existingSecondInCommandParticipantId &&
-      existingSecondInCommandParticipantId !== bossmanParticipantId &&
-      nextParticipants.some(
-        (participant) =>
-          participant.id === existingSecondInCommandParticipantId &&
-          participant.stageRole !== 'background'
-      )
-        ? existingSecondInCommandParticipantId
-        : undefined
+    const authority = normalizeEnsembleAuthority({
+      participants: orderedNextParticipants,
+      bossmanParticipantId: authorityState.bossmanParticipantId,
+      captainParticipantIds: authorityState.captainParticipantIds,
+      secondInCommandParticipantId: authorityState.secondInCommandParticipantId
+    })
     const existingSynthesizerParticipantId = chat.ensemble?.synthesizerParticipantId
     const synthesizerParticipantId =
       existingSynthesizerParticipantId &&
@@ -1257,11 +1295,12 @@ export function EnsembleParticipantsAboveRow({
       ensemble: {
         ...chat.ensemble!,
         maxParticipants: clampedMax,
-        participants: nextParticipants.map((p, idx) => ({ ...p, order: idx + 1 })),
-        bossmanParticipantId,
-        secondInCommandParticipantId,
+        participants: orderedNextParticipants,
+        bossmanParticipantId: authority.bossmanParticipantId,
+        captainParticipantIds: authority.captainParticipantIds,
+        secondInCommandParticipantId: authority.secondInCommandParticipantId,
         synthesizerParticipantId,
-        bossmanAutoApprovals: bossmanParticipantId || secondInCommandParticipantId
+        bossmanAutoApprovals: authority.bossmanParticipantId
           ? authorityState.bossmanAutoApprovals
           : undefined,
         updatedAt: new Date().toISOString()
@@ -1305,11 +1344,13 @@ export function EnsembleParticipantsAboveRow({
     const authorityPatch = resolveEnsembleParticipantAddAuthorityPatch(
       {
         bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+        captainParticipantIds: chat.ensemble?.captainParticipantIds,
         secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId,
         bossmanAutoApprovals: chat.ensemble?.bossmanAutoApprovals
       },
       newParticipant.id,
       configuration.authority,
+      next,
       desiredAutoApprovals
     )
     if (isRoundRunning) {
@@ -1327,6 +1368,7 @@ export function EnsembleParticipantsAboveRow({
   }
 
   const removeParticipant = (id: string): void => {
+    if (id === configuredAuthority.bossmanParticipantId) return
     const nextSelectedParticipantId = resolveParticipantSelectionAfterRemoval(
       participants,
       id,
@@ -1498,12 +1540,16 @@ export function EnsembleParticipantsAboveRow({
               onPatch={(patch) => updateParticipant(participant.id, patch)}
               isBossman={
                 participant.stageRole !== 'background' &&
-                chat.ensemble?.bossmanParticipantId === participant.id
+                configuredAuthority.bossmanParticipantId === participant.id
               }
               isSecondInCommand={
                 participant.stageRole !== 'background' &&
-                chat.ensemble?.secondInCommandParticipantId === participant.id &&
-                chat.ensemble?.bossmanParticipantId !== participant.id
+                captainParticipantIdSet.has(participant.id) &&
+                configuredAuthority.bossmanParticipantId !== participant.id
+              }
+              captainAssignmentDisabled={
+                !captainParticipantIdSet.has(participant.id) &&
+                configuredAuthority.captainParticipantIds.length >= MAX_ENSEMBLE_CAPTAINS
               }
               hasLeadership={hasLeadership}
               autoApprovalsEnabled={chat.ensemble?.bossmanAutoApprovals?.enabled === true}
@@ -1681,6 +1727,9 @@ export function EnsembleParticipantsAboveRow({
             providerGroups={providerGroups}
             participants={participants}
             hasLeadership={hasLeadership}
+            captainAssignmentDisabled={
+              configuredAuthority.captainParticipantIds.length >= MAX_ENSEMBLE_CAPTAINS
+            }
             bossmanAutoApprovals={chat.ensemble?.bossmanAutoApprovals}
             initialProvider={
               participants.find((participant) => participant.id === selectedParticipantId)
@@ -1698,6 +1747,7 @@ export function EnsembleParticipantsAboveRow({
             }}
             disabled={
               !selectedParticipantId ||
+              selectedParticipantId === configuredAuthority.bossmanParticipantId ||
               (isRoundRunning
                 ? onLiveRosterMutation === undefined || participants.length <= 1
                 : participants.length <= MIN_ENSEMBLE_PARTICIPANTS && !onCollapseToSolo)
@@ -1705,6 +1755,8 @@ export function EnsembleParticipantsAboveRow({
             title={
               !selectedParticipantId
                 ? 'Select a participant chip first.'
+                : selectedParticipantId === configuredAuthority.bossmanParticipantId
+                  ? 'Assign another Boss before removing this participant.'
                 : isRoundRunning
                   ? participants.length <= 1
                     ? 'An Ensemble must retain one participant.'
@@ -1765,6 +1817,7 @@ function EnsembleAddParticipantButton({
   providerGroups,
   participants,
   hasLeadership,
+  captainAssignmentDisabled,
   bossmanAutoApprovals,
   initialProvider,
   onAdd
@@ -1777,6 +1830,7 @@ function EnsembleAddParticipantButton({
   providerGroups?: readonly CombinedModelPickerProviderGroup[]
   participants: EnsembleParticipant[]
   hasLeadership: boolean
+  captainAssignmentDisabled: boolean
   bossmanAutoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
   initialProvider: ProviderId
   onAdd: (configuration: EnsembleParticipantAddDraft) => void
@@ -1929,7 +1983,7 @@ function EnsembleAddParticipantButton({
         return
       }
       const confirmed = window.confirm(
-        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
       )
       if (!confirmed) return
       patchDetails({
@@ -1979,6 +2033,7 @@ function EnsembleAddParticipantButton({
           details={detailsDraft}
           rolePresetId={rolePresetId}
           hasLeadership={hasLeadership || detailsDraft.authority !== 'agent'}
+          captainAssignmentDisabled={captainAssignmentDisabled}
           disabled={pickerDisabled}
           onDetailsChange={patchDetails}
           onRolePresetIdChange={setRolePresetId}
@@ -2013,6 +2068,7 @@ export function EnsembleAddParticipantFields({
   details,
   rolePresetId,
   hasLeadership,
+  captainAssignmentDisabled,
   disabled,
   onDetailsChange,
   onRolePresetIdChange,
@@ -2023,6 +2079,7 @@ export function EnsembleAddParticipantFields({
   details: EnsembleParticipantAddDetails
   rolePresetId: string
   hasLeadership: boolean
+  captainAssignmentDisabled: boolean
   disabled: boolean
   onDetailsChange: (patch: Partial<EnsembleParticipantAddDetails>) => void
   onRolePresetIdChange: (presetId: string) => void
@@ -2040,6 +2097,7 @@ export function EnsembleAddParticipantFields({
           enabled={details.enabled}
           authority={details.authority}
           backgroundRestricted={details.stageRole === 'background'}
+          captainAssignmentDisabled={captainAssignmentDisabled}
           hasLeadership={hasLeadership}
           autoApprovalsEnabled={details.autoApprovalsEnabled}
           locked={disabled}
@@ -2144,6 +2202,7 @@ interface ParticipantChipProps {
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   isBossman: boolean
   isSecondInCommand: boolean
+  captainAssignmentDisabled: boolean
   hasLeadership: boolean
   autoApprovalsEnabled: boolean
   onSetAuthority: (
@@ -2211,6 +2270,7 @@ function ParticipantChip({
   onPatch,
   isBossman,
   isSecondInCommand,
+  captainAssignmentDisabled,
   hasLeadership,
   autoApprovalsEnabled,
   onSetAuthority,
@@ -2512,6 +2572,7 @@ function ParticipantChip({
           onPatch={onPatch}
           isBossman={isBossman}
           isSecondInCommand={isSecondInCommand}
+          captainAssignmentDisabled={captainAssignmentDisabled}
           hasLeadership={hasLeadership}
           autoApprovalsEnabled={autoApprovalsEnabled}
           onSetAuthority={onSetAuthority}
@@ -2573,6 +2634,7 @@ interface OverflowPopoverProps {
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   isBossman: boolean
   isSecondInCommand: boolean
+  captainAssignmentDisabled: boolean
   hasLeadership: boolean
   autoApprovalsEnabled: boolean
   onSetAuthority: (
@@ -2600,6 +2662,8 @@ interface EnsembleParticipantAuthorityControlsProps {
   enabled: boolean
   authority: EnsembleParticipantAuthority
   backgroundRestricted?: boolean
+  bossDemotionDisabled?: boolean
+  captainAssignmentDisabled?: boolean
   hasLeadership: boolean
   autoApprovalsEnabled: boolean
   locked: boolean
@@ -2617,6 +2681,8 @@ export function EnsembleParticipantAuthorityControls({
   enabled,
   authority,
   backgroundRestricted = false,
+  bossDemotionDisabled = false,
+  captainAssignmentDisabled = false,
   hasLeadership,
   autoApprovalsEnabled,
   locked,
@@ -2658,7 +2724,7 @@ export function EnsembleParticipantAuthorityControls({
               ? effectiveAutoApprovalsEnabled
                 ? 'Disable thread-wide Boss/Captain Auto Approvals.'
                 : 'Enable thread-wide Boss/Captain Auto Approvals.'
-              : 'Assign a Boss or Captain before enabling Auto Approvals.'
+              : 'Assign a Boss before enabling Auto Approvals.'
           }
           disabled={locked || !hasLeadership}
           onClick={() => onAutoApprovalsChange(!effectiveAutoApprovalsEnabled)}
@@ -2689,10 +2755,15 @@ export function EnsembleParticipantAuthorityControls({
           },
           {
             value: 'captain',
-            disabled: backgroundRestricted,
+            disabled:
+              backgroundRestricted || bossDemotionDisabled || captainAssignmentDisabled,
             title: backgroundRestricted
               ? 'BG seats cannot own Boss or Captain authority.'
-              : 'Assign as the thread\'s only Captain.',
+              : bossDemotionDisabled
+                ? 'Assign another Boss before changing this participant\'s authority.'
+                : captainAssignmentDisabled
+                  ? `This panel already has ${MAX_ENSEMBLE_CAPTAINS} Captains.`
+                  : `Assign as one of up to ${MAX_ENSEMBLE_CAPTAINS} Captains.`,
             label: (
               <span className="ensemble-above-overflow-authority-label">
                 <CaptainHatIcon className="ensemble-above-overflow-captain-hat" />
@@ -2702,7 +2773,10 @@ export function EnsembleParticipantAuthorityControls({
           },
           {
             value: 'agent',
-            title: 'Use standard Agent authority.',
+            disabled: bossDemotionDisabled,
+            title: bossDemotionDisabled
+              ? 'Assign another Boss before changing this participant\'s authority.'
+              : 'Use standard Agent authority.',
             label: 'Agent'
           }
         ]}
@@ -2714,6 +2788,7 @@ export function EnsembleParticipantAuthorityControls({
 interface EnsembleParticipantStageControlProps {
   participantLabel: string
   stageRole?: EnsembleParticipant['stageRole']
+  backgroundDisabled?: boolean
   locked: boolean
   onStageRoleChange: (stageRole: EnsembleParticipant['stageRole'] | undefined) => void
 }
@@ -2722,6 +2797,7 @@ interface EnsembleParticipantStageControlProps {
 export function EnsembleParticipantStageControl({
   participantLabel,
   stageRole,
+  backgroundDisabled = false,
   locked,
   onStageRoleChange
 }: EnsembleParticipantStageControlProps): React.JSX.Element {
@@ -2734,7 +2810,15 @@ export function EnsembleParticipantStageControl({
         value={stageRole || 'any'}
         ariaLabel={`Stage for ${participantLabel}`}
         disabled={locked}
-        options={ENSEMBLE_PARTICIPANT_STAGE_OPTIONS}
+        options={ENSEMBLE_PARTICIPANT_STAGE_OPTIONS.map((option) =>
+          option.value === 'background' && backgroundDisabled
+            ? {
+                ...option,
+                disabled: true,
+                title: 'Assign another Boss before moving this participant to background.'
+              }
+            : option
+        )}
         onValueChange={(value) => onStageRoleChange(normalizeEnsembleStageRole(value))}
       />
     </div>
@@ -2748,6 +2832,7 @@ export function EnsembleParticipantOverflowPopover({
   onPatch,
   isBossman,
   isSecondInCommand,
+  captainAssignmentDisabled,
   hasLeadership,
   autoApprovalsEnabled,
   onSetAuthority,
@@ -2890,6 +2975,8 @@ export function EnsembleParticipantOverflowPopover({
         enabled={participant.enabled}
         authority={isBossman ? 'boss' : isSecondInCommand ? 'captain' : 'agent'}
         backgroundRestricted={participant.stageRole === 'background'}
+        bossDemotionDisabled={isBossman}
+        captainAssignmentDisabled={captainAssignmentDisabled}
         hasLeadership={hasLeadership}
         autoApprovalsEnabled={autoApprovalsEnabled}
         locked={locked}
@@ -2900,6 +2987,7 @@ export function EnsembleParticipantOverflowPopover({
       <EnsembleParticipantStageControl
         participantLabel={getProviderName(participant.provider)}
         stageRole={participant.stageRole}
+        backgroundDisabled={isBossman}
         locked={locked}
         onStageRoleChange={(stageRole) => onPatch({ stageRole })}
       />

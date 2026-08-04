@@ -817,6 +817,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         preset,
         participants,
         bossmanParticipantId: materialized.bossmanParticipantId || firstEnabled.id,
+        captainParticipantIds: materialized.captainParticipantIds,
         secondInCommandParticipantId: materialized.secondInCommandParticipantId,
         queuedAt: new Date().toISOString()
       })
@@ -863,6 +864,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           : {}),
         participants,
         bossmanParticipantId: materialized.bossmanParticipantId,
+        captainParticipantIds: materialized.captainParticipantIds,
         secondInCommandParticipantId: materialized.secondInCommandParticipantId,
         bossmanAutoApprovals: undefined,
         updatedAt: new Date().toISOString()

@@ -20594,6 +20594,7 @@ function App(): React.JSX.Element {
           preset,
           participants,
           bossmanParticipantId: materializedPreset.bossmanParticipantId || firstEnabled.id,
+          captainParticipantIds: materializedPreset.captainParticipantIds,
           secondInCommandParticipantId: materializedPreset.secondInCommandParticipantId,
           queuedAt: new Date().toISOString()
         })
@@ -20650,6 +20651,7 @@ function App(): React.JSX.Element {
               : {}),
             participants,
             bossmanParticipantId: materializedPreset.bossmanParticipantId,
+            captainParticipantIds: materializedPreset.captainParticipantIds,
             secondInCommandParticipantId: materializedPreset.secondInCommandParticipantId,
             bossmanAutoApprovals: undefined,
             updatedAt: new Date().toISOString()

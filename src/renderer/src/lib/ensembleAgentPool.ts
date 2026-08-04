@@ -763,7 +763,7 @@ export function applyPooledAgentToParticipant(participant: EnsembleParticipant):
 
 /**
  * Overwrite a linked snapshot's config fields from the Agent, PRESERVING the
- * preset-positional fields (order / isBossman / enabled) and the link itself
+ * preset-positional fields (order / authority / enabled) and the link itself
  * (pooledAgentId). Returns the same reference when nothing changed so callers
  * can skip a needless preset write.
  */
@@ -778,6 +778,7 @@ function applyAgentConfigToSnapshot(
     order: snapshot.order,
     enabled: snapshot.enabled,
     ...(snapshot.isBossman ? { isBossman: true } : {}),
+    ...(snapshot.isSecondInCommand ? { isSecondInCommand: true } : {}),
     pooledAgentId: agent.agentId,
     pooledAgentIdentity: identity
   }

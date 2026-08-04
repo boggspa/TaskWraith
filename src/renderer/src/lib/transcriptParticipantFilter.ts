@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRecord, EnsembleParticipant } from '../../../main/store/types'
+import { normalizeEnsembleAuthority } from '../../../shared/ensembleAuthority'
 
 export const TRANSCRIPT_SYSTEM_FILTER_KEY = 'system'
 
@@ -64,10 +65,16 @@ export function buildTranscriptParticipantFilterItems(
   const participants = [...chat.ensemble.participants].sort(
     (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.role.localeCompare(b.role) || a.id.localeCompare(b.id)
   )
+  const authorityState = normalizeEnsembleAuthority({
+    participants,
+    bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+    captainParticipantIds: chat.ensemble.captainParticipantIds,
+    secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId
+  })
+  const captainParticipantIds = new Set(authorityState.captainParticipantIds)
   const items = participants.map((participant, index): TranscriptParticipantFilterItem => {
-    const isBossman = chat.ensemble?.bossmanParticipantId === participant.id
-    const isCaptain =
-      !isBossman && chat.ensemble?.secondInCommandParticipantId === participant.id
+    const isBossman = authorityState.bossmanParticipantId === participant.id
+    const isCaptain = !isBossman && captainParticipantIds.has(participant.id)
     const authority = isBossman ? 'Boss - ' : isCaptain ? 'Captain - ' : ''
     return {
       key: transcriptParticipantFilterKey(participant.id),

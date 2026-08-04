@@ -210,6 +210,9 @@ struct RosterParticipantFieldsCluster: View {
     var onDiscreteChange: () -> Void = {}
     /// Thread-wide Auto Approvals pill next to Enabled (nil hides it).
     var autoApprovals: RosterAutoApprovalsConfig? = nil
+    var bossDemotionDisabled = false
+    var captainAssignmentDisabled = false
+    var backgroundDisabled = false
 
     @State private var rolePresetId: String = twEnsembleRolePresetCustomId
     @State private var showAutoApprovalsConsent = false
@@ -220,6 +223,12 @@ struct RosterParticipantFieldsCluster: View {
                 entry.isBossman ? "boss" : entry.isSecondInCommand ? "captain" : "agent"
             },
             set: { value in
+                if value == "agent" && bossDemotionDisabled { return }
+                if value == "captain" && captainAssignmentDisabled
+                    && !entry.isSecondInCommand
+                {
+                    return
+                }
                 entry.isBossman = value == "boss"
                 entry.isSecondInCommand = value == "captain"
                 onDiscreteChange()
@@ -232,6 +241,7 @@ struct RosterParticipantFieldsCluster: View {
         Binding(
             get: { entry.stageRole ?? "any" },
             set: { value in
+                if value == "background" && backgroundDisabled { return }
                 entry.stageRole = value == "any" ? nil : value
                 if value == "background" {
                     // BG seats cannot own Boss/Captain authority (desktop rule).
@@ -276,7 +286,7 @@ struct RosterParticipantFieldsCluster: View {
                     .accessibilityHint(
                         autoApprovals.hasLeadership
                             ? "Boss/Captain one-shot approvals within each seat's permission preset."
-                            : "Assign a Boss or Captain before enabling Auto Approvals."
+                            : "Assign a Boss before enabling Auto Approvals."
                     )
                 }
                 Spacer(minLength: 0)
@@ -292,13 +302,20 @@ struct RosterParticipantFieldsCluster: View {
                             : "Assign as the thread's only Boss."),
                     TWCompactSegmentOption(
                         value: "captain", label: "Captain", systemImage: "shield.fill",
-                        tint: TWTheme.chroma3, disabled: backgroundRestricted,
+                        tint: TWTheme.chroma3,
+                        disabled: backgroundRestricted
+                            || (captainAssignmentDisabled && !entry.isSecondInCommand),
                         help: backgroundRestricted
                             ? "BG seats cannot own Boss or Captain authority."
-                            : "Assign as the thread's only Captain."),
+                            : captainAssignmentDisabled && !entry.isSecondInCommand
+                                ? "Up to three Captains may be assigned."
+                                : "Assign as one of up to three Captains."),
                     TWCompactSegmentOption(
                         value: "agent", label: "Agent",
-                        help: "Use standard Agent authority."),
+                        disabled: bossDemotionDisabled,
+                        help: bossDemotionDisabled
+                            ? "Assign another Boss before demoting this participant."
+                            : "Use standard Agent authority."),
                 ],
                 selection: authoritySelection,
                 accessibilityLabelText: "Authority role"
@@ -322,6 +339,7 @@ struct RosterParticipantFieldsCluster: View {
                             help: "Runs after every non-reviewer finishes."),
                         TWCompactSegmentOption(
                             value: "background", label: "BG",
+                            disabled: backgroundDisabled,
                             help: "Runs asynchronously only when explicitly delegated."),
                     ],
                     selection: stageSelection,
@@ -436,7 +454,7 @@ struct RosterParticipantFieldsCluster: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests."
+                "Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests."
             )
         }
     }
@@ -453,6 +471,9 @@ private struct RosterParticipantConfigFields: View {
     @Binding var entry: RemoteSessionModel.RosterDraftEntry
     var onDiscreteChange: () -> Void = {}
     var autoApprovals: RosterAutoApprovalsConfig? = nil
+    var bossDemotionDisabled = false
+    var captainAssignmentDisabled = false
+    var backgroundDisabled = false
     /// Present = editor mode; shows the Remove row.
     var onRemove: (() -> Void)? = nil
 
@@ -461,7 +482,10 @@ private struct RosterParticipantConfigFields: View {
             VStack(alignment: .leading, spacing: 9) {
                 RosterParticipantFieldsCluster(
                     entry: $entry, onDiscreteChange: onDiscreteChange,
-                    autoApprovals: autoApprovals)
+                    autoApprovals: autoApprovals,
+                    bossDemotionDisabled: bossDemotionDisabled,
+                    captainAssignmentDisabled: captainAssignmentDisabled,
+                    backgroundDisabled: backgroundDisabled)
 
                 if let onRemove {
                     Button(role: .destructive, action: onRemove) {
@@ -702,6 +726,9 @@ struct RosterPermissionSidecarPicker: View {
 struct RosterParticipantEditorPopover: View {
     let catalogs: [ProviderModelCatalog]
     let canRemove: Bool
+    let bossDemotionDisabled: Bool
+    let captainAssignmentDisabled: Bool
+    let backgroundDisabled: Bool
     /// Live-apply: replace this entry in the roster draft + commit. Never
     /// closes the popover.
     let onApply: (RemoteSessionModel.RosterDraftEntry) -> Void
@@ -734,6 +761,9 @@ struct RosterParticipantEditorPopover: View {
         entry: RemoteSessionModel.RosterDraftEntry,
         catalogs: [ProviderModelCatalog],
         canRemove: Bool,
+        bossDemotionDisabled: Bool = false,
+        captainAssignmentDisabled: Bool = false,
+        backgroundDisabled: Bool = false,
         onApply: @escaping (RemoteSessionModel.RosterDraftEntry) -> Void,
         onRemove: @escaping () -> Void,
         autoApprovals: RosterAutoApprovalsConfig? = nil,
@@ -745,6 +775,9 @@ struct RosterParticipantEditorPopover: View {
     ) {
         self.catalogs = catalogs
         self.canRemove = canRemove
+        self.bossDemotionDisabled = bossDemotionDisabled
+        self.captainAssignmentDisabled = captainAssignmentDisabled
+        self.backgroundDisabled = backgroundDisabled
         self.onApply = onApply
         self.onRemove = onRemove
         self.autoApprovals = autoApprovals
@@ -808,6 +841,9 @@ struct RosterParticipantEditorPopover: View {
                 entry: $entry,
                 onDiscreteChange: applyDiscrete,
                 autoApprovals: autoApprovals,
+                bossDemotionDisabled: bossDemotionDisabled,
+                captainAssignmentDisabled: captainAssignmentDisabled,
+                backgroundDisabled: backgroundDisabled,
                 onRemove: canRemove ? onRemove : nil)
         }
         // The panel writes provider/model/reasoning/fast/thinking straight
@@ -859,6 +895,7 @@ struct RosterAddParticipantPopover: View {
     /// Current thread Auto Approvals state + leadership (for the pill).
     var threadAutoApprovalsEnabled: Bool = false
     var threadHasLeadership: Bool = false
+    var captainAssignmentDisabled = false
     /// Room the host measured for this balloon — see the editor popover above.
     var spaceBudget: CGFloat? = nil
     var onDismissRequest: () -> Void = {}
@@ -878,6 +915,7 @@ struct RosterAddParticipantPopover: View {
         seedProvider: String? = nil,
         threadAutoApprovalsEnabled: Bool = false,
         threadHasLeadership: Bool = false,
+        captainAssignmentDisabled: Bool = false,
         onAdd: @escaping (RemoteSessionModel.RosterDraftEntry, Bool?) -> Void,
         spaceBudget: CGFloat? = nil,
         onDismissRequest: @escaping () -> Void = {}
@@ -885,6 +923,7 @@ struct RosterAddParticipantPopover: View {
         self.catalogs = catalogs
         self.threadAutoApprovalsEnabled = threadAutoApprovalsEnabled
         self.threadHasLeadership = threadHasLeadership
+        self.captainAssignmentDisabled = captainAssignmentDisabled
         self.onAdd = onAdd
         self.spaceBudget = spaceBudget
         self.onDismissRequest = onDismissRequest
@@ -952,9 +991,9 @@ struct RosterAddParticipantPopover: View {
                 entry: $entry,
                 autoApprovals: RosterAutoApprovalsConfig(
                     isOn: stagedAutoApprovals ?? threadAutoApprovalsEnabled,
-                    hasLeadership: threadHasLeadership || entry.isBossman
-                        || entry.isSecondInCommand,
-                    onToggle: { stagedAutoApprovals = $0 }))
+                    hasLeadership: threadHasLeadership || entry.isBossman,
+                    onToggle: { stagedAutoApprovals = $0 }),
+                captainAssignmentDisabled: captainAssignmentDisabled)
         }
     }
 

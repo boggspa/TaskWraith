@@ -34,6 +34,7 @@ function ensembleChat(participants: EnsembleParticipant[]): ChatRecord {
       enabled: true,
       maxParticipants: participants.length,
       bossmanParticipantId: 'boss',
+      captainParticipantIds: ['captain', 'captain-2', 'captain-3'],
       secondInCommandParticipantId: 'captain',
       participants
     }
@@ -73,7 +74,9 @@ describe('transcript participant filters', () => {
           order: 1,
           pooledAgentId: 'pooled-agent-scout'
         }),
-        participant({ id: 'captain', provider: 'claude', role: 'Captain', order: 2 })
+        participant({ id: 'captain', provider: 'claude', role: 'Captain', order: 2 }),
+        participant({ id: 'captain-2', provider: 'grok', role: 'Captain 2', order: 4 }),
+        participant({ id: 'captain-3', provider: 'cursor', role: 'Captain 3', order: 5 })
       ])
     )
 
@@ -81,13 +84,17 @@ describe('transcript participant filters', () => {
       transcriptParticipantFilterKey('pooled'),
       transcriptParticipantFilterKey('captain'),
       transcriptParticipantFilterKey('boss'),
+      transcriptParticipantFilterKey('captain-2'),
+      transcriptParticipantFilterKey('captain-3'),
       TRANSCRIPT_SYSTEM_FILTER_KEY
     ])
-    expect(items.map((item) => item.ordinal)).toEqual([1, 2, 3, undefined])
+    expect(items.map((item) => item.ordinal)).toEqual([1, 2, 3, 4, 5, undefined])
     expect(items[0]).toMatchObject({ participantId: 'pooled', pooledAgent: true })
     expect(items[1]).toMatchObject({ participantId: 'captain', isCaptain: true })
     expect(items[2]).toMatchObject({ participantId: 'boss', isBossman: true })
-    expect(items[3]).toMatchObject({ kind: 'system', title: 'System messages' })
+    expect(items[3]).toMatchObject({ participantId: 'captain-2', isCaptain: true })
+    expect(items[4]).toMatchObject({ participantId: 'captain-3', isCaptain: true })
+    expect(items[5]).toMatchObject({ kind: 'system', title: 'System messages' })
   })
 
   it('filters messages additively by participant keys and the system key', () => {

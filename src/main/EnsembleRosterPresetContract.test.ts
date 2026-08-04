@@ -115,4 +115,33 @@ describe('EnsembleRosterPresetContract', () => {
     nonFinite.participants[0].order = Number.NaN
     expect(isEnsembleRosterPreset(nonFinite)).toBe(false)
   })
+
+  it('rejects more than three Captains and Boss/Captain overlap', () => {
+    const tooManyCaptains = preset()
+    tooManyCaptains.participants.push(
+      ...['codex', 'kimi', 'cursor'].map((provider, index) => ({
+        provider: provider as EnsembleRosterPreset['participants'][number]['provider'],
+        enabled: true,
+        role: `Captain ${index + 2}`,
+        instructions: '',
+        order: index + 3,
+        isSecondInCommand: true
+      }))
+    )
+    expect(isEnsembleRosterPreset(tooManyCaptains)).toBe(false)
+
+    const overlap = preset()
+    overlap.participants[0].isSecondInCommand = true
+    expect(isEnsembleRosterPreset(overlap)).toBe(false)
+
+    const twoBosses = preset()
+    twoBosses.participants[1].isBossman = true
+    expect(isEnsembleRosterPreset(twoBosses)).toBe(false)
+  })
+
+  it('keeps legacy presets without a Boss parseable for deterministic recovery', () => {
+    const legacy = preset()
+    delete legacy.participants[0].isBossman
+    expect(isEnsembleRosterPreset(legacy)).toBe(true)
+  })
 })

@@ -209,12 +209,43 @@ describe('ensembleRosterPresets — capture + materialize', () => {
     const resnapshot = snapshotParticipantsForPreset(
       materialized.participants,
       materialized.bossmanParticipantId,
+      materialized.captainParticipantIds,
       materialized.secondInCommandParticipantId
     )
     expect(resnapshot.filter((participant) => participant.isBossman === true)).toHaveLength(1)
     expect(resnapshot.filter((participant) => participant.isSecondInCommand === true)).toHaveLength(1)
     expect(resnapshot[1].isBossman).toBe(true)
     expect(resnapshot[0].isSecondInCommand).toBe(true)
+  })
+
+  it('round-trips three Captains in roster order with a scalar compatibility mirror', () => {
+    const participants = [
+      { ...sampleEnsemble().participants[0], id: 'boss', order: 1, role: 'Boss' },
+      { ...sampleEnsemble().participants[1], id: 'captain-1', order: 2, role: 'Captain 1' },
+      { ...sampleEnsemble().participants[0], id: 'captain-2', order: 3, role: 'Captain 2' },
+      { ...sampleEnsemble().participants[1], id: 'captain-3', order: 4, role: 'Captain 3' }
+    ]
+    const snapshots = snapshotParticipantsForPreset(
+      participants,
+      'boss',
+      ['captain-3', 'captain-1', 'captain-2'],
+      'captain-3'
+    )
+    expect(
+      snapshots.filter((participant) => participant.isSecondInCommand).map((participant) => participant.role)
+    ).toEqual(['Captain 1', 'Captain 2', 'Captain 3'])
+
+    const materialized = materializeParticipantsFromPresetWithBossman(snapshots)
+    expect(materialized.captainParticipantIds).toEqual(materialized.participants.slice(1).map((p) => p.id))
+    expect(materialized.secondInCommandParticipantId).toBe(materialized.participants[1].id)
+    expect(
+      snapshotParticipantsForPreset(
+        materialized.participants,
+        materialized.bossmanParticipantId,
+        materialized.captainParticipantIds,
+        materialized.secondInCommandParticipantId
+      ).filter((participant) => participant.isSecondInCommand)
+    ).toHaveLength(3)
   })
 })
 
@@ -538,5 +569,17 @@ describe('bridge preset save carries stageRole (spike 4 iOS parity)', () => {
     expect(preset.participants[1]).not.toHaveProperty('stageRole')
     expect(preset.participants[2].stageRole).toBe('scout')
     expect(preset.participants[3].stageRole).toBe('background')
+  })
+
+  it('preserves three paired-device Captain flags instead of only the first', () => {
+    const preset = saveEnsembleRosterPresetFromParticipants('Phone authority panel', [
+      { provider: 'claude', role: 'Boss', isBossman: true },
+      { provider: 'codex', role: 'Captain 1', isSecondInCommand: true },
+      { provider: 'kimi', role: 'Captain 2', isSecondInCommand: true },
+      { provider: 'cursor', role: 'Captain 3', isSecondInCommand: true }
+    ])
+
+    expect(preset.participants.filter((participant) => participant.isBossman)).toHaveLength(1)
+    expect(preset.participants.filter((participant) => participant.isSecondInCommand)).toHaveLength(3)
   })
 })

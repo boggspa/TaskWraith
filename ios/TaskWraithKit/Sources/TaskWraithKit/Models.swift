@@ -1220,9 +1220,11 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
     /// when no round is live, and absent entirely on older Mac builds.
     public let workingParticipantIds: [String]?
     public let bossmanParticipantId: String?
-    /// The user-designated Captain (second-in-command). Wire key
-    /// `secondInCommandParticipantId` — MUST match the Mac projection exactly.
-    /// Captain uses Boss-like controls only when the Boss is unavailable.
+    /// User-designated Captains in deterministic roster order. A present empty
+    /// array is authoritative; older Mac builds omit this field.
+    public let captainParticipantIds: [String]?
+    /// Compatibility mirror of the first Captain. Older Mac builds project only
+    /// this scalar; a present `captainParticipantIds` always wins over it.
     public let secondInCommandParticipantId: String?
     /// Ensemble orchestration mode. Wire key `orchestrationMode`; values are
     /// `"turn_bound"` | `"continuous"` (UNDERSCORE — not "turn-bound"). Absent
@@ -1276,6 +1278,49 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
         let rightOrder = rhs.order ?? Int.max
         if leftOrder != rightOrder { return leftOrder < rightOrder }
         return lhs.id < rhs.id
+    }
+
+    /// Exactly one configured Boss, recovered deterministically for legacy or
+    /// partial projections. Disabled seats remain configured; background seats
+    /// cannot hold authority.
+    public var resolvedBossmanParticipantId: String? {
+        let ordered = (roster ?? []).sorted(by: Self.rosterEntryOrder)
+        let eligible = ordered.filter { $0.stageRole != "background" }
+        if let bossmanParticipantId,
+            eligible.contains(where: { $0.id == bossmanParticipantId })
+        {
+            return bossmanParticipantId
+        }
+        return eligible.first(where: { $0.isBossman == true })?.id ?? eligible.first?.id
+    }
+
+    /// Canonical Captain membership. Plural wire state wins even when empty;
+    /// otherwise legacy scalar and per-entry flags are combined, ordered by the
+    /// roster, de-duplicated, Boss-excluded, and capped at three.
+    public var resolvedCaptainParticipantIds: [String] {
+        let ordered = (roster ?? []).sorted(by: Self.rosterEntryOrder)
+        let requested: Set<String>
+        if let captainParticipantIds {
+            requested = Set(captainParticipantIds)
+        } else {
+            var legacy = Set(
+                ordered.filter { $0.isSecondInCommand == true }.map(\.id)
+            )
+            if let secondInCommandParticipantId {
+                legacy.insert(secondInCommandParticipantId)
+            }
+            requested = legacy
+        }
+        return Array(
+            ordered
+                .filter {
+                    $0.stageRole != "background"
+                        && $0.id != resolvedBossmanParticipantId
+                        && requested.contains($0.id)
+                }
+                .prefix(3)
+                .map(\.id)
+        )
     }
 
     /// Live participants enriched with any configured roster model ids so UI

@@ -372,14 +372,17 @@ describe('storage bridge', () => {
 })
 
 describe('linked propagation to presets', () => {
-  function presetWithLinkedParticipant(agentId: string): EnsembleRosterPreset {
+  function presetWithLinkedParticipant(
+    agentId: string,
+    authority: 'boss' | 'captain' = 'boss'
+  ): EnsembleRosterPreset {
     const linked: EnsembleRosterParticipantSnapshot = {
       provider: 'claude',
       enabled: false,
       role: 'OLD ROLE',
       instructions: 'old',
       order: 2,
-      isBossman: true,
+      ...(authority === 'boss' ? { isBossman: true } : { isSecondInCommand: true }),
       pooledAgentId: agentId,
       model: 'old-model'
     }
@@ -388,7 +391,8 @@ describe('linked propagation to presets', () => {
       enabled: true,
       role: 'Unlinked',
       instructions: 'untouched',
-      order: 1
+      order: 1,
+      ...(authority === 'captain' ? { isBossman: true } : {})
     }
     return upsertEnsembleRosterPreset({
       id: 'preset-1',
@@ -423,6 +427,21 @@ describe('linked propagation to presets', () => {
     // Unlinked participant untouched:
     const unlinked = preset.participants.find((p) => p.role === 'Unlinked')!
     expect(unlinked.instructions).toBe('untouched')
+  })
+
+  it('preserves a linked Captain marker during pooled-agent propagation', () => {
+    const agent = createPooledAgentFromParticipant(
+      sampleParticipant({ role: 'Captain', instructions: 'NEW CAPTAIN GOAL' })
+    )
+    presetWithLinkedParticipant(agent.agentId, 'captain')
+
+    propagatePooledAgentToPresets(agent)
+
+    const linked = getEnsembleRosterPreset('preset-1')!.participants.find(
+      (participant) => participant.pooledAgentId === agent.agentId
+    )!
+    expect(linked.isBossman).toBeUndefined()
+    expect(linked.isSecondInCommand).toBe(true)
   })
 
   it('upsertPooledAgent auto-propagates by default', () => {
