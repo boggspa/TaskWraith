@@ -89,7 +89,8 @@ function resolveElectronBinary(options = {}) {
  * @param {number} options.mainInspectorPort
  * @param {string} [options.workload]
  * @param {string} [options.fxPosture]
- * @param {string} [options.userDataPath] — recorded for provenance; Electron derives via INSTANCE_ID
+ * @param {string} [options.userDataPath] — recorded for provenance; Electron derives via INSTANCE_ID + HOME
+ * @param {string} [options.home] — synthetic isolated HOME propagated into child env (blocker F)
  * @param {{ resolveElectronPath?: Function, requireElectron?: Function }} [options.adapters]
  */
 function buildElectronSpawnPlan(options) {
@@ -99,7 +100,8 @@ function buildElectronSpawnPlan(options) {
     mainInspectorPort: options.mainInspectorPort,
     workload: options.workload,
     fxPosture: options.fxPosture,
-    repoRoot: options.repoRoot
+    repoRoot: options.repoRoot,
+    home: options.home
   })
   const mainInspectorPort = base.mainInspectorPort
   if (
@@ -117,6 +119,9 @@ function buildElectronSpawnPlan(options) {
     ...base.env,
     IOS_REMOTE_TRUE: '0',
     ELECTRON_ENABLE_LOGGING: '1'
+  }
+  if (base.home) {
+    env.HOME = base.home
   }
 
   let electronBinary = null
@@ -141,6 +146,7 @@ function buildElectronSpawnPlan(options) {
   const shellCommand = [
     `TASKWRAITH_INSTANCE_ID=${shellQuote(env.TASKWRAITH_INSTANCE_ID)}`,
     'IOS_REMOTE_TRUE=0',
+    ...(env.HOME ? [`HOME=${shellQuote(env.HOME)}`] : []),
     `${shellQuote(binaryForShell)} ${shellQuote(entry)} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
   ].join(' ')
 
@@ -152,6 +158,7 @@ function buildElectronSpawnPlan(options) {
     electronBinary,
     spawnCommand: electronBinary || binaryForShell,
     shellCommand,
+    home: base.home || null,
     userDataPath: options.userDataPath || null,
     buildCommand: DEFAULT_BUILD_COMMAND,
     safety: {
@@ -163,11 +170,15 @@ function buildElectronSpawnPlan(options) {
       neverAutoDeleteArtifacts: true,
       spawnDirectElectronBinary: true,
       neverSpawnViaNpxWrapper: true,
+      neverUserDataDirArgv: true,
+      isolatedHomePropagated: Boolean(env.HOME),
       notes: [
         'Build from this clean isolated worktree first: npx electron-vite build',
-        'Materialize legacy_v1 fixture into exact TaskWraith Dev <sanitizedId> before launch so chats/ skips legacy migration',
+        'Materialize legacy_v1 fixture into exact TaskWraith Dev <sanitizedId> under isolated HOME before launch',
+        'Propagate identical HOME into Electron child env — never --user-data-dir',
         'Spawn resolve(require("electron")) directly — never npx (wrapper PID ≠ Electron)',
         'Attach CDP/inspector only to the ports owned by the spawned Electron pid/tree',
+        'Before replay, main inspector must prove HOME + app.getPath(userData) match expected paths',
         'Terminate only the recorded owned process group; never pgrep/kill TaskWraith broadly',
         'Never auto-delete artifact dirs or userData'
       ]

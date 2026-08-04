@@ -23,6 +23,7 @@ const DEFAULT_INSPECTOR_BASE_PORT = 9800
  * @param {string} [options.fxPosture]
  * @param {string} [options.repoRoot]
  * @param {string} [options.electronEntry='.']
+ * @param {string} [options.home] — synthetic isolated HOME propagated into child env (blocker F)
  */
 function buildIsolatedLaunchPlan(options) {
   const instanceId = options.instanceId
@@ -78,6 +79,13 @@ function buildIsolatedLaunchPlan(options) {
     TASKWRAITH_PERF_WORKLOAD: workload,
     TASKWRAITH_PERF_FX_POSTURE: fxPosture
   }
+  const isolatedHome =
+    options.home != null && String(options.home).trim() !== ''
+      ? path.resolve(String(options.home).trim())
+      : null
+  if (isolatedHome) {
+    env.HOME = isolatedHome
+  }
 
   const argv = [
     'electron',
@@ -88,6 +96,7 @@ function buildIsolatedLaunchPlan(options) {
   const shellCommand = [
     `TASKWRAITH_INSTANCE_ID=${shellQuote(instanceId)}`,
     'IOS_REMOTE_TRUE=0',
+    ...(isolatedHome ? [`HOME=${shellQuote(isolatedHome)}`] : []),
     `npx electron ${shellQuote(electronEntry)} --remote-debugging-port=${port} --inspect=${mainInspectorPort}`
   ].join(' ')
 
@@ -100,6 +109,7 @@ function buildIsolatedLaunchPlan(options) {
     attachOnlyExactChild: true,
     terminateOnlyExactChild: true,
     neverAutoDeleteArtifacts: true,
+    isolatedHomePropagated: Boolean(isolatedHome),
     preflight: [
       `curl -sS --max-time 2 http://127.0.0.1:${port}/json/version || true`,
       `curl -sS --max-time 2 http://127.0.0.1:${mainInspectorPort}/json || true`
@@ -107,6 +117,7 @@ function buildIsolatedLaunchPlan(options) {
     notes: [
       'Build from this worktree/checkout first: npx electron-vite build',
       'Materialize legacy_v1 into exact TaskWraith Dev <sanitizedId> before launch so chats/ skips legacy migration',
+      'Authoritative launch requires --home under <worktree>/perf-homes and propagates HOME into the Electron child',
       'Do not attach CDP to the live v1.9.2 instance; only to this instanceId + ports',
       'Terminate only the spawned child pid — never broad pgrep/kill',
       'Never auto-delete artifact dirs or userData',
@@ -124,6 +135,7 @@ function buildIsolatedLaunchPlan(options) {
     fxPosture,
     repoRoot,
     electronEntry,
+    home: isolatedHome,
     env,
     argv,
     shellCommand,

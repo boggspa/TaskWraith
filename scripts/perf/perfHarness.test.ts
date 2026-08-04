@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { createRequire } from 'module'
@@ -1258,7 +1258,10 @@ describe('T2 runner (no Electron launch)', () => {
 
   it('C: launch try/finally terminates owned child on staged attach failure', async () => {
     const kills = []
-    const home = mkdtempSync(path.join(tmpdir(), 'tw-t2-finally-'))
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-finally-'))
     try {
       await expect(
         runT2BaselineCli(
@@ -1275,7 +1278,7 @@ describe('T2 runner (no Electron launch)', () => {
             '--inspect-port=9811'
           ],
           {
-            repoRoot: path.resolve(__dirname, '..', '..'),
+            repoRoot,
             forceIsolated: true,
             allowDirtyLaunch: true,
             allowNonIsolatedLaunch: true,
@@ -1442,7 +1445,10 @@ describe('T2 runner (no Electron launch)', () => {
   it('E: runT2Baseline refuses attach before ownership check passes', async () => {
     const kills = []
     let cdpCalled = false
-    const home = mkdtempSync(path.join(tmpdir(), 'tw-t2-e-own-'))
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-e-own-'))
     try {
       await expect(
         runT2BaselineCli(
@@ -1459,7 +1465,7 @@ describe('T2 runner (no Electron launch)', () => {
             '--inspect-port=9811'
           ],
           {
-            repoRoot: path.resolve(__dirname, '..', '..'),
+            repoRoot,
             forceIsolated: true,
             allowDirtyLaunch: true,
             allowNonIsolatedLaunch: true,
@@ -1621,6 +1627,407 @@ describe('T2 runner (no Electron launch)', () => {
       )
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('F: authoritative launch refuses missing/real/out-of-worktree home; accepts perf-homes', async () => {
+    const {
+      assertAuthoritativeIsolatedHome,
+      resolveT2Home,
+      verifyIsolatedHomeAndUserDataViaMainInspector,
+      PERF_HOMES_DIRNAME
+    } = require('./isolatedHome.cjs')
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const realHome = '/Users/fake-real-home'
+    const boundary = path.join(repoRoot, PERF_HOMES_DIRNAME)
+
+    expect(() =>
+      assertAuthoritativeIsolatedHome({ home: '', repoRoot, realHomedir: realHome })
+    ).toThrow(/requires explicit --home/i)
+    expect(() =>
+      assertAuthoritativeIsolatedHome({
+        home: 'perf-homes/relative',
+        repoRoot,
+        realHomedir: realHome
+      })
+    ).toThrow(/absolute path/i)
+    expect(() =>
+      assertAuthoritativeIsolatedHome({ home: realHome, repoRoot, realHomedir: realHome })
+    ).toThrow(/must not equal the real os\.homedir/i)
+    expect(() =>
+      assertAuthoritativeIsolatedHome({
+        home: path.join(tmpdir(), 'outside-home'),
+        repoRoot,
+        realHomedir: realHome
+      })
+    ).toThrow(/inside the isolated worktree|under .*perf-homes/i)
+
+    mkdirSync(boundary, { recursive: true })
+    const safeHome = mkdtempSync(path.join(boundary, 'tw-t2-f-safe-'))
+    try {
+      const ok = assertAuthoritativeIsolatedHome({
+        home: safeHome,
+        repoRoot,
+        realHomedir: realHome
+      })
+      expect(ok.home).toBe(path.resolve(safeHome))
+      expect(ok.authoritative).toBe(true)
+
+      const resolved = resolveT2Home({
+        homeArg: safeHome,
+        repoRoot,
+        willLaunch: true,
+        realHomedir: realHome
+      })
+      expect(resolved.authoritativeHome).toBe(true)
+
+      const userData = resolveUnpackagedDevUserDataPath({
+        instanceId: 'perfFHome01',
+        home: safeHome,
+        platform: 'darwin'
+      })
+      expect(userData.userDataPath).toBe(
+        path.join(safeHome, 'Library', 'Application Support', 'TaskWraith Dev perfFHome01')
+      )
+
+      const plan = buildElectronSpawnPlan({
+        instanceId: 'perfFHome01',
+        repoRoot,
+        home: safeHome,
+        userDataPath: userData.userDataPath,
+        remoteDebuggingPort: 9411,
+        mainInspectorPort: 9811,
+        adapters: { resolveElectronPath: () => '/virtual/Electron' }
+      })
+      expect(plan.env.HOME).toBe(path.resolve(safeHome))
+      expect(plan.shellCommand).toContain(`HOME=${path.resolve(safeHome)}`)
+      expect(plan.argv.join(' ')).not.toMatch(/user-data-dir/i)
+      expect(plan.safety.neverUserDataDirArgv).toBe(true)
+
+      await expect(
+        runT2BaselineCli(
+          [
+            '--workload=dual_run',
+            '--launch',
+            '--i-accept-isolated-launch',
+            '--materialize-instance-userdata',
+            '--lean',
+            '--scale-down=40',
+            '--instance-id=perfFMiss',
+            '--port=9411',
+            '--inspect-port=9811'
+          ],
+          {
+            repoRoot,
+            forceIsolated: true,
+            allowDirtyLaunch: true,
+            allowNonIsolatedLaunch: true,
+            platform: 'darwin',
+            realHomedir: realHome,
+            provenance: {
+              gitSha: 'a'.repeat(40),
+              dirty: false,
+              dirtyTreeFingerprint: 'b'.repeat(64),
+              dirtyPaths: [],
+              isolatedWorktree: true,
+              authoritativeBaseline: true
+            }
+          }
+        )
+      ).rejects.toThrow(/requires explicit --home/i)
+
+      await expect(
+        runT2BaselineCli(
+          [
+            '--workload=dual_run',
+            '--launch',
+            '--i-accept-isolated-launch',
+            '--materialize-instance-userdata',
+            '--lean',
+            '--scale-down=40',
+            '--instance-id=perfFReal',
+            `--home=${realHome}`,
+            '--port=9411',
+            '--inspect-port=9811'
+          ],
+          {
+            repoRoot,
+            forceIsolated: true,
+            allowDirtyLaunch: true,
+            allowNonIsolatedLaunch: true,
+            platform: 'darwin',
+            realHomedir: realHome,
+            provenance: {
+              gitSha: 'a'.repeat(40),
+              dirty: false,
+              dirtyTreeFingerprint: 'b'.repeat(64),
+              dirtyPaths: [],
+              isolatedWorktree: true,
+              authoritativeBaseline: true
+            }
+          }
+        )
+      ).rejects.toThrow(/must not equal the real os\.homedir/i)
+    } finally {
+      rmSync(safeHome, { recursive: true, force: true })
+    }
+
+    const match = await verifyIsolatedHomeAndUserDataViaMainInspector(
+      {
+        post: async () => ({
+          result: {
+            value: {
+              home: '/virt/home',
+              userData: '/virt/home/Library/Application Support/TaskWraith Dev x'
+            }
+          }
+        })
+      },
+      {
+        home: '/virt/home',
+        userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+      }
+    )
+    expect(match.ok).toBe(true)
+
+    await expect(
+      verifyIsolatedHomeAndUserDataViaMainInspector(
+        {
+          post: async () => ({
+            result: {
+              value: {
+                home: '/wrong',
+                userData: '/virt/home/Library/Application Support/TaskWraith Dev x'
+              }
+            }
+          })
+        },
+        {
+          home: '/virt/home',
+          userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+        }
+      )
+    ).rejects.toThrow(/HOME mismatch/i)
+
+    await expect(
+      verifyIsolatedHomeAndUserDataViaMainInspector(
+        {
+          post: async () => ({
+            result: {
+              value: {
+                home: '/virt/home',
+                userData: '/other/TaskWraith Dev x'
+              }
+            }
+          })
+        },
+        {
+          home: '/virt/home',
+          userDataPath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+        }
+      )
+    ).rejects.toThrow(/userData.*mismatch/i)
+
+    await expect(
+      verifyIsolatedHomeAndUserDataViaMainInspector(
+        {
+          post: async () => {
+            throw new Error('protocol boom')
+          }
+        },
+        { home: '/virt/home', userDataPath: '/virt/home/x' }
+      )
+    ).rejects.toThrow(/protocol failed/i)
+  })
+
+  it('F: inspector path mismatch prevents replay and still tears down exact child', async () => {
+    const kills = []
+    let replayCalled = false
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-f-mismatch-'))
+    try {
+      await expect(
+        runT2BaselineCli(
+          [
+            '--workload=dual_run',
+            '--launch',
+            '--i-accept-isolated-launch',
+            '--materialize-instance-userdata',
+            '--lean',
+            '--scale-down=40',
+            '--instance-id=perfFMis01',
+            `--home=${home}`,
+            '--port=9411',
+            '--inspect-port=9811',
+            '--max-replay-events=1'
+          ],
+          {
+            repoRoot,
+            forceIsolated: true,
+            allowDirtyLaunch: true,
+            allowNonIsolatedLaunch: true,
+            platform: 'darwin',
+            provenance: {
+              gitSha: 'a'.repeat(40),
+              dirty: false,
+              dirtyTreeFingerprint: 'b'.repeat(64),
+              dirtyPaths: [],
+              isolatedWorktree: true,
+              authoritativeBaseline: true
+            },
+            buildAdapters: {
+              build: async () => ({ code: 0 })
+            },
+            spawnAdapters: {
+              resolveElectronPath: () => '/virtual/Electron',
+              spawn: (cmd, _args, opts) => {
+                expect(opts.env.HOME).toBe(path.resolve(home))
+                const ee = new EventEmitter()
+                return Object.assign(ee, {
+                  pid: 7070,
+                  stdout: new EventEmitter(),
+                  stderr: new EventEmitter(),
+                  kill(sig) {
+                    kills.push(sig)
+                    queueMicrotask(() => ee.emit('exit', 0, sig))
+                    return true
+                  }
+                })
+              }
+            },
+            portAdapters: {
+              probePort: async (port) => ({ port, occupied: false }),
+              probeCdp: async () => ({ port: 9411, reachable: false }),
+              listInstancePids: () => []
+            },
+            portOwnershipAdapters: ownedPortAdapters(7070),
+            mainInspectorUrl: 'ws://127.0.0.1:9811/xxxxxxxx',
+            WebSocket: class FakeWs {
+              constructor() {
+                this.handlers = {}
+                queueMicrotask(() => this.handlers.open && this.handlers.open())
+              }
+              on(event, handler) {
+                this.handlers[event] = handler
+              }
+              send(data) {
+                const msg = JSON.parse(data)
+                queueMicrotask(() => {
+                  this.handlers.message(
+                    JSON.stringify({ id: msg.id, result: { ok: true, method: msg.method } })
+                  )
+                })
+              }
+              close() {}
+            },
+            cdpAdapters: {
+              httpGetJson: async (url) => {
+                if (String(url).includes('/json/version')) return { Browser: 'Fake/1' }
+                if (String(url).includes(':9811')) {
+                  return [{ webSocketDebuggerUrl: 'ws://127.0.0.1:9811/xxxxxxxx' }]
+                }
+                return [
+                  {
+                    type: 'page',
+                    id: 'p1',
+                    webSocketDebuggerUrl: 'ws://127.0.0.1:9411/devtools/page/p1'
+                  }
+                ]
+              }
+            },
+            verifyIsolatedHomeAndUserData: async () => {
+              throw new Error(
+                "Refuse replay: app.getPath('userData') mismatch (expected isolated, observed wrong)"
+              )
+            },
+            replayApi: {
+              getChat: async () => {
+                replayCalled = true
+                return null
+              },
+              saveChat: async () => {
+                replayCalled = true
+                return { ok: true }
+              }
+            },
+            terminateOptions: { waitMs: 20, sleep: async () => {} }
+          }
+        )
+      ).rejects.toThrow(/userData.*mismatch|Refuse replay/i)
+      expect(replayCalled).toBe(false)
+      expect(kills.length).toBeGreaterThan(0)
+      expect(kills[0]).toBe('SIGTERM')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('F: matching inspector HOME/userData permits replay gate; dry stays non-authoritative', async () => {
+    const { verifyIsolatedHomeAndUserDataViaMainInspector } = require('./isolatedHome.cjs')
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-f-match-'))
+    const expectedUserData = path.join(
+      home,
+      'Library',
+      'Application Support',
+      'TaskWraith Dev perfFOk01'
+    )
+    try {
+      const probe = await verifyIsolatedHomeAndUserDataViaMainInspector(
+        {
+          post: async () => ({
+            result: {
+              value: {
+                home: path.resolve(home),
+                userData: expectedUserData
+              }
+            }
+          })
+        },
+        { home, userDataPath: expectedUserData }
+      )
+      expect(probe.ok).toBe(true)
+      expect(probe.observedHome).toBe(path.resolve(home))
+      expect(probe.observedUserDataPath).toBe(expectedUserData)
+
+      const dry = await runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--dry-run',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfFDry01',
+          `--home=${home}`
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          platform: 'darwin',
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          }
+        }
+      )
+      expect(dry.ok).toBe(true)
+      expect(dry.launched).toBe(false)
+      expect(dry.provenance.authoritativeBaseline).toBe(false)
+      expect(dry.report.environment.authoritativeBaseline).toBe(false)
+      expect(dry.isolation.verified).toBe(false)
+      expect(dry.spawnPlan.env.HOME).toBe(path.resolve(home))
+      expect(dry.userDataPath).toBe(
+        path.join(home, 'Library', 'Application Support', 'TaskWraith Dev perfFDry01')
+      )
+    } finally {
+      rmSync(home, { recursive: true, force: true })
     }
   })
 })

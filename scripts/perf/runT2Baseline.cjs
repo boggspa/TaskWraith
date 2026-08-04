@@ -34,6 +34,10 @@ const { generatePerfFixture, fixtureFingerprint } = require('./fixtureGenerator.
 const { materializePerfUserData } = require('./materializeUserData.cjs')
 const { collectRepoProvenance, detectAppVersion } = require('./repoProvenance.cjs')
 const { resolveUnpackagedDevUserDataPath, sanitizeDevInstanceId } = require('./devUserDataPath.cjs')
+const {
+  resolveT2Home,
+  verifyIsolatedHomeAndUserDataViaMainInspector
+} = require('./isolatedHome.cjs')
 const { assertLaunchPortsFree } = require('./portGuard.cjs')
 const {
   buildElectronSpawnPlan,
@@ -120,6 +124,9 @@ Usage:
 
 Safety defaults:
   • Refuses Electron launch unless BOTH --launch and --i-accept-isolated-launch
+  • Authoritative launch requires --home=<absolute> under <worktree>/perf-homes/ (never real os.homedir())
+  • Propagates that HOME into the Electron child; refuses --user-data-dir
+  • Before replay, main inspector must prove HOME + app.getPath('userData') match the materialized sibling
   • Never targets production TaskWraith or shared "TaskWraith Dev"
   • Attaches only to the spawned child pid/ports; terminates only that child
   • Never auto-deletes artifacts
@@ -130,7 +137,8 @@ Options:
   --dry-run                         Fixture + report + spawn plan; no Electron; tmp materialize optional
   --out-dir=<path>                  Artifact / materialize dir (required for non-dry materialize to tmp)
   --artifact-dir=<path>             Report/profile output dir (default: out-dir or tmp)
-  --materialize-instance-userdata   Write legacy_v1 into exact TaskWraith Dev <id> (macOS Application Support sibling)
+  --home=<absolute>                 Synthetic isolated HOME (required for --launch; must be under worktree/perf-homes/)
+  --materialize-instance-userdata   Write legacy_v1 into <home>/…/TaskWraith Dev <id>
   --launch                          Opt-in spawn (still requires --i-accept-isolated-launch)
   --i-accept-isolated-launch        Explicit acceptance of isolated Electron spawn
   --instance-id=<id>                Unique id (sanitized to 16 chars for userData)
@@ -217,7 +225,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const sanitizedId = sanitizeDevInstanceId(String(rawInstanceId))
   if (!sanitizedId) throw new Error('instance id sanitizes empty')
 
-  const home = args.home ? String(args.home) : options.home || os.homedir()
+  const homeResolved = resolveT2Home({
+    homeArg: args.home != null ? String(args.home) : options.home,
+    repoRoot,
+    willLaunch,
+    realHomedir: options.realHomedir,
+    fallbackHome: options.home || os.homedir()
+  })
+  const home = homeResolved.home
   const userDataResolved = resolveUnpackagedDevUserDataPath({
     instanceId: String(rawInstanceId),
     home,
@@ -237,7 +252,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     mainInspectorPort: args.inspectPort == null ? undefined : Number(args.inspectPort),
     workload,
     fxPosture,
-    userDataPath: userDataResolved.userDataPath
+    userDataPath: userDataResolved.userDataPath,
+    home
   })
 
   const fixture = generatePerfFixture({
@@ -297,8 +313,19 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   }
 
   // --skip-build may remain for operator debugging but never satisfies official baseline.
+  // Authoritative flag stays false until main-inspector HOME/userData verification succeeds.
   const skipBuild = Boolean(args.skipBuild)
-  const authoritativeBaseline = Boolean(provenance.authoritativeBaseline) && !skipBuild
+  let authoritativeBaseline = false
+  let isolationVerification = {
+    required: willLaunch,
+    verified: false,
+    authoritativeHome: homeResolved.authoritativeHome,
+    expectedHome: home,
+    observedHome: null,
+    expectedUserDataPath: userDataResolved.userDataPath,
+    observedUserDataPath: null,
+    note: homeResolved.note
+  }
 
   const startedAt = new Date().toISOString()
   const env = {
@@ -323,7 +350,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       dirtyPaths: provenance.dirtyPaths,
       isolatedWorktree: provenance.isolatedWorktree,
       skipBuild,
-      buildAuthoritative: !skipBuild
+      buildAuthoritative: !skipBuild,
+      isolatedHome: home,
+      authoritativeHomeGate: homeResolved.authoritativeHome
     }
   }
   const envCheck = validatePerfEnvironment(env)
@@ -344,8 +373,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     inspectorJsonUrl: spawnPlan.inspectorJsonUrl,
     mainInspectorPort: spawnPlan.mainInspectorPort,
     userDataPath: userDataResolved.userDataPath,
+    home,
     safety: spawnPlan.safety
   }
+  report.isolation = isolationVerification
 
   /** @type {object|null} */
   let childSession = null
@@ -426,6 +457,32 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         webSocketDebuggerUrl: inspectorUrl,
         WebSocket: options.WebSocket
       })
+
+      // Blocker F: fail closed unless child HOME + userData match the materialized sibling.
+      const pathProbe =
+        typeof options.verifyIsolatedHomeAndUserData === 'function'
+          ? await options.verifyIsolatedHomeAndUserData(mainInspector, {
+              home,
+              userDataPath: userDataResolved.userDataPath
+            })
+          : await verifyIsolatedHomeAndUserDataViaMainInspector(mainInspector, {
+              home,
+              userDataPath: userDataResolved.userDataPath
+            })
+      isolationVerification = {
+        ...isolationVerification,
+        verified: true,
+        observedHome: pathProbe.observedHome,
+        observedUserDataPath: pathProbe.observedUserDataPath,
+        expression: pathProbe.expression,
+        note: 'main inspector proved isolated HOME + TaskWraith Dev <id> userData before replay'
+      }
+      report.isolation = isolationVerification
+      if (!skipBuild && provenance.authoritativeBaseline) {
+        authoritativeBaseline = true
+        report.environment.authoritativeBaseline = true
+        env.authoritativeBaseline = true
+      }
 
       const profileDir = path.join(artifactDir, 'profiles')
       fs.mkdirSync(profileDir, { recursive: true })
@@ -571,6 +628,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     fingerprint,
     sanitizedInstanceId: userDataResolved.sanitizedInstanceId,
     userDataPath: userDataResolved.userDataPath,
+    home,
+    isolation: isolationVerification,
     reportPath,
     planPath,
     report,
@@ -580,7 +639,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     provenance: {
       ...provenance,
       authoritativeBaseline,
-      skipBuild
+      skipBuild,
+      isolatedHome: home,
+      authoritativeHomeGate: homeResolved.authoritativeHome
     },
     buildResult,
     gateProbe,
