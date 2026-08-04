@@ -1470,22 +1470,20 @@
   gap: 5px;
   min-width: 0;
   max-width: 100%;
-  padding: 2px 8px 2px 4px;
-  border: 1px solid color-mix(in srgb, var(--blackboard-chip-color, var(--accent)) 38%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--blackboard-chip-color, var(--accent)) 11%, transparent);
+  /* Satellite attribution (owner request 2026-08-05): no pill container —
+   * the provider glyph + name sit free beside the card head, 10% smaller
+   * than the old chip. Provider hue stays on the text and glyph. */
   color: var(--blackboard-chip-color, var(--accent));
   font-weight: 800;
   line-height: 1.2;
 }
 
 .blackboard-chip.size-md {
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .blackboard-chip.size-sm {
-  padding: 1px 6px 1px 3px;
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .blackboard-chip.is-user {
@@ -1502,14 +1500,14 @@
 .blackboard-chip-glyph,
 .blackboard-chip-initial {
   flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
 }
 
 .blackboard-chip.size-sm .blackboard-chip-glyph,
 .blackboard-chip.size-sm .blackboard-chip-initial {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
 }
 
 .blackboard-chip-initial {
