@@ -880,7 +880,8 @@ describe('T2 runner (no Electron launch)', () => {
   const {
     openCdpWebSocketSession,
     selectRendererTarget,
-    attachRendererCdpSession
+    attachRendererCdpSession,
+    discoverMainInspectorUrl
   } = require('./cdpWebSocketSession.cjs')
   const { buildMessagePrefixBatches, runDeterministicReplay } = require('./replayDriver.cjs')
   const { buildT2SmokePlan, summarizeT2SmokePlan } = require('./t2SmokePlan.cjs')
@@ -937,13 +938,17 @@ describe('T2 runner (no Electron launch)', () => {
       repoRoot: path.resolve(__dirname, '..', '..'),
       workload: 'dual_run',
       fxPosture: 'reduce_motion',
+      platform: 'darwin',
       adapters: {
         resolveElectronPath: () => '/virtual/electron-bin'
       }
     })
     expect(plan.env.IOS_REMOTE_TRUE).toBe('0')
+    expect(plan.env.CFFIXED_USER_HOME).toBeUndefined()
     expect(plan.mainInspectorPort).not.toBe(plan.remoteDebuggingPort)
     expect(plan.argv.join(' ')).toContain(`--inspect=${plan.mainInspectorPort}`)
+    expect(plan.argv).toContain('--use-mock-keychain')
+    expect(plan.shellCommand).toContain('--use-mock-keychain')
     expect(plan.argv[0]).not.toBe('electron')
     expect(plan.spawnCommand).toBe('/virtual/electron-bin')
     expect(plan.shellCommand).not.toMatch(/\bnpx\b/)
@@ -951,6 +956,72 @@ describe('T2 runner (no Electron launch)', () => {
     expect(plan.safety.neverAutoDeleteArtifacts).toBe(true)
     expect(plan.safety.neverPgrepKillBroad).toBe(true)
     expect(plan.safety.neverSpawnViaNpxWrapper).toBe(true)
+    expect(plan.safety.disposableMockKeychain).toBe(true)
+  })
+
+  it('binds macOS CoreFoundation appData to the exact isolated HOME', () => {
+    const home = path.resolve('/virtual/repo/perf-homes/perfT2MacHome')
+    const plan = buildElectronSpawnPlan({
+      instanceId: 'perfT2MacHome',
+      repoRoot: '/virtual/repo',
+      home,
+      platform: 'darwin',
+      adapters: { resolveElectronPath: () => '/virtual/Electron' }
+    })
+
+    expect(plan.env.HOME).toBe(home)
+    expect(plan.env.CFFIXED_USER_HOME).toBe(home)
+    expect(plan.shellCommand).toContain(`CFFIXED_USER_HOME=${home}`)
+    expect(plan.argv.indexOf('--use-mock-keychain')).toBeLessThan(plan.argv.indexOf('.'))
+    expect(plan.argv).not.toContain(expect.stringContaining('--user-data-dir'))
+    expect(plan.safety.coreFoundationHomePropagated).toBe(true)
+  })
+
+  it('waits boundedly for the exact-child main inspector HTTP endpoint', async () => {
+    let attempts = 0
+    let elapsedMs = 0
+    const url = await discoverMainInspectorUrl({
+      port: 9811,
+      adapters: {
+        httpGetJson: async () => {
+          attempts += 1
+          if (attempts === 1) throw new Error('http timeout')
+          if (attempts === 2) return []
+          return [{ webSocketDebuggerUrl: 'ws://127.0.0.1:9811/exact-child' }]
+        },
+        nowMs: () => elapsedMs,
+        sleep: async (ms) => {
+          elapsedMs += ms
+        },
+        timeoutMs: 5_000,
+        initialDelayMs: 50,
+        maxDelayMs: 200
+      }
+    })
+
+    expect(url).toBe('ws://127.0.0.1:9811/exact-child')
+    expect(attempts).toBe(3)
+  })
+
+  it('fails closed when the exact-child main inspector never becomes ready', async () => {
+    let elapsedMs = 0
+    await expect(
+      discoverMainInspectorUrl({
+        port: 9811,
+        adapters: {
+          httpGetJson: async () => {
+            throw new Error('http timeout')
+          },
+          nowMs: () => elapsedMs,
+          sleep: async (ms) => {
+            elapsedMs += ms
+          },
+          timeoutMs: 100,
+          initialDelayMs: 50,
+          maxDelayMs: 50
+        }
+      })
+    ).rejects.toThrow(/exact child port 9811.*not ready within 100ms.*http timeout/i)
   })
 
   it('refuses attach/terminate against non-exact child claims', async () => {
@@ -1027,6 +1098,51 @@ describe('T2 runner (no Electron launch)', () => {
       }
     })
     expect(attached.kind).toBe('renderer_cdp')
+    attached.close()
+  })
+
+  it('waits boundedly for a renderer page on the exact child port', async () => {
+    let listAttempts = 0
+    let elapsedMs = 0
+    class ReadyWs {
+      handlers = {}
+      on(event, handler) {
+        this.handlers[event] = handler
+        if (event === 'open') queueMicrotask(handler)
+      }
+      send() {}
+      close() {}
+    }
+
+    const attached = await attachRendererCdpSession({
+      port: 9411,
+      WebSocket: ReadyWs,
+      adapters: {
+        httpGetJson: async (url) => {
+          if (String(url).includes('/json/version')) return { Browser: 'Fake/2' }
+          listAttempts += 1
+          if (listAttempts < 3) return []
+          return [
+            {
+              type: 'page',
+              id: 'ready',
+              webSocketDebuggerUrl: 'ws://127.0.0.1:9411/devtools/page/ready'
+            }
+          ]
+        },
+        nowMs: () => elapsedMs,
+        sleep: async (ms) => {
+          elapsedMs += ms
+        },
+        timeoutMs: 5_000,
+        initialDelayMs: 50,
+        maxDelayMs: 200
+      }
+    })
+
+    expect(listAttempts).toBe(3)
+    expect(attached.targetId).toBe('ready')
+    expect(attached.browserVersion).toBe('Fake/2')
     attached.close()
   })
 
@@ -1208,11 +1324,20 @@ describe('T2 runner (no Electron launch)', () => {
     expect(skippedNonAuth.skipped).toBe(true)
     expect(skippedNonAuth.authoritative).toBe(false)
 
+    const buildSteps = []
     const direct = createDirectCliBuildAdapter({
-      spawnSync: () => ({ status: 0, stdout: 'built', stderr: '' })
+      spawnSync: (command, args) => {
+        buildSteps.push([command, args])
+        return { status: 0, stdout: `built:${command}`, stderr: '' }
+      }
     })
     const built = await direct('/virtual/repo')
     expect(built.code).toBe(0)
+    expect(buildSteps).toEqual([
+      ['npm', ['run', 'prebuild:bridge-daemon']],
+      ['npx', ['electron-vite', 'build']]
+    ])
+    expect(built.command).toContain('prebuild:bridge-daemon')
   })
 
   it('B: spawn uses resolved Electron binary PID — never npx wrapper', () => {
@@ -1328,7 +1453,8 @@ describe('T2 runner (no Electron launch)', () => {
             cdpAdapters: {
               httpGetJson: async () => {
                 throw new Error('staged attach failure')
-              }
+              },
+              timeoutMs: 0
             },
             terminateOptions: { waitMs: 20, sleep: async () => {} }
           }
@@ -1781,18 +1907,22 @@ describe('T2 runner (no Electron launch)', () => {
       rmSync(safeHome, { recursive: true, force: true })
     }
 
+    let probeExpression = ''
     const match = await verifyIsolatedHomeAndUserDataViaMainInspector(
       {
-        post: async () => ({
-          result: {
-            value: {
-              home: '/virt/home',
-              userData: '/virt/home/Library/Application Support/TaskWraith Dev x',
-              homeRealpath: '/virt/home',
-              userDataRealpath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+        post: async (_method, params) => {
+          probeExpression = params.expression
+          return {
+            result: {
+              value: {
+                home: '/virt/home',
+                userData: '/virt/home/Library/Application Support/TaskWraith Dev x',
+                homeRealpath: '/virt/home',
+                userDataRealpath: '/virt/home/Library/Application Support/TaskWraith Dev x'
+              }
             }
           }
-        })
+        }
       },
       {
         home: '/virt/home',
@@ -1802,6 +1932,8 @@ describe('T2 runner (no Electron launch)', () => {
       }
     )
     expect(match.ok).toBe(true)
+    expect(probeExpression).toContain("process.getBuiltinModule('module').createRequire")
+    expect(probeExpression).not.toMatch(/(^|[^A-Za-z])require\s*\(/)
 
     await expect(
       verifyIsolatedHomeAndUserDataViaMainInspector(

@@ -57,7 +57,7 @@ function buildT2SmokePlan(options = {}) {
       },
       {
         id: 'build',
-        action: 'npx electron-vite build',
+        action: 'npm run prebuild:bridge-daemon && npx electron-vite build',
         skippedInUnitSmoke: true
       },
       {

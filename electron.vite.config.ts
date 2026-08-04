@@ -63,6 +63,13 @@ export default defineConfig(({ mode }) => {
             // Work-provenance sampling brackets Git state and fingerprints
             // dirty paths. Keep that synchronous audited core out of main.
             workProvenanceWorker: resolve('src/main/workers/workProvenanceWorker.ts')
+          },
+          output: {
+            // bootstrap.ts deliberately defers the full main graph behind a
+            // dynamic import. Keep that chunk beside index.js: main runtime
+            // paths (preload, renderer, utility workers, dev Swift bridge)
+            // are resolved from the out/main directory.
+            chunkFileNames: '[name]-[hash].js'
           }
         }
       }

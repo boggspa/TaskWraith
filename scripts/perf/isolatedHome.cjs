@@ -24,7 +24,7 @@ const PERF_HOMES_DIRNAME = 'perf-homes'
 
 /** Static main-inspector expression — no string interpolation of untrusted input. */
 const ISOLATED_HOME_USERDATA_PROBE_EXPRESSION =
-  "(() => { const fs = require('fs'); const home = process.env.HOME; const userData = require('electron').app.getPath('userData'); return { home: home, userData: userData, homeRealpath: fs.realpathSync(home), userDataRealpath: fs.realpathSync(userData) }; })()"
+  "(() => { const fs = process.getBuiltinModule('fs'); const createRequire = process.getBuiltinModule('module').createRequire; const electron = createRequire(process.cwd() + '/package.json')('electron'); const home = process.env.HOME; const userData = electron.app.getPath('userData'); return { home: home, userData: userData, homeRealpath: fs.realpathSync(home), userDataRealpath: fs.realpathSync(userData) }; })()"
 
 /**
  * @param {string} repoRoot

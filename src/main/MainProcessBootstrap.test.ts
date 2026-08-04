@@ -109,5 +109,6 @@ describe('main process bootstrap', () => {
     )
     expect(entrySource).toContain("loadMainProcess: () => import('./index')")
     expect(viteConfigSource).toContain("index: resolve('src/main/bootstrap.ts')")
+    expect(viteConfigSource).toContain("chunkFileNames: '[name]-[hash].js'")
   })
 })

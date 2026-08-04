@@ -259,7 +259,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     workload,
     fxPosture,
     userDataPath: userDataResolved.userDataPath,
-    home
+    home,
+    platform: options.platform || process.platform
   })
 
   const fixture = generatePerfFixture({
@@ -438,7 +439,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           authoritativeBaseline: false
         }
       } else {
-        // A: authoritative --launch executes real npx electron-vite build; fail closed.
+        // A: authoritative --launch builds the required Swift daemon and Electron; fail closed.
         buildResult = await runIsolatedBuild({
           repoRoot,
           adapters: options.buildAdapters || {},

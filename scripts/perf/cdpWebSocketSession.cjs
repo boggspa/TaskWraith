@@ -196,8 +196,40 @@ function selectRendererTarget(targets) {
  * @param {{ httpGetJson?: Function }} [options.adapters]
  */
 async function attachRendererCdpSession(options) {
-  const { version, targets } = await fetchCdpTargets(options)
-  const target = selectRendererTarget(targets)
+  const adapters = options.adapters || {}
+  const sleep =
+    typeof adapters.sleep === 'function'
+      ? adapters.sleep
+      : (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const nowMs = typeof adapters.nowMs === 'function' ? adapters.nowMs : Date.now
+  const timeoutMs = Number.isFinite(adapters.timeoutMs) ? adapters.timeoutMs : 30_000
+  const maxDelayMs = Number.isFinite(adapters.maxDelayMs) ? adapters.maxDelayMs : 1_000
+  let delayMs = Number.isFinite(adapters.initialDelayMs) ? adapters.initialDelayMs : 100
+  const deadline = nowMs() + Math.max(0, timeoutMs)
+  let version = null
+  let target = null
+  let lastError = null
+
+  while (!target) {
+    try {
+      const fetched = await fetchCdpTargets(options)
+      version = fetched.version
+      target = selectRendererTarget(fetched.targets)
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+    }
+    if (target) break
+    if (nowMs() >= deadline) {
+      const error = new Error(
+        `Renderer CDP on exact child port ${options.port} was not ready within ${timeoutMs}ms: ${lastError.message}`
+      )
+      error.cause = lastError
+      throw error
+    }
+    await sleep(Math.max(0, delayMs))
+    delayMs = Math.min(maxDelayMs, Math.max(1, delayMs * 2))
+  }
+
   const session = await openCdpWebSocketSession({
     url: target.webSocketDebuggerUrl,
     WebSocket: options.WebSocket,
@@ -257,23 +289,47 @@ async function attachMainInspectorSession(options) {
  * Discover Node inspector WS URL on a port (GET /json).
  * @param {object} options
  * @param {number} options.port
- * @param {{ httpGetJson?: Function }} [options.adapters]
+ * @param {{ httpGetJson?: Function, sleep?: Function, nowMs?: Function, timeoutMs?: number, initialDelayMs?: number, maxDelayMs?: number }} [options.adapters]
  */
 async function discoverMainInspectorUrl(options) {
   const host = options.host || '127.0.0.1'
+  const adapters = options.adapters || {}
   const httpGetJson =
-    options.adapters && typeof options.adapters.httpGetJson === 'function'
-      ? options.adapters.httpGetJson
-      : defaultHttpGetJson
-  const list = await httpGetJson(`http://${host}:${options.port}/json`)
-  const targets = Array.isArray(list) ? list : []
-  const target =
-    targets.find((t) => t && t.webSocketDebuggerUrl) ||
-    (list && list.webSocketDebuggerUrl ? list : null)
-  if (!target || !target.webSocketDebuggerUrl) {
-    throw new Error(`No inspector WebSocket on port ${options.port}`)
+    typeof adapters.httpGetJson === 'function' ? adapters.httpGetJson : defaultHttpGetJson
+  const sleep =
+    typeof adapters.sleep === 'function'
+      ? adapters.sleep
+      : (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const nowMs = typeof adapters.nowMs === 'function' ? adapters.nowMs : Date.now
+  const timeoutMs = Number.isFinite(adapters.timeoutMs) ? adapters.timeoutMs : 30_000
+  const maxDelayMs = Number.isFinite(adapters.maxDelayMs) ? adapters.maxDelayMs : 1_000
+  let delayMs = Number.isFinite(adapters.initialDelayMs) ? adapters.initialDelayMs : 100
+  const deadline = nowMs() + Math.max(0, timeoutMs)
+  let lastError = null
+
+  while (true) {
+    try {
+      const list = await httpGetJson(`http://${host}:${options.port}/json`)
+      const targets = Array.isArray(list) ? list : []
+      const target =
+        targets.find((t) => t && t.webSocketDebuggerUrl) ||
+        (list && list.webSocketDebuggerUrl ? list : null)
+      if (target && target.webSocketDebuggerUrl) return target.webSocketDebuggerUrl
+      lastError = new Error(`No inspector WebSocket on port ${options.port}`)
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+    }
+
+    if (nowMs() >= deadline) {
+      const error = new Error(
+        `Main inspector on exact child port ${options.port} was not ready within ${timeoutMs}ms: ${lastError.message}`
+      )
+      error.cause = lastError
+      throw error
+    }
+    await sleep(Math.max(0, delayMs))
+    delayMs = Math.min(maxDelayMs, Math.max(1, delayMs * 2))
   }
-  return target.webSocketDebuggerUrl
 }
 
 function defaultHttpGetJson(urlString) {

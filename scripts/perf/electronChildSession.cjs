@@ -4,7 +4,7 @@
  * Exact-child Electron session for T2: build / spawn / attach / terminate.
  *
  * Safety invariants:
- * - Authoritative launch builds via real `npx electron-vite build` (fail-closed)
+ * - Authoritative launch builds the required Swift daemon and Electron bundle (fail-closed)
  * - Spawn resolves local `require('electron')` binary directly (never npx wrapper PID)
  * - Attach only to the spawned child's pid/tree + ports
  * - Terminate only that owned process group / tree
@@ -17,8 +17,11 @@ const path = require('path')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
 const { listListeningPidsForPort, getProcessIdentity } = require('./portGuard.cjs')
 
-const DEFAULT_BUILD_COMMAND = 'npx electron-vite build'
+const DEFAULT_BRIDGE_BUILD_COMMAND = 'npm run prebuild:bridge-daemon'
+const DEFAULT_BRIDGE_BUILD_ARGV = ['run', 'prebuild:bridge-daemon']
+const DEFAULT_ELECTRON_BUILD_COMMAND = 'npx electron-vite build'
 const DEFAULT_BUILD_ARGV = ['electron-vite', 'build']
+const DEFAULT_BUILD_COMMAND = `${DEFAULT_BRIDGE_BUILD_COMMAND} && ${DEFAULT_ELECTRON_BUILD_COMMAND}`
 
 /** Bounded wait for CDP + inspector listeners after spawn (fail closed). */
 const DEFAULT_PORT_OWNERSHIP_TIMEOUT_MS = 15_000
@@ -91,6 +94,7 @@ function resolveElectronBinary(options = {}) {
  * @param {string} [options.fxPosture]
  * @param {string} [options.userDataPath] — recorded for provenance; Electron derives via INSTANCE_ID + HOME
  * @param {string} [options.home] — synthetic isolated HOME propagated into child env (blocker F)
+ * @param {NodeJS.Platform} [options.platform=process.platform]
  * @param {{ resolveElectronPath?: Function, requireElectron?: Function }} [options.adapters]
  */
 function buildElectronSpawnPlan(options) {
@@ -122,6 +126,13 @@ function buildElectronSpawnPlan(options) {
   }
   if (base.home) {
     env.HOME = base.home
+    // Electron's macOS appData path is derived through CoreFoundation, which
+    // deliberately ignores HOME. Keep the disposable perf child inside the
+    // same proven home without using --user-data-dir (which bypasses the app's
+    // own userData authority and would make the inspector proof meaningless).
+    if ((options.platform || process.platform) === 'darwin') {
+      env.CFFIXED_USER_HOME = base.home
+    }
   }
 
   let electronBinary = null
@@ -135,8 +146,11 @@ function buildElectronSpawnPlan(options) {
     electronBinary = null
   }
   const entry = base.electronEntry || '.'
+  const platform = options.platform || process.platform
+  const usesMockKeychain = platform === 'darwin'
   // Direct Electron argv (binary is the spawn command — never `npx`).
   const argv = [
+    ...(usesMockKeychain ? ['--use-mock-keychain'] : []),
     entry,
     `--remote-debugging-port=${base.remoteDebuggingPort}`,
     `--inspect=${mainInspectorPort}`
@@ -147,7 +161,8 @@ function buildElectronSpawnPlan(options) {
     `TASKWRAITH_INSTANCE_ID=${shellQuote(env.TASKWRAITH_INSTANCE_ID)}`,
     'IOS_REMOTE_TRUE=0',
     ...(env.HOME ? [`HOME=${shellQuote(env.HOME)}`] : []),
-    `${shellQuote(binaryForShell)} ${shellQuote(entry)} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
+    ...(env.CFFIXED_USER_HOME ? [`CFFIXED_USER_HOME=${shellQuote(env.CFFIXED_USER_HOME)}`] : []),
+    `${shellQuote(binaryForShell)}${usesMockKeychain ? ' --use-mock-keychain' : ''} ${shellQuote(entry)} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
   ].join(' ')
 
   return {
@@ -172,10 +187,22 @@ function buildElectronSpawnPlan(options) {
       neverSpawnViaNpxWrapper: true,
       neverUserDataDirArgv: true,
       isolatedHomePropagated: Boolean(env.HOME),
+      coreFoundationHomePropagated: Boolean(env.CFFIXED_USER_HOME),
+      disposableMockKeychain: usesMockKeychain,
       notes: [
-        'Build from this clean isolated worktree first: npx electron-vite build',
+        `Build from this clean isolated worktree first: ${DEFAULT_BUILD_COMMAND}`,
         'Materialize legacy_v1 fixture into exact TaskWraith Dev <sanitizedId> under isolated HOME before launch',
         'Propagate identical HOME into Electron child env — never --user-data-dir',
+        ...(env.CFFIXED_USER_HOME
+          ? [
+              'Propagate the same isolated CFFIXED_USER_HOME on macOS so app.getPath(userData) cannot escape HOME through CoreFoundation'
+            ]
+          : []),
+        ...(usesMockKeychain
+          ? [
+              'Use Electron mock Keychain only for this disposable macOS perf child so isolated HOME cannot prompt for or mutate the user login Keychain'
+            ]
+          : []),
         'Spawn resolve(require("electron")) directly — never npx (wrapper PID ≠ Electron)',
         'Attach CDP/inspector only to the ports owned by the spawned Electron pid/tree',
         'Before replay, main inspector must prove HOME + app.getPath(userData) match expected paths',
@@ -187,30 +214,45 @@ function buildElectronSpawnPlan(options) {
 }
 
 /**
- * Default build adapter: run `npx electron-vite build` and fail closed on nonzero.
+ * Default build adapter: compile the required Swift daemon, then build Electron.
+ * Both steps execute directly and fail closed on nonzero.
  * @param {string} repoRoot
  * @param {{ spawn?: Function, spawnSync?: Function }} [adapters]
  */
 function createDirectCliBuildAdapter(adapters = {}) {
   return async function directCliBuild(repoRoot) {
     const cwd = path.resolve(repoRoot || '.')
+    const steps = [
+      {
+        command: 'npm',
+        argv: DEFAULT_BRIDGE_BUILD_ARGV,
+        label: DEFAULT_BRIDGE_BUILD_COMMAND
+      },
+      { command: 'npx', argv: DEFAULT_BUILD_ARGV, label: DEFAULT_ELECTRON_BUILD_COMMAND }
+    ]
     if (typeof adapters.spawnSync === 'function') {
-      const result = adapters.spawnSync('npx', DEFAULT_BUILD_ARGV, {
-        cwd,
-        encoding: 'utf8',
-        env: process.env
-      })
-      const code = result && typeof result.status === 'number' ? result.status : 1
-      if (code !== 0) {
-        const err = new Error(
-          `npx electron-vite build failed with code ${code}${
-            result && result.stderr ? `: ${String(result.stderr).slice(0, 400)}` : ''
-          }`
-        )
-        err.code = code
-        throw err
+      let stdout = ''
+      let stderr = ''
+      for (const step of steps) {
+        const result = adapters.spawnSync(step.command, step.argv, {
+          cwd,
+          encoding: 'utf8',
+          env: process.env
+        })
+        const code = result && typeof result.status === 'number' ? result.status : 1
+        stdout += result && result.stdout ? String(result.stdout) : ''
+        stderr += result && result.stderr ? String(result.stderr) : ''
+        if (code !== 0) {
+          const err = new Error(
+            `${step.label} failed with code ${code}${
+              result && result.stderr ? `: ${String(result.stderr).slice(0, 400)}` : ''
+            }`
+          )
+          err.code = code
+          throw err
+        }
       }
-      return { code: 0, command: DEFAULT_BUILD_COMMAND, cwd, stdout: result.stdout || '' }
+      return { code: 0, command: DEFAULT_BUILD_COMMAND, cwd, stdout, stderr }
     }
 
     const spawn =
@@ -220,52 +262,62 @@ function createDirectCliBuildAdapter(adapters = {}) {
         return nodeSpawn(cmd, args, opts)
       })
 
-    return await new Promise((resolve, reject) => {
-      const child = spawn('npx', DEFAULT_BUILD_ARGV, {
-        cwd,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
-      if (!child) {
-        reject(new Error('npx electron-vite build failed to spawn'))
-        return
-      }
-      let stdout = ''
-      let stderr = ''
-      if (child.stdout && typeof child.stdout.on === 'function') {
-        child.stdout.on('data', (chunk) => {
-          stdout += String(chunk)
+    const runStep = (step) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(step.command, step.argv, {
+          cwd,
+          env: process.env,
+          stdio: ['ignore', 'pipe', 'pipe']
         })
-      }
-      if (child.stderr && typeof child.stderr.on === 'function') {
-        child.stderr.on('data', (chunk) => {
-          stderr += String(chunk)
-        })
-      }
-      child.on('error', (error) => {
-        reject(
-          new Error(
-            `npx electron-vite build missing/failed to execute: ${
-              error && error.message ? error.message : error
-            }`
-          )
-        )
-      })
-      child.on('exit', (code, signal) => {
-        const exitCode = typeof code === 'number' ? code : 1
-        if (exitCode !== 0) {
-          const err = new Error(
-            `npx electron-vite build failed with code ${exitCode}${
-              signal ? ` signal=${signal}` : ''
-            }${stderr ? `: ${stderr.slice(0, 400)}` : ''}`
-          )
-          err.code = exitCode
-          reject(err)
+        if (!child) {
+          reject(new Error(`${step.label} failed to spawn`))
           return
         }
-        resolve({ code: 0, command: DEFAULT_BUILD_COMMAND, cwd, stdout, stderr })
+        let stdout = ''
+        let stderr = ''
+        if (child.stdout && typeof child.stdout.on === 'function') {
+          child.stdout.on('data', (chunk) => {
+            stdout += String(chunk)
+          })
+        }
+        if (child.stderr && typeof child.stderr.on === 'function') {
+          child.stderr.on('data', (chunk) => {
+            stderr += String(chunk)
+          })
+        }
+        child.on('error', (error) => {
+          reject(
+            new Error(
+              `${step.label} missing/failed to execute: ${
+                error && error.message ? error.message : error
+              }`
+            )
+          )
+        })
+        child.on('exit', (code, signal) => {
+          const exitCode = typeof code === 'number' ? code : 1
+          if (exitCode !== 0) {
+            const err = new Error(
+              `${step.label} failed with code ${exitCode}${
+                signal ? ` signal=${signal}` : ''
+              }${stderr ? `: ${stderr.slice(0, 400)}` : ''}`
+            )
+            err.code = exitCode
+            reject(err)
+            return
+          }
+          resolve({ stdout, stderr })
+        })
       })
-    })
+
+    let stdout = ''
+    let stderr = ''
+    for (const step of steps) {
+      const result = await runStep(step)
+      stdout += result.stdout
+      stderr += result.stderr
+    }
+    return { code: 0, command: DEFAULT_BUILD_COMMAND, cwd, stdout, stderr }
   }
 }
 
@@ -676,7 +728,7 @@ async function runIsolatedBuild(options = {}) {
     }
   }
 
-  // Authoritative default: real direct-CLI adapter (npx electron-vite build).
+  // Authoritative default: real Swift-daemon + Electron direct-CLI build.
   const build = createDirectCliBuildAdapter(options.adapters || {})
   const result = await build(repoRoot)
   return {

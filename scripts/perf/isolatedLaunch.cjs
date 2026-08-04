@@ -115,7 +115,7 @@ function buildIsolatedLaunchPlan(options) {
       `curl -sS --max-time 2 http://127.0.0.1:${mainInspectorPort}/json || true`
     ],
     notes: [
-      'Build from this worktree/checkout first: npx electron-vite build',
+      'Build from this worktree/checkout first: npm run prebuild:bridge-daemon && npx electron-vite build',
       'Materialize legacy_v1 into exact TaskWraith Dev <sanitizedId> before launch so chats/ skips legacy migration',
       'Authoritative launch requires --home under <worktree>/perf-homes and propagates HOME into the Electron child',
       'Do not attach CDP to the live v1.9.2 instance; only to this instanceId + ports',
