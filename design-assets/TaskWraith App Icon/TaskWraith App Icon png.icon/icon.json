@@ -1,26 +1,57 @@
 {
   "fill" : {
-    "linear-gradient" : [
-      "srgb:0.03048,0.09388,0.19346,1.00000",
-      "srgb:0.32563,0.32980,0.39141,1.00000"
-    ],
-    "orientation" : {
-      "start" : {
-        "x" : 0.5,
-        "y" : 0
-      },
-      "stop" : {
-        "x" : 0.5,
-        "y" : 0.7
-      }
-    }
+    "solid" : "srgb:0.25994,0.25994,0.25994,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
+          "fill" : "automatic",
           "image-name" : "ghost-guy-sticker-1024.png",
           "name" : "ghost-guy-sticker-1024",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1.32,
+            "translation-in-points" : [
+              -44.80000000000007,
+              -29.908906249999973
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "srgb:0.96113,0.97335,1.00000,1.00000"
+          },
+          "image-name" : "ghost-guy-sticker-1024.png",
+          "name" : "ghost-guy-sticker-1024",
+          "opacity" : 0.6,
+          "position" : {
+            "scale" : 1.32,
+            "translation-in-points" : [
+              -44.80000000000007,
+              -29.908906249999973
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "solid" : "srgb:0.00000,0.00000,0.00000,0.75286"
+          },
+          "image-name" : "ghost-guy-sticker-1024.png",
+          "name" : "ghost-guy-sticker-1024",
+          "opacity" : 0.6,
           "position" : {
             "scale" : 1.4,
             "translation-in-points" : [

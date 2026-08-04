@@ -1,19 +1,6 @@
 {
   "fill" : {
-    "linear-gradient" : [
-      "srgb:0.84159,0.84048,0.85990,1.00000",
-      "srgb:0.31510,0.31468,0.32195,1.00000"
-    ],
-    "orientation" : {
-      "start" : {
-        "x" : 0.5,
-        "y" : 1
-      },
-      "stop" : {
-        "x" : 0.5,
-        "y" : 0.3
-      }
-    }
+    "solid" : "srgb:0.19002,0.17982,0.18577,1.00000"
   },
   "groups" : [
     {
@@ -22,13 +9,13 @@
           "blend-mode" : "normal",
           "fill" : "automatic",
           "hidden" : false,
-          "image-name" : "ghost-guy-mark-monoline 2.svg",
-          "name" : "ghost-guy-mark-monoline 2",
+          "image-name" : "ghost-guy-mark-monoline.svg",
+          "name" : "ghost-guy-mark-monoline",
           "opacity" : 1,
           "position" : {
             "scale" : 1.3,
             "translation-in-points" : [
-              -22.40000000000009,
+              -32,
               -24
             ]
           }
@@ -36,16 +23,29 @@
         {
           "blend-mode" : "normal",
           "fill" : {
-            "solid" : "srgb:0.97583,0.97139,1.00000,1.00000"
+            "linear-gradient" : [
+              "srgb:0.91150,0.89052,0.85029,1.00000",
+              "srgb:0.53443,0.61206,0.96184,0.89794"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 0
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0.7
+              }
+            }
           },
           "hidden" : false,
-          "image-name" : "ghost-guy-mark-monoline.svg",
-          "name" : "ghost-guy-mark-monoline",
-          "opacity" : 0.4,
+          "image-name" : "ghost-guy-mark-monoline 2.svg",
+          "name" : "ghost-guy-mark-monoline 2",
+          "opacity" : 1,
           "position" : {
             "scale" : 1.3,
             "translation-in-points" : [
-              -32,
+              -22.40000000000009,
               -24
             ]
           }
@@ -61,6 +61,7 @@
       }
     },
     {
+      "hidden" : false,
       "layers" : [
 
       ],
