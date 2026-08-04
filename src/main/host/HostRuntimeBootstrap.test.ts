@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import {
+  HostRuntimeBootstrap,
+  type HostRuntimeDeferredRecoveryRecord
+} from './HostRuntimeBootstrap'
 
 const ACTOR = {
   clientId: 'test-client',
@@ -30,6 +33,12 @@ describe('HostRuntimeBootstrap', () => {
       position: { generation: 1, cursor: 0 },
       receipts: { size: 0, indeterminate: 0 }
     })
+    expect(runtime.getRecoverySummary().deferred).toEqual({
+      availability: 'unavailable',
+      size: null,
+      indeterminate: null,
+      uniqueIndeterminateCommandCount: null
+    })
 
     const delta = runtime.deltaStore.append({
       kind: 'upsert',
@@ -55,6 +64,69 @@ describe('HostRuntimeBootstrap', () => {
     expect(receipt.receipt.cursor).toBe(1)
     expect(receipt.receipt.commandName).toBe('composer.send')
     expect(runtime.getPosition()).toEqual({ generation: 1, cursor: 1 })
+  })
+
+  it('reports available deferred recovery and deduplicates indeterminate command ids', () => {
+    const first = new HostRuntimeBootstrap({ hostDataDir })
+    first.receiptStore.begin({
+      commandId: 'shared-command',
+      idempotencyKey: 'idem-shared',
+      commandName: 'ping',
+      commandFingerprint: 'a'.repeat(64),
+      actor: ACTOR,
+      target: { kind: 'host', id: 'host-1' },
+      authority: { decision: 'allowed' }
+    })
+
+    const restarted = new HostRuntimeBootstrap({
+      hostDataDir,
+      deferredRecovery: {
+        list: () => [
+          { commandId: 'shared-command', state: 'indeterminate' },
+          { commandId: 'deferred-only', state: 'indeterminate' },
+          { commandId: 'completed-deferred', state: 'succeeded' }
+        ]
+      }
+    })
+    const summary = restarted.getRecoverySummary()
+
+    expect(summary.receipts).toMatchObject({ size: 1, indeterminate: 1 })
+    expect(summary.deferred).toEqual({
+      availability: 'available',
+      size: 3,
+      indeterminate: 2,
+      uniqueIndeterminateCommandCount: 2
+    })
+  })
+
+  it('reports unavailable deferred recovery when the source throws or returns invalid records', () => {
+    const throwing = new HostRuntimeBootstrap({
+      hostDataDir,
+      deferredRecovery: {
+        list: () => {
+          throw new Error('bridge unavailable')
+        }
+      }
+    })
+    expect(throwing.getRecoverySummary().deferred).toEqual({
+      availability: 'unavailable',
+      size: null,
+      indeterminate: null,
+      uniqueIndeterminateCommandCount: null
+    })
+
+    const invalid = new HostRuntimeBootstrap({
+      hostDataDir,
+      deferredRecovery: {
+        list: () => [{ commandId: 'missing-state' } as unknown as HostRuntimeDeferredRecoveryRecord]
+      }
+    })
+    expect(invalid.getRecoverySummary().deferred).toEqual({
+      availability: 'unavailable',
+      size: null,
+      indeterminate: null,
+      uniqueIndeterminateCommandCount: null
+    })
   })
 
   it('reconstructs delta position and promotes pending receipts to indeterminate', () => {
