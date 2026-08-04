@@ -243,6 +243,7 @@ async function attachRendererCdpSession(options) {
     browserVersion: version && version['Browser'] ? version['Browser'] : null,
     session,
     send: session.send,
+    onEvent: session.onEvent,
     close: session.close
   }
 }

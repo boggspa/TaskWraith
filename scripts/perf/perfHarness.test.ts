@@ -1057,10 +1057,12 @@ describe('T2 runner (no Electron launch)', () => {
   })
 
   it('CDP websocket adapter speaks JSON-RPC via injected WebSocket', async () => {
+    let lastSocket = null
     class FakeWs {
       constructor(url) {
         this.url = url
         this.handlers = {}
+        lastSocket = this
         queueMicrotask(() => this.handlers.open && this.handlers.open())
       }
       on(event, handler) {
@@ -1102,6 +1104,21 @@ describe('T2 runner (no Electron launch)', () => {
       }
     })
     expect(attached.kind).toBe('renderer_cdp')
+    const events = []
+    const unsubscribe = attached.onEvent((event) => events.push(event))
+    lastSocket.handlers.message(
+      JSON.stringify({
+        method: 'HeapProfiler.addHeapSnapshotChunk',
+        params: { chunk: 'streamed' }
+      })
+    )
+    expect(events).toEqual([
+      {
+        method: 'HeapProfiler.addHeapSnapshotChunk',
+        params: { chunk: 'streamed' }
+      }
+    ])
+    unsubscribe()
     attached.close()
   })
 
