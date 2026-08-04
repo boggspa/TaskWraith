@@ -2729,7 +2729,7 @@
 }
 .provider-install-row {
   display: grid;
-  grid-template-columns: 60px minmax(0, 1fr) auto;
+  grid-template-columns: 60px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
 }
@@ -2737,16 +2737,21 @@
  * ("Qwen 3.5 (9B Param)") carry longer labels than the short provider
  * names, so they get a wider label column to avoid clipping. */
 .provider-install-row.is-model {
-  grid-template-columns: 150px minmax(0, 1fr) auto;
+  grid-template-columns: 150px minmax(0, 1fr) auto auto;
+}
+/* Rows without an Install action (plugin recipes, platform-mismatched
+ * commands) keep the command column stretched to the row edge. */
+.provider-install-row > .provider-install-copy:last-child {
+  grid-column: 3 / -1;
+  justify-self: end;
 }
 /* Caption that separates the "install Ollama" rows from the
  * "pull a model" rows below them. */
 .provider-install-subhead {
   margin-top: 6px;
-  font-size: 0.74em;
+  font-size: 0.8em;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
   color: var(--text-tertiary, var(--text-secondary));
 }
 .provider-install-label {
@@ -10957,9 +10962,11 @@
   min-height: 0;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: clamp(184px, 24vw, 232px);
+  /* 1.25x readability pass (owner request 2026-08-05): columns scale with
+   * the card type so bigger text wraps the same, not tighter. */
+  grid-auto-columns: clamp(230px, 30vw, 290px);
   grid-template-rows: minmax(0, 1fr);
-  gap: 8px;
+  gap: 10px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior: contain;
