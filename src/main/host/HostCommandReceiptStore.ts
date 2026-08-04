@@ -246,7 +246,8 @@ export type HostCommandReceiptBeginResult =
   /**
    * Protected anchors (pending + indeterminate) already consume maxRecords.
    * Refused before any index or journal mutation. Exact command/idempotency
-   * replay and conflict paths remain available at capacity.
+   * replay remains available at capacity. A new idempotency conflict is
+   * admitted only when its owner and durable conflict receipt can both fit.
    * Body-free — never exposes receipt/actor/target/body.
    */
   | { kind: 'capacity_refused' }
@@ -299,6 +300,11 @@ interface CheckpointDocument {
 type JournalEvent =
   | { op: 'upsert'; record: HostCommandReceiptRecord }
   | { op: 'compact'; retainedCommandIds: string[]; at: string }
+
+type HostCommandReceiptRetentionPin = {
+  ownerCommandId: string
+  conflictCommandId: string
+}
 
 export class HostCommandReceiptStore {
   private readonly dataDir: string
@@ -376,6 +382,15 @@ export class HostCommandReceiptStore {
           }
         }
       }
+    }
+
+    // Recovery must fail before pending -> indeterminate promotion mutates the
+    // journal. A lowered bound cannot partially rewrite durable evidence and
+    // then throw from compaction.
+    if (this.countProtectedAnchors() > this.maxRecords) {
+      throw new Error(
+        'HostCommandReceiptStore: protected anchors exceed maxRecords during recovery'
+      )
     }
 
     // Host restart while a command was in-flight: surface indeterminate recovery
@@ -491,6 +506,14 @@ export class HostCommandReceiptStore {
           return { kind: 'existing', receipt: cloneRecord(existing) }
         }
 
+        // A returned conflict receipt is a reconnect-safe durable result. If
+        // protected anchors plus its owner and the new conflict cannot all fit,
+        // refuse before indexing or appending instead of returning a receipt
+        // that inline compaction would immediately erase.
+        if (!this.canRetainDurableConflict(existing.commandId)) {
+          return { kind: 'capacity_refused' }
+        }
+
         // Distinct commandId + same key + different fingerprint → durable conflict.
         // Conflicts always persist fixed non-grant authority (denied), even when
         // the caller supplied allowed/deferred — never grant via conflict path.
@@ -516,7 +539,10 @@ export class HostCommandReceiptStore {
 
         this.indexRecord(conflictRecord)
         this.appendJournalEvent({ op: 'upsert', record: conflictRecord })
-        this.maybeCompact()
+        this.maybeCompact({
+          ownerCommandId: existing.commandId,
+          conflictCommandId: conflictRecord.commandId
+        })
         const conflict: HostCommandReceiptBeginResult = {
           kind: 'conflict',
           reason: 'idempotency_key_command_mismatch',
@@ -531,8 +557,8 @@ export class HostCommandReceiptStore {
     }
 
     // Refuse new distinct commands when protected anchors already consume
-    // maxRecords. Exact replay, conflict, and occupied-commandId paths above
-    // remain available at capacity. Refuse before any index or journal mutation.
+    // maxRecords. Exact replay and occupied-commandId paths above remain
+    // available at capacity. Refuse before any index or journal mutation.
     if (this.countProtectedAnchors() >= this.maxRecords) {
       return { kind: 'capacity_refused' }
     }
@@ -716,6 +742,19 @@ export class HostCommandReceiptStore {
     return count
   }
 
+  private canRetainDurableConflict(ownerCommandId: string): boolean {
+    const requiredCommandIds = new Set<string>()
+    for (const [, record] of this.recordsByCommandId) {
+      if (record.status === 'pending' || record.status === 'indeterminate') {
+        requiredCommandIds.add(record.commandId)
+      }
+    }
+    requiredCommandIds.add(ownerCommandId)
+    // The new conflict has a distinct commandId (occupied ids were handled
+    // before this path), so it requires one additional retention slot.
+    return requiredCommandIds.size + 1 <= this.maxRecords
+  }
+
   private indexRecord(record: HostCommandReceiptRecord): void {
     this.recordsByCommandId.set(record.commandId, record)
     // Conflict receipts never claim or steal the idempotency-key mapping.
@@ -725,21 +764,25 @@ export class HostCommandReceiptStore {
     }
   }
 
-  private maybeCompact(): void {
+  private maybeCompact(retentionPin?: HostCommandReceiptRetentionPin): void {
     if (this.journalRecordCount >= this.compactAfterRecords) {
-      this.writeCheckpointAndResetJournal()
+      this.writeCheckpointAndResetJournal(retentionPin)
     } else if (this.recordsByCommandId.size > this.maxRecords) {
-      this.writeCheckpointAndResetJournal()
+      this.writeCheckpointAndResetJournal(retentionPin)
     }
   }
 
   /**
    * Bounded retention that prefers non-conflict idempotency owners over
-   * conflicts. A retained conflict never outlives its conflictCommandId owner:
-   * if maxRecords cannot hold both (including maxRecords=1), the conflict is
-   * evicted and the owner is kept. Never exceeds the configured bound.
+   * conflicts. A retained conflict never outlives its conflictCommandId owner.
+   * The creating begin call may pin an admitted owner/conflict pair; later
+   * ordinary compaction may evict the conflict when both no longer fit.
+   * Never exceeds the configured bound.
    */
-  private selectRecordsForRetention(all: HostCommandReceiptRecord[]): HostCommandReceiptRecord[] {
+  private selectRecordsForRetention(
+    all: HostCommandReceiptRecord[],
+    retentionPin?: HostCommandReceiptRetentionPin
+  ): HostCommandReceiptRecord[] {
     if (all.length <= this.maxRecords) {
       return all
     }
@@ -758,6 +801,24 @@ export class HostCommandReceiptStore {
     for (const record of sorted) {
       if (record.status !== 'pending' && record.status !== 'indeterminate') continue
       selected.set(record.commandId, record)
+    }
+
+    // During the begin call that durably creates a conflict, retain that exact
+    // conflict and its owner together ahead of ordinary terminal rows. The
+    // admission preflight guarantees these pins do not displace anchors or
+    // exceed maxRecords. Later unrelated compaction uses ordinary retention.
+    if (retentionPin) {
+      const owner = all.find((record) => record.commandId === retentionPin.ownerCommandId)
+      const conflict = all.find(
+        (record) =>
+          record.commandId === retentionPin.conflictCommandId &&
+          record.status === 'conflict' &&
+          record.conflictCommandId === retentionPin.ownerCommandId
+      )
+      if (owner && conflict) {
+        selected.set(owner.commandId, owner)
+        selected.set(conflict.commandId, conflict)
+      }
     }
 
     // Phase 2: retain non-conflict terminal owners newest-first within
@@ -786,8 +847,11 @@ export class HostCommandReceiptStore {
     return [...selected.values()]
   }
 
-  private writeCheckpointAndResetJournal(): void {
-    const records = this.selectRecordsForRetention([...this.recordsByCommandId.values()])
+  private writeCheckpointAndResetJournal(retentionPin?: HostCommandReceiptRetentionPin): void {
+    const records = this.selectRecordsForRetention(
+      [...this.recordsByCommandId.values()],
+      retentionPin
+    )
 
     // Fail closed: if protected anchors alone exceed maxRecords the retained
     // set will be larger than the configured bound.  Do not rewrite evidence

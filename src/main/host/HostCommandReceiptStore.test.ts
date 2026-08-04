@@ -340,28 +340,30 @@ describe('HostCommandReceiptStore', () => {
     expect(attack?.authority.reason).toBe('idempotency_key_command_mismatch')
   })
 
-  it('at maxRecords=1 retains original owner over conflict and blocks fresh pending mint', () => {
+  it('at maxRecords=1 refuses conflict without mutation and preserves exact replay', () => {
     const store = openStore({ maxRecords: 1, compactAfterRecords: 1000 })
     const first = store.begin(baseInput())
     expect(first.kind).toBe('created')
     store.complete({ commandId: 'cmd-1', status: 'succeeded', resultSummary: 'owner' })
 
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const journalBefore = readFileSync(journalPath, 'utf8')
     const otherFp = hostCommandFingerprint({
       type: 'composer.send',
       targetKind: 'thread',
       targetId: 'thread-1',
       argsDigest: 'CONFLICT-AT-BOUND'
     })
-    const conflict = store.begin(
+    const refused = store.begin(
       baseInput({
         commandId: 'cmd-2',
         idempotencyKey: 'idem-1',
         commandFingerprint: otherFp
       })
     )
-    expect(conflict.kind).toBe('conflict')
+    expect(refused).toEqual({ kind: 'capacity_refused' })
+    expect(readFileSync(journalPath, 'utf8')).toBe(journalBefore)
 
-    store.compact()
     expect(store.size).toBe(1)
     expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
     expect(store.getByCommandId('cmd-2', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
@@ -373,6 +375,7 @@ describe('HostCommandReceiptStore', () => {
     expect(again.receipt.commandId).toBe('cmd-1')
     expect(again.receipt.status).toBe('succeeded')
 
+    store.compact()
     const reopened = openStore({ maxRecords: 1 })
     expect(reopened.size).toBe(1)
     expectFound(reopened.getByIdempotencyKey('idem-1', OWNER_ACTOR))
@@ -1245,27 +1248,164 @@ describe('HostCommandReceiptStore', () => {
     expect(replay.kind).toBe('existing')
   })
 
-  it('allows conflict path at capacity without capacity_refused', () => {
+  it('refuses a conflict before mutation when maxRecords cannot retain owner plus receipt', () => {
     const store = openStore({ maxRecords: 1, compactAfterRecords: 1000 })
     store.begin(baseInput())
     store.complete({ commandId: 'cmd-1', status: 'succeeded' })
 
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
     const otherFp = hostCommandFingerprint({
       type: 'composer.send',
       targetKind: 'thread',
       targetId: 'thread-1',
       argsDigest: 'CONFLICT-AT-CAPACITY'
     })
-    const conflict = store.begin(
+    const refused = store.begin(
       baseInput({
         commandId: 'cmd-2',
         idempotencyKey: 'idem-1',
         commandFingerprint: otherFp
       })
     )
+
+    expect(refused).toEqual({ kind: 'capacity_refused' })
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    expect(store.getByCommandId('cmd-2', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+  })
+
+  it('retains an admitted owner and conflict through inline compaction and reopen', () => {
+    const store = openStore({ maxRecords: 2, compactAfterRecords: 1 })
+    store.begin(baseInput())
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+
+    const conflictFingerprint = hostCommandFingerprint({
+      type: 'composer.send',
+      targetKind: 'thread',
+      targetId: 'thread-1',
+      argsDigest: 'DURABLE-AT-BOUND'
+    })
+    const conflict = store.begin(
+      baseInput({
+        commandId: 'cmd-2',
+        idempotencyKey: 'idem-1',
+        commandFingerprint: conflictFingerprint
+      })
+    )
+
     expect(conflict.kind).toBe('conflict')
     if (conflict.kind !== 'conflict') return
-    expect(conflict.receipt?.status).toBe('conflict')
+    expect(conflict.receipt?.commandId).toBe('cmd-2')
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    const durable = expectFound(store.getByCommandId('cmd-2', OWNER_ACTOR), 'conflict')
+    expect(durable?.conflictCommandId).toBe('cmd-1')
+    expectFound(store.getByIdempotencyKey('idem-1', OWNER_ACTOR), 'succeeded')
+
+    const reopened = openStore({ maxRecords: 2, compactAfterRecords: 1 })
+    expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    expect(expectFound(reopened.getByCommandId('cmd-2', OWNER_ACTOR), 'conflict')).toMatchObject({
+      commandId: 'cmd-2',
+      conflictCommandId: 'cmd-1',
+      commandFingerprint: conflictFingerprint
+    })
+    expectFound(reopened.getByIdempotencyKey('idem-1', OWNER_ACTOR), 'succeeded')
+  })
+
+  it('pins anchors plus a non-anchor owner and new conflict ahead of ordinary terminals', () => {
+    const store = openStore({ maxRecords: 3, compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+
+    store.begin(
+      baseInput({
+        commandId: 'cmd-unrelated',
+        idempotencyKey: 'idem-unrelated',
+        commandName: 'ping',
+        commandFingerprint: hostCommandFingerprint({
+          type: 'ping',
+          targetKind: 'host',
+          targetId: 'unrelated'
+        }),
+        target: { kind: 'host', id: 'unrelated' }
+      })
+    )
+    store.complete({ commandId: 'cmd-unrelated', status: 'succeeded' })
+
+    store.begin(
+      baseInput({
+        commandId: 'cmd-anchor',
+        idempotencyKey: 'idem-anchor',
+        commandName: 'ping',
+        commandFingerprint: hostCommandFingerprint({
+          type: 'ping',
+          targetKind: 'host',
+          targetId: 'anchor'
+        }),
+        target: { kind: 'host', id: 'anchor' }
+      })
+    )
+
+    const conflictFingerprint = hostCommandFingerprint({
+      type: 'composer.send',
+      targetKind: 'thread',
+      targetId: 'thread-1',
+      argsDigest: 'PINNED-CONFLICT'
+    })
+    const conflict = store.begin(
+      baseInput({
+        commandId: 'cmd-conflict',
+        idempotencyKey: 'idem-1',
+        commandFingerprint: conflictFingerprint
+      })
+    )
+
+    expect(conflict.kind).toBe('conflict')
+    expect(store.size).toBe(3)
+    expectFound(store.getByCommandId('cmd-anchor', OWNER_ACTOR), 'pending')
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    expectFound(store.getByCommandId('cmd-conflict', OWNER_ACTOR), 'conflict')
+    expect(store.getByCommandId('cmd-unrelated', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+
+    const reopened = openStore({ maxRecords: 3, compactAfterRecords: 1000 })
+    expectFound(reopened.getByCommandId('cmd-anchor', OWNER_ACTOR), 'indeterminate')
+    expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    expectFound(reopened.getByCommandId('cmd-conflict', OWNER_ACTOR), 'conflict')
+    expectFound(reopened.getByIdempotencyKey('idem-1', OWNER_ACTOR), 'succeeded')
+  })
+
+  it('refuses a cross-actor conflict body-free without mutating durable state', () => {
+    const store = openStore({ maxRecords: 1, compactAfterRecords: 1000 })
+    store.begin(baseInput({ commandId: 'cmd-owner', idempotencyKey: 'idem-owner' }))
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+    const otherActor: HostCommandReceiptActor = {
+      clientId: 'client-other',
+      actorId: 'user-other',
+      clientClass: 'desktop'
+    }
+
+    const refused = store.begin(
+      baseInput({
+        commandId: 'cmd-secret-attempt',
+        idempotencyKey: 'idem-owner',
+        commandFingerprint: hostCommandFingerprint({
+          type: 'composer.send',
+          targetKind: 'thread',
+          targetId: 'secret-target',
+          argsDigest: 'secret-body'
+        }),
+        actor: otherActor,
+        target: { kind: 'thread', id: 'secret-target' }
+      })
+    )
+
+    expect(refused).toEqual({ kind: 'capacity_refused' })
+    expect(JSON.stringify(refused)).toBe('{"kind":"capacity_refused"}')
+    expect(JSON.stringify(refused)).not.toMatch(/secret|owner|other/i)
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+    expect(store.getByCommandId('cmd-owner', otherActor)).toEqual({ kind: 'actor_mismatch' })
+    expect(store.getByCommandId('cmd-secret-attempt', otherActor)).toEqual({ kind: 'not_found' })
   })
 
   it('frees capacity when a protected anchor becomes terminal', () => {
@@ -1311,41 +1451,34 @@ describe('HostCommandReceiptStore', () => {
     expect(created.receipt.commandId).toBe('cmd-distinct')
   })
 
-  it('conflict receipt cannot displace a pending anchor at maxRecords=1', () => {
+  it('refuses a conflict body-free when a pending owner consumes maxRecords=1', () => {
     const store = openStore({ maxRecords: 1, compactAfterRecords: 1000 })
     store.begin(baseInput({ commandId: 'cmd-pending', idempotencyKey: 'idem-pending' }))
     expectFound(store.getByCommandId('cmd-pending', OWNER_ACTOR), 'pending')
 
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
     const otherFp = hostCommandFingerprint({
       type: 'composer.send',
       targetKind: 'thread',
       targetId: 'thread-1',
       argsDigest: 'CONFLICT-ANCHOR'
     })
-    const conflict = store.begin(
+    const refused = store.begin(
       baseInput({
         commandId: 'cmd-conflict',
         idempotencyKey: 'idem-pending',
         commandFingerprint: otherFp
       })
     )
-    expect(conflict.kind).toBe('conflict')
-    if (conflict.kind !== 'conflict') return
-    expect(conflict.receipt?.status).toBe('conflict')
 
-    // Two records exist but maxRecords=1. Compact must keep the pending anchor.
-    store.compact()
+    expect(refused).toEqual({ kind: 'capacity_refused' })
+    expect(JSON.stringify(refused)).toBe('{"kind":"capacity_refused"}')
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
     expect(store.size).toBe(1)
     expectFound(store.getByCommandId('cmd-pending', OWNER_ACTOR), 'pending')
-    expect(store.getByCommandId('cmd-conflict', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
-    // Idempotency key still maps to pending owner
     expectFound(store.getByIdempotencyKey('idem-pending', OWNER_ACTOR), 'pending')
-
-    // Reopen: pending → indeterminate promotion, but anchor survives
-    const reopened = openStore({ maxRecords: 1 })
-    expect(reopened.size).toBe(1)
-    expectFound(reopened.getByCommandId('cmd-pending', OWNER_ACTOR), 'indeterminate')
-    expect(reopened.getByCommandId('cmd-conflict', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+    expect(store.getByCommandId('cmd-conflict', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
   })
 
   it('capacity_refused is body-free and does not leak receipt identity in serialization', () => {
@@ -1372,37 +1505,78 @@ describe('HostCommandReceiptStore', () => {
     expect(json).toBe('{"kind":"capacity_refused"}')
   })
 
-  it('fails closed on reopen when legacy protected anchors exceed lowered maxRecords', () => {
-    // Create store with generous maxRecords; leave two pending receipts
+  it('fails recovery before mutation when protected anchors exceed lowered maxRecords', () => {
     const store = openStore({ maxRecords: 10, compactAfterRecords: 1000 })
-    store.begin(baseInput({ commandId: 'cmd-a', idempotencyKey: 'idem-a' }))
+    const firstFingerprint = hostCommandFingerprint({
+      type: 'composer.send',
+      targetKind: 'thread',
+      targetId: 'thread-1',
+      argsDigest: 'anchor-a'
+    })
+    const secondFingerprint = hostCommandFingerprint({
+      type: 'ping',
+      targetKind: 'host',
+      targetId: 'n-b'
+    })
+    store.begin(
+      baseInput({
+        commandId: 'cmd-a',
+        idempotencyKey: 'idem-a',
+        commandFingerprint: firstFingerprint
+      })
+    )
     store.begin(
       baseInput({
         commandId: 'cmd-b',
         idempotencyKey: 'idem-b',
-        commandFingerprint: hostCommandFingerprint({
-          type: 'ping',
-          targetKind: 'host',
-          targetId: 'n-b'
-        }),
+        commandFingerprint: secondFingerprint,
         commandName: 'ping',
         target: { kind: 'host', id: 'n-b' }
       })
     )
     store.compact()
-    expect(store.size).toBe(2)
-    expect(existsSync(join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME))).toBe(true)
-
-    // Reopen with maxRecords=1 — 2 pending anchors > 1 must fail closed
-    expect(() => openStore({ maxRecords: 1, compactAfterRecords: 1000 })).toThrow(
-      /exceeds maxRecords/
+    clock = '2026-08-03T17:00:05.000Z'
+    store.markIndeterminate(
+      markInput({
+        commandId: 'cmd-b',
+        position: { generation: 3, cursor: 9 },
+        updatedAt: clock
+      })
     )
 
-    // On-disk evidence preserved — checkpoint + journal still intact
     const checkpointPath = join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
     expect(existsSync(checkpointPath)).toBe(true)
-    const doc = JSON.parse(readFileSync(checkpointPath, 'utf8')) as { records: unknown[] }
-    expect(doc.records).toHaveLength(2)
+    expect(existsSync(journalPath)).toBe(true)
+    const checkpointBefore = readFileSync(checkpointPath, 'utf8')
+    const journalBefore = readFileSync(journalPath, 'utf8')
+
+    expect(() => openStore({ maxRecords: 1, compactAfterRecords: 1000 })).toThrow(
+      /protected anchors exceed maxRecords during recovery/
+    )
+    expect(readFileSync(checkpointPath, 'utf8')).toBe(checkpointBefore)
+    expect(readFileSync(journalPath, 'utf8')).toBe(journalBefore)
+
+    clock = '2026-08-03T17:00:06.000Z'
+    const restored = openStore({ maxRecords: 10, compactAfterRecords: 1000 })
+    const first = expectFound(restored.getByCommandId('cmd-a', OWNER_ACTOR), 'indeterminate')
+    const second = expectFound(restored.getByCommandId('cmd-b', OWNER_ACTOR), 'indeterminate')
+    expect(first).toMatchObject({
+      commandId: 'cmd-a',
+      idempotencyKey: 'idem-a',
+      commandFingerprint: firstFingerprint,
+      actor: OWNER_ACTOR,
+      recoveryState: 'recoverable-indeterminate'
+    })
+    expect(second).toMatchObject({
+      commandId: 'cmd-b',
+      idempotencyKey: 'idem-b',
+      commandFingerprint: secondFingerprint,
+      actor: OWNER_ACTOR,
+      recoveryState: 'recoverable-indeterminate'
+    })
+    expect(readFileSync(checkpointPath, 'utf8')).toBe(checkpointBefore)
+    expect(readFileSync(journalPath, 'utf8')).not.toBe(journalBefore)
   })
 
   it('fails closed on compact when protected anchors exceed maxRecords without rewriting checkpoint', () => {
