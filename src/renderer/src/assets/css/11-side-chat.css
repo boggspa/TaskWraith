@@ -1294,9 +1294,8 @@
 }
 
 .blackboard-card-scope {
-  padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
-  border-radius: 999px;
+  /* De-pilled (owner request 2026-08-05): the scope reads as plain
+   * small-caps metadata beside the timestamp, no capsule. */
   color: color-mix(in srgb, var(--text-secondary) 74%, transparent);
   font-size: 11px;
   font-weight: 800;
@@ -1304,11 +1303,10 @@
   text-transform: uppercase;
 }
 
-/* Round-scoped entries are ephemeral (pruned at round end) — tint the
- * badge so they read as live working state, unlike session notes. */
+/* Round-scoped entries are ephemeral (pruned at round end) — keep the
+ * accent COLOR so they still read as live working state, unlike session
+ * notes; the capsule is gone with the rest of the badge chrome. */
 .blackboard-card-scope.scope-round {
-  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
 }
 
