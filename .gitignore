@@ -63,3 +63,6 @@ SESSION-IN-PROGRESS-*.md
 .cursor/
 /.fixpass*
 /.wsa-*
+
+# Nested TaskWraith fan-out worktrees must never live inside the main checkout
+.taskwraith-worktrees/
