@@ -5,6 +5,12 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 const RECEIPT_SCHEMA_VERSION = 1
 const MAX_SETTINGS_BYTES = 1024 * 1024
 const MAX_RECEIPT_BYTES = 2 * 1024 * 1024
+/**
+ * The exact read-only command observed in the official agy failure ledger.
+ * Keep this native unsandboxed grant narrow: the signed shell posture does not
+ * authorize an arbitrary unsandboxed command or an outside-workspace target.
+ */
+const AGY_WORKSPACE_STATUS_COMMAND = 'git status --porcelain'
 
 type JsonObject = Record<string, unknown>
 
@@ -120,11 +126,16 @@ function workspaceRules(input: AntigravityPermissionLeaseRequest): string[] {
   if (!isAbsolute(workspacePath) || /[\r\n)]/.test(workspacePath)) {
     throw new Error('AntiGravity permission setup requires a safe absolute workspace path.')
   }
-  const rules = [`read_file(${workspacePath})`, `read_file(${workspacePath}/**)`]
+  // agy 1.1.10 rejects path globs while constructing its terminal sandbox.
+  // A directory rule is the supported recursive workspace boundary; adding
+  // `/**` makes the entire launch fail before a tool can run.
+  const rules = [`read_file(${workspacePath})`]
   if (input.allowWrite) {
-    rules.push(`write_file(${workspacePath})`, `write_file(${workspacePath}/**)`)
+    rules.push(`write_file(${workspacePath})`)
   }
-  if (input.allowShell) rules.push('command(*)')
+  if (input.allowShell) {
+    rules.push('command(*)', `unsandboxed(${AGY_WORKSPACE_STATUS_COMMAND})`)
+  }
   return rules
 }
 

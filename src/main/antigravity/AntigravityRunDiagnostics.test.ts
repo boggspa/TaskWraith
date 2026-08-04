@@ -5,7 +5,7 @@ import {
 } from './AntigravityRunDiagnostics'
 
 describe('AntiGravity native run diagnostics', () => {
-  it.each(['read_file', 'write_file', 'command'])(
+  it.each(['read_file', 'write_file', 'command', 'unsandboxed'])(
     'recognises the official agy headless %s permission/no-output failure',
     (permission) => {
       expect(
@@ -19,6 +19,7 @@ describe('AntiGravity native run diagnostics', () => {
   it('keeps the diagnostic actionable without recommending the bypass flag', () => {
     expect(ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON).toContain('read_file')
     expect(ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON).toContain('command')
+    expect(ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON).toContain('unsandboxed')
     expect(ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON).not.toContain(
       '--dangerously-skip-permissions'
     )

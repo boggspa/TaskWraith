@@ -53,10 +53,9 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
       allow: [
         'command(git status)',
         'read_file(/Users/test/Project)',
-        'read_file(/Users/test/Project/**)',
         'write_file(/Users/test/Project)',
-        'write_file(/Users/test/Project/**)',
-        'command(*)'
+        'command(*)',
+        'unsandboxed(git status --porcelain)'
       ],
       ask: ['command(rm)'],
       deny: ['read_file(/secrets/**)']
@@ -153,8 +152,9 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     await first.release()
     const second = await secondPending
     const installed = JSON.parse(await readFile(settingsPath, 'utf8'))
-    expect(installed.permissions.allow).toContain('read_file(/Users/test/Second/**)')
-    expect(installed.permissions.allow).not.toContain('read_file(/Users/test/First/**)')
+    expect(installed.permissions.allow).toContain('read_file(/Users/test/Second)')
+    expect(installed.permissions.allow).not.toContain('read_file(/Users/test/First)')
+    expect(installed.permissions.allow).not.toContain('unsandboxed(git status --porcelain)')
     expect(installed).not.toHaveProperty('toolPermission')
     await second.release()
   })
