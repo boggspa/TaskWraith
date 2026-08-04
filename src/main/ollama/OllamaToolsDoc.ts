@@ -113,14 +113,14 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   // label: policy clamps it to one exact desktop-reviewed prompt per call, so
   // no grant or Full Access can make it automatic.
   if (def.name === 'canvas_eval') {
-    return 'signed-elevated — denied under Ask; approval-gated under Plan and prompts every permitted call with exact desktop review'
+    return 'signed-elevated — denied under Plan; approval-gated under Ask and prompts every permitted call with exact desktop review'
   }
   if (def.name === 'request_tool_permission') {
     return 'permission elicitation — callable under Ask/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'
   }
   if (annotations.readOnlyHint === true) return 'read-only (no approval needed)'
   if (annotations.destructiveHint === true) {
-    return 'mutating — governed by your run permission role (denied under Ask/Plan; prompts under Accept Edits unless granted)'
+    return 'mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)'
   }
   return 'governed by your run permission role'
 }

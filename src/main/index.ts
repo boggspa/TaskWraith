@@ -8988,7 +8988,10 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
             provider: parent.provider,
             workspacePath: parent.workspacePath,
             settings,
-            presetId: 'read_only'
+            // Automatic mailbox continuations are unattended: use the plan
+            // no-ask floor, not read_only (Ask), so no modal fires with
+            // nobody at the keyboard (posture inversion 2026-08-04).
+            presetId: 'plan'
           })
         : undefined
     const payload: AgentRunPayload = {

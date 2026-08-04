@@ -136,7 +136,12 @@ const ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_P
 // gated canvas/media instruments + subthread delegation), so allowing a mid-
 // round swap to `plan` would let a Boss/agent re-open that elevation on a seat
 // the read-only round locked down. `plan` is intentionally NOT in this set.
-const READ_ONLY_ROUND_PERMISSION_PRESET_SET = new Set<string>(['read_only'])
+// Posture inversion (2026-08-04): during a read-only round a roster edit may
+// assign the round's own baseline (`read_only` — the Ask tier the round is
+// already composed of, so it unlocks nothing) or the strictly narrower no-ask
+// floor (`plan`). The write tiers (default+) stay rejected — those are the
+// mid-round elevations this guard exists to stop.
+const READ_ONLY_ROUND_PERMISSION_PRESET_SET = new Set<string>(['read_only', 'plan'])
 const PATCH_FIELDS = [
   'provider',
   'model',

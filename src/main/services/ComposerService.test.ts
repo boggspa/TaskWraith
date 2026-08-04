@@ -670,11 +670,11 @@ describe('ComposerService', () => {
     expect(payload.workflowMode).toBe('normal')
     expect(payload.composer.workflowMode).toBe('normal')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
-    // Posture split: the Ask row resolves the strict floor preset —
-    // no elevation path (subthread/canvas denied).
+    // Posture inversion: the Ask row prompts per-invocation —
+    // no auto-deny (subthread/canvas ask).
     expect(payload.effectivePermissions?.presetId).toBe('read_only')
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
-    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('ask')
   })
 
   it('uses persisted plan workflow to force plan approval mode', () => {
@@ -687,7 +687,7 @@ describe('ComposerService', () => {
     expect(payload.composer.workflowMode).toBe('plan')
   })
 
-  it('posture split: a Plan-workflow solo run resolves the plan instrument tier', () => {
+  it('posture inversion: a Plan-workflow solo run resolves the plan no-ask floor', () => {
     const payload = compose(
       { provider: 'claude', workflowMode: 'plan' },
       { approvalMode: 'default' }
@@ -695,12 +695,12 @@ describe('ComposerService', () => {
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
-    // The Plan row is now genuinely distinct from Ask: canvas/media/
-    // subthread are approval-queued (the W7 instrument tier)…
+    // The Plan row is the no-ask floor: canvas/media/subthread deny outright
+    // (its only elevation is the plan-document approval)…
     expect(payload.effectivePermissions?.presetId).toBe('plan')
-    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('ask')
-    expect(payload.effectivePermissions?.agenticServices.mediaEditing).toBe('ask')
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.mediaEditing).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
     // …while direct writes remain denied (plan is not a write mode).
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
     expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
@@ -1235,9 +1235,9 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(payload.effectivePermissions).toBeDefined()
     expect(payload.effectivePermissions?.readOnly).toBe(true)
     expect(payload.effectivePermissions?.presetId).toBe('read_only')
-    // read_only preset hard-denies the mutating services.
-    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
-    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+    // read_only (Ask) prompts for the mutating services rather than denying.
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('ask')
   })
 
   it('populates signed effectivePermissions for non-read-only runs', () => {
@@ -1806,9 +1806,10 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
     )
     expect(payload.approvalMode).toBe('plan')
     // Read-only permissions must be POPULATED (forced before the plan-population
-    // block) — not read-only in name only.
+    // block) — not read-only in name only. Posture inversion (2026-08-04):
+    // unattended runs take the plan no-ask floor.
     expect(payload.effectivePermissions?.readOnly).toBe(true)
-    expect(payload.effectivePermissions?.presetId).toBe('read_only')
+    expect(payload.effectivePermissions?.presetId).toBe('plan')
   })
 
   it('clears externalPathGrants for the forced-plan unattended run (interactive contrast keeps them)', () => {
@@ -1996,10 +1997,12 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.readOnly).toBe(false)
   })
 
-  it('no ack (resolve → null) → plan + read_only (P1 regression); tampered/stale surface here as null too', () => {
+  it('no ack (resolve → null) → plan approvalMode + plan no-ask floor (P1 regression); tampered/stale surface here as null too', () => {
     const payload = composeUnattended(null)
     expect(payload.approvalMode).toBe('plan')
-    expect(payload.effectivePermissions?.presetId).toBe('read_only')
+    // Posture inversion (2026-08-04): the unattended fallback is the plan
+    // no-ask floor, not read_only (Ask) — no modals with nobody attending.
+    expect(payload.effectivePermissions?.presetId).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
   })
 })

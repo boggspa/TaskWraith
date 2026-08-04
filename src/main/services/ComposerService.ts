@@ -631,7 +631,9 @@ export class ComposerService {
             // (workflowMode 'plan') resolves the `plan` instrument tier; the
             // Ask row (workflowMode 'normal') the strict floor. Both
             // keep readOnly:true so the signed posture still clears the clamp.
-            presetId: workflowMode === 'plan' ? 'plan' : 'read_only'
+            // Unattended (scheduled) plan-mode runs force the plan no-ask floor:
+            // an Ask posture would raise modals nobody is attending.
+            presetId: workflowMode === 'plan' || unattended ? 'plan' : 'read_only'
           })
         : elevatedPresetId
           ? resolveEffectiveRunPermissions({

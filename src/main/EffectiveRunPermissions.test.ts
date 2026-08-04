@@ -100,55 +100,57 @@ describe('resolveEffectiveRunPermissions', () => {
       // untouched. The global-deny kill switch and preview-risk models still force
       // 'deny' ahead of the preset (covered by the deny-path tests below).
       expect(resolved.networkAccess).toBe('allow')
-      // Shared floor: neither preset can write files, run shell, capture, or
-      // cross-thread-read — the split only diverges on the instrument services.
-      // canvasEval is NOT asserted here: it became an instrument (deny under
-      // read_only, ask under plan), so it is no longer part of the shared floor.
-      // The per-preset tests below and the drift guard cover it.
-      expect(resolved.agenticServices.fileChanges).toBe('deny')
-      expect(resolved.agenticServices.externalPublish).toBe('ask')
-      expect(resolved.agenticServices.shellCommands).toBe('deny')
-      expect(resolved.agenticServices.mcpTools).toBe('ask')
-      expect(resolved.agenticServices.crossThreadRead).toBe('deny')
+      // Shared floor after the 2026-08-04 inversion: BOTH presets stay
+      // readOnly:true / approvalMode 'plan' (native lanes plan-contained) and
+      // both keep capture denied. They diverge on the ASK axis: read_only
+      // ("Ask") may prompt for anything, plan never prompts.
       expect(resolved.agenticServices.mediaRecording).toBe('deny')
     }
   })
 
-  it('read_only is the strict floor — no elevation path (subthread/canvas/media denied)', () => {
+  it('read_only ("Ask") asks for everything not auto-allowed — no auto-deny except capture', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'read_only'
     })
-    expect(resolved.agenticServices.subThreadDelegation).toBe('deny')
-    expect(resolved.agenticServices.canvasInteraction).toBe('deny')
-    expect(resolved.agenticServices.meshCanvas).toBe('deny')
-    expect(resolved.agenticServices.mediaEditing).toBe('deny')
-    // Deliberately still denied here even though `plan` may now ask for it:
-    // read_only offers no elevation path to a code-execution boundary at all.
-    expect(resolved.agenticServices.canvasEval).toBe('deny')
+    expect(resolved.agenticServices.fileChanges).toBe('ask')
+    expect(resolved.agenticServices.shellCommands).toBe('ask')
+    expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
+    expect(resolved.agenticServices.canvasInteraction).toBe('ask')
+    expect(resolved.agenticServices.meshCanvas).toBe('ask')
+    expect(resolved.agenticServices.mediaEditing).toBe('ask')
+    expect(resolved.agenticServices.crossThreadRead).toBe('ask')
+    expect(resolved.agenticServices.threadMessage).toBe('ask')
+    expect(resolved.agenticServices.externalPublish).toBe('ask')
+    expect(resolved.agenticServices.mcpTools).toBe('ask')
+    // canvasEval remains non-grantable, so this ASK can never become automatic.
+    expect(resolved.agenticServices.canvasEval).toBe('ask')
+    // The one deliberate auto-deny: there is no attended capture flow to approve.
+    expect(resolved.agenticServices.mediaRecording).toBe('deny')
   })
 
-  it('plan is the instrument tier — subthread/canvas/media/eval approval-queued (ask), never a write', () => {
+  it('plan is the no-ask floor — every gated service denies, no mid-run modals', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'plan'
     })
-    expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
-    expect(resolved.agenticServices.canvasInteraction).toBe('ask')
-    expect(resolved.agenticServices.sketchCanvas).toBe('ask')
-    expect(resolved.agenticServices.meshCanvas).toBe('ask')
-    expect(resolved.agenticServices.mediaEditing).toBe('ask')
+    expect(resolved.agenticServices.subThreadDelegation).toBe('deny')
+    expect(resolved.agenticServices.canvasInteraction).toBe('deny')
+    expect(resolved.agenticServices.sketchCanvas).toBe('deny')
+    expect(resolved.agenticServices.meshCanvas).toBe('deny')
+    expect(resolved.agenticServices.mediaEditing).toBe('deny')
     expect(resolved.agenticServices.fileChanges).toBe('deny')
-    expect(resolved.agenticServices.externalPublish).toBe('ask')
+    expect(resolved.agenticServices.externalPublish).toBe('deny')
     expect(resolved.agenticServices.shellCommands).toBe('deny')
+    expect(resolved.agenticServices.mcpTools).toBe('deny')
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
-    // ASK, not allow. canvasEval is non-grantable, so this prompts on EVERY
-    // call and no grant/preset/Full Access can promote it.
-    expect(resolved.agenticServices.canvasEval).toBe('ask')
+    // Plan never prompts — even eval denies outright; the plan-document
+    // approval is the only elevation path.
+    expect(resolved.agenticServices.canvasEval).toBe('deny')
   })
 
   it('pins the Sketch Canvas mutation ladder across every permission preset', () => {
@@ -160,8 +162,8 @@ describe('resolveEffectiveRunPermissions', () => {
         presetId
       }).agenticServices.sketchCanvas
 
-    expect(policyFor('read_only')).toBe('deny')
-    expect(policyFor('plan')).toBe('ask')
+    expect(policyFor('read_only')).toBe('ask')
+    expect(policyFor('plan')).toBe('deny')
     // Persisted pre-Sketch settings omit the optional key; Accept Edits
     // still adopts the intentional prompt-free fallback.
     expect(policyFor('default')).toBe('allow')
@@ -192,7 +194,7 @@ describe('resolveEffectiveRunPermissions', () => {
       }).agenticServices.externalPublish
 
     expect(policyFor('read_only')).toBe('ask')
-    expect(policyFor('plan')).toBe('ask')
+    expect(policyFor('plan')).toBe('deny')
     expect(policyFor('default')).toBe('ask')
     expect(policyFor('workspace_write')).toBe('allow')
     expect(policyFor('full_access')).toBe('allow')
@@ -228,7 +230,7 @@ describe('resolveEffectiveRunPermissions', () => {
         presetId
       }).agenticServices.fileChanges
 
-    expect(policyFor('read_only')).toBe('deny')
+    expect(policyFor('read_only')).toBe('ask')
     expect(policyFor('plan')).toBe('deny')
     // Accept Edits' defining behavior (user decision 2026-08-04): selecting the
     // preset IS the authorization for in-workspace file edits — no per-edit
@@ -265,7 +267,7 @@ describe('resolveEffectiveRunPermissions', () => {
     // deny — read-class browsing in the sandboxed Canvas Browser is the same
     // reach web_fetch already has prompt-free, with a visible surface attached.
     expect(policyFor('read_only')).toBe('ask')
-    expect(policyFor('plan')).toBe('ask')
+    expect(policyFor('plan')).toBe('deny')
     expect(policyFor('default')).toBe('ask')
     expect(policyFor('workspace_write')).toBe('allow')
     expect(policyFor('full_access')).toBe('allow')
@@ -285,7 +287,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(globallyDenied.agenticServices.webBrowsing).toBe('deny')
   })
 
-  it('webBrowsing stays per-invocation under read_only/plan — grants promote it only under default', () => {
+  it('webBrowsing stays per-invocation under Ask, denied under plan — grants promote it only under default', () => {
     const grants = [
       {
         id: 'grant-browse',
@@ -296,15 +298,21 @@ describe('resolveEffectiveRunPermissions', () => {
         updatedAt: '2026-08-04T00:00:00.000Z'
       }
     ]
-    for (const presetId of ['read_only', 'plan'] as const) {
-      const held = resolveEffectiveRunPermissions({
-        provider: 'claude',
-        workspacePath: '/repo',
-        settings: settings({ agenticWorkspaceGrants: grants }),
-        presetId
-      })
-      expect(held.agenticServices.webBrowsing).toBe('ask')
-    }
+    const held = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({ agenticWorkspaceGrants: grants }),
+      presetId: 'read_only'
+    })
+    expect(held.agenticServices.webBrowsing).toBe('ask')
+    // plan never asks — the grant cannot resurrect a denied service there.
+    const planHeld = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({ agenticWorkspaceGrants: grants }),
+      presetId: 'plan'
+    })
+    expect(planHeld.agenticServices.webBrowsing).toBe('deny')
     // The SAME grant is real: under default it promotes to the workspace tier.
     const def = resolveEffectiveRunPermissions({
       provider: 'claude',
@@ -315,34 +323,24 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.webBrowsing).toBe('workspace')
   })
 
-  it('read_only and plan differ ONLY on the instrument services (guard against re-merge/drift)', () => {
+  it('plan tightens read_only exactly — every Ask becomes deny, capture equal-deny (drift guard)', () => {
     const base = { provider: 'claude' as const, workspacePath: '/repo', settings: settings() }
     const readOnly = resolveEffectiveRunPermissions({ ...base, presetId: 'read_only' }).agenticServices
     const plan = resolveEffectiveRunPermissions({ ...base, presetId: 'plan' }).agenticServices
-    const INSTRUMENT_SERVICES: readonly string[] = [
-      'subThreadDelegation',
-      'canvasInteraction',
-      'sketchCanvas',
-      'meshCanvas',
-      'mediaEditing',
-      // Joined the belt 2026-07-26. Hard-denying it made eval SILENTLY
-      // unavailable in the posture most likely to need it, while `ask` costs
-      // nothing: it is non-grantable, so it re-prompts every call regardless.
-      'canvasEval'
-    ]
     for (const service of Object.keys(readOnly) as (keyof typeof readOnly)[]) {
-      if (INSTRUMENT_SERVICES.includes(service)) {
-        // plan RELAXES read_only's deny to an approval prompt on these three.
+      if (service === 'mediaRecording') {
+        // The one shared auto-deny: no attended capture flow exists to approve.
         expect(readOnly[service]).toBe('deny')
-        expect(plan[service]).toBe('ask')
+        expect(plan[service]).toBe('deny')
       } else {
-        // everything else is byte-identical — plan is a strict superset.
-        expect(plan[service]).toBe(readOnly[service])
+        // Ask prompts; plan is the no-ask floor — strictly tighter, never looser.
+        expect(readOnly[service]).toBe('ask')
+        expect(plan[service]).toBe('deny')
       }
     }
   })
 
-  it('plan instruments stay per-invocation — a standing workspace grant does NOT auto-allow them', () => {
+  it('plan stays denied — a standing workspace grant does NOT lift the no-ask floor', () => {
     const grants = [
       {
         id: 'grant-canvas',
@@ -377,10 +375,8 @@ describe('resolveEffectiveRunPermissions', () => {
         updatedAt: '2026-05-24T00:00:00.000Z'
       },
       {
-        // The one that matters most now that canvasEval is ASK under plan
-        // rather than DENY: a standing grant must NOT turn a code-execution
-        // boundary into an automatic allow. canvasEval is non-grantable, so
-        // this grant should be inert in EVERY preset, not merely under plan.
+        // canvasEval is non-grantable — this grant must be inert in EVERY
+        // preset: it cannot lift plan's deny, and stays ask under default.
         id: 'grant-eval',
         provider: 'claude' as const,
         workspacePath: '/repo',
@@ -389,19 +385,19 @@ describe('resolveEffectiveRunPermissions', () => {
         updatedAt: '2026-05-24T00:00:00.000Z'
       }
     ]
-    // Under plan the standing grant is ignored — instruments remain a prompt
-    // (standing per-workspace instrument grants are the conformance-gated W7-b rung).
+    // Under plan the standing grant is ignored — the no-ask floor stays deny
+    // (a grant may lift promptable policies, never a preset deny).
     const plan = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       settings: settings({ agenticWorkspaceGrants: grants }),
       presetId: 'plan'
     })
-    expect(plan.agenticServices.canvasInteraction).toBe('ask')
-    expect(plan.agenticServices.sketchCanvas).toBe('ask')
-    expect(plan.agenticServices.meshCanvas).toBe('ask')
-    expect(plan.agenticServices.mediaEditing).toBe('ask')
-    expect(plan.agenticServices.canvasEval).toBe('ask')
+    expect(plan.agenticServices.canvasInteraction).toBe('deny')
+    expect(plan.agenticServices.sketchCanvas).toBe('deny')
+    expect(plan.agenticServices.meshCanvas).toBe('deny')
+    expect(plan.agenticServices.mediaEditing).toBe('deny')
+    expect(plan.agenticServices.canvasEval).toBe('deny')
 
     // The SAME grant auto-allows in-workspace under default — proving the grant
     // is real and the plan immunity is plan-specific, not a global de-grant.
@@ -415,8 +411,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.mediaEditing).toBe('workspace')
     expect(def.agenticServices.meshCanvas).toBe('workspace')
     expect(def.agenticServices.sketchCanvas).toBe('allow')
-    // canvasEval does NOT promote under any preset — it is non-grantable, and
-    // that immunity is the whole reason ASK under plan is safe for it.
+    // canvasEval does NOT promote under any preset — it is non-grantable.
     expect(def.agenticServices.canvasEval).toBe('ask')
     // canvasInteraction now behaves the same way here, but for a DIFFERENT
     // reason, and the distinction matters if anyone revisits this: it is still
@@ -427,16 +422,16 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.canvasInteraction).toBe('ask')
   })
 
-  it('denies Canvas control and Sketch edits under read_only and allows both under full_access', () => {
+  it('asks Canvas control and Sketch edits under read_only (Ask) and allows both under full_access', () => {
     const readOnly = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'read_only'
     })
-    expect(readOnly.agenticServices.canvasInteraction).toBe('deny')
-    expect(readOnly.agenticServices.sketchCanvas).toBe('deny')
-    expect(readOnly.agenticServices.meshCanvas).toBe('deny')
+    expect(readOnly.agenticServices.canvasInteraction).toBe('ask')
+    expect(readOnly.agenticServices.sketchCanvas).toBe('ask')
+    expect(readOnly.agenticServices.meshCanvas).toBe('ask')
 
     const fullAccess = resolveEffectiveRunPermissions({
       provider: 'claude',
@@ -634,15 +629,16 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('deny')
   })
 
-  it('denies canvasEval under read-only and never auto-allows it under full access', () => {
+  it('asks canvasEval under read-only (Ask) and never auto-allows it under full access', () => {
     const readOnly = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'read_only'
     })
-    // Arbitrary eval (RCE) is denied outright under read-only.
-    expect(readOnly.agenticServices.canvasEval).toBe('deny')
+    // Arbitrary eval (RCE) prompts per-invocation under Ask; non-grantable,
+    // so the ask can never become automatic.
+    expect(readOnly.agenticServices.canvasEval).toBe('ask')
 
     const fullAccess = resolveEffectiveRunPermissions({
       provider: 'codex',
@@ -752,7 +748,7 @@ describe('resolveEffectiveRunPermissions', () => {
     })
 
     expect(readOnly.agenticServices.externalPublish).toBe('ask')
-    expect(plan.agenticServices.externalPublish).toBe('ask')
+    expect(plan.agenticServices.externalPublish).toBe('deny')
     expect(workspaceWrite.agenticServices.externalPublish).toBe('allow')
     expect(fullAccess.agenticServices.fileChanges).toBe('allow')
     expect(fullAccess.agenticServices.externalPublish).toBe('allow')
@@ -923,8 +919,10 @@ describe('resolveEffectiveRunPermissions', () => {
 
       expect(resolved.approvalMode).toBe('plan')
       expect(resolved.readOnly).toBe(true)
-      expect(resolved.agenticServices.shellCommands).toBe('deny')
-      expect(resolved.agenticServices.fileChanges).toBe('deny')
+      // The preset now ASKS for these; the preview-risk clamp keeps them at
+      // a prompt (never auto) and the network stays force-denied.
+      expect(resolved.agenticServices.shellCommands).toBe('ask')
+      expect(resolved.agenticServices.fileChanges).toBe('ask')
       expect(resolved.networkAccess).toBe('deny')
     }
   })
@@ -1006,20 +1004,39 @@ describe('workspace_write preset — run-level auto-allow without a second grant
 })
 
 describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instruments', () => {
-  it('holds (forces a prompt) for plan + canvas/media instruments', () => {
-    expect(isPlanInstrumentGrantHold('plan', 'canvasInteraction')).toBe(true)
-    expect(isPlanInstrumentGrantHold('plan', 'sketchCanvas')).toBe(true)
-    expect(isPlanInstrumentGrantHold('plan', 'meshCanvas')).toBe(true)
-    expect(isPlanInstrumentGrantHold('plan', 'mediaEditing')).toBe(true)
-    expect(isPlanInstrumentGrantHold('plan', 'webBrowsing')).toBe(true)
+  it('holds nothing under plan — the no-ask floor denies instead of prompting', () => {
+    for (const service of [
+      'canvasInteraction',
+      'sketchCanvas',
+      'meshCanvas',
+      'mediaEditing',
+      'canvasEval',
+      'webBrowsing'
+    ] as const) {
+      expect(isPlanInstrumentGrantHold('plan', service)).toBe(false)
+    }
   })
 
-  it('holds for read_only + webBrowsing (the single Recon instrument) and nothing else there', () => {
-    expect(isPlanInstrumentGrantHold('read_only', 'webBrowsing')).toBe(true)
-    // Every other read_only service is DENY at the preset layer, so the hold is
-    // moot for them — assert it stays scoped to the one Recon instrument.
-    expect(isPlanInstrumentGrantHold('read_only', 'canvasInteraction')).toBe(false)
-    expect(isPlanInstrumentGrantHold('read_only', 'mediaEditing')).toBe(false)
+  it('holds every asked mutating service under read_only (Ask) — grants cannot zero-click a prompt', () => {
+    for (const service of [
+      'shellCommands',
+      'fileChanges',
+      'subThreadDelegation',
+      'canvasInteraction',
+      'sketchCanvas',
+      'meshCanvas',
+      'crossThreadRead',
+      'threadMessage',
+      'mediaEditing',
+      'canvasEval',
+      'webBrowsing'
+    ] as const) {
+      expect(isPlanInstrumentGrantHold('read_only', service)).toBe(true)
+    }
+    // Deliberately exempt: generic MCP reads keep their pre-inversion grant
+    // behavior, and externalPublish rides POSTURE_APPROVAL_ONLY_SERVICES.
+    expect(isPlanInstrumentGrantHold('read_only', 'mcpTools')).toBe(false)
+    expect(isPlanInstrumentGrantHold('read_only', 'externalPublish')).toBe(false)
   })
 
   it('does NOT hold for plan + non-instrument services (subthread was already grantable)', () => {
@@ -1031,7 +1048,7 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
   })
 
   it('does NOT hold under other presets — canvas/media stay normally grantable there', () => {
-    for (const preset of ['read_only', 'default', 'workspace_write', 'full_access', 'custom']) {
+    for (const preset of ['default', 'workspace_write', 'full_access', 'custom']) {
       expect(isPlanInstrumentGrantHold(preset, 'canvasInteraction')).toBe(false)
       expect(isPlanInstrumentGrantHold(preset, 'sketchCanvas')).toBe(false)
       expect(isPlanInstrumentGrantHold(preset, 'meshCanvas')).toBe(false)

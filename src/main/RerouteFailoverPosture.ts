@@ -31,8 +31,11 @@ import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../shared/retiredPro
  */
 const DEFAULT_PRESET_AUTHORITY_RANK = 2
 const PRESET_AUTHORITY_RANK: Readonly<Record<string, number>> = {
-  read_only: 0,
-  plan: 1,
+  // Posture inversion (2026-08-04): plan is the strict no-ask floor; the Ask
+  // tier (read_only) sits above it because per-invocation approval is a real,
+  // human-gated authority path plan deliberately lacks.
+  plan: 0,
+  read_only: 1,
   custom: 2,
   default: 2,
   workspace_write: 3,

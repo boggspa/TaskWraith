@@ -105,7 +105,7 @@ export function isUnattendedElevationAckCurrent(
  *     sites (ComposerService + EnsembleOrchestrator) pass an explicit
  *     networkAccess:'deny' override, so an unattended elevated loop never gets network.
  *   - 'default'     → 'default'.
- *   - 'safe' / unknown → undefined (caller falls back to read-only).
+ *   - 'safe' / unknown → undefined (caller falls back to the plan no-ask floor).
  * One source of truth shared by both honoring sites (ComposerService + the
  * ensemble orchestrator).
  */

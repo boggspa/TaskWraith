@@ -124,7 +124,7 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
     })
 
     expect(readOnly.externalPathGrants).toEqual([grant])
-    expect(readOnly.agenticServices.fileChanges).toBe('deny')
+    expect(readOnly.agenticServices.fileChanges).toBe('ask')
     expect(readOnly.readOnly).toBe(true)
     expect(workspaceWrite.externalPathGrants).toEqual([grant])
     // Full WS Access is the run-level opt-in: file/shell auto-allow without a
@@ -133,20 +133,29 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
     expect(workspaceWrite.readOnly).toBe(false)
   })
 
-  it('DENIES file edits and shell under read_only and plan', () => {
-    for (const presetId of ['read_only', 'plan'] as const) {
-      expect(gateDecision(presetId, 'fileChanges')).toBe('deny')
-      expect(gateDecision(presetId, 'shellCommands')).toBe('deny')
-      // A standing workspace grant CANNOT override a preset 'deny' — deny wins.
-      expect(gateDecision(presetId, 'fileChanges', { grant: true })).toBe('deny')
-      expect(gateDecision(presetId, 'shellCommands', { grant: true })).toBe('deny')
-    }
+  it('DENIES file edits and shell under plan; ASKS under read_only — grants lift neither', () => {
+    // Posture inversion (2026-08-04): plan is the no-ask floor (deny, grant-immune);
+    // read_only ("Ask") prompts per-invocation, and the widened read_only hold keeps
+    // a standing grant from upgrading the ask at the resolver AND the gate.
+    expect(gateDecision('plan', 'fileChanges')).toBe('deny')
+    expect(gateDecision('plan', 'shellCommands')).toBe('deny')
+    expect(gateDecision('plan', 'fileChanges', { grant: true })).toBe('deny')
+    expect(gateDecision('plan', 'shellCommands', { grant: true })).toBe('deny')
+    expect(gateDecision('read_only', 'fileChanges')).toBe('ask')
+    expect(gateDecision('read_only', 'shellCommands')).toBe('ask')
+    // This helper models resolver + PermissionService only. A standing grant
+    // upgrades the ask AT THIS LAYER — end-to-end the widened read_only
+    // grant-hold (isPlanInstrumentGrantHold, folded into neverAutoAllow at both
+    // gate sites) still forces the per-invocation prompt; that immunity is
+    // pinned in EffectiveRunPermissions.test.ts.
+    expect(gateDecision('read_only', 'fileChanges', { grant: true })).toBe('allow')
+    expect(gateDecision('read_only', 'shellCommands', { grant: true })).toBe('allow')
   })
 
   it('PROMPTS (never silently auto-executes) file edits and shell under default with no grant', () => {
-    // default preset carries no service overrides -> falls to global policy, exactly
-    // like every other provider's Accept Edits. No standing grant => prompt.
-    expect(gateDecision('default', 'fileChanges')).toBe('ask')
+    // Accept Edits auto-accepts in-workspace edits at the preset layer (slice A,
+    // 2026-08-04); shell still falls to global policy => prompt with no grant.
+    expect(gateDecision('default', 'fileChanges')).toBe('allow')
     expect(gateDecision('default', 'shellCommands')).toBe('ask')
     // The solo composer sends no preset for a plain 'default'/'auto_edit' run
     // (effectivePermissions undefined); the raw global fallback must still prompt.
@@ -155,9 +164,10 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
   })
 
   it('auto-allows workspace_write without a second grant, honors standing grants under default, and keeps full_access open', () => {
-    // Default still needs an explicit standing grant (or Accept for workspace).
+    // Shell under default still needs an explicit standing grant; file edits
+    // auto-accept at the preset layer (slice A).
     expect(gateDecision('default', 'shellCommands', { grant: true })).toBe('allow')
-    expect(gateDecision('default', 'fileChanges')).toBe('ask')
+    expect(gateDecision('default', 'fileChanges')).toBe('allow')
     // Full WS Access is the product opt-in for in-workspace shell/file — the
     // preset itself is the authorization; no separate standing grant required.
     expect(gateDecision('workspace_write', 'fileChanges')).toBe('allow')

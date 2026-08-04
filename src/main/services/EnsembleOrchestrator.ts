@@ -3333,7 +3333,7 @@ interface ActiveRoundRuntime {
   /**
    * P2 — VERIFIED elevation level for an unattended round. When set,
    * resolveParticipantPermissions lifts the uniform posture from read-only to
-   * the level's preset instead of read_only. Only ever set alongside `unattended`.
+   * the level's preset instead of the plan floor. Only ever set alongside `unattended`.
    */
   unattendedElevationLevel?: UnattendedElevationLevel
   pendingWakeups?: Map<string, EnsembleWakeupRecord>
@@ -4048,7 +4048,7 @@ export class EnsembleOrchestrator {
     fanoutPolicy?: EnsembleFanoutPolicy
     /**
      * P1b — set for a scheduled/workflow occurrence (unattended run).
-     * Forces every participant's posture to read-only so an unattended
+     * Forces every participant's posture to the plan no-ask floor so an unattended
      * scheduled ensemble can't silently auto-accept edits via a
      * write-capable participant preset.
      */
@@ -4057,7 +4057,7 @@ export class EnsembleOrchestrator {
      * P2 — a VERIFIED unattended-elevation level (resolved + HMAC-checked
      * main-side). On an unattended round, every participant's uniform posture
      * rises from read-only to the level's preset (full_access → workspace_write,
-     * default → default). Absent ⇒ P1b read-only. Ignored when `unattended` is false.
+     * default → default). Absent ⇒ P1b plan (no-ask floor). Ignored when `unattended` is false.
      */
     unattendedElevationLevel?: UnattendedElevationLevel
     /**
@@ -18878,7 +18878,7 @@ export class EnsembleOrchestrator {
     if (roundUnattended) {
       // P2 — a VERIFIED elevation lifts the uniform posture from read-only to the
       // level's preset (full_access → workspace_write, default → default). No
-      // verified elevation ⇒ P1b read-only. The level was HMAC-verified main-side
+      // verified elevation ⇒ P1b plan (no-ask floor). The level was HMAC-verified main-side
       // before reaching the runtime, so it's a trusted capability here; the preset
       // still flows through resolveEffectiveRunPermissions (approval gates intact).
       const previewRiskModel = isPreviewRiskModel(participant.provider, participant.model)
@@ -18890,10 +18890,14 @@ export class EnsembleOrchestrator {
         workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
         model: participant.model,
         settings: this.deps.getSettings(),
-        presetId: elevatedPreset || 'read_only',
-        // Elevated → force-deny network egress (workspace_write/default don't set
-        // it → settings default 'allow'); read_only already denies it via its preset.
-        overrides: elevatedPreset ? { networkAccess: 'deny' } : null
+        // Posture inversion (2026-08-04): the unattended fallback is the plan
+        // NO-ASK floor — read_only (Ask) would raise approval modals nobody is
+        // attending (they die by timeout as denials anyway, noisily).
+        presetId: elevatedPreset || 'plan',
+        // Force-deny network egress in EVERY unattended posture (plan/read
+        // presets carry networkAccess 'allow' for attended web reads, and
+        // workspace_write/default fall to the settings default 'allow').
+        overrides: { networkAccess: 'deny' }
         // Deliberately drop explicitExternalPathGrants either way: an unattended
         // round must not widen file access via composer-supplied grants.
       })

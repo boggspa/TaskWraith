@@ -67,7 +67,7 @@ describe('resources/Tools.md', () => {
   it('does not describe non-grantable canvas_eval as grantable', () => {
     const section = buildOllamaToolDocSection('canvas_eval')
     expect(section).toContain(
-      '- Access: signed-elevated — denied under Ask; approval-gated under Plan and prompts every permitted call with exact desktop review'
+      '- Access: signed-elevated — denied under Plan; approval-gated under Ask and prompts every permitted call with exact desktop review'
     )
     expect(section).toContain('under Plan and every other posture where it is permitted')
     expect(section).not.toContain('unless granted')
@@ -78,7 +78,7 @@ describe('resources/Tools.md', () => {
     expect(section).toContain(
       '- Access: permission elicitation — callable under Ask/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'
     )
-    expect(section).not.toContain('denied under Ask/Plan')
+    expect(section).not.toContain('denied under Plan, prompts under Ask')
   })
 
   it.each(['canvas_screenshot', 'canvas_eval'])(

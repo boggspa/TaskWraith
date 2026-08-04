@@ -680,10 +680,9 @@ describe('evaluateRosterEdit', () => {
       )
     ).toMatchObject({ ok: false, error: 'read_only_posture' })
 
-    // Posture split: `plan` is now strictly MORE permissive than read_only
-    // (approval-gated canvas/media instruments + subthread delegation), so a
-    // read-only round must reject a mid-round swap to `plan`, just like `default`
-    // — otherwise a Boss/agent could re-open elevation on a locked-down seat.
+    // Posture inversion (2026-08-04): `plan` is now the no-ask floor — strictly
+    // NARROWER than the round's read_only baseline — so assigning it mid-round
+    // unlocks nothing and is allowed. Only the write tiers (default+) reject.
     expect(
       evaluateRosterEdit(
         {
@@ -692,7 +691,7 @@ describe('evaluateRosterEdit', () => {
         },
         makeContext({ roundReadOnly: true })
       )
-    ).toMatchObject({ ok: false, error: 'read_only_posture' })
+    ).toMatchObject({ ok: true })
 
     const result = evaluateRosterEdit(
       { action: 'add_participant', participant: { provider: 'kimi' } },

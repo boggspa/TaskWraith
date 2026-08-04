@@ -3518,7 +3518,7 @@ describe('Kimi prompt-projection compaction evidence', () => {
 // turn ("Bash denied → workspace shell → denied again"); these pin the
 // per-posture sentences so the rule cannot silently regress to vagueness.
 describe('permission-surface rule', () => {
-  it('read_only seats are told shell/file are denied and pointed at read tools', () => {
+  it('read_only (Ask) seats are told writes need per-call approval and pointed at read tools', () => {
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),
       config: ensemble,
@@ -3528,7 +3528,8 @@ describe('permission-surface rule', () => {
       chatContextTurns: 4
     })
     expect(prompt).toContain('Your permission role is read_only')
-    expect(prompt).toContain('file writes and shell commands are DENIED')
+    // Posture inversion: Ask seats may request approval, never assume denial.
+    expect(prompt).toContain('ONLY if the user approves your specific request')
     expect(prompt).toContain('TaskWraith-aware lanes may list workspace_search')
     expect(prompt).toContain('native-only lanes may instead list read, grep, find, and ls')
     expect(prompt).toContain('Coordination tools are available only when they are listed')

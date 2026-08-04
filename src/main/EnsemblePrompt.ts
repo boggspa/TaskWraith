@@ -820,9 +820,13 @@ function permissionSurfaceRule(
       participant.provider === 'grok'
         ? ' (exception: Grok seats may run the fixed read-only shell recon commands)'
         : ''
-    const planInstruments =
-      presetId === 'plan' ? ' Approval-gated canvas/media instruments may prompt the user.' : ''
-    return `- Your permission role is ${presetId || 'plan-clamped'}: file writes and shell commands are DENIED this run${grokRecon} — do not spend a turn discovering that. Recon only with tools actually listed by your runtime: TaskWraith-aware lanes may list workspace_search, find_files, git_status, and read_file; native-only lanes may instead list read, grep, find, and ls.${planInstruments} Coordination tools are available only when they are listed for this exact run; do not assume ensemble_send, blackboard, or poll tools exist.`
+    // Posture inversion (2026-08-04): read_only ("Ask") may request per-call
+    // approval for gated tools; plan is the no-ask floor and never prompts.
+    const writePosture =
+      presetId === 'read_only'
+        ? 'file writes and shell commands run ONLY if the user approves your specific request — ask sparingly, and treat a denial as final'
+        : 'file writes and shell commands are DENIED this run'
+    return `- Your permission role is ${presetId || 'plan-clamped'}: ${writePosture}${grokRecon} — do not spend a turn discovering that. Recon first with tools actually listed by your runtime: TaskWraith-aware lanes may list workspace_search, find_files, git_status, and read_file; native-only lanes may instead list read, grep, find, and ls. Coordination tools are available only when they are listed for this exact run; do not assume ensemble_send, blackboard, or poll tools exist.`
   }
   if (presetId === 'workspace_write' || presetId === 'full_access') {
     return `- Your permission role is ${presetId}: listed shell and file tools are available for in-workspace work${

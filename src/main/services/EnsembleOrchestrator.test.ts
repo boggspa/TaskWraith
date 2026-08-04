@@ -3918,7 +3918,8 @@ describe('EnsembleOrchestrator', () => {
           readOnly,
           agenticServices: {
             // workspace_write auto-allows file changes inside the workspace.
-            fileChanges: readOnly ? 'deny' : 'allow',
+            // Posture inversion (2026-08-04): read_only (Ask) prompts for edits.
+            fileChanges: readOnly ? 'ask' : 'allow',
             mcpTools: 'deny'
           }
         }
@@ -12446,8 +12447,8 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0].effectivePermissions?.agenticServices.shellCommands).toBe('deny')
-    expect(harness.dispatched[0].effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.shellCommands).toBe('ask')
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.fileChanges).toBe('ask')
 
     harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Passing to worker.')
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
@@ -18715,7 +18716,7 @@ Next action:
     expect(scoutNote).toBeUndefined()
   })
 
-  it('P1b: clamps every participant to a read-only posture for an unattended (scheduled) round', async () => {
+  it('P1b: clamps every participant to the plan no-ask floor for an unattended (scheduled) round', async () => {
     // Default fixture: Claude (read_only) then Codex (workspace_write).
     // An unattended/scheduled round must force BOTH to read-only so a
     // write-capable participant preset can't auto-accept edits with no
@@ -18731,7 +18732,7 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('claude')
-    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('read_only')
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('plan')
     expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(true)
     expect(harness.dispatched[0].approvalMode).toBe('plan')
 
@@ -18746,7 +18747,7 @@ Next action:
     // Codex carries `workspace_write` in the fixture; the unattended
     // clamp must override it to read-only (plan + readOnly).
     expect(harness.dispatched[1].provider).toBe('codex')
-    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('read_only')
+    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('plan')
     expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(true)
     expect(harness.dispatched[1].effectivePermissions?.approvalMode).toBe('plan')
     expect(harness.dispatched[1].approvalMode).toBe('plan')
@@ -18847,7 +18848,7 @@ Next action:
     expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(false)
   })
 
-  it('P2: no elevation level on an unattended round → read_only (P1b regression)', async () => {
+  it('P2: no elevation level on an unattended round → plan no-ask floor (P1b regression)', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -18856,7 +18857,7 @@ Next action:
       unattended: true
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('read_only')
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('plan')
     expect(harness.dispatched[0].approvalMode).toBe('plan')
   })
 

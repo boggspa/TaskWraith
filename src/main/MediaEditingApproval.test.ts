@@ -102,25 +102,26 @@ describe('mediaEditing approval service', () => {
     expect(AGENTIC_SERVICE_LABELS.mediaRecording).toBeTruthy()
   })
 
-  it('read_only DENIES mediaEditing — the gate-reroute landmine guard (2)', () => {
+  it('read_only (Ask) PROMPTS mediaEditing — the gate-reroute landmine guard (2)', () => {
     // With media on its OWN service the gate's mcpTools->shellCommands read-only
-    // reroute no longer fires for it, so the DENY must come from the preset itself.
-    expect(DEFAULT_PERMISSION_PRESETS.read_only.agenticServices?.mediaEditing).toBe('deny')
+    // reroute no longer fires for it, so the ASK must come from the preset itself.
+    expect(DEFAULT_PERMISSION_PRESETS.read_only.agenticServices?.mediaEditing).toBe('ask')
 
-    // A write-class media tool resolves to a DENY under read_only even when global
-    // settings would allow it — i.e. it is refused, not merely prompted.
+    // A write-class media tool resolves to an ASK under read_only even when global
+    // settings would allow it — per-invocation approval, never automatic (the
+    // read_only grant-hold keeps grants from zero-clicking it).
     const eff = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       presetId: 'read_only',
       settings: settings({ mediaEditing: 'allow' })
     })
-    expect(eff.agenticServices.mediaEditing).toBe('deny')
+    expect(eff.agenticServices.mediaEditing).toBe('ask')
     expect(eff.readOnly).toBe(true)
 
-    // The resolved DENY drives a denied preflight: a fresh PermissionService with no
-    // grants resolves decision 'deny' for transcode_audio/audio_mix's service under
-    // the read-only effective settings (this is what blocks, not prompts).
+    // The resolved ASK drives a prompting preflight: a fresh PermissionService with
+    // no grants resolves decision 'ask' for transcode_audio/audio_mix's service under
+    // the read-only effective settings (this is what prompts).
     const runManager = new RunManager()
     const permissionService = new PermissionService({ runManager, sessionGrants: new Set() })
     const decision = permissionService.resolvePermission(
@@ -130,7 +131,7 @@ describe('mediaEditing approval service', () => {
       undefined,
       { agenticServices: eff.agenticServices } as AppSettings
     )
-    expect(decision.decision).toBe('deny')
+    expect(decision.decision).toBe('ask')
     expect(taskWraithToolAgenticService('audio_mix')).toBe('mediaEditing')
   })
 

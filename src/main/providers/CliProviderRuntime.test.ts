@@ -196,11 +196,11 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
       approvalMode: 'plan',
       readOnly: true,
       agenticServices: {
-        shellCommands: 'deny',
-        fileChanges: 'deny',
-        subThreadDelegation: 'deny',
-        crossThreadRead: 'deny',
-        threadMessage: 'deny'
+        shellCommands: 'ask',
+        fileChanges: 'ask',
+        subThreadDelegation: 'ask',
+        crossThreadRead: 'ask',
+        threadMessage: 'ask'
       }
     })
   })

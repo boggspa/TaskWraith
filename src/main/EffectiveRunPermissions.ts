@@ -32,121 +32,72 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'webBrowsing'
 ]
 
-// Posture split (roadmap T1 / W7 down-payment). `read_only` and `plan` used to
-// share ONE service map, so the two presets were byte-identical and the
-// permission lattice lied: the UI offered two postures that enforced the same
-// thing. They now have DISTINCT maps and MUST NOT be re-merged.
+// Posture inversion (owner directive 2026-08-04 — docs/refactors/
+// PermissionTierBehaviorAlignment.md slice C). `read_only` ("Ask") and `plan`
+// ("Plan") are BOTH read-only-for-writes postures (`approvalMode: 'plan'`,
+// `readOnly: true` — native lanes stay physically plan-contained), but they now
+// differ on the OPPOSITE axis from the original W7 split:
 //
-// Both keep `approvalMode: 'plan'` (the host posture value that each runnable
-// adapter must map without weakening the lattice) and `readOnly: true`, so
-// NEITHER can edit files, run shell, eval, capture, cross-thread-read, or write
-// directly. The ONLY axis on which they differ is which agent INSTRUMENTS a
-// human may approve mid-run:
+//   plan ("Plan" — the strict floor): NO mid-run permission asks at all.
+//     Anything not auto-allowed is DENIED — "denied and no elevation offered".
+//     The only elevation is the proposed-plan document approval (which flips
+//     the chat to Accept Edits and re-dispatches), and the only write is the
+//     product-managed markdown plan artifact (executor-owned carve-out, not a
+//     service policy).
+//   read_only ("Ask" — the ask tier): anything not auto-allowed MAY be asked
+//     via the approval modal — per-invocation human approval, NO auto-deny.
+//     Approval genuinely executes on the brokered lane (the gate is the only
+//     enforcement; executors carry no independent readOnly block), while
+//     provider-NATIVE mutating tools remain contained by the physical plan
+//     mode both postures still run under.
 //
-//   read_only (the strict floor — "Recon"): no elevation path at all.
-//     subThreadDelegation is DENY (a read_only seat cannot spawn a subthread
-//     that would inherit no read_only posture — the one real escalation vector),
-//     and canvas actuation + media compute stay DENY.
-//   plan (the instruments tier): subthread delegation, canvas actuation
-//     (canvas_click/fill), and media-compute (transcode/render/probe) are ASK —
-//     permitted only through per-invocation human approval. read_only < plan.
-//
-// canvas_click/fill route to `canvasInteraction` and media tools to
-// `mediaEditing` — their OWN services, NOT the generic `mcpTools` service — so
-// the gate's `isReadOnlyBlockedTool` mcpTools->shellCommands reroute never fires
-// for them and the ASK/DENY verdict comes straight from THESE preset entries.
-// (Verified across the Claude/Kimi/Codex/shared-MCP gate sites.) The
-// deny-survival line in effectiveAgenticSettings preserves each DENY across the
-// key-by-key rebuild.
+// plan is therefore a strict SUBSET of read_only in reachable authority: it
+// only ever TIGHTENS read_only's ASK to DENY, never the reverse. The
+// deny-survival line in effectiveAgenticSettings still preserves every global
+// DENY across the key-by-key rebuild, and the grant-hold below keeps standing
+// grants from zero-clicking read_only's asks.
 const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
-  shellCommands: 'deny',
-  fileChanges: 'deny',
+  shellCommands: 'ask',
+  fileChanges: 'ask',
   externalPublish: 'ask',
   mcpTools: 'ask',
-  // No elevation path: a read_only seat may not delegate to a subthread (which
-  // would inherit no read_only posture). This is the load-bearing delta from
-  // `plan` — it is DENY here, ASK there.
-  subThreadDelegation: 'deny',
-  // Canvas actuation (canvas_click/fill) mutates the app surface — denied under
-  // read_only; approval-queued under `plan`.
-  canvasInteraction: 'deny',
-  // Reading/opening a Sketch is handled by read-only auto-allowed tools. Only
-  // structured document edits route here, and Recon denies those outright.
-  sketchCanvas: 'deny',
-  // Mesh scene authoring/import is a dedicated visual-workspace mutation. It
-  // stays denied on Recon, independently of generic MCP or web-canvas grants.
-  meshCanvas: 'deny',
-  // Cross-thread reads are denied under read-only — no reaching into other
-  // threads'/workspaces' run history from a read-only seat. (Not an instrument;
-  // stays DENY under `plan` too.)
-  crossThreadRead: 'deny',
-  // Pushing a message into another thread is a cross-boundary WRITE, strictly more
-  // powerful than a cross-thread read — denied under read_only, and (unlike the
-  // instruments) it stays DENY under `plan` for the same reason crossThreadRead does.
-  threadMessage: 'deny',
-  // Media editing (transcode/encode/probe/mix etc.) is mutating/compute — denied
-  // under read_only; approval-queued under `plan`.
-  mediaEditing: 'deny',
-  // Media recording (future capture) is non-grantable — denied under both.
+  subThreadDelegation: 'ask',
+  canvasInteraction: 'ask',
+  sketchCanvas: 'ask',
+  meshCanvas: 'ask',
+  crossThreadRead: 'ask',
+  threadMessage: 'ask',
+  mediaEditing: 'ask',
+  // Media recording (future capture) stays non-grantable and DENIED — the one
+  // deliberate exception to "no auto-deny": there is no attended capture flow
+  // for a human to meaningfully approve yet.
   mediaRecording: 'deny',
-  // Arbitrary canvas_eval is RCE. It is an INSTRUMENT (ask under `plan`), but
-  // stays DENY here: read_only's load-bearing property is that it offers no
-  // elevation path at all, so a read_only seat may not even ask to reach a
-  // code-execution boundary.
-  canvasEval: 'deny',
-  // Canvas Browser navigation (canvas_navigate) is the ONE deliberate exception
-  // to "no instruments under Recon" (user decision 2026-08-04): it is a
-  // read-class egress verb — the same class of reach web_fetch already has
-  // prompt-free — rendered in the sandboxed, SSRF-guarded preview surface, with
-  // no click/fill/eval actuation attached. ASK, per-invocation only: the
-  // grant-hold below keeps standing/session grants from ever auto-allowing it
-  // in this posture, and the global kill switch still forces deny.
+  // canvas_eval is RCE; it remains non-grantable (isNonGrantableService), so
+  // this ASK can never be promoted to an automatic allow — every call prompts
+  // with the script shown on the desktop approval.
+  canvasEval: 'ask',
   webBrowsing: 'ask'
 }
 
-// `plan` = read_only PLUS the approval-gated instrument belt (W7 down-payment).
-// Strict superset of read_only: it only ever RELAXES read_only's DENY to ASK on
-// the instrument services, never the reverse, so plan is always ≥ read_only in
-// authority. Delivery is conditional-by-design: `preserveExplicitDeny` clamps
-// any of these ASK entries back to DENY when the user's GLOBAL agenticServices
-// setting for that service is 'deny' (a global kill switch always wins).
+// `plan` = the no-ask floor. Every service is DENY: a Plan turn must never
+// interrupt the user with a permission modal — its elevation path is the plan
+// document approval, nothing else. (Auto-allowed read tools skip the gate
+// entirely via MCP_AUTO_ALLOWED_TOOLS, so this map only governs gated calls.)
 const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
-  externalPublish: 'ask',
-  mcpTools: 'ask',
-  // Plan may delegate to a subthread with per-invocation approval.
-  subThreadDelegation: 'ask',
-  // Instrument: canvas actuation permitted under plan via human approval.
-  canvasInteraction: 'ask',
-  // Sketch editing is lightweight but still user-visible mutation. Plan keeps
-  // it behind a fresh modal for every update.
-  sketchCanvas: 'ask',
-  // Instrument: Mesh Canvas creation/import/presentation is permitted under
-  // plan only with a human decision for each action.
-  meshCanvas: 'ask',
-  // Not an instrument — cross-thread history reads stay denied under plan.
+  externalPublish: 'deny',
+  mcpTools: 'deny',
+  subThreadDelegation: 'deny',
+  canvasInteraction: 'deny',
+  sketchCanvas: 'deny',
+  meshCanvas: 'deny',
   crossThreadRead: 'deny',
-  // Not an instrument either, and a write rather than a read — stays denied.
   threadMessage: 'deny',
-  // Instrument: media compute permitted under plan via human approval.
-  mediaEditing: 'ask',
-  // Capture is non-grantable — denied under plan too.
+  mediaEditing: 'deny',
   mediaRecording: 'deny',
-  // Instrument: canvas_eval permitted under plan via human approval. It was
-  // hard-denied here, which made it SILENTLY unavailable in the posture most
-  // likely to want it — plan is the reviewing/inspecting posture, and eval is
-  // sometimes the only way to express a check the structured canvas verbs
-  // cannot. ASK is not a weakening: `canvasEval` is non-grantable
-  // (`isNonGrantableService`), so no grant, preset or Full Access can ever
-  // promote this to an automatic allow — it re-prompts on EVERY call, the
-  // script is shown only on the transient desktop approval, and
-  // `preserveExplicitDeny` still lets the global kill switch force it back to
-  // deny. Deliberately NOT relaxed under read_only; see that map.
-  canvasEval: 'ask',
-  // Instrument: Canvas Browser navigation, per-invocation ask (same rationale
-  // and grant-hold as under read_only above).
-  webBrowsing: 'ask'
+  canvasEval: 'deny',
+  webBrowsing: 'deny'
 }
 
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
@@ -293,29 +244,36 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'webBrowsing'
 ]
 
-// The `plan` preset relaxes these instrument services from read_only's DENY to
-// ASK — but ONLY as per-invocation approval (the W7 down-payment rung). A
-// standing workspace grant must NOT silently upgrade them to auto-allow under
-// `plan`: standing per-workspace instrument grants are the W7-b rung, gated on
-// the instrument-conformance suite, not this change. They stay grantable under
-// `default`/`full_access`, where the user opted into that authority tier.
-// (subThreadDelegation is deliberately absent — it was already ASK + grantable
-// under `plan` before the split, so grant-immunity there would be a regression.)
+// Posture inversion (2026-08-04): `plan` no longer has ANY ask surface — every
+// service in its map is DENY, so there is nothing for a grant to zero-click and
+// this set is empty. Kept exported (the gate folds it into neverAutoAllow) so
+// the enforcement shape survives; membership would only return if Plan ever
+// regained a per-invocation instrument.
 export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
+  new Set<AgenticServiceId>([])
+
+// The Ask tier's defining property is PER-INVOCATION human approval: anything
+// the map asks for must genuinely prompt, so a standing workspace grant or an
+// in-run session grant minted under `default`+ must NOT silently auto-allow it
+// on a read_only ("Ask") seat. Every asked mutating service joins the hold.
+// Deliberately absent: `mcpTools` (generic MCP reads were ASK + grantable under
+// read_only long before the inversion — grant-immunity there would double-tax
+// existing recon workflows) and `externalPublish` (already held for
+// read_only/plan via POSTURE_APPROVAL_ONLY_SERVICES below).
+export const READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
   new Set<AgenticServiceId>([
+    'shellCommands',
+    'fileChanges',
+    'subThreadDelegation',
     'canvasInteraction',
     'sketchCanvas',
     'meshCanvas',
+    'crossThreadRead',
+    'threadMessage',
     'mediaEditing',
+    'canvasEval',
     'webBrowsing'
   ])
-
-// The one Recon instrument (see READ_ONLY_AGENTIC_SERVICES.webBrowsing): under
-// `read_only` it must be reachable ONLY as a per-invocation prompt, so the same
-// grant-hold that protects plan instruments applies. Every other service in the
-// read_only map is DENY, which needs no hold.
-export const READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
-  new Set<AgenticServiceId>(['webBrowsing'])
 
 const POSTURE_APPROVAL_ONLY_SERVICES: ReadonlySet<AgenticServiceId> =
   new Set<AgenticServiceId>(['externalPublish'])

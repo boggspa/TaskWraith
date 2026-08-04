@@ -217,7 +217,11 @@ export function normalizeAgentRunPayload(
           provider,
           workspacePath: scope === 'global' ? undefined : workspace,
           settings: deps.getSettings(),
-          presetId: 'read_only'
+          // Posture inversion (2026-08-04): the tamper/unsigned fail-safe is the
+          // plan NO-ASK floor. read_only (Ask) now carries an approval surface,
+          // and an untrusted payload must never gain the power to raise
+          // attacker-shaped permission prompts.
+          presetId: 'plan'
         }),
       reDeriveDefault: () =>
         resolveEffectiveRunPermissions({

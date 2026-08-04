@@ -73,18 +73,18 @@ describe('crossThreadRead approval service', () => {
     expect(AGENTIC_SERVICE_LABELS.crossThreadRead).toBeTruthy()
   })
 
-  it('is denied under the read_only preset and allowed under full_access', () => {
-    expect(DEFAULT_PERMISSION_PRESETS.read_only.agenticServices?.crossThreadRead).toBe('deny')
+  it('asks under the read_only preset and allows under full_access', () => {
+    expect(DEFAULT_PERMISSION_PRESETS.read_only.agenticServices?.crossThreadRead).toBe('ask')
     expect(DEFAULT_PERMISSION_PRESETS.full_access.agenticServices?.crossThreadRead).toBe('allow')
   })
 
-  it('resolves to deny under read_only even when settings would allow it', () => {
+  it('stays per-invocation under read_only even when settings would allow it', () => {
     const eff = resolveEffectiveRunPermissions({
       provider: 'claude',
       presetId: 'read_only',
       settings: settings({ crossThreadRead: 'allow' })
     })
-    expect(eff.agenticServices.crossThreadRead).toBe('deny')
+    expect(eff.agenticServices.crossThreadRead).toBe('ask')
   })
 
   it('is GRANTABLE — honors a workspace/allow setting, unlike non-grantable canvasEval', () => {

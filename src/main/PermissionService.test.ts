@@ -908,7 +908,7 @@ describe('PermissionService', () => {
 
     it('publication follows the requested posture split', () => {
       expect(decisionFor('read_only', 'externalPublish')).toBe('ask')
-      expect(decisionFor('plan', 'externalPublish')).toBe('ask')
+      expect(decisionFor('plan', 'externalPublish')).toBe('deny')
       expect(decisionFor('default', 'externalPublish')).toBe('ask')
       expect(decisionFor('workspace_write', 'externalPublish')).toBe('allow')
       expect(decisionFor('full_access', 'externalPublish')).toBe('allow')
