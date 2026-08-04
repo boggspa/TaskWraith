@@ -2166,7 +2166,7 @@ button.sidebar-item {
     105deg,
     var(--sidebar-terminal-outcome-color) 0%,
     var(--sidebar-terminal-outcome-color) 38%,
-    color-mix(in srgb, var(--text-primary) 42%, var(--sidebar-terminal-outcome-color)) 50%,
+    color-mix(in srgb, var(--text-primary) 52%, var(--sidebar-terminal-outcome-color)) 50%,
     var(--sidebar-terminal-outcome-color) 62%,
     var(--sidebar-terminal-outcome-color) 100%
   );
@@ -2177,9 +2177,9 @@ button.sidebar-item {
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: sidebar-terminal-outcome-shimmer 12s linear infinite;
+  animation: sidebar-terminal-outcome-shimmer 10s linear infinite;
   filter: drop-shadow(
-    0 0 6px color-mix(in srgb, var(--sidebar-terminal-outcome-color) 22%, transparent)
+    0 0 6px color-mix(in srgb, var(--sidebar-terminal-outcome-color) 28%, transparent)
   );
 }
 
