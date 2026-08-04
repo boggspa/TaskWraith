@@ -119,6 +119,59 @@ describe('HostCommandReceiptStore', () => {
     expect(completed?.cursor).toBe(7)
   })
 
+  it('refreshes position at terminal completion and preserves it through reopen/compaction', () => {
+    position = { generation: 3, cursor: 7 }
+    const store = openStore()
+    store.begin(baseInput())
+
+    const completed = store.complete({
+      commandId: 'cmd-1',
+      status: 'succeeded',
+      position: { generation: 3, cursor: 42 }
+    })
+    expect(completed?.generation).toBe(3)
+    expect(completed?.cursor).toBe(42)
+
+    store.compact()
+    const reopened = openStore()
+    const durable = expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    expect(durable?.generation).toBe(3)
+    expect(durable?.cursor).toBe(42)
+  })
+
+  it('preserves the begin position when completion omits a refreshed position', () => {
+    position = { generation: 3, cursor: 7 }
+    const store = openStore()
+    store.begin(baseInput())
+
+    const completed = store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+    expect(completed?.generation).toBe(3)
+    expect(completed?.cursor).toBe(7)
+  })
+
+  it.each([
+    { generation: -1, cursor: 42 },
+    { generation: 3, cursor: 1.5 }
+  ])('rejects invalid completion position without journal mutation', (invalidPosition) => {
+    const store = openStore()
+    store.begin(baseInput())
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const before = readFileSync(journalPath, 'utf8')
+
+    expect(() =>
+      store.complete({
+        commandId: 'cmd-1',
+        status: 'succeeded',
+        position: invalidPosition
+      })
+    ).toThrow(/generation|cursor/)
+
+    expect(readFileSync(journalPath, 'utf8')).toBe(before)
+    const pending = expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+    expect(pending?.generation).toBe(1)
+    expect(pending?.cursor).toBe(0)
+  })
+
   it('returns the original receipt for an exact repeated command from the same actor', () => {
     const store = openStore()
     const first = store.begin(baseInput())

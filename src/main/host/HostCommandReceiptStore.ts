@@ -169,6 +169,11 @@ export type HostCommandReceiptCompleteInput = {
   resultSummary?: string
   /** Optional authority update at completion (e.g. final deny reason). */
   authority?: HostCommandReceiptAuthority
+  /**
+   * Optional refreshed sole-journal position. When present, it is validated
+   * before any terminal receipt mutation and persisted with the completion.
+   */
+  position?: HostCommandReceiptPosition
 }
 
 export type HostCommandReceiptBeginResult =
@@ -491,6 +496,9 @@ export class HostCommandReceiptStore {
     const commandId = normalizeId(input.commandId, 'commandId')
     const current = this.recordsByCommandId.get(commandId)
     if (!current) return null
+    // Normalize once before any terminal check or mutation. An invalid
+    // post-effect position must fail closed without writing a journal event.
+    const position = input.position === undefined ? undefined : normalizePosition(input.position)
 
     if (
       current.status === 'succeeded' ||
@@ -522,6 +530,9 @@ export class HostCommandReceiptStore {
         : {}),
       ...(input.resultSummary !== undefined
         ? { resultSummary: truncateText(input.resultSummary, MAX_SUMMARY_CHARS) }
+        : {}),
+      ...(position !== undefined
+        ? { generation: position.generation, cursor: position.cursor }
         : {})
     }
     delete next.recoveryState
