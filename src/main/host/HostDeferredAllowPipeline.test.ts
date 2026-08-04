@@ -9,13 +9,8 @@ import {
   type HostCommand,
   type HostCursorPosition
 } from '../../shared/hostProtocol'
-import type {
-  HostCommandMutationPipeline,
-  HostCommandMutationPipelineObserve,
-  HostCommandMutationPipelineComplete
-} from './HostCommandMutationPipeline'
+import type { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
 import type { HostMutationCompletionResult } from './HostMutationCompletionCoordinator'
-import type { HostObservedMutationResult } from './HostObservedMutationExecutor'
 import type {
   HostDeferredCommandEnvelopeResolverIndeterminateCode,
   HostDeferredCommandEnvelopeResolverInput,
@@ -23,13 +18,11 @@ import type {
 } from './HostDeferredCommandEnvelopeResolver'
 import type {
   HostCommandReceiptIndeterminateCode,
-  HostCommandReceiptStatus,
-  HostCommandReceiptTerminalStatus
+  HostCommandReceiptStatus
 } from './HostCommandReceiptStore'
 import {
   HostDeferredAllowPipeline,
-  type HostDeferredAllowPipelineConsumeEnvelope,
-  type HostDeferredAllowPipelineResult
+  type HostDeferredAllowPipelineConsumeEnvelope
 } from './HostDeferredAllowPipeline'
 
 // ---------------------------------------------------------------------------
@@ -145,7 +138,7 @@ function openPipeline(options?: {
 
   const pipeline = new HostDeferredAllowPipeline({
     verifyCommand,
-    pipeline: innerPipeline as HostCommandMutationPipeline,
+    pipeline: innerPipeline as unknown as HostCommandMutationPipeline,
     consumeEnvelope: options?.consumeEnvelope === null ? undefined : consumeEnvelope
   })
 
@@ -172,15 +165,19 @@ describe('HostDeferredAllowPipeline', () => {
     expect(
       () =>
         new HostDeferredAllowPipeline({
-          verifyCommand: undefined as unknown as () => VERIFIED_RESULT,
-          pipeline: { execute: async () => COMPLETED_RESULT } as HostCommandMutationPipeline
+          verifyCommand: undefined as unknown as () => typeof VERIFIED_RESULT,
+          pipeline: {
+            execute: async () => COMPLETED_RESULT
+          } as unknown as HostCommandMutationPipeline
         })
     ).toThrow(/requires verifyCommand/)
     expect(
       () =>
         new HostDeferredAllowPipeline({
-          verifyCommand: 'not-a-function' as unknown as () => VERIFIED_RESULT,
-          pipeline: { execute: async () => COMPLETED_RESULT } as HostCommandMutationPipeline
+          verifyCommand: 'not-a-function' as unknown as () => typeof VERIFIED_RESULT,
+          pipeline: {
+            execute: async () => COMPLETED_RESULT
+          } as unknown as HostCommandMutationPipeline
         })
     ).toThrow(/requires verifyCommand/)
   })
@@ -217,7 +214,9 @@ describe('HostDeferredAllowPipeline', () => {
       () =>
         new HostDeferredAllowPipeline({
           verifyCommand: () => VERIFIED_RESULT,
-          pipeline: { execute: async () => COMPLETED_RESULT } as HostCommandMutationPipeline,
+          pipeline: {
+            execute: async () => COMPLETED_RESULT
+          } as unknown as HostCommandMutationPipeline,
           consumeEnvelope: 'not-a-function' as unknown as HostDeferredAllowPipelineConsumeEnvelope
         })
     ).toThrow(/consumeEnvelope must be a function/)
@@ -228,7 +227,9 @@ describe('HostDeferredAllowPipeline', () => {
       () =>
         new HostDeferredAllowPipeline({
           verifyCommand: () => VERIFIED_RESULT,
-          pipeline: { execute: async () => COMPLETED_RESULT } as HostCommandMutationPipeline,
+          pipeline: {
+            execute: async () => COMPLETED_RESULT
+          } as unknown as HostCommandMutationPipeline,
           consumeEnvelope: undefined
         })
     ).not.toThrow()
@@ -452,8 +453,7 @@ describe('HostDeferredAllowPipeline', () => {
       'deferred_receipt_uncertain',
       'deferred_execution_may_have_begun',
       'deferred_effects_partial',
-      'deferred_effects_unavailable',
-      'pre_execution_failed'
+      'deferred_effects_unavailable'
     ]
 
     for (const errorCode of codes) {
@@ -687,7 +687,7 @@ describe('HostDeferredAllowPipeline', () => {
     const verifyCommand = vi.fn(() => VERIFIED_RESULT)
     const pipeline = new HostDeferredAllowPipeline({
       verifyCommand,
-      pipeline: { execute: async () => COMPLETED_RESULT } as HostCommandMutationPipeline
+      pipeline: { execute: async () => COMPLETED_RESULT } as unknown as HostCommandMutationPipeline
     })
 
     await pipeline.execute(input)
