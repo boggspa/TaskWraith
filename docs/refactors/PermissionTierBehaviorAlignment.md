@@ -56,7 +56,34 @@ pre-1.8.6 state and is stale. Pinned by the externalPublish ladder test in
 EffectiveRunPermissions.test.ts (per-preset policy + hold membership +
 global-deny survival). No code change required.
 
-### C — Ask/Plan ask-semantics inversion (the core; biggest blast radius)
+### C — Ask/Plan ask-semantics inversion — LANDED 2026-08-04 (`4563966d4`)
+Everything below was implemented as specified, with these recorded decisions:
+- read_only ("Ask") asks for every gated service except mediaRecording (the one
+  auto-deny: no attended capture flow exists to approve); canvasEval stays
+  non-grantable so its ask can never become automatic. plan denies everything.
+- The read_only grant-hold widened to every asked mutating service (mcpTools
+  exempt — pre-inversion grant behavior; externalPublish exempt — posture hold).
+  plan's hold set is now empty (deny needs no hold).
+- PRESET_AUTHORITY_RANK: plan 0 < read_only 1 < default 2; reroute escalation
+  guard direction flipped with it.
+- READ_ONLY_ROUND_PERMISSION_PRESET_SET = {read_only, plan}: a read-only round
+  may assign its own baseline or the narrower floor; write tiers reject. (The
+  round's own baseline cannot be "an unlock".)
+- EVERY automatic/unattended posture now falls back to the plan no-ask floor
+  instead of read_only: P1b unattended round clamp + P2 fallback (orchestrator,
+  networkAccess force-denied in every unattended posture), unattended solo
+  composer fallback, sub-thread mailbox auto-continuation, and the HMAC
+  tamper/unsigned fail-safe in AgentRunNormalizer (an untrusted payload must
+  never gain the power to raise attacker-shaped prompts). Attended read_only
+  stamps (runtime-profile tightening, sub-thread worker baseline) keep the Ask
+  surface deliberately.
+- Ensemble prompt shell tells Ask seats writes run only on approved request;
+  OllamaToolsDoc vocabulary flipped and resources/Tools.md regenerated.
+- ~40k main-process tests green post-change; the only remaining failures are
+  the documented pre-existing set plus one load-flaky lock process-integration
+  test that passes solo.
+
+Original design notes (for archaeology):
 Today (posture split, docs in EffectiveRunPermissions.ts): `read_only` is the
 deny-floor with ONE ask instrument (webBrowsing, user decision 2026-08-04);
 `plan` carries the ask-instrument belt. The spec INVERTS who may ask mid-run.
