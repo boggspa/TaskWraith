@@ -3562,3 +3562,63 @@ describe('permission-surface rule', () => {
     expect(prompt).toContain('file writes and shell commands are DENIED')
   })
 })
+
+/*
+ * Isolate policy disclosure — the chat-level fan-out isolation setting is
+ * user authority, so every seat must be told which regime it works under
+ * (Shared pinned / Worktrees pinned / agent-decided) instead of inventing
+ * its own branch/worktree strategy.
+ */
+describe('workspace isolation policy disclosure', () => {
+  const promptFor = (fanoutIsolation?: 'off' | 'worktree' | 'any'): string =>
+    buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: fanoutIsolation ? { ...ensemble, fanoutIsolation } : ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Go.',
+      roundId: 'round-iso',
+      chatContextTurns: 4
+    })
+
+  it('discloses the pinned Shared policy by default', () => {
+    const prompt = promptFor()
+    expect(prompt).toContain('Workspace isolation: shared checkout (user-pinned)')
+    expect(prompt).toContain('do NOT create git branches or worktrees')
+  })
+
+  it('discloses the pinned Worktrees policy', () => {
+    const prompt = promptFor('worktree')
+    expect(prompt).toContain('Workspace isolation: isolated worktrees (user-pinned)')
+  })
+
+  it('discloses the agent-decided policy', () => {
+    const prompt = promptFor('any')
+    expect(prompt).toContain('Workspace isolation: agent-decided')
+  })
+
+  it('omits the line for global-scope chats with no workspace checkout', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...chat(), workspacePath: undefined, scope: 'global' as const },
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Go.',
+      roundId: 'round-iso',
+      chatContextTurns: 4
+    })
+    expect(prompt).not.toContain('Workspace isolation:')
+  })
+
+  it('stamps the prompt shell when the Isolate policy changes', () => {
+    // Slim resumed turns skip the full briefing; without the stamp entry a
+    // mid-chat Isolate flip would never re-brief the seats.
+    const base = { ...ensemble, participants: ensemble.participants.map((p) => ({ ...p })) }
+    const stamp = computeEnsemblePromptShellStamp(base)
+    const worktreeStamp = computeEnsemblePromptShellStamp({
+      ...base,
+      fanoutIsolation: 'worktree' as const
+    })
+    expect(worktreeStamp).not.toBe(stamp)
+    const anyStamp = computeEnsemblePromptShellStamp({ ...base, fanoutIsolation: 'any' as const })
+    expect(anyStamp).not.toBe(stamp)
+  })
+})

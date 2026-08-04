@@ -8,6 +8,7 @@ import type {
   SessionActivityLedgerEntry,
   ToolActivity
 } from './store/types'
+import { resolveEnsembleFanoutIsolationPolicy } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 
@@ -245,7 +246,11 @@ export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string 
     // concurrent mode change the parallel-policy lines.
     config.selfReflective ? 'self-reflective' : '',
     config.fanoutPolicy || '',
-    config.concurrentModeEnabled ? 'concurrent' : ''
+    config.concurrentModeEnabled ? 'concurrent' : '',
+    // The Isolate policy line is part of the invariant shell — without this
+    // entry a mid-chat Shared/Worktrees/Any flip would never re-brief a seat
+    // riding slim resumed turns.
+    config.fanoutIsolation || ''
     // Review F3: printable escape, NOT a raw NUL byte (a literal 0x00 in the
     // source made git classify this whole file as binary).
   ].join('\u0001')
@@ -1030,6 +1035,22 @@ export function buildEnsembleParticipantPromptProjection(
   const disambigNote = formatSameProviderDisambiguationNote(orderedParticipants)
   const selfReflective = Boolean(input.config.selfReflective)
   const workspaceStanza = formatWorkspaceStanza(input.chat, selfReflective)
+  // Chat-level Isolate policy disclosure. The pinned regimes are USER
+  // authority — seats must not invent their own branch/worktree strategy —
+  // and the orchestrator mechanically clamps fan-out isolation to match.
+  // Meaningless without a workspace checkout, so global-scope chats skip it.
+  const workspaceIsolationLine = input.chat.workspacePath
+    ? (() => {
+        const policy = resolveEnsembleFanoutIsolationPolicy(input.config.fanoutIsolation)
+        if (policy === 'worktree') {
+          return 'Workspace isolation: isolated worktrees (user-pinned). Write-intent fan-out lanes always run in per-lane git worktrees forked from the last commit, and their results land as promotable candidates. Route parallel write work through listed fan-out tools instead of hand-creating branches or worktrees in the shared checkout; isolation=off requests are ignored for this chat.'
+        }
+        if (policy === 'any') {
+          return 'Workspace isolation: agent-decided. Boss/Captain may choose per dispatch via the ensemble_fanout/ensemble_fanout_all isolation parameter — worktree forks each write-intent lane into its own git worktree with promotable candidates; off/omitted keeps the shared checkout under TaskWraith write locks.'
+        }
+        return 'Workspace isolation: shared checkout (user-pinned). All work happens in the live workspace checkout on its current branch — do NOT create git branches or worktrees and do not switch branches; TaskWraith write locks serialize concurrent writers. isolation=worktree requests are ignored for this chat.'
+      })()
+    : null
   // 1.0.4-AR8 — when the workspace stanza is suspended (null), the
   // dependent deictic rule that references "Round subject:" is also
   // skipped. Either both ship together or neither does.
@@ -1280,6 +1301,7 @@ export function buildEnsembleParticipantPromptProjection(
         ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss- or Captain-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'
         : 'Parallel policy: read-only fan-out lanes may run concurrently. Writer-capable participants still run serially unless locked writer lanes are explicitly enabled.'
       : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out only when it is listed. Otherwise use the normal rotation and a unique @Role/@Model mention to steer the next available participant.',
+    ...(workspaceIsolationLine ? [workspaceIsolationLine] : []),
     ...(workspaceStanza ? [workspaceStanza] : []),
     '',
     dynamicStateSnapshot.block,

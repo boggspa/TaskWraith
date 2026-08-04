@@ -148,7 +148,8 @@ import {
   RunAnalystSnapshot,
   EnsembleParticipant,
   PermissionPresetId,
-  EnsembleFanoutIsolation,
+  EnsembleFanoutIsolationPolicy,
+  resolveEnsembleFanoutIsolationPolicy,
   EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   PinnedMessageGroup,
@@ -20889,8 +20890,9 @@ function App(): React.JSX.Element {
     [requestLiveEnsembleRoundConfigUpdate, updateChatById]
   )
   const updateEnsembleFanoutIsolationForChat = useCallback(
-    (chatId: string, isolation: EnsembleFanoutIsolation): void => {
-      const nextIsolation: EnsembleFanoutIsolation = isolation === 'worktree' ? 'worktree' : 'off'
+    (chatId: string, isolation: EnsembleFanoutIsolationPolicy): void => {
+      const nextIsolation: EnsembleFanoutIsolationPolicy =
+        resolveEnsembleFanoutIsolationPolicy(isolation)
       updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
         const patched: ChatRecord = {
@@ -21044,7 +21046,7 @@ function App(): React.JSX.Element {
     [updateCurrentEnsembleFanoutPolicy]
   )
   const updateCurrentEnsembleFanoutIsolation = useCallback(
-    (isolation: EnsembleFanoutIsolation) => {
+    (isolation: EnsembleFanoutIsolationPolicy) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
       updateEnsembleFanoutIsolationForChat(currentChat.appChatId, isolation)
     },
@@ -28346,7 +28348,7 @@ function App(): React.JSX.Element {
         updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
       updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
         updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
-      updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolation) =>
+      updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolationPolicy) =>
         updateEnsembleFanoutIsolationForChat(viewerChatId, isolation),
       updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
         updateEnsembleFanoutPolicyForChat(viewerChatId, enabled ? 'read_only' : 'off'),
@@ -29563,7 +29565,7 @@ function App(): React.JSX.Element {
           paneCtxHelpers.updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
         updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
           paneCtxHelpers.updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
-        updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolation) =>
+        updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolationPolicy) =>
           paneCtxHelpers.updateEnsembleFanoutIsolationForChat(viewerChatId, isolation),
         updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
           paneCtxHelpers.updateEnsembleFanoutPolicyForChat(

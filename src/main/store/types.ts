@@ -754,14 +754,34 @@ export type EnsembleFanoutPolicy =
   | 'locked_writers_user_preflight'
 
 /**
- * Per-chat isolation preference for write-intent fan-out lanes. `'worktree'`
- * gives every write-capable lane its own linked git worktree (branched from
- * the workspace HEAD) so parallel writers cannot stomp each other; read-only
- * lanes always keep the shared checkout, since they need to see current state
- * and cannot mutate it. Undefined reads as `'off'` so existing chats keep
- * their shared-checkout behavior.
+ * Lane-level isolation for a write-intent fan-out lane. `'worktree'` gives
+ * the lane its own linked git worktree (branched from the workspace HEAD) so
+ * parallel writers cannot stomp each other; read-only lanes always keep the
+ * shared checkout, since they need to see current state and cannot mutate it.
  */
 export type EnsembleFanoutIsolation = 'off' | 'worktree'
+
+/**
+ * Chat-level Isolate setting (the composer's Shared / Worktrees / Any
+ * control). `'off'` and `'worktree'` are USER-PINNED regimes a per-call
+ * `ensemble_fanout` isolation override cannot escape: `'off'` pins every
+ * lane to the shared checkout (agents are also briefed not to hand-create
+ * branches/worktrees), `'worktree'` pins write-intent lanes into per-lane
+ * worktrees and fails them closed when no allocator is available. `'any'`
+ * delegates the per-dispatch choice to the calling Boss/Captain, defaulting
+ * to the shared checkout when omitted. Undefined reads as `'off'` so
+ * existing chats keep their shared-checkout behavior.
+ */
+export type EnsembleFanoutIsolationPolicy = EnsembleFanoutIsolation | 'any'
+
+/** Normalize a persisted/IPC value to the effective chat-level Isolate
+ * policy. Single source of truth — orchestrator, prompt composition, and the
+ * renderer clamps all resolve through this. */
+export function resolveEnsembleFanoutIsolationPolicy(
+  value: unknown
+): EnsembleFanoutIsolationPolicy {
+  return value === 'worktree' || value === 'any' ? value : 'off'
+}
 
 /**
  * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4) —
@@ -1667,12 +1687,14 @@ export interface EnsembleConfig {
    */
   fanoutPolicy?: EnsembleFanoutPolicy
   /**
-   * Per-chat worktree isolation for write-intent fan-out lanes. Read live at
-   * dispatch time (not captured into the round) — it is a mechanical
-   * preference, not an authority decision, so a mid-round toggle simply
-   * applies from the next fan-out pass onward.
+   * Chat-level Isolate policy (Shared / Worktrees / Any) for fan-out lanes.
+   * Read live at dispatch time (not captured into the round), so a mid-round
+   * toggle simply applies from the next fan-out pass onward. Unlike the old
+   * two-state preference this is USER AUTHORITY: `'off'`/`'worktree'` pin the
+   * regime against per-call agent overrides; only `'any'` delegates the
+   * choice. See EnsembleFanoutIsolationPolicy.
    */
-  fanoutIsolation?: EnsembleFanoutIsolation
+  fanoutIsolation?: EnsembleFanoutIsolationPolicy
   /** 1.0.4-AR13 — see `EnsembleRoundMode` for semantics. Undefined
    * reads as `'roundtable'` so all pre-AR13 chats keep their
    * existing structure. */

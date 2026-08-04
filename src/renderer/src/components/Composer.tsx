@@ -9,11 +9,12 @@ import {
   AgenticServiceId,
   AgenticWorkspaceGrant,
   ChatWorkflowMode,
-  EnsembleFanoutIsolation,
+  EnsembleFanoutIsolationPolicy,
   EnsembleFanoutPolicy,
   EnsembleParticipant,
   PermissionPresetId,
-  ProviderId
+  ProviderId,
+  resolveEnsembleFanoutIsolationPolicy
 } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
@@ -520,7 +521,7 @@ export interface ComposerProps {
   workspaceTrustMutationDisabledReason?: string
   updateCurrentEnsembleConcurrentMode: any
   updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) => void
-  updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolation) => void
+  updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolationPolicy) => void
   updateCurrentEnsembleContextChars: any
   updateCurrentEnsembleMaxContinuationHops: any
   updateCurrentEnsembleOrchestrationMode: any
@@ -1243,7 +1244,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         fanoutPolicy={currentEnsembleFanoutPolicy}
         writerFanoutPolicy={writerFanoutPolicy}
         onFanoutPolicyChange={updateCurrentEnsembleFanoutPolicy}
-        fanoutIsolation={currentChat.ensemble.fanoutIsolation === 'worktree' ? 'worktree' : 'off'}
+        fanoutIsolation={resolveEnsembleFanoutIsolationPolicy(currentChat.ensemble.fanoutIsolation)}
         onFanoutIsolationChange={updateCurrentEnsembleFanoutIsolation}
         concurrentLanesAvailable={ensembleConcurrentLanesAvailable}
         concurrentWriteLanesAvailable={ensembleConcurrentWriteLanesAvailable}

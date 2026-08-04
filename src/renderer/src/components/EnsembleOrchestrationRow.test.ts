@@ -34,6 +34,24 @@ describe('orchestration row control text', () => {
     expect(active).toMatch(/color:\s*var\(--accent-color\)/)
   })
 
+  it('opens the Isolate popover through the shared picker chrome with all three policies', () => {
+    // The Isolate control is a trigger + portaled popover like its Fan-Out
+    // neighbour — NOT a cycle toggle. The popover must reuse the exact
+    // combined-picker chrome classes (opaque themed panel + rim highlight)
+    // so it matches every other composer popover identically.
+    const source = readFileSync(new URL('./EnsembleOrchestrationRow.tsx', import.meta.url), 'utf8')
+    expect(source).toContain('function IsolationPicker')
+    const pickerStart = source.indexOf('interface IsolationRow')
+    expect(pickerStart).toBeGreaterThan(-1)
+    const picker = source.slice(pickerStart)
+    expect(picker).toContain('composer-combined-picker-popover composer-plus-picker-popover shell-')
+    expect(picker).toContain("label: 'Shared'")
+    expect(picker).toContain("label: 'Worktrees'")
+    expect(picker).toContain("label: 'Any'")
+    // The old cycle-toggle handler must be gone: clicking opens the popover.
+    expect(source).not.toMatch(/onFanoutIsolationChange\(fanoutIsolation === 'worktree'/)
+  })
+
   it('references only colour tokens the themes actually define', () => {
     // `--text-color` is defined nowhere; a declaration using it is dropped as
     // invalid, which is exactly how the dead hover rule hid this for so long.

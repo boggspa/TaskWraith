@@ -12,6 +12,7 @@
  *
  *   Mode:          [Turn/Continuous picker]
  *   Fan-Out:       [Off/Read/Write/All picker]
+ *   Isolate:       [Shared/Worktrees/Any picker]
  *   Chars:         [slider] 24K
  *   Turns:         [n/m hop meter]           (continuous mode only)
  *
@@ -36,7 +37,7 @@ import {
 import { EnsembleModePicker, type EnsembleOrchestrationMode } from './EnsembleModePicker'
 import type {
   ComposerStyle,
-  EnsembleFanoutIsolation,
+  EnsembleFanoutIsolationPolicy,
   EnsembleFanoutPolicy
 } from '../../../main/store/types'
 
@@ -102,10 +103,12 @@ export function EnsembleOrchestrationRow({
    * vs user-preflight) — resolved upstream from bossmanParticipantId. */
   writerFanoutPolicy: EnsembleFanoutPolicy
   onFanoutPolicyChange: (policy: EnsembleFanoutPolicy) => void
-  /** Worktree isolation for WRITE-intent fan-out lanes (chat-level config;
-   * ensemble_fanout/_all tool calls may still override per call). */
-  fanoutIsolation: EnsembleFanoutIsolation
-  onFanoutIsolationChange: (isolation: EnsembleFanoutIsolation) => void
+  /** Chat-level Isolate policy for fan-out lanes. Shared ('off') and
+   * Worktrees ('worktree') are user-pinned — the orchestrator clamps
+   * per-call ensemble_fanout isolation overrides to match — while Any
+   * delegates the per-dispatch choice to the Boss/Captain. */
+  fanoutIsolation: EnsembleFanoutIsolationPolicy
+  onFanoutIsolationChange: (isolation: EnsembleFanoutIsolationPolicy) => void
   concurrentLanesAvailable: boolean
   concurrentWriteLanesAvailable: boolean
   bossmanAssigned: boolean
@@ -223,22 +226,11 @@ export function EnsembleOrchestrationRow({
         <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">
           Isolate
         </span>
-        <button
-          type="button"
-          className="composer-fanout-isolation-toggle"
-          data-active={fanoutIsolation === 'worktree'}
-          aria-pressed={fanoutIsolation === 'worktree'}
-          title={
-            fanoutIsolation === 'worktree'
-              ? 'Write-intent fan-out lanes run in their own git worktrees (forked from the last commit). Each lane’s result becomes a candidate to compare & promote from the Compare surface.'
-              : 'Write-intent fan-out lanes share the live workspace checkout. Turn on to give each write lane an isolated worktree whose result you promote or discard.'
-          }
-          onClick={() =>
-            onFanoutIsolationChange(fanoutIsolation === 'worktree' ? 'off' : 'worktree')
-          }
-        >
-          {fanoutIsolation === 'worktree' ? 'Worktrees' : 'Shared'}
-        </button>
+        <IsolationPicker
+          value={fanoutIsolation}
+          composerStyle={composerStyle}
+          onSelect={onFanoutIsolationChange}
+        />
       </span>
       <span className="composer-orchestration-cell composer-orchestration-cell-history">
         <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">
@@ -448,6 +440,168 @@ function FanoutPolicyPicker({
         onClick={() => setOpen((current) => !current)}
       >
         <span className="composer-fanout-policy-trigger-label">{triggerLabel}</span>
+      </button>
+      {popover}
+    </>
+  )
+}
+
+interface IsolationRow {
+  key: EnsembleFanoutIsolationPolicy
+  label: string
+  description: string
+}
+
+const ISOLATION_ROWS: IsolationRow[] = [
+  {
+    key: 'off',
+    label: 'Shared',
+    description:
+      'User-pinned: every lane works in the live checkout on its current branch. Agents may not create branches or worktrees; TaskWraith write locks serialize concurrent writers.'
+  },
+  {
+    key: 'worktree',
+    label: 'Worktrees',
+    description:
+      'User-pinned: write-intent fan-out lanes always run in per-lane git worktrees (forked from the last commit) whose results become candidates to compare & promote.'
+  },
+  {
+    key: 'any',
+    label: 'Any',
+    description:
+      'Agents decide: Boss/Captain choose per dispatch via the fan-out isolation parameter; lanes without an explicit choice keep the shared checkout.'
+  }
+]
+
+/**
+ * Isolate picker — trigger + portaled popover, structurally cloned from
+ * FanoutPolicyPicker above so it reuses the exact combined-picker popover
+ * chrome every other composer popover carries (opaque themed panel + rim
+ * highlight). The trigger keeps the `.composer-fanout-isolation-toggle`
+ * class (its resting/active text treatment is pinned by
+ * EnsembleOrchestrationRow.test.ts); `data-active` still marks the
+ * pinned-Worktrees state only.
+ */
+function IsolationPicker({
+  value,
+  composerStyle,
+  onSelect
+}: {
+  value: EnsembleFanoutIsolationPolicy
+  composerStyle: ComposerStyle
+  onSelect: (value: EnsembleFanoutIsolationPolicy) => void
+}): React.JSX.Element {
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const selectedRow = ISOLATION_ROWS.find((row) => row.key === value) || ISOLATION_ROWS[0]
+
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      if (!open) {
+        setPosition(null)
+        return
+      }
+      const trigger = triggerRef.current
+      if (!trigger) return
+      const rect = trigger.getBoundingClientRect()
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 340))
+      const top = rect.top - 8
+      setPosition({ left, top })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target)) return
+      if (triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    document.addEventListener('mousedown', handleClick, true)
+    document.addEventListener('keydown', handleKey, true)
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true)
+      document.removeEventListener('keydown', handleKey, true)
+    }
+  }, [open])
+
+  const popover =
+    open && position
+      ? createPortal(
+          <div
+            ref={popoverRef}
+            className={`composer-combined-picker-popover composer-plus-picker-popover shell-${composerStyle}`}
+            style={{
+              position: 'fixed',
+              left: `${position.left}px`,
+              top: `${position.top}px`,
+              transform: 'translateY(-100%)'
+            }}
+            role="dialog"
+            aria-label="Fan-out isolation"
+          >
+            <div className="composer-plus-picker-section">
+              <div className="composer-combined-picker-column-header">Isolate</div>
+              {ISOLATION_ROWS.map((row) => {
+                const active = row.key === value
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    className={`composer-combined-picker-row composer-plus-picker-row ${active ? 'is-selected' : ''}`}
+                    onClick={() => {
+                      onSelect(row.key)
+                      setOpen(false)
+                    }}
+                    title={row.description}
+                    aria-pressed={active}
+                  >
+                    <span className="composer-plus-picker-row-copy">
+                      <span className="composer-combined-picker-row-label">{row.label}</span>
+                      <span className="composer-combined-picker-row-sub">{row.description}</span>
+                    </span>
+                    {active && (
+                      <span className="composer-combined-picker-check" aria-hidden>
+                        ✓
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>,
+          document.body
+        )
+      : null
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="composer-fanout-isolation-toggle"
+        data-active={value === 'worktree'}
+        title={selectedRow.description}
+        aria-label="Fan-out isolation"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {selectedRow.label}
       </button>
       {popover}
     </>

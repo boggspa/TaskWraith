@@ -78,6 +78,7 @@ import type {
   TranscriptMediaRef,
   UsageRecord
 } from '../store/types'
+import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
 import {
   findAllMentions,
   resolvePhraseToParticipant,
@@ -952,7 +953,9 @@ export interface EnsembleFanoutInput {
   mode?: EnsembleFanoutMode
   targetStage?: unknown
   writeScopes?: unknown
-  /** 'worktree' | 'off'; omitted inherits the chat's fanoutIsolation config. */
+  /** 'worktree' | 'off'. Honored only while the chat's Isolate setting is
+   * 'any'; a user-pinned Shared/Worktrees setting overrides it (the receipt
+   * says so). Omitted defers to the chat policy. */
   isolation?: unknown
 }
 
@@ -964,7 +967,9 @@ export interface EnsembleFanoutAllInput {
   targets?: unknown
   prompt?: string
   reason?: string
-  /** 'worktree' | 'off'; omitted inherits the chat's fanoutIsolation config. */
+  /** 'worktree' | 'off'. Honored only while the chat's Isolate setting is
+   * 'any'; a user-pinned Shared/Worktrees setting overrides it (the receipt
+   * says so). Omitted defers to the chat policy. */
   isolation?: unknown
 }
 
@@ -1628,18 +1633,6 @@ function normalizeFanoutMode(value: unknown): EnsembleFanoutMode | null {
 function normalizeFanoutIsolation(value: unknown): EnsembleFanoutIsolation | null | undefined {
   if (value === undefined || value === null || value === '') return undefined
   return value === 'worktree' || value === 'off' ? value : null
-}
-
-/**
- * Live-read per-chat isolation preference. Deliberately not captured into the
- * round: unlike fanoutPolicy this is a mechanical preference, not an
- * authority decision, so a mid-round toggle simply applies from the next
- * fan-out pass onward.
- */
-function resolveEnsembleFanoutIsolation(
-  config: { fanoutIsolation?: unknown } | null | undefined
-): EnsembleFanoutIsolation {
-  return config?.fanoutIsolation === 'worktree' ? 'worktree' : 'off'
 }
 
 const ENSEMBLE_AWAIT_POLL_INTERVAL_MS = 500
@@ -10507,6 +10500,24 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Receipt note when a per-call isolation override lost to a user-pinned
+   * chat Isolate setting. The dispatch itself proceeds under the pinned
+   * regime (runParallelFanoutPass owns the clamp); this note teaches the
+   * calling seat instead of silently ignoring its parameter.
+   */
+  private ignoredIsolationOverrideNote(
+    chat: ChatRecord,
+    isolation: EnsembleFanoutIsolation | undefined
+  ): string {
+    if (isolation === undefined) return ''
+    const policy = resolveEnsembleFanoutIsolationPolicy(chat.ensemble?.fanoutIsolation)
+    if (policy === 'any' || isolation === policy) return ''
+    const pinned =
+      policy === 'worktree' ? 'write lanes into isolated worktrees' : 'lanes to the shared checkout'
+    return ` Requested isolation=${isolation} was ignored — this chat's Isolate setting pins ${pinned} (set Isolate to Any to let agents choose).`
+  }
+
   private async fanoutForRunExclusive(
     runId: string | undefined,
     input: EnsembleFanoutInput
@@ -10837,7 +10848,7 @@ export class EnsembleOrchestrator {
         status: 'dispatched',
         laneIds,
         participantIds: acceptedTargets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} lane(s) entered provider setup.${rejectedCount > 0 ? ` ${rejectedCount} target(s) were rejected before adapter invocation and remain eligible for serial rotation.` : ''} Results and any asynchronous setup failures will appear in the transcript; this tool returns after adapter invocation so the caller does not time out while lanes are working.`
+        message: `${label} dispatched: ${laneIds.length} lane(s) entered provider setup.${rejectedCount > 0 ? ` ${rejectedCount} target(s) were rejected before adapter invocation and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results and any asynchronous setup failures will appear in the transcript; this tool returns after adapter invocation so the caller does not time out while lanes are working.`
       }
     } catch (error) {
       const message =
@@ -11108,7 +11119,7 @@ export class EnsembleOrchestrator {
         status: 'dispatched',
         laneIds,
         participantIds: acceptedTargets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} lane(s) started under each participant's own permissions.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
+        message: `${label} dispatched: ${laneIds.length} lane(s) started under each participant's own permissions.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
       }
     } catch (error) {
       const message =
@@ -15870,7 +15881,9 @@ export class EnsembleOrchestrator {
        * validation below. */
       dispatchOwnPermissions?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
-      /** Explicit per-call override; omitted inherits chat fanoutIsolation. */
+      /** Per-call choice, honored only while the chat Isolate policy is
+       * 'any' — pinned 'off'/'worktree' policies clamp it. Omitted defers
+       * to the chat policy ('any' defaults to the shared checkout). */
       isolation?: EnsembleFanoutIsolation
       onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
       acceptedRuns?: ActiveParticipantRun[]
@@ -15924,16 +15937,22 @@ export class EnsembleOrchestrator {
     const writeCount = participants.length - readOnlyCount
     // Worktree isolation applies to WRITE-intent lanes only: read lanes need
     // the live checkout (and cannot mutate it), while parallel writers are the
-    // stomping hazard. Requires workspace scope and the wired allocator dep.
+    // stomping hazard. The chat-level Isolate policy is USER AUTHORITY,
+    // live-read at pass time (a mid-round toggle applies from the next pass):
+    // 'off'/'worktree' are pinned regimes a per-call override cannot escape;
+    // only 'any' delegates the choice to the caller, defaulting to the shared
+    // checkout when omitted.
+    const isolationPolicy = resolveEnsembleFanoutIsolationPolicy(
+      (this.deps.getChat(runtime.chatId) || chat).ensemble?.fanoutIsolation
+    )
     const fanoutIsolation: EnsembleFanoutIsolation =
-      options.isolation ??
-      resolveEnsembleFanoutIsolation((this.deps.getChat(runtime.chatId) || chat).ensemble)
+      isolationPolicy === 'any' ? (options.isolation ?? 'off') : isolationPolicy
+    // Global-scope chats have no workspace checkout to isolate; write lanes
+    // there run as before. Missing allocator/workspace on a workspace-scoped
+    // chat is NOT an exemption — those lanes fail closed per-lane below
+    // instead of silently sharing the checkout.
     const isolateWriteLanes =
-      fanoutIsolation === 'worktree' &&
-      writeCount > 0 &&
-      chat.scope !== 'global' &&
-      Boolean(chat.workspacePath) &&
-      Boolean(this.deps.allocateFanoutLaneWorktree)
+      fanoutIsolation === 'worktree' && writeCount > 0 && chat.scope !== 'global'
     const label =
       options.label ||
       (mode === 'locked_writers'
@@ -16243,7 +16262,12 @@ export class EnsembleOrchestrator {
             // back to the shared checkout would defeat the isolation the user
             // (or Boss) explicitly asked for and reintroduce writer stomping.
             try {
-              const allocation = await this.deps.allocateFanoutLaneWorktree!({
+              if (!this.deps.allocateFanoutLaneWorktree || !dispatchChat.workspacePath) {
+                throw new Error(
+                  'worktree isolation is required for this dispatch, but no workspace worktree allocator is available — refusing to run this write lane in the shared checkout.'
+                )
+              }
+              const allocation = await this.deps.allocateFanoutLaneWorktree({
                 chatId: runtime.chatId,
                 roundId: runtime.roundId,
                 laneId: run.laneId,

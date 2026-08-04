@@ -21681,10 +21681,12 @@ describe('fan-out worktree isolation', () => {
     )
   })
 
-  it('inherits isolation from the explicit tool parameter when chat config is off', async () => {
-    const allocate = vi.fn(
-      async (input: { laneId: string }) => allocationFor(input.laneId)
-    )
+  it('clamps an explicit worktree override while the chat pins Shared (default)', async () => {
+    // The Isolate setting is user authority: unset/off means the shared
+    // checkout is PINNED, and a Boss-side isolation=worktree cannot escape
+    // it. Before this rule the per-call parameter silently overrode the
+    // user's visible "Shared" toggle, which made the toggle read as a no-op.
+    const allocate = vi.fn(async (input: { laneId: string }) => allocationFor(input.laneId))
     const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
     await startIsolationRound(harness)
 
@@ -21700,8 +21702,116 @@ describe('fan-out worktree isolation', () => {
         { type: 'result', status: 'success' }
       )
     }
-    await fanout
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(allocate).not.toHaveBeenCalled()
+    for (const payload of harness.dispatched) {
+      expect(payload.runtimeWorktree).toBeUndefined()
+    }
+    // The receipt teaches the caller about the clamp instead of silently
+    // ignoring the parameter.
+    expect(result.message).toContain('Isolate setting pins')
+    expect(result.message).toContain('Any')
+  })
+
+  it('any policy honors an explicit worktree override', async () => {
+    const allocate = vi.fn(async (input: { laneId: string }) => allocationFor(input.laneId))
+    const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
+    await startIsolationRound(harness)
+    harness.chat.ensemble!.fanoutIsolation = 'any'
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.',
+      isolation: 'worktree'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(result.message).not.toContain('Isolate setting pins')
     expect(allocate).toHaveBeenCalledTimes(1)
+  })
+
+  it('any policy defaults to the shared checkout when the caller omits isolation', async () => {
+    const allocate = vi.fn(async (input: { laneId: string }) => allocationFor(input.laneId))
+    const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
+    await startIsolationRound(harness)
+    harness.chat.ensemble!.fanoutIsolation = 'any'
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    await fanout
+    expect(allocate).not.toHaveBeenCalled()
+  })
+
+  it('a pinned Worktrees setting overrides an explicit off request', async () => {
+    const allocate = vi.fn(async (input: { laneId: string }) => allocationFor(input.laneId))
+    const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
+    await startIsolationRound(harness)
+    harness.chat.ensemble!.fanoutIsolation = 'worktree'
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.',
+      isolation: 'off'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('Isolate setting pins')
+    expect(allocate).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails write lanes closed when Worktrees is pinned but no allocator is wired', async () => {
+    // Silently running a write lane in the shared checkout would defeat the
+    // isolation the user pinned — the lane must fail pre-dispatch instead,
+    // exactly like a thrown allocation error, while read lanes proceed.
+    const harness = makeHarness()
+    await startIsolationRound(harness)
+    harness.chat.ensemble!.fanoutIsolation = 'worktree'
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(result.laneIds).toHaveLength(1)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('fan-out lane failed before dispatch') &&
+          message.content.includes('refusing to run this write lane')
+      )
+    ).toBe(true)
   })
 
   it('rejects an unrecognized isolation value', async () => {
@@ -21750,9 +21860,7 @@ describe('fan-out worktree isolation', () => {
   })
 
   it('never allocates when isolation is off (default) even with the dep wired', async () => {
-    const allocate = vi.fn(
-      async (input: { laneId: string }) => allocationFor(input.laneId)
-    )
+    const allocate = vi.fn(async (input: { laneId: string }) => allocationFor(input.laneId))
     const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
     await startIsolationRound(harness)
 
