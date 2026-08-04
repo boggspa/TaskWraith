@@ -169,3 +169,20 @@ describe('FanoutWorktreeAllocator', () => {
     ).rejects.toThrow('saved chat')
   })
 })
+
+/*
+ * Isolate pinned-Shared branch-hold exemption is STRUCTURAL: the allocator
+ * runs main-side through GitService and never traverses the seat approval
+ * gate, so the hold cannot deadlock the very isolation machinery the
+ * Worktrees policy depends on. Pin that structure — if allocation ever
+ * routes through the gate, the exemption needs an explicit design instead.
+ */
+describe('seat-approval-gate exemption', () => {
+  it('never references the seat approval gate or the branch-hold predicate', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync(new URL('./FanoutWorktreeAllocation.ts', import.meta.url), 'utf8')
+    expect(source).not.toContain('requestAgenticServiceApproval')
+    expect(source).not.toContain('resolveNativeApprovalPreflight')
+    expect(source).not.toContain('isIsolateSharedBranchHold')
+  })
+})

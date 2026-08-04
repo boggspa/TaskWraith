@@ -9,6 +9,7 @@ import type {
   AgenticServiceId,
   AgentApprovalAction,
   AppSettings,
+  ChatRecord,
   EffectiveRunPermissions,
   EnsembleRunIdentity,
   ProviderId,
@@ -19,6 +20,7 @@ import {
   isReadOnlyGitShellCommand,
   shellCommandFromApprovalPreview
 } from '../ReadOnlyGitShellCommand'
+import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -87,6 +89,12 @@ export interface RequestAgenticServiceApprovalDeps {
     appChatId?: string
   ) => boolean
   getSettings: () => AppSettings
+  /**
+   * Chat lookup for chat-scoped holds (the Isolate pinned-Shared branch/
+   * worktree ask-hold). Optional so existing fixtures keep compiling; when
+   * absent the hold never fires — production wiring always provides it.
+   */
+  getChatById?: (appChatId: string | undefined) => Pick<ChatRecord, 'ensemble'> | null | undefined
   appendDurableRunEventForRoute: (
     provider: ProviderId,
     route: AgentRunRoute | null | undefined,
@@ -517,7 +525,18 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       service === 'canvasEval' ||
       service === 'mediaRecording' ||
       isPostureApprovalOnlyService(effectivePermissions?.presetId, service) ||
-      isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
+      isPlanInstrumentGrantHold(effectivePermissions?.presetId, service) ||
+      // Isolate pinned-Shared: an ensemble seat's branch/worktree creation
+      // always asks — the chat-level Isolate setting is user authority no
+      // posture, grant, or YOLO may bypass. Ask-hold, not deny: unattended
+      // lanes fail safe via the approval timeout.
+      (service === 'shellCommands' &&
+        isIsolateSharedBranchHold({
+          service,
+          shellCommand: shellCommandFromApprovalPreview(request.preview),
+          isEnsembleRun: Boolean(ensembleRun),
+          chat: deps.getChatById?.(appChatId)
+        }))
     const trustedSessionExternalWrite =
       !request.forcePrompt &&
       !neverAutoAllow &&

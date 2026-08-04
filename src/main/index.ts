@@ -1408,6 +1408,7 @@ import {
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { isReadOnlyGitShellCommand, shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
+import { isIsolateSharedBranchHold } from './IsolateSharedBranchHold'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 // ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
@@ -13049,6 +13050,18 @@ function resolveNativeApprovalPreflight(args: {
     // but the two provider paths should agree on what a grant means.
     args.surfaceId
   )
+  // Isolate pinned-Shared branch/worktree ask-hold (chat-scoped user
+  // authority, orthogonal to the signed posture) — computed only for
+  // ensemble-seat shell commands; parity with the ApprovalOrchestration fold.
+  const holdChatId = (session?.state?.appChatId ?? session?.appChatId) as string | undefined
+  const isolateSharedBranchHold =
+    args.service === 'shellCommands' &&
+    isIsolateSharedBranchHold({
+      service: args.service,
+      shellCommand: args.shellCommand,
+      isEnsembleRun: Boolean(session?.state?.ensembleRun),
+      chat: holdChatId ? AppStore.getChat(holdChatId) : undefined
+    })
   return resolveNativeApprovalPreflightDecision({
     resolution,
     externalPathDetected: Boolean(args.externalPathDetection),
@@ -13072,7 +13085,10 @@ function resolveNativeApprovalPreflight(args: {
       args.service === 'canvasEval' ||
       args.service === 'mediaRecording' ||
       isPostureApprovalOnlyService(effectivePermissions?.presetId, args.service) ||
-      isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service),
+      isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service) ||
+      // Isolate pinned-Shared: seat branch/worktree creation always asks
+      // (ask-hold, not deny — unattended lanes fail safe via approval timeout).
+      isolateSharedBranchHold,
     // Pure `git status` / `git diff` / `git log` runs prompt-free under every
     // posture (parity with the auto-allowed MCP git read tools); the
     // classifier fails closed.
@@ -13396,6 +13412,7 @@ const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
   getApprovalService: () => approvalService,
   isApprovalAdmissionBlocked: historyClearAdmissionBlocked,
   getSettings: () => AppStore.getSettings(),
+  getChatById: (chatId) => (chatId ? AppStore.getChat(chatId) : undefined),
   appendDurableRunEventForRoute,
   recordApprovalLedgerRequest,
   safeSendToSender,

@@ -417,6 +417,94 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).toContain('registerGeminiTool')
   })
 
+  // (h3) NEVER-AUTO-ALLOW — Isolate pinned-Shared branch hold. An ensemble
+  // seat's `git checkout -b` under a chat whose Isolate policy pins the
+  // shared checkout must PROMPT even with session-YOLO + an allow decision:
+  // the chat-scoped Isolate setting is user authority no posture, grant, or
+  // YOLO may bypass (ask-hold, not deny — unattended lanes fail safe via the
+  // approval timeout).
+  it('(h3) Isolate pinned-Shared holds seat branch creation despite YOLO + allow', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              ensembleRun: { provider: 'codex', role: 'Builder', roundId: 'round-1' }
+            }
+          }
+        : undefined) as never)
+    // Chat with ensemble config and NO fanoutIsolation set — undefined pins
+    // Shared (the enforced default).
+    deps.getChatById = vi.fn(() => ({ ensemble: { enabled: true, participants: [] } }) as never)
+
+    createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: {
+          command: 'git checkout -b feature/x',
+          params: { command: 'git checkout -b feature/x' }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    expect(order).not.toContain('audit:autoAllow:session_yolo')
+    expect(order).not.toContain('audit:autoAllow:workspace_grant')
+    expect(order).toContain('registerGeminiTool')
+  })
+
+  // (h4) …and the SAME command auto-allows again when the chat's Isolate
+  // policy is Any (agent-decided) — the hold is policy-scoped, not a blanket
+  // git restriction.
+  it('(h4) the same seat branch creation auto-allows when Isolate policy is Any', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              ensembleRun: { provider: 'codex', role: 'Builder', roundId: 'round-1' }
+            }
+          }
+        : undefined) as never)
+    deps.getChatById = vi.fn(
+      () => ({ ensemble: { enabled: true, participants: [], fanoutIsolation: 'any' } }) as never
+    )
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: {
+          command: 'git checkout -b feature/x',
+          params: { command: 'git checkout -b feature/x' }
+        }
+      })
+    )
+
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:session_yolo')
+    expect(order).not.toContain('registerGeminiTool')
+  })
+
   it('(h2) posture approval-only publishing prompts request-only despite an allow decision', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
