@@ -3,7 +3,11 @@ import { mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { codexGitMetadataRootsForWorkspace, codexSandboxForMode } from './CodexRunPolicy'
+import {
+  codexGitMetadataRootsForWorkspace,
+  codexNativeAutoApprovalFromPosture,
+  codexSandboxForMode
+} from './CodexRunPolicy'
 
 const tempRoots: string[] = []
 
@@ -74,5 +78,27 @@ describe('codexGitMetadataRootsForWorkspace', () => {
 
     expect(existsSync(workspace)).toBe(false)
     expect(codexGitMetadataRootsForWorkspace(workspace)).toEqual([])
+  })
+})
+
+describe('codexNativeAutoApprovalFromPosture (slice D — posture-honoring native gate)', () => {
+  const posture = (presetId: string, shell: string, file: string) =>
+    ({ presetId, agenticServices: { shellCommands: shell, fileChanges: file } }) as never
+
+  it('auto-approves native codex tools when the SIGNED posture is a write tier with shell+file allow', () => {
+    expect(codexNativeAutoApprovalFromPosture(posture('workspace_write', 'allow', 'allow'))).toBe(true)
+    expect(codexNativeAutoApprovalFromPosture(posture('full_access', 'allow', 'allow'))).toBe(true)
+  })
+
+  it('never auto-approves from read tiers, Accept Edits, or when the global kill switch survived the clamp', () => {
+    expect(codexNativeAutoApprovalFromPosture(posture('default', 'allow', 'allow'))).toBe(false)
+    expect(codexNativeAutoApprovalFromPosture(posture('read_only', 'allow', 'allow'))).toBe(false)
+    expect(codexNativeAutoApprovalFromPosture(posture('plan', 'allow', 'allow'))).toBe(false)
+    // A global deny is preserved into the resolved services (preserveExplicitDeny):
+    // the posture path must respect it exactly like the settings path did.
+    expect(codexNativeAutoApprovalFromPosture(posture('workspace_write', 'deny', 'allow'))).toBe(false)
+    expect(codexNativeAutoApprovalFromPosture(posture('full_access', 'allow', 'ask'))).toBe(false)
+    expect(codexNativeAutoApprovalFromPosture(undefined)).toBe(false)
+    expect(codexNativeAutoApprovalFromPosture(null)).toBe(false)
   })
 })

@@ -118,3 +118,29 @@ export function normalizeCodexTurnStatus(status?: string): string {
   if (status === 'failed') return 'failed'
   return status || 'success'
 }
+
+
+/**
+ * Slice D (owner directive 2026-08-04): the codex native-tool approval gate
+ * previously read only GLOBAL agenticServices, so a Full WS Access / Full
+ * Access run still inherited the globals' prompts ("some providers can't use
+ * shell when granted"). This posture-honoring variant reads the run's SIGNED,
+ * post-clamp effective permissions instead: a write-tier preset whose resolved
+ * shell+file are both 'allow' runs codex natively without the per-call gate.
+ * A global 'deny' survives the resolver (preserveExplicitDeny), so the kill
+ * switch keeps working through this path exactly as through the settings path.
+ * Read tiers and Accept Edits never qualify — their TaskWraith-side prompts
+ * remain the contract.
+ */
+export function codexNativeAutoApprovalFromPosture(
+  effectivePermissions:
+    | { presetId?: string; agenticServices?: Record<string, string | undefined> }
+    | null
+    | undefined
+): boolean {
+  if (!effectivePermissions) return false
+  const presetId = effectivePermissions.presetId
+  if (presetId !== 'workspace_write' && presetId !== 'full_access') return false
+  const services = effectivePermissions.agenticServices
+  return services?.shellCommands === 'allow' && services?.fileChanges === 'allow'
+}

@@ -188,6 +188,7 @@ import {
   codexSandboxForMode,
   buildCodexUserInput,
   codexGitMetadataRootsForWorkspace,
+  codexNativeAutoApprovalFromPosture,
   normalizeCodexTurnStatus
 } from './codex/CodexRunPolicy'
 import { isCodexUserInputRequestMethod } from './codex/CodexUserInput'
@@ -1409,6 +1410,7 @@ import {
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { isReadOnlyGitShellCommand, shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from './IsolateSharedBranchHold'
+import { isInspectionShellCommand, shellCommandTierHold } from './ShellCommandTierPolicy'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 // ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
@@ -13065,6 +13067,18 @@ function resolveNativeApprovalPreflight(args: {
       isEnsembleRun: Boolean(session?.state?.ensembleRun),
       chat: holdChatId ? AppStore.getChat(holdChatId) : undefined
     })
+  // Slices D/E per-tier shell holds — parity with the ApprovalOrchestration
+  // fold: remote/SSH + raw network egress always ask; `rm -r`-class always
+  // asks except a provably in-workspace delete at Full Access; process
+  // mutation asks at Full WS Access.
+  const tierShellHold =
+    args.service === 'shellCommands' &&
+    shellCommandTierHold({
+      presetId: effectivePermissions?.presetId,
+      service: args.service,
+      shellCommand: args.shellCommand,
+      workspacePath: args.workspacePath
+    })
   return resolveNativeApprovalPreflightDecision({
     resolution,
     externalPathDetected: Boolean(args.externalPathDetection),
@@ -13091,13 +13105,23 @@ function resolveNativeApprovalPreflight(args: {
       isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service) ||
       // Isolate pinned-Shared: seat branch/worktree creation always asks
       // (ask-hold, not deny — unattended lanes fail safe via approval timeout).
-      isolateSharedBranchHold,
+      isolateSharedBranchHold ||
+      tierShellHold,
     // Pure `git status` / `git diff` / `git log` runs prompt-free under every
     // posture (parity with the auto-allowed MCP git read tools); the
     // classifier fails closed.
     readOnlyShellFastPath:
       args.service === 'shellCommands' &&
-      isReadOnlyGitShellCommand(shellCommandFromRawCommand(args.shellCommand)),
+      (isReadOnlyGitShellCommand(shellCommandFromRawCommand(args.shellCommand)) ||
+        // Slice D: pure inspection commands join the read fast path (fails
+        // closed; structurally disjoint from every hold above).
+        isInspectionShellCommand(shellCommandFromRawCommand(args.shellCommand))),
+    // Slice E: outside-workspace READS auto-approve at the write tiers;
+    // writes keep the external-path ask.
+    externalPathReadAutoAllowed:
+      args.externalPathDetection?.access === 'read' &&
+      (effectivePermissions?.presetId === 'workspace_write' ||
+        effectivePermissions?.presetId === 'full_access'),
     effectivePermissions
   })
 }
@@ -25240,12 +25264,21 @@ function sendAgentCompatExit(
 
 function codexApprovalPolicyForMode(
   approvalMode?: string,
-  settings: AppSettings = AppStore.getSettings()
+  settings: AppSettings = AppStore.getSettings(),
+  effectivePermissions?: EffectiveRunPermissions | null
 ): 'never' | 'on-request' {
   if (approvalMode === 'plan') {
     return 'never'
   }
-  if (approvalMode === 'auto_edit' && !codexNeedsApprovalGate(settings)) return 'never'
+  // Slice D (2026-08-04): honor the run's SIGNED posture, not just globals —
+  // a write-tier preset with resolved shell+file allow runs codex natively
+  // without the per-call gate (global 'deny' survives the resolver, so the
+  // kill switch keeps working through this path).
+  if (
+    approvalMode === 'auto_edit' &&
+    (codexNativeAutoApprovalFromPosture(effectivePermissions) || !codexNeedsApprovalGate(settings))
+  )
+    return 'never'
   return 'on-request'
 }
 
@@ -30176,7 +30209,7 @@ async function runCodexAppServerWithClient(
   const approvalPolicy =
     payload.scope === 'global'
       ? 'on-request'
-      : codexApprovalPolicyForMode(payload.approvalMode, settings)
+      : codexApprovalPolicyForMode(payload.approvalMode, settings, payload.effectivePermissions)
   const fullAccessGranted = isFullShellAccessGranted(payload.effectivePermissions)
   const sandbox =
     payload.scope === 'global'

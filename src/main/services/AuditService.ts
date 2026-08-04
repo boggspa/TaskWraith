@@ -43,6 +43,8 @@ export type AutomaticApprovalDecisionSource =
   | 'bossman_auto'
   | 'plan_artifact'
   | 'readonly_shell'
+  | 'inspection_shell'
+  | 'external_read'
   | 'explicit_user_request'
 export type AutomaticApprovalGrantedScope = 'request' | 'session' | 'workspace'
 

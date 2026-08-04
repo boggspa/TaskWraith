@@ -38,6 +38,8 @@ export type NativeApprovalPreflight =
         | 'session_yolo'
         | 'trusted_session'
         | 'readonly_shell'
+        | 'inspection_shell'
+        | 'external_read'
       scope: 'workspace' | 'session' | 'request'
       effectivePermissions?: EffectiveRunPermissions
     }
@@ -152,6 +154,12 @@ export function resolveNativeApprovalPreflightDecision(args: {
    * trusted).
    */
   readOnlyShellFastPath?: boolean
+  /**
+   * Slice E (2026-08-04): the detected external path is a READ and the signed
+   * posture is a write tier (workspace_write / full_access) — outside-workspace
+   * reads auto-approve there by owner spec; writes keep the external-path ask.
+   */
+  externalPathReadAutoAllowed?: boolean
   effectivePermissions?: EffectiveRunPermissions
 }): Exclude<NativeApprovalPreflight, { kind: 'none' }> {
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = args.resolution
@@ -179,6 +187,15 @@ export function resolveNativeApprovalPreflightDecision(args: {
       policy,
       reason: 'trusted_session',
       scope: 'session',
+      effectivePermissions: args.effectivePermissions
+    }
+  }
+  if (args.externalPathDetected && args.externalPathReadAutoAllowed) {
+    return {
+      kind: 'allow',
+      policy,
+      reason: 'external_read',
+      scope: 'request',
       effectivePermissions: args.effectivePermissions
     }
   }

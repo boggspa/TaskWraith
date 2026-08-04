@@ -615,3 +615,44 @@ describe('resolveNativeApprovalPreflightDecision — readOnlyShellFastPath (git 
     )
   })
 })
+
+describe('resolveNativeApprovalPreflightDecision — external read split (slice E)', () => {
+  const base = {
+    resolution: {
+      policy: 'ask' as const,
+      workspaceGrantAllowed: false,
+      sessionGrantAllowed: false,
+      decision: 'ask' as const
+    }
+  }
+
+  it('auto-allows a detected external READ when the caller marks the write-tier split', () => {
+    const decision = resolveNativeApprovalPreflightDecision({
+      ...base,
+      externalPathDetected: true,
+      externalPathReadAutoAllowed: true
+    })
+    expect(decision).toMatchObject({ kind: 'allow', reason: 'external_read', scope: 'request' })
+  })
+
+  it('still asks for detected external paths without the read split, and deny/hold always win', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({ ...base, externalPathDetected: true })
+    ).toMatchObject({ kind: 'ask' })
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        ...base,
+        externalPathDetected: true,
+        externalPathReadAutoAllowed: true,
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'ask' })
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: { ...base.resolution, decision: 'deny', policy: 'deny' },
+        externalPathDetected: true,
+        externalPathReadAutoAllowed: true
+      })
+    ).toMatchObject({ kind: 'deny' })
+  })
+})

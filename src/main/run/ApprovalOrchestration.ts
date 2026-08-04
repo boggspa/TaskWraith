@@ -21,6 +21,7 @@ import {
   shellCommandFromApprovalPreview
 } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
+import { isInspectionShellCommand, shellCommandTierHold } from '../ShellCommandTierPolicy'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -432,7 +433,19 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // path below.
     if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
       const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
-      if (readOnlyShellCommand !== null && isReadOnlyGitShellCommand(readOnlyShellCommand)) {
+      // Slice D widens the read fast path: pure inspection commands (`ls`,
+      // `cat`, `grep`…) join the read-only git twins — both classifiers fail
+      // closed, and neither overlaps the tier holds below (rm/ssh/kill heads
+      // are structurally outside the inspection allowlist).
+      const shellFastPathReason =
+        readOnlyShellCommand === null
+          ? null
+          : isReadOnlyGitShellCommand(readOnlyShellCommand)
+            ? ('readonly_shell' as const)
+            : isInspectionShellCommand(readOnlyShellCommand)
+              ? ('inspection_shell' as const)
+              : null
+      if (shellFastPathReason) {
         deps.auditService.recordAutomaticApprovalDecision(
           provider,
           auditRoute,
@@ -440,7 +453,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           workspacePath,
           request,
           'autoAllow',
-          'readonly_shell',
+          shellFastPathReason,
           'request',
           {
             policy,
@@ -536,6 +549,18 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           shellCommand: shellCommandFromApprovalPreview(request.preview),
           isEnsembleRun: Boolean(ensembleRun),
           chat: deps.getChatById?.(appChatId)
+        })) ||
+      // Slices D/E per-tier shell holds (owner spec 2026-08-04): remote/SSH +
+      // raw network egress always ask; `rm -r`-class always asks except a
+      // provably in-workspace delete at Full Access; process mutation asks at
+      // Full WS Access. Ask-holds, not denies — unattended lanes fail safe
+      // via the approval timeout.
+      (service === 'shellCommands' &&
+        shellCommandTierHold({
+          presetId: effectivePermissions?.presetId,
+          service,
+          shellCommand: shellCommandFromApprovalPreview(request.preview),
+          workspacePath
         }))
     const trustedSessionExternalWrite =
       !request.forcePrompt &&
@@ -561,6 +586,35 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         {
           policy,
           externalPathWrite: true,
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        }
+      )
+      return true
+    }
+    // Slice E (owner spec 2026-08-04): outside-workspace READS auto-approve at
+    // the write tiers — Full WS Access "auto-approve all reads outside
+    // workspace unprompted", and Full Access is a strict superset. Writes keep
+    // the external-path grant card. Audited like every automatic approval.
+    const externalReadAutoAllowed =
+      !request.forcePrompt &&
+      !neverAutoAllow &&
+      request.externalPathDetection?.access === 'read' &&
+      (effectivePermissions?.presetId === 'workspace_write' ||
+        effectivePermissions?.presetId === 'full_access')
+    if (externalReadAutoAllowed) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'external_read',
+        'request',
+        {
+          policy,
+          externalPathRead: true,
+          externalPath: request.externalPathDetection?.path,
           ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
         }
       )

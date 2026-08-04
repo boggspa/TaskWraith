@@ -505,6 +505,186 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('registerGeminiTool')
   })
 
+  // (d1) TIER HOLD — catastrophic deletion at Full WS Access. Owner spec
+  // (slices D/E): `rm -r` class ALWAYS asks at workspace_write, surviving
+  // session-YOLO and an allow decision. Ask-hold, not deny.
+  it('(d1) recursive rm at workspace_write prompts despite YOLO + allow', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              effectivePermissions: { presetId: 'workspace_write' }
+            }
+          }
+        : undefined) as never)
+
+    createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: {
+          command: 'rm -rf node_modules',
+          params: { command: 'rm -rf node_modules' }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    expect(order).not.toContain('audit:autoAllow:session_yolo')
+    expect(order).toContain('registerGeminiTool')
+  })
+
+  // (d2) TIER HOLD — remote egress asks even at Full Access (owner spec:
+  // remote/SSH + raw network shell commands ASK at both write tiers).
+  it('(d2) ssh at full_access prompts despite YOLO + allow', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              effectivePermissions: { presetId: 'full_access' }
+            }
+          }
+        : undefined) as never)
+
+    createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: {
+          command: 'ssh host uptime',
+          params: { command: 'ssh host uptime' }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    expect(order).not.toContain('audit:autoAllow:session_yolo')
+    expect(order).toContain('registerGeminiTool')
+  })
+
+  // (d3) INSPECTION FAST PATH — read-only inspection commands (`ls`, `cat`,
+  // `grep`…) run prompt-free under an ask policy, the shell twins of the
+  // auto-allowed MCP read tools (mirrors the read-only git fast path).
+  it('(d3) ls auto-allows under an ask policy via the inspection fast path', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: {
+          command: 'ls -la src',
+          params: { command: 'ls -la src' }
+        }
+      })
+    )
+
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:inspection_shell')
+    expect(order).not.toContain('registerGeminiTool')
+  })
+
+  // (d4) FULL ACCESS IN-WORKSPACE DELETE — "always approve in workspace":
+  // a provably in-workspace recursive rm keeps auto-allowing at full_access.
+  it('(d4) provably in-workspace rm -rf auto-allows at full_access', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              effectivePermissions: { presetId: 'full_access' }
+            }
+          }
+        : undefined) as never)
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: {
+          command: 'rm -rf build',
+          params: { command: 'rm -rf build' }
+        }
+      })
+    )
+
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:session_yolo')
+    expect(order).not.toContain('registerGeminiTool')
+  })
+
+  // (d5) EXTERNAL READ SPLIT — outside-workspace READS auto-approve at the
+  // write tiers (owner spec: Full WS Access "auto-approve all reads outside
+  // workspace unprompted"); writes keep the external-path card.
+  it('(d5) an external READ detection auto-allows at workspace_write', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              effectivePermissions: { presetId: 'workspace_write' }
+            }
+          }
+        : undefined) as never)
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'fileChanges',
+      '/repo',
+      request({
+        externalPathDetection: {
+          provider: 'codex',
+          path: '/outside/readme.txt',
+          access: 'read'
+        }
+      })
+    )
+
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:external_read')
+    expect(order).not.toContain('registerGeminiTool')
+  })
+
   it('(h2) posture approval-only publishing prompts request-only despite an allow decision', async () => {
     const order: string[] = []
     const deps = makeDeps(order)

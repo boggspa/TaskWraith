@@ -4237,6 +4237,8 @@ export type ApprovalLedgerDecisionSource =
   | 'bossman_auto'
   | 'plan_artifact'
   | 'readonly_shell'
+  | 'inspection_shell'
+  | 'external_read'
   | 'explicit_user_request'
   | 'system'
 export type ApprovalLedgerExpirationMode =
