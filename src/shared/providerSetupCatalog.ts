@@ -3,12 +3,17 @@
  * Settings, and remote first-launch projections.
  */
 
+import { isLiveSelectableProvider } from './retiredProviders'
+
 export interface ProviderInstallEntry {
   id: string
   label: string
   command: string
   source: string
+  /** Display qualifier shown beside the label (for example "macOS / Linux"). */
   platform?: string
+  /** NodeJS.Platform values this command applies to; undefined = any platform. */
+  platforms?: readonly string[]
 }
 
 export interface OllamaModelEntry {
@@ -48,7 +53,8 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     label: 'Mistral Vibe',
     command: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash',
     source: 'Mistral',
-    platform: 'macOS / Linux'
+    platform: 'macOS / Linux',
+    platforms: ['darwin', 'linux']
   },
   {
     id: 'pi',
@@ -61,14 +67,16 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     label: 'Ollama',
     command: 'curl -fsSL https://ollama.com/install.sh | sh',
     source: 'Ollama',
-    platform: 'macOS / Linux'
+    platform: 'macOS / Linux',
+    platforms: ['darwin', 'linux']
   },
   {
     id: 'ollama-windows',
     label: 'Ollama',
     command: 'irm https://ollama.com/install.ps1 | iex',
     source: 'Ollama',
-    platform: 'Windows'
+    platform: 'Windows',
+    platforms: ['win32']
   }
 ]
 
@@ -135,3 +143,41 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   },
   { id: 'llama3.2:3b', label: 'Llama 3.2 (3B Param)', command: 'ollama run llama3.2:3b' }
 ]
+
+export interface CatalogInstallCommand {
+  id: string
+  label: string
+  command: string
+  kind: 'provider' | 'ollama-model'
+  /** NodeJS.Platform values this command applies to; undefined = any platform. */
+  platforms?: readonly string[]
+}
+
+/**
+ * Resolve a catalog row id to its executable install command. This is the ONLY
+ * lookup the auto-install IPC lane consults, so it applies the same
+ * live-selectable filter the render sites do: a retired or security-disabled
+ * provider's command is not executable even by id. Host CLIs (gh) are NOT here —
+ * they run through the richer `host-tool:open-install-terminal` lane, which
+ * also knows how to upgrade an existing install.
+ */
+export function findCatalogInstallCommand(id: unknown): CatalogInstallCommand | null {
+  if (typeof id !== 'string' || id.length === 0) return null
+  const provider = PROVIDER_INSTALL_COMMANDS.find(
+    (entry) => entry.id === id && isLiveSelectableProvider(entry.id)
+  )
+  if (provider) {
+    return {
+      id: provider.id,
+      label: provider.label,
+      command: provider.command,
+      kind: 'provider',
+      platforms: provider.platforms
+    }
+  }
+  const model = OLLAMA_MODEL_COMMANDS.find((entry) => entry.id === id)
+  if (model) {
+    return { id: model.id, label: model.label, command: model.command, kind: 'ollama-model' }
+  }
+  return null
+}

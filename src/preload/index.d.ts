@@ -1337,6 +1337,16 @@ declare global {
         notice?: string
       }>
       /**
+       * Catalog install commands (provider CLIs + Ollama model pulls): opens a
+       * Terminal running the official command for this catalog row id. Main
+       * re-resolves the command from the shared catalog — ids only cross IPC.
+       */
+      openInstallCommandTerminal: (commandId: string) => Promise<{
+        ok: boolean
+        error?: string
+        command?: string
+      }>
+      /**
        * Optional host CLIs (today only `gh`). Installs when the binary is
        * absent and upgrades the resolved copy when it is present — the caller
        * does not choose, because only MAIN can see which one applies.

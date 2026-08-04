@@ -223,6 +223,15 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('aria-label="FX Labs intensity"')
   })
 
+  it('offers an Install button beside Copy for provider, host-tool, and model commands', () => {
+    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps({})} />)
+
+    expect(html).toContain('Run the Codex install command in Terminal')
+    expect(html).toContain('Run the GitHub CLI (macOS) install command in Terminal')
+    expect(html).toContain('Run the Qwen 3 (4B Param) pull command in Terminal')
+    expect(html).toContain('>Install<')
+  })
+
   it('renders Cursor and Grok as CLI-login providers without raw env flags', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

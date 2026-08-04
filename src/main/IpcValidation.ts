@@ -318,6 +318,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // channels because a host tool is not a ProviderId.
   'host-tool:open-install-terminal': ['hostCliToolId'],
   'host-tool:status': ['hostCliToolId'],
+  // Catalog install commands (provider CLIs + Ollama model pulls). The arg is a
+  // catalog ROW ID; main re-resolves the command from the shared catalog, so an
+  // arbitrary string can never execute.
+  'install-command:open-terminal': ['nonEmptyString'],
   'app:quit': [],
   // Auto-update service (no-arg snapshot/control channels).
   'update-snapshot': [],

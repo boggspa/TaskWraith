@@ -1719,6 +1719,7 @@ import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers
 import { rendererSafeProviderStatus } from './RendererProviderProjection'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
 import { registerHostToolTerminalHandlers } from './ipc/hostToolTerminalHandlers'
+import { registerInstallCommandTerminalHandlers } from './ipc/installCommandTerminalHandlers'
 import { publishCliPathDirectories } from './CliPathDirectoriesPublisher'
 import { __resetHostToolResolverCache, findExecutableOnHost } from './HostToolResolver'
 import {
@@ -51061,6 +51062,15 @@ if (isGeminiMcpBridgeProcess) {
       getPlatform: () => process.platform,
       realpathSync: (path) => fsSync.realpathSync(path),
       invalidateHostToolCache: () => __resetHostToolResolverCache()
+    })
+
+    registerInstallCommandTerminalHandlers({
+      getUserDataPath: () => app.getPath('userData'),
+      openPath: (path) => shell.openPath(path),
+      mkdirSync: (path, options) => fsSync.mkdirSync(path, options),
+      writeFileSync: (path, data, options) => fsSync.writeFileSync(path, data, options),
+      chmodSync: (path, mode) => fsSync.chmodSync(path, mode),
+      getPlatform: () => process.platform
     })
 
     const resolveSenderAgentThreadScope = (event: IpcMainInvokeEvent): AgentThreadSenderScope => {

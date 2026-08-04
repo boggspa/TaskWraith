@@ -33,6 +33,13 @@ describe('banned default styles stay out of approval and menu chrome', () => {
     expect(eyebrow).not.toContain('0.12em')
   })
 
+  it('keeps the provider-install subheads sentence case', () => {
+    const css = readCss('08-theme-picker-overrides.css')
+    const subhead = cssBlockStartingAt(css, '.provider-install-subhead {')
+
+    expect(subhead).not.toContain('text-transform')
+  })
+
   it('keeps the side-chat menu section header sentence case', () => {
     const css = readCss('11-side-chat.css')
     const section = cssBlockStartingAt(css, '.side-chat-layout-menu-section {')

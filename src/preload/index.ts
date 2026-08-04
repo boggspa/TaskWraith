@@ -1424,6 +1424,14 @@ const api = {
       managedRunReady?: false
       notice?: string
     }>,
+  /** Catalog install commands (provider CLIs + Ollama model pulls): opens a
+   * Terminal running the official command for this catalog row id. */
+  openInstallCommandTerminal: (commandId: string) =>
+    ipcRenderer.invoke('install-command:open-terminal', commandId) as Promise<{
+      ok: boolean
+      error?: string
+      command?: string
+    }>,
   /** Optional host CLIs (gh) — install when absent, upgrade when present. */
   openHostToolInstallTerminal: (toolId: string) =>
     ipcRenderer.invoke('host-tool:open-install-terminal', toolId) as Promise<{
