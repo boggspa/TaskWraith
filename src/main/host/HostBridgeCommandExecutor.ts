@@ -182,6 +182,13 @@ const BRIDGE_ACTION_TTL_MS = 120_000
 
 const HOST_APPROVAL_DECISION_SET = new Set<string>(HOST_APPROVAL_DECIDE_DECISIONS)
 
+/** Validated Host↔Bridge join metadata — computed once per execute() before any resolve/Bridge. */
+type HostBridgeActionMeta = {
+  readonly actionId: string
+  readonly issuedAt: number
+  readonly expiresAt: number
+}
+
 function failResult(errorCode: string, errorMessage: string): HostBridgeCommandExecutorResult {
   return { status: 'failed', errorCode, errorMessage }
 }
@@ -313,20 +320,29 @@ export class HostBridgeCommandExecutor {
 
     const hostCommand = validated.value
 
+    // Validate actionMeta exactly once before the switch and before every
+    // resolver/Bridge call so invalid commandId never touches Host context
+    // resolvers or Bridge.
+    const metaResolved = this.actionMeta(hostCommand.commandId)
+    if (!metaResolved.ok) {
+      return failResult('invalid_command_id', metaResolved.error)
+    }
+    const meta = metaResolved.value
+
     try {
       switch (hostCommand.name) {
         case 'composer.send':
-          return await this.executeComposerSend(hostCommand)
+          return await this.executeComposerSend(hostCommand, meta)
         case 'run.cancel':
-          return await this.executeRunCancel(hostCommand)
+          return await this.executeRunCancel(hostCommand, meta)
         case 'approval.decide':
-          return await this.executeApprovalDecide(hostCommand)
+          return await this.executeApprovalDecide(hostCommand, meta)
         case 'question.answer':
-          return await this.executeQuestionAnswer(hostCommand)
+          return await this.executeQuestionAnswer(hostCommand, meta)
         case 'ensemble.seat.toggle':
-          return await this.executeEnsembleSeatToggle(hostCommand)
+          return await this.executeEnsembleSeatToggle(hostCommand, meta)
         case 'thread.select':
-          return await this.executeThreadSelect(hostCommand)
+          return await this.executeThreadSelect(hostCommand, meta)
         default:
           return failResult('not_governed_mutation', 'command is not a governed mutation')
       }
@@ -342,9 +358,7 @@ export class HostBridgeCommandExecutor {
    * actionId exceeds the protocol identifier ceiling. Never embeds random
    * suffixes, raw args, or actor material.
    */
-  private actionMeta(
-    commandId: string
-  ): HostDecodeResult<{ actionId: string; issuedAt: number; expiresAt: number }> {
+  private actionMeta(commandId: string): HostDecodeResult<HostBridgeActionMeta> {
     if (!isSafeHostIdentifier(commandId) || !isHostUuid(commandId)) {
       return {
         ok: false,
@@ -367,7 +381,8 @@ export class HostBridgeCommandExecutor {
   }
 
   private async executeComposerSend(
-    command: HostCommand
+    command: HostCommand,
+    meta: HostBridgeActionMeta
   ): Promise<HostBridgeCommandExecutorResult> {
     const threadId = command.target.threadId
     if (!threadId)
@@ -379,11 +394,6 @@ export class HostBridgeCommandExecutor {
     }
 
     const text = String(command.arguments.text ?? '')
-    const metaResolved = this.actionMeta(command.commandId)
-    if (!metaResolved.ok) {
-      return failResult('invalid_command_id', metaResolved.error)
-    }
-    const meta = metaResolved.value
     const ctx = resolved.value
 
     if (ctx.mode === 'ensemble') {
@@ -421,7 +431,10 @@ export class HostBridgeCommandExecutor {
     return mapBridgeExecutionResult(await this.bridge.executeComposerPrompt(action))
   }
 
-  private async executeRunCancel(command: HostCommand): Promise<HostBridgeCommandExecutorResult> {
+  private async executeRunCancel(
+    command: HostCommand,
+    meta: HostBridgeActionMeta
+  ): Promise<HostBridgeCommandExecutorResult> {
     const threadId = command.target.threadId
     if (!threadId)
       return failResult('invalid_command_arguments', 'run.cancel target.threadId required')
@@ -440,11 +453,6 @@ export class HostBridgeCommandExecutor {
       }
     }
 
-    const metaResolved = this.actionMeta(command.commandId)
-    if (!metaResolved.ok) {
-      return failResult('invalid_command_id', metaResolved.error)
-    }
-    const meta = metaResolved.value
     if (ctx.mode === 'ensemble') {
       const action: BridgeEnsembleCancelRoundAction = {
         kind: 'ensembleCancelRound',
@@ -470,7 +478,8 @@ export class HostBridgeCommandExecutor {
   }
 
   private async executeApprovalDecide(
-    command: HostCommand
+    command: HostCommand,
+    meta: HostBridgeActionMeta
   ): Promise<HostBridgeCommandExecutorResult> {
     const approvalResolved = resolveHostApprovalId({
       approvalId: command.target.approvalId
@@ -498,11 +507,6 @@ export class HostBridgeCommandExecutor {
       return failResult('approval_alias_conflict', aliasCheck.error)
     }
 
-    const metaResolved = this.actionMeta(command.commandId)
-    if (!metaResolved.ok) {
-      return failResult('invalid_command_id', metaResolved.error)
-    }
-    const meta = metaResolved.value
     const action: BridgeApprovalReplyAction = {
       kind: 'approvalReply',
       ...meta,
@@ -518,7 +522,8 @@ export class HostBridgeCommandExecutor {
   }
 
   private async executeQuestionAnswer(
-    command: HostCommand
+    command: HostCommand,
+    meta: HostBridgeActionMeta
   ): Promise<HostBridgeCommandExecutorResult> {
     const questionResolved = resolveHostQuestionId({
       questionId: command.target.questionId
@@ -540,11 +545,6 @@ export class HostBridgeCommandExecutor {
       return failResult('question_alias_conflict', aliasCheck.error)
     }
 
-    const metaResolved = this.actionMeta(command.commandId)
-    if (!metaResolved.ok) {
-      return failResult('invalid_command_id', metaResolved.error)
-    }
-    const meta = metaResolved.value
     const decision = command.arguments.decision
 
     if (decision === 'dismiss') {
@@ -582,7 +582,8 @@ export class HostBridgeCommandExecutor {
   }
 
   private async executeEnsembleSeatToggle(
-    command: HostCommand
+    command: HostCommand,
+    meta: HostBridgeActionMeta
   ): Promise<HostBridgeCommandExecutorResult> {
     const threadId = command.target.threadId
     const participantId = command.arguments.participantId
@@ -600,11 +601,6 @@ export class HostBridgeCommandExecutor {
       return failResult('context_resolve_failed', resolved.error)
     }
 
-    const metaResolved = this.actionMeta(command.commandId)
-    if (!metaResolved.ok) {
-      return failResult('invalid_command_id', metaResolved.error)
-    }
-    const meta = metaResolved.value
     const action: BridgeEnsembleRosterUpdateAction = {
       kind: 'ensembleRosterUpdate',
       ...meta,
@@ -616,7 +612,8 @@ export class HostBridgeCommandExecutor {
   }
 
   private async executeThreadSelect(
-    command: HostCommand
+    command: HostCommand,
+    meta: HostBridgeActionMeta
   ): Promise<HostBridgeCommandExecutorResult> {
     const threadId = command.target.threadId
     if (!threadId) {
@@ -628,11 +625,6 @@ export class HostBridgeCommandExecutor {
       return failResult('context_resolve_failed', resolved.error)
     }
 
-    const metaResolved = this.actionMeta(command.commandId)
-    if (!metaResolved.ok) {
-      return failResult('invalid_command_id', metaResolved.error)
-    }
-    const meta = metaResolved.value
     const action: BridgeSetWatchedThreadAction = {
       kind: 'setWatchedThread',
       ...meta,

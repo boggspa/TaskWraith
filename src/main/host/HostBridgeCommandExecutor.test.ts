@@ -665,7 +665,7 @@ describe('deterministic host:command:<commandId> actionId (Wave 2E-2A Lane B)', 
     )
   })
 
-  it('fails closed for non-UUID commandId without Bridge dispatch', async () => {
+  it('fails closed for non-UUID commandId with zero resolver and zero Bridge calls', async () => {
     const resolveComposerSend = vi.fn(() =>
       ok({
         mode: 'solo' as const,
@@ -674,8 +674,7 @@ describe('deterministic host:command:<commandId> actionId (Wave 2E-2A Lane B)', 
       })
     )
     const { executor, bridge } = open({}, { resolveComposerSend })
-    // Invalid commandId is checked only at actionMeta (after arg validation + resolve).
-    // Use a string that is not a UUID but is safe enough to pass identity checks elsewhere.
+    // actionMeta is hoisted after arg validation and before every resolve/Bridge call.
     const result = await executor.execute(
       command(
         'composer.send',
@@ -689,22 +688,98 @@ describe('deterministic host:command:<commandId> actionId (Wave 2E-2A Lane B)', 
       errorCode: 'invalid_command_id',
       errorMessage: 'commandId is missing, unsafe, or not a UUID'
     })
+    expect(resolveComposerSend).not.toHaveBeenCalled()
     expect(bridge.calls).toEqual([])
   })
 
-  it('fails closed for empty commandId without Bridge dispatch', async () => {
-    const { executor, bridge } = open()
+  it.each([
+    {
+      label: 'composer.send',
+      cmd: () =>
+        command(
+          'composer.send',
+          { threadId: 'thread-1' },
+          { text: 'hi' },
+          { commandId: 'not-a-uuid' }
+        ),
+      resolverKey: 'resolveComposerSend' as const
+    },
+    {
+      label: 'run.cancel',
+      cmd: () => command('run.cancel', { threadId: 'thread-1' }, {}, { commandId: 'not-a-uuid' }),
+      resolverKey: 'resolveRunCancel' as const
+    },
+    {
+      label: 'approval.decide',
+      cmd: () =>
+        command(
+          'approval.decide',
+          { approvalId: 'approval-1' },
+          { decision: 'accept' },
+          { commandId: 'not-a-uuid' }
+        ),
+      resolverKey: 'resolveApprovalDecide' as const
+    },
+    {
+      label: 'question.answer',
+      cmd: () =>
+        command(
+          'question.answer',
+          { questionId: 'question-1' },
+          { decision: 'answer', answer: 'yes' },
+          { commandId: 'not-a-uuid' }
+        ),
+      resolverKey: 'resolveQuestionAnswer' as const
+    },
+    {
+      label: 'ensemble.seat.toggle',
+      cmd: () =>
+        command(
+          'ensemble.seat.toggle',
+          { threadId: 'thread-1' },
+          { participantId: 'p2', enabled: true },
+          { commandId: 'not-a-uuid' }
+        ),
+      resolverKey: 'resolveEnsembleSeatToggle' as const
+    },
+    {
+      label: 'thread.select',
+      cmd: () =>
+        command('thread.select', { threadId: 'thread-1' }, {}, { commandId: 'not-a-uuid' }),
+      resolverKey: 'resolveThreadSelect' as const
+    }
+  ] as const)(
+    '$label invalid commandId makes zero resolver and zero Bridge calls',
+    async ({ cmd, resolverKey }) => {
+      const spy = vi.fn()
+      const { executor, bridge } = open({}, { [resolverKey]: spy })
+      const result = await executor.execute(cmd())
+      expect(result).toEqual({
+        status: 'failed',
+        errorCode: 'invalid_command_id',
+        errorMessage: 'commandId is missing, unsafe, or not a UUID'
+      })
+      expect(spy).not.toHaveBeenCalled()
+      expect(bridge.calls).toEqual([])
+    }
+  )
+
+  it('fails closed for empty commandId without Bridge or resolver dispatch', async () => {
+    const resolveRunCancel = vi.fn()
+    const { executor, bridge } = open({}, { resolveRunCancel })
     const result = await executor.execute(
       command('run.cancel', { threadId: 'thread-1' }, {}, { commandId: '' })
     )
     // Empty may fail at argument validation or actionMeta; either is fail-closed.
     expect(['invalid_command_id', 'invalid_command_arguments']).toContain(result.errorCode)
     expect(result.status).toBe('failed')
+    expect(resolveRunCancel).not.toHaveBeenCalled()
     expect(bridge.calls).toEqual([])
   })
 
-  it('fails closed for commandId with control characters', async () => {
-    const { executor, bridge } = open()
+  it('fails closed for commandId with control characters with zero resolver/Bridge', async () => {
+    const resolveThreadSelect = vi.fn()
+    const { executor, bridge } = open({}, { resolveThreadSelect })
     const result = await executor.execute(
       command(
         'thread.select',
@@ -714,6 +789,7 @@ describe('deterministic host:command:<commandId> actionId (Wave 2E-2A Lane B)', 
       )
     )
     expect(result.errorCode).toBe('invalid_command_id')
+    expect(resolveThreadSelect).not.toHaveBeenCalled()
     expect(bridge.calls).toEqual([])
   })
 })
