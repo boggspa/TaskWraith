@@ -20,6 +20,9 @@
  * - Deterministic family then entityId order.
  * - Reject duplicate / ambiguous / unsafe / overlong ids and provider
  *   composite collisions without truncation.
+ * - Provider entity ids use a reversible tagged length-prefixed encoding
+ *   that always distinguishes model-absent from model-present and remains
+ *   unambiguous when components contain ':' (no hash / truncation).
  * - No state mutation of caller inputs.
  */
 
@@ -475,83 +478,85 @@ function entityIdOf(
 }
 
 /**
- * Provider entity ids are providerId, or providerId:modelId when a model is
- * present. Composite length must fit HOST_PROTOCOL_MAX_ID — never truncate.
+ * Provider entity ids are a reversible tagged length-prefixed encoding:
+ *   model absent  → `p0:<len>:<providerId>`
+ *   model present → `p1:<len>:<providerId>:<len>:<modelId>`
+ *
+ * Length prefixes make embedded ':' bytes unambiguous. The tag always
+ * distinguishes no-model from model-present so a providerId of `a:b` cannot
+ * alias provider `a` + model `b` across before/after snapshots. Final
+ * entityId must fit HOST_PROTOCOL_MAX_ID — never hash or truncate.
  */
 function providerCompositeEntityId(
   provider: HostProviderModelProjection
 ): { ok: true; entityId: string } | { ok: false; failure: IndexFailure } {
-  if (typeof provider.providerId !== 'string') {
-    return {
-      ok: false,
-      failure: {
-        reason: 'ambiguous_entity_id',
-        detail: 'provider.providerId is missing or non-string'
-      }
-    }
-  }
-  if (provider.providerId.length > HOST_PROTOCOL_MAX_ID) {
-    return {
-      ok: false,
-      failure: {
-        reason: 'overlong_entity_id',
-        detail: 'provider.providerId exceeds HOST_PROTOCOL_MAX_ID without truncation'
-      }
-    }
-  }
-  if (!isSafeHostIdentifier(provider.providerId, HOST_PROTOCOL_MAX_ID)) {
-    return {
-      ok: false,
-      failure: {
-        reason: 'unsafe_entity_id',
-        detail: 'provider.providerId is empty, whitespace-padded, or contains controls'
-      }
-    }
-  }
+  const providerIdResult = validateProviderComponent(provider.providerId, 'provider.providerId')
+  if (!providerIdResult.ok) return providerIdResult
+  const providerId = providerIdResult.value
 
   if (provider.modelId === undefined) {
-    return { ok: true, entityId: provider.providerId }
+    return finalizeProviderEntityId(`p0:${providerId.length}:${providerId}`)
   }
 
-  if (typeof provider.modelId !== 'string') {
+  const modelIdResult = validateProviderComponent(provider.modelId, 'provider.modelId')
+  if (!modelIdResult.ok) return modelIdResult
+  const modelId = modelIdResult.value
+
+  return finalizeProviderEntityId(
+    `p1:${providerId.length}:${providerId}:${modelId.length}:${modelId}`
+  )
+}
+
+function validateProviderComponent(
+  value: unknown,
+  label: 'provider.providerId' | 'provider.modelId'
+): { ok: true; value: string } | { ok: false; failure: IndexFailure } {
+  if (typeof value !== 'string') {
     return {
       ok: false,
       failure: {
         reason: 'ambiguous_entity_id',
-        detail: 'provider.modelId is present but non-string'
+        detail:
+          label === 'provider.providerId'
+            ? 'provider.providerId is missing or non-string'
+            : 'provider.modelId is present but non-string'
       }
     }
   }
-  if (provider.modelId.length > HOST_PROTOCOL_MAX_ID) {
+  if (value.length > HOST_PROTOCOL_MAX_ID) {
     return {
       ok: false,
       failure: {
         reason: 'overlong_entity_id',
-        detail: 'provider.modelId exceeds HOST_PROTOCOL_MAX_ID without truncation'
+        detail: `${label} exceeds HOST_PROTOCOL_MAX_ID without truncation`
       }
     }
   }
-  if (!isSafeHostIdentifier(provider.modelId, HOST_PROTOCOL_MAX_ID)) {
+  if (!isSafeHostIdentifier(value, HOST_PROTOCOL_MAX_ID)) {
     return {
       ok: false,
       failure: {
         reason: 'unsafe_entity_id',
-        detail: 'provider.modelId is empty, whitespace-padded, or contains controls'
+        detail: `${label} is empty, whitespace-padded, or contains controls`
       }
     }
   }
+  return { ok: true, value }
+}
 
-  const composite = `${provider.providerId}:${provider.modelId}`
-  if (composite.length > HOST_PROTOCOL_MAX_ID) {
+function finalizeProviderEntityId(
+  entityId: string
+): { ok: true; entityId: string } | { ok: false; failure: IndexFailure } {
+  if (entityId.length > HOST_PROTOCOL_MAX_ID) {
     return {
       ok: false,
       failure: {
         reason: 'provider_composite_overlong',
-        detail: `provider composite length ${composite.length} exceeds HOST_PROTOCOL_MAX_ID without truncation`
+        detail: `provider composite length ${entityId.length} exceeds HOST_PROTOCOL_MAX_ID without truncation`
       }
     }
   }
-  if (!isSafeHostIdentifier(composite, HOST_PROTOCOL_MAX_ID)) {
+  if (!isSafeHostIdentifier(entityId, HOST_PROTOCOL_MAX_ID)) {
     return {
       ok: false,
       failure: {
@@ -560,7 +565,7 @@ function providerCompositeEntityId(
       }
     }
   }
-  return { ok: true, entityId: composite }
+  return { ok: true, entityId }
 }
 
 function uniqueSortedIds(

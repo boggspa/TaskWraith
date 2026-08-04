@@ -300,7 +300,7 @@ describe('diffHostSnapshotDomainEffects', () => {
       'mission:upsert:m-1',
       'round:upsert:r-1',
       'participant:upsert:p1',
-      'provider:upsert:cursor:grok-4.5',
+      'provider:upsert:p1:6:cursor:8:grok-4.5',
       'question:upsert:q-1',
       'approval:upsert:a-1',
       'schedule:upsert:s-1',
@@ -456,7 +456,11 @@ describe('diffHostSnapshotDomainEffects', () => {
     expect(JSON.stringify(overlongResult)).not.toContain(overlongId.slice(0, 32))
   })
 
-  it('uses provider composites and rejects composite collisions / overlong composites', () => {
+  it('uses tagged length-prefixed provider ids and rejects collisions / overlong finals', () => {
+    const withModelId = (providerId: string, modelId: string) =>
+      `p1:${providerId.length}:${providerId}:${modelId.length}:${modelId}`
+    const withoutModelId = (providerId: string) => `p0:${providerId.length}:${providerId}`
+
     const distinct = baseSnapshot({
       providers: [
         {
@@ -477,6 +481,96 @@ describe('diffHostSnapshotDomainEffects', () => {
     })
     const distinctOk = diffHostSnapshotDomainEffects(distinct, distinct)
     expect(distinctOk).toEqual({ kind: 'effects', effects: [] })
+
+    // Embedded colons in components remain unambiguous under length prefixes.
+    const embedded = baseSnapshot({
+      providers: [
+        {
+          providerId: 'cur:sor',
+          displayProvider: 'Cursor',
+          shortCode: 'cur',
+          available: true,
+          modelId: 'grok:4.5'
+        }
+      ]
+    })
+    const afterEmbedded = cloneSnapshot(embedded)
+    afterEmbedded.providers[0]!.available = false
+    const embeddedResult = diffHostSnapshotDomainEffects(embedded, afterEmbedded)
+    expect(embeddedResult.kind).toBe('effects')
+    if (embeddedResult.kind === 'effects') {
+      expect(embeddedResult.effects.map((e) => `${e.kind}:${e.entityId}`)).toEqual([
+        `upsert:${withModelId('cur:sor', 'grok:4.5')}`
+      ])
+    }
+
+    // Model-absent vs model-present must never share an entityId.
+    expect(withoutModelId('cursor')).not.toBe(withModelId('cursor', 'x'))
+    const absentVsPresentBefore = baseSnapshot({
+      providers: [
+        {
+          providerId: 'cursor',
+          displayProvider: 'Cursor',
+          shortCode: 'cur',
+          available: true
+        }
+      ]
+    })
+    const absentVsPresentAfter = baseSnapshot({
+      providers: [
+        {
+          providerId: 'cursor',
+          displayProvider: 'Cursor',
+          shortCode: 'cur',
+          available: true,
+          modelId: 'x'
+        }
+      ]
+    })
+    const absentVsPresent = diffHostSnapshotDomainEffects(
+      absentVsPresentBefore,
+      absentVsPresentAfter
+    )
+    expect(absentVsPresent.kind).toBe('effects')
+    if (absentVsPresent.kind === 'effects') {
+      expect(absentVsPresent.effects.map((e) => `${e.kind}:${e.entityId}`)).toEqual([
+        `tombstone:${withoutModelId('cursor')}`,
+        `upsert:${withModelId('cursor', 'x')}`
+      ])
+    }
+
+    // Cross-snapshot alias that the old colon join collapsed to one key:
+    // providerId "a:b" (no model) vs providerId "a" + modelId "b".
+    const aliasBefore = baseSnapshot({
+      providers: [
+        {
+          providerId: 'a:b',
+          displayProvider: 'A',
+          shortCode: 'ab',
+          available: true
+        }
+      ]
+    })
+    const aliasAfter = baseSnapshot({
+      providers: [
+        {
+          providerId: 'a',
+          displayProvider: 'A',
+          shortCode: 'a',
+          available: false,
+          modelId: 'b'
+        }
+      ]
+    })
+    expect(withoutModelId('a:b')).not.toBe(withModelId('a', 'b'))
+    const aliasResult = diffHostSnapshotDomainEffects(aliasBefore, aliasAfter)
+    expect(aliasResult.kind).toBe('effects')
+    if (aliasResult.kind === 'effects') {
+      expect(aliasResult.effects.map((e) => `${e.kind}:${e.entityId}`)).toEqual([
+        `tombstone:${withoutModelId('a:b')}`,
+        `upsert:${withModelId('a', 'b')}`
+      ])
+    }
 
     const collided = baseSnapshot({
       providers: [
@@ -503,7 +597,8 @@ describe('diffHostSnapshotDomainEffects', () => {
 
     const providerId = 'p'.repeat(300)
     const modelId = 'm'.repeat(300)
-    expect(providerId.length + 1 + modelId.length).toBeGreaterThan(HOST_PROTOCOL_MAX_ID)
+    const encoded = withModelId(providerId, modelId)
+    expect(encoded.length).toBeGreaterThan(HOST_PROTOCOL_MAX_ID)
     const overlongComposite = baseSnapshot({
       providers: [
         {
@@ -515,7 +610,7 @@ describe('diffHostSnapshotDomainEffects', () => {
         }
       ]
     })
-    // Individual ids fit decode bounds; composite does not.
+    // Individual ids fit decode bounds; final tagged encoding does not.
     expect(providerId.length).toBeLessThanOrEqual(HOST_PROTOCOL_MAX_ID)
     expect(modelId.length).toBeLessThanOrEqual(HOST_PROTOCOL_MAX_ID)
     const overlongResult = diffHostSnapshotDomainEffects(overlongComposite, overlongComposite)
