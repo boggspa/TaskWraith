@@ -200,15 +200,16 @@ export function EnsembleFanoutResultCard({
   // The lane's seat, decoded from the snapshot captured when the row was
   // written — so a lane read back later still shows what it actually ran as.
   //
-  // Gated on the snapshot EXISTING, not merely on a seat resolving. The seat
-  // element always draws a permission chip and resolves an absent preset to
-  // `'default'`, so a row written before the snapshot was emitted would render
-  // "Accept Edits" for a lane that may have run read-only. Those rows keep the
-  // original pills, which claim nothing about permission at all.
-  const seat = useMemo(
-    () => (metadata.ensembleSeatSnapshot ? seatFromEnsembleMetadata(metadata) : null),
-    [metadata]
-  )
+  // This used to be gated on the snapshot EXISTING rather than on a seat
+  // resolving, because the element resolved an absent preset to `'default'`
+  // and would have claimed "Accept Edits" for a lane that may have run
+  // read-only. But the snapshot only started being written when the lane card
+  // was folded onto the seat element, so EVERY older row fell back to the
+  // pills — measured on a real chat: 1734 of 1741 lane rows, across every
+  // provider. The element now omits the permission chip when the tier is
+  // unknown, so those rows can render the seat honestly: same provider, model,
+  // role and #N the pills carried, minus a claim nobody can make.
+  const seat = useMemo(() => seatFromEnsembleMetadata(metadata), [metadata])
   const seatRole = composedSeatRole(seat)
   const content = message.content || ''
   const transcriptParts = useMemo(() => readEnsembleFanoutTranscriptParts(message), [message])

@@ -547,16 +547,22 @@ describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
     expect(render({ ensembleSeatSnapshot: SNAPSHOT })).toContain('#2 Reader')
   })
 
-  it('falls back to the original pills when no snapshot was written', () => {
-    // Not cosmetic. The seat element ALWAYS draws a permission chip and
-    // resolves an absent preset to 'default', so a pre-snapshot row rendered as
-    // a seat would claim "Accept Edits" for a lane that may have run read-only.
-    // The old pills claim nothing about permission, which is the honest answer
-    // when we never recorded it.
+  it('still wears the seat element with no snapshot — minus the permission chip', () => {
+    // This used to assert the opposite, and the reason was sound at the time:
+    // the element resolved an absent preset to 'default', so a pre-snapshot row
+    // would have claimed "Accept Edits" for a lane that may have run read-only.
+    //
+    // But the snapshot only began being written when the lane card moved onto
+    // the seat element, so the fallback swallowed nearly every row already on
+    // disk — measured on a real chat, 1734 of 1741 lane rows, across EVERY
+    // provider. The element now omits the tier when it is unknown, so the
+    // honest answer and the consistent one are the same answer.
     const html = render({ ensembleSeatSnapshot: undefined })
-    expect(html).not.toContain('seat-state-chips')
-    expect(html).toContain('ensemble-fanout-result-model')
+    expect(html).toContain('seat-state-chips')
+    expect(html).not.toContain('ensemble-fanout-result-model')
+    // The claim we cannot make is still not made.
     expect(html).not.toContain('Accept Edits')
+    expect(html).not.toContain('data-permission-value')
   })
 })
 

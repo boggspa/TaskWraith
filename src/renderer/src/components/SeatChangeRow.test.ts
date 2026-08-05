@@ -25,7 +25,9 @@ describe('SeatChangeRow composer-parity contract', () => {
   })
 
   it('keeps the composer tint/hue seams: permission value, reasoning token, provider hue accent', () => {
-    expect(rowSource).toContain('data-permission-value={view.presetId}')
+    // `|| undefined` so an unknown tier emits no attribute at all — the
+    // composer's tint rules key on the value, and an empty one is not a tier.
+    expect(rowSource).toContain('data-permission-value={view.presetId || undefined}')
     expect(rowSource).toContain('data-selected-reasoning={view.reasoningToken}')
     expect(rowSource).toContain('data-composer-control="permission"')
     expect(rowSource).toContain('`var(--provider-${view.hue}-color, var(--accent))`')
@@ -61,6 +63,16 @@ describe('SeatChangeRow composer-parity contract', () => {
 })
 
 describe('CharOdometer family contract', () => {
+  it('omits the permission chip when the tier is unknown, rather than claiming default', () => {
+    // An absent preset is not the default preset. Rows predating the seat
+    // snapshot carry provider/model/role but no tier; defaulting there would
+    // have the chip assert "Accept Edits" for a lane that may have run
+    // read-only.
+    expect(rowSource).toContain("const presetId = state.permissionPresetId || ''")
+    expect(rowSource).toContain('if (!view.tierLabel && !view.grantsLabel) return null')
+    expect(rowSource).not.toContain("state.permissionPresetId || 'default'")
+  })
+
   it('collapses a slot the new text does not reach, instead of leaving it undefined', () => {
     // Rolling "Extra High" -> "Max" leaves 7 slots with an empty target. An
     // undefined width falls back to `width: auto`, and their content is still

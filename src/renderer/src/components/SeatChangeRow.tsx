@@ -73,9 +73,14 @@ function seatSideView(state: SeatChangeSeatState): SeatSideView {
         kimiThinkingEnabled: state.thinkingEnabled
       })
     : ''
-  const presetId = state.permissionPresetId || 'default'
-  const tierLabel =
-    composerPermissionOptions().find((option) => option.value === presetId)?.label || presetId
+  // An ABSENT preset is not the default preset. Rows written before the seat
+  // snapshot existed carry provider/model/role but no tier, and defaulting
+  // there would have the chip claim "Accept Edits" for a lane that may have run
+  // read-only — a confident lie about permissions. Unknown renders no chip.
+  const presetId = state.permissionPresetId || ''
+  const tierLabel = presetId
+    ? composerPermissionOptions().find((option) => option.value === presetId)?.label || presetId
+    : ''
   const grantsCount = state.grantsCount ?? 0
   return {
     provider: state.provider,
@@ -161,16 +166,21 @@ function SeatPermissionChip({
 }: {
   view: SeatSideView
   animate: boolean
-}): JSX.Element {
+}): JSX.Element | null {
+  // Nothing known and nothing to show: omit the chip rather than render an
+  // empty one, which would leave a stray gap in the strip's flex row.
+  if (!view.tierLabel && !view.grantsLabel) return null
   return (
     <span
       className="composer-combined-picker-trigger seat-change-chip"
       data-composer-control="permission"
-      data-permission-value={view.presetId}
+      data-permission-value={view.presetId || undefined}
     >
-      <span className="composer-combined-picker-trigger-primary">
-        {seatText(view.tierLabel, animate)}
-      </span>
+      {view.tierLabel && (
+        <span className="composer-combined-picker-trigger-primary">
+          {seatText(view.tierLabel, animate)}
+        </span>
+      )}
       {view.grantsLabel && (
         <span className="composer-combined-picker-trigger-suffix">
           {seatText(view.grantsLabel, animate)}
