@@ -2158,8 +2158,27 @@ button.sidebar-item {
   --sidebar-terminal-outcome-color: var(--diff-stat-del-color, #ec3d35);
 }
 
+/* Waiting on the user — an approval modal or an unanswered ask_user_question.
+ * The one member of this family that is LIVE rather than settled: it appears
+ * while the thread is parked and clears itself the moment the answer lands,
+ * so it never needs the read/unread acknowledgement the two outcome tones do.
+ *
+ * Amber, not a third Appearance colour: Settings exposes exactly two diff
+ * hues (additions/deletions), and inventing a user-set yellow for a
+ * non-diff signal would imply a link that does not exist. `--tool-warning`
+ * is the app's established "held, needs a human" ink — the same token the
+ * folded system/compaction one-liners use — so the sidebar agrees with the
+ * transcript about what amber means. */
+.app-sidebar .sidebar-attention-waiting {
+  --sidebar-terminal-outcome-color: var(--tool-warning, #f5a623);
+}
+
 .app-sidebar
-  :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)
+  :is(
+    .sidebar-terminal-outcome-success,
+    .sidebar-terminal-outcome-failure,
+    .sidebar-attention-waiting
+  )
   :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
   color: var(--sidebar-terminal-outcome-color);
   background-image: linear-gradient(
@@ -2185,7 +2204,11 @@ button.sidebar-item {
 
 @media (prefers-reduced-motion: reduce) {
   .app-sidebar
-    :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)
+    :is(
+    .sidebar-terminal-outcome-success,
+    .sidebar-terminal-outcome-failure,
+    .sidebar-attention-waiting
+  )
     :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
     animation: none;
     background-image: none;
@@ -2197,7 +2220,11 @@ button.sidebar-item {
 
 :root[data-reduce-motion='true']
   .app-sidebar
-  :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)
+  :is(
+    .sidebar-terminal-outcome-success,
+    .sidebar-terminal-outcome-failure,
+    .sidebar-attention-waiting
+  )
   :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
   animation: none;
   background-image: none;

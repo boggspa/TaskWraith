@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, ChatRun } from '../../../main/store/types'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY,
   acknowledgeSidebarTerminalOutcome,
+  chatIsAwaitingUserResponse,
+  sidebarRowToneClass,
   isSidebarTerminalOutcomeUnread,
   loadSidebarTerminalOutcomeAcknowledgements,
   persistSidebarTerminalOutcomeAcknowledgements,
@@ -209,3 +213,70 @@ describe('sidebar terminal outcome acknowledgements', () => {
     )
   })
 })
+
+describe('chatIsAwaitingUserResponse', () => {
+  it('is true for an approval head, a queued approval, or an unanswered question', () => {
+    expect(
+      chatIsAwaitingUserResponse('chat-1', { approvalHeadByChatId: { 'chat-1': { id: 'a' } } })
+    ).toBe(true)
+    expect(
+      chatIsAwaitingUserResponse('chat-1', { approvalQueueByChatId: { 'chat-1': [{ id: 'a' }] } })
+    ).toBe(true)
+    expect(
+      chatIsAwaitingUserResponse('chat-1', { questionsByChatId: { 'chat-1': [{ id: 'q' }] } })
+    ).toBe(true)
+  })
+
+  it('is false once nothing is parked — the tone clears without an acknowledgement', () => {
+    expect(chatIsAwaitingUserResponse('chat-1', undefined)).toBe(false)
+    expect(chatIsAwaitingUserResponse('chat-1', {})).toBe(false)
+    // A resolved head is stored as null, and drained queues as empty arrays.
+    expect(
+      chatIsAwaitingUserResponse('chat-1', {
+        approvalHeadByChatId: { 'chat-1': null },
+        approvalQueueByChatId: { 'chat-1': [] },
+        questionsByChatId: { 'chat-1': [] }
+      })
+    ).toBe(false)
+    expect(chatIsAwaitingUserResponse('', { approvalHeadByChatId: { '': { id: 'a' } } })).toBe(false)
+  })
+
+  it('reads the FILING key, never another thread pending work', () => {
+    const sources = { approvalHeadByChatId: { 'other-chat': { id: 'a' } } }
+    expect(chatIsAwaitingUserResponse('chat-1', sources)).toBe(false)
+    expect(chatIsAwaitingUserResponse('other-chat', sources)).toBe(true)
+  })
+})
+
+describe('sidebar row tone ink', () => {
+  const css = readFileSync(
+    join(process.cwd(), 'src/renderer/src/assets/css/01-sidebar.css'),
+    'utf8'
+  )
+  const block = (selector: string): string => {
+    const start = css.indexOf(selector)
+    if (start < 0) return ''
+    const open = css.indexOf('{', start)
+    return css.slice(start, css.indexOf('}', open) + 1)
+  }
+
+  it('keeps the terminal class names and gives waiting its own', () => {
+    expect(sidebarRowToneClass('success')).toBe('sidebar-terminal-outcome-success')
+    expect(sidebarRowToneClass('failure')).toBe('sidebar-terminal-outcome-failure')
+    // Not "…-outcome-waiting": nothing has settled, the thread is parked.
+    expect(sidebarRowToneClass('waiting')).toBe('sidebar-attention-waiting')
+  })
+
+  it('inks waiting amber and joins the same slow sweep as the two outcomes', () => {
+    expect(block('.app-sidebar .sidebar-attention-waiting {')).toContain(
+      'var(--tool-warning, #f5a623)'
+    )
+    // One shared sweep: every selector list that drives the animation, the
+    // reduced-motion opt-outs included, must carry all three tones.
+    const lists = css.split('.sidebar-terminal-outcome-failure,').length - 1
+    expect(lists).toBe(3)
+    expect(css.split('.sidebar-attention-waiting').length - 1).toBe(4)
+    expect(css).toContain('animation: sidebar-terminal-outcome-shimmer 10s linear infinite')
+  })
+})
+

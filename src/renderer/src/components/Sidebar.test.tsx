@@ -193,6 +193,7 @@ function renderSidebar(
     collaboratingChatIds?: Set<string>
     initialExpandedSubThreadParentIds?: string[]
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
+    pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
     pendingAgentQuestionsByChatId?: ComponentProps<typeof Sidebar>['pendingAgentQuestionsByChatId']
     hasConnectedCollaborator?: boolean
     onRenameChat?: (chatId: string, nextTitle: string) => void
@@ -227,6 +228,7 @@ function renderSidebar(
       collaboratingChatIds={options.collaboratingChatIds}
       initialExpandedSubThreadParentIds={options.initialExpandedSubThreadParentIds}
       pendingAgentApprovalByChatId={options.pendingAgentApprovalByChatId}
+      pendingApprovalQueueByChatId={options.pendingApprovalQueueByChatId}
       pendingAgentQuestionsByChatId={options.pendingAgentQuestionsByChatId}
       hasConnectedCollaborator={options.hasConnectedCollaborator}
       onSelectWorkspace={() => {}}
@@ -577,7 +579,7 @@ describe('sidebar row memo comparators', () => {
     surfaceId: 'workspace-ws-1-a',
     isSelected: false,
     isRunning: false,
-    terminalOutcomeTone: null,
+    rowTone: null,
     needsInput: false,
     isEditing: false,
     isCollaborating: false,
@@ -614,7 +616,7 @@ describe('sidebar row memo comparators', () => {
       { surfaceId: 'global-a' },
       { isSelected: true },
       { isRunning: true },
-      { terminalOutcomeTone: 'success' as const },
+      { rowTone: 'success' as const },
       { needsInput: true },
       { isEditing: true },
       { isCollaborating: true },
@@ -634,7 +636,7 @@ describe('sidebar row memo comparators', () => {
       surfaceId: 'recent-a',
       isSelected: false,
       isRunning: false,
-      terminalOutcomeTone: null,
+      rowTone: null,
       needsInput: false,
       isEditing: false,
       query: '',
@@ -656,7 +658,7 @@ describe('sidebar row memo comparators', () => {
       { variant: 'pinned' as const },
       { isSelected: true },
       { isRunning: true },
-      { terminalOutcomeTone: 'failure' as const },
+      { rowTone: 'failure' as const },
       { needsInput: true },
       { isEditing: true },
       { draggable: false },
@@ -1717,6 +1719,153 @@ describe('Sidebar unread terminal outcome accent', () => {
     expect(renderSidebar([completed, viewer], { activeChatId: 'viewer' })).not.toContain(
       'sidebar-terminal-outcome-success'
     )
+  })
+})
+
+describe('Sidebar waiting-on-you accent', () => {
+  const question = (questionId: string) => ({
+    questionId,
+    appRunId: 'run-1',
+    messageId: `message-${questionId}`,
+    provider: 'codex' as const,
+    question: 'Which option?',
+    options: ['A', 'B'],
+    askedAt: 1
+  })
+  const approval = makeApproval()
+
+  it('paints an amber accent on a thread parked on an unanswered question', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar(
+      [
+        makeChat({ appChatId: 'asking-thread', title: 'Asking thread', updatedAt: 2 }),
+        makeChat({ appChatId: 'viewer', title: 'Viewer', updatedAt: 1 })
+      ],
+      {
+        activeChatId: 'viewer',
+        pendingAgentQuestionsByChatId: { 'asking-thread': [question('q-1')] }
+      }
+    )
+
+    expect(html).toContain('sidebar-attention-waiting')
+    expect(html).toContain('Asking thread')
+  })
+
+  it('paints the same accent for a thread blocked on an approval', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const queued = renderSidebar(
+      [
+        makeChat({ appChatId: 'gated-thread', title: 'Gated thread', updatedAt: 2 }),
+        makeChat({ appChatId: 'viewer', updatedAt: 1 })
+      ],
+      {
+        activeChatId: 'viewer',
+        pendingAgentApprovalByChatId: { 'gated-thread': approval }
+      }
+    )
+    expect(queued).toContain('sidebar-attention-waiting')
+
+    // Approvals stacked behind the head count too — the thread is still parked.
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    expect(
+      renderSidebar(
+        [
+          makeChat({ appChatId: 'gated-thread', title: 'Gated thread', updatedAt: 2 }),
+          makeChat({ appChatId: 'viewer', updatedAt: 1 })
+        ],
+        {
+          activeChatId: 'viewer',
+          pendingApprovalQueueByChatId: { 'gated-thread': [approval] }
+        }
+      )
+    ).toContain('sidebar-attention-waiting')
+  })
+
+  it('survives the running gate that suppresses settled outcome ink', () => {
+    // The run is BLOCKED on the user, not finished — the gate that hides
+    // outcome accents on working threads must not hide this one.
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    expect(
+      renderSidebar(
+        [
+          makeChat({ appChatId: 'busy-thread', title: 'Busy thread', updatedAt: 2 }),
+          makeChat({ appChatId: 'viewer', updatedAt: 1 })
+        ],
+        {
+          activeChatId: 'viewer',
+          runningChatIds: ['busy-thread'],
+          pendingAgentQuestionsByChatId: { 'busy-thread': [question('q-1')] }
+        }
+      )
+    ).toContain('sidebar-attention-waiting')
+  })
+
+  it('stays off the selected thread, whose modal is already on screen', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    expect(
+      renderSidebar(
+        [makeChat({ appChatId: 'asking-thread', title: 'Asking thread', updatedAt: 2 })],
+        {
+          activeChatId: 'asking-thread',
+          pendingAgentQuestionsByChatId: { 'asking-thread': [question('q-1')] }
+        }
+      )
+    ).not.toContain('sidebar-attention-waiting')
+  })
+
+  it('clears itself once nothing is pending — no acknowledgement needed', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    expect(
+      renderSidebar(
+        [
+          makeChat({ appChatId: 'asking-thread', title: 'Asking thread', updatedAt: 2 }),
+          makeChat({ appChatId: 'viewer', updatedAt: 1 })
+        ],
+        { activeChatId: 'viewer', pendingAgentQuestionsByChatId: { 'asking-thread': [] } }
+      )
+    ).not.toContain('sidebar-attention-waiting')
+  })
+
+  it('outranks an unread settled outcome on the same thread', () => {
+    const settledButAsking = makeChat({
+      appChatId: 'both-thread',
+      title: 'Both thread',
+      updatedAt: 2,
+      runs: [
+        {
+          runId: 'done-run',
+          startedAt: '2026-08-03T20:00:00.000Z',
+          endedAt: '2026-08-03T20:05:00.000Z',
+          status: 'success',
+          exitCode: 0
+        }
+      ]
+    })
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar(
+      [settledButAsking, makeChat({ appChatId: 'viewer', updatedAt: 1 })],
+      {
+        activeChatId: 'viewer',
+        pendingAgentQuestionsByChatId: { 'both-thread': [question('q-1')] }
+      }
+    )
+
+    expect(html).toContain('sidebar-attention-waiting')
+    expect(html).not.toContain('sidebar-terminal-outcome-success')
   })
 })
 

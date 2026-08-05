@@ -20,10 +20,18 @@ describe('sidebar terminal outcome title accent', () => {
     expect(cssBlockStartingAt('.app-sidebar .sidebar-terminal-outcome-failure {')).toContain(
       'var(--diff-stat-del-color, #ec3d35)'
     )
-
-    const ink = cssBlockStartingAt(
-      '.app-sidebar\n  :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)'
+    // The waiting tone is amber, not a third Appearance colour — Settings
+    // exposes only the two diff hues.
+    expect(cssBlockStartingAt('.app-sidebar .sidebar-attention-waiting {')).toContain(
+      'var(--tool-warning, #f5a623)'
     )
+
+    // All three tones share ONE sweep — the two settled outcomes and the live
+    // waiting state — so the ink block is keyed on the whole selector list.
+    const ink = cssBlockStartingAt(
+      '.app-sidebar\n  :is(\n    .sidebar-terminal-outcome-success,\n    .sidebar-terminal-outcome-failure,\n    .sidebar-attention-waiting\n  )'
+    )
+    expect(ink).not.toBe('')
     expect(ink).toContain('background-clip: text')
     expect(ink).toContain('background-size: 300% 100%')
     expect(ink).toContain('background-repeat: no-repeat')
@@ -41,7 +49,7 @@ describe('sidebar terminal outcome title accent', () => {
     const compactCss = css.replace(/\s+/g, ' ')
     expect(css).toContain('@media (prefers-reduced-motion: reduce)')
     expect(compactCss).toContain(
-      ":root[data-reduce-motion='true'] .app-sidebar :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)"
+      ":root[data-reduce-motion='true'] .app-sidebar :is( .sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure, .sidebar-attention-waiting )"
     )
     expect(css).toContain('-webkit-text-fill-color: var(--sidebar-terminal-outcome-color)')
   })

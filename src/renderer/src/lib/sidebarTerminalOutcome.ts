@@ -5,6 +5,51 @@ export const SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY =
 
 export type SidebarTerminalOutcomeTone = 'success' | 'failure'
 
+/**
+ * What a sidebar row's title ink is saying. Two of these are settled outcomes
+ * the user has not read yet; `waiting` is LIVE state — a thread parked on an
+ * approval or an ask_user_question, which is the one case where the row is
+ * asking for the user rather than reporting to them.
+ */
+export type SidebarRowTone = SidebarTerminalOutcomeTone | 'waiting'
+
+/** Ink class for a row tone. The two terminal tones keep their historical
+ * class names (CSS + pinned tests); `waiting` gets a name that does not claim
+ * to be an outcome, and the stylesheet shares one sweep across all three. */
+export function sidebarRowToneClass(tone: SidebarRowTone): string {
+  return tone === 'waiting' ? 'sidebar-attention-waiting' : `sidebar-terminal-outcome-${tone}`
+}
+
+/** Structural view of the renderer's pending-attention maps — kept loose so
+ * this lib never imports the component graph for `AgentQuestionState` /
+ * `AgentApprovalRequest`. */
+export interface SidebarPendingAttentionSources {
+  /** Head-of-queue approval per chat (`null` when none is showing). */
+  approvalHeadByChatId?: Record<string, unknown> | undefined
+  /** Approvals queued behind the head. */
+  approvalQueueByChatId?: Record<string, readonly unknown[] | undefined> | undefined
+  /** Unanswered ask_user_question cards. */
+  questionsByChatId?: Record<string, readonly unknown[] | undefined> | undefined
+}
+
+/**
+ * Is this thread blocked on the user answering something?
+ *
+ * Keyed on the MAP KEY, never on an approval's own `appChatId`: for sub-thread
+ * and fan-out runs the request's chat id can be absent or diverge from the
+ * thread it is filed under, and the filing key is what "which thread is
+ * blocked" means (the same rule the Approvals footer jump uses).
+ */
+export function chatIsAwaitingUserResponse(
+  chatId: string,
+  sources: SidebarPendingAttentionSources | undefined
+): boolean {
+  if (!chatId || !sources) return false
+  if (sources.approvalHeadByChatId?.[chatId]) return true
+  if ((sources.approvalQueueByChatId?.[chatId]?.length ?? 0) > 0) return true
+  return (sources.questionsByChatId?.[chatId]?.length ?? 0) > 0
+}
+
 export interface SidebarTerminalOutcomeProjection {
   fingerprint: string
   source: 'goal' | 'round' | 'run'
