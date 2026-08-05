@@ -6,6 +6,10 @@ import type { ChatRecord } from './types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-chat-cache-test-${process.pid}`)
 
+// T3a-1: Disable the coalescer for cache-behavior tests — these tests verify
+// cache semantics, not coalesce timing. The coalescer has its own test suite.
+vi.hoisted(() => { process.env.TASKWRAITH_SAVE_COALESCE_MS = '-1' })
+
 vi.mock('electron', () => ({
   app: {
     getPath: () => userDataPath

@@ -27,6 +27,7 @@ import {
 } from './UsageJournalStore'
 import { coerceProviderForPersistence } from './ProviderOfferPersistence'
 import { beginPersistenceWrite } from './persistenceProbes'
+import { createSaveCoalescer, type FlushReason } from './saveCoalescer'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
@@ -507,6 +508,15 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
 const chatsDir = path.join(userDataPath, 'chats')
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
 const chatListIndexStore = new ChatListIndexStore(userDataPath)
+/** T3a-1: per-chat save coalescer. Default 100 ms; set TASKWRAITH_SAVE_COALESCE_MS to
+ *  0 for immediate flush (timer still allocated), negative to disable entirely. */
+const saveCoalesceMs = (() => {
+  const raw = process.env.TASKWRAITH_SAVE_COALESCE_MS
+  if (raw === undefined) return 100
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : 100
+})()
+const saveCoalescer = createSaveCoalescer(saveCoalesceMs)
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
 const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
@@ -5051,6 +5061,13 @@ export class AppStore {
   private static chatGitWorkflowWriteTails = new Map<string, Promise<ChatRecord>>()
 
   private static readChatRecordCached(chatId: string, chatPath: string): ChatRecord | null {
+    const cached = this.chatRecordCache.get(chatId)
+    // T3a-1: mtimeMs === -1 is the dirty marker — the record was saved
+    // through the coalescer and hasn't been flushed to disk yet. Skip the
+    // file-stat check and return the cached record directly.
+    if (cached && cached.mtimeMs === -1) {
+      return cached.record
+    }
     let stat: fs.Stats
     try {
       stat = fs.statSync(chatPath)
@@ -5058,7 +5075,6 @@ export class AppStore {
       this.chatRecordCache.delete(chatId)
       return null
     }
-    const cached = this.chatRecordCache.get(chatId)
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
       return cached.record
     }
@@ -6141,31 +6157,63 @@ export class AppStore {
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
       return previousChatForFeedback || normalizedChat
     }
-    const preStat = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
-    let postStat: fs.Stats | null = null
-    writeJson(chatPath, normalizedChat)
-    // Write-through: the next read (bridge broadcast fires right after most
-    // saves) must not re-parse what we just serialized. Still only trust the
-    // cache when the file visibly changed; otherwise invalidate and let disk be
-    // the truth.
-    try {
-      postStat = fs.statSync(chatPath)
-      const wrote =
-        !preStat || postStat.mtimeMs !== preStat.mtimeMs || postStat.size !== preStat.size
-      if (wrote) {
+    // T3a-1: If the file doesn't exist yet (first save of a new chat), write
+    // synchronously so filesystem enumeration (getChats, chat search, workspace
+    // filtering) sees the chat immediately. Subsequent saves on existing files
+    // are coalesced — those are the 8–14 rewrites/10s the T2 baseline measured.
+    const chatFileExists = fs.existsSync(chatPath)
+    if (!chatFileExists) {
+      writeJson(chatPath, normalizedChat)
+      let postStat: fs.Stats | null = null
+      try {
+        postStat = fs.statSync(chatPath)
+      } catch { /* writeJson just succeeded; stat failure is a kernel race */ }
+      if (postStat) {
         this.chatRecordCache.set(normalizedChat.appChatId, {
           mtimeMs: postStat.mtimeMs,
           size: postStat.size,
           record: normalizedChat
         })
-      } else {
-        this.chatRecordCache.delete(normalizedChat.appChatId)
       }
-    } catch {
-      this.chatRecordCache.delete(normalizedChat.appChatId)
+    } else {
+      // Optimistic cache with mtimeMs: -1 dirty marker — readChatRecordCached
+      // skips the file-stat check for dirty entries and returns the cached
+      // record directly.
+      this.chatRecordCache.set(normalizedChat.appChatId, {
+        mtimeMs: -1,
+        size: -1,
+        record: normalizedChat
+      })
+      const chatId = normalizedChat.appChatId
+      saveCoalescer.schedule(
+        chatId,
+        () => {
+          const preStatActual = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
+          writeJson(chatPath, normalizedChat)
+          try {
+            const postStatActual = fs.statSync(chatPath)
+            const wrote =
+              !preStatActual ||
+              postStatActual.mtimeMs !== preStatActual.mtimeMs ||
+              postStatActual.size !== preStatActual.size
+            if (wrote) {
+              this.chatRecordCache.set(chatId, {
+                mtimeMs: postStatActual.mtimeMs,
+                size: postStatActual.size,
+                record: normalizedChat
+              })
+            }
+          } catch {
+            // Cache was already set optimistically; a stale mtimeMs is harmless.
+          }
+        },
+        'normal'
+      )
     }
+    // The chat-list-index write and harvests stay synchronous — they're cheap
+    // thanks to T3c (incremental JSONL) and don't benefit from coalescing.
     const index = chatListIndexStore.readAll()
-    const nextItem = this.toChatListItem(normalizedChat, postStat || undefined)
+    const nextItem = this.toChatListItem(normalizedChat)
     if (this.shouldWriteChatListIndexItem(index[normalizedChat.appChatId], nextItem)) {
       chatListIndexStore.writeEntry(normalizedChat.appChatId, nextItem)
       this.chatListIndexWriteAtByChatId.set(normalizedChat.appChatId, Date.now())
@@ -6188,6 +6236,23 @@ export class AppStore {
     // the exact revision that was persisted.
     chat.persistenceRevision = normalizedChat.persistenceRevision
     return normalizedChat
+  }
+
+  /**
+   * T3a-1: Synchronously flush any pending coalesced write for a specific chat.
+   * Call this at trust boundaries (approval grants, terminal state transitions)
+   * to ensure the record is durable before a downstream consumer reads it.
+   */
+  static flushChatSave(chatId: string): boolean {
+    return saveCoalescer.flush(chatId)
+  }
+
+  /**
+   * T3a-1: Synchronously flush ALL pending coalesced writes. Called at
+   * shutdown (will-quit) to ensure no data is lost.
+   */
+  static flushAllChatSaves(): void {
+    saveCoalescer.flushAll()
   }
 
   private static historyDeletionRunning = false
