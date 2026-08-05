@@ -1,4 +1,5 @@
 import { coerceRunItemEvents, type RunItemEvent } from '../../../shared/runItemEvents'
+import { resolveToolEventName } from '../../../shared/toolEventNaming'
 import type { ClaudeWorkflowTelemetry } from '../../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../../shared/codexMultiAgent'
@@ -68,6 +69,9 @@ export type NormalizedEvent =
       timestamp: string
       isUse: boolean
       isResult: boolean
+      /** A tool sidecar rode the same stdout line; the run_item_event lane
+       *  owns this row and the legacy lane must skip it. */
+      projectedFromRunItem?: boolean
     }
   | { type: 'error'; message: string; timestamp: string }
   | {
@@ -113,10 +117,20 @@ export class GeminiStreamAdapter {
         (event) =>
           event.kind === 'item/delta' && event.channel === 'assistant' && event.delta.length > 0
       )
+      // Same contract as the assistant flag: a tool sidecar riding THIS line
+      // means the run_item_event lane is the sole applier for the tool row, so
+      // the legacy normalization below must be skipped. `projectRunItemToolEvents`
+      // renders exactly these two kinds — keep the predicates in step.
+      const projectedToolEventFromRunItem = runItemEvents.some(
+        (event) => event.kind === 'tool/progress' || event.kind === 'tool/outputDelta'
+      )
       for (const event of runItemEvents) {
         this.onEvent({ type: 'run_item_event', event })
       }
-      this.normalizeEvent(parsed, { projectedAssistantDeltaFromRunItem })
+      this.normalizeEvent(parsed, {
+        projectedAssistantDeltaFromRunItem,
+        projectedToolEventFromRunItem
+      })
       this.onEvent({ type: 'raw_event', data: parsed })
     } catch {
       this.onEvent({ type: 'malformed_json', text: line })
@@ -125,7 +139,10 @@ export class GeminiStreamAdapter {
 
   private normalizeEvent(
     parsed: any,
-    hints: { projectedAssistantDeltaFromRunItem?: boolean } = {}
+    hints: {
+      projectedAssistantDeltaFromRunItem?: boolean
+      projectedToolEventFromRunItem?: boolean
+    } = {}
   ) {
     if (!parsed || typeof parsed !== 'object') return
 
@@ -228,7 +245,7 @@ export class GeminiStreamAdapter {
       return
     }
 
-    if (this.emitVisibleProgress(parsed)) {
+    if (this.emitVisibleProgress(parsed, hints.projectedToolEventFromRunItem === true)) {
       return
     }
 
@@ -357,17 +374,8 @@ export class GeminiStreamAdapter {
             parsed.type === 'tool_result' ||
             parsed.type === 'tool_output' ||
             parsed.type === 'tool_response'
-          const toolName =
-            parsed.tool_name ||
-            parsed.toolName ||
-            parsed.name ||
-            parsed.function?.name ||
-            parsed.tool ||
-            parsed.params?.type ||
-            parsed.item?.type ||
-            parsed.params?.item?.type ||
-            parsed.type ||
-            'unknown'
+          // Shared with main's compat mapper — see toolEventNaming.ts.
+          const toolName = resolveToolEventName(parsed)
           const normalizedData = isSubagentEvent
             ? {
                 ...parsed,
@@ -386,14 +394,15 @@ export class GeminiStreamAdapter {
             data: normalizedData,
             timestamp: parsed.timestamp || new Date().toISOString(),
             isUse: isUse || isSubagentEvent,
-            isResult
+            isResult,
+            ...(hints.projectedToolEventFromRunItem ? { projectedFromRunItem: true } : {})
           })
         }
         break
     }
   }
 
-  private emitVisibleProgress(parsed: any): boolean {
+  private emitVisibleProgress(parsed: any, projectedFromRunItem = false): boolean {
     const eventName = String(
       parsed.type || parsed.name || parsed.tool_name || parsed.method || ''
     ).trim()
@@ -457,7 +466,8 @@ export class GeminiStreamAdapter {
       },
       timestamp: parsed.timestamp || new Date().toISOString(),
       isUse: true,
-      isResult: false
+      isResult: false,
+      ...(projectedFromRunItem ? { projectedFromRunItem: true } : {})
     })
 
     if (output) {
@@ -474,7 +484,8 @@ export class GeminiStreamAdapter {
         },
         timestamp: parsed.timestamp || new Date().toISOString(),
         isUse: false,
-        isResult: true
+        isResult: true,
+        ...(projectedFromRunItem ? { projectedFromRunItem: true } : {})
       })
     }
 

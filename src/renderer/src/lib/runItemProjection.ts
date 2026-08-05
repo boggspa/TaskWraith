@@ -25,8 +25,6 @@ export interface RunItemToolProjection {
   runId: string
   itemId: string
   sequence: number
-  legacySkipKey: string
-  legacySkipKeys: string[]
   event: RunItemProjectedToolEvent
 }
 
@@ -79,22 +77,6 @@ export function projectRunItemAssistantDelta(
   }
 }
 
-export function legacyToolEventProjectionKey(
-  runId: string,
-  toolId: string | undefined,
-  isResult: boolean
-): string {
-  return `${runId}\u0000${toolId || ''}\u0000${isResult ? 'result' : 'use'}`
-}
-
-export function legacyToolEventProjectionNameKey(
-  runId: string,
-  toolName: string | undefined,
-  isResult: boolean
-): string {
-  return `${runId}\u0000name:${toolName || ''}\u0000${isResult ? 'result' : 'use'}`
-}
-
 function visibleProgressCompatType(event: RunItemEvent): string {
   const dataType =
     event.kind === 'tool/progress' &&
@@ -105,20 +87,6 @@ function visibleProgressCompatType(event: RunItemEvent): string {
   return event.kind === 'tool/progress' && typeof event.toolName === 'string'
     ? event.toolName.toLowerCase()
     : ''
-}
-
-function legacySkipKeys(
-  runId: string,
-  toolId: string | undefined,
-  toolName: string | undefined,
-  isResult: boolean
-): { legacySkipKey: string; legacySkipKeys: string[] } {
-  const keys = new Set([
-    legacyToolEventProjectionKey(runId, toolId, isResult),
-    legacyToolEventProjectionNameKey(runId, toolName, isResult)
-  ])
-  const legacySkipKey = legacyToolEventProjectionKey(runId, toolId, isResult)
-  return { legacySkipKey, legacySkipKeys: Array.from(keys) }
 }
 
 function visibleString(value: unknown): string {
@@ -214,14 +182,12 @@ export function projectRunItemToolEvents(
           ...data
         }
 
-    const useSkipKeys = legacySkipKeys(event.runId, toolId, toolName, false)
     const projections: RunItemToolProjection[] = [
       {
         chatId: event.chatId,
         runId: event.runId,
         itemId: event.itemId,
         sequence: event.sequence,
-        ...useSkipKeys,
         event: {
           type: 'tool_event',
           name: toolName,
@@ -241,13 +207,11 @@ export function projectRunItemToolEvents(
     ]
 
     if (isVisibleProgress && output) {
-      const resultSkipKeys = legacySkipKeys(event.runId, toolId, toolName, true)
       projections.push({
         chatId: event.chatId,
         runId: event.runId,
         itemId: event.itemId,
         sequence: event.sequence,
-        ...resultSkipKeys,
         event: {
           type: 'tool_event',
           name: toolName,
@@ -274,14 +238,12 @@ export function projectRunItemToolEvents(
     const toolId = event.toolCallId || event.itemId
     const toolName = event.toolName || 'unknown'
     const output = event.output || event.delta
-    const resultSkipKeys = legacySkipKeys(event.runId, toolId, toolName, true)
     return [
       {
         chatId: event.chatId,
         runId: event.runId,
         itemId: event.itemId,
         sequence: event.sequence,
-        ...resultSkipKeys,
         event: {
           type: 'tool_event',
           name: toolName,

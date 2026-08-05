@@ -8,12 +8,7 @@ import {
   loadRendererUsageRecords
 } from './lib/usageRecordsCache'
 import { resolveWithinDeadline } from './lib/backgroundHydration'
-import {
-  legacyToolEventProjectionKey,
-  legacyToolEventProjectionNameKey,
-  projectRunItemAssistantDelta,
-  projectRunItemToolEvents
-} from './lib/runItemProjection'
+import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
 import { anchorPendingAgentQuestionMarkers } from './lib/agentQuestionMarkerAnchor'
@@ -2028,7 +2023,6 @@ function App(): React.JSX.Element {
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
   const pendingStreamFlushCharsByRunItemRef = useRef<Map<string, number>>(new Map())
-  const projectedLegacyToolEventKeysRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
@@ -14506,9 +14500,6 @@ function App(): React.JSX.Element {
                 ) {
                   upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
                 }
-                projection.legacySkipKeys.forEach((key) => {
-                  projectedLegacyToolEventKeysRef.current.add(key)
-                })
               }
               updated.messages = nextMessages
               return updated
@@ -14636,34 +14627,30 @@ function App(): React.JSX.Element {
           // while this check runs synchronously.
           return
         }
-        if (event.type === 'tool_event') {
-          const toolId =
-            typeof event.data?.tool_id === 'string'
-              ? event.data.tool_id
-              : typeof event.data?.toolId === 'string'
-                ? event.data.toolId
-                : typeof event.data?.id === 'string'
-                  ? event.data.id
-                : typeof event.data?.call_id === 'string'
-                  ? event.data.call_id
-                  : undefined
-          const toolName =
-            typeof event.name === 'string' && event.name
-              ? event.name
-              : typeof event.data?.tool_name === 'string'
-                ? event.data.tool_name
-                : typeof event.data?.toolName === 'string'
-                  ? event.data.toolName
-                  : undefined
-          const skippedById = projectedLegacyToolEventKeysRef.current.delete(
-            legacyToolEventProjectionKey(currentRunId, toolId, event.isResult)
-          )
-          const skippedByName = projectedLegacyToolEventKeysRef.current.delete(
-            legacyToolEventProjectionNameKey(currentRunId, toolName, event.isResult)
-          )
-          if (skippedById || skippedByName) {
-            return
-          }
+        if (event.type === 'tool_event' && event.projectedFromRunItem === true) {
+          // The run-item sidecar on the SAME stdout line already carried this
+          // tool row (the adapter sets the flag only when a tool/progress or
+          // tool/outputDelta rode the line), and the run_item_event handler
+          // above is the sole applier — its ensemble/steer guards mirror the
+          // legacy reducer's, so any state where the sidecar no-ops the legacy
+          // would have no-oped too.
+          //
+          // Skip unconditionally rather than consulting a content-keyed set.
+          // The keyed lookup this replaces had three independent ways to miss,
+          // each of which rendered one call as two rows (2026-08-05, reported
+          // as "shell commands always appear twice"):
+          //   - the two lanes resolved the tool NAME from different fallback
+          //     chains, so the name key diverged (now shared — see
+          //     src/shared/toolEventNaming.ts) while the id key could never
+          //     match a synthesized `<runId>:tool-N` against a legacy line
+          //     that carries no id at all;
+          //   - a Set collapses two idless calls to the same tool into ONE
+          //     name key, and the lookup deletes it, so the second doubled;
+          //   - the record-side add lives inside a reducer that defers behind
+          //     async chat hydration while this check runs synchronously, so
+          //     during that window EVERY row doubled.
+          // Mirrors the assistant-delta lane above; keep the two symmetric.
+          return
         }
 
         let finalizedProviderChangeChat: ChatRecord | null = null

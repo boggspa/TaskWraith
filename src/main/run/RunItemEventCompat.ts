@@ -6,6 +6,7 @@ import {
   type RunItemEventProvider,
   type RunItemKind
 } from '../../shared/runItemEvents'
+import { resolveToolEventName } from '../../shared/toolEventNaming'
 
 export interface CompatRunItemIdentity {
   chatId: string
@@ -244,7 +245,9 @@ export class RunItemEventCompatMapper {
     }
 
     if (type === 'tool_use' || type === 'tool_call') {
-      const toolName = stringField(record, 'tool_name', 'toolName', 'name', 'tool') || 'tool'
+      // Shared with the renderer adapter's legacy lane — the two names key the
+      // dual-lane dedupe, so they must resolve identically (toolEventNaming.ts).
+      const toolName = resolveToolEventName(record, 'tool')
       const itemId = this.toolItemId(identity, record, toolName, 'use')
       return [
         ...this.ensureItemStarted(identity, itemId, 'tool', {
@@ -264,7 +267,7 @@ export class RunItemEventCompatMapper {
     }
 
     if (type === 'tool_result' || type === 'tool_output' || type === 'tool_response') {
-      const toolName = stringField(record, 'tool_name', 'toolName', 'name', 'tool') || undefined
+      const toolName = resolveToolEventName(record, undefined)
       const itemId = this.toolItemId(identity, record, toolName, 'result')
       const output = stringField(record, 'output', 'content', 'text', 'result', 'message')
       return [
