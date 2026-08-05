@@ -737,7 +737,6 @@ describe('SessionCheckpoint hot/archive split (T3b)', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
     try {
       const storagePath = join(tmp, 'session-checkpoints.json')
-      const archivePath = join(tmp, 'session-checkpoints-archive.jsonl')
       const store = new SessionCheckpointStore({
         storagePath,
         now: () => '2026-06-01T09:01:00.000Z',
