@@ -1882,6 +1882,95 @@ describe('Sidebar success-ink epoch (first launch after upgrading)', () => {
   })
 })
 
+describe('Sidebar run-status chips are retired', () => {
+  const runs = {
+    failed: {
+      runId: 'boom',
+      startedAt: '2026-08-05T10:00:00.000Z',
+      endedAt: '2026-08-05T10:05:00.000Z',
+      status: 'failed' as const,
+      exitCode: 1
+    },
+    sleeping: { runId: 'nap', startedAt: '2026-08-05T10:00:00.000Z', status: 'sleeping' }
+  }
+
+  it('shows no status chip for a failed, running or sleeping thread', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'a',
+          title: 'Failed thread',
+          workspaceId: 'ws-1',
+          runs: [runs.failed]
+        }),
+        makeChat({ appChatId: 'b', title: 'Busy thread', workspaceId: 'ws-1' }),
+        makeChat({
+          appChatId: 'c',
+          title: 'Napping thread',
+          workspaceId: 'ws-1',
+          runs: [runs.sleeping]
+        })
+      ],
+      {
+        workspaces: [makeWorkspace({ id: 'ws-1' })],
+        currentWorkspace: makeWorkspace({ id: 'ws-1' }),
+        runningChatIds: ['b']
+      }
+    )
+
+    // The ink and the ghost carry all of this now.
+    expect(html).not.toContain('sidebar-run-status tone-danger')
+    expect(html).not.toContain('sidebar-run-status tone-running')
+    expect(html).not.toContain('sidebar-compact-needs-input')
+    expect(html).not.toContain('>Failed<')
+    expect(html).not.toContain('>Running<')
+    expect(html).not.toContain('Needs input')
+  })
+
+  it('keeps the identity chips — those were never run state', () => {
+    // Source-region: the muted chips live on sub-thread / ensemble / search
+    // rows whose render paths need a lot of scaffolding to reach, and the
+    // claim under test is "the removal did not over-reach" — that the muted
+    // idiom (WHAT a row is) survived while the run-state idiom (how its run
+    // went) did not.
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/Sidebar.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('sidebar-run-status tone-muted')
+    expect(source).not.toContain('tone-running')
+    expect(source).not.toContain('sidebar-compact-needs-input')
+    expect(source).not.toContain('Needs input')
+    // The status vocabulary itself stays — it still feeds the aria labels.
+    expect(source).toContain('sidebarChatRunStatusText')
+  })
+
+  it('still announces run state to screen readers — the ink is visual-only', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'a',
+          title: 'Failed thread',
+          workspaceId: 'ws-1',
+          runs: [runs.failed]
+        })
+      ],
+      {
+        workspaces: [makeWorkspace({ id: 'ws-1' })],
+        currentWorkspace: makeWorkspace({ id: 'ws-1' })
+      }
+    )
+    expect(html).toContain('Failed')
+    expect(html).toMatch(/aria-label="[^"]*Failed/)
+  })
+})
+
 describe('Sidebar failure ink persistence', () => {
   const failedRun = {
     runId: 'boom',
@@ -2186,7 +2275,10 @@ describe('Sidebar footer controls', () => {
       }
     })
     expect(pending).toContain('glow-red')
-    expect(pending).toContain('Needs input')
+    // This test's subject is the Approvals BUTTON. It used to also assert the
+    // row's "Needs input" chip; that chip is retired, and the row-ink path a
+    // pending question now takes has its own coverage in "Sidebar
+    // waiting-on-you accent".
   })
 
   it('ignores cleared (null) approval entries for the red glow', () => {

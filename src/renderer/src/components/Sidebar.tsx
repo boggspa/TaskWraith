@@ -1636,11 +1636,11 @@ function SidebarCompactChatRowInner({
       ) : (
         editableTitle
       )}
-      {needsInput ? (
-        <span className="sidebar-run-status tone-warning sidebar-compact-needs-input">
-          Needs input
-        </span>
-      ) : variant === 'pinned' ? (
+      {/* Run-state chips retired: the row's title ink says it (amber while
+        parked on you, red/green for a settled result, sea blue asleep) and the
+        ghost says running. The state still reaches screen readers through the
+        composed aria-label — the ink is visual-only. */}
+      {variant === 'pinned' ? (
         isRunning && <SidebarRunningGhost />
       ) : isRunning ? (
         <SidebarRunningGhost />
@@ -1859,17 +1859,6 @@ function SidebarChatRowInner({
         </span>
         {showSubline && (
           <span className="sidebar-chat-subline">
-            {needsInput ? (
-              <span className="sidebar-run-status tone-warning" title="Agent is waiting for your answer">
-                Needs input
-              </span>
-            ) : isRunning ? (
-              <span className="sidebar-run-status tone-running">Running</span>
-            ) : lastRunStatus ? (
-              <span className={`sidebar-run-status tone-${lastRunStatus.tone}`}>
-                {lastRunStatus.label}
-              </span>
-            ) : null}
             {variant === 'workspace' && subThreadCount > 0 && (
               <span
                 className={`sidebar-branched-badge sidebar-branched-${branchedBadgeTone}`}
@@ -4613,21 +4602,6 @@ export function Sidebar({
                 {label}
               </span>
             ))}
-            {subNeedsInput ? (
-              <span className="sidebar-run-status tone-warning" title="Agent is waiting for your answer">
-                Needs input
-              </span>
-            ) : (subRunning ||
-                (subLastStatus &&
-                  subLastStatus.tone !== 'success' &&
-                  subLastStatus.tone !== 'muted')) &&
-              (subRunning ? (
-                <span className="sidebar-run-status tone-running">Running</span>
-              ) : subLastStatus ? (
-                <span className={`sidebar-run-status tone-${subLastStatus.tone}`}>
-                  {subLastStatus.label}
-                </span>
-              ) : null)}
           </span>
         </span>
         <SidebarOverflowMenu
@@ -5976,20 +5950,10 @@ export function Sidebar({
                                 />
                               </span>
                               <span className="sidebar-chat-subline">
-                                {ensembleNeedsInput ? (
-                                  <span
-                                    className="sidebar-run-status tone-warning"
-                                    title="Agent is waiting for your answer"
-                                  >
-                                    Needs input
-                                  </span>
-                                ) : (
-                                  <span
-                                    className={`sidebar-run-status tone-${isRunning ? 'warning' : 'muted'}`}
-                                  >
-                                    {isRunning ? `Speaking: ${subtitle}` : subtitle}
-                                  </span>
-                                )}
+                                      {/* Identity (which participant holds the turn), not run state. Muted, not amber, so it never competes with the waiting ink. */}
+                                      <span className="sidebar-run-status tone-muted">
+                                        {isRunning ? `Speaking: ${subtitle}` : subtitle}
+                                      </span>
                                 {subThreads.length > 0 && (
                                   <span
                                     className="sidebar-branched-badge sidebar-branched-dim"
