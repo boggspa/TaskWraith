@@ -5706,7 +5706,13 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
       color-mix(in srgb, var(--message-working-accent) 76%, var(--text-primary)) 62%,
       color-mix(in srgb, var(--message-working-accent) 54%, var(--text-secondary)) 100%
     );
-  background-size: 260% 100%;
+  /* Seamless-loop arithmetic — do not round this to a tidy 260%. Position
+   * percentages resolve against (box − image), so with the image `t` box-widths
+   * wide the shared keyframes' 220% → -120% travel covers 3.4(t − 1) box-widths
+   * against a tile `t` wide: laps = 3.4(t − 1)/t, which must be whole. 260%
+   * gave 2.0923, and that stray .0923 of a tile was a 0.24-box-width backwards
+   * jump on every restart. 17/7 = 242.857% is the exact two-lap solution. */
+  background-size: 242.857% 100%;
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;

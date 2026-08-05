@@ -73,6 +73,30 @@ describe('shimmering working label keeps its glow on a contained layer', () => {
     expect(body).not.toContain('filter:')
   })
 
+  /**
+   * `background-size` and the shared keyframes are one equation, not two knobs.
+   * Position percentages resolve against (box - image), so with the image
+   * `t` box-widths wide the keyframes' 220% -> -120% travel covers 3.4(t - 1)
+   * box-widths against a tile `t` wide: laps = 3.4(t - 1)/t. A seamless restart
+   * needs that whole. The tidy-looking 260% gives 2.0923 — and the leftover
+   * .0923 of a tile is a 0.24-box-width backwards jump on EVERY restart.
+   * 17/7 = 242.857% is the exact two-lap solution.
+   *
+   * Credit: worked out by the session retuning the ensemble chip shimmer,
+   * which hit the same seam at 260% and pinned 242.857% in
+   * ensembleChipLiveShimmerCss.test.ts. Verified here before adopting.
+   */
+  it('sizes the sweep tile so the loop restarts without a backwards jump', () => {
+    const body = ruleBodyFor(transcriptCss(), '.message-working-label::after')
+
+    const size = /background-size:\s*([\d.]+)%/.exec(body)
+    expect(size, 'sweep layer must declare a background-size').not.toBeNull()
+
+    const tiles = Number(size?.[1]) / 100
+    const laps = (3.4 * (tiles - 1)) / tiles
+    expect(Math.abs(laps - Math.round(laps))).toBeLessThan(1e-4)
+  })
+
   it('still collapses to a solid, motionless label under reduce-motion', () => {
     const css = transcriptCss()
     const start = css.indexOf(`[data-reduce-motion='true'] .message-working-label`)
