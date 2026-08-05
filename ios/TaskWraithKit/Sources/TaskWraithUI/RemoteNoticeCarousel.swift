@@ -167,30 +167,45 @@ struct RemoteNoticeCard: View {
                 .accessibilityLabel("Dismiss notice: \(notice.title)")
             }
         }
-        .padding(12)
+        .padding(isBare ? 0 : 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(backgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            accentColor.opacity(usesAccentWash ? 0.13 : 0.05),
-                            Color.clear
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        .background {
+            if !isBare {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(backgroundColor)
+            }
+        }
+        .overlay {
+            if !isBare {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accentColor.opacity(usesAccentWash ? 0.13 : 0.05),
+                                Color.clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-                .allowsHitTesting(false)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: 1)
-        )
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay {
+            if !isBare {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: 1)
+            }
+        }
+    }
+
+    /// Twin of the Electron `notification-card--bare` modifier: a grouped
+    /// notice ("New Additions") is a list of provider headings, not a banner,
+    /// so it sits satellite with no card, wash, or border around it. The icon
+    /// keeps `accentColor`, so the notice loses its container, not its hue.
+    private var isBare: Bool {
+        guard let groups = notice.groups else { return false }
+        return !groups.isEmpty
     }
 
     private var accentKey: String { notice.accent?.lowercased() ?? "" }
