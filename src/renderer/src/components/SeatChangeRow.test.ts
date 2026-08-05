@@ -61,6 +61,19 @@ describe('SeatChangeRow composer-parity contract', () => {
 })
 
 describe('CharOdometer family contract', () => {
+  it('collapses a slot the new text does not reach, instead of leaving it undefined', () => {
+    // Rolling "Extra High" -> "Max" leaves 7 slots with an empty target. An
+    // undefined width falls back to `width: auto`, and their content is still
+    // the OUTGOING character sitting in the roll frame above — so the box kept
+    // the width of letters nobody can see (measured: an 85px box to show
+    // "Max", 55px of it dead). Zero is what makes a rolled row the same width
+    // as a freshly rendered one.
+    expect(odometerSource).toContain('if (!char) return 0')
+    // The empty check must NOT be folded back into the font guard, which is
+    // where it was and what returned undefined.
+    expect(odometerSource).not.toContain('if (!char || !font')
+  })
+
   it('reuses the digit-odometer CSS family verbatim', () => {
     expect(odometerSource).toContain('"digit-odometer__visual"')
     expect(odometerSource).toContain('digit-odometer__slot char-odometer__slot')
@@ -98,6 +111,9 @@ describe('seat-change chrome strip CSS', () => {
     expect(start).toBeGreaterThanOrEqual(0)
     const end = cssSource.indexOf('}', start)
     const block = cssSource.slice(start, end)
+    // Composer parity includes SPACING: narrowed to 7px, the provider and the
+    // model read as one run of text at normal size.
+    expect(block).toContain('gap: 9px')
     expect(block).toContain('background: none !important')
     expect(block).toContain('border: 0 !important')
     expect(block).not.toContain('color:')

@@ -26,7 +26,14 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } fr
 let measureContext: CanvasRenderingContext2D | null = null
 
 function charWidth(char: string, font: string): number | undefined {
-  if (!char || !font || typeof document === 'undefined') return undefined
+  if (!font || typeof document === 'undefined') return undefined
+  // A slot the new text does not reach must collapse to nothing. Returning
+  // `undefined` here (no inline width) lets it fall back to `width: auto`,
+  // where its content is still the OUTGOING character sitting in the roll
+  // frame above — so shrinking "Extra High" to "Max" left seven slots holding
+  // the width of letters nobody can see. The width transition animates the
+  // retraction in lockstep with the roll.
+  if (!char) return 0
   if (!measureContext) {
     measureContext = document.createElement('canvas').getContext('2d')
   }

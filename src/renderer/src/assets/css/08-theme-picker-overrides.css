@@ -12039,7 +12039,11 @@
   background: none !important;
   box-shadow: none !important;
   cursor: inherit;
-  gap: 7px;
+  /* The composer trigger's own gap. It was narrowed to 7px when this strip was
+   * written, which read as no space at all between the provider and the model
+   * at normal size — and the whole point of borrowing the class is that the
+   * spacing matches the composer too. */
+  gap: 9px;
   /* The composer shell assigns its controls flex `order` (permission = 2) —
    * inside the transcript row the chips must keep their DOM order. */
   order: 0 !important;
