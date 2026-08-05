@@ -676,7 +676,8 @@ import {
 } from './lib/welcomeFit'
 import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
-import { resolveChatHydration } from './lib/chatHydrationMerge'
+import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
+import { createChatHydrationRuntime, reconcileHydrationOptions } from './lib/chatHydrationRuntime'
 import {
   applyParticipantPermissionsToEnsemble,
   cloneParticipantPermissionPatch,
@@ -3836,6 +3837,7 @@ function App(): React.JSX.Element {
   const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  const chatHydrationRuntimeRef = useRef(createChatHydrationRuntime())
   // This baseline is deliberately separate from chatByIdRef: the latter may
   // contain optimistic or in-flight renderer-only content and is therefore
   // not a safe base for reconstructing main-owned transport patches.
@@ -5927,10 +5929,16 @@ function App(): React.JSX.Element {
       request?: { localAtRequestStart: ChatRecord | null }
     ): ChatRecord => {
       const merged = resolveHydratedChat(chat, request)
-      chatByIdRef.current.set(merged.appChatId, merged)
-      setChats((prev) => mergeChatRecord(prev, merged))
-      setCurrentChat((prev) => (prev?.appChatId === merged.appChatId ? merged : prev))
-      return merged
+      const committed = commitHydratedChat({
+        chat: merged,
+        transcriptStore: chatHydrationRuntimeRef.current.transcriptStore,
+        byteLru: chatHydrationRuntimeRef.current.byteLru,
+        pinReason: currentChatIdRef.current === merged.appChatId ? 'focused' : undefined
+      })
+      chatByIdRef.current.set(committed.appChatId, committed)
+      setChats((prev) => mergeChatRecord(prev, committed))
+      setCurrentChat((prev) => (prev?.appChatId === committed.appChatId ? committed : prev))
+      return committed
     },
     [resolveHydratedChat]
   )
@@ -6321,12 +6329,9 @@ function App(): React.JSX.Element {
         .getChat(chat.appChatId)
         .then((hydrated) => {
           if (!hydrated || currentChatIdRef.current !== hydrated.appChatId) return
-          const resolved = resolveHydratedChat(hydrated, { localAtRequestStart })
+          const resolved = applyHydratedChat(hydrated, { localAtRequestStart })
           const provider = getChatProvider(resolved)
-          chatByIdRef.current.set(resolved.appChatId, resolved)
-          setChats((prev) => mergeChatRecord(prev, resolved))
           startTransition(() => {
-            setCurrentChat(resolved)
             applyChatComposerSelection(resolved, provider)
             setRunCompleteNotice(
               deriveChatRunCompleteNotice(resolved, runningChatIds.has(resolved.appChatId))
@@ -10763,7 +10768,8 @@ function App(): React.JSX.Element {
       activeRunChatIds,
       recentlyCompleted: recentlyCompletedChatIdsRef.current,
       now: Date.now(),
-      recentlyCompletedWindowMs: RECENTLY_COMPLETED_WINDOW_MS
+      recentlyCompletedWindowMs: RECENTLY_COMPLETED_WINDOW_MS,
+      ...reconcileHydrationOptions(chatHydrationRuntimeRef.current)
     })
   }, [chats, currentChat])
 

@@ -103,8 +103,21 @@ describe('resolveChatHydration', () => {
     expect(refresh).toContain('const localAtRequestStart =')
     expect(refresh).toContain('applyHydratedChat(hydrated, { localAtRequestStart })')
     expect(selected).toContain('const localAtRequestStart =')
-    expect(selected).toContain('resolveHydratedChat(hydrated, { localAtRequestStart })')
+    expect(selected).toContain('applyHydratedChat(hydrated, { localAtRequestStart })')
     expect(selected).not.toContain('setCurrentChat(hydrated)')
+    // applyHydratedChat owns setCurrentChat; after-paint only syncs composer chrome.
+    expect(selected).not.toContain('setCurrentChat(resolved)')
+  })
+
+  it('routes hydration commits through commitHydratedChat for T7 store/LRU', () => {
+    const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const apply = source.slice(
+      source.indexOf('const applyHydratedChat ='),
+      source.indexOf('const refreshSingleChat =')
+    )
+    expect(apply).toContain('commitHydratedChat({')
+    expect(apply).toContain('chatHydrationRuntimeRef.current.transcriptStore')
+    expect(apply).toContain('chatHydrationRuntimeRef.current.byteLru')
   })
 
   it('cancels pending hydration before delete, clear-all, and reap removal', () => {
