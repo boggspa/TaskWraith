@@ -13,6 +13,8 @@ import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
 import { LiveActivityViewport } from './LiveActivityViewport'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { composedSeatRole, seatFromEnsembleMetadata } from '../lib/transcriptSeat'
 import { MarkdownMessage } from './MarkdownMessage'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
 import {
@@ -194,6 +196,19 @@ export function EnsembleFanoutResultCard({
   const modelBadge = provider && model ? shortModelName(provider, '', model) : model
   const laneId = textValue(metadata.ensembleLaneId)
   const order = numberValue(metadata.ensembleOrder)
+  // The lane's seat, decoded from the snapshot captured when the row was
+  // written — so a lane read back later still shows what it actually ran as.
+  //
+  // Gated on the snapshot EXISTING, not merely on a seat resolving. The seat
+  // element always draws a permission chip and resolves an absent preset to
+  // `'default'`, so a row written before the snapshot was emitted would render
+  // "Accept Edits" for a lane that may have run read-only. Those rows keep the
+  // original pills, which claim nothing about permission at all.
+  const seat = useMemo(
+    () => (metadata.ensembleSeatSnapshot ? seatFromEnsembleMetadata(metadata) : null),
+    [metadata]
+  )
+  const seatRole = composedSeatRole(seat)
   const content = message.content || ''
   const transcriptParts = useMemo(() => readEnsembleFanoutTranscriptParts(message), [message])
   const activities = useMemo(() => message.toolActivities || [], [message.toolActivities])
@@ -317,30 +332,55 @@ export function EnsembleFanoutResultCard({
             ↠
           </span>
           <span className="ensemble-fanout-result-label">{laneLabel(message)}</span>
-          <span
-            className={`segmented-control-action segmented-control-action--compact segmented-control-action--primary ensemble-fanout-result-provider provider-${hueClass}`}
-          >
-            {providerLabel}
-          </span>
-          <strong className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-title">
-            {role}
-          </strong>
-          {modelBadge && (
-            <span
-              className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-model"
-              title={`Model: ${modelBadge}`}
-              aria-label={`Model ${modelBadge}`}
-            >
-              {modelBadge}
-            </span>
-          )}
-          {typeof order === 'number' && (
-            <span
-              className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-order"
-              title={`Participant order ${order}`}
-            >
-              #{order}
-            </span>
+          {seat ? (
+            <>
+              {/* Role first, as on the peer-message card: a reader scanning a
+                  column of lanes wants WHO before what they were running.
+                  `#N` is kept here and dropped there — this lane sits in the
+                  reader's own roster, so its seat number names something they
+                  can actually see. */}
+              {seatRole && (
+                <strong
+                  className="ensemble-fanout-result-title ensemble-fanout-result-seat-role"
+                  style={{ color: seatAccentVar(seat) }}
+                  title={`Participant ${seatRole}`}
+                >
+                  {seatRole}
+                </strong>
+              )}
+              <SeatStateChips seat={seat} className="ensemble-fanout-result-seat" />
+            </>
+          ) : (
+            <>
+              {/* Rows written before the seat snapshot existed keep the original
+                  pills — a lane with no resolvable model must not render an
+                  identity-shaped strip that says nothing. */}
+              <span
+                className={`segmented-control-action segmented-control-action--compact segmented-control-action--primary ensemble-fanout-result-provider provider-${hueClass}`}
+              >
+                {providerLabel}
+              </span>
+              <strong className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-title">
+                {role}
+              </strong>
+              {modelBadge && (
+                <span
+                  className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-model"
+                  title={`Model: ${modelBadge}`}
+                  aria-label={`Model ${modelBadge}`}
+                >
+                  {modelBadge}
+                </span>
+              )}
+              {typeof order === 'number' && (
+                <span
+                  className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-order"
+                  title={`Participant order ${order}`}
+                >
+                  #{order}
+                </span>
+              )}
+            </>
           )}
         </div>
       </header>

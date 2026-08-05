@@ -91,7 +91,13 @@ describe('EnsembleFanoutResultCard', () => {
           metadata: {
             ...fanoutMessage().metadata,
             ensembleProvider: 'ollama',
-            ensembleModel: 'qwen3.5:9b'
+            ensembleModel: 'qwen3.5:9b',
+            ensembleSeatSnapshot: {
+              schemaVersion: 1,
+              provider: 'ollama',
+              model: 'qwen3.5:9b',
+              configuredPermissionPresetId: 'default'
+            }
           }
         })}
         onPreviewImage={() => {}}
@@ -99,10 +105,20 @@ describe('EnsembleFanoutResultCard', () => {
     )
 
     // A Qwen model on Ollama paints Alibaba purple (matching the mention chips),
-    // not generic Ollama green.
+    // not generic Ollama green. The card accent, the chip hue and the PROVIDER
+    // LABEL are all the upstream brand — those are the overrides that carry the
+    // identity, and they are what this pins.
     expect(html).toContain('provider-alibaba')
     expect(html).toContain('--accent:var(--provider-alibaba-color, var(--accent))')
-    expect(html).not.toContain('provider-ollama')
+    expect(html).toContain('data-provider-hue="alibaba"')
+    expect(html).toContain('>Alibaba<')
+    // The generic Ollama HUE must never win.
+    expect(html).not.toContain('provider-ollama-color')
+    // The serving provider's LOGO may appear (owner call 2026-08-05): the seat
+    // element draws it beside the upstream label, so a lane reads as "Alibaba's
+    // Qwen, served via Ollama". Close-out and the seat-change row already do
+    // this; fan-out matches them rather than hiding the mark.
+    expect(html).toContain('provider-brand-logo-ollama')
   })
 
   it('spoofs every Pi upstream accent on its fan-out viewport card', () => {
@@ -115,7 +131,13 @@ describe('EnsembleFanoutResultCard', () => {
             metadata: {
               ...fanoutMessage().metadata,
               ensembleProvider: 'pi',
-              ensembleModel: model
+              ensembleModel: model,
+              ensembleSeatSnapshot: {
+                schemaVersion: 1,
+                provider: 'pi',
+                model,
+                configuredPermissionPresetId: 'default'
+              }
             }
           })}
           onPreviewImage={() => {}}
@@ -124,7 +146,10 @@ describe('EnsembleFanoutResultCard', () => {
 
       expect(html).toContain(`provider-${brand.hueClass}`)
       expect(html).toContain(`--accent:var(--provider-${brand.hueClass}-color, var(--accent))`)
-      expect(html).not.toContain('provider-pi')
+      expect(html).toContain(`data-provider-hue="${brand.hueClass}"`)
+      // The upstream hue wins; the raw Pi hue never does. The Pi logo itself is
+      // allowed beside the upstream label (see the Ollama case above).
+      expect(html).not.toContain('provider-pi-color')
     }
   })
 
@@ -484,5 +509,53 @@ describe('working-lane rim shimmer', () => {
     })
     expect(ensembleFanoutParticipantId(blank)).toBeNull()
     expect(isEnsembleFanoutLaneWorking(blank, new Set(['   ']))).toBe(false)
+  })
+})
+
+describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
+  const SNAPSHOT = {
+    schemaVersion: 1,
+    provider: 'claude',
+    model: 'claude-opus-5',
+    reasoningEffort: 'xhigh',
+    configuredPermissionPresetId: 'read_only'
+  }
+
+  const render = (extra: Record<string, unknown>) =>
+    renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage({ metadata: { ...fanoutMessage().metadata, ...extra } })}
+        onPreviewImage={() => {}}
+      />
+    )
+
+  it('renders the shared seat chips instead of the old segmented pills', () => {
+    const html = render({ ensembleSeatSnapshot: SNAPSHOT })
+    expect(html).toContain('seat-state-chips')
+    expect(html).not.toContain('ensemble-fanout-result-model')
+  })
+
+  it('shows the permission tier the lane ACTUALLY ran under', () => {
+    // The flat metadata cannot carry this; without the snapshot the chip would
+    // fall back to the default tier and misreport a read-only lane.
+    expect(render({ ensembleSeatSnapshot: SNAPSHOT })).toContain('Ask')
+  })
+
+  it('KEEPS #N — a fan-out lane sits in the reader’s own roster', () => {
+    // Deliberately opposite to the peer thread-message card, where the sender
+    // belongs to a roster the reader is not in and a seat number is unreadable.
+    expect(render({ ensembleSeatSnapshot: SNAPSHOT })).toContain('#2 Reader')
+  })
+
+  it('falls back to the original pills when no snapshot was written', () => {
+    // Not cosmetic. The seat element ALWAYS draws a permission chip and
+    // resolves an absent preset to 'default', so a pre-snapshot row rendered as
+    // a seat would claim "Accept Edits" for a lane that may have run read-only.
+    // The old pills claim nothing about permission, which is the honest answer
+    // when we never recorded it.
+    const html = render({ ensembleSeatSnapshot: undefined })
+    expect(html).not.toContain('seat-state-chips')
+    expect(html).toContain('ensemble-fanout-result-model')
+    expect(html).not.toContain('Accept Edits')
   })
 })

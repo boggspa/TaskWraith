@@ -17680,6 +17680,12 @@ export class EnsembleOrchestrator {
             ensembleRole: run.participant.role,
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
             ensembleOrder: run.participant.order,
+            // The seat AS CONFIGURED for this run, so a fan-out lane card can
+            // render the same seat element the close-out and peer-message cards
+            // use. Carries the permission preset, which role/model/reasoning
+            // alone do not — without it a lane's chip would claim the default
+            // tier rather than the one it actually ran under.
+            ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
             ensembleStatus: visibleStatus,
             ensembleTimelineIndex: i,
             ...pooledAgentTranscriptMetadata(run.participant),
@@ -17782,6 +17788,7 @@ export class EnsembleOrchestrator {
             ensembleRole: run.participant.role,
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
             ensembleOrder: run.participant.order,
+            ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
             ensembleStatus: visibleStatus,
             ensembleTimelineIndex: timeline.length,
             ensembleModel: run.participant.model,
