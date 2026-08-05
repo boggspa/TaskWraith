@@ -17603,6 +17603,16 @@ export class EnsembleOrchestrator {
     }
     const chat = this.deps.getChat(run.chatId)
     if (!chat?.ensemble) return
+    // Chat-level authority, resolved HERE because it does not live on the
+    // participant: a lane card cannot derive Boss/Captain from the seat alone.
+    // Written onto the row so it stays historically true — a seat that was the
+    // Boss when the lane ran keeps its crown after the roster moves on.
+    const laneSeatAuthority = resolveSeatAuthority({
+      participantId: run.participant.id,
+      stageRole: run.participant.stageRole,
+      bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+      captainParticipantIds: chat.ensemble.captainParticipantIds
+    })
     const timestamp = this.deps.nowIso()
     const holdingOwnedFanoutTranscript =
       run.ownedFanoutTranscriptBoundary !== undefined &&
@@ -17691,6 +17701,7 @@ export class EnsembleOrchestrator {
             // alone do not — without it a lane's chip would claim the default
             // tier rather than the one it actually ran under.
             ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
+            ...(laneSeatAuthority ? { ensembleSeatAuthority: laneSeatAuthority } : {}),
             ensembleStatus: visibleStatus,
             ensembleTimelineIndex: i,
             ...pooledAgentTranscriptMetadata(run.participant),
@@ -17794,6 +17805,7 @@ export class EnsembleOrchestrator {
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
             ensembleOrder: run.participant.order,
             ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
+            ...(laneSeatAuthority ? { ensembleSeatAuthority: laneSeatAuthority } : {}),
             ensembleStatus: visibleStatus,
             ensembleTimelineIndex: timeline.length,
             ensembleModel: run.participant.model,

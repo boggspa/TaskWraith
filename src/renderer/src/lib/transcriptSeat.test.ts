@@ -180,3 +180,24 @@ describe('stage role reaches the glyph', () => {
     expect(seatFromEnsembleMetadata(metadata())).not.toHaveProperty('stageRole')
   })
 })
+
+describe('lane authority reaches the glyph', () => {
+  it('carries Boss and Captain from the lane row', () => {
+    expect(seatFromEnsembleMetadata(metadata({ ensembleSeatAuthority: 'boss' }))?.authority).toBe(
+      'boss'
+    )
+    expect(
+      seatFromEnsembleMetadata(metadata({ ensembleSeatAuthority: 'captain' }))?.authority
+    ).toBe('captain')
+  })
+
+  it('drops an unknown authority rather than passing it to the icon resolver', () => {
+    expect(
+      seatFromEnsembleMetadata(metadata({ ensembleSeatAuthority: 'king' }))
+    ).not.toHaveProperty('authority')
+  })
+
+  it('has none for an ordinary lane', () => {
+    expect(seatFromEnsembleMetadata(metadata())).not.toHaveProperty('authority')
+  })
+})

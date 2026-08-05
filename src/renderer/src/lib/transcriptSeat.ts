@@ -60,6 +60,10 @@ export function seatFromEnsembleMetadata(
     stage === 'scout' || stage === 'worker' || stage === 'reviewer' || stage === 'background'
       ? stage
       : undefined
+  // Sibling field rather than part of the snapshot: authority is chat-level,
+  // while `ensembleSeatSnapshot` is derived purely from the participant.
+  const auth = trimmed(metadata.ensembleSeatAuthority)
+  const authority = auth === 'boss' || auth === 'captain' ? auth : undefined
 
   return {
     provider,
@@ -67,6 +71,7 @@ export function seatFromEnsembleMetadata(
     ...(role ? { role } : {}),
     ...(seatNumber ? { seatNumber } : {}),
     ...(stageRole ? { stageRole } : {}),
+    ...(authority ? { authority } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     // A separate input from `reasoningEffort` producing the same chip suffix;
     // `false` is meaningful, so this is a type check rather than truthiness.

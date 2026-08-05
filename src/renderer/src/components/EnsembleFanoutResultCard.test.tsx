@@ -559,3 +559,36 @@ describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
     expect(html).not.toContain('Accept Edits')
   })
 })
+
+describe('EnsembleFanoutResultCard — authority glyph', () => {
+  const SNAP = {
+    schemaVersion: 1,
+    provider: 'claude',
+    model: 'claude-opus-5',
+    configuredPermissionPresetId: 'default'
+  }
+  const render = (extra: Record<string, unknown>) =>
+    renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage({ metadata: { ...fanoutMessage().metadata, ...extra } })}
+        onPreviewImage={() => {}}
+      />
+    )
+
+  it('titles a Boss lane as Boss, not by its stage role', () => {
+    // Authority outranks stage, matching the composer chips: a Boss who is also
+    // a Worker reads as the Boss rather than wearing both marks.
+    const html = render({
+      ensembleSeatSnapshot: SNAP,
+      ensembleSeatAuthority: 'boss',
+      ensembleStageRole: 'worker'
+    })
+    expect(html).toContain('Boss · #2 Reader')
+  })
+
+  it('falls back to the stage role when the lane holds no authority', () => {
+    expect(render({ ensembleSeatSnapshot: SNAP, ensembleStageRole: 'worker' })).toContain(
+      'Worker · #2 Reader'
+    )
+  })
+})
