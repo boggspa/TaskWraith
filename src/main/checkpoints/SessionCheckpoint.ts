@@ -381,7 +381,21 @@ export class SessionCheckpointStore {
 
     const hot = this.readHotRecords()
     const archive = this.readArchiveRecords()
-    return [...hot, ...archive]
+
+    // T3b amendment: dedupe by id. A crash between archive and hot renames
+    // (during migration or a terminal-state persist) can leave the same
+    // record in both files. Keep the later updatedAt; never duplicate.
+    const seen = new Map<string, SessionCheckpointRecord>()
+    for (const record of [...archive, ...hot]) {
+      const existing = seen.get(record.id)
+      if (
+        !existing ||
+        Date.parse(record.updatedAt) > Date.parse(existing.updatedAt)
+      ) {
+        seen.set(record.id, record)
+      }
+    }
+    return [...seen.values()]
   }
 
   /**
@@ -469,6 +483,15 @@ export class SessionCheckpointStore {
   // T3b: split disk format so every upsert writes only the compact hot set
   // (status='available' records) instead of the full 20 MB array. Terminal
   // records (superseded/accepted/dismissed) are appended to a JSONL archive.
+  // T3b: persist disk format so every upsert writes only the compact hot set
+  // (status='available' records). Terminal records (superseded/accepted/
+  // dismissed) are written to a JSONL archive. In the steady state this
+  // replaces ~20 MB full-array rewrites with O(15)-record hot writes; the
+  // archive is only rewritten on terminal-state transitions — which are rare
+  // compared to participant-updated upserts. The real T3b throughput win is
+  // hot-set compaction, not call-count gating: the orchestrator guard skips
+  // participant-updated persists while the round runs (the most frequent
+  // reason), but round-updated calls still reach this path.
   private persistOrThrow(): void {
     if (!this.storagePath) return
     const hot = this.records.filter((r) => r.status === 'available')
@@ -476,15 +499,11 @@ export class SessionCheckpointStore {
 
     mkdirSync(dirname(this.storagePath), { recursive: true })
 
-    // Hot store: compact JSON array of active checkpoints only.
-    const tmpPath = `${this.storagePath}.${this.idFactory()}.tmp`
-    writeFileSync(tmpPath, JSON.stringify(hot), 'utf-8')
-    renameSync(tmpPath, this.storagePath)
-
-    // Archive: append terminal records as JSONL (one line per record).
-    // This is a full rewrite of the archive file each persist — archive
-    // changes are rare (only on supersede/accept/dismiss/purge) and the
-    // file stays small because records are terminal and never updated.
+    // Archive written FIRST: if a crash happens between the two renames
+    // the terminal records are already durable before the hot file replaces
+    // the legacy store. This closes the migration crash window that the
+    // original T3b ordering (hot-first) could permanently lose 493-class
+    // terminal records.
     if (this.archivePath) {
       if (archive.length === 0) {
         // Purge may have cleared all archive records.
@@ -500,6 +519,13 @@ export class SessionCheckpointStore {
         renameSync(archTmpPath, this.archivePath)
       }
     }
+
+    // Hot store: compact JSON array of active checkpoints only.
+    // Written AFTER the archive so a crash between them still has
+    // terminal records safe on disk.
+    const tmpPath = `${this.storagePath}.${this.idFactory()}.tmp`
+    writeFileSync(tmpPath, JSON.stringify(hot), 'utf-8')
+    renameSync(tmpPath, this.storagePath)
   }
 }
 
