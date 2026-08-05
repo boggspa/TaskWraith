@@ -41,6 +41,20 @@ export interface SeatChangeSeatState {
   /** Chat-level workspace grant count at emit time (the permission chip's
    * "N grants" suffix). */
   grantsCount?: number
+  /**
+   * Stage identity (scout / worker / reviewer / background), drawn as the glyph
+   * beside the role name.
+   *
+   * Carried on the SEAT rather than resolved by each host because a seat change
+   * can change it: without this the transcript row could show a participant
+   * moved from Scout to Reviewer and render nothing at all to say so.
+   */
+  stageRole?: 'scout' | 'worker' | 'reviewer' | 'background'
+  /**
+   * Chat-level authority at emit time. Outranks `stageRole` for the glyph — a
+   * Boss who is also a Scout reads as the Boss, matching the composer chips.
+   */
+  authority?: 'boss' | 'captain'
 }
 
 export interface SeatChangePayload {
@@ -129,7 +143,9 @@ const SEAT_LINK_KEYS = {
   reasoningEffort: 'r',
   thinkingEnabled: 't',
   permissionPresetId: 'k',
-  grantsCount: 'g'
+  grantsCount: 'g',
+  stageRole: 's',
+  authority: 'a'
 } as const
 
 /**
@@ -189,6 +205,10 @@ function seatParams(state: SeatChangeSeatState, prefix: string): Array<[string, 
   if (state.grantsCount !== undefined) {
     params.push([`${prefix}${SEAT_LINK_KEYS.grantsCount}`, String(state.grantsCount)])
   }
+  // A new seat field that is not encoded here is silently dropped from every
+  // close-out row — the table would keep rendering, just without the glyph.
+  if (state.stageRole) params.push([`${prefix}${SEAT_LINK_KEYS.stageRole}`, state.stageRole])
+  if (state.authority) params.push([`${prefix}${SEAT_LINK_KEYS.authority}`, state.authority])
   return params
 }
 
@@ -201,6 +221,16 @@ function readSeat(params: Map<string, string>, prefix: string): SeatChangeSeatSt
   const reasoningEffort = params.get(`${prefix}${SEAT_LINK_KEYS.reasoningEffort}`)
   const permissionPresetId = params.get(`${prefix}${SEAT_LINK_KEYS.permissionPresetId}`)
   const thinkingEnabled = params.get(`${prefix}${SEAT_LINK_KEYS.thinkingEnabled}`)
+  const stageRole = params.get(`${prefix}${SEAT_LINK_KEYS.stageRole}`)
+  const authority = params.get(`${prefix}${SEAT_LINK_KEYS.authority}`)
+  // Closed unions, validated on decode: this comes off persisted message
+  // CONTENT, so an unknown value must drop rather than reach the icon resolver.
+  const stage =
+    stageRole === 'scout' || stageRole === 'worker' || stageRole === 'reviewer' ||
+    stageRole === 'background'
+      ? stageRole
+      : undefined
+  const auth = authority === 'boss' || authority === 'captain' ? authority : undefined
   return {
     provider,
     model: params.get(`${prefix}${SEAT_LINK_KEYS.model}`) || '',
@@ -209,7 +239,9 @@ function readSeat(params: Map<string, string>, prefix: string): SeatChangeSeatSt
     ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(thinkingEnabled === undefined ? {} : { thinkingEnabled: thinkingEnabled === '1' }),
     ...(permissionPresetId ? { permissionPresetId } : {}),
-    ...(Number.isFinite(grantsCount) && grantsCount >= 0 ? { grantsCount } : {})
+    ...(Number.isFinite(grantsCount) && grantsCount >= 0 ? { grantsCount } : {}),
+    ...(stage ? { stageRole: stage } : {}),
+    ...(auth ? { authority: auth } : {})
   }
 }
 
@@ -240,4 +272,27 @@ export function decodeSeatChangeLink(href: string): SeatChangeLink | null {
   const after = readSeat(params, '')
   if (!participantId || !after) return null
   return { participantId, before: readSeat(params, 'b') || after, after }
+}
+
+/**
+ * Which authority glyph a seat wears, if any.
+ *
+ * Shared so the composer chips, the seat-change row, the close-out table and
+ * the transcript result cards cannot drift apart on a rule that is easy to get
+ * subtly wrong: a Boss is never also shown as a Captain, and a BACKGROUND seat
+ * wears neither — a background lane is not part of the round's command chain,
+ * so decorating it with a crown would overstate what it does.
+ */
+export function resolveSeatAuthority(input: {
+  participantId: string
+  stageRole?: string | null
+  bossmanParticipantId?: string | null
+  captainParticipantIds?: readonly string[] | null
+}): 'boss' | 'captain' | undefined {
+  const id = (input.participantId || '').trim()
+  if (!id || input.stageRole === 'background') return undefined
+  const boss = (input.bossmanParticipantId || '').trim()
+  if (boss && boss === id) return 'boss'
+  const captains = input.captainParticipantIds || []
+  return captains.some((candidate) => (candidate || '').trim() === id) ? 'captain' : undefined
 }

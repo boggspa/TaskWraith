@@ -8073,3 +8073,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   flex: 0 0 auto;
   font-weight: 600;
 }
+
+/* Authority / stage glyph beside a seat's role name. Inherits `color` from the
+ * role span, which is the seat's provider accent, so the mark and the name are
+ * the same colour without either declaring it twice. */
+.seat-role-icon,
+.seat-change-role-icon {
+  flex: 0 0 auto;
+  vertical-align: -2px;
+  margin-right: 4px;
+  opacity: 0.9;
+}

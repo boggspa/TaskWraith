@@ -84,7 +84,7 @@ import type {
 } from '../store/types'
 import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
 import type { SeatChangeSeatState } from '../store/types'
-import { coalesceSeatChangeMessages } from '../../shared/seatChange'
+import { coalesceSeatChangeMessages, resolveSeatAuthority } from '../../shared/seatChange'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import {
   findAllMentions,
@@ -2358,13 +2358,18 @@ function participantLabel(participant?: EnsembleParticipant): string {
  */
 function seatChangeSeatState(
   participant: EnsembleParticipant,
-  grantsCount?: number
+  grantsCount?: number,
+  authority?: 'boss' | 'captain'
 ): SeatChangeSeatState {
   return {
     provider: participant.provider,
     model: participant.model || '',
     ...(participant.role ? { role: participant.role } : {}),
     ...(participant.order ? { seatNumber: participant.order } : {}),
+    // Captured per side, so a change that moves a seat between stages (or in or
+    // out of authority) is visible in the row rather than silently invisible.
+    ...(participant.stageRole ? { stageRole: participant.stageRole } : {}),
+    ...(authority ? { authority } : {}),
     ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
     ...(participant.thinkingEnabled === undefined
       ? {}
@@ -18384,14 +18389,21 @@ export class EnsembleOrchestrator {
           (grant) => grant.workspacePath === chat.workspacePath
         ).length
       : undefined
+    const seatAuthorityFor = (participant: EnsembleParticipant): 'boss' | 'captain' | undefined =>
+      resolveSeatAuthority({
+        participantId: participant.id,
+        stageRole: participant.stageRole,
+        bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+        captainParticipantIds: chat.ensemble?.captainParticipantIds
+      })
     const timestamp = this.deps.nowIso()
     const { messages, payload } = coalesceSeatChangeMessages(
       chat.messages,
       {
         participantId: before.id,
         label: participantLabel(after) || participantLabel(before),
-        before: seatChangeSeatState(before, grantsCount),
-        after: seatChangeSeatState(after, grantsCount),
+        before: seatChangeSeatState(before, grantsCount, seatAuthorityFor(before)),
+        after: seatChangeSeatState(after, grantsCount, seatAuthorityFor(after)),
         appliedAt: timestamp
       },
       this.deps.now()

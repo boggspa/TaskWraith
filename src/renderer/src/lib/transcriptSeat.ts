@@ -55,12 +55,18 @@ export function seatFromEnsembleMetadata(
   const reasoningEffort = trimmed(snapshot?.reasoningEffort)
   const permissionPresetId = trimmed(snapshot?.configuredPermissionPresetId)
   const seatNumber = positiveInt(metadata.ensembleOrder)
+  const stage = trimmed(metadata.ensembleStageRole)
+  const stageRole =
+    stage === 'scout' || stage === 'worker' || stage === 'reviewer' || stage === 'background'
+      ? stage
+      : undefined
 
   return {
     provider,
     model,
     ...(role ? { role } : {}),
     ...(seatNumber ? { seatNumber } : {}),
+    ...(stageRole ? { stageRole } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     // A separate input from `reasoningEffort` producing the same chip suffix;
     // `false` is meaningful, so this is a type check rather than truthiness.

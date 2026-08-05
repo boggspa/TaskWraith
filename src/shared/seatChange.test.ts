@@ -5,8 +5,9 @@ import {
   coalesceSeatChangeMessages,
   decodeSeatChangeLink,
   encodeSeatChangeLink,
-  type SeatChangePayload,
-  type SeatChangeCarrierMessage
+  resolveSeatAuthority,
+  type SeatChangeCarrierMessage,
+  type SeatChangePayload
 } from './seatChange'
 
 const T0 = Date.parse('2026-08-05T12:00:00.000Z')
@@ -166,5 +167,75 @@ describe('close-out seat links', () => {
     expect(decodeSeatChangeLink('ensemble-seat://p-8')).toBeNull()
     expect(decodeSeatChangeLink('ensemble-seat://p-8?m=claude-opus-5')).toBeNull()
     expect(decodeSeatChangeLink('ensemble-seat://?p=claude')).toBeNull()
+  })
+})
+
+describe('resolveSeatAuthority', () => {
+  it('marks the boss', () => {
+    expect(
+      resolveSeatAuthority({ participantId: 'p1', bossmanParticipantId: 'p1' })
+    ).toBe('boss')
+  })
+
+  it('marks a captain', () => {
+    expect(
+      resolveSeatAuthority({ participantId: 'p2', captainParticipantIds: ['p2', 'p3'] })
+    ).toBe('captain')
+  })
+
+  it('never shows the boss as a captain too', () => {
+    // One mark per seat: two would make the roster harder to scan, not easier.
+    expect(
+      resolveSeatAuthority({
+        participantId: 'p1',
+        bossmanParticipantId: 'p1',
+        captainParticipantIds: ['p1']
+      })
+    ).toBe('boss')
+  })
+
+  it('gives a BACKGROUND seat no authority glyph', () => {
+    // A background lane is not in the round's command chain, so a crown there
+    // would overstate what it does — matching the composer chips exactly.
+    expect(
+      resolveSeatAuthority({
+        participantId: 'p1',
+        stageRole: 'background',
+        bossmanParticipantId: 'p1',
+        captainParticipantIds: ['p1']
+      })
+    ).toBeUndefined()
+  })
+
+  it('is undefined for an ordinary seat', () => {
+    expect(resolveSeatAuthority({ participantId: 'p9', captainParticipantIds: ['p2'] })).toBeUndefined()
+    expect(resolveSeatAuthority({ participantId: '' })).toBeUndefined()
+  })
+})
+
+describe('seat link carries the glyph fields', () => {
+  it('round-trips stageRole and authority', () => {
+    // A new seat field missing from SEAT_LINK_KEYS is silently dropped from
+    // every close-out row — the table keeps rendering, just without the glyph.
+    const link = {
+      participantId: 'p1',
+      before: { provider: 'claude', model: 'm', stageRole: 'scout' as const },
+      after: { provider: 'claude', model: 'm', stageRole: 'reviewer' as const, authority: 'boss' as const }
+    }
+    const decoded = decodeSeatChangeLink(encodeSeatChangeLink(link))
+    expect(decoded?.after.stageRole).toBe('reviewer')
+    expect(decoded?.after.authority).toBe('boss')
+    expect(decoded?.before.stageRole).toBe('scout')
+  })
+
+  it('drops an unknown stage role or authority on decode', () => {
+    const bad = encodeSeatChangeLink({
+      participantId: 'p1',
+      before: { provider: 'claude', model: 'm' },
+      after: { provider: 'claude', model: 'm', stageRole: 'overlord' as never, authority: 'king' as never }
+    })
+    const decoded = decodeSeatChangeLink(bad)
+    expect(decoded?.after).not.toHaveProperty('stageRole')
+    expect(decoded?.after).not.toHaveProperty('authority')
   })
 })

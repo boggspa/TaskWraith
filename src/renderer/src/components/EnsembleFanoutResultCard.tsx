@@ -15,6 +15,7 @@ import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 import { composedSeatRole, seatFromEnsembleMetadata } from '../lib/transcriptSeat'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { MarkdownMessage } from './MarkdownMessage'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
 import {
@@ -343,8 +344,17 @@ export function EnsembleFanoutResultCard({
                 <strong
                   className="ensemble-fanout-result-title ensemble-fanout-result-seat-role"
                   style={{ color: seatAccentVar(seat) }}
-                  title={`Participant ${seatRole}`}
+                  title={
+                    [participantRoleIconTitle(seat.authority, seat.stageRole), seatRole]
+                      .filter(Boolean)
+                      .join(' · ') || undefined
+                  }
                 >
+                  <ParticipantRoleIcon
+                    authority={seat.authority}
+                    stageRole={seat.stageRole}
+                    className="seat-role-icon"
+                  />
                   {seatRole}
                 </strong>
               )}

@@ -30,6 +30,11 @@
  * drag + the overflow editor.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  BossmanCrownIcon,
+  CaptainHatIcon,
+  EnsembleStageRoleIcon
+} from './icons/ParticipantRoleIcon'
 import { createPortal } from 'react-dom'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
 import {
@@ -695,131 +700,6 @@ function ParticipantStatusIcon({ status }: { status: string }): React.JSX.Elemen
       <path d="M9 3h3l-3 3h3" strokeWidth={1.2} />
       <path d="M5 7h4l-4 4h4" />
       <path d="M3 12h2l-2 2h2" strokeWidth={1.2} />
-    </svg>
-  )
-}
-
-function BossmanCrownIcon({ className }: { className?: string }): React.JSX.Element {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="14"
-      height="14"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M4.7 17.8h14.6l1.2-9.1-4.8 3.4-3.7-6-3.7 6-4.8-3.4 1.2 9.1Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path d="M5.4 20h13.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function CaptainHatIcon({ className }: { className?: string }): React.JSX.Element {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="14"
-      height="14"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M5.2 15.8c2.3 1.2 11.3 1.2 13.6 0"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-      <path
-        d="M6.8 14.8 8 9.7c.3-1.1 1.2-1.8 2.3-1.8h3.4c1.1 0 2 .7 2.3 1.8l1.2 5.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M9.3 8c.7-1.2 1.6-1.9 2.7-1.9s2 .7 2.7 1.9M10.1 11.4h3.8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <path
-        d="M4 16.4c1.9 1.3 4.6 2 8 2s6.1-.7 8-2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-/**
- * Runtime copies of the designer SVGs in
- * `design-assets/ensemble-stage-roles/icons`. These intentionally do not use
- * ToolFamilyIcon: stage roles need distinct silhouettes at the chip's 14px
- * size and are a separate visual concept from transcript tool calls.
- */
-function EnsembleStageRoleIcon({
-  stageRole,
-  className
-}: {
-  stageRole: NonNullable<EnsembleParticipant['stageRole']>
-  className?: string
-}): React.JSX.Element {
-  const baseSvgProps = {
-    className,
-    width: 14,
-    height: 14,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.9,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    'aria-hidden': true as const,
-    focusable: 'false' as const
-  }
-
-  if (stageRole === 'scout') {
-    return (
-      <svg {...baseSvgProps}>
-        <circle cx="10.1" cy="10.1" r="5.8" />
-        <path d="m14.4 14.4 5.8 5.8" />
-      </svg>
-    )
-  }
-  if (stageRole === 'worker') {
-    return (
-      <svg {...baseSvgProps}>
-        <path d="M15.2 4.1a5 5 0 0 0-6.1 6.4l-5.3 5.3a2.7 2.7 0 0 0 3.8 3.8l5.3-5.3a5 5 0 0 0 6.4-6.1" />
-        <path d="m15.2 4.1-3.1 3.1.9 3.3 3.3.9 3-3.2" />
-      </svg>
-    )
-  }
-  if (stageRole === 'background') {
-    return (
-      <svg {...baseSvgProps}>
-        <rect x="3.2" y="5" width="17.6" height="14" rx="2.2" />
-        <path d="m7.2 10 2.6 2.2-2.6 2.2M12.2 14.4h4.6" />
-      </svg>
-    )
-  }
-  return (
-    <svg {...baseSvgProps}>
-      <circle cx="7.3" cy="13.1" r="3.6" />
-      <circle cx="16.7" cy="13.1" r="3.6" />
-      <path d="M10.9 12.4c.7-.8 1.5-.8 2.2 0" />
-      <path d="m3.8 11.7-1.3-3.2M20.2 11.7l1.3-3.2" />
     </svg>
   )
 }

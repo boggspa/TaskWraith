@@ -32,6 +32,7 @@ import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 
 interface ThreadMessageInboxCardProps {
   message: ThreadMessageCardInput
@@ -80,7 +81,18 @@ export function ThreadMessageInboxCard({
           </span>
           <div className="thread-message-card-heading-stack">
             <div className="thread-message-card-heading-lead">
-              <span className="thread-message-card-lead" style={{ color: leadAccent }}>
+              <span
+                className="thread-message-card-lead"
+                style={{ color: leadAccent }}
+                title={
+                  participantRoleIconTitle(model.seat?.authority, model.seat?.stageRole) || undefined
+                }
+              >
+                <ParticipantRoleIcon
+                  authority={model.seat?.authority}
+                  stageRole={model.seat?.stageRole}
+                  className="seat-role-icon"
+                />
                 {model.leadLabel}
               </span>
               <span className="thread-message-card-from">from</span>

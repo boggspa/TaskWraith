@@ -9,6 +9,7 @@ import { PillButton } from './PillButton'
 import { ProviderSatelliteLabel } from './ProviderSatelliteLabel'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 import { composedSeatRole, seatFromSubThreadMetadata } from '../lib/transcriptSeat'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { linkedChildReturnRelation, subThreadReturnBody } from './SubThreadReturnCardModel'
 
 interface SubThreadReturnCardProps {
@@ -117,7 +118,13 @@ export function SubThreadReturnCard({
                 <strong
                   className="subthread-return-title subthread-return-seat-role"
                   style={{ color: seatAccentVar(seat) }}
+                  title={participantRoleIconTitle(seat.authority, seat.stageRole) || undefined}
                 >
+                  <ParticipantRoleIcon
+                    authority={seat.authority}
+                    stageRole={seat.stageRole}
+                    className="seat-role-icon"
+                  />
                   {seatRole}
                 </strong>
               )}

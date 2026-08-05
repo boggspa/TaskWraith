@@ -7,6 +7,10 @@ import {
 } from './CombinedModelPicker'
 import { CharOdometer } from './CharOdometer'
 import { SeatChairIcon } from './icons/SeatChairIcon'
+import {
+  ParticipantRoleIcon,
+  participantRoleIconTitle
+} from './icons/ParticipantRoleIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { getProviderName } from './Sidebar'
 import { resolveProviderBrandLabel } from '../lib/ollamaDisplayBrand'
@@ -46,6 +50,8 @@ interface SeatSideView {
   tierLabel: string
   grantsLabel: string
   role: string
+  stageRole?: SeatChangeSeatState['stageRole']
+  authority?: SeatChangeSeatState['authority']
 }
 
 function seatSideView(state: SeatChangeSeatState): SeatSideView {
@@ -85,7 +91,11 @@ function seatSideView(state: SeatChangeSeatState): SeatSideView {
       ? state.seatNumber
         ? `#${state.seatNumber} ${state.role}`
         : state.role
-      : ''
+      : '',
+    // Carried per SIDE so a change that moves a seat between stages, or in or
+    // out of authority, is visible in the row — it was previously invisible.
+    ...(state.stageRole ? { stageRole: state.stageRole } : {}),
+    ...(state.authority ? { authority: state.authority } : {})
   }
 }
 
@@ -211,7 +221,16 @@ function SeatStrip({
         <span
           className="seat-change-role"
           style={{ color: `var(--provider-${current.hue}-color, var(--accent))` }}
+          title={participantRoleIconTitle(current.authority, current.stageRole) || undefined}
         >
+          {/* Outside the odometer on purpose: an SVG has no character runs to
+              roll, and nesting it would give CharOdometer a slot it cannot
+              measure. The glyph swaps instantly while the text rolls. */}
+          <ParticipantRoleIcon
+            authority={current.authority}
+            stageRole={current.stageRole}
+            className="seat-change-role-icon"
+          />
           <CharOdometer text={current.role} />
         </span>
       )}
@@ -321,7 +340,13 @@ export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Elemen
             <span
               className="seat-change-role"
               style={{ color: `var(--provider-${before.hue}-color, var(--accent))` }}
+              title={participantRoleIconTitle(before.authority, before.stageRole) || undefined}
             >
+              <ParticipantRoleIcon
+                authority={before.authority}
+                stageRole={before.stageRole}
+                className="seat-change-role-icon"
+              />
               {before.role}
             </span>
           )}

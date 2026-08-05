@@ -157,3 +157,26 @@ describe('seatFromSubThreadMetadata', () => {
     expect(seatFromSubThreadMetadata({ subThreadSeat: [] })).toBeNull()
   })
 })
+
+describe('stage role reaches the glyph', () => {
+  it('carries a valid ensemble stage role', () => {
+    expect(seatFromEnsembleMetadata(metadata({ ensembleStageRole: 'scout' }))?.stageRole).toBe(
+      'scout'
+    )
+  })
+
+  it('drops an unknown stage role rather than passing it to the icon resolver', () => {
+    // Comes off persisted metadata, so an unrecognised value must not reach a
+    // component that switches on a closed union.
+    expect(
+      seatFromEnsembleMetadata(metadata({ ensembleStageRole: 'overlord' }))
+    ).not.toHaveProperty('stageRole')
+    expect(seatFromEnsembleMetadata(metadata({ ensembleStageRole: 42 }))).not.toHaveProperty(
+      'stageRole'
+    )
+  })
+
+  it('has no stage role when the row never carried one', () => {
+    expect(seatFromEnsembleMetadata(metadata())).not.toHaveProperty('stageRole')
+  })
+})
