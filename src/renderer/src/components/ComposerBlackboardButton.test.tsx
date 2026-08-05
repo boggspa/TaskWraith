@@ -94,13 +94,40 @@ describe('buildComposerBlackboardColumns', () => {
 
   it('keeps the browse area horizontal, each category vertical, and the compose shelf fixed below it', () => {
     expect(blackboardCss).toMatch(
-      /\.composer-blackboard-list\s*\{[^}]*flex:\s*1 1 auto;[^}]*grid-auto-flow:\s*column;[^}]*grid-auto-columns:\s*clamp\(184px, 24vw, 232px\);[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*hidden;/s
+      /\.composer-blackboard-list\s*\{[^}]*flex:\s*1 1 auto;[^}]*grid-auto-flow:\s*column;[^}]*grid-auto-columns:\s*clamp\(230px, 30vw, 290px\);[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*hidden;/s
     )
     expect(blackboardCss).toMatch(
       /\.composer-blackboard-list > \.blackboard-group\s*\{[^}]*height:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s
     )
     expect(blackboardCss).toMatch(
       /\.composer-blackboard-footer\s*\{[^}]*flex:\s*0 0 auto;[^}]*flex-direction:\s*column;[^}]*border-top:/s
+    )
+  })
+
+  /**
+   * `overflow-x: hidden` still makes each lane a scroll container on the X
+   * axis — one that can never scroll. A blanket `overscroll-behavior: contain`
+   * therefore SWALLOWED every horizontal wheel/trackpad delta the pointer
+   * delivered over a lane instead of chaining it to the board, so the board
+   * could only be panned from the 10px lane gaps or by dragging the scrollbar
+   * (measured 2026-08-05: 0px over a lane body, 400px over a gap). The lane
+   * must contain the Y axis only.
+   */
+  it('lets a horizontal gesture over a lane chain out to the board', () => {
+    const laneBlock = blackboardCss.slice(
+      blackboardCss.indexOf('.composer-blackboard-list > .blackboard-group {'),
+      blackboardCss.indexOf(
+        '}',
+        blackboardCss.indexOf('.composer-blackboard-list > .blackboard-group {')
+      ) + 1
+    )
+
+    expect(laneBlock).toContain('overscroll-behavior: auto contain')
+    expect(laneBlock).not.toMatch(/overscroll-behavior:\s*contain\s*;/)
+    // The board itself is still the wall — the chain stops there, never
+    // reaching the transcript behind the popover.
+    expect(blackboardCss).toMatch(
+      /\.composer-blackboard-list\s*\{[^}]*overscroll-behavior:\s*contain;/s
     )
   })
 })

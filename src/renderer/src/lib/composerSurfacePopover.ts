@@ -35,3 +35,22 @@ export function resolveComposerSurfacePopoverPosition({
     width: Math.round(width)
   }
 }
+
+/**
+ * Equality gate for stored popover positions. Surfaces reposition from a
+ * CAPTURING window scroll listener, so scrolls inside the popover's own body
+ * reach it as well as scrolls that actually move the composer. Storing a fresh
+ * object for those re-renders the whole popover for a position that never
+ * moved — hold the previous object when this returns true.
+ */
+export function sameComposerSurfacePopoverPosition(
+  previous: ComposerSurfacePopoverPosition | null,
+  next: ComposerSurfacePopoverPosition
+): boolean {
+  return (
+    previous !== null &&
+    previous.left === next.left &&
+    previous.top === next.top &&
+    previous.width === next.width
+  )
+}

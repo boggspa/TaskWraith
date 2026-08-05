@@ -14,7 +14,10 @@ import type {
   ComposerStyle,
   ProviderId
 } from '../../../main/store/types'
-import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
+import {
+  resolveComposerSurfacePopoverPosition,
+  sameComposerSurfacePopoverPosition
+} from '../lib/composerSurfacePopover'
 import {
   BLACKBOARD_CATEGORY_LABELS,
   BLACKBOARD_CATEGORY_ORDER,
@@ -315,13 +318,15 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
     const triggerRect = trigger.getBoundingClientRect()
     const surface = trigger.closest('.composer-surface') as HTMLElement | null
     const surfaceRect = surface?.getBoundingClientRect() ?? triggerRect
-    setPosition(
-      resolveComposerSurfacePopoverPosition({
-        triggerRect,
-        surfaceRect,
-        viewportWidth: window.innerWidth
-      })
-    )
+    const next = resolveComposerSurfacePopoverPosition({
+      triggerRect,
+      surfaceRect,
+      viewportWidth: window.innerWidth
+    })
+    // The reposition listener captures, so every scroll inside the board's own
+    // lanes lands here too. Hold the previous object when nothing moved —
+    // otherwise each scroll event re-renders all five lanes of cards.
+    setPosition((current) => (sameComposerSurfacePopoverPosition(current, next) ? current : next))
   }, [])
 
   useEffect(() => {

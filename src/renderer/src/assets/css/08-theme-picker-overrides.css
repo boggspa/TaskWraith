@@ -10981,7 +10981,16 @@
   align-content: flex-start;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  /* Y contained, X chained — NOT a blanket `contain`. `overflow-x: hidden`
+   * still makes the lane a scroll container on the X axis, one that can never
+   * scroll, so `contain` on that axis swallowed every horizontal wheel /
+   * trackpad delta the pointer delivered over a lane rather than passing it to
+   * the board (measured: 0px over a lane body vs 400px over a 10px lane gap —
+   * the board was only pannable from the gaps or by dragging its scrollbar,
+   * which read as staccato horizontal scrolling). The board itself still
+   * carries `overscroll-behavior: contain`, so the chain stops there and never
+   * reaches the transcript behind the popover. */
+  overscroll-behavior: auto contain;
   padding: 0 4px 4px 0;
   scrollbar-gutter: stable;
 }
