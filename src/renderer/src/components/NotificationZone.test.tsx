@@ -176,6 +176,29 @@ describe('NotificationZone', () => {
     expect(html).not.toContain('Fallback summary text.')
   })
 
+  it('drops the card chrome for grouped notices so they sit satellite', () => {
+    const grouped: AppNotification = {
+      id: 'grouped-bare',
+      kind: 'addition',
+      title: 'New Additions',
+      body: 'Fallback summary text.',
+      groups: [
+        { provider: 'claude', label: 'Claude', models: [{ name: 'Opus 5', blurb: 'Half price.' }] }
+      ]
+    }
+    expect(renderToStaticMarkup(<NotificationZone notifications={[grouped]} />)).toContain(
+      'notification-card--bare'
+    )
+    // A plain-body notice is still a banner, so it keeps its card...
+    expect(renderToStaticMarkup(<NotificationZone notifications={[addition]} />)).not.toContain(
+      'notification-card--bare'
+    )
+    // ...and the red deprecation card keeps the chrome it uses as a signal.
+    expect(renderToStaticMarkup(<NotificationZone notifications={[deprecation]} />)).not.toContain(
+      'notification-card--bare'
+    )
+  })
+
   it('renders the official Antigravity PNG in the pinned New Additions notice', () => {
     const html = renderToStaticMarkup(<NotificationZone notifications={PINNED_APP_NOTIFICATIONS} />)
 

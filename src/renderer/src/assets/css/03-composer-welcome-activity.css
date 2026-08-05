@@ -14060,6 +14060,31 @@ button.diff-file-row {
     inset 0 0 18px color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 12%, transparent),
     0 0 0 3px color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 8%, transparent);
 }
+/* Chromeless variant — the grouped "New Additions" notice sits SATELLITE on the
+ * surface: no bubble, no glass, no accent rim. It is a list of provider
+ * headings, and boxing a list that already reads as its own block just adds a
+ * frame around the pane's own background.
+ *
+ * Both selectors are deliberately over-specific: the plain card is (0,2,0) via
+ * the accent variants' `:not()` and the refraction rules reach (0,3,0), so a
+ * lone `.notification-card--bare` would lose to every one of them. The `::after`
+ * kill is what removes the glass rim — the refraction layer paints it on a
+ * pseudo-element, so zeroing box-shadow on the card alone leaves it behind.
+ *
+ * `--notification-accent` is NOT reset: the ✦ icon still reads it, so the
+ * notice keeps its hue while losing its container. */
+.notification-card.notification-card--bare,
+:root[data-advanced-fx-refraction="true"] .notification-card.notification-card--bare {
+  padding: 0;
+  border-color: transparent;
+  background: none;
+  background-image: none;
+  box-shadow: none;
+}
+:root[data-advanced-fx-refraction="true"] .notification-card.notification-card--bare::after {
+  content: none;
+}
+
 .notification-card-icon {
   flex: 0 0 18px;
   display: inline-grid;

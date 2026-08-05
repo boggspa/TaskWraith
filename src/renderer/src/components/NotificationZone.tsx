@@ -129,9 +129,16 @@ function NotificationCard({
   const tone = appNotificationTone(notification.kind)
   const accent = appNotificationAccent(notification)
   const groups = notification.groups
+  // A grouped notice is a list of provider headings, not a banner — it sits
+  // satellite on the surface with no card around it. Only the one-line body
+  // variant (and the red deprecation card, which uses its chrome as a warning
+  // signal) keeps the bubble.
+  const isBare = Boolean(groups && groups.length > 0)
   return (
     <div
-      className={`notification-card notification-card--${tone} notification-card--accent-${accent}`}
+      className={`notification-card notification-card--${tone} notification-card--accent-${accent}${
+        isBare ? ' notification-card--bare' : ''
+      }`}
       role="status"
     >
       <span className="notification-card-icon" aria-hidden>
