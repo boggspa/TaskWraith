@@ -262,7 +262,15 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
               participantId: mainEnsembleRun.participantId,
               role: mainEnsembleRun.role,
               ...(mainEnsembleRun.stageRole ? { stageRole: mainEnsembleRun.stageRole } : {}),
-              ...(mainEnsembleRun.laneId ? { laneId: mainEnsembleRun.laneId } : {})
+              ...(mainEnsembleRun.laneId ? { laneId: mainEnsembleRun.laneId } : {}),
+              // Seat number for the renderer's "@Role #N" chip — same field the
+              // service gate forwards. Guarded because legacy session snapshots
+              // may predate `order` being required on EnsembleRunIdentity.
+              ...(typeof mainEnsembleRun.order === 'number' &&
+              Number.isInteger(mainEnsembleRun.order) &&
+              mainEnsembleRun.order > 0
+                ? { order: mainEnsembleRun.order }
+                : {})
             }
           }
         : null

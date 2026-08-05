@@ -47,4 +47,30 @@ describe('banned default styles stay out of approval and menu chrome', () => {
     expect(section).not.toContain('text-transform')
     expect(section).not.toContain('0.08em')
   })
+
+  /* The 2026-08 approval-modal redraft shed this surface's remaining caps-
+   * spaced micro-labels (source badge, "Requested by", preview header). */
+  it('keeps the approval source badge sentence case', () => {
+    const css = readCss('03-composer-welcome-activity.css')
+    const source = cssBlockStartingAt(css, '.composer-permission-source {')
+
+    expect(source).not.toContain('text-transform')
+    expect(source).not.toContain('letter-spacing')
+  })
+
+  it('keeps the approval attribution label sentence case', () => {
+    const css = readCss('03-composer-welcome-activity.css')
+    const label = cssBlockStartingAt(css, '.composer-permission-attribution-label {')
+
+    expect(label).not.toContain('text-transform')
+    expect(label).not.toContain('letter-spacing')
+  })
+
+  it('keeps the approval preview header sentence case', () => {
+    const css = readCss('04-settings-controls.css')
+    const header = cssBlockStartingAt(css, '.agent-approval-preview-header {')
+
+    expect(header).not.toContain('text-transform')
+    expect(header).not.toContain('letter-spacing')
+  })
 })

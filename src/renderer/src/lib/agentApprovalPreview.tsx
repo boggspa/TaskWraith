@@ -282,7 +282,12 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
           .map(([key, value]) => `${key}=${String(value)}`)
           .join('\n')
       : ''
-  const kind = typeof preview.kind === 'string' ? preview.kind : 'approval'
+  // Header text is sentence case now that the CSS no longer caps-locks it
+  // (banned default) — a raw provider kind like `tool_permission_retry` would
+  // otherwise render as a bare enum id, which is its own banned style.
+  const rawKind = typeof preview.kind === 'string' && preview.kind.trim() ? preview.kind : 'approval'
+  const kindWords = rawKind.replace(/[_-]+/g, ' ').trim()
+  const kind = kindWords.charAt(0).toUpperCase() + kindWords.slice(1)
   const launchContextPreview = formatLaunchContextPreview(preview)
   // Outlook: every field the call actually writes gets its own row. Showing
   // only subject+recipients let an event's 32k body and its location through

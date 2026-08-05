@@ -8487,12 +8487,27 @@ button.composer-run-timecode.is-open {
 }
 
 .composer-permission-card {
+  /* 2026-08 redraft — the card wears the REQUESTING PARTICIPANT's accent.
+   * Composer pins `--approval-accent` inline from the seat's provider/brand
+   * hue class (fan-out result-card pattern, ollama/Pi overrides included);
+   * with no pin the card falls back to the historic warning amber, so legacy
+   * and non-attributed surfaces keep their caution look. The two alpha knobs
+   * exist so the light themes can raise contrast without restating the
+   * chrome. */
+  --approval-accent: var(--warning);
+  --approval-accent-border-alpha: 30%;
+  --approval-accent-wash-alpha: 12%;
   position: relative;
   margin: 0 var(--space-md) 0;
   border-radius: 14px;
-  border: 1px solid rgba(255, 165, 0, 0.24);
+  border: 1px solid
+    color-mix(in srgb, var(--approval-accent) var(--approval-accent-border-alpha), transparent);
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--warning) 12%, transparent), transparent 52%),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--approval-accent) var(--approval-accent-wash-alpha), transparent),
+      transparent 52%
+    ),
     var(--tw-popover-glass-bg);
   padding: var(--space-sm);
   display: flex;
@@ -8515,7 +8530,12 @@ button.composer-run-timecode.is-open {
   pointer-events: none;
   box-shadow:
     inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.5)),
-    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 14%, transparent);
+    inset 0 0 0 1px
+      color-mix(
+        in srgb,
+        var(--approval-accent) 22%,
+        color-mix(in srgb, var(--tw-glass-rim-light, #fff) 14%, transparent)
+      );
 }
 
 .composer-permission-card > * {
@@ -8536,6 +8556,11 @@ button.composer-run-timecode.is-open {
  * content needs. `.composer-area` is `pointer-events: none`, so the
  * card re-enables its own hit-testing. */
 .composer-permission-card--overlay {
+  /* Everything inside the overlay derives from the participant accent —
+   * primary action pill, note focus ring, preview border — so the card is one
+   * coherent "this seat is asking" surface. Scoped to the overlay so the
+   * legacy in-flow card keeps theme-accent controls. */
+  --accent: var(--approval-accent);
   position: absolute;
   left: 0;
   right: 0;
@@ -8584,15 +8609,24 @@ button.composer-run-timecode.is-open {
  * Bounding one child at a time only relocates the bug: the message paragraph
  * was fixed first and the external-path row reproduced it at ~800 characters.
  *
- * The rule is therefore general — every direct child may shrink — with the
- * actions row pinned so it is never what gets shrunk, and an explicit
- * scroll+ceiling on each child that carries untrusted text. */
+ * Every direct child may shrink as the belt for children this list has never
+ * met — but the FIXED rows (title, attribution chips, countdown, note,
+ * actions) are pinned un-shrinkable. Before the pin, flex distributed the
+ * shortfall across ALL children, so long agent text visually crushed the
+ * title and slid the body under the preview panel (the 2026-08-05 drift
+ * screenshots). Only the rows that own a scrollbar (message, external path,
+ * preview) may now absorb overflow. */
 .composer-permission-card--overlay > * {
   min-height: 0;
 }
 
+.composer-permission-card--overlay > .composer-permission-title,
+.composer-permission-card--overlay > .composer-permission-attribution,
+.composer-permission-card--overlay > .composer-permission-countdown,
+.composer-permission-card--overlay > .composer-permission-note,
 .composer-permission-card--overlay > .composer-permission-actions {
   flex: 0 0 auto;
+  min-height: auto;
 }
 
 .composer-permission-card--overlay .composer-permission-message,
@@ -8626,13 +8660,74 @@ button.composer-run-timecode.is-open {
   animation: composer-permission-overlay-in 180ms cubic-bezier(0.22, 0.9, 0.32, 1);
 }
 
+/* ── Pending rim chase ────────────────────────────────────────────
+ * The fan-out working-lane shimmer (02-transcript-messages-fx.css),
+ * repurposed as the "a decision is waiting on you" affordance: a slow
+ * conic sweep in the participant accent around the card rim while the
+ * approval is pending. Same conic + mask-composite technique; a SEPARATE
+ * registered property on purpose — reusing --fanout-lane-rim-angle here
+ * would make this shard silently depend on the transcript shard's naming.
+ * The card's ::after is the glass rim, so the chase takes ::before. */
+@property --approval-rim-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 318deg;
+}
+
+.composer-permission-card--overlay::before {
+  content: '';
+  position: absolute;
+  /* inset 0 (not the fan-out's -1px): this card clips (`overflow: hidden`),
+   * so the strip sits ON the card's own 1px border instead of 1px outside
+   * it — outside would be clipped away entirely. */
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--approval-rim-angle),
+    transparent 0deg,
+    transparent 186deg,
+    color-mix(in srgb, var(--approval-accent) 26%, transparent) 268deg,
+    color-mix(in srgb, var(--approval-accent) 62%, transparent) 330deg,
+    color-mix(in srgb, var(--approval-accent) 92%, transparent) 353deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: composer-permission-rim-chase 3.6s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes composer-permission-rim-chase {
+  to {
+    --approval-rim-angle: 678deg;
+  }
+}
+
+/* Honour BOTH reduce-motion signals. The rim stays lit at its rest angle
+ * rather than vanishing — "an approval is pending here" should survive
+ * turning motion off. */
 @media (prefers-reduced-motion: reduce) {
   .composer-permission-card--overlay {
+    animation: none;
+  }
+  .composer-permission-card--overlay::before {
     animation: none;
   }
 }
 
 [data-reduce-motion="true"] .composer-permission-card--overlay {
+  animation: none;
+}
+
+[data-reduce-motion="true"] .composer-permission-card--overlay::before {
   animation: none;
 }
 
@@ -8675,83 +8770,17 @@ button.composer-run-timecode.is-open {
   height: 13px;
 }
 
-.composer-permission-card.provider-codex {
-  border-color: color-mix(in srgb, var(--provider-codex-color) 26%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--provider-codex-color) 14%, transparent),
-      transparent 52%
-    ),
-    var(--tw-popover-glass-bg);
-}
-
-.composer-permission-card.provider-claude {
-  border-color: color-mix(in srgb, var(--provider-claude-color) 28%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--provider-claude-color) 14%, transparent),
-      transparent 52%
-    ),
-    var(--tw-popover-glass-bg);
-}
-
-.composer-permission-card.provider-kimi {
-  border-color: color-mix(in srgb, var(--provider-kimi-color) 28%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--provider-kimi-color) 14%, transparent),
-      transparent 52%
-    ),
-    var(--tw-popover-glass-bg);
-}
-
 /* Light-mode awareness for the composer-area approval card.
  *
- * The default rules above are tuned for dark surfaces — the
- * low-alpha amber + per-provider tints rely on a dark backdrop to
- * read as "warm caution". On light surfaces they wash out into
- * near-invisible tints, and the card loses its caution affordance.
- * Re-tune with slightly higher opacity + a faint surface fill so the
- * card remains legible without breaking the warm/per-provider
- * vocabulary that's already wired across the rest of the app. */
+ * The dark-tuned low-alpha accent wash washes out into a near-invisible
+ * tint on light surfaces. The chrome derives from the two alpha knobs on
+ * the base rule, so light themes just raise them — the accent itself
+ * (participant hue or warning fallback) is unchanged. This replaced the
+ * hand-written per-provider tint rules (codex/claude/kimi): every
+ * provider now tints through the pinned `--approval-accent`. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card {
-  border-color: rgba(196, 110, 0, 0.42);
-  background:
-    linear-gradient(135deg, rgba(255, 213, 130, 0.34), transparent 52%),
-    var(--tw-popover-glass-bg);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-codex {
-  border-color: color-mix(in srgb, var(--provider-codex-color) 42%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--provider-codex-color) 24%, transparent),
-      transparent 52%
-    ),
-    var(--tw-popover-glass-bg);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-claude {
-  border-color: color-mix(in srgb, var(--provider-claude-color) 42%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--provider-claude-color) 28%, transparent),
-      transparent 52%
-    ),
-    var(--tw-popover-glass-bg);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-kimi {
-  border-color: color-mix(in srgb, var(--provider-kimi-color) 45%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--provider-kimi-color) 28%, transparent),
-      transparent 52%
-    ),
-    var(--tw-popover-glass-bg);
+  --approval-accent-border-alpha: 44%;
+  --approval-accent-wash-alpha: 26%;
 }
 
 :root[data-reduce-transparency="true"] .composer-permission-card {
@@ -8768,9 +8797,12 @@ button.composer-run-timecode.is-open {
   }
 }
 
+/* Semibold sans title in the primary text colour — the caution vocabulary
+ * moved off the title and onto the countdown row; the glow dot carries the
+ * requesting participant's accent instead. */
 .composer-permission-title {
   font-size: var(--font-size-xs);
-  color: var(--warning);
+  color: var(--text-primary);
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -8790,48 +8822,54 @@ button.composer-run-timecode.is-open {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 8px color-mix(in srgb, currentColor 65%, transparent);
+  background: var(--approval-accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--approval-accent) 65%, transparent);
 }
 
 .composer-permission-source {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
+/* "Requested by" chip row — the fan-out result-card chip family
+ * (segmented-control-action pills). The @Role chip's --primary variant tints
+ * itself from the card's pinned participant accent; the order/provider/model/
+ * stage chips stay neutral. The old bordered warning box is gone: the chips
+ * ARE the visual now. */
 .composer-permission-attribution {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 4px 7px;
-  padding: 7px 9px;
-  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-subtle));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  gap: 6px;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
 .composer-permission-attribution-label {
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
+  margin-right: 2px;
 }
 
-.composer-permission-attribution strong {
-  color: var(--text-primary);
-  font-weight: 650;
+/* Chips are non-interactive spans wearing the shared pill chrome. */
+.composer-permission-attribution-chip {
+  cursor: default;
 }
 
-.composer-permission-attribution-detail {
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
+.composer-permission-attribution-order {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+/* The card title dropped its amber, so the countdown is now where the
+ * caution colour lives — it is also the only row whose urgency grows. */
+.composer-permission-countdown {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--warning);
 }
 
 .composer-permission-message {

@@ -3856,6 +3856,19 @@
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
 }
 
+/* The permission card keeps its requesting-participant accent border under
+ * the native shells — the solid compositing fix above only needed to replace
+ * the glass BACKGROUND, and the flat white border it also brought would erase
+ * the card's "which seat is asking" hue. */
+[data-composer-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card,
+[data-composer-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card {
+  border-color: color-mix(
+    in srgb,
+    var(--approval-accent, var(--warning)) var(--approval-accent-border-alpha, 30%),
+    transparent
+  );
+}
+
 [data-composer-style="codex"] .composer-action-btn.run-btn:not(:disabled) {
   background: color-mix(in srgb, #ffffff 90%, transparent) !important;
 }

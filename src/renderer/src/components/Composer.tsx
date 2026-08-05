@@ -116,7 +116,10 @@ import type { SideSlashCommand } from '../lib/SideSlashCommand'
 import { lastRetryableEnsembleUserPrompt } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
-import { agentApprovalEnsembleAttribution } from '../lib/agentApprovalAttribution'
+import {
+  agentApprovalDisplayTitle,
+  agentApprovalEnsembleAttribution
+} from '../lib/agentApprovalAttribution'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
@@ -164,8 +167,10 @@ import {
 import {
   codexReasoningDisplayLabel,
   claudeReasoningDisplayLabel,
-  grokReasoningDisplayLabel
+  grokReasoningDisplayLabel,
+  shortModelName
 } from '../lib/composerChipFormat'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import {
   antigravityEffortForModelId,
   antigravityVariantGroupForModel,
@@ -1279,6 +1284,34 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const approvalEnsembleAttribution = agentApprovalEnsembleAttribution(
     pendingAgentApproval?.preview
   )
+  // The card wears the requesting participant's accent (fan-out result-card
+  // pattern): ensemble seats resolve their roster model so the ollama/Pi brand
+  // overrides apply (a Pi seat serving DeepSeek wears DeepSeek blue); solo
+  // chats fall back to the composer's own model. The hue only feeds display
+  // tinting — attribution itself stays validator-derived.
+  const approvalSeatModel = approvalEnsembleAttribution
+    ? currentChat?.ensemble?.participants?.find(
+        (participant: EnsembleParticipant) =>
+          participant.id === approvalEnsembleAttribution.participantId
+      )?.model
+    : !currentChat?.ensemble && typeof customModel === 'string' && customModel
+      ? customModel
+      : undefined
+  const approvalHueClass = pendingAgentApproval
+    ? resolveProviderHueClass(pendingAgentApproval.provider, approvalSeatModel) ||
+      pendingAgentApproval.provider
+    : null
+  const approvalSeatModelBadge =
+    approvalEnsembleAttribution && pendingAgentApproval && approvalSeatModel
+      ? shortModelName(pendingAgentApproval.provider, '', approvalSeatModel)
+      : null
+  const approvalDisplayTitle = pendingAgentApproval
+    ? agentApprovalDisplayTitle(
+        pendingAgentApproval.title,
+        approvalEnsembleAttribution,
+        getProviderLabel(pendingAgentApproval.provider)
+      )
+    : ''
 
   const confirmTrustedSessionForLane = async (): Promise<void> => {
     if (trustedSessionMutationDisabledReason) {
@@ -5469,9 +5502,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     : undefined
                 }
                 className={`composer-permission-card composer-permission-card--overlay provider-${pendingAgentApproval.provider}`}
+                style={
+                  {
+                    // Fan-out result-card pattern: the card is self-contained in
+                    // its participant's hue (brand overrides included) rather
+                    // than inheriting whatever the surrounding shell is tinted.
+                    '--approval-accent': `var(--provider-${approvalHueClass}-color, var(--warning))`
+                  } as React.CSSProperties
+                }
               >
                 <div className="composer-permission-title">
-                  <span id="composer-agent-approval-title">{pendingAgentApproval.title}</span>
+                  <span id="composer-agent-approval-title">{approvalDisplayTitle}</span>
                   <span className="composer-permission-source">
                     {getProviderLabel(pendingAgentApproval.provider)}
                     {/* 1.0.4-AK4 — surface the queue depth so the
@@ -5502,16 +5543,37 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     aria-label="Ensemble permission request attribution"
                   >
                     <span className="composer-permission-attribution-label">Requested by</span>
-                    <strong>{approvalEnsembleAttribution.role}</strong>
-                    <span className="composer-permission-attribution-detail">
-                      {getProviderLabel(pendingAgentApproval.provider)} · Ensemble participant
-                      {approvalEnsembleAttribution.stageRole
-                        ? ` · ${approvalEnsembleAttribution.stageRole}`
-                        : ''}
-                      {approvalEnsembleAttribution.order
-                        ? ` · seat ${approvalEnsembleAttribution.order}`
-                        : ''}
+                    {/* The fan-out result-card chip family: the @Role chip's
+                      --primary variant tints itself from the card's pinned
+                      participant accent, the rest stay neutral. None are
+                      interactive. */}
+                    <strong className="segmented-control-action segmented-control-action--compact segmented-control-action--primary composer-permission-attribution-chip">
+                      @{approvalEnsembleAttribution.role}
+                    </strong>
+                    {approvalEnsembleAttribution.order ? (
+                      <span
+                        className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip composer-permission-attribution-order"
+                        title={`Participant order ${approvalEnsembleAttribution.order}`}
+                      >
+                        #{approvalEnsembleAttribution.order}
+                      </span>
+                    ) : null}
+                    <span className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip">
+                      {getProviderLabel(pendingAgentApproval.provider)}
                     </span>
+                    {approvalSeatModelBadge ? (
+                      <span
+                        className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip"
+                        title={`Model: ${approvalSeatModelBadge}`}
+                      >
+                        {approvalSeatModelBadge}
+                      </span>
+                    ) : null}
+                    {approvalEnsembleAttribution.stageRole ? (
+                      <span className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip">
+                        {approvalEnsembleAttribution.stageRole}
+                      </span>
+                    ) : null}
                   </section>
                 )}
                 {agentApprovalCountdownMs != null && (

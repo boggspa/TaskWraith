@@ -1021,7 +1021,8 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
                     participantId: 'ensemble-participant-14',
                     provider: 'pi',
                     role: 'K3Review',
-                    stageRole: 'reviewer'
+                    stageRole: 'reviewer',
+                    order: 3
                   }
                 }
               }
@@ -1053,7 +1054,11 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     expect((sent[0].preview as Record<string, unknown>).ensembleParticipant).toEqual({
       participantId: 'ensemble-participant-14',
       role: 'K3Review',
-      stageRole: 'reviewer'
+      stageRole: 'reviewer',
+      // Seat number for the renderer's "@Role #N" chip — EnsembleRunIdentity
+      // carries `order` (required), so the main path forwards it like the
+      // service gate already does.
+      order: 3
     })
   })
 

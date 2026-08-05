@@ -17,6 +17,33 @@ function boundedString(value: unknown, maxLength: number): string | undefined {
  * identity before showing it, so a solo approval never gains a misleading
  * participant label from a partial or legacy preview.
  */
+/**
+ * Both approval authorities bake the requesting seat into the title so the
+ * ledger row and paired-device summary stay self-describing ("K3Review: …"
+ * from the main authority, "Pi / K3Review: …" from the service gate). The
+ * modal renders the seat as an @Role chip, so on screen that baked prefix is
+ * pure repetition — strip it for display only, and only on an exact match
+ * against the VALIDATED attribution (never a fuzzy prefix, so agent-authored
+ * titles cannot lose leading text they happen to share with a role name).
+ */
+export function agentApprovalDisplayTitle(
+  title: string,
+  attribution: AgentApprovalEnsembleAttribution | null,
+  providerLabel?: string
+): string {
+  if (!attribution) return title
+  const prefixes = [
+    `${attribution.role}: `,
+    ...(providerLabel ? [`${providerLabel} / ${attribution.role}: `] : [])
+  ]
+  for (const prefix of prefixes) {
+    if (title.startsWith(prefix) && title.length > prefix.length) {
+      return title.slice(prefix.length)
+    }
+  }
+  return title
+}
+
 export function agentApprovalEnsembleAttribution(
   preview: unknown
 ): AgentApprovalEnsembleAttribution | null {

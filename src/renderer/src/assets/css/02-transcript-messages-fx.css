@@ -2773,7 +2773,7 @@
 }
 
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-participant-filter-rail,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
+html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop, .composer-permission-card--overlay))
   .transcript-participant-filter-rail {
   display: none !important;
 }
@@ -2970,13 +2970,17 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
        `position:fixed; inset:0` sheet backdrop there. Each MUST be conditionally
        mounted (rendered only while open, e.g. `if (!open) return null`) so `:has()`
        matches only while the sheet is up — an always-mounted backdrop would hide the
-       rails permanently.
+       rails permanently; and
+     - the pending agent-approval overlay card (.composer-permission-card--overlay,
+       conditionally mounted): it is the designated interaction surface while an
+       approval waits, sits at z 40 inside the composer area, and is wider than the
+       content column — both fixed rails (10030/10031) painted OVER its side edges.
    `:has()` applies synchronously with the covering element (no JS, no one-frame flash).
    The `offsetParent` guard in TranscriptUserMessageGutter is the belt for any future
    hide condition. Keep this selector list in sync with the participant-filter-rail rule
    above. */
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gutter,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
+html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop, .composer-permission-card--overlay))
   .transcript-user-gutter {
   display: none !important;
 }

@@ -5703,11 +5703,21 @@ input:disabled, select:disabled, textarea:disabled {
   background: color-mix(in srgb, var(--surface) 84%, transparent);
 }
 
+/* Sentence case (2026-08 approval redraft; the caps-spaced micro-label is a
+ * banned default). Sticky so the "what am I approving" header survives the
+ * panel scrolling in the overlay card — the panel is the overlay's designated
+ * scroller, and the header used to be the first thing to leave. */
 .agent-approval-preview-header {
-  font-size: var(--font-size-xs);
+  position: sticky;
+  top: calc(var(--space-sm) * -1);
+  z-index: 1;
+  margin: calc(var(--space-sm) * -1) calc(var(--space-sm) * -1) 0;
+  padding: var(--space-sm) var(--space-sm) 4px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .agent-approval-preview-row,

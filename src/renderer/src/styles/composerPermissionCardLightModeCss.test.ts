@@ -60,20 +60,30 @@ describe('composer approval/discovery card light-mode CSS', () => {
   })
 
   it('keeps the light-theme approval-card treatments the shells now fall through to', () => {
+    // 2026-08 redraft: the card chrome derives from `--approval-accent` plus
+    // two alpha knobs on the base rule; the light themes raise the knobs
+    // instead of restating the chrome. The protection is the same as before
+    // the redraft — light mode must keep a HIGHER-contrast treatment than the
+    // dark default, or the card washes out exactly as the original fix
+    // documented.
     const css = readCss('03-composer-welcome-activity.css')
+    const readAlpha = (block: string, knob: string): number => {
+      const match = block.match(new RegExp(`${knob}:\\s*(\\d+(?:\\.\\d+)?)%`))
+      expect(match, `Missing ${knob} in block`).toBeTruthy()
+      return Number(match![1])
+    }
+    const darkBase = cssBlockStartingAt(css, '.composer-permission-card {')
+    expect(darkBase).toContain('var(--approval-accent) var(--approval-accent-border-alpha)')
+    expect(darkBase).toContain('var(--tw-popover-glass-bg)')
     const lightBase = cssBlockStartingAt(
       css,
       ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card {'
     )
-    expect(lightBase).toContain(
-      'linear-gradient(135deg, rgba(255, 213, 130, 0.34), transparent 52%)'
+    expect(readAlpha(lightBase, '--approval-accent-border-alpha')).toBeGreaterThan(
+      readAlpha(darkBase, '--approval-accent-border-alpha')
     )
-    expect(lightBase).toContain('var(--tw-popover-glass-bg)')
-    const lightCodex = cssBlockStartingAt(
-      css,
-      ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-codex {'
+    expect(readAlpha(lightBase, '--approval-accent-wash-alpha')).toBeGreaterThan(
+      readAlpha(darkBase, '--approval-accent-wash-alpha')
     )
-    expect(lightCodex).toContain('color-mix(in srgb, var(--provider-codex-color) 24%, transparent)')
-    expect(lightCodex).toContain('var(--tw-popover-glass-bg)')
   })
 })
