@@ -64,18 +64,48 @@ that replays the full schedule and requires zero rejections.
   (`harness-attempt*.log`) and the fail-loud adapter will name the page error.
 - Attempt evidence archived in the run worktree:
   `perf-t2-progress.stall-0407Z.json`, `…killed-attempt2.json`,
-  `…killed-attempt3.json`, plus the `.stall-0407Z`, `.attempt2-nosaves`, and
-  `.attempt3-casreject` userData snapshots under `perf-homes/`.
-- Attempt 4 runs at amended pin `03be9dca8` = `83970a4c4` + the two
-  harness-only fixes; the product tree is byte-identical to `83970a4c4`
-  (verified `git diff … ':(exclude)scripts/perf'` empty), so the comparison
-  still measures exactly the pinned product code. Fixture fingerprint is
-  shape-derived and unchanged (`9977a712b741`).
+  `…killed-attempt3.json`, `…attempt4-transport-bound.json`, plus the
+  `.stall-0407Z`, `.attempt2-nosaves`, `.attempt3-casreject` and
+  `.attempt4-transportbound` userData snapshots under `perf-homes/`.
+- The comparison runs at an amended pin (`94abdf3d5` for attempt 5) =
+  `83970a4c4` + harness-only fixes; the product tree is byte-identical to
+  `83970a4c4` (verified `git diff … ':(exclude)scripts/perf'` empty at every
+  amendment), so the comparison still measures exactly the pinned product code.
+  Fixture fingerprint is shape-derived and unchanged (`9977a712b741`).
 
-First live counters with real saves (attempt 4, ~424 events in): 424
-scheduled / 414 coalesced / 9 flushed, all ceiling-forced — the T3a-1
-write-amplification design working as specified, measured for the first time.
+## The fourth defect: the instrument owned the clock
+
+Attempt 4 finally saved for real — and immediately exposed the next layer.
+Sampled live mid-replay at event 3,170:
+
+| Term | Value |
+| --- | --- |
+| replay wall | 539.7 s |
+| app `writeJson` (all targets) | 6.5 s = **1.21%** |
+| driver per-event wall | ~319 ms |
+| pure CDP transport + V8 parse of the same payload | **159–250 ms** |
+
+Transport was measured directly with a no-op expression carrying an
+identical-size payload (read-only — a stray save would have broken the
+driver's CAS chain): 6 ms at 0.12 MB, 54 ms at 0.89 MB, 159 ms at 3.67 MB, i.e.
+**~50 ms/MB, linear in the prefix**. The app-side residual held near 68 ms/event
+from event 100 to event 3,331. So the decay was the instrument, again — the same
+term that produced the 2026-08-04 curve, now merely sharing the clock with real
+work instead of owning all of it.
+
+Worse than noise: the **coalescing ratio is a function of event arrival rate**
+against the coalescer's 1 s trailing window. A slow harness manufactures its own
+coalescing result, so attempt 4's headline 94.5% was not an app property either.
+
+`17ef8bf80` seeds each record into the page once and sends a ~350-byte prefix
+command per save. What main receives over IPC is byte-identical — the
+renderer→main structured clone of the whole record is a real app cost and is
+deliberately preserved; only the harness's own CDP→renderer hop is removed.
+Attempt 5 holds ~13.4 evt/s at event 1,500 where attempt 4 had already fallen to
+7.5 and was still dropping.
 
 Lesson, same as the doctrine the harness itself asserts elsewhere: **a
 completed event is not evidence of work performed — every layer that can say
-"no" must be able to make the run say it out loud.**
+"no" must be able to make the run say it out loud.** And its corollary, which
+cost three more attempts: **before believing a performance curve, measure what
+fraction of the clock your own instrument is holding.**
