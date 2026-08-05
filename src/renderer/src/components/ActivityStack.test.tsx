@@ -141,6 +141,78 @@ describe('ActivityStack ensemble_yield rendering', () => {
     expect(html).toContain('@Gems')
   })
 
+  it('names the seat when the model yields to an opaque roster id', () => {
+    const chat = makeEnsembleChat([
+      makeParticipant({
+        id: 'ensemble-participant-1',
+        provider: 'codex',
+        role: 'Worker',
+        order: 1
+      }),
+      makeParticipant({
+        id: 'ensemble-participant-4',
+        provider: 'gemini',
+        role: 'Builder',
+        order: 2
+      })
+    ])
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeEnsembleYieldActivity({
+            displayName: 'DSeekWork yielding to ensemble-participant-4',
+            parameters: { target: 'ensemble-participant-4' }
+          })
+        ]}
+        provider="codex"
+        chat={chat}
+      />
+    )
+
+    // The handoff routed fine; only the label was the raw id.
+    expect(html).toContain('@Builder')
+    expect(html).not.toContain('@ensemble-participant-4')
+    // Actor half and the provider tint both survive the swap, and the
+    // model's own words stay reachable on hover.
+    expect(html).toContain('DSeekWork yielding to')
+    expect(html).toContain('provider-gemini')
+    expect(html).toContain('title="ensemble-participant-4"')
+  })
+
+  it('leaves an ambiguous target as the model typed it', () => {
+    const chat = makeEnsembleChat([
+      makeParticipant({
+        id: 'ensemble-participant-1',
+        provider: 'codex',
+        role: 'Worker',
+        order: 1
+      }),
+      makeParticipant({
+        id: 'ensemble-participant-2',
+        provider: 'codex',
+        role: 'Reviewer',
+        order: 2
+      })
+    ])
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeEnsembleYieldActivity({
+            displayName: 'Gems yielding to codex',
+            parameters: { target: 'codex' }
+          })
+        ]}
+        provider="gemini"
+        chat={chat}
+      />
+    )
+
+    // Two codex seats — naming one would claim a handoff we cannot verify.
+    expect(html).toContain('@codex')
+    expect(html).not.toContain('@Worker')
+    expect(html).not.toContain('@Reviewer')
+  })
+
   it('falls back to humanized label even when displayName is the raw tool name (defensive bypass)', () => {
     // Simulates an upstream path that constructs the activity without
     // running it through the humanization helper — `displayName` is left

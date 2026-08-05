@@ -41,6 +41,10 @@ import { ReviewCard } from './ReviewCard'
 import { CodexMultiAgentCard } from './CodexMultiAgentCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
 import { inlineStatsForActivity, sumActivityDiffTotals } from '../lib/ActivityInlineStats'
+import {
+  resolveYieldTargetParticipant,
+  yieldTargetDisplayLabel
+} from '../../../shared/ensembleYieldTarget'
 import { CollapsedDiffStats } from './CollapsedTranscriptRow'
 import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
 import { FileTypeIcon } from './FileTypeIcon'
@@ -711,44 +715,21 @@ function renderEnsembleYieldTitle(
   const params = activity.parameters || {}
   const target = (getStringParam(params, ['target', 'participant', 'to', 'next']) || '').trim()
 
-  let targetProvider: ProviderId | undefined
-  let targetProviderClass: string | undefined
-  if (target && participants && participants.length > 0) {
-    // 1.0.4 — agents often emit compound target strings like
-    // "Kimi / Captain K" (provider + role), "@Captain K" (with @
-    // prefix), or "Captain K" (bare role). Strip leading @ and
-    // split on common separators so we try each token against the
-    // participant roster — first as an exact match, then as a
-    // substring fallback. Without this, the chip stayed neutral
-    // grey for compound targets even though the participant was
-    // resolvable.
-    const stripped = target.replace(/^@+/, '').trim().toLowerCase()
-    const tokens = [
-      stripped,
-      ...stripped
-        .split(/[/,|]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-    ]
-    const matched = participants.find((p) => {
-      const role = (p.role || '').toLowerCase()
-      const provider = (p.provider || '').toLowerCase()
-      const id = (p.id || '').toLowerCase()
-      for (const token of tokens) {
-        if (role === token) return true
-        if (provider === token) return true
-        if (id === token) return true
-      }
-      return false
-    })
-    if (matched) {
-      targetProvider = matched.provider
-      // Ollama-backed display brands resolve to their spoofed brand hue
-      // class (e.g. `alibaba`) so the yield chip matches the brand tint
-      // used by the transcript header and @-mention chips.
-      targetProviderClass = resolveProviderHueClass(matched.provider, matched.model)
-    }
-  }
+  // 1.0.4 — agents emit compound target strings ("Kimi / Captain K"), mention
+  // forms ("@Captain K"), bare roles, bare providers, and opaque roster ids
+  // ("ensemble-participant-4"). The shared resolver tries each form so the
+  // chip both carries the provider tint AND reads as a person: printing the
+  // model's raw string put "@ensemble-participant-4" in front of the user for
+  // a handoff that had routed perfectly well.
+  const matched = resolveYieldTargetParticipant(target, participants)
+  const targetProvider: ProviderId | undefined = matched?.provider
+  // Ollama-backed display brands resolve to their spoofed brand hue class
+  // (e.g. `alibaba`) so the yield chip matches the brand tint used by the
+  // transcript header and @-mention chips.
+  const targetProviderClass = matched
+    ? resolveProviderHueClass(matched.provider, matched.model)
+    : undefined
+  const targetLabel = yieldTargetDisplayLabel(target, participants)
 
   // Pull actor prefix from the orchestrator's displayName when it
   // matches the canonical "X yielding to Y" shape. Falls back to no
@@ -767,8 +748,9 @@ function renderEnsembleYieldTitle(
     <span
       className={`activity-yield-target${targetProviderClass ? ` provider-${targetProviderClass}` : ''}`}
       data-provider={targetProvider || ''}
+      title={targetLabel === target ? undefined : target}
     >
-      @{target}
+      @{targetLabel}
     </span>
   )
 

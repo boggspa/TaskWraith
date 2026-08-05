@@ -85,6 +85,7 @@ import type {
 import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
 import type { SeatChangeSeatState } from '../store/types'
 import { coalesceSeatChangeMessages } from '../../shared/seatChange'
+import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import {
   findAllMentions,
   resolvePhraseToParticipant,
@@ -2767,13 +2768,20 @@ function getEnsembleToolCategory(toolName: string, toolKind = ''): ToolActivity[
 function getEnsembleToolDisplayName(
   toolName: string,
   parameters: Record<string, unknown>,
-  participant?: EnsembleParticipant
+  participant?: EnsembleParticipant,
+  roster?: readonly EnsembleParticipant[]
 ): string {
   const name = stripToolNamespace(toolName)
   if (name === 'ensemble_yield') {
     const target = getStringParameter(parameters, ['target', 'participant', 'to', 'next'])
     const actor = participantLabel(participant)
-    return target ? `${actor} yielding to ${target}` : `${actor} yielding`
+    // Models address a peer by whatever form is in front of them — including
+    // the opaque roster id the held-handoff result hands back. Resolve it to
+    // the seat's role so the PERSISTED name reads like the actor half does
+    // ("DSeekWork yielding to Builder"); unresolvable targets keep the
+    // model's own words.
+    const label = yieldTargetDisplayLabel(target, roster)
+    return label ? `${actor} yielding to ${label}` : `${actor} yielding`
   }
   if (name === 'update_topic') {
     const topic = getStringParameter(parameters, ['title', 'topic', 'name'])
@@ -2928,7 +2936,8 @@ function mergeToolDiffSummaries(
 function buildEnsembleToolActivity(
   event: any,
   startedAt: string,
-  participant?: EnsembleParticipant
+  participant?: EnsembleParticipant,
+  roster?: readonly EnsembleParticipant[]
 ): ToolActivity {
   const toolName = extractToolName(event)
   const toolKind = extractToolKind(event)
@@ -2971,7 +2980,7 @@ function buildEnsembleToolActivity(
   return {
     id: extractToolId(event),
     toolName,
-    displayName: getEnsembleToolDisplayName(toolName, parameters, participant),
+    displayName: getEnsembleToolDisplayName(toolName, parameters, participant, roster),
     category,
     status: 'running',
     startedAt,
@@ -13222,7 +13231,12 @@ export class EnsembleOrchestrator {
       // participants used tools. Build the activity, push it into
       // the run's timeline at the current position so flushRun can
       // emit it inline between content chunks.
-      const activity = buildEnsembleToolActivity(payload, this.deps.nowIso(), run.participant)
+      const activity = buildEnsembleToolActivity(
+        payload,
+        this.deps.nowIso(),
+        run.participant,
+        this.deps.getChat(run.chatId)?.ensemble?.participants
+      )
       const upsert = upsertEnsembleToolUseActivity(run, activity)
       if (upsert === 'inserted') {
         appendTimelineTool(run, activity.id)
@@ -13280,7 +13294,8 @@ export class EnsembleOrchestrator {
         const orphan = buildEnsembleToolActivity(
           { ...payload, type: 'tool_use', tool_id: id },
           this.deps.nowIso(),
-          run.participant
+          run.participant,
+          this.deps.getChat(run.chatId)?.ensemble?.participants
         )
         run.toolActivities.push(pairEnsembleToolResult(orphan, payload, this.deps.nowIso()))
       }
