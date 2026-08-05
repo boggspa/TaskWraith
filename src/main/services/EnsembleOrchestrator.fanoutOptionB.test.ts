@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { EnsembleOrchestrator } from './EnsembleOrchestrator'
+import {
+  clampAwaitTimeoutSeconds,
+  DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS,
+  EnsembleOrchestrator
+} from './EnsembleOrchestrator'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 
@@ -281,4 +285,23 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
       await vi.waitFor(() => expect(harness.chat.ensemble!.activeRound!.status).toBe('completed'))
     }
   )
+
+  /*
+   * Lockstep guard. The foreground handoff window is a LIVENESS BACKSTOP, not
+   * the effective cap on a lane — the same doctrine MCP_BROKER_LONG_POLL_TIMEOUT_MS
+   * follows for ensemble_await's transport kill.
+   *
+   * When this window sits BELOW the await ceiling, a lane doing nothing more
+   * exotic than one maximal ensemble_await outlives its owner's wait. The owner
+   * is handed off with fanoutTimedOut, the round closes, and the late settlement
+   * reaches releaseOwnedFanoutHold to find a dead round — latching
+   * permanentSuppress and DISCARDING the owner's held post-fan-out synthesis
+   * forever. That presents as the Boss being truncated mid-dispatch.
+   */
+  it('does not let the owned fan-out handoff window sit below the ensemble_await ceiling', () => {
+    const awaitCeilingMs = clampAwaitTimeoutSeconds(1e9) * 1000
+
+    expect(awaitCeilingMs).toBe(600_000)
+    expect(DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS).toBeGreaterThanOrEqual(awaitCeilingMs)
+  })
 })

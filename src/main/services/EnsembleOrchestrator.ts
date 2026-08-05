@@ -398,8 +398,23 @@ const PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS = 450
 // 1.0.7 — hard upper bound on how long a Boss/Captain foreground turn waits
 // for its owned fan-out lanes to settle. Prevents a stalled lane from pinning
 // the serial queue indefinitely; the caller synthesizes with partial results
-// after timeout. Measured in milliseconds; default 75s.
-const DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS = 75 * 1000
+// after timeout. Measured in milliseconds.
+//
+// This is a LIVENESS BACKSTOP, never a lane's effective cap — the same doctrine
+// the broker's long-poll kill follows for ensemble_await. At the old 75s it WAS
+// the cap, 8x under the await ceiling: a lane doing nothing more exotic than one
+// maximal ensemble_await outlived its owner's wait, so the owner was handed off
+// with fanoutTimedOut and the late settlement reached releaseOwnedFanoutHold to
+// find a closed round — latching permanentSuppress and discarding the owner's
+// held synthesis for good, which reads as a Boss truncated mid-dispatch. Stop
+// still releases the wait at once (waitForOwnedFanoutSettlements breaks on
+// runtime.cancelled), so the longer ceiling stays user-interruptible.
+//
+// Lockstep with ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS (600s), spelled literally
+// because that const is declared ~1250 lines below and would be in the temporal
+// dead zone here. The guard in EnsembleOrchestrator.fanoutOptionB.test.ts holds
+// the two together.
+export const DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS = 600 * 1000
 const TERMINAL_RUN_TOOL_TOMBSTONE_TTL_MS = 2 * 60 * 1000
 const TERMINAL_RUN_TOOL_TOMBSTONE_LIMIT = 256
 
