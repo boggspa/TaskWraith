@@ -666,3 +666,16 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(ollama.reasoningOptions).toEqual([])
   })
 })
+
+describe('mistral reasoning lock (vibe schema: medium-3.5 thinking=high, devstral off)', () => {
+  it('locks Mistral Medium 3.5 to a single High option so the ladder renders fixed', () => {
+    expect(getEnsembleReasoningOptions('mistral', 'mistral-medium-3.5')).toEqual([
+      { value: 'high', label: 'High' }
+    ])
+  })
+
+  it('keeps Devstral Small reasoning-free (inert rail)', () => {
+    expect(getEnsembleReasoningOptions('mistral', 'devstral-small')).toEqual([])
+    expect(getEnsembleReasoningOptions('mistral', undefined)).toEqual([])
+  })
+})

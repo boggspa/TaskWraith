@@ -121,6 +121,15 @@ const GROK_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'high', label: 'High' }
 ]
 
+// Mistral Medium 3.5 thinks at exactly one level — vibe-acp's own schema pins
+// `thinking="high"` for it (devstral-small runs thinking off and gets no
+// options at all). A single option renders the ladder in the established
+// LOCKED aesthetic: pinned at High, non-interactive, "Reasoning is fixed for
+// this model" tooltip.
+const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'high', label: 'High' }
+]
+
 const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
@@ -356,6 +365,8 @@ export function getEnsembleReasoningOptions(
       return isGrok45ReasoningModelId(modelId) ? GROK_REASONING : []
     case 'cursor':
       return modelId === CURSOR_GROK_45_BASE_MODEL_ID ? GROK_REASONING : []
+    case 'mistral':
+      return modelId === 'mistral-medium-3.5' ? MISTRAL_THINKING_REASONING : []
     default:
       return []
   }
