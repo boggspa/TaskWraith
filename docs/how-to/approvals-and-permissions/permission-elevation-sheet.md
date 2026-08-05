@@ -5,7 +5,7 @@
 ## What it is
 The permission elevation sheet is a confirmation dialog shown when you **raise** a permission preset — in a solo chat, a side chat, or for the selected ensemble participant. Raising warns before anything changes; lowering never does. There are two warning tiers, plus a dedicated sheet for Full Access:
 
-- **Raising to Accept Edits** — a small notice ("Let *provider* edit files in this workspace?") shown **once per workspace and provider**. After you continue once, later raises to Accept Edits for that workspace + provider apply without asking again.
+- **Raising to Accept Edits** — a small notice ("Let agents edit files in this workspace?") shown **once per workspace**, the first time you raise to Accept Edits or send the workspace’s first edit-capable prompt. One Continue covers every agent, model, and participant that will ever work in the workspace (matching the agents-wide workspace grants); confirming the sterner Full WS Access / Full Access sheets also counts.
 - **Raising to Full WS Access** — a sterner sheet shown **every time**, with an "I understand the risks" checkbox that must be ticked before the **Enable Full WS Access** button unlocks.
 - **Raising to Full Access** — a dedicated **Start Full Access?** sheet with its own risk acknowledgement, since that preset grants TaskWraith's highest local authority (host-level tools where the provider supports them).
 
@@ -26,7 +26,7 @@ and its TaskWraith tool gateway. TaskWraith-mediated calls use approval cards
 and workspace Tool Grants; Cursor-native actions remain provider-owned.
 
 ## Tips & related
-- The once-per-workspace memory applies only to the Accept Edits notice; Full WS Access and Full Access ask every time by design.
+- The once-per-workspace memory applies only to the Accept Edits notice and covers all agents at once; Full WS Access and Full Access ask every time by design.
 - In an Ensemble chat, the confirmation covers only the selected participant — other participants keep their own presets.
 - [Provider, Model, and Permissions Pickers](../composer/provider-model-permissions-pickers.md) — the composer chip that triggers this sheet.
 - [Pending Approval Modal](pending-approval-modal.md) — the per-action approval prompt you still see for individual gated actions even after elevating.
