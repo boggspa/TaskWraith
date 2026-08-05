@@ -48,7 +48,7 @@ describe('AppStore Ensemble authority normalization', () => {
         maxParticipants: 4,
         participants: [
           participant('background', 1, { stageRole: 'background' }),
-          participant('recovered-boss', 2, { enabled: false }),
+          participant('recovered-boss', 2),
           participant('legacy-captain', 3)
         ],
         bossmanParticipantId: 'missing',
@@ -61,6 +61,43 @@ describe('AppStore Ensemble authority normalization', () => {
       captainParticipantIds: ['legacy-captain'],
       secondInCommandParticipantId: 'legacy-captain'
     })
+  })
+
+  it('walks past a disabled seat when recovering a Boss', () => {
+    // Honouring a Boss the user pinned is respecting a choice even when the
+    // seat is off; RECOVERING onto a seat they switched off is inventing one —
+    // and that invented Boss goes on to pick the solo provider when the chat
+    // collapses out of Ensemble.
+    const chat = AppStore.normalizeChatRecord(
+      ensembleChat({
+        enabled: true,
+        maxParticipants: 4,
+        participants: [
+          participant('background', 1, { stageRole: 'background' }),
+          participant('switched-off', 2, { enabled: false }),
+          participant('first-to-speak', 3)
+        ],
+        bossmanParticipantId: 'missing'
+      })
+    )
+
+    expect(chat.ensemble?.bossmanParticipantId).toBe('first-to-speak')
+  })
+
+  it('still recovers a Boss when every foreground seat is disabled', () => {
+    const chat = AppStore.normalizeChatRecord(
+      ensembleChat({
+        enabled: true,
+        maxParticipants: 4,
+        participants: [
+          participant('first', 1, { enabled: false }),
+          participant('second', 2, { enabled: false })
+        ],
+        bossmanParticipantId: 'missing'
+      })
+    )
+
+    expect(chat.ensemble?.bossmanParticipantId).toBe('first')
   })
 
   it('keeps plural Captains canonical and normalizes the active-round snapshot', () => {

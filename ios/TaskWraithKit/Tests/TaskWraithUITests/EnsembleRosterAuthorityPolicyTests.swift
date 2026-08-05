@@ -11,6 +11,7 @@ struct EnsembleRosterAuthorityPolicyTests {
         _ id: String,
         boss: Bool = false,
         captain: Bool = false,
+        enabled: Bool = true,
         stageRole: String? = nil
     ) -> Entry {
         Entry(
@@ -19,11 +20,48 @@ struct EnsembleRosterAuthorityPolicyTests {
             model: nil,
             role: id,
             brief: "",
-            enabled: true,
+            enabled: enabled,
             stageRole: stageRole,
             isBossman: boss,
             isSecondInCommand: captain
         )
+    }
+
+    @Test func recoveryWalksPastASwitchedOffSeat() {
+        let hydrated = EnsembleRosterAuthorityPolicy.hydrate(
+            [
+                entry("background", stageRole: "background"),
+                entry("switched-off", enabled: false),
+                entry("first-to-speak"),
+            ],
+            bossmanParticipantId: "missing",
+            captainParticipantIds: [],
+            secondInCommandParticipantId: nil
+        )
+
+        #expect(hydrated.filter(\.isBossman).map(\.id) == ["first-to-speak"])
+    }
+
+    @Test func recoveryStillLandsWhenEveryForegroundSeatIsSwitchedOff() {
+        let hydrated = EnsembleRosterAuthorityPolicy.hydrate(
+            [entry("first", enabled: false), entry("second", enabled: false)],
+            bossmanParticipantId: "missing",
+            captainParticipantIds: [],
+            secondInCommandParticipantId: nil
+        )
+
+        #expect(hydrated.filter(\.isBossman).map(\.id) == ["first"])
+    }
+
+    @Test func aPinnedBossKeepsAuthorityWhileSwitchedOff() {
+        let hydrated = EnsembleRosterAuthorityPolicy.hydrate(
+            [entry("pinned", enabled: false), entry("available")],
+            bossmanParticipantId: "pinned",
+            captainParticipantIds: [],
+            secondInCommandParticipantId: nil
+        )
+
+        #expect(hydrated.filter(\.isBossman).map(\.id) == ["pinned"])
     }
 
     @Test func preservesThreeCaptainsAcrossReorderAndUnrelatedEdit() {

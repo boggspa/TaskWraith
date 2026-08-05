@@ -3,6 +3,11 @@ import Foundation
 /// Pure roster-draft authority policy shared by both iOS roster editors.
 /// Authority is configuration, not availability: disabled foreground seats
 /// remain eligible, while background seats cannot be Boss or Captain.
+///
+/// Recovery is the one place availability does speak. Honouring a Boss the user
+/// pinned is respecting a choice even when that seat is off; RECOVERING onto a
+/// seat they switched off is inventing one. Mirrors `normalizeEnsembleAuthority`
+/// in src/shared/ensembleAuthority.ts — keep the two rules in lockstep.
 enum EnsembleRosterAuthorityPolicy {
     static let maximumCaptainCount = 3
 
@@ -20,6 +25,7 @@ enum EnsembleRosterAuthorityPolicy {
                 return bossmanParticipantId
             }
             return entries.first(where: { isForeground($0) && $0.isBossman })?.id
+                ?? entries.first(where: { isForeground($0) && $0.enabled })?.id
                 ?? entries.first(where: isForeground)?.id
         }()
 

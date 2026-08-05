@@ -80,6 +80,27 @@ describe('normalizeEnsembleAuthority', () => {
     })
   })
 
+  it('recovers onto the first ENABLED foreground seat, skipping a disabled one', () => {
+    expect(
+      normalizeEnsembleAuthority({
+        participants,
+        captainParticipantIds: []
+      }).bossmanParticipantId
+    ).toBe('captain-a')
+  })
+
+  it('still recovers a Boss when every foreground seat is disabled', () => {
+    expect(
+      normalizeEnsembleAuthority({
+        participants: [
+          { id: 'first', order: 1, enabled: false },
+          { id: 'second', order: 2, enabled: false }
+        ],
+        captainParticipantIds: []
+      }).bossmanParticipantId
+    ).toBe('first')
+  })
+
   it('never manufactures authority when no foreground seat exists', () => {
     expect(
       normalizeEnsembleAuthority({
