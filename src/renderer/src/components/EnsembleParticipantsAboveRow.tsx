@@ -2324,16 +2324,19 @@ function ParticipantChip({
   // (running=warm, yielded=amber, answered=green, cancelled=muted, etc.).
   const statusClass = `status-${statusLabel.toLowerCase().replace(/\s+/g, '-')}`
   const providerClass = resolveProviderHueClass(participant.provider, participant.model)
-  // 2026-07 chip polish — the actively-working participant's role
-  // name glows in its provider hue (Ollama chips inherit the spoofed
-  // upstream brand hue via `providerClass`, same as the role tint);
-  // a failed/unreachable turn glows red instead. The round state
-  // holding these statuses is replaced wholesale when the next round
-  // starts, so the red glow naturally resets — the failure may be
+  // 2026-08 chip polish — the actively-working participant's role
+  // name runs the transcript's shared text-shimmer-sweep in its
+  // provider hue (Ollama chips inherit the spoofed upstream brand hue
+  // via `providerClass`, same as the role tint); a failed/unreachable
+  // turn re-inks the leading stage/authority icon in the danger hue
+  // beside the trailing warning triangle. The round state holding
+  // these statuses is replaced wholesale when the next round starts,
+  // so the failure accent naturally resets — the failure may be
   // fixed or irrelevant by the next turn.
   const normalizedStatus = statusLabel.toLowerCase()
-  const isLiveGlow = !dimmed && (normalizedStatus === 'speaking' || normalizedStatus === 'running')
-  const isFailedGlow = normalizedStatus === 'failed' || normalizedStatus === 'unreachable'
+  const isLiveShimmer =
+    !dimmed && (normalizedStatus === 'speaking' || normalizedStatus === 'running')
+  const isFailedAccent = normalizedStatus === 'failed' || normalizedStatus === 'unreachable'
   const providerDisplayName =
     resolveProviderBrandLabel(participant.provider, participant.model) ||
     getProviderName(participant.provider)
@@ -2443,7 +2446,7 @@ function ParticipantChip({
       onPointerDown={handlePointerDown}
       onPointerEnter={handleTooltipPointerEnter}
       onPointerLeave={dismissTooltip}
-      className={`ensemble-above-chip provider-${providerClass} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''} ${isLiveGlow ? 'is-live-glow' : ''} ${isFailedGlow ? 'is-failed-glow' : ''}`}
+      className={`ensemble-above-chip provider-${providerClass} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''} ${isLiveShimmer ? 'is-live-shimmer' : ''} ${isFailedAccent ? 'is-failed-accent' : ''}`}
       // `order` places the chip in the MERGED roster slot, so an external
       // seated between two model seats pushes the later one along visually
       // without the model map having to know it exists.

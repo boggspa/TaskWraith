@@ -1691,53 +1691,93 @@
   color: var(--provider-cerebras-color);
 }
 
-/* 2026-07 chip polish — live/failed role-name glow.
+/* 2026-08 chip polish — live shimmer sweep + failed icon re-ink.
+ * (Replaces the 2026-07 text-shadow glows, which clashed with the
+ * strip's provider tints.)
  *
- * `.is-live-glow` (speaking / running, incl. awaiting-approval lanes)
- * breathes the role name in its provider hue. The glow rides
- * `currentColor`, so it inherits whatever the per-provider role
- * rules above resolved — including Ollama-backed display brands'
- * spoofed upstream hues (provider-alibaba, provider-google, …)
- * without needing its own per-provider fan-out.
+ * `.is-live-shimmer` (speaking / running, incl. awaiting-approval
+ * lanes) runs the transcript's shared `text-shimmer-sweep` keyframes
+ * across the role name — the same treatment as the "Working…" label
+ * in 02-transcript-messages-fx.css. The gradient rides `currentColor`,
+ * so it inherits whatever the per-provider role rules above resolved —
+ * including Ollama-backed display brands' spoofed upstream hues
+ * (provider-alibaba, provider-google, …) without needing its own
+ * per-provider fan-out.
  *
- * `.is-failed-glow` (failed / unreachable) holds a steady red glow
- * on the still-provider-tinted name. It persists after the round
- * ends and clears when the NEXT round starts (fresh round state
- * resets the participant status) — deliberate: the failure may be
- * fixed or irrelevant by the next turn. Failed wins over live by
- * source order below (a chip is never both in practice). */
-.ensemble-above-chip.is-live-glow .ensemble-above-chip-role {
-  animation: ensemble-chip-role-live-glow 1.8s ease-in-out infinite;
+ * LANDMINE: only `-webkit-text-fill-color` may go transparent here.
+ * The transcript label also sets `color: transparent`, but on this
+ * span that would resolve `currentColor` to transparent — erasing the
+ * gradient AND the currentColor-stroked leading SVGs (crown / hat /
+ * stage icon) that share the role span.
+ *
+ * `.is-failed-accent` (failed / unreachable) re-inks the chip's
+ * leading identity icon — stage badge, Boss crown, Captain hat — in
+ * the same danger mix as the trailing `.status-failed` warning
+ * triangle, so the two marks read as one system. It persists after
+ * the round ends and clears when the NEXT round starts (fresh round
+ * state resets the participant status) — deliberate: the failure may
+ * be fixed or irrelevant by the next turn. */
+.ensemble-above-chip.is-live-shimmer .ensemble-above-chip-role {
+  background-image: linear-gradient(
+    105deg,
+    color-mix(in srgb, currentColor 54%, var(--text-secondary)) 0%,
+    color-mix(in srgb, currentColor 68%, var(--text-primary)) 34%,
+    color-mix(in srgb, white 46%, currentColor) 48%,
+    color-mix(in srgb, currentColor 76%, var(--text-primary)) 62%,
+    color-mix(in srgb, currentColor 54%, var(--text-secondary)) 100%
+  );
+  background-size: 260% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer-sweep 2.4s ease-in-out infinite;
 }
 
-.ensemble-above-chip.is-failed-glow .ensemble-above-chip-role {
-  animation: none;
-  text-shadow:
-    0 0 5px color-mix(in srgb, #e5484d 75%, transparent),
-    0 0 12px color-mix(in srgb, #e5484d 40%, transparent);
+/* Light themes — the white sweep hotspot washes out against near-white
+ * chip surfaces, so the highlight leans on theme ink instead: the sweep
+ * reads as a passing deepening of the hue, and contrast never drops
+ * below the static provider tint. `:where()` keeps the prefix
+ * specificity-neutral so the reduce-motion overrides below still win
+ * on source order alone. */
+:where([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-chip.is-live-shimmer .ensemble-above-chip-role {
+  background-image: linear-gradient(
+    105deg,
+    color-mix(in srgb, currentColor 72%, var(--text-primary)) 0%,
+    color-mix(in srgb, currentColor 84%, var(--text-primary)) 38%,
+    color-mix(in srgb, var(--text-primary) 34%, currentColor) 50%,
+    color-mix(in srgb, currentColor 84%, var(--text-primary)) 62%,
+    color-mix(in srgb, currentColor 72%, var(--text-primary)) 100%
+  );
 }
 
-@keyframes ensemble-chip-role-live-glow {
-  0%,
-  100% {
-    text-shadow:
-      0 0 4px color-mix(in srgb, currentColor 45%, transparent),
-      0 0 10px color-mix(in srgb, currentColor 22%, transparent);
-  }
-  50% {
-    text-shadow:
-      0 0 6px color-mix(in srgb, currentColor 85%, transparent),
-      0 0 14px color-mix(in srgb, currentColor 45%, transparent);
-  }
+/* The stage badge re-tints itself through its own currentColor
+ * background; the icon needs the explicit override because its base
+ * rule pins `var(--text-primary)`. `filter: none` drops the crown/hat
+ * gold + silver drop-shadow halos — a glow around a danger-red icon
+ * reads as broken chrome, and failure state is glow-free by design. */
+.ensemble-above-chip.is-failed-accent
+  :is(
+    .ensemble-above-chip-stage-badge,
+    .ensemble-above-chip-stage-icon,
+    .ensemble-above-chip-crown,
+    .ensemble-above-chip-captain-hat
+  ) {
+  color: color-mix(in srgb, var(--danger, #c44a4a) 85%, var(--text-primary));
+  filter: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ensemble-above-chip.is-live-glow .ensemble-above-chip-role {
+  .ensemble-above-chip.is-live-shimmer .ensemble-above-chip-role {
     animation: none;
-    text-shadow:
-      0 0 5px color-mix(in srgb, currentColor 70%, transparent),
-      0 0 12px color-mix(in srgb, currentColor 35%, transparent);
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
   }
+}
+
+:root[data-reduce-motion="true"] .ensemble-above-chip.is-live-shimmer .ensemble-above-chip-role {
+  animation: none;
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
 }
 
 /* 2026-07 chip polish — custom chip hover tooltip (500ms delay,
