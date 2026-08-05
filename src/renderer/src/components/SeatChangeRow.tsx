@@ -221,6 +221,47 @@ function SeatStrip({
 }
 
 /**
+ * The colour a seat resolves to — the provider accent, generic accent as
+ * fallback. Exported so a host that renders the role in its own heading tints
+ * it identically instead of re-deriving the hue and drifting out of step with
+ * the chips beside it. (Building the whole view for one field is deliberate:
+ * the hue depends on the humanised model label, so deriving it any other way
+ * is how the two answers diverge.)
+ */
+export function seatAccentVar(seat: SeatChangeSeatState): string {
+  return `var(--provider-${seatSideView(seat).hue}-color, var(--accent))`
+}
+
+/**
+ * A seat rendered as a STATE rather than a change — the two composer chips and
+ * nothing else.
+ *
+ * Deliberately missing three things the change variants carry. No chair glyph:
+ * that glyph *claims* a seat was reconfigured, and asserting it where nothing
+ * changed is a lie the reader has been trained to believe. No roll: there is no
+ * before to roll from, and the odometer's per-character measured slots are pure
+ * cost when every slot is static. No role: a host showing one state generally
+ * wants the role in its own heading (see `seatAccentVar` for tinting it), which
+ * is exactly what the peer thread-message card does — it answers "who sent
+ * this", not "what changed".
+ */
+export function SeatStateChips({
+  seat,
+  className
+}: {
+  seat: SeatChangeSeatState
+  className?: string
+}): JSX.Element {
+  const view = useMemo(() => seatSideView(seat), [seat])
+  return (
+    <span className={`seat-state-chips${className ? ' ' + className : ''}`}>
+      <SeatClusterChip view={view} animate={false} />
+      <SeatPermissionChip view={view} animate={false} />
+    </span>
+  )
+}
+
+/**
  * Close-out variant: the same strip, inline in a markdown table cell. No
  * timestamp (the close-out header carries the time), no click-to-expand, and
  * no button — a table cell's seat is a RECORD, and the roll replaying every

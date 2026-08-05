@@ -12236,3 +12236,12 @@
 .seat-change-message.is-inline .seat-change-role {
   margin-left: 0;
 }
+
+/* `SeatStateChips` — a seat shown as a state, not a change. Layout only: the
+ * chips carry their own chrome strip, so this wrapper never needs a composer
+ * ancestor and drops into any host's flex line. */
+.seat-state-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}

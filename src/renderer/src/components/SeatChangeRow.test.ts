@@ -189,3 +189,39 @@ describe('close-out table reuses the seat element', () => {
     expect(region).toContain('fields.permission[which]')
   })
 })
+
+describe('SeatStateChips — a seat as a state, for third-party hosts', () => {
+  it('omits the chair glyph, the roll, and the role', () => {
+    const start = rowSource.indexOf('export function SeatStateChips')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const region = rowSource.slice(start, rowSource.indexOf('export function SeatChangeInlineStrip'))
+    // The chair glyph CLAIMS a seat was reconfigured — rendering it where
+    // nothing changed asserts something false to a reader who has learned it.
+    expect(region).not.toContain('SeatChairIcon')
+    expect(region).not.toContain('seat-change-role')
+    // Static: no odometer slots to measure when every slot would be unchanged.
+    expect(region).toContain('animate={false}')
+    expect(region).not.toContain('animate />')
+  })
+
+  it('still rides the composer chips, so tints and hues match the change variants', () => {
+    const start = rowSource.indexOf('export function SeatStateChips')
+    const region = rowSource.slice(start, rowSource.indexOf('export function SeatChangeInlineStrip'))
+    expect(region).toContain('<SeatClusterChip')
+    expect(region).toContain('<SeatPermissionChip')
+  })
+
+  it('exports the resolved accent so a host tinting its own role cannot drift', () => {
+    expect(rowSource).toContain('export function seatAccentVar')
+    expect(rowSource).toContain('`var(--provider-${seatSideView(seat).hue}-color, var(--accent))`')
+  })
+
+  it('gives the wrapper layout only — the chips carry their own chrome strip', () => {
+    const start = cssSource.indexOf('.seat-state-chips {')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const block = cssSource.slice(start, cssSource.indexOf('}', start))
+    expect(block).toContain('inline-flex')
+    // No composer ancestor required, and no colour: both would fight the chips.
+    expect(block).not.toContain('color:')
+  })
+})
