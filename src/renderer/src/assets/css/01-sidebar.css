@@ -2173,11 +2173,37 @@ button.sidebar-item {
   --sidebar-terminal-outcome-color: var(--tool-warning, #f5a623);
 }
 
+/* Sleeping — a run parked on a CLOCK rather than on a person. Nothing is
+ * owed, it will wake itself, so it must not read as "finished" (green) or as
+ * "needs you" (amber). Sea blue is the one free slot in the family that is
+ * neither.
+ *
+ * The only tone with an explicit light-mode value. The other three are
+ * legible in both (the diff hues are the user's own, and amber carries on
+ * white), but a sea blue bright enough for dark chrome washes out on the
+ * light sidebar's white. The pair is contrast-BALANCED rather than merely
+ * passing: 7.9:1 on the dark sidebar, 7.0:1 on the light one, so the tone
+ * carries the same weight in both.
+ *
+ * Distinguishable from the running ghost's indigo (--tool-running #5a8cff) by
+ * hue, and the two can never appear on the same row anyway — a run is asleep
+ * or working, never both. */
+.app-sidebar .sidebar-attention-sleeping {
+  --sidebar-terminal-outcome-color: #57b6d9;
+}
+
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+  .app-sidebar
+  .sidebar-attention-sleeping {
+  --sidebar-terminal-outcome-color: #15607a;
+}
+
 .app-sidebar
   :is(
     .sidebar-terminal-outcome-success,
     .sidebar-terminal-outcome-failure,
-    .sidebar-attention-waiting
+    .sidebar-attention-waiting,
+    .sidebar-attention-sleeping
   )
   :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
   color: var(--sidebar-terminal-outcome-color);
@@ -2207,7 +2233,8 @@ button.sidebar-item {
     :is(
     .sidebar-terminal-outcome-success,
     .sidebar-terminal-outcome-failure,
-    .sidebar-attention-waiting
+    .sidebar-attention-waiting,
+    .sidebar-attention-sleeping
   )
     :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
     animation: none;
@@ -2223,7 +2250,8 @@ button.sidebar-item {
   :is(
     .sidebar-terminal-outcome-success,
     .sidebar-terminal-outcome-failure,
-    .sidebar-attention-waiting
+    .sidebar-attention-waiting,
+    .sidebar-attention-sleeping
   )
   :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
   animation: none;

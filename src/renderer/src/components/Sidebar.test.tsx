@@ -1882,6 +1882,57 @@ describe('Sidebar success-ink epoch (first launch after upgrading)', () => {
   })
 })
 
+describe('Sidebar sleeping accent', () => {
+  const sleepingRun = { runId: 'nap', startedAt: '2026-08-05T10:00:00.000Z', status: 'sleeping' }
+
+  it('inks a thread whose run is asleep, without needing acknowledgement', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar(
+      [
+        makeChat({ appChatId: 'napping', title: 'Napping thread', updatedAt: 2, runs: [sleepingRun] }),
+        makeChat({ appChatId: 'viewer', updatedAt: 1 })
+      ],
+      { activeChatId: 'viewer' }
+    )
+    expect(html).toContain('sidebar-attention-sleeping')
+    // Not an outcome — a sleeping run has not settled anything.
+    expect(html).not.toContain('sidebar-terminal-outcome-success')
+    expect(html).not.toContain('sidebar-terminal-outcome-failure')
+  })
+
+  it('yields to waiting — a person outranks a clock', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar(
+      [
+        makeChat({ appChatId: 'napping', title: 'Napping thread', updatedAt: 2, runs: [sleepingRun] }),
+        makeChat({ appChatId: 'viewer', updatedAt: 1 })
+      ],
+      {
+        activeChatId: 'viewer',
+        pendingAgentQuestionsByChatId: {
+          napping: [
+            {
+              questionId: 'q1',
+              appRunId: 'nap',
+              messageId: 'm1',
+              provider: 'codex',
+              question: 'Which?',
+              options: ['A'],
+              askedAt: 1
+            }
+          ]
+        }
+      }
+    )
+    expect(html).toContain('sidebar-attention-waiting')
+    expect(html).not.toContain('sidebar-attention-sleeping')
+  })
+})
+
 describe('Sidebar waiting-on-you accent', () => {
   const question = (questionId: string) => ({
     questionId,

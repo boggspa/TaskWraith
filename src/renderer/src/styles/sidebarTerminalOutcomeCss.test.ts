@@ -25,11 +25,19 @@ describe('sidebar terminal outcome title accent', () => {
     expect(cssBlockStartingAt('.app-sidebar .sidebar-attention-waiting {')).toContain(
       'var(--tool-warning, #f5a623)'
     )
+    // Sea blue, and the ONLY tone with an explicit light-mode value: a blue
+    // bright enough for dark chrome washes out on the light sidebar's white.
+    // The pair is contrast-balanced (7.9:1 dark / 7.0:1 light), not merely
+    // passing.
+    expect(cssBlockStartingAt('.app-sidebar .sidebar-attention-sleeping {')).toContain('#57b6d9')
+    expect(css.replace(/\s+/g, ' ')).toContain(
+      "[data-theme='sage']) .app-sidebar .sidebar-attention-sleeping { --sidebar-terminal-outcome-color: #15607a;"
+    )
 
     // All three tones share ONE sweep — the two settled outcomes and the live
     // waiting state — so the ink block is keyed on the whole selector list.
     const ink = cssBlockStartingAt(
-      '.app-sidebar\n  :is(\n    .sidebar-terminal-outcome-success,\n    .sidebar-terminal-outcome-failure,\n    .sidebar-attention-waiting\n  )'
+      '.app-sidebar\n  :is(\n    .sidebar-terminal-outcome-success,\n    .sidebar-terminal-outcome-failure,\n    .sidebar-attention-waiting,\n    .sidebar-attention-sleeping\n  )'
     )
     expect(ink).not.toBe('')
     expect(ink).toContain('background-clip: text')
@@ -49,7 +57,7 @@ describe('sidebar terminal outcome title accent', () => {
     const compactCss = css.replace(/\s+/g, ' ')
     expect(css).toContain('@media (prefers-reduced-motion: reduce)')
     expect(compactCss).toContain(
-      ":root[data-reduce-motion='true'] .app-sidebar :is( .sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure, .sidebar-attention-waiting )"
+      ":root[data-reduce-motion='true'] .app-sidebar :is( .sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure, .sidebar-attention-waiting, .sidebar-attention-sleeping )"
     )
     expect(css).toContain('-webkit-text-fill-color: var(--sidebar-terminal-outcome-color)')
   })

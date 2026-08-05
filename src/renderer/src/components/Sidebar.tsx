@@ -90,6 +90,7 @@ import { isCanvasEvalApprovalToolName } from '../lib/agentApprovalPreview'
 import {
   acknowledgeSidebarTerminalOutcome,
   chatIsAwaitingUserResponse,
+  chatIsSleeping,
   isSidebarTerminalOutcomeUnread,
   loadOrSeedSidebarSuccessInkEpoch,
   loadSidebarTerminalOutcomeAcknowledgements,
@@ -1612,11 +1613,13 @@ function SidebarCompactChatRowInner({
             ? `${chat.title}, running`
             : rowTone === 'waiting'
               ? `${chat.title}, waiting on your response`
-              : rowTone === 'success'
-                ? `${chat.title}, completed successfully, unread`
-                : rowTone === 'failure'
-                  ? `${chat.title}, blocked or failed, unread`
-                  : chat.title
+              : rowTone === 'sleeping'
+                ? `${chat.title}, sleeping until its next wake-up`
+                : rowTone === 'success'
+                  ? `${chat.title}, completed successfully, unread`
+                  : rowTone === 'failure'
+                    ? `${chat.title}, blocked or failed, unread`
+                    : chat.title
       }
       {...(variant === 'recents' && dragHandlers ? dragHandlers : {})}
     >
@@ -2457,6 +2460,7 @@ function buildSidebarChatRowA11y(args: {
   // question case; the waiting tone also covers approvals, so name it only
   // when statusText did not already say so.
   if (args.rowTone === 'waiting' && !args.needsInput) parts.push('waiting on your response')
+  if (args.rowTone === 'sleeping') parts.push('sleeping until its next wake-up')
   if (args.rowTone === 'success') parts.push('goal or task completed, unread')
   if (args.rowTone === 'failure') parts.push('goal blocked or task failed, unread')
   if (args.selected) parts.push('selected')
@@ -3739,6 +3743,14 @@ export function Sidebar({
       // threads still working. It clears itself when the answer lands.
       if (chatIsAwaitingUserResponse(chat.appChatId, pendingAttentionSources)) {
         tones.set(chat.appChatId, 'waiting')
+        continue
+      }
+      // Parked on a clock rather than a person. Ranked under `waiting`
+      // because nothing is owed, and above the outcomes because the thread
+      // has not finished — it is going to wake up. Live state, so no
+      // acknowledgement and no epoch: it retires when the run does.
+      if (chatIsSleeping(chat)) {
+        tones.set(chat.appChatId, 'sleeping')
         continue
       }
       if (runningIds.has(chat.appChatId)) continue

@@ -8,18 +8,40 @@ export const SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY = 'taskwraith-sidebar-success
 export type SidebarTerminalOutcomeTone = 'success' | 'failure'
 
 /**
- * What a sidebar row's title ink is saying. Two of these are settled outcomes
- * the user has not read yet; `waiting` is LIVE state — a thread parked on an
- * approval or an ask_user_question, which is the one case where the row is
- * asking for the user rather than reporting to them.
+ * What a sidebar row's title ink is saying.
+ *
+ * Two are settled outcomes; two are LIVE state. `waiting` is a thread parked
+ * on an approval or an ask_user_question — the one case where the row is
+ * asking for the user rather than reporting to them. `sleeping` is a run
+ * parked on a clock rather than on a person: nothing is owed, it will wake
+ * itself, and the row says so instead of looking finished.
+ *
+ * The ink is the sidebar's whole run vocabulary — the status chips that used
+ * to sit in the subline are gone, so anything a row needs to say, it says
+ * here.
  */
-export type SidebarRowTone = SidebarTerminalOutcomeTone | 'waiting'
+export type SidebarRowTone = SidebarTerminalOutcomeTone | 'waiting' | 'sleeping'
 
 /** Ink class for a row tone. The two terminal tones keep their historical
  * class names (CSS + pinned tests); `waiting` gets a name that does not claim
  * to be an outcome, and the stylesheet shares one sweep across all three. */
 export function sidebarRowToneClass(tone: SidebarRowTone): string {
-  return tone === 'waiting' ? 'sidebar-attention-waiting' : `sidebar-terminal-outcome-${tone}`
+  if (tone === 'waiting') return 'sidebar-attention-waiting'
+  if (tone === 'sleeping') return 'sidebar-attention-sleeping'
+  return `sidebar-terminal-outcome-${tone}`
+}
+
+/**
+ * Is this thread's newest run asleep — parked on a clock, waiting to wake?
+ *
+ * Deliberately NOT an outcome: `terminalRunEvidence` refuses to settle a
+ * sleeping run, because nothing has happened yet. It is live state like
+ * `waiting`, so it needs no acknowledgement and retires the moment the run
+ * wakes.
+ */
+export function chatIsSleeping(chat: ChatRecord): boolean {
+  const run = latestSidebarRun(chat)
+  return String(run?.status || '').toLowerCase() === 'sleeping'
 }
 
 /** Structural view of the renderer's pending-attention maps — kept loose so
