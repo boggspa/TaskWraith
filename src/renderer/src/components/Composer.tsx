@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
 import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
+import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
 import {
   MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   computeGoalRuntimeTiming
@@ -1314,27 +1315,39 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     : ''
 
   const confirmTrustedSessionForLane = async (): Promise<void> => {
-    if (trustedSessionMutationDisabledReason) {
-      setTrustedSessionConfirmOpen(false)
-      setTrustedSessionApprovalId(null)
-      return
-    }
     const approvalId = trustedSessionApprovalId
-    const approvalParticipantId =
-      approvalId && pendingAgentApproval?.id === approvalId
-        ? pendingAgentApproval.preview?.ensembleParticipant?.participantId
-        : null
-    const approvalParticipant =
-      approvalParticipantId && currentChat?.ensemble
-        ? currentChat.ensemble.participants.find((participant) => participant.id === approvalParticipantId)
-        : null
-    const targetParticipant =
-      approvalParticipant || (isCurrentEnsembleChat && selectedParticipant ? selectedParticipant : null)
-    if (!currentChat?.appChatId) {
+    // Decided by a pure planner so it is actually covered: the renderer has no
+    // jsdom, and this sequence — grant, elevate the seat, accept the prompt
+    // that opened the sheet — is precisely the seam that used to grant without
+    // elevating, which reads to a user as the button doing nothing.
+    // See lib/trustedSessionElevation.ts.
+    const plan = planTrustedSessionElevation({
+      disabledReason: trustedSessionMutationDisabledReason,
+      chatId: currentChat?.appChatId,
+      approvalId,
+      approvalParticipantId:
+        approvalId && pendingAgentApproval?.id === approvalId
+          ? pendingAgentApproval.preview?.ensembleParticipant?.participantId
+          : null,
+      isEnsembleChat: isCurrentEnsembleChat,
+      participantIds: (currentChat?.ensemble?.participants || []).map(
+        (participant) => participant.id
+      ),
+      selectedParticipantId: selectedParticipant?.id
+    })
+    if (plan.kind !== 'elevate') {
       setTrustedSessionConfirmOpen(false)
       setTrustedSessionApprovalId(null)
       return
     }
+    // Hoisted so the discriminant narrows inside the `find` closure.
+    const elevationTarget = plan.target
+    const targetParticipant =
+      elevationTarget.scope === 'participant'
+        ? (currentChat?.ensemble?.participants || []).find(
+            (participant) => participant.id === elevationTarget.participantId
+          ) || null
+        : null
     const grantResult = await window.api.trustedSessionSet(
       {
         chatId: currentChat.appChatId,
@@ -1355,10 +1368,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     }
     setTrustedSessionConfirmOpen(false)
     setTrustedSessionApprovalId(null)
-    if (approvalParticipantId && currentChat?.ensemble) {
-      patchEnsembleParticipantById(approvalParticipantId, { permissionPresetId: 'full_access' })
-    } else if (isCurrentEnsembleChat && selectedParticipant) {
-      updateSelectedParticipant({ permissionPresetId: 'full_access' })
+    // The grant alone never silenced anything: it unlocks elevated capability,
+    // while THIS is what raises the seat's posture and stops the prompts.
+    if (plan.target.scope === 'participant') {
+      // `via` keeps the original two write paths apart — a seat named by an
+      // approval is patched by id, while the composer's own selection goes
+      // through the helper that also rebinds the picker to that chip.
+      if (plan.target.via === 'approval') {
+        patchEnsembleParticipantById(plan.target.participantId, {
+          permissionPresetId: 'full_access'
+        })
+      } else {
+        updateSelectedParticipant({ permissionPresetId: 'full_access' })
+      }
     } else {
       setApprovalMode('auto_edit')
       rememberCurrentChatComposerSelection({
@@ -1367,8 +1389,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         permissionPresetId: 'full_access'
       })
     }
-    if (approvalId) {
-      await handleAgentApprovalAction(approvalId, 'accept')
+    if (plan.acceptApprovalId) {
+      await handleAgentApprovalAction(plan.acceptApprovalId, 'accept')
     }
   }
 
