@@ -1726,11 +1726,28 @@
     color-mix(in srgb, currentColor 76%, var(--text-primary)) 62%,
     color-mix(in srgb, currentColor 54%, var(--text-secondary)) 100%
   );
-  background-size: 260% 100%;
+  /* Seamless-loop arithmetic — do not round this to a tidy 260%.
+   * `background-position` percentages resolve against (box − image), so with
+   * the image wider than the box the shared keyframes' 220% → -120% travel
+   * covers 3.4 × (tiles − 1) box-widths per cycle, against a repeating tile
+   * `tiles` wide. Whole laps therefore need 3.4(t − 1)/t ∈ ℤ, i.e.
+   * t = 3.4/(3.4 − laps): 17/7 = 242.857% buys exactly TWO passes. The old
+   * 260% gave 2.09 — that stray .09 of a tile was a backwards snap on every
+   * restart, which read as the sweep giving up halfway and starting over. */
+  background-size: 242.857% 100%;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: text-shimmer-sweep 2.4s ease-in-out infinite;
+  /* `linear`, not `ease-in-out`: whole laps only line the seam up in SPACE,
+   * and an eased sweep still parks at zero velocity on both ends, so it stalls
+   * and lurches at the wrap. Constant velocity is what hides the loop point.
+   *
+   * 4.6s is the app's established SLOW shimmer tier (`.digit-odometer__cell`,
+   * `.composer-combined-picker-trigger-suffix`), so the chip stops borrowing
+   * the transcript working label's cadence — 2.4s over 2.09 laps was ≈1.15s
+   * per pass, and a strip of them beside the composer read as frantic. Two
+   * laps here puts it at 2.3s per pass, within 1% of that slow tier. */
+  animation: text-shimmer-sweep 4.6s linear infinite;
 }
 
 /* Light themes — the white sweep hotspot washes out against near-white
