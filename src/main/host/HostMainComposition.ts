@@ -14,6 +14,12 @@
  * AppStore/Bridge singletons. If a dedicated Host child ever ships, only the
  * injected port becomes RPC-backed; nothing here changes shape.
  *
+ * SCOPE-4c. Production composition ALWAYS wires the S4a AllowPipeline adapter
+ * as Bridge resolve ports (required `pipeline` — no optional refusal default)
+ * and wraps the snapshot donor so awaiting approval-kind challenges publish
+ * with `approvalId = challengeId` (GAP-A). S4b E-first hooks
+ * (`getByChallengeId` / `resolve`) are closed over the same Bridge instance.
+ *
  * BOUNDARIES (enforced by the import-isolation test alongside this file):
  * - zero `electron` imports;
  * - zero AppStore / BridgeActionExecutor / provider VALUE imports (the
@@ -29,7 +35,7 @@
 
 import { join } from 'node:path'
 
-import type { HostCapability } from '../../shared/hostProtocol'
+import type { HostApprovalProjection, HostCapability } from '../../shared/hostProtocol'
 import {
   AppStoreHostAuthority,
   type AppStoreHostAuthorityEvaluator,
@@ -39,10 +45,12 @@ import {
   type AppStoreHostAuthoritySnapshotDonor
 } from './AppStoreHostAuthority'
 import type { HostAuthority } from './HostAuthority'
+import type { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import {
   HostDeferredCommandBridge,
   type HostDeferredCommandBridgePorts
 } from './HostDeferredCommandBridge'
+import { createHostDeferredResolutionAdapter } from './HostDeferredResolutionAdapter'
 import {
   HostRuntimeBootstrap,
   type HostRuntimeRecoverySummaryWithDeferred
@@ -71,10 +79,9 @@ export function hostRuntimeDataDir(userDataPath: string): string {
  * Terminal code surfaced when a deferred challenge is resolved on a Host whose
  * deferred EXECUTION ports were never wired.
  *
- * Wiring the resolve half (execute / publish / complete) is a separate, later
- * scope. Until it lands, the honest behaviour for an `allow` decision is an
- * explicit non-success: never a silent acknowledgement, never a fabricated
- * success, and never a domain execution through an unwired path.
+ * Retained for Wave-6 audit of the refusal helper and for isolated Bridge
+ * tests. Production composition (S4c) never installs these ports — it always
+ * wires the AllowPipeline adapter.
  */
 export const HOST_DEFERRED_RESOLUTION_UNWIRED_CODE = 'host_deferred_resolution_unwired'
 
@@ -86,6 +93,7 @@ export const HOST_DEFERRED_RESOLUTION_UNWIRED_CODE = 'host_deferred_resolution_u
  * ask still dies explicitly and can never be executed twice.
  *
  * Exported so the refusal is asserted directly rather than merely claimed.
+ * Production createHostMainComposition does not call this (S4c required flip).
  */
 export function createUnwiredDeferredResolutionPorts(): HostDeferredCommandBridgePorts {
   const refuse = (): never => {
@@ -118,10 +126,11 @@ export interface HostMainCompositionInput {
   /** Extra durable-state flush performed after the Host's own flush. */
   readonly onShutdown?: AppStoreHostAuthorityShutdownCallback
   /**
-   * Resolve-side deferred ports. Omitted ⇒ fail-closed refusal ports; an
-   * allow decision then terminalizes as failed instead of executing.
+   * AllowPipeline for deferred allow execution (S4c required).
+   * Composition builds the S4a adapter over this and installs it as Bridge
+   * resolve ports — no optional refusal default remains on the production path.
    */
-  readonly deferredResolution?: HostDeferredCommandBridgePorts
+  readonly pipeline: HostDeferredAllowPipeline
   readonly sessionIdFactory?: HostSessionIdFactory
   /** Injected ISO clock for tests. */
   readonly now?: () => string
@@ -146,6 +155,25 @@ export interface HostMainComposition {
 function requireFunction(value: unknown, label: string): void {
   if (typeof value !== 'function') {
     throw new Error(`HostMainComposition requires an injected ${label}`)
+  }
+}
+
+/**
+ * Bounded approval card from an awaiting Bridge row (GAP-A / PIN S4-Q).
+ * Body-free: challengeId as id, commandName as actionKind, no args/fingerprint.
+ */
+function awaitingApprovalCardFromBridgeRecord(record: {
+  challengeId: string
+  commandName: string
+  createdAt: string
+}): HostApprovalProjection {
+  const parsed = Date.parse(record.createdAt)
+  return {
+    approvalId: record.challengeId,
+    actionKind: record.commandName,
+    status: 'pending',
+    createdAt: Number.isFinite(parsed) ? parsed : 0,
+    summary: `Deferred ${record.commandName}`
   }
 }
 
@@ -179,20 +207,60 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
   if (!Array.isArray(input.hostCapabilityOffer)) {
     throw new Error('HostMainComposition requires an injected hostCapabilityOffer')
   }
+  if (!input.pipeline || typeof input.pipeline !== 'object') {
+    throw new Error('HostMainComposition requires an injected pipeline')
+  }
+  requireFunction(input.pipeline.execute, 'pipeline.execute')
 
   const hostDataDir = hostRuntimeDataDir(input.userDataPath)
   const now = input.now
 
+  // Lazy runtime ref: adapter execute runs after construction; envelope store
+  // owns the durable idempotencyKey (S4a injection seam — zero store imports
+  // inside the adapter module).
+  let runtimeRef: HostRuntimeBootstrap | null = null
+  const adapterPorts = createHostDeferredResolutionAdapter({
+    pipeline: input.pipeline,
+    resolveIdempotencyKey: (executeInput) => {
+      if (!runtimeRef) return null
+      const lookup = runtimeRef.envelopeStore.getByDeferredId(
+        executeInput.deferredId,
+        executeInput.actor
+      )
+      if (lookup.kind !== 'found') return null
+      return lookup.record.idempotencyKey
+    }
+  })
+
   const deferredBridge = new HostDeferredCommandBridge({
     dataDir: hostDataDir,
-    ports: input.deferredResolution ?? createUnwiredDeferredResolutionPorts(),
+    ports: adapterPorts,
     ...(now ? { now } : {})
   })
+
+  // GAP-A donor wrap: publish Host-minted challengeId as approval card id.
+  // Approval-kind + awaiting only (PIN S4-Q excludes question-kind publish).
+  const wrappedSnapshotDonor: AppStoreHostAuthoritySnapshotDonor = async () => {
+    const families = await input.snapshotDonor()
+    const existingIds = new Set(families.approvals.map((a) => a.approvalId))
+    const merged: HostApprovalProjection[] = [...families.approvals]
+    for (const record of deferredBridge.list()) {
+      if (record.state !== 'awaiting' || record.challengeKind !== 'approval') continue
+      if (existingIds.has(record.challengeId)) continue
+      existingIds.add(record.challengeId)
+      merged.push(awaitingApprovalCardFromBridgeRecord(record))
+    }
+    return {
+      ...families,
+      approvals: merged
+    }
+  }
 
   const runtime = new HostRuntimeBootstrap({
     hostDataDir,
     deferredRecovery: { list: () => deferredBridge.list() }
   })
+  runtimeRef = runtime
 
   // Idempotent so an authoritative host shutdown and a supervisor stop cannot
   // double-flush, and so shutdown can never re-enter through the Authority.
@@ -210,14 +278,18 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     ...(now ? { now } : {}),
     ports: {
       runtime,
-      snapshotDonor: input.snapshotDonor,
+      snapshotDonor: wrappedSnapshotDonor,
       authorityEvaluator: input.authorityEvaluator,
       commandExecutor: input.commandExecutor,
       healthProvider: input.healthProvider,
       onShutdown: flushDurableState,
       deferredAsk: {
         envelopeStorePut: (put) => runtime.envelopeStore.put(put),
-        bridgeRegister: (register) => deferredBridge.register(register)
+        bridgeRegister: (register) => deferredBridge.register(register),
+        // S4b E-first hooks — same Bridge instance the adapter resolves against.
+        getByChallengeId: (challengeId, actor) =>
+          deferredBridge.getByChallengeId(challengeId, actor),
+        resolve: (resolveInput) => deferredBridge.resolve(resolveInput)
       }
     }
   })

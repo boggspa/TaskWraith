@@ -22,6 +22,7 @@ import type {
 } from './AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from './HostAuthority'
 import { HostDeferredCommandBridge } from './HostDeferredCommandBridge'
+import type { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import {
   createHostMainComposition,
   createUnwiredDeferredResolutionPorts,
@@ -119,6 +120,17 @@ const HEALTH: HostHealthProjection = {
   freshness: 'live'
 }
 
+// S4c: mock pipeline for tests
+const mockPipelineExecute = vi.fn(async () => ({
+  kind: 'completed' as const,
+  status: 'succeeded' as const,
+  position: { generation: 0, cursor: 0 }
+}))
+
+const mockPipeline: HostDeferredAllowPipeline = {
+  execute: mockPipelineExecute
+} as unknown as HostDeferredAllowPipeline
+
 describe('HostMainComposition', () => {
   let userDataPath: string
   let executor: ReturnType<typeof vi.fn>
@@ -133,6 +145,7 @@ describe('HostMainComposition', () => {
       healthProvider: () => HEALTH,
       host: { hostId: 'host-1', hostVersion: '1.9.2' },
       hostCapabilityOffer: CAPABILITIES,
+      pipeline: mockPipeline,
       now: () => NOW,
       ...overrides
     })
@@ -140,6 +153,7 @@ describe('HostMainComposition', () => {
   beforeEach(() => {
     userDataPath = mkdtempSync(join(tmpdir(), 'host-main-composition-'))
     executor = vi.fn(async () => ({ status: 'succeeded' as const, resultSummary: 'ok' }))
+    vi.resetAllMocks()
   })
 
   afterEach(() => {
@@ -237,6 +251,14 @@ describe('HostMainComposition', () => {
       expect(() => open({ host: { hostId: '', hostVersion: '1.9.2' } })).toThrow(/host identity/)
       expect(() => open({ host: { hostId: 'host-1', hostVersion: '' } })).toThrow(/host identity/)
       expect(() => open({ hostCapabilityOffer: undefined as never })).toThrow(/hostCapabilityOffer/)
+    })
+
+    it('rejects a missing pipeline (S4c)', () => {
+      expect(() => open({ pipeline: undefined as never })).toThrow(/pipeline/)
+    })
+
+    it('rejects a pipeline without execute (S4c)', () => {
+      expect(() => open({ pipeline: {} as never })).toThrow(/pipeline\.execute/)
     })
   })
 
@@ -345,6 +367,156 @@ describe('HostMainComposition', () => {
       const summary = composition.getRecoverySummary()
       expect(summary.deferred.availability).toBe('available')
       expect(summary.deferred.size).toBe(0)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // S4c — GAP-A donor wrap + required adapter wiring
+  // -----------------------------------------------------------------------
+
+  describe('S4c donor wrap and required deferred resolution', () => {
+    it('publishes awaiting approval-kind challenges with approvalId = challengeId', async () => {
+      composition = open({
+        authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'approval' })
+      })
+      const result = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({
+          commandId: DEFERRED_COMMAND_ID,
+          idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+          actor: ACTOR_A
+        })
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.value.status).toBe('pending')
+
+      const snap = await composition.authority.snapshot(contextFor(ACTOR_A))
+      expect(snap.ok).toBe(true)
+      if (!snap.ok) return
+      expect(snap.value.approvals).toHaveLength(1)
+      const published = snap.value.approvals[0]
+      expect(published.status).toBe('pending')
+      // PIN S4-V / GAP-A: actionKind ← commandName, not challengeKind
+      expect(published.actionKind).toBe('thread.select')
+      expect(published.summary).toContain('thread.select')
+      expect(published.approvalId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      )
+      // PIN S4-Q: questions family stays empty for approval-kind deferrals
+      expect(snap.value.questions).toEqual([])
+    })
+
+    it('excludes question-kind awaiting rows from approvals publish (PIN S4-Q)', async () => {
+      composition = open({
+        authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'question' })
+      })
+      const result = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({
+          commandId: DEFERRED_COMMAND_ID,
+          idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+          actor: ACTOR_A
+        })
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.value.status).toBe('pending')
+
+      const snap = await composition.authority.snapshot(contextFor(ACTOR_A))
+      expect(snap.ok).toBe(true)
+      if (!snap.ok) return
+      expect(snap.value.approvals).toEqual([])
+      // Slice-1: question-kind rows are NOT published as question cards either
+      expect(snap.value.questions).toEqual([])
+    })
+
+    it('does not duplicate an approval already present under the challengeId', async () => {
+      composition = open({
+        authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'approval' }),
+        snapshotDonor: () => ({
+          ...donorFamilies(),
+          approvals: [
+            {
+              approvalId: '55555555-5555-4555-8555-555555555555',
+              actionKind: 'pre-existing',
+              status: 'pending',
+              createdAt: Date.parse(NOW),
+              summary: 'pre-existing card'
+            }
+          ]
+        })
+      })
+
+      const result = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({
+          commandId: DEFERRED_COMMAND_ID,
+          idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+          actor: ACTOR_A
+        })
+      )
+      expect(result.ok).toBe(true)
+
+      const snap = await composition.authority.snapshot(contextFor(ACTOR_A))
+      expect(snap.ok).toBe(true)
+      if (!snap.ok) return
+      // Pre-existing donor card retained + one Bridge-minted challenge card
+      expect(snap.value.approvals).toHaveLength(2)
+      expect(
+        snap.value.approvals.filter((a) => a.approvalId === '55555555-5555-4555-8555-555555555555')
+      ).toHaveLength(1)
+      expect(
+        snap.value.approvals.find((a) => a.approvalId === '55555555-5555-4555-8555-555555555555')
+          ?.actionKind
+      ).toBe('pre-existing')
+      const ids = snap.value.approvals.map((a) => a.approvalId)
+      expect(new Set(ids).size).toBe(ids.length)
+    })
+
+    it('wires S4b hooks so correlated approval.decide hits pipeline once and zero H', async () => {
+      composition = open({
+        authorityEvaluator: (cmd) =>
+          cmd.name === 'approval.decide'
+            ? { decision: 'allowed' }
+            : { decision: 'deferred', challengeKind: 'approval' }
+      })
+      const deferred = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({
+          commandId: DEFERRED_COMMAND_ID,
+          idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+          actor: ACTOR_A
+        })
+      )
+      expect(deferred.ok).toBe(true)
+      if (!deferred.ok) return
+
+      const snap = await composition.authority.snapshot(contextFor(ACTOR_A))
+      expect(snap.ok).toBe(true)
+      if (!snap.ok) return
+      const card = snap.value.approvals[0]
+      expect(card).toBeDefined()
+
+      executor.mockClear()
+      mockPipelineExecute.mockClear()
+
+      const decide = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({
+          commandId: '66666666-6666-4666-8666-666666666666',
+          idempotencyKey: 'desktop:client-a:77777777-7777-4777-8777-777777777777',
+          actor: ACTOR_A,
+          name: 'approval.decide',
+          target: { approvalId: card.approvalId },
+          arguments: { decision: 'accept' }
+        })
+      )
+      expect(decide.ok).toBe(true)
+      // E-first owns the path — live Bridge H executor must not run
+      expect(executor).not.toHaveBeenCalled()
+      // Adapter → pipeline exactly once on allow
+      expect(mockPipelineExecute).toHaveBeenCalledTimes(1)
     })
   })
 

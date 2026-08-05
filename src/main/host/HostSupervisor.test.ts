@@ -46,6 +46,8 @@ function mockCompositionInput(
     }),
     host: MOCK_HOST,
     hostCapabilityOffer: MOCK_CAPS,
+    // S4c required pipeline — Supervisor tests never execute it; type-complete only.
+    pipeline: { execute: vi.fn() } as unknown as HostMainCompositionInput['pipeline'],
     ...overrides
   }
 }
