@@ -654,6 +654,31 @@ function evaluateNumericPerfGates(report, baselineReport) {
     return { gPerf: false, details, refuseReasons: ['metrics required on both reports'] }
   }
 
+  // T9a — CLOSE THE SATISFIABLE-BY-OMISSION HAZARD.
+  //
+  // `main.saveChat.coalescing` is optional at VALIDATION time so the frozen T2
+  // baseline — captured before these probes existed, and the denominator for
+  // every comparison — keeps validating. But optional-everywhere means a
+  // comparison run whose sampler silently failed would ship an absent block,
+  // validate cleanly, and still be read as evidence. So the AFTER side of a
+  // comparison must CARRY the block. The baseline side stays exempt by design:
+  // requiring it there would retroactively invalidate the only denominator we
+  // have.
+  const afterCoalescing =
+    isPlainObject(after.main) && isPlainObject(after.main.saveChat)
+      ? after.main.saveChat.coalescing
+      : undefined
+  if (!isPlainObject(afterCoalescing)) {
+    refuseReasons.push(
+      'after report must carry measured main.saveChat.coalescing — an absent block means the sampler did not run, not that coalescing did nothing'
+    )
+  } else if (!isPlainObject(afterCoalescing.reasonMix)) {
+    refuseReasons.push('after report main.saveChat.coalescing.reasonMix required for attribution')
+  }
+  // Deliberately NOT an early return: a run can be refused for several
+  // independent reasons at once, and reporting only the first would send the
+  // next lane round the loop fixing them one at a time.
+
   // stringify timing: if unsupported on either side, refuse rather than invent numbers
   if (after.main && after.main.saveChat && after.main.saveChat.stringifyMsUnsupported === true) {
     refuseReasons.push(

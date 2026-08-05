@@ -77,7 +77,13 @@ function buildIsolatedLaunchPlan(options) {
     TASKWRAITH_INSTANCE_ID: instanceId,
     IOS_REMOTE_TRUE: '0',
     TASKWRAITH_PERF_WORKLOAD: workload,
-    TASKWRAITH_PERF_FX_POSTURE: fxPosture
+    TASKWRAITH_PERF_FX_POSTURE: fxPosture,
+    // T9a: arms the persistence probes AND installs the read-only
+    // `__TASKWRAITH_PERF_STATS__` handle the runner samples after the replay.
+    // Without it the sampler fail-closes with "not installed" and the run is
+    // refused — which is correct, but useless. This is the measured child only;
+    // production launches never set it, so the handle stays absent there.
+    PERF_PRELOAD_PROBE: '1'
   }
   const isolatedHome =
     options.home != null && String(options.home).trim() !== ''

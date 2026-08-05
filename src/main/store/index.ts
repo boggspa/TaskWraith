@@ -29,8 +29,10 @@ import { coerceProviderForPersistence } from './ProviderOfferPersistence'
 import {
   beginPersistenceWrite,
   isPersistenceProbeEnabled,
-  recordPersistenceWrite
+  recordPersistenceWrite,
+  snapshotPersistenceProbes
 } from './persistenceProbes'
+import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
 import {
   createSaveCoalescer,
@@ -574,6 +576,23 @@ const saveCoalescer =
  * must expect chat-journal bytes to ADD to chat bytes here, not replace them.
  */
 const chatJournal = createChatJournal(path.join(userDataPath, 'chat-journal'))
+
+/**
+ * T9a: install the harness-gated perf sampling handle. Wired here rather than
+ * in `src/main/index.ts` because this is where the counters live, and because
+ * a one-line call in the 2 MB main entrypoint would be wiring for wiring's
+ * sake. No-ops entirely unless PERF_PRELOAD_PROBE=1, so production launches
+ * assign nothing and the global does not exist.
+ */
+installPerfStatsHandle(() => ({
+  sampledAt: Date.now(),
+  coalescing: {
+    coalescer: saveCoalescer.stats(),
+    journal: chatJournal.stats(),
+    config: { coalesceMs: saveCoalesceMs, maxLatencyMs: saveCoalesceMaxMs ?? null }
+  },
+  probes: snapshotPersistenceProbes()
+}))
 
 /**
  * T4c — decide whether this save may be deferred, and record WHY.

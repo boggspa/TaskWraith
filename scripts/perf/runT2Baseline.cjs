@@ -58,7 +58,9 @@ const {
   collectRendererHeapSnapshot,
   collectMainCpuProfile,
   sampleOsBundle,
-  verifyArtifactFile
+  verifyArtifactFile,
+  sampleMainPersistenceStats,
+  applyPersistenceStatsToMetrics
 } = require('./collectors/index.cjs')
 const {
   runDeterministicReplay,
@@ -665,6 +667,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   /** @type {object|null} */
   let replayResult = null
   let profilesCaptured = false
+  // T9a: true only when the main-process persistence counters were genuinely
+  // sampled. Gates `claimMetricsCollected` — a run that could not sample must
+  // never claim measured metrics.
+  let persistenceStatsOk = false
   /** @type {object|null} */
   let buildResult = null
   /** @type {Error|null} */
@@ -1102,6 +1108,34 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           : null
       }
       profilesCaptured = !captureDeadlineExceeded
+
+      // T9a — THE PRODUCER. Everything else in this tranche built the seam;
+      // this is the only place that actually reads it. Sample here, while the
+      // main inspector is still attached (it is closed in the `finally` below)
+      // and AFTER the replay, so the counters describe the measured window.
+      //
+      // Sampling is a single in-memory read over an already-open inspector
+      // session: it adds no write/fsync traffic to the I/O path under
+      // measurement, which is why this route was chosen over streaming probe
+      // JSONL out of the child during the replay.
+      if (!mainInspector) {
+        report.persistenceStatsFailure = { reason: 'main inspector session unavailable' }
+      } else if (captureDeadlineExceeded) {
+        report.persistenceStatsFailure = {
+          reason: 'capture deadline exceeded before persistence sampling'
+        }
+      } else {
+        const statsResult = await sampleMainPersistenceStats(mainInspector)
+        if (statsResult.ok) {
+          applyPersistenceStatsToMetrics(report.metrics, statsResult.stats)
+          persistenceStatsOk = true
+        } else {
+          // Honest failure record. A partially-populated block would be read as
+          // evidence, so the collector returns all-or-nothing and we surface why.
+          report.persistenceStatsFailure = { reason: statsResult.reason }
+        }
+      }
+
       report.replayWindowedRate = windowedRate ? windowedRate.snapshot() : null
       setCapturePhase(
         'capture_complete',
@@ -1209,7 +1243,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   report.environment.endedAt = new Date().toISOString()
   const gateProbe = evaluatePerfGates({
     report,
-    claimMetricsCollected: false,
+    // T9a: was hardcoded false because nothing produced measured metrics. It is
+    // now a genuine claim — true only when the persistence counters were
+    // sampled AND the profile evidence is complete.
+    claimMetricsCollected: persistenceStatsOk && profilesCaptured,
     fsAdapter: {
       statSync: fs.statSync,
       readFileSync: fs.readFileSync

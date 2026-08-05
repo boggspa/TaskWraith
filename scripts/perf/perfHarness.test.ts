@@ -580,6 +580,55 @@ describe('T1b numeric gPerf + profile digests', () => {
     expect(tiny.errors.some((e) => /too small/i.test(e))).toBe(true)
   })
 
+  it('T9a: refuses a comparison whose after-report carries no measured coalescing block', () => {
+    // The satisfiable-by-omission hazard: `coalescing` is optional at
+    // VALIDATION time so the frozen T2 denominator still parses. If the
+    // comparison gate were also permissive, a run whose sampler silently
+    // failed would validate cleanly and be read as evidence that coalescing
+    // did nothing — indistinguishable from coalescing genuinely doing nothing.
+    const before = createEmptyPerfMetrics()
+    const after = createEmptyPerfMetrics()
+    fillCorrectCaps(after)
+
+    const beforeReport = createPerfReport(authEnv())
+    beforeReport.metrics = before
+    beforeReport.fixture = { fingerprint: 'f'.repeat(64) }
+    const afterReport = createPerfReport(authEnv())
+    afterReport.metrics = after
+    afterReport.fixture = { fingerprint: 'f'.repeat(64) }
+
+    const absent = evaluateNumericPerfGates(afterReport, beforeReport)
+    expect(absent.gPerf).toBe(false)
+    expect(
+      absent.refuseReasons.some((r: string) => /must carry measured .*coalescing/i.test(r))
+    ).toBe(true)
+
+    // A present-but-unattributable block (no reason mix) is refused too:
+    // counts without a reason mix cannot tell a coalesced run from a run where
+    // every save was a barrier.
+    after.main.saveChat.coalescing = { scheduled: 10, coalesced: 5 }
+    const noMix = evaluateNumericPerfGates(afterReport, beforeReport)
+    expect(noMix.gPerf).toBe(false)
+    expect(noMix.refuseReasons.some((r: string) => /reasonMix required/i.test(r))).toBe(true)
+
+    // The BASELINE side must stay exempt — requiring it there would
+    // retroactively invalidate the only denominator the epic has.
+    after.main.saveChat.coalescing = {
+      scheduled: 10,
+      coalesced: 5,
+      flushed: 5,
+      pending: 0,
+      urgentFlushes: 0,
+      ceilingFlushes: 0,
+      discarded: 0,
+      reasonMix: { normal: 10, terminal: 0, approval: 0, 'history-deletion': 0, shutdown: 0 }
+    }
+    const baselineStillExempt = evaluateNumericPerfGates(afterReport, beforeReport)
+    expect(
+      baselineStillExempt.refuseReasons.some((r: string) => /coalescing/i.test(r))
+    ).toBe(false)
+  })
+
   it('validates the T4b coalescing/journal reporting seam without breaking the T2 baseline', () => {
     // The frozen T2 baseline predates these probes and is the denominator for
     // every comparison — absent must stay valid or the comparison can never run.
@@ -678,6 +727,19 @@ describe('T1b numeric gPerf + profile digests', () => {
 
     after.main.saveChat.stringifyMsUnsupported = false
     after.main.saveChat.stringifyMs = { p50: 2, p95: 4 }
+    // T9a: the AFTER side of a comparison must carry a measured coalescing
+    // block. The baseline stays exempt (the frozen T2 denominator predates
+    // these probes), which is why only `after` gets one here.
+    after.main.saveChat.coalescing = {
+      scheduled: 100,
+      coalesced: 70,
+      flushed: 30,
+      pending: 0,
+      urgentFlushes: 4,
+      ceilingFlushes: 12,
+      discarded: 0,
+      reasonMix: { normal: 90, terminal: 8, approval: 1, 'history-deletion': 1, shutdown: 0 }
+    }
     const pass = evaluateNumericPerfGates(afterReport, beforeReport)
     expect(pass.gPerf).toBe(true)
     expect(pass.details.hotWriteByteReduction).toBeGreaterThanOrEqual(
@@ -2884,5 +2946,219 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
     expect(report.captureDeadline.captureSkippedSteps).toHaveLength(2)
     expect(report.diskHeadroom.preflight.ok).toBe(true)
     expect(report.replayWindowedRate.windowedRateEvtPerSec).toBe(2.0)
+  })
+})
+
+describe('T9a main persistence stats collector', () => {
+  const {
+    PERF_STATS_GLOBAL,
+    normalizePerfStatsPayload,
+    sampleMainPersistenceStats,
+    applyPersistenceStatsToMetrics
+  } = require('./collectors/mainPersistenceStatsCollector.cjs')
+  const { createEmptyPerfMetrics } = require('./schema.cjs')
+
+  function validPayload() {
+    return {
+      sampledAt: 1,
+      coalescing: {
+        coalescer: {
+          scheduled: 100,
+          coalesced: 70,
+          flushed: 30,
+          pending: 0,
+          urgentFlushes: 4,
+          ceilingFlushes: 12,
+          discarded: 1,
+          reasonMix: { normal: 90, terminal: 8, approval: 1, 'history-deletion': 1, shutdown: 0 }
+        },
+        journal: {
+          appends: 30,
+          linesWritten: 30,
+          bytesWritten: 4096,
+          snapshotsWritten: 1,
+          chatsDeleted: 0,
+          tombstoneRejects: 0,
+          tornLinesRecovered: 0
+        },
+        config: { coalesceMs: 1000, maxLatencyMs: null }
+      },
+      probes: {
+        enabled: true,
+        targets: [
+          { target: 'chat', writes: 30, bytes: 1_000_000, fsyncMs: 42 },
+          { target: 'chat-journal', writes: 30, bytes: 900_000, fsyncMs: 20 }
+        ]
+      }
+    }
+  }
+
+  const sessionReturning = (value: unknown) => ({
+    post: async (method: string) => {
+      if (method !== 'Runtime.evaluate') throw new Error(`unexpected ${method}`)
+      return { result: { value } }
+    }
+  })
+
+  it('samples a valid payload from the main context', async () => {
+    const result = await sampleMainPersistenceStats(sessionReturning(validPayload()))
+    expect(result.ok).toBe(true)
+    expect(result.stats.coalescer.coalesced).toBe(70)
+    expect(result.stats.journal.bytesWritten).toBe(4096)
+  })
+
+  it('evaluates a guarded expression naming the shared global', async () => {
+    let seen = ''
+    await sampleMainPersistenceStats({
+      post: async (_m: string, params: { expression: string }) => {
+        seen = params.expression
+        return { result: { value: validPayload() } }
+      }
+    })
+    expect(seen).toContain(PERF_STATS_GLOBAL)
+    // typeof-guarded so a missing handle refuses cleanly instead of throwing
+    expect(seen).toContain("typeof globalThis")
+  })
+
+  it('fails closed on every degraded path rather than half-populating', async () => {
+    // Handle absent (production default: PERF_PRELOAD_PROBE unset)
+    const missing = await sampleMainPersistenceStats(sessionReturning(null))
+    expect(missing.ok).toBe(false)
+    expect(missing.reason).toMatch(/not installed/i)
+
+    // Handle threw inside main
+    const threw = await sampleMainPersistenceStats(sessionReturning({ error: 'boom' }))
+    expect(threw.ok).toBe(false)
+    expect(threw.reason).toMatch(/threw in main/i)
+
+    // Inspector itself failed
+    const broken = await sampleMainPersistenceStats({
+      post: async () => {
+        throw new Error('socket closed')
+      }
+    })
+    expect(broken.ok).toBe(false)
+    expect(broken.reason).toMatch(/Runtime\.evaluate failed/i)
+
+    // Evaluation raised in the main context
+    const exception = await sampleMainPersistenceStats({
+      post: async () => ({ exceptionDetails: { text: 'ReferenceError' } })
+    })
+    expect(exception.ok).toBe(false)
+
+    // No session at all
+    const noSession = await sampleMainPersistenceStats(null)
+    expect(noSession.ok).toBe(false)
+  })
+
+  it('rejects a partial payload instead of reporting it as measured', () => {
+    const missingReason = validPayload()
+    delete (missingReason.coalescing.coalescer.reasonMix as Record<string, unknown>)['approval']
+    expect(normalizePerfStatsPayload(missingReason).ok).toBe(false)
+
+    const missingCounter = validPayload()
+    delete (missingCounter.coalescing.coalescer as Record<string, unknown>).ceilingFlushes
+    expect(normalizePerfStatsPayload(missingCounter).ok).toBe(false)
+
+    const missingJournal = validPayload()
+    delete (missingJournal.coalescing as Record<string, unknown>).journal
+    expect(normalizePerfStatsPayload(missingJournal).ok).toBe(false)
+
+    const missingProbes = validPayload()
+    delete (missingProbes as Record<string, unknown>).probes
+    expect(normalizePerfStatsPayload(missingProbes).ok).toBe(false)
+  })
+
+  it('keeps legacy chat bytes and journal bytes in SEPARATE buckets', () => {
+    const normalized = normalizePerfStatsPayload(validPayload())
+    expect(normalized.ok).toBe(true)
+    const metrics = applyPersistenceStatsToMetrics(createEmptyPerfMetrics(), normalized)
+
+    // Dual-write ADDS journal bytes this tranche. Summing them would read as a
+    // regression and hide which half moved.
+    expect(metrics.main.saveChat.writeBytes.total).toBe(1_000_000)
+    expect(metrics.main.saveChat.journalWriteBytes.total).toBe(900_000)
+    expect(metrics.main.saveChat.writeBytes.total).not.toBe(1_900_000)
+
+    // The zero default seeds are replaced by real measurements.
+    expect(metrics.main.saveChat.count).toBe(100)
+    expect(metrics.main.saveChat.coalescedCount).toBe(70)
+    expect(metrics.main.saveChat.coalescing.reasonMix.normal).toBe(90)
+    expect(metrics.main.saveChat.journal.bytesWritten).toBe(4096)
+  })
+
+  it('produces a block that satisfies the comparison gate it was built for', () => {
+    const { validatePerfMetrics } = require('./schema.cjs')
+    const normalized = normalizePerfStatsPayload(validPayload())
+    const metrics = applyPersistenceStatsToMetrics(createEmptyPerfMetrics(), normalized)
+    // End-to-end: sampler output must pass the same schema the gate enforces.
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+  })
+})
+
+describe('T9a runner wiring (the producer must actually be invoked)', () => {
+  const fsNode = require('fs') as typeof import('fs')
+  const pathNode = require('path') as typeof import('path')
+  const perfDir = pathNode.dirname(new URL(import.meta.url).pathname)
+  /**
+   * Read a harness script with comment-only lines stripped.
+   *
+   * This matters: the first version of these guards matched the call string
+   * inside a `// commented-out` line, so disabling the producer left the suite
+   * green. A source-region guard that accepts commented code proves nothing.
+   */
+  const readPerf = (name: string): string =>
+    fsNode
+      .readFileSync(pathNode.join(perfDir, name), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+      .join('\n')
+
+  it('barrel-exports the persistence stats collector', () => {
+    // Without this the runner's destructured import silently yields undefined
+    // and the sampling call throws at attach time, mid-run.
+    const collectors = require('./collectors/index.cjs')
+    expect(typeof collectors.sampleMainPersistenceStats).toBe('function')
+    expect(typeof collectors.applyPersistenceStatsToMetrics).toBe('function')
+  })
+
+  it('invokes the sampler in runT2Baseline BEFORE the main inspector closes', () => {
+    // Source-region guard. The T9a seam was built once and sat ZERO-PRODUCER
+    // for two passes because everything was unit-tested and nothing was wired.
+    // This asserts the call exists in the runner AND is ordered before teardown,
+    // which no unit test of the collector can show.
+    const src = readPerf('runT2Baseline.cjs')
+
+    // Anchored to statement form, not a bare substring: a plain indexOf also
+    // matches the call sitting in a trailing `// comment`, which let a
+    // disabled producer keep the suite green when this guard was first written.
+    const sampleAt = src.search(
+      /^\s*const statsResult = await sampleMainPersistenceStats\(mainInspector\)\s*$/m
+    )
+    const applyAt = src.search(/^\s*applyPersistenceStatsToMetrics\(report\.metrics, /m)
+    const closeAt = src.search(/^\s*mainInspector\.close\(\)\s*$/m)
+
+    expect(sampleAt).toBeGreaterThan(-1)
+    expect(applyAt).toBeGreaterThan(sampleAt)
+    // Sampling must happen while the session is still attached.
+    expect(closeAt).toBeGreaterThan(applyAt)
+
+    // A failed sample must be recorded, never silently dropped.
+    expect(src).toContain('persistenceStatsFailure')
+  })
+
+  it('derives claimMetricsCollected instead of hardcoding false', () => {
+    const src = readPerf('runT2Baseline.cjs')
+    expect(
+      src.search(/^\s*claimMetricsCollected: persistenceStatsOk && profilesCaptured,\s*$/m)
+    ).toBeGreaterThan(-1)
+    expect(src.search(/^\s*claimMetricsCollected: false,?\s*$/m)).toBe(-1)
+  })
+
+  it('arms PERF_PRELOAD_PROBE on the measured child', () => {
+    // The handle installs only under this flag. Without it every run would
+    // fail-closed with "not installed" — correct, but permanently unpassable.
+    const src = readPerf('isolatedLaunch.cjs')
+    expect(src).toContain("PERF_PRELOAD_PROBE: '1'")
   })
 })
