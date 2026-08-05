@@ -4115,6 +4115,7 @@ export const TranscriptPanel = memo(
                         label={superSummary.label}
                         labelParts={superSummary.parts}
                         icons={<CollapsedStackIconStrip families={superSummary.families} />}
+                        diffStats={superSummary.diff}
                         compact={!superGroup.headerMessage}
                         errored={superSummary.errorCount > 0}
                         expanded={superGroupExpanded}
@@ -4238,6 +4239,7 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     header={activityStackHeader}
                     activities={msg.toolActivities || []}
+                    showDiffStats
                     expanded={collapsedStackExpanded}
                     onToggle={(expanded) =>
                       setCollapsedStackExpanded(liveViewportStackKey, expanded)
@@ -4263,6 +4265,7 @@ export const TranscriptPanel = memo(
                         setActivityExpansionForRow(rowKey, next)
                       }
                       onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                      showDiffStats
                       thinkingTraceActions={thinkingTraceActions}
                     />
                   </CollapsedActivityStackRow>
@@ -4286,6 +4289,7 @@ export const TranscriptPanel = memo(
                     expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                     onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(rowKey, next)}
                     onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                    showDiffStats
                     thinkingTraceActions={thinkingTraceActions}
                   />
                 ) : msg.role === 'tool' ? (
