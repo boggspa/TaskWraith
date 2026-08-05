@@ -176,6 +176,15 @@ struct HomeView: View {
     /// via the connected host as the "oracle").
     @State private var showDiscoverySheet = false
     @State private var renameTargetCard: RemoteTaskCard?
+    /// Thread-list title ink (desktop sidebar parity). The store holds the
+    /// read/unread fingerprints and the success-ink epoch; the epoch is seeded
+    /// on first construction and never moves, so upgrading never greens a whole
+    /// history of finished work at once.
+    @State private var rowToneStore = TWThreadRowToneStore()
+    @State private var rowToneAcknowledgements: [String: String] = [:]
+    /// Seeded once per view lifetime rather than per row render — the store
+    /// reads UserDefaults, and every row would otherwise hit it each pass.
+    @State private var rowToneSuccessEpoch: Date? = nil
     /// N1 home search — ephemeral by design (a theme-revision teardown clears
     /// a transient search; boarded landmine ③ exception in ios-batch1-ux-spec).
     @State private var searchText = ""
@@ -196,6 +205,25 @@ struct HomeView: View {
     /// Gated on `explicitSelection` (the iPad NavigationSplitView sidebar —
     /// horizontalSizeClass is unreliable here, see above) + a persisted flag, so
     /// it runs once; afterwards the user's collapse/expand choices stick.
+    /// Seed the success-ink epoch once and load the read/unread fingerprints.
+    private func primeRowToneState() {
+        if rowToneSuccessEpoch == nil {
+            rowToneSuccessEpoch = rowToneStore.loadOrSeedSuccessInkEpoch(now: Date())
+        }
+        rowToneAcknowledgements = rowToneStore.currentAcknowledgements
+    }
+
+    /// Opening a thread IS the acknowledgement (desktop parity): its settled
+    /// result has now been seen, so the ink retires. The waiting tone is
+    /// untouched - live state with nothing to acknowledge.
+    private func acknowledgeRowTone(for threadId: String?) {
+        guard let threadId else { return }
+        guard let card = model.taskCards.first(where: { $0.id == threadId }) else { return }
+        guard let outcome = TWThreadRowToneResolver.outcome(for: card) else { return }
+        rowToneStore.acknowledge(chatId: threadId, outcome: outcome)
+        rowToneAcknowledgements = rowToneStore.currentAcknowledgements
+    }
+
     private func seedSidebarCollapseIfNeeded() {
         guard explicitSelection, !ipadCollapseSeeded else { return }
         ipadCollapseSeeded = true
@@ -424,7 +452,13 @@ struct HomeView: View {
             }
             .twSheetLiquidGlass(detents: [.medium])
         }
-        .onAppear { seedSidebarCollapseIfNeeded() }
+        .onAppear {
+            seedSidebarCollapseIfNeeded()
+            primeRowToneState()
+        }
+        .onChange(of: selection) { _, threadId in
+            acknowledgeRowTone(for: threadId)
+        }
         .onChange(of: model.navigationTarget) { _, threadId in
             guard let threadId else { return }
             selection = threadId
@@ -973,6 +1007,11 @@ struct HomeView: View {
         // "needs you" work stays easy to spot.
         let pendingAttentionCount = projection.pendingAttentionCount(for: card)
         let needsAttention = pendingAttentionCount > 0
+        let rowTone = TWThreadRowToneResolver.tone(
+            for: card,
+            isSelected: selection == card.id,
+            acknowledgements: rowToneAcknowledgements,
+            successInkEpoch: rowToneSuccessEpoch)
         let rowChrome = Group {
             if needsAttention {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1017,7 +1056,8 @@ struct HomeView: View {
             } label: {
                 HStack(spacing: 6) {
                     TaskRow(
-                        card: card, pendingAttentionCount: pendingAttentionCount, nested: nested)
+                        card: card, pendingAttentionCount: pendingAttentionCount, nested: nested,
+                        rowTone: rowTone)
                     Image(systemName: "chevron.right")
                         .font(.caption2)
                         .foregroundStyle(TWTheme.textMuted)
@@ -1038,7 +1078,8 @@ struct HomeView: View {
             } label: {
                 HStack(spacing: 6) {
                     TaskRow(
-                        card: card, pendingAttentionCount: pendingAttentionCount, nested: nested)
+                        card: card, pendingAttentionCount: pendingAttentionCount, nested: nested,
+                        rowTone: rowTone)
                     Image(systemName: "chevron.right")
                         .font(.caption2)
                         .foregroundStyle(TWTheme.textMuted)
@@ -1318,6 +1359,9 @@ struct TaskRow: View {
     let card: RemoteTaskCard
     let pendingAttentionCount: Int
     var nested: Bool = false
+    /// Title ink: amber while parked on the user, the user's diff green/red
+    /// for an unread settled result, nil for an ordinary row.
+    var rowTone: TWThreadRowTone? = nil
     @Environment(\.appScale) private var appScale
 
     private var nestIcon: String {
@@ -1370,6 +1414,12 @@ struct TaskRow: View {
                         .font(nested ? .footnote : .callout)
                         .foregroundStyle(TWTheme.textPrimary)
                         .lineLimit(1)
+                        .twThreadRowToneInk(rowTone)
+                        .accessibilityLabel(
+                            rowTone.map {
+                                TWThreadRowToneInk.accessibilityLabel(
+                                    for: $0, title: card.title ?? card.id)
+                            } ?? (card.title ?? card.id))
                     // Pending-attention is an actionable "needs you" signal (not a
                     // status chip) — keep it, inline so the row stays one line.
                     if pendingAttentionCount > 0 {
