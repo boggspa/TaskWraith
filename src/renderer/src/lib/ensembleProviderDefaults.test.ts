@@ -670,8 +670,21 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
 describe('mistral reasoning lock (vibe schema: medium-3.5 thinking=high, devstral off)', () => {
   it('locks Mistral Medium 3.5 to a single High option so the ladder renders fixed', () => {
     expect(getEnsembleReasoningOptions('mistral', 'mistral-medium-3.5')).toEqual([
-      { value: 'high', label: 'High' }
+      { value: 'high', label: 'High', disabledReason: 'Mistral Medium 3.5 always thinks at High.' }
     ])
+  })
+
+  it('mirrors the lock on the Pi BYOK lane and keeps every other Pi model honestly inert', () => {
+    // Pi's launch authority seals thinkingMode 'provider-default' — no level
+    // is ever sent, so a locked label is only truthful where the upstream
+    // default is known (mistral's schema pins medium-3.5 at high). The other
+    // thinking models run their upstream defaults and stay option-free.
+    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-3.5')).toEqual([
+      { value: 'high', label: 'High', disabledReason: 'Mistral Medium 3.5 always thinks at High.' }
+    ])
+    expect(getEnsembleReasoningOptions('pi', 'deepseek/deepseek-v4-pro')).toEqual([])
+    expect(getEnsembleReasoningOptions('pi', 'cerebras/gpt-oss-120b')).toEqual([])
+    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
   })
 
   it('keeps Devstral Small reasoning-free (inert rail)', () => {

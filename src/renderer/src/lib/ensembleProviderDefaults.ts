@@ -127,7 +127,11 @@ const GROK_REASONING: CombinedModelPickerReasoningOption[] = [
 // LOCKED aesthetic: pinned at High, non-interactive, "Reasoning is fixed for
 // this model" tooltip.
 const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'high', label: 'High' }
+  {
+    value: 'high',
+    label: 'High',
+    disabledReason: 'Mistral Medium 3.5 always thinks at High.'
+  }
 ]
 
 const CODEX_MODELS: CombinedModelPickerModelOption[] = [
@@ -367,6 +371,12 @@ export function getEnsembleReasoningOptions(
       return modelId === CURSOR_GROK_45_BASE_MODEL_ID ? GROK_REASONING : []
     case 'mistral':
       return modelId === 'mistral-medium-3.5' ? MISTRAL_THINKING_REASONING : []
+    case 'pi':
+      // Pi's sealed launch policy never sends `--thinking` (provider-default),
+      // so a locked label is only truthful where the upstream default is
+      // known: mistral's own schema pins medium-3.5 at high. Every other Pi
+      // model runs its upstream default and stays honestly option-free.
+      return modelId === 'mistral/mistral-medium-3.5' ? MISTRAL_THINKING_REASONING : []
     default:
       return []
   }
