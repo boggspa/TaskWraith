@@ -20,19 +20,18 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     const card = rule('.app-sidebar .model-usage-summary--sidebar {')
     const body = rule('.app-sidebar .model-usage-liquid-card {')
 
-    expect(card).toContain('border-radius: 16px;')
+    expect(card).toContain('border-radius: 0;')
     expect(card).toContain('background-color: rgba(22, 22, 22, 0.65);')
     expect(card).toContain('background-image: none;')
     expect(card).toContain('backdrop-filter: blur(22px) saturate(0%) brightness(0.96);')
-    expect(card).toContain('--model-usage-rim-glow: rgba(86, 151, 240, 0.38);')
-    expect(card).toContain('0 0 12px -4px var(--model-usage-rim-glow)')
+    // No accent glow anywhere on the pane (owner call 2026-08-05).
+    expect(css).not.toContain('--model-usage-rim-glow')
     expect(body).toContain('background: transparent;')
     expect(body).toContain('border: 0;')
   })
 
-  it('builds a sharp cool hairline rim without a top-biased sheen', () => {
+  it('is square and rimless — the pane is sidebar chrome, not a floating card', () => {
     const card = rule('.app-sidebar .model-usage-summary--sidebar {')
-    const rim = rule('.app-sidebar .model-usage-summary--sidebar::before {')
     const sheen = rule('.app-sidebar .model-usage-summary--sidebar::after {')
 
     expect(card).toContain('--model-usage-rim-inset: 2px;')
@@ -41,14 +40,16 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(card).not.toContain('inset 0 1px 0')
     expect(card).not.toContain('radial-gradient(115% 82% at 12% -12%')
     expect(card).not.toContain('inset 0 18px 34px -30px')
-    expect(rim).toContain('inset: var(--model-usage-rim-inset);')
-    expect(rim).toContain('height: auto;')
-    expect(rim).toContain('border-radius: calc(16px - var(--model-usage-rim-inset));')
-    expect(rim).toContain('-webkit-mask-composite: xor;')
-    expect(rim).toContain('mask-composite: exclude;')
-    expect(rim).toContain('background: rgba(112, 168, 246, 0.65);')
-    expect(rim).toContain('filter: drop-shadow(0 0 1px rgba(112, 168, 246, 0.35));')
-    expect(rim).not.toContain('background: linear-gradient(')
+
+    // The blue hairline is GONE, not merely recoloured: it was a ::before with a
+    // mask-composite ring, so leaving the element behind would keep painting a
+    // 1px border once anyone gave it a colour again.
+    expect(css).not.toContain('.app-sidebar .model-usage-summary--sidebar::before {')
+    expect(css).not.toContain('rgba(112, 168, 246')
+    expect(css).not.toMatch(/border-radius:\s*calc\(16px/)
+
+    // The neutral glass sheen survives, squared — it is the material, not a rim.
+    expect(sheen).toContain('border-radius: 0;')
     expect(sheen).toContain('linear-gradient(')
     expect(sheen).not.toContain('radial-gradient(')
     expect(sheen).not.toContain('rgba(150, 171, 201')
@@ -65,7 +66,6 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(glassCard).toContain('background-color: rgba(22, 22, 22, 0.65);')
     expect(glassCard).toContain('background-image: none;')
     expect(glassCard).toContain('inset 0 -1px 0 rgba(0, 0, 0, 0.5)')
-    expect(glassCard).toContain('0 0 12px -4px var(--model-usage-rim-glow)')
     expect(glassCard).not.toContain('inset 0 1px 0')
   })
 

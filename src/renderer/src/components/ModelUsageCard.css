@@ -222,16 +222,17 @@
   overflow-y: auto;
   position: relative;
   isolation: isolate;
-  /* Keep the visible rim safely inside the pane's clipping boundary. */
+  /* Keeps the neutral sheen inside the pane's clipping boundary. */
   --model-usage-rim-inset: 2px;
-  --model-usage-rim-glow: rgba(86, 151, 240, 0.38);
   border: 1px solid transparent;
-  border-radius: 16px;
+  /* Square, rimless (owner call 2026-08-05): the pane is docked flush to the
+     sidebar's own edges, so a radius and an accent hairline read as a floating
+     card rather than as part of the sidebar chrome. */
+  border-radius: 0;
   background-color: rgba(22, 22, 22, 0.65);
   background-image: none;
   box-shadow:
     inset 0 -1px 0 rgba(0, 0, 0, 0.5),
-    0 0 12px -4px var(--model-usage-rim-glow),
     0 12px 28px -18px rgba(0, 0, 0, 0.72),
     0 1px 2px rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(22px) saturate(0%) brightness(0.96);
@@ -244,30 +245,12 @@
     opacity 150ms ease;
 }
 
-.app-sidebar .model-usage-summary--sidebar::before {
-  content: '';
-  position: absolute;
-  z-index: 0;
-  inset: var(--model-usage-rim-inset);
-  height: auto;
-  padding: 1px;
-  border-radius: calc(16px - var(--model-usage-rim-inset));
-  background: rgba(112, 168, 246, 0.65);
-  filter: drop-shadow(0 0 1px rgba(112, 168, 246, 0.35));
-  pointer-events: none;
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-}
-
 .app-sidebar .model-usage-summary--sidebar::after {
   content: '';
   position: absolute;
   z-index: 0;
   inset: var(--model-usage-rim-inset);
-  border-radius: calc(16px - var(--model-usage-rim-inset));
+  border-radius: 0;
   background: linear-gradient(
     118deg,
     rgba(255, 255, 255, 0.025),
@@ -322,7 +305,6 @@
   background-image: none;
   box-shadow:
     inset 0 -1px 0 rgba(0, 0, 0, 0.5),
-    0 0 12px -4px var(--model-usage-rim-glow),
     0 12px 28px -18px rgba(0, 0, 0, 0.72),
     0 1px 2px rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(16px) saturate(0%) brightness(0.96);
@@ -332,13 +314,11 @@
 :is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-appearance]
   .app-sidebar
   .run-summary.model-usage-summary.model-usage-summary--sidebar {
-  --model-usage-rim-glow: rgba(72, 137, 226, 0.28);
   border-color: transparent;
   background-color: rgba(255, 255, 255, 0.65);
   background-image: none;
   box-shadow:
     inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 0 12px -4px var(--model-usage-rim-glow),
     0 12px 28px -19px rgba(0, 0, 0, 0.3),
     0 1px 2px rgba(0, 0, 0, 0.12);
 }
