@@ -189,7 +189,11 @@ import type {
   UsageWindowAggregate,
   UsageBalanceAggregate
 } from './lib/usageAggregateTypes'
-import { buildQuotaSnapshotHookAggregates } from './lib/quotaSnapshotHook'
+import {
+  buildQuotaSnapshotHookAggregates,
+  mergeQuotaSnapshotHookSnapshots
+} from './lib/quotaSnapshotHook'
+import type { QuotaSnapshotHookSnapshot } from '../../shared/quotaSnapshotHook'
 import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
 import { openInteractiveProviderLogin } from './lib/providerLoginRefresh'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
@@ -2509,6 +2513,10 @@ function App(): React.JSX.Element {
     pi: [],
     mistral: []
   })
+  // Last-known Limit Counter hook snapshots (antigravity/deepseek/cerebras).
+  // The hook lane's counterpart to `lastUsageWindowsByProviderRef` above: one
+  // empty or deadline-missed helper read must not blank those meters.
+  const lastQuotaSnapshotHookRef = useRef<QuotaSnapshotHookSnapshot[]>([])
   const usageSummarySignatureRef = useRef('')
   const usageRecordsSignatureRef = useRef('')
   const usageRecordsInitializedRef = useRef(false)
@@ -8852,9 +8860,17 @@ function App(): React.JSX.Element {
     // AntiGravity plus Pi's API-credit/PAYG upstreams arrive through Limit
     // Counter's credential-free normalized cache. TaskWraith never opens the
     // AGY session, Pi key store, provider keychain entries, or raw responses.
-    if (Array.isArray(hookSnapshots)) {
-      ordered.push(...buildQuotaSnapshotHookAggregates(hookSnapshots))
-    }
+    // Merged over the last-known snapshots per provider (the hook lane's
+    // `resolveWithCache`): the helper cache is re-read on every refresh, so a
+    // torn write, plutil hiccup, or missed UI deadline used to blank all three
+    // meters until the next successful poll.
+    const hookSnapshotsMerged = mergeQuotaSnapshotHookSnapshots(
+      lastQuotaSnapshotHookRef.current,
+      Array.isArray(hookSnapshots) ? hookSnapshots : null,
+      now
+    )
+    lastQuotaSnapshotHookRef.current = hookSnapshotsMerged
+    ordered.push(...buildQuotaSnapshotHookAggregates(hookSnapshotsMerged))
 
     const inferUsageProvider = (model: string): ProviderId => {
       const normalized = model.toLowerCase()
