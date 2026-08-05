@@ -413,33 +413,80 @@ function startsLaterTranscriptTurn(message: ChatMessage): boolean {
   )
 }
 
-function hasLaterRoundRun(group: EnsembleFanoutViewportGroup, runs: readonly ChatRun[]): boolean {
-  const runIndexById = new Map(runs.map((run, index) => [run.runId, index] as const))
+/**
+ * Run-derived lookups that are identical for every round and every wave in one
+ * transcript pass.
+ *
+ * MEASURED 2026-08-05 (perf-artifacts/fanout-viewport-soak-2026-08-05): these
+ * were rebuilt per ROUND (`terminalRunIds`) and per WAVE (`Map(runs)` inside
+ * `hasLaterRoundRun`). Runs grow with rounds, so both were O(rounds x runs) —
+ * the accumulator behind a constant-work transcript mutation growing
+ * 134ms -> 9,220ms across a 500-round soak. Build once, share everywhere.
+ */
+export interface EnsembleFanoutRunIndex {
+  terminalRunIds: ReadonlySet<string>
+  runIndexById: ReadonlyMap<string, number>
+  /** Runs that carry a startedAt, bucketed by round, in run order. */
+  startedRunsByRoundId: ReadonlyMap<string, ReadonlyArray<{ index: number; laneId: string }>>
+}
+
+export function buildEnsembleFanoutRunIndex(
+  runs: readonly ChatRun[] | null | undefined
+): EnsembleFanoutRunIndex {
+  const list = runs || []
+  const terminalRunIds = new Set<string>()
+  const runIndexById = new Map<string, number>()
+  const startedRunsByRoundId = new Map<string, Array<{ index: number; laneId: string }>>()
+  for (let index = 0; index < list.length; index += 1) {
+    const run = list[index]
+    if (runIsTerminal(run)) terminalRunIds.add(run.runId)
+    runIndexById.set(run.runId, index)
+    const roundId = run.ensembleRoundId
+    if (
+      typeof roundId === 'string' &&
+      roundId &&
+      typeof run.startedAt === 'string' &&
+      run.startedAt
+    ) {
+      const bucket = startedRunsByRoundId.get(roundId)
+      const entry = { index, laneId: run.ensembleLaneId || '' }
+      if (bucket) bucket.push(entry)
+      else startedRunsByRoundId.set(roundId, [entry])
+    }
+  }
+  return { terminalRunIds, runIndexById, startedRunsByRoundId }
+}
+
+function hasLaterRoundRun(
+  group: EnsembleFanoutViewportGroup,
+  runIndex: EnsembleFanoutRunIndex
+): boolean {
   const ownedLaneIds = new Set(
     group.lanes
       .map(({ message }) => metadataString(message, 'ensembleLaneId'))
       .filter((laneId): laneId is string => Boolean(laneId))
   )
-  const laneRunIndexes = group.lanes
-    .map(({ message }) => (message.runId ? runIndexById.get(message.runId) : undefined))
-    .filter((index): index is number => typeof index === 'number')
-  if (laneRunIndexes.length === 0) return false
-  const lastLaneRunIndex = Math.max(...laneRunIndexes)
-  return runs.some(
-    (run, index) =>
-      index > lastLaneRunIndex &&
-      run.ensembleRoundId === group.roundId &&
-      (!run.ensembleLaneId || !ownedLaneIds.has(run.ensembleLaneId)) &&
-      typeof run.startedAt === 'string' &&
-      run.startedAt.length > 0
+  let lastLaneRunIndex = -1
+  for (const { message } of group.lanes) {
+    const index = message.runId ? runIndex.runIndexById.get(message.runId) : undefined
+    if (typeof index === 'number' && index > lastLaneRunIndex) lastLaneRunIndex = index
+  }
+  if (lastLaneRunIndex < 0) return false
+  // Only this round's started runs can qualify, so scan that bucket rather than
+  // the whole run list (which grows with every round in the chat).
+  const candidates = runIndex.startedRunsByRoundId.get(group.roundId)
+  if (!candidates) return false
+  return candidates.some(
+    (candidate) =>
+      candidate.index > lastLaneRunIndex &&
+      (!candidate.laneId || !ownedLaneIds.has(candidate.laneId))
   )
 }
 
 function shouldCollapseFanoutGroup(
   group: EnsembleFanoutViewportGroup,
-  messages: readonly ChatMessage[],
-  runs: readonly ChatRun[],
-  terminalRunIds: ReadonlySet<string>
+  lastTurnStartIndex: number,
+  runIndex: EnsembleFanoutRunIndex
 ): boolean {
   const latestRowByLaneId = new Map<string, IndexedLaneMessage>()
   for (const laneRow of group.laneRows) {
@@ -450,16 +497,18 @@ function shouldCollapseFanoutGroup(
     (group.expectedLaneCount !== null && group.lanes.length < group.expectedLaneCount) ||
     !group.lanes.every(({ message }) => {
       const latest = latestRowByLaneId.get(fanoutLaneKey(message))
-      return Boolean(latest && laneIsTerminal(latest.message, terminalRunIds))
+      return Boolean(latest && laneIsTerminal(latest.message, runIndex.terminalRunIds))
     })
   ) {
     return false
   }
-  const lastLaneIndex = Math.max(...group.laneRows.map((lane) => lane.index))
-  return (
-    messages.slice(lastLaneIndex + 1).some(startsLaterTranscriptTurn) ||
-    hasLaterRoundRun(group, runs)
-  )
+  let lastLaneIndex = -1
+  for (const lane of group.laneRows) if (lane.index > lastLaneIndex) lastLaneIndex = lane.index
+  // `lastTurnStartIndex` is the highest index in this round whose message
+  // starts a later transcript turn, precomputed once per round. It is exactly
+  // equivalent to the previous `messages.slice(lastLaneIndex + 1).some(...)`,
+  // without allocating a fresh tail array for every wave.
+  return lastTurnStartIndex > lastLaneIndex || hasLaterRoundRun(group, runIndex)
 }
 
 /**
@@ -473,16 +522,30 @@ export function buildEnsembleFanoutViewportRanges(input: {
   roundId: string
   messages: readonly ChatMessage[]
   runs?: readonly ChatRun[]
+  /**
+   * Shared run lookups. The transcript calls this once per visible ROUND with
+   * the chat's whole run list, so deriving them here made the work
+   * O(rounds x runs). Callers in a multi-round pass should build it once with
+   * `buildEnsembleFanoutRunIndex` and pass it in; it is derived on demand when
+   * absent so single-round callers and tests stay unchanged.
+   */
+  runIndex?: EnsembleFanoutRunIndex
   sourceOffset: number
   expandedViewportIds: ReadonlySet<string>
 }): TranscriptGroupedMessageRange[] {
-  const runs = input.runs || []
-  const terminalRunIds = new Set(runs.filter(runIsTerminal).map((run) => run.runId))
+  const runIndex = input.runIndex || buildEnsembleFanoutRunIndex(input.runs)
+  let lastTurnStartIndex = -1
+  for (let index = input.messages.length - 1; index >= 0; index -= 1) {
+    if (startsLaterTranscriptTurn(input.messages[index])) {
+      lastTurnStartIndex = index
+      break
+    }
+  }
   const groups = collectEnsembleFanoutViewportGroups(
     input.chatId,
     input.roundId,
     input.messages
-  ).filter((group) => shouldCollapseFanoutGroup(group, input.messages, runs, terminalRunIds))
+  ).filter((group) => shouldCollapseFanoutGroup(group, lastTurnStartIndex, runIndex))
   if (groups.length === 0) {
     return input.messages.map((message, index) => ({
       message,

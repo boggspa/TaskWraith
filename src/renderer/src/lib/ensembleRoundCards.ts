@@ -7,7 +7,10 @@ import {
   type ChatPopoutRoundExpansionSnapshot
 } from '../../../shared/chatPopoutTransfer'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
-import { buildEnsembleFanoutViewportRanges } from './ensembleFanoutViewportGroups'
+import {
+  buildEnsembleFanoutRunIndex,
+  buildEnsembleFanoutViewportRanges
+} from './ensembleFanoutViewportGroups'
 import { isAgentQuestionMarker, isAgentQuestionReply } from './agentQuestionTombstone'
 import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGrouping'
 
@@ -382,6 +385,11 @@ export function buildEnsembleRoundCardRowsWithRanges(
       .filter((roundId): roundId is string => typeof roundId === 'string' && roundId.length > 0)
   )
 
+  // Derived ONCE for the whole pass. Deriving it inside the per-round call made
+  // the sweep O(rounds x runs) — runs grow with rounds, which is the measured
+  // accumulator (perf-artifacts/fanout-viewport-soak-2026-08-05).
+  const fanoutRunIndex = buildEnsembleFanoutRunIndex(chat.runs || [])
+
   const out: TranscriptGroupedMessageRange[] = []
   let roundIndex = 0
   let sourceIndex = 0
@@ -401,6 +409,7 @@ export function buildEnsembleRoundCardRowsWithRanges(
         roundId,
         messages,
         runs: chat.runs || [],
+        runIndex: fanoutRunIndex,
         sourceOffset: groupStartIndex,
         expandedViewportIds: expandedFanoutViewportIds
       })
