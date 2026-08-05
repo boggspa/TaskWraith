@@ -580,6 +580,63 @@ describe('T1b numeric gPerf + profile digests', () => {
     expect(tiny.errors.some((e) => /too small/i.test(e))).toBe(true)
   })
 
+  it('validates the T4b coalescing/journal reporting seam without breaking the T2 baseline', () => {
+    // The frozen T2 baseline predates these probes and is the denominator for
+    // every comparison — absent must stay valid or the comparison can never run.
+    expect(validatePerfMetrics(createEmptyPerfMetrics()).ok).toBe(true)
+
+    const withSeam = () => {
+      const m = createEmptyPerfMetrics()
+      m.main.saveChat.coalescing = {
+        scheduled: 12,
+        coalesced: 9,
+        flushed: 3,
+        pending: 0,
+        urgentFlushes: 1,
+        ceilingFlushes: 2,
+        discarded: 0,
+        reasonMix: { normal: 11, terminal: 1, approval: 0, 'history-deletion': 0, shutdown: 0 }
+      }
+      m.main.saveChat.journal = {
+        appends: 3,
+        linesWritten: 3,
+        bytesWritten: 4096,
+        snapshotsWritten: 0,
+        chatsDeleted: 0,
+        tombstoneRejects: 0,
+        tornLinesRecovered: 0
+      }
+      return m
+    }
+    expect(validatePerfMetrics(withSeam()).ok).toBe(true)
+
+    // Present-but-incomplete must FAIL loudly: a half-wired sampler would
+    // otherwise produce a run nobody could attribute.
+    const missingCeiling = withSeam()
+    delete (missingCeiling.main.saveChat.coalescing as Record<string, unknown>).ceilingFlushes
+    const missingCeilingResult = validatePerfMetrics(missingCeiling)
+    expect(missingCeilingResult.ok).toBe(false)
+    expect(
+      missingCeilingResult.errors.some((e: string) => /coalescing\.ceilingFlushes/.test(e))
+    ).toBe(true)
+
+    // Reason attribution is the whole point of the seam — a missing reason
+    // bucket must not slip through as a zero.
+    const missingReason = withSeam()
+    delete (missingReason.main.saveChat.coalescing.reasonMix as Record<string, unknown>)[
+      'history-deletion'
+    ]
+    const missingReasonResult = validatePerfMetrics(missingReason)
+    expect(missingReasonResult.ok).toBe(false)
+    expect(
+      missingReasonResult.errors.some((e: string) => /reasonMix\.history-deletion/.test(e))
+    ).toBe(true)
+
+    const badJournal = withSeam()
+    ;(badJournal.main.saveChat.journal as Record<string, unknown>).bytesWritten = 'lots'
+    expect(validatePerfMetrics(badJournal).ok).toBe(false)
+  })
+
   it('evaluates numeric thresholds and refuses unsupported stringify invention', () => {
     const before = createEmptyPerfMetrics()
     const after = createEmptyPerfMetrics()
@@ -2611,26 +2668,18 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
   const { PERF_GATE_THRESHOLDS } = require('./perfGateThresholds.cjs')
 
   it('checkDiskHeadroom refuses when free space is below minFreeBytes', () => {
-    const result = checkDiskHeadroom(
-      '/tmp',
-      PERF_GATE_THRESHOLDS.minFreeDiskBytes,
-      {
-        statfsSync: () => ({ bsize: 4096, bavail: 100 })
-      }
-    )
+    const result = checkDiskHeadroom('/tmp', PERF_GATE_THRESHOLDS.minFreeDiskBytes, {
+      statfsSync: () => ({ bsize: 4096, bavail: 100 })
+    })
     expect(result.ok).toBe(false)
     expect(result.freeBytes).toBe(4096 * 100)
     expect(result.note).toMatch(/only \d+\.\d GiB free/)
   })
 
   it('checkDiskHeadroom passes when free space exceeds minFreeBytes', () => {
-    const result = checkDiskHeadroom(
-      '/tmp',
-      1_000_000,
-      {
-        statfsSync: () => ({ bsize: 4096, bavail: 1_000_000 })
-      }
-    )
+    const result = checkDiskHeadroom('/tmp', 1_000_000, {
+      statfsSync: () => ({ bsize: 4096, bavail: 1_000_000 })
+    })
     expect(result.ok).toBe(true)
     expect(result.freeBytes).toBe(4096 * 1_000_000)
   })
