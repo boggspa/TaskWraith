@@ -80,6 +80,13 @@ export interface ChatUpdateDeliveryCoordinatorOptions {
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
 }
 
+/** Test seam: the default-protocol decision is a shipping behaviour worth pinning. */
+export function resolveEmitProtocolVersionForTest(
+  requested?: ChatUpdateProtocolVersion
+): ChatUpdateProtocolVersion {
+  return resolveEmitProtocolVersion(requested)
+}
+
 function resolveEmitProtocolVersion(
   requested?: ChatUpdateProtocolVersion
 ): ChatUpdateProtocolVersion {
@@ -87,8 +94,16 @@ function resolveEmitProtocolVersion(
     return requested
   }
   const fromEnv = process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL?.trim()
+  if (fromEnv === '1') return CHAT_UPDATE_PROTOCOL_V1
   if (fromEnv === '2') return CHAT_UPDATE_PROTOCOL_V2
-  return CHAT_UPDATE_PROTOCOL_V1
+  // Default v2. Measured 2026-08-05 on a real 26k-message / 62 MB chat with
+  // the transcript open: v1 degraded 6.6 s -> 22.8 s across seven identical
+  // saves while v2 held flat at ~3.4 s, and v2 opened the chat in 2.35 s vs
+  // 6.75 s holding 196 MB vs 717 MB of renderer heap. Patching is fail-safe —
+  // it happens only while the acknowledged baseline is held, and a failed
+  // apply nacks, which drops the baseline and forces a full snapshot next
+  // delivery. TASKWRAITH_CHAT_UPDATE_PROTOCOL=1 is the escape hatch.
+  return CHAT_UPDATE_PROTOCOL_V2
 }
 
 function toCompactBaseline(chat: ChatRecord, revision: number): CompactChatUpdateBaseline {

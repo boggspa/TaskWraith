@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRecord } from './store/types'
 import { applyChatUpdateDelivery, type ChatUpdateDelivery } from '../shared/chatUpdateTransport'
 import {
   ChatUpdateDeliveryCoordinator,
+  resolveEmitProtocolVersionForTest,
   type ChatUpdateDeliveryTarget
 } from './ChatUpdateDeliveryCoordinator'
 
@@ -37,7 +38,10 @@ function target(id = 7): ChatUpdateDeliveryTarget & { deliveries: ChatUpdateDeli
 describe('ChatUpdateDeliveryCoordinator', () => {
   it('keeps one delivery in flight and replaces any number of pending snapshots with the latest', () => {
     const sink = target()
-    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 1
+    })
     coordinator.enqueue(sink, chat(1, ['one']))
     coordinator.enqueue(sink, chat(2, ['two']))
     coordinator.enqueue(sink, chat(3, ['three']))
@@ -60,7 +64,10 @@ describe('ChatUpdateDeliveryCoordinator', () => {
 
   it('produces a patch that reconstructs the exact latest pending chat', () => {
     const sink = target()
-    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 1
+    })
     const first = chat(1, ['one', 'stable'])
     const latest = chat(3, ['three', 'stable', 'tail'])
     coordinator.enqueue(sink, first)
@@ -148,7 +155,8 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
       minDeliveryIntervalMs: 100,
-      now: () => now
+      now: () => now,
+      emitProtocolVersion: 1
     })
     coordinator.enqueue(sink, chat(1, ['one']))
     coordinator.enqueue(sink, chat(2, ['two']))
@@ -208,7 +216,10 @@ describe('ChatUpdateDeliveryCoordinator', () => {
 
   it('reports retained baseline bytes and never stacks three full ChatRecord refs', () => {
     const sink = target()
-    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 1
+    })
     const first = chat(1, ['one-message-body'])
     coordinator.enqueue(sink, first)
     const beforeAck = coordinator.statsForTarget(sink.id)
@@ -254,5 +265,40 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     // Treated as a reject → one snapshot retry, then stop.
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+})
+
+describe('default emit protocol', () => {
+  /**
+   * MEASURED 2026-08-05 on the real 26,389-message / 924-run ensemble chat
+   * (62 MB record), identical freshly-seeded profile per arm, transcript open,
+   * 7 identical saves each:
+   *
+   *   v1 total per save: 6.6, 9.3, 13.0, 15.2, 18.2, 22.8, 21.5 s  (degrading)
+   *   v2 total per save: 1.7, 3.6, 3.4, 3.4, 3.4, 3.4, 3.4 s       (flat)
+   *
+   * The decisive property is not the 4.5x median — it is that v1 degrades
+   * monotonically with every save while v2 stays flat, which is the
+   * "it never recovers" symptom users report. v2 also opened the chat in
+   * 2.35 s vs 6.75 s and held 196 MB vs 717 MB of renderer heap.
+   *
+   * Patches are fail-safe: the coordinator only patches while it holds the
+   * acknowledged baseline, and a failed apply nacks, which drops the baseline
+   * and forces a full snapshot on the next delivery. TASKWRAITH_CHAT_UPDATE_PROTOCOL=1
+   * remains as the escape hatch.
+   */
+  it('defaults to v2 patches, with an explicit env escape hatch back to v1', () => {
+    const previous = process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL
+    try {
+      delete process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL
+      expect(resolveEmitProtocolVersionForTest()).toBe(2)
+      process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL = '1'
+      expect(resolveEmitProtocolVersionForTest()).toBe(1)
+      process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL = '2'
+      expect(resolveEmitProtocolVersionForTest()).toBe(2)
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL
+      else process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL = previous
+    }
   })
 })
