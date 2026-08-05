@@ -140,3 +140,44 @@ describe('assignAgentIdentity', () => {
     })
   })
 })
+
+describe('pool exhaustion stays linear', () => {
+  /**
+   * Once the nickname pool (34 names) is used up, `pickNextPoolPair` searched
+   * for a free `"<name> <suffix>"` by walking suffix = 2, 3, 4 … and testing
+   * each against the used-name set. The Nth agent therefore cost O(N) and
+   * assigning N agents cost O(N^2).
+   *
+   * Found by CPU-profiling a fan-out soak (2026-08-05): `assignAgentIdentity` +
+   * `pickNextPoolPair` were 52% of a single transcript update once several
+   * hundred subagents had accumulated. Real chats persist identities, so the
+   * common path is the cheap early-return — but any chat that genuinely
+   * accumulates agents pays this once, and it is quadratic.
+   *
+   * Asserts the ALLOCATION COUNT, not wall-clock: a name must be found without
+   * rescanning the whole suffix space, so the number of distinct names stays
+   * exactly one per agent and the run completes well inside a timeout that a
+   * quadratic implementation blows through.
+   */
+  it('assigns many agents past the pool without quadratic rescanning', () => {
+    const chat = makeChat()
+    const agentCount = 4000
+    const started = Date.now()
+    const names = new Set<string>()
+    for (let i = 0; i < agentCount; i += 1) {
+      const identity = assignAgentIdentity(chat, makeThread({ id: `task-${i}` }))
+      names.add(identity.name)
+    }
+    const elapsedMs = Date.now() - started
+
+    // Every agent keeps a unique name.
+    expect(names.size).toBe(agentCount)
+    expect(agentCount).toBeGreaterThan(AGENT_NAME_POOL.length)
+    // Re-assignment is idempotent and must not mint a new name.
+    expect(assignAgentIdentity(chat, makeThread({ id: 'task-7' })).name).toBe(
+      assignAgentIdentity(chat, makeThread({ id: 'task-7' })).name
+    )
+    // 4k agents is ~8M set probes when quadratic (seconds); linear is ~ms.
+    expect(elapsedMs).toBeLessThan(1500)
+  })
+})

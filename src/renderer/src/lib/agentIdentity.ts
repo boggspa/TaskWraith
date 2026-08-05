@@ -188,6 +188,29 @@ function enrichIdentityWithNamedIcon(identity: AgentIdentity): AgentIdentity {
   return next
 }
 
+/**
+ * Used-name sets, keyed by the identities map they describe.
+ *
+ * Rebuilding `new Set(Object.values(map).map(...))` inside every assignment was
+ * the other half of the O(agents^2): each of N assignments walked all N names.
+ * The map object is replaced whenever a fresh canonical ChatRecord arrives, so
+ * keying on its identity rebuilds exactly once per record — O(agents) per
+ * update instead of per agent — and a WeakMap lets dead records be collected.
+ * This module is the only writer, so the cached set is kept in sync on insert.
+ */
+const usedNamesByIdentityMap = new WeakMap<object, Set<string>>()
+
+function usedNamesFor(map: Record<string, AgentIdentity>): Set<string> {
+  const cached = usedNamesByIdentityMap.get(map)
+  if (cached) return cached
+  const names = new Set<string>()
+  for (const identity of Object.values(map)) {
+    if (identity && typeof identity.name === 'string') names.add(identity.name)
+  }
+  usedNamesByIdentityMap.set(map, names)
+  return names
+}
+
 function pickNextPoolPair(usedNames: Set<string>): {
   name: string
   color: string
@@ -202,8 +225,17 @@ function pickNextPoolPair(usedNames: Set<string>): {
     }
   }
   // Pool exhausted: append a numeric suffix to keep things unique.
+  //
+  // The suffix search starts from the count of names already taken rather than
+  // from 2. Restarting at 2 every time made the Nth agent walk ~N candidates,
+  // so assigning N agents was O(N^2) — measured at 52% of a single transcript
+  // update in a fan-out soak once several hundred subagents had accumulated
+  // (2026-08-05). Suffixes are only ever appended, so everything below the
+  // current size is already taken; starting there makes each assignment
+  // amortised O(1) while keeping the exact same name sequence. The loop still
+  // probes upward, so any gap or externally-supplied name is still respected.
   if (!chosenName) {
-    let suffix = 2
+    let suffix = Math.max(2, usedNames.size - AGENT_NICKNAME_POOL.length + 2)
     while (true) {
       const candidate = `${AGENT_NICKNAME_POOL[(suffix - 1) % AGENT_NICKNAME_POOL.length]} ${suffix}`
       if (!usedNames.has(candidate)) {
@@ -265,7 +297,7 @@ export function assignAgentIdentity(
   }
 
   // For Codex, try the platform name first. Fall back to pool for everyone else.
-  const usedNames = new Set<string>(Object.values(map).map((id) => id.name))
+  const usedNames = usedNamesFor(map)
   let identity: AgentIdentity
   const platformName = thread.provider === 'codex' ? extractPlatformName(activity) : undefined
   if (platformName && !usedNames.has(platformName)) {
@@ -297,6 +329,8 @@ export function assignAgentIdentity(
   }
 
   map[thread.id] = identity
+  // Keep the cached set in sync so the next assignment stays O(1).
+  usedNames.add(identity.name)
   return identity
 }
 
