@@ -1636,9 +1636,15 @@ function normalizeFanoutIsolation(value: unknown): EnsembleFanoutIsolation | nul
 }
 
 const ENSEMBLE_AWAIT_POLL_INTERVAL_MS = 500
-/** MCP broker hard-kills tool calls at 130s; leave re-invoke headroom. */
-const ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS = 110
-const ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS = 60
+/**
+ * Await budget (owner request 2026-08-05): authoritative seats may hold a
+ * fan-out JOIN open for up to 10 minutes per call, defaulting to 3. The MCP
+ * broker's long-poll allowance for ensemble_await is this ceiling + 30s grace
+ * (MCP_BROKER_LONG_POLL_TIMEOUT_MS in mcp/McpBrokerTimeouts.ts — keep them in
+ * lockstep) so the transport kill stays a liveness backstop, never the cap.
+ */
+const ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS = 600
+const ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS = 180
 const ENSEMBLE_LANE_RESULT_DEFAULT_MAX_CHARS = 20_000
 const ENSEMBLE_LANE_RESULT_MAX_CHARS = 60_000
 
@@ -1653,7 +1659,7 @@ function normalizeLaneIdList(value: unknown): string[] | null | undefined {
   return [...new Set(laneIds)]
 }
 
-function clampAwaitTimeoutSeconds(value: unknown): number {
+export function clampAwaitTimeoutSeconds(value: unknown): number {
   const requested = typeof value === 'number' && Number.isFinite(value) ? value : NaN
   if (!Number.isFinite(requested)) return ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS
   return Math.max(5, Math.min(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS, Math.round(requested)))
@@ -10296,8 +10302,9 @@ export class EnsembleOrchestrator {
    * persisted round state covers all three and survives orchestrator
    * restarts of in-memory bookkeeping.
    *
-   * The MCP broker hard-kills tool calls at 130s, so the timeout clamps to
-   * 110s and expiry returns PARTIAL per-lane status (never an error) — the
+   * The MCP broker grants ensemble_await a long-poll budget, so the timeout clamps
+   * to 600s (default 180) and expiry returns PARTIAL per-lane status (never an
+   * error) — the
    * caller re-invokes to keep waiting. Deliberately NOT serialized through
    * the owner's fanoutDispatchQueue: a wait queued behind its own pending
    * dispatch would deadlock.

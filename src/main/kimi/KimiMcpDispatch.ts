@@ -1,3 +1,4 @@
+import { mcpBrokerRequestTimeoutMsFor } from '../mcp/McpBrokerTimeouts'
 import {
   handleMcpJsonRpcMessage,
   type McpBridgeAgentRunRoute,
@@ -136,11 +137,13 @@ export function createKimiMcpDispatch(
               id: message.id ?? null,
               error: { code: -32000, message: 'TaskWraith MCP dispatch timed out.' }
             }),
-          // Match the stdio broker's approval-aware request budget. Kimi's
-          // normal approval window is longer than 30s; resolving earlier leaves
-          // the host mutation running and encourages the model to retry, which
-          // can duplicate a roster import after the first call eventually wins.
-          options.timeoutMs ?? 130_000
+          // Match the stdio broker's approval-aware request budget (tool-aware:
+          // long-poll tools like ensemble_await get their clamp ceiling +
+          // grace). Kimi's normal approval window is longer than 30s; resolving
+          // earlier leaves the host mutation running and encourages the model
+          // to retry, which can duplicate a roster import after the first call
+          // eventually wins.
+          options.timeoutMs ?? mcpBrokerRequestTimeoutMsFor(message)
         )
       }
     })

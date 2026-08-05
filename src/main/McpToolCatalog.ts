@@ -2470,7 +2470,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_await',
       description:
-        'In Ensemble Mode, wait (bounded) for fan-out lanes to settle — the JOIN step of an agent-programmed workflow. Omit laneIds to await every lane in the current round except your own; pass the laneIds returned by ensemble_fanout / ensemble_fanout_all to await specific lanes. Returns per-lane status either way: status=settled means every awaited lane is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 110 seconds per call. A lane cannot await itself.',
+        'In Ensemble Mode, wait (bounded) for fan-out lanes to settle — the JOIN step of an agent-programmed workflow. Omit laneIds to await every lane in the current round except your own; pass the laneIds returned by ensemble_fanout / ensemble_fanout_all to await specific lanes. Returns per-lane status either way: status=settled means every awaited lane is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call. A lane cannot await itself.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -2489,7 +2489,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           timeoutSeconds: {
             type: 'number',
             description:
-              'How long to wait before returning partial status. Default 60, clamped to 5–110.'
+              'How long to wait before returning partial status. Default 180 (3 minutes), clamped to 5–600.'
           }
         }
       }

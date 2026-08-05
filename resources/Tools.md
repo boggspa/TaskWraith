@@ -851,7 +851,7 @@ In Ensemble Mode, the configured Boss or Captain fans out EVERY tagged participa
 
 ## ensemble_await
 
-In Ensemble Mode, wait (bounded) for fan-out lanes to settle — the JOIN step of an agent-programmed workflow. Omit laneIds to await every lane in the current round except your own; pass the laneIds returned by ensemble_fanout / ensemble_fanout_all to await specific lanes. Returns per-lane status either way: status=settled means every awaited lane is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 110 seconds per call. A lane cannot await itself.
+In Ensemble Mode, wait (bounded) for fan-out lanes to settle — the JOIN step of an agent-programmed workflow. Omit laneIds to await every lane in the current round except your own; pass the laneIds returned by ensemble_fanout / ensemble_fanout_all to await specific lanes. Returns per-lane status either way: status=settled means every awaited lane is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call. A lane cannot await itself.
 
 - Access: read-only (no approval needed)
 - Required args: none

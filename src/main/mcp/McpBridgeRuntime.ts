@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'child_process'
+import { mcpBrokerRequestTimeoutMsFor } from './McpBrokerTimeouts'
 import { spawn } from 'child_process'
 import { randomBytes, timingSafeEqual } from 'crypto'
 import { promises as fs } from 'fs'
@@ -1091,7 +1092,9 @@ export function brokerRequest(socketPath: string, request: unknown): Promise<unk
     }
     const timeout = setTimeout(
       () => finish({ ok: false, error: 'TaskWraith MCP broker timed out.' }),
-      130_000
+      // Tool-aware budget: long-poll tools (ensemble_await) get their clamp
+      // ceiling + grace; everything else keeps the standard 130s liveness kill.
+      mcpBrokerRequestTimeoutMsFor(request)
     )
     socket.setEncoding('utf8')
     socket.on('connect', () => {

@@ -6,7 +6,8 @@ import {
   parseSelfReflectivePrefix,
   resolveYieldTargetIndex,
   type EnsembleOrchestratorDeps,
-  type ParticipantProbeResult
+  type ParticipantProbeResult,
+  clampAwaitTimeoutSeconds
 } from './EnsembleOrchestrator'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { DiscordContextSnapshot } from '../channels/DiscordContextService'
@@ -22269,5 +22270,16 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
     expect(
       harness.orchestrator.laneResultForRun(undefined, { laneId: 'lane-1' })
     ).toMatchObject({ ok: false, error: 'no_active_run' })
+  })
+})
+
+describe('ensemble_await timeout clamp (owner request 2026-08-05)', () => {
+  it('defaults to 3 minutes and allows up to 10 per call', () => {
+    expect(clampAwaitTimeoutSeconds(undefined)).toBe(180)
+    expect(clampAwaitTimeoutSeconds(Number.NaN)).toBe(180)
+    expect(clampAwaitTimeoutSeconds(600)).toBe(600)
+    expect(clampAwaitTimeoutSeconds(6000)).toBe(600)
+    expect(clampAwaitTimeoutSeconds(1)).toBe(5)
+    expect(clampAwaitTimeoutSeconds(45)).toBe(45)
   })
 })
