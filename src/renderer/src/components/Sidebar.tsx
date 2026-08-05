@@ -6155,11 +6155,21 @@ export function Sidebar({
                           </span>
                         </span>
                         {workspaceHasRunning && (
-                          <span
-                            className="sidebar-workspace-running-dot"
-                            title="Task running in this workspace"
-                            aria-label="Task running in this workspace"
-                          />
+                          <>
+                            {/* Same pulsing monoline ghost the thread rows use.
+                              A workspace is running because a THREAD inside it
+                              is, so the folded parent should say it in the same
+                              vocabulary rather than inventing a second "busy"
+                              mark — the dot that used to live here read as a
+                              different kind of state. */}
+                            <SidebarRunningGhost />
+                            {/* The ghost is decorative (aria-hidden), and this
+                              row's accessible name is its text content, so the
+                              running state needs a text node of its own. Thread
+                              rows announce it through their composed aria-label
+                              instead. */}
+                            <span className="sr-only">Task running in this workspace</span>
+                          </>
                         )}
                         {totalChats > 0 && hoveredWorkspace !== ws.id && (
                           <span

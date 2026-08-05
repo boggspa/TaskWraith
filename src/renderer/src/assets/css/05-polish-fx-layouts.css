@@ -179,20 +179,6 @@
   color: color-mix(in srgb, var(--accent) 85%, white);
 }
 
-/* --- Sidebar: workspace running indicator ----------------------------- */
-.app-sidebar .sidebar-workspace-running-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-left: 6px;
-  flex: 0 0 6px;
-  background: var(--accent);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent),
-    0 0 12px color-mix(in srgb, var(--accent) 50%, transparent);
-  animation: sidebarBusyPulse 1.4s ease-in-out infinite;
-}
-
 /* --- Sidebar: hover action buttons -------------------------------- */
 .app-sidebar .sidebar-item-action {
   border-radius: 5px;
@@ -3875,8 +3861,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   .sidebar-primary-action,
   .app-sidebar .sidebar-item,
   .app-sidebar .sidebar-item-action,
-  .sidebar-tree-chevron,
-  .app-sidebar .sidebar-workspace-running-dot {
+  .sidebar-tree-chevron {
     transition: none;
     animation: none;
   }
@@ -3885,8 +3870,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 :root[data-reduce-motion="true"] .sidebar-primary-action,
 :root[data-reduce-motion="true"] .app-sidebar .sidebar-item,
 :root[data-reduce-motion="true"] .app-sidebar .sidebar-item-action,
-:root[data-reduce-motion="true"] .sidebar-tree-chevron,
-:root[data-reduce-motion="true"] .app-sidebar .sidebar-workspace-running-dot {
+:root[data-reduce-motion="true"] .sidebar-tree-chevron {
   transition: none;
   animation: none;
 }

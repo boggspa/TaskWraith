@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -516,6 +518,51 @@ describe('Sidebar active chat override', () => {
 
     expect(html).toContain('provider-codex active')
     expect(html).not.toContain('provider-gemini active')
+  })
+})
+
+describe('Sidebar workspace running indicator', () => {
+  it('pulses the thread ghost on a workspace whose thread is running', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+    const workspace = makeWorkspace({ id: 'ws-busy', displayName: 'Busy Repo' })
+    const html = renderSidebar(
+      [makeChat({ appChatId: 'busy-thread', title: 'Busy thread', workspaceId: 'ws-busy' })],
+      { workspaces: [workspace], runningChatIds: ['busy-thread'] }
+    )
+
+    const rowStart = html.indexOf('sidebar-workspace-item')
+    const rowEnd = html.indexOf('sidebar-workspace-group', rowStart + 1)
+    const row = html.slice(rowStart, rowEnd > 0 ? rowEnd : undefined)
+    // Same mark the thread rows use, not a second "busy" vocabulary.
+    expect(row).toContain('sidebar-chat-running')
+    // The ghost is aria-hidden, and this row's accessible name is its text
+    // content, so the state needs a text node of its own.
+    expect(row).toContain('Task running in this workspace')
+    // The dot it replaced is gone from the markup AND the stylesheets.
+    expect(html).not.toContain('sidebar-workspace-running-dot')
+  })
+
+  it('leaves a workspace with no running thread unmarked', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+    const html = renderSidebar(
+      [makeChat({ appChatId: 'idle-thread', title: 'Idle thread', workspaceId: 'ws-idle' })],
+      { workspaces: [makeWorkspace({ id: 'ws-idle', displayName: 'Idle Repo' })] }
+    )
+    expect(html).not.toContain('Task running in this workspace')
+  })
+
+  it('retired the dot from every stylesheet that styled it', () => {
+    for (const file of [
+      'src/renderer/src/assets/css/05-polish-fx-layouts.css',
+      'src/renderer/src/assets/css/06-component-panels-modals.css'
+    ]) {
+      const css = readFileSync(join(process.cwd(), file), 'utf8')
+      expect(css).not.toContain('sidebar-workspace-running-dot')
+    }
   })
 })
 
