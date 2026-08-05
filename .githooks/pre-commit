@@ -455,12 +455,23 @@ for marker in .WORK-IN-PROGRESS-*.md; do
     continue
   fi
   kill -0 "$m_pid" 2>/dev/null || continue
-    if [ -n "$m_exp" ]; then
-      exp_epoch="$(to_epoch "$m_exp")"
-      if [ -n "$exp_epoch" ] && [ "$now" -gt "$exp_epoch" ]; then
-        continue
-      fi
-    fi
+  # `expires` is the authority, and it has to be READABLE to hold. A missing or
+  # unparseable lease decays the claim exactly like an elapsed one — otherwise
+  # it blocks every other session for as long as the host pid lives, and agent
+  # session hosts idle alive for hours, so nothing else would ever release it.
+  # Same fail-open reasoning as the missing-pid branch above; a promise nobody
+  # can read is not a promise. Surfaced rather than silently dropped, because
+  # the owner still needs to fix or delete it, and section 5 cannot see it (its
+  # decay test scores an unreadable lease as not-decayed).
+  exp_epoch=""
+  [ -n "$m_exp" ] && exp_epoch="$(to_epoch "$m_exp")"
+  if [ -z "$exp_epoch" ]; then
+    printf '  note: %s has no readable expires — treating as decayed.\n' "$marker"
+    printf '        Give it a lease or delete it (AGENTS.md: Marker format).\n'
+    warn=1
+    continue
+  fi
+  [ "$now" -gt "$exp_epoch" ] && continue
   claimed="$(marker_list "$marker" paths)"
   [ -z "$claimed" ] && continue
   while IFS= read -r path; do
@@ -502,24 +513,42 @@ if [ "${count:-0}" -ge 40 ]; then
   warn=1
 fi
 
-# ── 4. ADVISE: your own claim is expiring ───────────────────────────────────
+# ── 4. ADVISE: your own claim is expiring, or you never raised one ──────────
+# The second half is the mirror of the first, and it is the only thing in this
+# hook that speaks to a session holding NO claim. Section 1 needs someone
+# else's marker to say anything, and section 6 waits ORPHAN_WARN_MS — so a
+# session that edits a clean file and commits promptly without a marker used to
+# trigger nothing at all, on every commit, indefinitely. Path COVERAGE stays
+# section 6's job; this answers only "is there a live claim of yours at all",
+# which is the cheap question the hook can always answer correctly.
+own_live_claim=0
 shopt -s nullglob
-for marker in SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
-  [ -f "$marker" ] || continue
-  m_pid="$(marker_scalar "$marker" pid)"
-  [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
-  is_own_marker_claim "$marker" "$m_pid" || continue
-  printf '  note: your claim %s is still up — drop it when this work is done.\n' "$marker"
-done
-for marker in .WORK-IN-PROGRESS-*.md; do
+for marker in SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md .WORK-IN-PROGRESS-*.md; do
   [ -f "$marker" ] || continue
   is_runtime_marker_filename "$marker" && continue
   m_pid="$(marker_scalar "$marker" pid)"
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   is_own_marker_claim "$marker" "$m_pid" || continue
   printf '  note: your claim %s is still up — drop it when this work is done.\n' "$marker"
+  m_exp="$(marker_scalar "$marker" expires)"
+  exp_epoch=""
+  [ -n "$m_exp" ] && exp_epoch="$(to_epoch "$m_exp")"
+  if [ -z "$exp_epoch" ]; then
+    # Your own unreadable lease never reaches section 1 (it skips your claims),
+    # so this is the only place you learn the marker cannot decay.
+    printf '        It has no readable expires, so it can never decay — fix or drop it.\n'
+    warn=1
+  elif [ "$now" -le "$exp_epoch" ]; then
+    own_live_claim=1
+  fi
 done
 shopt -u nullglob
+
+if [ "$own_live_claim" -eq 0 ]; then
+  printf '  note: no live claim of yours covers this commit. Raise a marker before\n'
+  printf '        your next edit to a clean file (AGENTS.md: Before you write).\n'
+  warn=1
+fi
 
 # ── 5. ADVISE: a decayed claim is still standing ────────────────────────────
 # Manual markers become adoptable on expiry or owner death (AGENTS.md:

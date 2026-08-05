@@ -131,6 +131,22 @@ expire_marker() {
   mv "$marker.next" "$marker"
 }
 
+# An empty value deletes the field outright; anything else replaces it. Both
+# shapes are how a lease stops being readable in practice.
+set_marker_expires() {
+  local marker="$1" value="$2"
+  if [ -z "$value" ]; then
+    sed -E '/^expires:/d' "$marker" > "$marker.next"
+  else
+    sed -E "s|^expires:.*|expires: $value|" "$marker" > "$marker.next"
+  fi
+  mv "$marker.next" "$marker"
+}
+
+drop_marker() {
+  rm -f "$1"
+}
+
 hook_output=""
 hook_status=0
 run_hook() {
@@ -261,6 +277,80 @@ stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$foreign_pid" src/manual.ts
 expire_marker "$repo/.WORK-IN-PROGRESS-manual-test.md"
 expect_allow 'expired manual promises remain expiry-authoritative' "$repo"
+
+# A manual claim whose lease cannot be READ must decay exactly like one that has
+# expired. Otherwise it blocks for as long as its host pid lives — and agent
+# session hosts idle alive for hours, so `expires` is the only decay signal that
+# fires in practice. Both shapes below are immortal claims without this.
+repo="$(new_repo unreadable-lease-manual)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" 'tomorrow-ish'
+expect_allow 'manual claims with an unreadable lease decay instead of blocking' "$repo"
+if [[ "$hook_output" != *'no readable expires'* ]]; then
+  printf 'FAIL: unreadable manual lease was not surfaced for cleanup\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+repo="$(new_repo missing-lease-manual)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" ''
+expect_allow 'manual claims with no lease at all decay instead of blocking' "$repo"
+if [[ "$hook_output" != *'no readable expires'* ]]; then
+  printf 'FAIL: missing manual lease was not surfaced for cleanup\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+# A RUNTIME-derived projection must NOT gain the same escape hatch: durable lock
+# authority owns its cleanup, so an unreadable lease there still fails closed.
+repo="$(new_repo unreadable-lease-derived)"
+stage_file "$repo" src/hunk.ts
+write_derived_marker "$repo" owner-unreadable false '' src/hunk.ts "$foreign_pid"
+set_marker_expires "$repo/.WORK-IN-PROGRESS-taskwraith-runtime-test.md" 'tomorrow-ish'
+expect_block 'derived projections with an unreadable lease still fail closed' "$repo"
+
+# Section 4's mirror: the hook must say something to a session that is committing
+# with no claim of its own. Path COVERAGE is deliberately not checked here —
+# work-guard section 6 already owns "dirty path no live claim covers"; this owns
+# the orthogonal case of no claim existing at all, reported immediately rather
+# than after ORPHAN_WARN_MS.
+repo="$(new_repo markerless-commit)"
+stage_file "$repo" src/manual.ts
+expect_allow 'a markerless commit is nagged, never blocked' "$repo"
+if [[ "$hook_output" != *'no live claim of yours'* ]]; then
+  printf 'FAIL: markerless commit produced no marker nag\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+repo="$(new_repo claimed-commit-quiet)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$$" src/manual.ts
+expect_allow 'a session holding its own live claim is not nagged' "$repo"
+if [[ "$hook_output" == *'no live claim of yours'* ]]; then
+  printf 'FAIL: marker nag fired at a session that holds a live claim\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+# A claim of yours that has DECAYED must not buy silence — that is the forgot-to-
+# renew case, and it is exactly when the nag is worth having.
+repo="$(new_repo own-decayed-claim-nagged)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$$" src/manual.ts
+expire_marker "$repo/.WORK-IN-PROGRESS-manual-test.md"
+expect_allow 'a decayed own claim still earns the markerless nag' "$repo"
+if [[ "$hook_output" != *'no live claim of yours'* ]]; then
+  printf 'FAIL: decayed own claim silenced the marker nag\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
 
 sleep 300 &
 dead_runtime_pid=$!
