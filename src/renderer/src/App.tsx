@@ -3077,6 +3077,16 @@ function App(): React.JSX.Element {
     return branch ? `${name}/${branch}` : name
   })()
 
+  // The branch half of that identity, on its own, so the sidebar can tint it
+  // without guessing where the repo name ends. Splitting the joined string
+  // there is not safe: a branch may itself contain "/" ("feat/foo"), and so
+  // may a folder-derived workspace name. Kept a primitive because the sidebar
+  // row memo comparators only gate primitives.
+  const activeChatSidebarBranch = ((): string | null => {
+    if (!activeChatSidebarIdentity) return null
+    return primaryGitSnapshot?.branch?.trim() || null
+  })()
+
   // Git status icons riding the right of that identity face. Two independent
   // sources: the workspace's LIVE pull request, and the thread's own durable
   // `gitWorkflow` marker ("the PR THIS session shipped") — so a thread whose
@@ -30564,6 +30574,7 @@ function App(): React.JSX.Element {
     handleSetChatHiddenFromMainList,
     handleClearChatGitWorkflow,
     activeChatSidebarIdentity,
+    activeChatSidebarBranch,
     activeChatSidebarGitIndicators,
     handleTogglePinWorkspace,
     handleTogglePinWorkspaceBoard,

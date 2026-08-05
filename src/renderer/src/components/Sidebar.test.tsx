@@ -204,6 +204,8 @@ function renderSidebar(
     initialExpandedSubThreadParentIds?: string[]
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
     pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+    activeChatIdentityTicker?: string | null
+    activeChatIdentityBranch?: string | null
     pendingAgentQuestionsByChatId?: ComponentProps<typeof Sidebar>['pendingAgentQuestionsByChatId']
     hasConnectedCollaborator?: boolean
     onRenameChat?: (chatId: string, nextTitle: string) => void
@@ -239,6 +241,8 @@ function renderSidebar(
       initialExpandedSubThreadParentIds={options.initialExpandedSubThreadParentIds}
       pendingAgentApprovalByChatId={options.pendingAgentApprovalByChatId}
       pendingApprovalQueueByChatId={options.pendingApprovalQueueByChatId}
+      activeChatIdentityTicker={options.activeChatIdentityTicker}
+      activeChatIdentityBranch={options.activeChatIdentityBranch}
       pendingAgentQuestionsByChatId={options.pendingAgentQuestionsByChatId}
       hasConnectedCollaborator={options.hasConnectedCollaborator}
       onSelectWorkspace={() => {}}
@@ -543,6 +547,50 @@ describe('Sidebar identity ticker git tones', () => {
     )
   })
 
+  it('tints only the branch half of the identity, never the repo name', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar([makeChat({ appChatId: 'sel', title: 'Selected thread' })], {
+      activeChatId: 'sel',
+      activeChatIdentityTicker: 'TaskWraith/master',
+      activeChatIdentityBranch: 'master'
+    })
+    // main/master -> blue, matching the composer's git-tone-main.
+    expect(html).toContain('sidebar-title-ticker-branch git-tone-main')
+    // The repo name sits OUTSIDE the tinted span.
+    expect(html).toContain('TaskWraith/<span')
+  })
+
+  it('reads the branch kind the way the composer does', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    // A branch may itself contain "/" — the split must come from the supplied
+    // branch, not from cutting the joined string at the first slash.
+    const html = renderSidebar([makeChat({ appChatId: 'sel', title: 'Selected thread' })], {
+      activeChatId: 'sel',
+      activeChatIdentityTicker: 'TaskWraith/feat/ticker-tones',
+      activeChatIdentityBranch: 'feat/ticker-tones'
+    })
+    expect(html).toContain('git-tone-feature')
+    expect(html).toContain('feat/ticker-tones</span>')
+    expect(html).toContain('TaskWraith/<span')
+  })
+
+  it('leaves the face plain when the halves disagree, rather than mis-slicing', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar([makeChat({ appChatId: 'sel', title: 'Selected thread' })], {
+      activeChatId: 'sel',
+      activeChatIdentityTicker: 'TaskWraith/master',
+      activeChatIdentityBranch: 'something-else'
+    })
+    expect(html).not.toContain('sidebar-title-ticker-branch')
+    expect(html).toContain('TaskWraith/master')
+  })
+
   it('uses the exact composer hues, so the two surfaces cannot drift', () => {
     const composer = readFileSync(
       join(process.cwd(), 'src/renderer/src/assets/css/07-composer-shells.css'),
@@ -554,6 +602,21 @@ describe('Sidebar identity ticker git tones', () => {
     )
     expect(composerAhead).toContain('#ffc248')
     expect(composer).toContain('#c38b00')
+    // Branch palette too: every tone the sidebar paints must exist in the
+    // composer with the same value, or the same branch reads as two colours.
+    for (const [tone, dark, light] of [
+      ['main', '#4b84ff', '#1a5ceb'],
+      ['feature', '#a78bfa', '#6d4fe0'],
+      ['fix', '#f0a35a', '#c0660f'],
+      ['release', '#6ddfa8', null]
+    ] as const) {
+      expect(block(`.sidebar-title-ticker-branch.git-tone-${tone} {`)).toContain(dark)
+      expect(composer).toContain(dark)
+      if (light) {
+        expect(css).toContain(light)
+        expect(composer).toContain(light)
+      }
+    }
   })
 })
 

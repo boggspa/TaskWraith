@@ -66,6 +66,7 @@ import {
 import { chatGitWorkflowMarker, groupChatsByGitWorkflow } from '../lib/gitWorkflowSections'
 import { decodeSidebarGitIndicators } from '../lib/sidebarGitIndicators'
 import { SidebarGitIndicatorStrip } from './SidebarGitIndicatorStrip'
+import { branchTone } from './GitStatusChips'
 import { isSubThreadChat } from '../lib/chatScope'
 import {
   primarySurfaceForSidebarTabChange,
@@ -269,6 +270,9 @@ interface SidebarProps {
   /** Workspace/branch identity ("TaskWraith/master") for the ACTIVE chat —
    * the selected row's label slowly cycles between title and this string. */
   activeChatIdentityTicker?: string | null
+  /** The branch half of `activeChatIdentityTicker`, on its own, so the ticker
+   * can tint it without guessing where the repo name ends. */
+  activeChatIdentityBranch?: string | null
   /** Encoded git status strip shown at the right of that identity face —
    * built by `buildSidebarGitIndicators` and encoded so it crosses the memo
    * comparators as a primitive. */
@@ -1479,11 +1483,17 @@ export function SidebarGitWorkflowIcon({
  */
 function SidebarTitleTicker({
   identity,
+  branch,
   gitIndicators,
   className,
   children
 }: {
   identity: string
+  /** The branch half of `identity`, supplied separately rather than split out
+   * of it: a branch may itself contain "/" ("feat/foo"), and so may a
+   * folder-derived workspace name, so there is no safe place to cut the joined
+   * string. Absent (no repo / detached) leaves the whole face untinted. */
+  branch?: string | null
   /** Encoded git status strip (see lib/sidebarGitIndicators). Rides the
    * identity face, right-aligned, so it slides in and out with the branch
    * name rather than becoming permanent row chrome. */
@@ -1492,12 +1502,35 @@ function SidebarTitleTicker({
   children: ReactNode
 }): ReactNode {
   const indicators = decodeSidebarGitIndicators(gitIndicators)
+  // Only the branch is tinted; the repo/workspace name stays in the row's own
+  // ink. The suffix check is belt-and-braces — if the two ever disagree the
+  // face renders plain rather than mis-slicing the name.
+  const trimmedBranch = (branch || '').trim()
+  const branchSuffix = trimmedBranch ? `/${trimmedBranch}` : ''
+  const splitsCleanly = Boolean(branchSuffix) && identity.endsWith(branchSuffix)
+  const repoHalf = splitsCleanly ? identity.slice(0, identity.length - trimmedBranch.length) : ''
   return (
     <span className={`sidebar-title-ticker ${className}`}>
       <span className="sidebar-title-ticker-strip">
         <span className="sidebar-title-ticker-seg">{children}</span>
         <span className="sidebar-title-ticker-seg sidebar-title-ticker-identity" aria-hidden>
-          <span className="sidebar-title-ticker-identity-text">{identity}</span>
+          <span className="sidebar-title-ticker-identity-text">
+            {splitsCleanly ? (
+              <>
+                {repoHalf}
+                <span
+                  className={`sidebar-title-ticker-branch git-tone-${branchTone(
+                    trimmedBranch,
+                    false
+                  )}`}
+                >
+                  {trimmedBranch}
+                </span>
+              </>
+            ) : (
+              identity
+            )}
+          </span>
           <SidebarGitIndicatorStrip indicators={indicators} />
         </span>
       </span>
@@ -1532,6 +1565,9 @@ interface SidebarCompactChatRowProps {
   /** Encoded git status strip for the identity face — same primitive-prop
    * contract as `identityTicker`. */
   identityGitIndicators?: string | null
+  /** Branch half of `identityTicker`, tinted by kind. Same primitive-prop
+   * contract as the two above. */
+  identityBranch?: string | null
   /** Comparator proxies for the SSR-relevant fields of `dragHandlers`
    * (recents only). `dragHandlers` itself is a fresh object each render and
    * is intentionally NOT compared — these primitives gate re-render. */
@@ -1566,6 +1602,7 @@ function SidebarCompactChatRowInner({
   query,
   identityTicker,
   identityGitIndicators,
+  identityBranch,
   dragHandlers,
   onSelect,
   onStartRename,
@@ -1629,6 +1666,7 @@ function SidebarCompactChatRowInner({
         <SidebarTitleTicker
           identity={identityTicker}
           gitIndicators={identityGitIndicators}
+          branch={identityBranch}
           className={labelClass}
         >
           {editableTitle}
@@ -1669,7 +1707,8 @@ export function sidebarCompactChatRowPropsAreEqual(
     a.isDragging === b.isDragging &&
     a.query === b.query &&
     (a.identityTicker ?? null) === (b.identityTicker ?? null) &&
-    (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null)
+    (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null) &&
+    (a.identityBranch ?? null) === (b.identityBranch ?? null)
   )
 }
 
@@ -1697,6 +1736,8 @@ interface SidebarChatRowProps {
   identityTicker?: string | null
   /** See SidebarCompactChatRowProps.identityGitIndicators. */
   identityGitIndicators?: string | null
+  /** See SidebarCompactChatRowProps.identityBranch. */
+  identityBranch?: string | null
   onSelect: (chat: ChatRecord) => void
   onRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, chat: ChatRecord) => void
   onToggleSubThreads: (
@@ -1735,6 +1776,7 @@ function SidebarChatRowInner({
   query,
   identityTicker,
   identityGitIndicators,
+  identityBranch,
   onSelect,
   onRowKeyDown,
   onToggleSubThreads,
@@ -1833,6 +1875,7 @@ function SidebarChatRowInner({
             <SidebarTitleTicker
               identity={identityTicker}
               gitIndicators={identityGitIndicators}
+              branch={identityBranch}
               className="sidebar-chat-title"
             >
               <SidebarChatTitleEditable
@@ -1916,7 +1959,8 @@ export function sidebarChatRowPropsAreEqual(
     a.subThreadsExpanded === b.subThreadsExpanded &&
     a.query === b.query &&
     (a.identityTicker ?? null) === (b.identityTicker ?? null) &&
-    (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null)
+    (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null) &&
+    (a.identityBranch ?? null) === (b.identityBranch ?? null)
   )
 }
 
@@ -3003,6 +3047,7 @@ export function Sidebar({
   onClearChatGitWorkflow,
   activeChatIdentityTicker,
   activeChatIdentityGitIndicators,
+  activeChatIdentityBranch,
   onToggleArchiveChat,
   onDeleteChat,
   onRenameChat,
@@ -5612,6 +5657,9 @@ export function Sidebar({
                         identityGitIndicators={
                           selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                         }
+                        identityBranch={
+                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
+                        }
                         draggable={false}
                         isDragging={false}
                         onSelect={selectAndAcknowledgeChat}
@@ -5699,6 +5747,9 @@ export function Sidebar({
                             identityGitIndicators={
                               selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                             }
+                            identityBranch={
+                              selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
+                            }
                             draggable={false}
                             isDragging={false}
                             onSelect={selectAndAcknowledgeChat}
@@ -5771,6 +5822,9 @@ export function Sidebar({
                         }
                         identityGitIndicators={
                           selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
+                        }
+                        identityBranch={
+                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
                         }
                         draggable={dragHandlers.draggable}
                         isDragging={dragHandlers['data-dragging'] === 'true'}
@@ -6309,6 +6363,9 @@ export function Sidebar({
                         identityGitIndicators={
                           selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                         }
+                        identityBranch={
+                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
+                        }
                         onSelect={selectAndAcknowledgeChat}
                         onRowKeyDown={handleChatRowKeyDown}
                         onToggleSubThreads={toggleSubThreadsExpanded}
@@ -6425,6 +6482,9 @@ export function Sidebar({
                         }
                         identityGitIndicators={
                           selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
+                        }
+                        identityBranch={
+                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
                         }
                         onSelect={selectAndAcknowledgeChat}
                         onRowKeyDown={handleChatRowKeyDown}

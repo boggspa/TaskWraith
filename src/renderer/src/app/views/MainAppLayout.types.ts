@@ -124,6 +124,7 @@ type MainAppLayoutSidebarProps = {
   /** Workspace/branch identity ("TaskWraith/master") for the active chat's
    * sidebar title ticker; null when the chat has no workspace context. */
   activeChatSidebarIdentity: SidebarProps['activeChatIdentityTicker']
+  activeChatSidebarBranch: SidebarProps['activeChatIdentityBranch']
   /** Encoded git status strip for the right of that identity face. */
   activeChatSidebarGitIndicators: SidebarProps['activeChatIdentityGitIndicators']
   handleTogglePinWorkspace: NonNullable<SidebarProps['onTogglePinWorkspace']>

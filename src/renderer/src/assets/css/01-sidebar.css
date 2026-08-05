@@ -2071,6 +2071,39 @@ button.sidebar-item {
   text-overflow: ellipsis;
 }
 
+/* Branch-name tone on the identity face, lifted wholesale from the composer
+   workspace row (.composer-above-bar-secondary-branch.git-tone-*) so the same
+   branch never reads as two different colours across the two surfaces. Only
+   the BRANCH is tinted — the repo/workspace name beside it stays in the row's
+   own ink, because the repo is context and the branch is the choice. `other`
+   and `detached` deliberately have no rule: they inherit, which is the
+   composer's muted default. */
+.sidebar-title-ticker-branch.git-tone-main {
+  color: #4b84ff;
+}
+.sidebar-title-ticker-branch.git-tone-feature {
+  color: #a78bfa;
+}
+.sidebar-title-ticker-branch.git-tone-fix {
+  color: #f0a35a;
+}
+.sidebar-title-ticker-branch.git-tone-release {
+  color: #6ddfa8;
+}
+/* Same deepened values the composer switches to on light chrome. */
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
+  .sidebar-title-ticker-branch.git-tone-main {
+  color: #1a5ceb;
+}
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
+  .sidebar-title-ticker-branch.git-tone-feature {
+  color: #6d4fe0;
+}
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
+  .sidebar-title-ticker-branch.git-tone-fix {
+  color: #c0660f;
+}
+
 /* ————————————————————————————————————————————————————————————————
    Active-row git status strip — up to three icons at the right of the
    identity face. Colour vocabulary is GitHub's: green open / green
