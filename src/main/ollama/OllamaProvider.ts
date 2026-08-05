@@ -500,27 +500,50 @@ export function ollamaToolResultSignature(output: string): string {
   return `${value.length}:${(hash >>> 0).toString(16)}`
 }
 
+export interface OllamaToolCallSignatureEntry {
+  signature: string
+  /** Compression epoch the result was last served in (see the run loop). */
+  epoch: number
+}
+
+export interface OllamaRepeatedToolCallEvaluation {
+  repeated: boolean
+  /**
+   * The identical result was last served BEFORE a transcript compression, so
+   * the raw content no longer survives in the message list. A nudge here would
+   * claim the model already has content it cannot see — re-serve instead.
+   */
+  compactedAway: boolean
+}
+
 /**
  * Detect a no-op repeated tool call: the SAME tool + SAME arguments
  * returning the SAME result as an earlier call this run. Records the
  * signature on first/changed calls so a later re-read after an edit
  * (different result) is correctly treated as fresh, not a repeat. The
  * passed map is the per-run signature store and is mutated in place.
+ *
+ * `compressionEpoch` counts transcript compressions in the run loop. Each
+ * entry remembers the epoch its result was last served in; a repeat from an
+ * older epoch means compression removed the raw content from the messages, so
+ * the caller must re-serve it rather than nudge (re-serving also refreshes the
+ * entry's epoch, so the SECOND identical repeat in the new epoch nudges again).
  */
 export function evaluateOllamaRepeatedToolCall(
-  signatures: Map<string, string>,
+  signatures: Map<string, OllamaToolCallSignatureEntry>,
   toolName: string,
   args: Record<string, unknown>,
-  output: string
-): { repeated: boolean } {
+  output: string,
+  compressionEpoch = 0
+): OllamaRepeatedToolCallEvaluation {
   const key = ollamaToolCallKey(toolName, args)
   const signature = ollamaToolResultSignature(output)
   const previous = signatures.get(key)
-  if (previous !== undefined && previous === signature) {
-    return { repeated: true }
+  signatures.set(key, { signature, epoch: compressionEpoch })
+  if (previous !== undefined && previous.signature === signature) {
+    return { repeated: true, compactedAway: previous.epoch < compressionEpoch }
   }
-  signatures.set(key, signature)
-  return { repeated: false }
+  return { repeated: false, compactedAway: false }
 }
 
 /**
@@ -529,19 +552,37 @@ export function evaluateOllamaRepeatedToolCall(
  * rule that otherwise only lived in the system prompt — small models
  * (e.g. a 9B) ignore the soft rule and burn their whole tool-loop
  * budget re-reading the same file before they ever edit.
+ *
+ * Served ONLY when the earlier result genuinely survives in the message list
+ * (same compression epoch) — the "still above in this conversation" claim must
+ * be true; a compacted-away repeat re-serves the content instead.
  */
 export function ollamaRepeatedToolCallNudge(
   toolName: string,
   options?: OllamaRetryPromptOptions
 ): string {
   return [
-    `You already called \`${toolName}\` with these exact arguments earlier this turn and got the same result, so its output is unchanged and already in your context.`,
+    `You already called \`${toolName}\` with these exact arguments earlier this run and got the same result; its full output is still above in this conversation.`,
     'Do NOT call it again.',
     ...ollamaEnsembleRetryReminder(options),
     options?.ensembleRun
       ? 'Act on what you have now inside your assigned ensemble slice: make only the edits your role owns, or give your final answer for this turn.'
       : 'Act on what you have now: make the edits the task needs (edit_file / write_file), or give your final answer.',
     'Repeating identical reads wastes your limited local tool budget and will end the run with no result.'
+  ].join(' ')
+}
+
+/**
+ * Prefix for re-serving a repeated result whose earlier copy was compacted out
+ * of the transcript by a working-memory compression. Without this the repeat
+ * guard withheld content the model no longer had, while telling it to edit
+ * with an exact old_string from that content — an unwinnable read loop.
+ */
+export function ollamaCompactedRepeatToolCallPreamble(toolName: string): string {
+  return [
+    `You already called \`${toolName}\` with these exact arguments and the result is unchanged,`,
+    'but the earlier copy was compacted out of your context, so the full result is re-served below.',
+    'Do not call it again — act on this content now.'
   ].join(' ')
 }
 
@@ -2829,7 +2870,10 @@ export async function runOllamaProvider(
     // repeated-tool-call guard: a model that re-issues an identical call
     // with an unchanged result gets a redirect instead of the re-dumped
     // output, so it stops burning its tool-loop budget re-reading files.
-    const toolCallSignatures = new Map<string, string>()
+    const toolCallSignatures = new Map<string, OllamaToolCallSignatureEntry>()
+    // Bumped on every transcript compression; lets the repeat guard tell
+    // "still in context" apart from "compacted away" (see the entry type).
+    let compressionEpoch = 0
     // Identical-failure streak for the runaway breaker (see
     // OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES). Keyed on tool name +
     // the failure output's head so the same tool failing with a NEW error —
@@ -3185,6 +3229,8 @@ export async function runOllamaProvider(
           route
         )
         let toolResult: OllamaToolExecutionResult
+        let noActiveGoalToolResult = false
+        let repeat: OllamaRepeatedToolCallEvaluation = { repeated: false, compactedAway: false }
         const toolExecutionRequest: OllamaToolExecutionRequest = {
           toolName: toolRequest.toolName,
           arguments: toolRequest.arguments,
@@ -3227,6 +3273,25 @@ export async function runOllamaProvider(
           // do not allow the next `/api/chat` continuation to cross the
           // already-claimed terminal boundary.
           assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
+          noActiveGoalToolResult = isOllamaNoActiveGoalToolResult(
+            toolRequest.toolName,
+            toolResult
+          )
+          // Repeated-tool-call guard: if this exact call already returned the
+          // same result earlier this run, feed the model a redirect (or, after
+          // a compression, re-serve the content) instead of re-dumping
+          // identical output. The UI tool_result + trajectory below still
+          // record the real read; only the model-facing follow-up changes.
+          repeat =
+            toolResult.ok || noActiveGoalToolResult
+              ? evaluateOllamaRepeatedToolCall(
+                  toolCallSignatures,
+                  toolRequest.toolName,
+                  toolRequest.arguments,
+                  toolResult.output,
+                  compressionEpoch
+                )
+              : { repeated: false, compactedAway: false }
           // Progress = a tool that ACTUALLY executed. A harness-gate block and an
           // arg-invalid (validationError) result are both pre-execution redirects
           // with their own repair message — no tool ran, so they count as
@@ -3234,9 +3299,16 @@ export async function runOllamaProvider(
           // re-hits the harness gate every turn would reset the counter forever.
           if (!harnessGate.blocked && !toolResult.validationError) {
             if (toolResult.ok) {
-              lastToolFailureKey = null
-              identicalToolFailureStreak = 0
-              productiveToolRanThisTurn = true
+              if (!repeat.repeated) {
+                lastToolFailureKey = null
+                identicalToolFailureStreak = 0
+                productiveToolRanThisTurn = true
+              }
+              // An identical call returning an identical result is not
+              // progress — nudged or re-served — so it feeds the retry
+              // ceiling instead of resetting it. Otherwise a model alternating
+              // re-reads with failed edits (or granted a re-serve every
+              // compression epoch) loops forever.
             } else {
               // An executed-but-failed tool is progress the first couple of
               // times (compile error → read → fix is a legitimate loop). The
@@ -3282,35 +3354,22 @@ export async function runOllamaProvider(
           toolResultLimits,
           toolRequest.toolName
         )
-        // Repeated-tool-call guard: if this exact call already returned the
-        // same result earlier this run, feed the model a redirect instead of
-        // re-dumping identical output. The UI tool_result + trajectory below
-        // still record the real read; only the model-facing follow-up changes.
-        const noActiveGoalToolResult = isOllamaNoActiveGoalToolResult(
-          toolRequest.toolName,
-          toolResult
-        )
-        let modelFacingOutput = noActiveGoalToolResult
-          ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { ensembleRun })
-          : toolResult.validationError
-            ? ollamaToolArgumentRepairPrompt({
-                toolName: toolRequest.toolName,
-                output: truncatedOutput,
-                ensembleRun
-              })
-            : truncatedOutput
-        if (toolResult.ok || noActiveGoalToolResult) {
-          const repeat = evaluateOllamaRepeatedToolCall(
-            toolCallSignatures,
-            toolRequest.toolName,
-            toolRequest.arguments,
-            toolResult.output
-          )
-          if (repeat.repeated) {
-            modelFacingOutput = noActiveGoalToolResult
-              ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { repeated: true, ensembleRun })
-              : ollamaRepeatedToolCallNudge(toolRequest.toolName, { ensembleRun })
-          }
+        let modelFacingOutput = truncatedOutput
+        if (noActiveGoalToolResult) {
+          modelFacingOutput = ollamaNoActiveGoalToolNudge(toolRequest.toolName, {
+            repeated: repeat.repeated,
+            ensembleRun
+          })
+        } else if (toolResult.validationError) {
+          modelFacingOutput = ollamaToolArgumentRepairPrompt({
+            toolName: toolRequest.toolName,
+            output: truncatedOutput,
+            ensembleRun
+          })
+        } else if (repeat.repeated && !repeat.compactedAway) {
+          modelFacingOutput = ollamaRepeatedToolCallNudge(toolRequest.toolName, { ensembleRun })
+        } else if (repeat.repeated && repeat.compactedAway) {
+          modelFacingOutput = `${ollamaCompactedRepeatToolCallPreamble(toolRequest.toolName)}\n${truncatedOutput}`
         }
         sessionMemory = appendOllamaTrajectoryEntry(sessionMemory, {
           toolName: toolRequest.toolName,
@@ -3355,6 +3414,7 @@ export async function runOllamaProvider(
               sessionMemory.workingMemory
             ) as OllamaChatMessage[])
           )
+          compressionEpoch += 1
         }
         if (usingNativeToolCalls) {
           // Native protocol: feed the result back as a `role: 'tool'` message

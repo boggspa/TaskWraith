@@ -25,6 +25,8 @@ import {
   ollamaToolResultSignature,
   evaluateOllamaRepeatedToolCall,
   ollamaRepeatedToolCallNudge,
+  ollamaCompactedRepeatToolCallPreamble,
+  type OllamaToolCallSignatureEntry,
   isOllamaNoActiveGoalToolResult,
   ollamaNoActiveGoalToolNudge,
   ollamaGoalLifecycleStopContent,
@@ -2740,6 +2742,76 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
   }, 10000)
 
+  it('stops a model that re-reads the same unchanged file instead of acting (repeat is not progress)', async () => {
+    let chatCalls = 0
+    const chatBodies: string[] = []
+    // The model explores once, then re-issues the identical read_file forever —
+    // the classic local-model read loop. Every read executes fine, so if a
+    // repeated identical call still counted as progress the retry ceiling would
+    // never fire and this would spin until the user killed the run. Repeats are
+    // non-productive: nudged while the earlier copy is still in context,
+    // re-served once compression compacted it away — but never credited.
+    const executeTool = vi.fn(async (request: { toolName: string }) =>
+      request.toolName === 'workspace_search'
+        ? { ok: true, output: 'src/app.ts:1: const x = 1' }
+        : { ok: true, output: 'FILE BODY unchanged' }
+    )
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(String(init?.body || ''))
+        if (chatCalls > 40) {
+          throw new Error('runaway loop: model never finalized')
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                chatCalls === 1
+                  ? '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"app"}}}'
+                  : '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"src/app.ts"}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    // search + fresh read productive; repeat reads: nudge (epoch 0), re-serve
+    // (post-compression epoch), nudge, nudge → 4 non-productive turns → ceiling.
+    expect(chatCalls).toBe(6)
+    expect(executeTool).toHaveBeenCalledTimes(6)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('stopping instead of looping')
+    const allBodies = chatBodies.join('\n')
+    expect(allBodies).toContain('still above in this conversation')
+    const reServe = chatBodies.find((body) => body.includes('compacted out of your context'))
+    expect(reServe).toBeTruthy()
+    expect(reServe).toContain('FILE BODY unchanged')
+  }, 10000)
+
   it('constrains json-fallback decoding to the compact gateway surface', async () => {
     // Regression: the constrained-decoding grammar must allow every EXECUTABLE
     // tool (so a model can name a tail tool discovered via tool_help), even
@@ -4055,14 +4127,14 @@ describe('repeated-tool-call guard', () => {
   })
 
   it('flags a second identical call with an unchanged result', () => {
-    const sigs = new Map<string, string>()
+    const sigs = new Map<string, OllamaToolCallSignatureEntry>()
     const args = { path: 'test_kimi_datetime.py' }
     expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'FILE BODY').repeated).toBe(false)
     expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'FILE BODY').repeated).toBe(true)
   })
 
   it('does NOT flag a re-read after the file changed (e.g. post-edit verify)', () => {
-    const sigs = new Map<string, string>()
+    const sigs = new Map<string, OllamaToolCallSignatureEntry>()
     const args = { path: 'a.py' }
     expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'v1').repeated).toBe(false)
     // File changed → not a no-op repeat; the new body is recorded.
@@ -4072,7 +4144,7 @@ describe('repeated-tool-call guard', () => {
   })
 
   it('flags non-consecutive repeats (read A, read B, read A again)', () => {
-    const sigs = new Map<string, string>()
+    const sigs = new Map<string, OllamaToolCallSignatureEntry>()
     evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'A')
     evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'b.py' }, 'B')
     expect(
@@ -4081,7 +4153,7 @@ describe('repeated-tool-call guard', () => {
   })
 
   it('keys different tools and different args separately', () => {
-    const sigs = new Map<string, string>()
+    const sigs = new Map<string, OllamaToolCallSignatureEntry>()
     evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'same')
     expect(
       evaluateOllamaRepeatedToolCall(sigs, 'search_files', { path: 'a.py' }, 'same').repeated
@@ -4095,10 +4167,45 @@ describe('repeated-tool-call guard', () => {
     const nudge = ollamaRepeatedToolCallNudge('read_file')
     expect(nudge).toContain('read_file')
     expect(nudge).toContain('Do NOT call it again')
+    // The nudge is only served while the earlier result genuinely survives in
+    // the message list, so this claim must stay literally true.
+    expect(nudge).toContain('still above in this conversation')
     const ensembleNudge = ollamaRepeatedToolCallNudge('read_file', { ensembleRun: true })
     expect(ensembleNudge).toContain('assigned ensemble slice')
     expect(ensembleNudge).toContain('Boss/Bossman/Lead routing')
     expect(ensembleNudge).toContain('role owns')
+  })
+
+  it('flags a repeat from an older compression epoch as compacted away', () => {
+    const sigs = new Map<string, OllamaToolCallSignatureEntry>()
+    const args = { path: 'a.py' }
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'BODY', 0)).toEqual({
+      repeated: false,
+      compactedAway: false
+    })
+    // Same epoch: content still in the transcript → nudge, not re-serve.
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'BODY', 0)).toEqual({
+      repeated: true,
+      compactedAway: false
+    })
+    // A compression happened since the result was last served → re-serve.
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'BODY', 1)).toEqual({
+      repeated: true,
+      compactedAway: true
+    })
+    // The re-serve refreshed the entry's epoch: the next identical repeat in
+    // the SAME epoch is back to a nudge.
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'BODY', 1)).toEqual({
+      repeated: true,
+      compactedAway: false
+    })
+  })
+
+  it('compacted-repeat preamble names the tool and announces the re-serve', () => {
+    const preamble = ollamaCompactedRepeatToolCallPreamble('read_file')
+    expect(preamble).toContain('read_file')
+    expect(preamble).toContain('compacted out of your context')
+    expect(preamble).toContain('re-served below')
   })
 
   it('detects and rewrites no-active-goal lifecycle failures for the local model', () => {
