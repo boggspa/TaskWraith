@@ -8,8 +8,8 @@ function message(id: string, content: string): ChatMessage {
     id,
     role: 'assistant',
     content,
-    createdAt: 1
-  } as ChatMessage
+    timestamp: '1'
+  }
 }
 
 function chat(id: string): ChatRecord {

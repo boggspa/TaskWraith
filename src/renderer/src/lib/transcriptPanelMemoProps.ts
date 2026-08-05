@@ -31,7 +31,7 @@ export type TranscriptPanelMemoComparable = {
   onEnsemblePollVote?: unknown
   runCompleteNotice: unknown
   runCompleteDurationText: unknown
-  currentRun: unknown
+  currentRun?: unknown
   currentChat: ChatRecord | null
   currentWorkspacePath?: unknown
   currentProviderLabel: unknown

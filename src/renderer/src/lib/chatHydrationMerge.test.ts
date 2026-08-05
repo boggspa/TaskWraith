@@ -149,7 +149,7 @@ describe('commitHydratedChat', () => {
     const lru = new ChatByteLru()
     const full = {
       ...chat('Hydrated'),
-      messages: [{ id: 'm1', role: 'user' as const, content: 'hi', createdAt: 1 }]
+      messages: [{ id: 'm1', role: 'user' as const, content: 'hi', timestamp: '1' }]
     }
     commitHydratedChat({
       chat: full,

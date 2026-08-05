@@ -9,6 +9,7 @@ import {
   reconcileHydrationOptions,
   resolveMaxHydratedMessageBytes
 } from './chatHydrationRuntime'
+import { isChatSummaryRecord } from './chatRecordMerge'
 import { reconcileChatRefMap } from './reconcileChatRefMap'
 
 function fullChat(id: string, content: string): ChatRecord {
@@ -18,7 +19,7 @@ function fullChat(id: string, content: string): ChatRecord {
     createdAt: 1,
     updatedAt: 1,
     archived: false,
-    messages: [{ id: `${id}-m`, role: 'user', content, createdAt: 1 }],
+    messages: [{ id: `${id}-m`, role: 'user', content, timestamp: '1' }],
     runs: []
   }
 }
@@ -83,7 +84,7 @@ describe('T7 App wiring — demote then rehydrate on focus', () => {
       pinReason: 'focused'
     })
     runtime.byteLru.unpin('focus', 'focused')
-    expect(committed.summaryOnly).toBeFalsy()
+    expect(isChatSummaryRecord(committed)).toBe(false)
     expect(committed.messages?.[0]?.content.length).toBe(8_000)
     expect(runtime.transcriptStore.get('cold')?.messages).toHaveLength(1)
     expect(runtime.byteLru.isPinned('cold')).toBe(true)
