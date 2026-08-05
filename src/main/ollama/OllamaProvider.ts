@@ -51,7 +51,11 @@ import {
   recordOllamaHarnessToolResult,
   type OllamaHarnessRunState
 } from './OllamaHarnessGates'
-import { summarizeOllamaToolResult } from './OllamaToolResultSummary'
+import {
+  resolveOllamaToolResultLimits,
+  summarizeOllamaToolResult,
+  type OllamaToolResultLimits
+} from './OllamaToolResultSummary'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { OllamaPromptIntent } from './OllamaPromptIntent'
 import { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
@@ -451,10 +455,11 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
 
 export function truncateOllamaToolResultOutput(
   output: string,
-  maxChars = OLLAMA_TOOL_RESULT_MAX_CHARS,
+  limits: number | OllamaToolResultLimits = OLLAMA_TOOL_RESULT_MAX_CHARS,
   toolName?: OllamaToolName | string
 ): string {
-  if (toolName) return summarizeOllamaToolResult(toolName, output, maxChars)
+  if (toolName) return summarizeOllamaToolResult(toolName, output, limits)
+  const maxChars = typeof limits === 'number' ? limits : limits.maxChars
   const value = String(output || '')
   if (value.length <= maxChars) return value
   return `${value.slice(0, maxChars)}\n[tool result truncated for selected Ollama context budget]`
@@ -2729,6 +2734,12 @@ export async function runOllamaProvider(
     } = launchPlan
     launchedModel = model
     const modelInfo = launchPlan.modelManifest.merged
+    // Tool-result truncation scales to the daemon-measured window (bounded by
+    // the profile cap); an unmeasured window keeps the conservative floor.
+    const toolResultLimits = resolveOllamaToolResultLimits({
+      measuredContextTokens: modelInfo?.contextLength,
+      contextCapTokens: runProfile.contextCapTokens
+    })
     const ensembleRun = Boolean(payload.ensembleRun)
     const chatId = route.appChatId || payload.appChatId
     const memoryKey = launchPlan.memoryKey ?? undefined
@@ -3259,7 +3270,7 @@ export async function runOllamaProvider(
         }
         const truncatedOutput = truncateOllamaToolResultOutput(
           toolResult.output,
-          OLLAMA_TOOL_RESULT_MAX_CHARS,
+          toolResultLimits,
           toolRequest.toolName
         )
         // Repeated-tool-call guard: if this exact call already returned the
