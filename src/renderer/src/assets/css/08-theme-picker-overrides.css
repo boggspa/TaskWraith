@@ -3972,7 +3972,11 @@
   width: max-content;
   min-width: 0;
   max-width: 100%;
-  padding: 5px 12px 5px 10px;
+  /* Horizontal padding is double the vertical-rhythm baseline (10/12 → 20/24)
+   * so the capsule reads as a pill rather than a label with a border. The
+   * left/right asymmetry stays: the chevron is optically lighter than the
+   * count badge, so it needs less gutter to look centered. */
+  padding: 5px 24px 5px 20px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--sidebar-text) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--sidebar-text) 18%, var(--sidebar-border));
@@ -3996,17 +4000,27 @@
   border-color: color-mix(in srgb, var(--sidebar-text) 26%, var(--sidebar-border));
 }
 
-/* Section count badge INSIDE the header capsule (iOS GlassPillHeader:
- * 11pt semibold monospaced digits on a surface3 capsule, tertiary text). */
+/* Section count INSIDE the header capsule — a bare satellite digit, not a
+ * badge. The pill is already the container, so a second capsule around the
+ * number just nested one lozenge inside another; the digit alone reads as
+ * metadata hanging off the label.
+ *
+ * The pill is `width: max-content`, so `margin-left: auto` has no free space
+ * to consume and would collapse to zero. The separation from the label has to
+ * be an explicit margin, which stacks on the toggle's own 6px flex gap. The
+ * pill's 24px padding-right then holds the digit off the trailing edge. */
 .app-sidebar .sidebar-section-header-toggle .sidebar-section-count {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   flex: 0 0 auto;
-  min-width: 16px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--sidebar-text) 16%, transparent);
+  min-width: 0;
+  margin-left: 10px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
   color: color-mix(in srgb, var(--sidebar-text) 72%, transparent);
   font-size: 11px;
   font-weight: 600;
