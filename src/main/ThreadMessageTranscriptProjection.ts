@@ -49,6 +49,10 @@ export function buildThreadMessageTranscriptProjection(event: ThreadMessageEvent
       threadMessageRequestedDelivery: event.requestedDelivery,
       threadMessageTrust: event.trust,
       threadMessageCreatedAt: event.createdAt,
+      // Spread so the key is ABSENT rather than undefined when no seat was
+      // captured: the card branches on presence to choose its seatless heading,
+      // and an empty seat would render an identity-shaped strip saying nothing.
+      ...(event.seat ? { threadMessageSeat: event.seat } : {}),
       threadMessageTruncated: event.truncated === true
     }
   }

@@ -21,6 +21,7 @@
 
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
 import type { ThreadMessageDelivery, ThreadMessageEvent } from '../../shared/threadMessage'
+import type { SeatChangeSeatState } from '../../shared/seatChange'
 import { createThreadMessageEvent } from '../../shared/threadMessage'
 import {
   threadMessageDenialMessage,
@@ -80,6 +81,18 @@ export interface ThreadMessageToolDeps {
   now: () => number
   /** Best-effort UI notify for the receiving chat (sidebar indicator, S7). */
   notifyThreadMessageQueued?: (event: ThreadMessageEvent) => void
+  /**
+   * The calling seat as configured RIGHT NOW, for the receiving card's "who
+   * sent this" header. Resolved in the host, where the chat record and roster
+   * live; this module stays free of both.
+   *
+   * Optional, and returning null is a supported answer rather than a failure —
+   * a solo chat has no participant to describe, and the card renders an honest
+   * seatless line. What it must never do is guess: an inaccurate seat is worse
+   * than no seat, because the reader uses it to decide how much weight to give
+   * a relayed message.
+   */
+  resolveCallerSeat?: (context: ThreadMessageToolContext) => SeatChangeSeatState | null
 }
 
 export interface ThreadMessageToolExecutors {
@@ -231,7 +244,12 @@ export function createThreadMessageToolExecutors(
       origin: 'agent',
       body,
       requestedDelivery,
-      createdAt: deps.now()
+      createdAt: deps.now(),
+      // Captured at SEND time, from the store — never from tool arguments, for
+      // the same reason as the title above, and never resolved later from the
+      // chat id, which would let a reconfiguration of this thread rewrite what
+      // the reader is told about a message it already received.
+      seat: deps.resolveCallerSeat?.(context) ?? undefined
     })
     if (!event) {
       return fail('The message could not be built (empty after sanitising, or self-addressed).')

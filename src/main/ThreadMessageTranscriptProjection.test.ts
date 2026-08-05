@@ -122,3 +122,43 @@ describe('ThreadMessageTranscriptProjection', () => {
     ])
   })
 })
+
+describe('sender seat projection', () => {
+  const SEAT = {
+    provider: 'claude',
+    model: 'claude-opus-5',
+    role: 'Reviewer',
+    permissionPresetId: 'full_access'
+  }
+
+  it('carries the captured seat onto the transcript row', () => {
+    const event = createThreadMessageEvent({
+      id: 'm-seat',
+      fromChatId: 'chat-a',
+      fromChatTitle: 'Byte pin fix',
+      toChatId: 'chat-b',
+      origin: 'agent',
+      body: 'Pull master before you continue.',
+      createdAt: 1_700_000_000_000,
+      seat: SEAT
+    })!
+    const row = buildThreadMessageTranscriptProjection(event)
+    expect(row.metadata?.threadMessageSeat).toEqual(SEAT)
+  })
+
+  it('omits the seat entirely when the sender had none', () => {
+    const event = createThreadMessageEvent({
+      id: 'm-bare',
+      fromChatId: 'chat-a',
+      fromChatTitle: 'Byte pin fix',
+      toChatId: 'chat-b',
+      origin: 'agent',
+      body: 'No seat was resolvable at send time.',
+      createdAt: 1_700_000_000_000
+    })!
+    const row = buildThreadMessageTranscriptProjection(event)
+    // Absent, not null/{} — the card branches on presence to pick the
+    // seatless heading, and an empty object would render an empty strip.
+    expect(row.metadata).not.toHaveProperty('threadMessageSeat')
+  })
+})

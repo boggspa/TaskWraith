@@ -322,3 +322,81 @@ describe('summarizeThreadMessageInbox', () => {
     })
   })
 })
+
+describe('sender seat capture', () => {
+  const SEAT = {
+    provider: 'claude',
+    model: 'claude-opus-5',
+    role: 'Reviewer',
+    reasoningEffort: 'xhigh',
+    thinkingEnabled: false,
+    permissionPresetId: 'full_access'
+  }
+
+  it('keeps the sender seat on the built event', () => {
+    expect(event({ seat: SEAT })?.seat).toEqual(SEAT)
+  })
+
+  it('SURVIVES A RELOAD — normalize rebuilds events from a whitelist, so an unthreaded field is silently lost', () => {
+    const inbox = enqueueThreadMessage(emptyThreadMessageInbox('chat-b'), event({ seat: SEAT })!)
+    const reloaded = normalizeThreadMessageInbox(JSON.parse(JSON.stringify(inbox)), 'chat-b')
+    expect(reloaded.pending[0]?.seat).toEqual(SEAT)
+  })
+
+  it('does not invent a seat when the sender never supplied one', () => {
+    expect(event()).not.toHaveProperty('seat')
+  })
+
+  it('refuses a seat with no model rather than storing an empty one', () => {
+    // Agreed with the seat element's author: an empty model means "we never saw
+    // one" in the close-out, so this host must never produce that state. The
+    // MESSAGE still sends — only the seat is dropped.
+    const built = event({ seat: { provider: 'claude', model: '   ' } })
+    expect(built).not.toBeNull()
+    expect(built).not.toHaveProperty('seat')
+  })
+
+  it('refuses a seat with no provider', () => {
+    expect(event({ seat: { provider: '', model: 'claude-opus-5' } })).not.toHaveProperty('seat')
+  })
+
+  it('drops a malformed seat instead of trusting it', () => {
+    expect(event({ seat: 'claude' as never })).not.toHaveProperty('seat')
+    expect(event({ seat: [] as never })).not.toHaveProperty('seat')
+    expect(event({ seat: null as never })).not.toHaveProperty('seat')
+  })
+
+  it('keeps only the fields the strip renders, and drops hostile extras', () => {
+    const built = event({
+      seat: { ...SEAT, grantsCount: 4, seatNumber: 3, poisoned: 'yes' } as never
+    })
+    // grantsCount describes the workspace and seatNumber is roster-local, so a
+    // peer sender's "#N" would be a lie. Neither is carried.
+    expect(built?.seat).toEqual(SEAT)
+  })
+
+  it('strips control characters out of seat strings', () => {
+    const built = event({
+      seat: { provider: `cla${CTRL(7)}ude`, model: `opus${CTRL(0)}-5`, role: `Rev${CTRL(27)}iewer` }
+    })
+    expect(built?.seat).toEqual({ provider: 'claude', model: 'opus-5', role: 'Reviewer' })
+  })
+
+  it('ignores a non-boolean thinkingEnabled rather than coercing it', () => {
+    const built = event({ seat: { ...SEAT, thinkingEnabled: 'yes' as never } })
+    expect(built?.seat).not.toHaveProperty('thinkingEnabled')
+  })
+
+  it('loads a pre-capture record untouched — no bump, so no inbox is discarded', () => {
+    const legacy = {
+      toChatId: 'chat-b',
+      schemaVersion: THREAD_MESSAGE_SCHEMA_VERSION,
+      pending: [{ ...event()!, seat: undefined }],
+      deliveredIds: ['old-1']
+    }
+    const decoded = normalizeThreadMessageInbox(JSON.parse(JSON.stringify(legacy)), 'chat-b')
+    expect(decoded.pending).toHaveLength(1)
+    expect(decoded.pending[0]).not.toHaveProperty('seat')
+    expect(decoded.deliveredIds).toEqual(['old-1'])
+  })
+})

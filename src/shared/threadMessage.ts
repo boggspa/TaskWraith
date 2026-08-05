@@ -26,7 +26,20 @@
  * unattended run.
  */
 
+import type { SeatChangeSeatState } from './seatChange'
+
+/**
+ * NOT bumped when the sender's seat was added, and it must not be bumped
+ * casually: `normalizeThreadMessageInbox` treats any other value as an
+ * unreadable ledger and returns an EMPTY inbox, which would discard both the
+ * undelivered queue and `deliveredIds` — the exactly-once guard. New fields
+ * belong here as OPTIONAL ones, so an older record keeps loading and simply
+ * renders without them.
+ */
 export const THREAD_MESSAGE_SCHEMA_VERSION = 1 as const
+
+/** Cap on any single captured seat string; long values are cut, never rejected. */
+export const MAX_THREAD_MESSAGE_SEAT_FIELD_CHARS = 120
 
 /** Synthetic transcript-row discriminator; delivery still lives in the ledger. */
 export const THREAD_MESSAGE_TRANSCRIPT_KIND = 'threadMessage' as const
@@ -87,6 +100,20 @@ export interface ThreadMessageEvent {
   readonly requestedDelivery: ThreadMessageDelivery
   readonly createdAt: number
   readonly trust: ThreadMessageTrust
+  /**
+   * The sending seat AS CONFIGURED WHEN IT SENT — provider, model, reasoning,
+   * permission tier, role. Captured here rather than resolved from `fromChatId`
+   * at render time on purpose: a later reconfiguration of the peer thread would
+   * otherwise silently rewrite history in the reader's transcript, and a solo
+   * peer chat has no participant to resolve at all.
+   *
+   * Optional in both directions. Records written before capture existed have no
+   * seat, and a send whose provider/model cannot both be resolved deliberately
+   * stores none — an absent seat renders an honest fallback line, whereas an
+   * empty model would collide with the close-out's use of that state to mean
+   * "we never saw one".
+   */
+  readonly seat?: SeatChangeSeatState
   /** Set once the body has entered the target's provider context. */
   readonly deliveredAt?: number
   /** True when `body` was clamped to MAX_THREAD_MESSAGE_CHARS. */
@@ -110,6 +137,8 @@ export interface ThreadMessageInput {
   readonly body: string
   readonly requestedDelivery?: ThreadMessageDelivery | null
   readonly createdAt: number
+  /** Untrusted: sanitized by `sanitizeSeat`, never stored as given. */
+  readonly seat?: unknown
 }
 
 export interface ThreadMessageInboxSummary {
@@ -184,6 +213,50 @@ function normalizedDelivery(value: unknown): ThreadMessageDelivery {
   return value === 'wake' ? 'wake' : 'queue'
 }
 
+/**
+ * Rebuild a sender's seat from untrusted input, field by field.
+ *
+ * An allowlist rather than a filter, for the usual reason: this value is
+ * rendered as the identity of whoever sent a relayed message, so anything the
+ * strip does not draw has no business surviving into storage.
+ *
+ * Two fields the seat element supports are deliberately NOT captured here.
+ * `grantsCount` describes the sending workspace rather than the sender, and
+ * `seatNumber` is `participant.order` — 1-based within ONE roster, so a peer
+ * sender's "#3" would be a number the reader cannot interpret. (The same token
+ * is meaningful for a fan-out lane, which is in the reader's own roster; do not
+ * unify the two cases.)
+ *
+ * Returns null unless BOTH provider and model survive, which is what keeps this
+ * host from ever producing the empty-model seat the close-out uses to mean
+ * something else.
+ */
+function sanitizeSeat(value: unknown): SeatChangeSeatState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const field = (key: string): string =>
+    sanitizeSingleLine(record[key], MAX_THREAD_MESSAGE_SEAT_FIELD_CHARS)
+  const provider = field('provider')
+  const model = field('model')
+  if (!provider || !model) return null
+  const role = field('role')
+  const reasoningEffort = field('reasoningEffort')
+  const permissionPresetId = field('permissionPresetId')
+  return {
+    provider,
+    model,
+    ...(role ? { role } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    // Strictly boolean: `thinkingEnabled` is a SEPARATE input from
+    // `reasoningEffort` that produces the same chip suffix, and `false` is a
+    // meaningful value, so this can be neither truthiness-tested nor coerced.
+    ...(typeof record.thinkingEnabled === 'boolean'
+      ? { thinkingEnabled: record.thinkingEnabled }
+      : {}),
+    ...(permissionPresetId ? { permissionPresetId } : {})
+  }
+}
+
 function normalizedTimestamp(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 }
@@ -208,6 +281,10 @@ export function createThreadMessageEvent(input: ThreadMessageInput): ThreadMessa
   if (!id || !fromChatId || !toChatId || fromChatId === toChatId) return null
   const { body, truncated } = sanitizeBody(input.body)
   if (!body) return null
+  // An unusable seat drops the SEAT, never the message: who sent it is worth
+  // less than what they said, and a refused capture must not silently swallow
+  // a delivery.
+  const seat = sanitizeSeat(input.seat)
   return {
     id,
     schemaVersion: THREAD_MESSAGE_SCHEMA_VERSION,
@@ -220,6 +297,7 @@ export function createThreadMessageEvent(input: ThreadMessageInput): ThreadMessa
     createdAt: normalizedTimestamp(input.createdAt),
     // Never taken from input — a sender cannot relabel its own message as trusted.
     trust: 'untrusted-thread-message',
+    ...(seat ? { seat } : {}),
     ...(truncated ? { truncated: true } : {})
   }
 }
@@ -250,7 +328,11 @@ export function normalizeThreadMessageInbox(value: unknown, toChatId: string): T
       origin: normalizedOrigin(source.origin),
       body: typeof source.body === 'string' ? source.body : '',
       requestedDelivery: normalizedDelivery(source.requestedDelivery),
-      createdAt: normalizedTimestamp(source.createdAt)
+      createdAt: normalizedTimestamp(source.createdAt),
+      // Re-sanitized rather than spread: this function REBUILDS each event from
+      // a field allowlist, so anything omitted here is dropped on every load —
+      // it would look persisted right up until the app restarts.
+      seat: source.seat
     })
     if (!event || seen.has(event.id)) continue
     seen.add(event.id)

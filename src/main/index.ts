@@ -1312,6 +1312,7 @@ import {
   isThreadMessageMcpToolName
 } from './mcp/ThreadMessageToolExecutors'
 import { createThreadMessageId } from './ThreadMessageLedger'
+import { resolveThreadMessageSenderSeat } from './ThreadMessageSeatCapture'
 import { createThreadMessageEvent, summarizeThreadMessageInbox } from '../shared/threadMessage'
 import { registerThreadMessageHandlers } from './ipc/threadMessageHandlers'
 import { createThreadMessageWakeDispatcher } from './ThreadMessageWakeDispatcher'
@@ -5255,6 +5256,17 @@ const threadMessageToolExecutors = createThreadMessageToolExecutors({
     const targetChat = AppStore.getChat(event.toChatId)
     if (targetChat) broadcastChatUpdated(targetChat)
     sweepThreadMessageWakes()
+  },
+  // The sending seat, captured now and stored on the message, so the receiving
+  // card can say WHO sent it. `getParticipantIdForRun` names the roster seat
+  // that actually made the tool call; without it (solo chats, unscoped callers)
+  // the chat's own provider/model is used, and when neither resolves the seat
+  // is omitted rather than guessed.
+  resolveCallerSeat: (context) => {
+    const chat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+    if (!chat) return null
+    const participantId = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
+    return resolveThreadMessageSenderSeat(chat, participantId)
   }
 })
 
