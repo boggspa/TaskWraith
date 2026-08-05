@@ -577,6 +577,43 @@ export interface RemoteProposedPlan {
   bodyTruncated?: boolean
 }
 
+/**
+ * Structured authoritative seat change — `metadata.seatChange` projected so a
+ * remote client renders the same seat strip the desktop transcript row does
+ * (provider, model, reasoning, permission tier, grants, #N role), with the same
+ * before → after motion. The row stays kind 'system' and keeps its plain
+ * sentence in `preview`, so a client without the strip is exactly as informed
+ * as it was before this field existed.
+ *
+ * Field names mirror `SeatChangeSeatState` / `SeatChangePayload` in
+ * `src/shared/seatChange.ts` 1:1 — the same shape the close-out link carries —
+ * so one value type on the client decodes both surfaces.
+ */
+export interface RemoteSeatChangeSeat {
+  provider: string
+  model: string
+  role?: string
+  /** 1-based roster position, rendered as the "#N" prefix on the role. */
+  seatNumber?: number
+  reasoningEffort?: string
+  /** Kimi's thinking toggle — a separate input from `reasoningEffort` that
+   * produces the same chip suffix. */
+  thinkingEnabled?: boolean
+  permissionPresetId?: string
+  /** Chat-level workspace grant count at emit time. */
+  grantsCount?: number
+}
+
+export interface RemoteSeatChange {
+  participantId: string
+  /** Human seat label at emit time (role or provider). */
+  label: string
+  before: RemoteSeatChangeSeat
+  after: RemoteSeatChangeSeat
+  /** ISO timestamp of the LATEST coalesced adjustment. */
+  appliedAt: string
+}
+
 /** Structured `ask_user_question` prompt — the desktop AgentQuestionCard's data,
  * projected so the phone can render the question INLINE in the transcript
  * (anchored to its asking system message) instead of only in the top attention
@@ -862,6 +899,10 @@ export interface RemoteThreadRow {
    * drives the inline collapsible plan card + approve/respond/dismiss on remote
    * clients, mirroring the desktop ProposedPlanCard. */
   proposedPlan?: RemoteProposedPlan
+  /** Present on an authoritative seat-change row — drives the remote seat strip
+   * (desktop SeatChangeRow parity). The row stays kind 'system' with its plain
+   * sentence in `preview`, so clients without the strip are unaffected. */
+  seatChange?: RemoteSeatChange
   /** Present on an ask_user_question asking message — drives the inline question
    * card (the same prompt the top attention banner shows) so remote clients can
    * answer it in place, matching the desktop AgentQuestionCard. */
@@ -1949,6 +1990,82 @@ function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined
   return result
 }
 
+/** A seat carries a whole configuration, none of it free text the user typed —
+ * ids, a role name and two small integers. The caps are containment against a
+ * malformed blob, not a preview budget. */
+const REMOTE_SEAT_FIELD_MAX = 120
+const REMOTE_SEAT_NUMBER_MAX = 999
+const REMOTE_SEAT_GRANTS_MAX = 9999
+
+/**
+ * Project one side of a seat change. `provider` is the only required field:
+ * without it there is no seat to draw, and a strip with a blank provider is
+ * worse than the plain sentence the row already carries.
+ *
+ * Deliberately NOT `providerField`-validated: the seat is a RECORD of what the
+ * round actually ran with, so a provider this build has since retired (or one a
+ * newer Mac added) must still project. The client resolves an unknown provider
+ * to a neutral dot and its raw name, which is the honest degradation.
+ */
+function buildSeatChangeSeat(raw: unknown): RemoteSeatChangeSeat | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const seat = raw as Record<string, unknown>
+  const provider = stringField(seat.provider, REMOTE_SEAT_FIELD_MAX)
+  if (!provider) return undefined
+  const result: RemoteSeatChangeSeat = {
+    provider,
+    model: stringField(seat.model, REMOTE_SEAT_FIELD_MAX) ?? ''
+  }
+  const role = stringField(seat.role, REMOTE_SEAT_FIELD_MAX)
+  if (role) result.role = role
+  const seatNumber = boundedSeatCount(seat.seatNumber, 1, REMOTE_SEAT_NUMBER_MAX)
+  if (seatNumber !== undefined) result.seatNumber = seatNumber
+  const reasoningEffort = stringField(seat.reasoningEffort, REMOTE_SEAT_FIELD_MAX)
+  if (reasoningEffort) result.reasoningEffort = reasoningEffort
+  if (typeof seat.thinkingEnabled === 'boolean') result.thinkingEnabled = seat.thinkingEnabled
+  const permissionPresetId = stringField(seat.permissionPresetId, REMOTE_SEAT_FIELD_MAX)
+  if (permissionPresetId) result.permissionPresetId = permissionPresetId
+  const grantsCount = boundedSeatCount(seat.grantsCount, 0, REMOTE_SEAT_GRANTS_MAX)
+  if (grantsCount !== undefined) result.grantsCount = grantsCount
+  return result
+}
+
+function boundedSeatCount(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const rounded = Math.trunc(value)
+  if (rounded < min || rounded > max) return undefined
+  return rounded
+}
+
+/**
+ * Project the authoritative seat-change row from `metadata.seatChange`. Gated
+ * on the writer's own stamp (role 'system' + `kind === 'ensembleSeatChange'` —
+ * EnsembleOrchestrator.appendSeatChange is the single writer) so a seat blob on
+ * any other row can never grow a phantom strip.
+ *
+ * A change with no resolvable AFTER seat projects nothing; a missing BEFORE
+ * falls back to the after side, which is the same "nothing to roll"
+ * degradation the close-out link applies to an unchanged seat.
+ */
+function buildSeatChange(message: ChatMessage): RemoteSeatChange | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (message.role !== 'system' || metadata?.kind !== 'ensembleSeatChange') return undefined
+  const raw = metadata.seatChange
+  if (!raw || typeof raw !== 'object') return undefined
+  const payload = raw as Record<string, unknown>
+  const participantId = stringField(payload.participantId, REMOTE_SEAT_FIELD_MAX)
+  const after = buildSeatChangeSeat(payload.after)
+  if (!participantId || !after) return undefined
+  const before = buildSeatChangeSeat(payload.before) ?? after
+  return {
+    participantId,
+    label: stringField(payload.label, REMOTE_SEAT_FIELD_MAX) ?? after.role ?? after.provider,
+    before,
+    after,
+    appliedAt: stringField(payload.appliedAt, 40) ?? message.timestamp
+  }
+}
+
 /**
  * Project an ask_user_question prompt from its asking message. The renderer
  * stamps `metadata.kind === 'agentQuestion'` (+ questionId / agentQuestion /
@@ -2347,6 +2464,8 @@ function buildRow(
   }
   const proposedPlan = buildProposedPlan(message)
   if (proposedPlan) row.proposedPlan = proposedPlan
+  const seatChange = buildSeatChange(message)
+  if (seatChange) row.seatChange = seatChange
   const agentQuestion = buildAgentQuestion(message, questionAnswers)
   if (agentQuestion) row.agentQuestion = agentQuestion
   const fanoutResult = buildFanoutResult(message, previewMax)

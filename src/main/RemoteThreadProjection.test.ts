@@ -1147,6 +1147,115 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('seatChange (iOS seat-strip parity)', () => {
+    const seatChangeRow = (seatChange: unknown, overrides = {}) =>
+      msg(1, {
+        id: 'ensemble-seat-change-r1',
+        role: 'system',
+        content: 'Authoritative seat change applied.',
+        // Cast: these cases deliberately feed shapes `metadata.seatChange` does
+        // not allow, which is the point — the projector has to contain them.
+        metadata: { kind: 'ensembleSeatChange', ensembleRoundId: 'r1', seatChange } as never,
+        ...overrides
+      })
+
+    const CHANGE = {
+      participantId: 'p-8',
+      label: 'GemProWork',
+      before: {
+        provider: 'grok',
+        model: 'grok-4.5-fast',
+        role: 'GemProWork',
+        seatNumber: 8,
+        reasoningEffort: 'high',
+        permissionPresetId: 'default',
+        grantsCount: 2
+      },
+      after: {
+        provider: 'claude',
+        model: 'claude-opus-5',
+        role: 'GemProWork',
+        seatNumber: 8,
+        reasoningEffort: 'max',
+        permissionPresetId: 'workspace_write',
+        grantsCount: 2
+      },
+      appliedAt: '2026-08-05T12:00:00.000Z'
+    }
+
+    it('projects both sides of the seat, including the grants count and the thinking flag', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [seatChangeRow(CHANGE)])
+      expect(snap.rows[0].seatChange).toEqual(CHANGE)
+      // The row stays an ordinary system row carrying its plain sentence, so a
+      // client without the strip is exactly as informed as before.
+      expect(snap.rows[0].kind).toBe('system')
+      expect(snap.rows[0].preview).toContain('Authoritative seat change applied.')
+
+      const thinking = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow({
+          ...CHANGE,
+          before: { provider: 'kimi', model: 'kimi-k2.7-code', thinkingEnabled: false },
+          after: { provider: 'kimi', model: 'kimi-k2.7-code', thinkingEnabled: true }
+        })
+      ])
+      expect(thinking.rows[0].seatChange?.before.thinkingEnabled).toBe(false)
+      expect(thinking.rows[0].seatChange?.after.thinkingEnabled).toBe(true)
+    })
+
+    it('falls back to the after side when the before seat is missing (nothing to roll)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow({ ...CHANGE, before: undefined })
+      ])
+      expect(snap.rows[0].seatChange?.before).toEqual(CHANGE.after)
+    })
+
+    it('projects a provider this build does not know — the seat is a RECORD, not a picker', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow({
+          ...CHANGE,
+          after: { ...CHANGE.after, provider: 'some-future-provider' }
+        })
+      ])
+      expect(snap.rows[0].seatChange?.after.provider).toBe('some-future-provider')
+    })
+
+    it('ignores a seat blob without the writer stamp, or with no resolvable after seat', () => {
+      const unstamped = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow(CHANGE, { metadata: { seatChange: CHANGE } })
+      ])
+      expect(unstamped.rows[0].seatChange).toBeUndefined()
+
+      const wrongRole = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow(CHANGE, { role: 'assistant' })
+      ])
+      expect(wrongRole.rows[0].seatChange).toBeUndefined()
+
+      const noProvider = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow({ ...CHANGE, after: { model: 'claude-opus-5' } })
+      ])
+      expect(noProvider.rows[0].seatChange).toBeUndefined()
+
+      const noPayload = project({ kind: 'latestN', n: 10 }, [seatChangeRow(undefined)])
+      expect(noPayload.rows[0].seatChange).toBeUndefined()
+    })
+
+    it('bounds the counts rather than trusting whatever the blob says', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow({
+          ...CHANGE,
+          after: { ...CHANGE.after, seatNumber: 10_000, grantsCount: -1 }
+        })
+      ])
+      expect(snap.rows[0].seatChange?.after.seatNumber).toBeUndefined()
+      expect(snap.rows[0].seatChange?.after.grantsCount).toBeUndefined()
+    })
+
+    it('leaves every other row untouched', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, MESSAGES)
+      expect(snap.rows.every((row) => row.seatChange === undefined)).toBe(true)
+    })
+  })
+
   describe('agentQuestion', () => {
     const ask = (overrides = {}) =>
       msg(1, {
