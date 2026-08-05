@@ -508,15 +508,50 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
 const chatsDir = path.join(userDataPath, 'chats')
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
 const chatListIndexStore = new ChatListIndexStore(userDataPath)
-/** T3a-1: per-chat save coalescer. Default 100 ms; set TASKWRAITH_SAVE_COALESCE_MS to
- *  0 for immediate flush (timer still allocated), negative to disable entirely. */
+/**
+ * T3a-1: per-chat save coalescer.
+ *
+ * WINDOW SIZING IS MEASURED, NOT GUESSED. The T2 baseline recorded the hot
+ * chat being rewritten 8-14 times per 10 s window — one save every 714-1250
+ * ms. A trailing-edge debounce only merges saves that arrive INSIDE its
+ * window, so the original 100 ms default expired 600-1150 ms before each
+ * successor arrived: it coalesced essentially nothing and would have reported
+ * a near-zero delta on the comparison run, inviting the false conclusion that
+ * coalescing does not work.
+ *
+ * 1000 ms sits at the dense end of the measured cadence, so sustained
+ * streaming keeps re-arming the trailing timer; the 3x ceiling
+ * (DEFAULT_MAX_LATENCY_MULTIPLIER) then governs and forces a durable write
+ * every 3 s. Expected effect during streaming: ~14 writes/10 s collapses to
+ * ~3.3 (~4x), and 8 writes/10 s to ~3.3 (~2.4x).
+ *
+ * This window is only SAFE because the ceiling exists: without it the trailing
+ * timer would re-arm forever and a continuously streaming chat would never
+ * become durable. The ceiling also bounds the crash-loss window to 3 s of
+ * actively-streaming transcript — and only for chats with a running run, since
+ * every other save is a 'terminal' barrier that writes through synchronously.
+ *
+ * Env override retained: TASKWRAITH_SAVE_COALESCE_MS — 0 flushes on the next
+ * tick, negative disables coalescing entirely (exactly the pre-T3a-1
+ * behaviour). TASKWRAITH_SAVE_COALESCE_MAX_MS overrides the ceiling.
+ */
+const SAVE_COALESCE_DEFAULT_MS = 1000
 const saveCoalesceMs = (() => {
   const raw = process.env.TASKWRAITH_SAVE_COALESCE_MS
-  if (raw === undefined) return 100
+  if (raw === undefined) return SAVE_COALESCE_DEFAULT_MS
   const n = Number(raw)
-  return Number.isFinite(n) ? n : 100
+  return Number.isFinite(n) ? n : SAVE_COALESCE_DEFAULT_MS
 })()
-const saveCoalescer = createSaveCoalescer(saveCoalesceMs)
+const saveCoalesceMaxMs = (() => {
+  const raw = process.env.TASKWRAITH_SAVE_COALESCE_MAX_MS
+  if (raw === undefined) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
+})()
+const saveCoalescer =
+  saveCoalesceMaxMs === undefined
+    ? createSaveCoalescer(saveCoalesceMs)
+    : createSaveCoalescer(saveCoalesceMs, saveCoalesceMaxMs)
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
 const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
@@ -6185,6 +6220,17 @@ export class AppStore {
         record: normalizedChat
       })
       const chatId = normalizedChat.appChatId
+      // T3a-1 durability barrier. Deferral is only safe while a run is
+      // actively streaming: that is both where the measured 8-14 rewrites per
+      // 10 s come from, and the only window a superseding save is guaranteed
+      // to follow. Once no run is running the chat sits at a terminal/idle
+      // boundary, so the next reader — bridge broadcast, iOS, crash recovery —
+      // must find it on disk rather than in a pending timer.
+      const flushReason: FlushReason = (normalizedChat.runs ?? []).some(
+        (run) => run.status === 'running'
+      )
+        ? 'normal'
+        : 'terminal'
       saveCoalescer.schedule(
         chatId,
         () => {
@@ -6207,7 +6253,7 @@ export class AppStore {
             // Cache was already set optimistically; a stale mtimeMs is harmless.
           }
         },
-        'normal'
+        flushReason
       )
     }
     // The chat-list-index write and harvests stay synchronous — they're cheap
@@ -6934,10 +6980,20 @@ export class AppStore {
     }
     if (step === 'chat-records') {
       if (intent.kind === 'global') {
+        // T3a-1: drop every deferred write BEFORE the directory goes. A
+        // pending timer would otherwise recreate a chat file after deletion,
+        // and getChats() enumerates this directory, so the deleted chat would
+        // reappear in the list (NON-NEGOTIABLE #4).
+        saveCoalescer.discardAll()
         removePathStrict(chatsDir, 'chat history directory')
       } else if (intent.kind === 'truncate') {
         const chatId = intent.rootChatId!
         const chatPath = chatPathForId(chatsDir, chatId)
+        // T3a-1: truncation reads the record from DISK, so a deferred write
+        // must land first. Discarding here would silently truncate a stale
+        // record and drop the newest non-history fields; flushing keeps the
+        // file authoritative before it is rewritten.
+        saveCoalescer.flush(chatId)
         const stored = readJsonStrictIfPresent(chatPath)
         if (stored === null) return
         const chat = this.normalizeChatRecord(stored as ChatRecord)
@@ -7006,6 +7062,10 @@ export class AppStore {
           throw new Error('Truncated chat still contains a durable history or orchestration source.')
         }
       } else {
+        // T3a-1: discard, never flush. A pending write for a chat being
+        // deleted must be dropped before the file is unlinked, or the timer
+        // recreates it and getChats() lists a deleted chat again.
+        for (const chatId of intent.chatIds) saveCoalescer.discard(chatId)
         removePathsStrict(
           intent.chatIds.map((chatId) => ({
             targetPath: chatPathForId(chatsDir, chatId),

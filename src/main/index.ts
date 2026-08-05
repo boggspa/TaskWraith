@@ -47212,6 +47212,15 @@ if (isGeminiMcpBridgeProcess) {
         clearInterval(nativeWindowExpirySweepTimer)
         nativeWindowExpirySweepTimer = null
       }
+      // T3a-1: flush every deferred chat save before the process exits.
+      // Unlike the advisory quota estimate below, this IS correctness: a
+      // coalesced write still pending at quit would lose that chat's newest
+      // transcript entirely.
+      try {
+        AppStore.flushAllChatSaves()
+      } catch (e) {
+        console.error('Failed to flush pending chat saves on quit', e)
+      }
       // Up to one debounce window of the last turn's spend is otherwise lost.
       // The estimate is advisory, so this is tidiness rather than correctness.
       void flushMistralQuotaStore()

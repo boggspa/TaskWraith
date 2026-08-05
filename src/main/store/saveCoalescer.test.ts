@@ -235,4 +235,93 @@ describe('saveCoalescer', () => {
       expect(c.stats().pending).toBe(0);
     });
   });
+
+  describe('max-latency ceiling', () => {
+    it('writes by the ceiling even while saves keep re-arming the trailing timer', () => {
+      const writes: string[] = [];
+      const c = createSaveCoalescer(100, 300);
+
+      // A save every 80 ms always lands inside the 100 ms trailing window, so
+      // the trailing edge is never reached. Without a ceiling this chat would
+      // defer forever and never become durable.
+      c.schedule('chat-1', () => writes.push('s0'), 'normal');
+      for (let i = 1; i <= 5; i += 1) {
+        vi.advanceTimersByTime(80);
+        c.schedule('chat-1', () => writes.push(`s${i}`), 'normal');
+      }
+
+      expect(writes).toEqual(['s3']);
+      expect(c.stats().ceilingFlushes).toBe(1);
+    });
+
+    it('CONTROL: with the ceiling out of reach the same traffic never writes at all', () => {
+      const writes: string[] = [];
+      // Same 80 ms cadence, but a ceiling far beyond the test horizon —
+      // i.e. the pre-fix behaviour. This is what the ceiling exists to stop:
+      // the trailing timer re-arms forever and nothing ever becomes durable.
+      const c = createSaveCoalescer(100, 1_000_000);
+
+      c.schedule('chat-1', () => writes.push('s0'), 'normal');
+      for (let i = 1; i <= 5; i += 1) {
+        vi.advanceTimersByTime(80);
+        c.schedule('chat-1', () => writes.push(`s${i}`), 'normal');
+      }
+
+      expect(writes).toEqual([]);
+      expect(c.stats().flushed).toBe(0);
+      expect(c.stats().ceilingFlushes).toBe(0);
+    });
+
+    it('does not fire early when a single save settles normally', () => {
+      const writes: string[] = [];
+      const c = createSaveCoalescer(100, 300);
+
+      c.schedule('chat-1', () => writes.push('only'), 'normal');
+      vi.advanceTimersByTime(99);
+      expect(writes).toEqual([]);
+
+      vi.advanceTimersByTime(2);
+      expect(writes).toEqual(['only']);
+      // Settled by the trailing edge, not forced by the ceiling.
+      expect(c.stats().ceilingFlushes).toBe(0);
+    });
+  });
+
+  describe('discard (delete-resurrection guard)', () => {
+    it('drops a pending write so a deleted chat cannot reappear', () => {
+      const writes: string[] = [];
+      const c = createSaveCoalescer(100);
+
+      c.schedule('chat-1', () => writes.push('resurrected'), 'normal');
+      expect(c.discard('chat-1')).toBe(true);
+
+      vi.advanceTimersByTime(500);
+
+      // The write must never happen: it would recreate the deleted chat file.
+      expect(writes).toEqual([]);
+      expect(c.stats().flushed).toBe(0);
+      expect(c.stats().pending).toBe(0);
+      expect(c.stats().discarded).toBe(1);
+    });
+
+    it('returns false when nothing is pending for that chat', () => {
+      const c = createSaveCoalescer(100);
+      expect(c.discard('never-scheduled')).toBe(false);
+    });
+
+    it('discardAll drops every pending write (global history deletion)', () => {
+      const writes: string[] = [];
+      const c = createSaveCoalescer(100);
+
+      c.schedule('chat-a', () => writes.push('a'), 'normal');
+      c.schedule('chat-b', () => writes.push('b'), 'normal');
+
+      expect(c.discardAll()).toBe(2);
+      vi.advanceTimersByTime(500);
+
+      expect(writes).toEqual([]);
+      expect(c.stats().flushed).toBe(0);
+      expect(c.stats().discarded).toBe(2);
+    });
+  });
 });

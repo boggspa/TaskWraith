@@ -32,16 +32,21 @@
  *    handle it, and letting it escape a timer callback would take down the
  *    main process. Barrier writes keep normal throw semantics.
  *
- * KNOWN GAPS in this API — see the GrokWork collision report; these are
- * findings for the owning lane, deliberately NOT silently added here:
- *  1. No read-through. While a write is deferred the file on disk is stale,
- *     but `saveChat` derives `persistenceRevision` from a re-read baseline
- *     (`readChatForFeedbackBaseline`, store/index.ts) — two saves inside one
- *     deferral window would derive from the same baseline and collide.
- *  2. No max-latency ceiling. The trailing timer re-arms on every save, so a
- *     continuously streaming chat can defer indefinitely.
- *  3. No discard. A pending write that lands after a delete recreates the
- *     deleted chat file.
+ * GAP STATUS (all three closed; kept here as the audit trail):
+ *  1. Read-through — CLOSED in `store/index.ts`, not here. `saveChat` derives
+ *     `persistenceRevision` from a re-read baseline, so a deferred write must
+ *     not leave that read seeing stale disk. The store marks its cache entry
+ *     dirty (`mtimeMs: -1`) and `readChatRecordCached` /
+ *     `readChatForFeedbackBaseline` consult it, so the baseline is the latest
+ *     record rather than the last file on disk.
+ *  2. Max-latency ceiling — CLOSED below. The trailing timer re-arms on every
+ *     save, so under sustained streaming the trailing edge is never reached;
+ *     without a ceiling a continuously active chat would defer forever. The
+ *     ceiling makes the deferral window bounded and therefore the crash-loss
+ *     window bounded, which is what makes raising the trailing window safe.
+ *  3. Discard — CLOSED below. A pending write that fires after its chat was
+ *     deleted recreates the file, and `getChats()` enumerates the directory,
+ *     so the deleted chat reappears. Deletion must DISCARD, never flush.
  */
 
 /**
@@ -62,6 +67,11 @@ export interface SaveCoalescerStats {
   pending: number
   /** Barrier saves that bypassed the timer. */
   urgentFlushes: number
+  /** Deferred writes forced out by the max-latency ceiling rather than by the
+   *  trailing edge. Under sustained streaming this is the governing path. */
+  ceilingFlushes: number
+  /** Pending writes dropped without writing, because their chat was deleted. */
+  discarded: number
 }
 
 export interface SaveCoalescer {
@@ -75,25 +85,52 @@ export interface SaveCoalescer {
   flush(chatId: string): boolean
   /** Durability barrier for every deferred chat — shutdown and global consistency points. */
   flushAll(): void
+  /**
+   * Drop a deferred write WITHOUT performing it. Only correct where the target
+   * is being destroyed: flushing there would recreate a deleted chat file.
+   * Returns true when a pending write was dropped.
+   */
+  discard(chatId: string): boolean
+  /** Drop every deferred write without performing it — global history deletion. */
+  discardAll(): number
   stats(): SaveCoalescerStats
 }
 
 interface PendingSave {
   write: () => void
   timer: ReturnType<typeof setTimeout> | null
+  /** When this chat first went pending, for the max-latency ceiling. */
+  firstQueuedAt: number
 }
+
+/** Ceiling applied when the caller does not supply one explicitly. */
+export const DEFAULT_MAX_LATENCY_MULTIPLIER = 3
 
 /**
  * @param delayMs Trailing-edge window. Negative disables coalescing entirely
  *   (every save writes through synchronously, i.e. today's behaviour); `0`
  *   still coalesces saves issued in the same synchronous batch.
+ * @param maxLatencyMs Hard ceiling between a chat's first pending save and its
+ *   write. The trailing timer re-arms on every save, so under sustained
+ *   streaming the trailing edge is never reached and this ceiling — not
+ *   `delayMs` — is what actually governs. It bounds both the staleness of the
+ *   file on disk and the crash-loss window. Ignored when `delayMs <= 0`, where
+ *   there is no meaningful deferral to bound.
  */
-export function createSaveCoalescer(delayMs: number): SaveCoalescer {
+export function createSaveCoalescer(
+  delayMs: number,
+  maxLatencyMs: number = Math.max(delayMs, delayMs * DEFAULT_MAX_LATENCY_MULTIPLIER)
+): SaveCoalescer {
   const pending = new Map<string, PendingSave>()
+  // A ceiling below the trailing window would make the trailing edge
+  // unreachable and every write would report as ceiling-forced.
+  const ceilingMs = delayMs > 0 ? Math.max(delayMs, maxLatencyMs) : 0
   let scheduled = 0
   let coalesced = 0
   let flushed = 0
   let urgentFlushes = 0
+  let ceilingFlushes = 0
+  let discarded = 0
 
   /**
    * Run one write callback. Counted even when it throws: the write was
@@ -149,19 +186,30 @@ export function createSaveCoalescer(delayMs: number): SaveCoalescer {
       }
 
       scheduled += 1
+      // The ceiling is measured from when this chat FIRST went pending, not
+      // from the newest save. Restarting it per save is what would let a
+      // continuously streaming chat defer forever.
+      const previous = pending.get(chatId)
+      const firstQueuedAt = previous ? previous.firstQueuedAt : Date.now()
       supersede(chatId)
 
-      const entry: PendingSave = { write, timer: null }
+      const remainingCeiling =
+        ceilingMs > 0 ? ceilingMs - (Date.now() - firstQueuedAt) : Number.POSITIVE_INFINITY
+      const forcedByCeiling = remainingCeiling <= delayMs
+      const delay = forcedByCeiling ? Math.max(0, remainingCeiling) : delayMs
+
+      const entry: PendingSave = { write, timer: null, firstQueuedAt }
       pending.set(chatId, entry)
       entry.timer = setTimeout(() => {
-        // A barrier or a superseding save may have replaced this entry
-        // between scheduling and firing; writing then would resurrect
-        // superseded state.
+        // A barrier, a discard, or a superseding save may have replaced this
+        // entry between scheduling and firing; writing then would resurrect
+        // superseded — or deleted — state.
         if (pending.get(chatId) !== entry) return
         pending.delete(chatId)
+        if (forcedByCeiling) ceilingFlushes += 1
         runWrite(entry.write)
-      }, delayMs)
-      return delayMs
+      }, delay)
+      return delay
     },
 
     flush,
@@ -170,8 +218,38 @@ export function createSaveCoalescer(delayMs: number): SaveCoalescer {
       for (const chatId of [...pending.keys()]) flush(chatId)
     },
 
+    discard(chatId: string): boolean {
+      const entry = pending.get(chatId)
+      if (!entry) return false
+      if (entry.timer) clearTimeout(entry.timer)
+      pending.delete(chatId)
+      discarded += 1
+      return true
+    },
+
+    discardAll(): number {
+      let dropped = 0
+      for (const chatId of [...pending.keys()]) {
+        const entry = pending.get(chatId)
+        if (!entry) continue
+        if (entry.timer) clearTimeout(entry.timer)
+        pending.delete(chatId)
+        discarded += 1
+        dropped += 1
+      }
+      return dropped
+    },
+
     stats(): SaveCoalescerStats {
-      return { scheduled, coalesced, flushed, pending: pending.size, urgentFlushes }
+      return {
+        scheduled,
+        coalesced,
+        flushed,
+        pending: pending.size,
+        urgentFlushes,
+        ceilingFlushes,
+        discarded
+      }
     }
   }
 }
