@@ -409,7 +409,9 @@ describe('buildCompactGroupTargetSummary', () => {
       })
     ])
 
-    expect(summary.label).toBe('Read 4 times across 2 files')
+    // One voice with the settled-row fold: count files touched, not calls
+    // made. The 4 calls survive as the ×2 repeat counts on the chips.
+    expect(summary.label).toBe('Read 2 files')
     expect(summary.overflowCount).toBe(0)
     expect(summary.chips.map((chip) => [chip.label, chip.repeatCount])).toEqual([
       ['App.tsx', 2],

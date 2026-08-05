@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
@@ -605,6 +607,68 @@ describe('ActivityStack compact tool groups', () => {
     expect(html).toContain('digit-odometer')
     expect(html).toContain('2 raw tool calls')
     expect(html).not.toContain('activity-compact-chip muted')
+  })
+
+  it('counts files touched, not calls made, so it matches the settled-row one-liner', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeReadActivity({ id: 'r1', parameters: { file_path: '/repo/a.ts' } }),
+          makeReadActivity({ id: 'r2', parameters: { file_path: '/repo/a.ts' } }),
+          makeReadActivity({ id: 'r3', parameters: { file_path: '/repo/b.ts' } }),
+          makeReadActivity({ id: 'r4', parameters: { file_path: '/repo/b.ts' } })
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Read 2 files')
+    expect(html).not.toContain('times across')
+    // The call counts survive where they belong — on the per-file chips.
+    expect(html).toContain('activity-compact-chip-repeat')
+  })
+
+  it('paints summed diff totals beside the group label when the transcript opts in', () => {
+    const edits = [
+      makeWriteActivity({
+        id: 'w1',
+        toolName: 'edit_file',
+        parameters: { file_path: '/repo/a.ts', old_string: 'a\nb', new_string: 'A\nB\nC' }
+      }),
+      makeWriteActivity({
+        id: 'w2',
+        toolName: 'edit_file',
+        parameters: { file_path: '/repo/a.ts', old_string: 'x', new_string: 'X\nY' }
+      })
+    ]
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={edits} provider="codex" showDiffStats />
+    )
+
+    expect(html).toContain('activity-compact-group')
+    expect(html).toContain('collapsed-activity-stack-diff-stat is-add')
+    // 3 + 2 added, 2 + 1 removed across the two folded edits.
+    expect(html).toContain('+5')
+    expect(html).toContain('-3')
+
+    // Fan-out lane and sub-agent viewports never opt in.
+    const bare = renderToStaticMarkup(<ActivityStack activities={edits} provider="codex" />)
+    expect(bare).toContain('activity-compact-group')
+    expect(bare).not.toContain('collapsed-activity-stack-diff')
+  })
+
+  it('speaks in the settled-row one-liner voice, typography included', () => {
+    const groupCss = readFileSync(
+      join(process.cwd(), 'src/renderer/src/assets/css/06-component-panels-modals.css'),
+      'utf8'
+    )
+    const start = groupCss.indexOf('.activity-compact-group-title {')
+    const title = groupCss.slice(start, groupCss.indexOf('}', start) + 1)
+    // Byte-identical typography to .collapsed-activity-stack-summary — both
+    // are a folded run of tool calls and must not read as two kinds of row.
+    expect(title).toContain('font-family: var(--transcript-font-family)')
+    expect(title).toContain('font-size: var(--font-size-md)')
+    expect(title).toContain('font-weight: 600')
   })
 
   it('debounces only same-id transitions from individual rows into a compact group', () => {

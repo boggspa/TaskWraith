@@ -40,7 +40,8 @@ import { WorkflowCard } from './WorkflowCard'
 import { ReviewCard } from './ReviewCard'
 import { CodexMultiAgentCard } from './CodexMultiAgentCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
-import { inlineStatsForActivity } from '../lib/ActivityInlineStats'
+import { inlineStatsForActivity, sumActivityDiffTotals } from '../lib/ActivityInlineStats'
+import { CollapsedDiffStats } from './CollapsedTranscriptRow'
 import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
 import { FileTypeIcon } from './FileTypeIcon'
 import { DigitOdometer } from './DigitOdometer'
@@ -123,6 +124,11 @@ interface ActivityStackProps {
   expandedActivityIds?: Set<string>
   onExpandedActivityIdsChange?: (next: Set<string>) => void
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
+  /** Paint summed `+N −M` diff totals on the compact-group one-liners this
+   * stack folds, matching the settled-row summary. Main transcript opts in;
+   * fan-out lane viewports leave it off (their rows carry their own diff
+   * chrome, and sub-agent viewports render through their own card). */
+  showDiffStats?: boolean
   thinkingTraceActions?: ThinkingTraceActionsConfig
 }
 
@@ -1405,11 +1411,14 @@ export function buildCompactGroupTargetSummary(
   if (unique === 1 && targets[0].repeatCount === total) {
     label = `${targetVerb(firstKind)} ${targets[0].label}`
   } else if (firstKind === 'shell-command') {
-    label = `Ran ${total} ${total === 1 ? 'command' : 'commands'} (${unique} unique)`
+    label = `Ran ${total} ${total === 1 ? 'command' : 'commands'}`
   } else if (firstKind === 'read-file') {
-    label = `Read ${total} times across ${unique} ${unique === 1 ? 'file' : 'files'}`
+    // One voice with the settled-row fold: count what was TOUCHED, not how
+    // many calls it took ("Read 2 files", not "Read 4 times across 2 files").
+    // The per-target repeat counts survive on the ×N chips below the line.
+    label = `Read ${unique} ${unique === 1 ? 'file' : 'files'}`
   } else if (firstKind === 'write-file') {
-    label = `Edited ${total} times across ${unique} ${unique === 1 ? 'file' : 'files'}`
+    label = `Edited ${unique} ${unique === 1 ? 'file' : 'files'}`
   }
 
   return {
@@ -1827,6 +1836,7 @@ function ActivityCompactGroup({
   provider,
   participants,
   shimmerNow,
+  showDiffStats,
   onOpenFileChangeInWorkbench
 }: {
   activities: ToolActivity[]
@@ -1837,6 +1847,10 @@ function ActivityCompactGroup({
   /** 1.0.4 — forwarded to ActivityRow for ensemble_yield chip tinting. */
   participants?: EnsembleParticipant[]
   shimmerNow: number
+  /** Paint the summed `+N −M` of the folded writes beside the label, exactly
+   * as the settled-row one-liner does. Main transcript opts in; fan-out lane
+   * and sub-agent viewports stay bare. */
+  showDiffStats?: boolean
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -1849,6 +1863,7 @@ function ActivityCompactGroup({
   // for the dominant-category phrasing rules.
   const targetSummary = buildCompactGroupTargetSummary(activities)
   const label = targetSummary.label
+  const diffTotals = showDiffStats ? sumActivityDiffTotals(activities) : null
   const primaryCategory: 'search' | 'read' =
     otherCount === 0 && searchCount > readCount ? 'search' : 'read'
   const chips = targetSummary.chips
@@ -1925,7 +1940,10 @@ function ActivityCompactGroup({
             )}
           </span>
         )}
-        <span className="activity-compact-group-title">{label}</span>
+        <span className="activity-compact-group-title-wrap">
+          <span className="activity-compact-group-title">{label}</span>
+          <CollapsedDiffStats totals={diffTotals} />
+        </span>
         <span className="activity-compact-group-meta">
           {durationLabel(durationMs) && (
             <span className="activity-compact-group-duration">{durationLabel(durationMs)}</span>
@@ -2521,6 +2539,7 @@ export function ActivityStack({
   expandedActivityIds,
   onExpandedActivityIdsChange,
   onOpenFileChangeInWorkbench,
+  showDiffStats,
   thinkingTraceActions
 }: ActivityStackProps) {
   // 1.0.4-AS1 — drive the shimmer/pulse staleness check. The
@@ -2703,6 +2722,7 @@ export function ActivityStack({
           provider={provider}
           participants={participants}
           shimmerNow={shimmerNow}
+          showDiffStats={showDiffStats}
           onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
         />
       )

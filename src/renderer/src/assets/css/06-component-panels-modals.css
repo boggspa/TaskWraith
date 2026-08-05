@@ -255,15 +255,29 @@
   transform: rotate(180deg);
 }
 
+/* Holds the summary text plus its summed +N −M in one grid cell, so the
+ * counters sit immediately after the label instead of drifting out to the
+ * meta column. The label keeps the elastic width and ellipsizes; the
+ * counters never shrink. */
+.activity-compact-group-title-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
 .activity-compact-group-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* Phase L4 slice 1 — match the body-text scale of inline tool
-   * rows so grouped + individual rows read as one coherent block. */
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  /* One voice with the settled-row one-liner (.collapsed-activity-stack-
+   * summary): same transcript typeface, same demi-bold, same body scale —
+   * both are a folded run of tool calls, so they must not read as two
+   * different kinds of row. */
+  font-family: var(--transcript-font-family);
+  font-size: var(--font-size-md);
+  font-weight: 600;
   color: color-mix(in srgb, var(--text-primary) 86%, transparent);
 }
 
