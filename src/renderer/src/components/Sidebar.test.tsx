@@ -521,6 +521,42 @@ describe('Sidebar active chat override', () => {
   })
 })
 
+describe('Sidebar identity ticker git tones', () => {
+  const css = readFileSync(
+    join(process.cwd(), 'src/renderer/src/assets/css/01-sidebar.css'),
+    'utf8'
+  )
+  const block = (selector: string): string => {
+    const start = css.indexOf(selector)
+    if (start < 0) return ''
+    const open = css.indexOf('{', start)
+    return css.slice(start, css.indexOf('}', open) + 1)
+  }
+
+  it('paints the commits-ahead count in the composer workspace row gold', () => {
+    const ahead = block('.sidebar-git-indicator.tone-idle {')
+    expect(ahead).toContain('#ffc248')
+    expect(ahead).not.toContain('var(--sidebar-text-secondary)')
+    // Same deepened value the composer switches to on light chrome.
+    expect(css.replace(/\s+/g, ' ')).toContain(
+      "[data-theme='alabaster']) .sidebar-git-indicator.tone-idle { color: #c38b00;"
+    )
+  })
+
+  it('uses the exact composer hues, so the two surfaces cannot drift', () => {
+    const composer = readFileSync(
+      join(process.cwd(), 'src/renderer/src/assets/css/07-composer-shells.css'),
+      'utf8'
+    )
+    const composerAhead = composer.slice(
+      composer.indexOf('.git-status-ahead {'),
+      composer.indexOf('}', composer.indexOf('.git-status-ahead {')) + 1
+    )
+    expect(composerAhead).toContain('#ffc248')
+    expect(composer).toContain('#c38b00')
+  })
+})
+
 describe('Sidebar workspace running indicator', () => {
   it('pulses the thread ghost on a workspace whose thread is running', () => {
     stubSidebarStorage({

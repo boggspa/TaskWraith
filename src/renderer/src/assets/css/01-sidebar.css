@@ -2108,12 +2108,23 @@ button.sidebar-item {
 .sidebar-git-indicator.tone-closed {
   color: color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--sidebar-text));
 }
-/* The ahead-count fallback is informational, not a status — it stays in the
-   row's own ink so it never competes with a real state. */
+/* Unpushed commits, in the composer workspace row's gold (.git-status-ahead).
+   It used to sit in the row's own muted ink on the reasoning that a count is
+   informational rather than a status — but "N commits that exist only on this
+   machine" IS a state, and the same number is already gold one surface away,
+   so the two surfaces now agree. `ahead` is the only kind that maps to
+   tone-idle, so this cannot bleed onto another indicator. */
 .sidebar-git-indicator.tone-idle {
-  color: var(--sidebar-text-secondary);
+  color: #ffc248;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+/* Dark-optimised gold washes out on light chrome — same deepened value the
+   composer switches to. */
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
+  .sidebar-git-indicator.tone-idle {
+  color: #c38b00;
 }
 @keyframes sidebar-title-ticker-cycle {
   0%,
