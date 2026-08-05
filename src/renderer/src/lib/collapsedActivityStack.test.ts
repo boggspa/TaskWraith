@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ToolActivity } from '../../../main/store/types'
 import {
   activityStackHasLiveWork,
+  collapsedStackDiffAriaLabel,
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
   summarizeCollapsedActivityStack,
@@ -16,6 +17,23 @@ const activity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   status: 'success',
   ...overrides
 })
+
+/** A settled edit carrying an exact server-side diff, as the expanded
+ * viewport's odometer would read it. */
+const write = (path: string, additions: number, deletions: number): ToolActivity =>
+  activity({
+    toolName: 'edit',
+    displayName: 'Edit',
+    category: 'write',
+    filePath: path,
+    diffSummary: {
+      additions,
+      deletions,
+      confidence: 'exact',
+      source: 'git_numstat',
+      files: [{ path, status: 'modified', additions, deletions }]
+    }
+  })
 
 describe('summarizeCollapsedActivityStack', () => {
   it('leads with thinking duration and follows tool families in first-appearance order', () => {
@@ -93,6 +111,58 @@ describe('summarizeCollapsedActivityStack', () => {
       ]).label
     ).toBe('Thought for 1m 35s')
     expect(summarizeCollapsedActivityStack([]).label).toBe('Activity')
+  })
+
+  it('sums the folded file writes into one +N -M total', () => {
+    // Three edits fold into "Edited 2 files"; the diff the open viewports
+    // showed per row must survive as a total, not be flattened away.
+    const summary = summarizeCollapsedActivityStack([
+      activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 3_000 }),
+      write('/a/Blackboard.ts', 12, 5),
+      write('/a/Blackboard.ts', 3, 0),
+      write('/a/types.ts', 7, 4)
+    ])
+    expect(summary.label).toBe('Thought for 3s · Edited 2 files')
+    expect(summary.diff).toEqual({ additions: 22, deletions: 9, estimated: false })
+    // The counters are their own field — the label/parts contract that the
+    // aria string and the iOS mirror build from stays byte-identical.
+    expect(summary.parts.map((part) => part.text).join(' · ')).toBe(summary.label)
+    expect(summary.label).not.toContain('+')
+  })
+
+  it('reports no diff when nothing folded away carried one', () => {
+    expect(
+      summarizeCollapsedActivityStack([
+        activity({ category: 'read', filePath: '/a/x.ts' }),
+        activity({ category: 'shell' })
+      ]).diff
+    ).toBeNull()
+    expect(summarizeCollapsedActivityStack([]).diff).toBeNull()
+  })
+
+  it('excludes writes that errored — a denied edit changed nothing on disk', () => {
+    const summary = summarizeCollapsedActivityStack([
+      write('/a/x.ts', 9, 2),
+      { ...write('/a/y.ts', 400, 400), status: 'error' }
+    ])
+    expect(summary.diff).toEqual({ additions: 9, deletions: 2, estimated: false })
+  })
+
+  it('flags the total as estimated when a contributing diff was not exact', () => {
+    const summary = summarizeCollapsedActivityStack([
+      write('/a/x.ts', 4, 1),
+      // No server-side diff — the counts are inferred from the replacement
+      // strings, which is what the `~` marker discloses.
+      activity({
+        category: 'write',
+        toolName: 'edit',
+        filePath: '/a/y.ts',
+        parameters: { file_path: '/a/y.ts', old_string: 'one\ntwo', new_string: 'ONE\nTWO\nTHREE' }
+      })
+    ])
+    expect(summary.diff?.additions).toBe(7)
+    expect(summary.diff?.deletions).toBe(3)
+    expect(summary.diff?.estimated).toBe(true)
   })
 
   it('always includes a duration for sub-second and untimed thoughts', () => {
@@ -194,5 +264,30 @@ describe('summarizeCollapsedSuperGroup', () => {
     })
     expect(summary.label).toBe('2 system notices · Blackboard updated: fact.')
     expect(summary.families).toEqual([])
+    expect(summary.diff).toBeNull()
+  })
+
+  it('sums diffs across every member stack the super-group swallowed', () => {
+    const summary = summarizeCollapsedSuperGroup({
+      activities: [write('/a/x.ts', 10, 3), write('/a/y.ts', 5, 1), write('/a/z.ts', 1, 1)],
+      systemCount: 1,
+      firstSystemPreview: 'Round settled.'
+    })
+    expect(summary.label).toBe('Edited 3 files · 1 system notice')
+    expect(summary.diff).toEqual({ additions: 16, deletions: 5, estimated: false })
+  })
+})
+
+describe('collapsedStackDiffAriaLabel', () => {
+  it('announces the totals the counters paint, singular-aware', () => {
+    expect(collapsedStackDiffAriaLabel({ additions: 22, deletions: 9, estimated: false })).toBe(
+      '22 lines added, 9 lines removed'
+    )
+    expect(collapsedStackDiffAriaLabel({ additions: 1, deletions: 1, estimated: false })).toBe(
+      '1 line added, 1 line removed'
+    )
+    expect(collapsedStackDiffAriaLabel({ additions: 4, deletions: 0, estimated: true })).toBe(
+      'about 4 lines added, 0 lines removed'
+    )
   })
 })

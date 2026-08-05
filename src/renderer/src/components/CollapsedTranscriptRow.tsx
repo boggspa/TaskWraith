@@ -1,7 +1,9 @@
 import { Fragment, useMemo, type ReactElement, type ReactNode } from 'react'
 import type { ToolActivity } from '../../../main/store/types'
 import {
+  collapsedStackDiffAriaLabel,
   summarizeCollapsedActivityStack,
+  type CollapsedStackDiffTotals,
   type CollapsedStackLabelPart
 } from '../lib/collapsedActivityStack'
 import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
@@ -22,6 +24,7 @@ export function CollapsedTranscriptRow({
   labelContent,
   labelParts,
   icons,
+  diffStats,
   errored,
   compact,
   expanded,
@@ -42,6 +45,10 @@ export function CollapsedTranscriptRow({
   labelParts?: readonly CollapsedStackLabelPart[]
   /** Optional leading icon strip (tool-family monoline SVGs). */
   icons?: ReactNode
+  /** Summed `+N −M` for the file writes this row folded away, painted at the
+   * end of the line in the user's Settings → Appearance diff accents. Opt-in:
+   * the main transcript passes it, fan-out lane summaries do not. */
+  diffStats?: CollapsedStackDiffTotals | null
   errored?: boolean
   /** Caption-sized summary line (system notices) instead of body text —
    * these rows are noise being tidied away, not messages. */
@@ -63,7 +70,11 @@ export function CollapsedTranscriptRow({
         className="collapsed-activity-stack-summary"
         onClick={() => onToggle(!expanded)}
         aria-expanded={expanded}
-        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${ariaTargetLabel}: ${label}`}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${ariaTargetLabel}: ${label}${
+          // The whole row is one button, so an aria-label on the counters
+          // themselves would never be announced — append instead.
+          diffStats ? ` — ${collapsedStackDiffAriaLabel(diffStats)}` : ''
+        }`}
         title={expanded ? `Collapse ${ariaTargetLabel}` : `Expand ${ariaTargetLabel}`}
       >
         <span className="collapsed-activity-stack-chevron" aria-hidden="true">
@@ -93,9 +104,32 @@ export function CollapsedTranscriptRow({
                 })
               : label)}
         </span>
+        <CollapsedDiffStats totals={diffStats} />
       </button>
       {expanded ? children : null}
     </div>
+  )
+}
+
+/**
+ * Summed `+N −M` for the writes a one-liner folded away, in the user's
+ * Settings → Appearance diff accents. Sits immediately after the summary
+ * text so the numbers read as part of the line rather than as a far-right
+ * stat column. Shared with the in-stack compact group so both one-liners
+ * paint the same thing the same way.
+ */
+export function CollapsedDiffStats({
+  totals
+}: {
+  totals?: CollapsedStackDiffTotals | null
+}): ReactElement | null {
+  if (!totals) return null
+  return (
+    <span className="collapsed-activity-stack-diff" aria-hidden>
+      <span className="collapsed-activity-stack-diff-stat is-add">+{totals.additions}</span>
+      <span className="collapsed-activity-stack-diff-stat is-del">-{totals.deletions}</span>
+      {totals.estimated ? <span className="collapsed-activity-stack-diff-estimated">~</span> : null}
+    </span>
   )
 }
 
@@ -137,12 +171,17 @@ export function CollapsedStackIconStrip({
 export function CollapsedActivityStackRow({
   header,
   activities,
+  showDiffStats,
   expanded,
   onToggle,
   children
 }: {
   header: ReactElement | null
   activities: ToolActivity[]
+  /** Paint the summed `+N −M` of the folded file writes at the end of the
+   * line. Main-transcript stacks opt in; fan-out lane and sub-agent viewport
+   * summaries stay bare — their rows already carry their own diff chrome. */
+  showDiffStats?: boolean
   expanded: boolean
   onToggle: (expanded: boolean) => void
   children?: ReactNode
@@ -154,6 +193,7 @@ export function CollapsedActivityStackRow({
       label={summary.label}
       labelParts={summary.parts}
       icons={<CollapsedStackIconStrip families={summary.families} />}
+      diffStats={showDiffStats ? summary.diff : null}
       errored={summary.errorCount > 0}
       expanded={expanded}
       onToggle={onToggle}

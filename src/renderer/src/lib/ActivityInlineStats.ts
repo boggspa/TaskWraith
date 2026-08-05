@@ -160,3 +160,36 @@ export function inlineStatsForActivity(activity: ToolActivity): InlineStatResult
     diffSummary: activity.diffSummary
   })
 }
+
+/** Summed `+N −M` for a run of activities — what a one-liner shows once it
+ * has folded the individual rows away. */
+export interface InlineStatTotals {
+  additions: number
+  deletions: number
+  /** Any contributing activity reported a non-exact diff (the `~` marker). */
+  estimated: boolean
+}
+
+/**
+ * Add up exactly the per-row odometers the expanded rows would paint, so a
+ * summary line never loses the diff — it totals it. Returns null when nothing
+ * in the run carried one (errored/denied writes changed nothing on disk and
+ * are suppressed by `computeInlineStats` itself).
+ */
+export function sumActivityDiffTotals(
+  activities: readonly ToolActivity[]
+): InlineStatTotals | null {
+  let additions = 0
+  let deletions = 0
+  let estimated = false
+  let seen = false
+  for (const activity of activities) {
+    const stats = inlineStatsForActivity(activity)
+    if (!stats.visible) continue
+    seen = true
+    additions += stats.additions
+    deletions += stats.deletions
+    if (stats.confidence && stats.confidence !== 'exact') estimated = true
+  }
+  return seen ? { additions, deletions, estimated } : null
+}

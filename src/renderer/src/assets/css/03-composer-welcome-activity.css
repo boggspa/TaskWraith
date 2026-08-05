@@ -12680,6 +12680,41 @@ button.diff-file-row {
 .collapsed-activity-stack-verb.is-failed {
   color: var(--diff-stat-del-color, #ec3d35);
 }
+/* Summed diff counters. Folding a stack must not swallow the "+N −M" the
+ * open viewports were showing, so the totals ride the end of the summary
+ * TEXT — the numbers survive the collapse, the hover diff-preview bubble does
+ * not. Same user-set accents as everywhere else (Settings → Appearance; both
+ * vars are runtime-set on :root by useAppearance, fallbacks = shipped
+ * defaults). Deliberately NOT `margin-left: auto`: parked at the row's far
+ * right they read as a detached stat column across a wide transcript, so they
+ * sit a hair after the label and travel with it. */
+.collapsed-activity-stack-diff {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.collapsed-activity-stack-diff-stat {
+  line-height: 1;
+}
+.collapsed-activity-stack-diff-stat.is-add {
+  color: var(--diff-stat-add-color, #2db777);
+}
+.collapsed-activity-stack-diff-stat.is-del {
+  color: var(--diff-stat-del-color, #ec3d35);
+}
+.collapsed-activity-stack-diff-estimated {
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+/* Compact (system-notice) one-liners set 12px on the summary; the counters
+ * inherit it, but hold them a touch quieter still so a folded notice never
+ * out-shouts a folded activity stack. */
+.collapsed-activity-stack.is-compact .collapsed-activity-stack-diff {
+  font-size: 11px;
+}
 .collapsed-activity-stack.is-expanded .collapsed-activity-stack-summary {
   margin-bottom: 2px;
 }

@@ -1,4 +1,5 @@
 import type { ToolActivity } from '../../../main/store/types'
+import { sumActivityDiffTotals, type InlineStatTotals } from './ActivityInlineStats'
 import { isReasoningToolName } from './ToolParser'
 
 /**
@@ -47,6 +48,13 @@ export interface CollapsedStackLabelPart {
   failed: boolean
 }
 
+/** Summed `+N −M` line counts for the write activities a one-liner folded
+ * away ("Edited file" / "Created file" / "Wrote file" / "Deleted file" …).
+ * Totals are the sum of exactly the per-row odometers the expanded stack
+ * would paint, so folding a stack never loses the diff — it adds it up.
+ * Shared with the in-stack compact group, which folds the same way. */
+export type CollapsedStackDiffTotals = InlineStatTotals
+
 export interface CollapsedStackSummary {
   /** "Thought for 12s · Searched ×8 · Read 5 files · Edited 2 files" */
   label: string
@@ -59,6 +67,10 @@ export interface CollapsedStackSummary {
   errorCount: number
   /** Total activities folded away (for the a11y label / tooltip). */
   activityCount: number
+  /** Summed line counts of the folded file writes, or null when none of the
+   * activities carried a diff. Rendered at the end of the one-liner (main
+   * transcript only — fan-out lane summaries opt out). */
+  diff: CollapsedStackDiffTotals | null
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
@@ -172,8 +184,20 @@ export function summarizeCollapsedActivityStack(
     parts,
     families,
     errorCount,
-    activityCount: activities.length
+    activityCount: activities.length,
+    // Sum exactly what the expanded viewports would have shown per row, so a
+    // folded "Edited 3 files" carries the same +N −M the three open rows
+    // added up to.
+    diff: sumActivityDiffTotals(activities)
   }
+}
+
+/** Screen-reader phrasing for the summed diff — the row is a single button,
+ * so the totals have to ride its accessible name or they go unannounced. */
+export function collapsedStackDiffAriaLabel(diff: CollapsedStackDiffTotals): string {
+  const added = `${diff.additions} ${diff.additions === 1 ? 'line' : 'lines'} added`
+  const removed = `${diff.deletions} ${diff.deletions === 1 ? 'line' : 'lines'} removed`
+  return diff.estimated ? `about ${added}, ${removed}` : `${added}, ${removed}`
 }
 
 /** One-line label for a collapsed plain system notice: the first non-empty
@@ -191,8 +215,9 @@ export function collapsedSystemNoticeLabel(content: string | undefined): string 
  * stack summaries + interleaved system notices) condenses into ONE merged
  * line — "Thought for 19s · Used 9 tools · Ran 4 commands · 2 system
  * notices". Activities from every member stack merge through the ordinary
- * summarizer (thinking durations sum; files dedupe per family); an all-system
- * group leads with the notice count and the first notice's text.
+ * summarizer (thinking durations sum; files dedupe per family; diff counts
+ * sum across every folded write); an all-system group leads with the notice
+ * count and the first notice's text.
  */
 export function summarizeCollapsedSuperGroup(input: {
   activities: readonly ToolActivity[]
@@ -212,7 +237,8 @@ export function summarizeCollapsedSuperGroup(input: {
       parts,
       families: [],
       errorCount: 0,
-      activityCount: 0
+      activityCount: 0,
+      diff: null
     }
   }
   const merged = summarizeCollapsedActivityStack(input.activities)
