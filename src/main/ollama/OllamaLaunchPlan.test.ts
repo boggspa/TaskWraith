@@ -224,7 +224,11 @@ describe('OllamaFinalLaunchPlan', () => {
       thinkingLevel: 'high',
       firstRequest: {
         model: 'lfm2.5-thinking:latest',
-        think: 'high'
+        think: 'high',
+        // A thinking model's first response must budget for the think stream
+        // plus the tool call — the small numPredictTool budget truncates it
+        // mid-thought into the degenerate-turn nudge cycle.
+        options: { num_predict: 4096 }
       }
     })
   })

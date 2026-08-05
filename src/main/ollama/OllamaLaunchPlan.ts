@@ -25,7 +25,11 @@ import {
   normalizeOllamaSessionMemory,
   type OllamaSessionMemory
 } from './OllamaRunMemory'
-import { resolveOllamaRunProfile, resolveOllamaThinkingLevel } from './OllamaRunProfiles'
+import {
+  resolveOllamaRunProfile,
+  resolveOllamaThinkingLevel,
+  resolveOllamaTurnNumPredict
+} from './OllamaRunProfiles'
 import { ollamaAdvertisedToolNames } from './OllamaToolTiers'
 import type {
   OllamaChatMessage,
@@ -284,8 +288,13 @@ export async function resolveOllamaFinalLaunchPlan(
   if (typeof firstNumCtx === 'number' && Number.isFinite(firstNumCtx)) {
     firstRequestOptions.num_ctx = Math.max(1024, Math.trunc(firstNumCtx))
   }
-  if (typeof runProfile.numPredictTool === 'number' && Number.isFinite(runProfile.numPredictTool)) {
-    firstRequestOptions.num_predict = Math.max(1, Math.trunc(runProfile.numPredictTool))
+  const firstNumPredict = resolveOllamaTurnNumPredict({
+    toolCallCount: 0,
+    thinkingLevel,
+    profile: runProfile
+  })
+  if (typeof firstNumPredict === 'number' && Number.isFinite(firstNumPredict)) {
+    firstRequestOptions.num_predict = Math.max(1, Math.trunc(firstNumPredict))
   }
   const firstRequest: Record<string, unknown> = {
     model,

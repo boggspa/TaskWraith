@@ -182,6 +182,24 @@ export function resolveOllamaRunProfile(
   }
 }
 
+/**
+ * Per-turn generation budget. The first response of a run used the small
+ * `numPredictTool` budget unconditionally — but for a thinking family that
+ * budget must also hold the think stream, and e.g. a deepseek-r1 routinely
+ * spends 1,500+ tokens thinking before it emits the tool call, so the turn
+ * truncated mid-thought and fed the degenerate-response nudge cycle. A
+ * thinking model gets the final budget from turn one.
+ */
+export function resolveOllamaTurnNumPredict(input: {
+  toolCallCount: number
+  thinkingLevel?: OllamaReasoningLevel | null
+  profile: Pick<OllamaRunProfile, 'numPredictTool' | 'numPredictFinal'>
+}): number | undefined {
+  return input.toolCallCount > 0 || input.thinkingLevel
+    ? input.profile.numPredictFinal
+    : input.profile.numPredictTool
+}
+
 export function resolveOllamaThinkingLevel(
   modelId: string,
   profile: Pick<OllamaRunProfile, 'reasoningLevel'>

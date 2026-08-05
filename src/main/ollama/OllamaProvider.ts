@@ -42,6 +42,7 @@ import {
   type OllamaSessionMemory
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
+import { resolveOllamaTurnNumPredict } from './OllamaRunProfiles'
 import {
   createOllamaHarnessRunState,
   evaluateOllamaHarnessGate,
@@ -2920,7 +2921,11 @@ export async function runOllamaProvider(
             (nativeToolDefs.length === 0 &&
               toolProtocolEnabled &&
               ollamaPrefersJsonToolProtocol(model, modelInfo))
-      const numPredict = toolCallCount > 0 ? runProfile.numPredictFinal : runProfile.numPredictTool
+      const numPredict = resolveOllamaTurnNumPredict({
+        toolCallCount,
+        thinkingLevel,
+        profile: runProfile
+      })
       const reasoningId = `ollama-thinking-${route.appRunId || 'run'}-${turnIndex}`
       let streamedThinkingStarted = false
       let streamedThinkingText = ''

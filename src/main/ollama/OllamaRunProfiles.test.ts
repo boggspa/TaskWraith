@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   OLLAMA_RUN_PROFILE_PRESETS,
   resolveOllamaRunProfile,
-  resolveOllamaThinkingLevel
+  resolveOllamaThinkingLevel,
+  resolveOllamaTurnNumPredict
 } from './OllamaRunProfiles'
 
 describe('OllamaRunProfiles', () => {
@@ -184,5 +185,21 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaThinkingLevel('ministral-3:14b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBeUndefined()
+  })
+
+  it('budgets the first turn for the think stream on thinking models only', () => {
+    const profile = OLLAMA_RUN_PROFILE_PRESETS.provider_parity
+    expect(
+      resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: null, profile })
+    ).toBe(profile.numPredictTool)
+    // A thinking first response must hold the think stream plus the tool call;
+    // the small tool budget truncates it mid-thought into the degenerate-turn
+    // nudge cycle.
+    expect(
+      resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'high', profile })
+    ).toBe(profile.numPredictFinal)
+    expect(
+      resolveOllamaTurnNumPredict({ toolCallCount: 2, thinkingLevel: null, profile })
+    ).toBe(profile.numPredictFinal)
   })
 })
