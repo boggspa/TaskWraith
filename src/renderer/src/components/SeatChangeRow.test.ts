@@ -181,6 +181,22 @@ describe('close-out table reuses the seat element', () => {
     expect(region).not.toContain('onClick')
   })
 
+  it('leads with the role in the table and trails with it in the transcript', () => {
+    // A table is read down its first column, so the seat's name is what the
+    // eye must land on; a transcript row is read along its length and is
+    // already anchored by the chair glyph. Ordered by DOM position, never by
+    // flex `order` — reading order and visual order must not disagree.
+    const start = rowSource.indexOf('function SeatStrip(')
+    const region = rowSource.slice(start, rowSource.indexOf('export function seatAccentVar'))
+    const leading = region.indexOf('{inline ? role : null}')
+    const cluster = region.indexOf('<SeatClusterChip')
+    const trailing = region.indexOf('{inline ? null : role}')
+    expect(leading).toBeGreaterThanOrEqual(0)
+    expect(cluster).toBeGreaterThan(leading)
+    expect(trailing).toBeGreaterThan(cluster)
+    expect(region).not.toContain('order:')
+  })
+
   it('both surfaces share one strip, so the chips can never drift apart', () => {
     expect(rowSource).toContain('function SeatStrip(')
     expect(rowSource.split('<SeatStrip ').length - 1).toBe(2)

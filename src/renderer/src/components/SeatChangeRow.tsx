@@ -220,30 +220,41 @@ function SeatStrip({
   const current = phase === 'before' ? before : after
   const time = inline ? '' : formatSeatChangeTime(timestamp)
 
+  const role = current.role ? (
+    <span
+      className="seat-change-role"
+      style={{ color: `var(--provider-${current.hue}-color, var(--accent))` }}
+      title={participantRoleIconTitle(current.authority, current.stageRole) || undefined}
+    >
+      {/* Outside the odometer on purpose: an SVG has no character runs to
+          roll, and nesting it would give CharOdometer a slot it cannot
+          measure. The glyph swaps instantly while the text rolls. */}
+      <ParticipantRoleIcon
+        authority={current.authority}
+        stageRole={current.stageRole}
+        className="seat-change-role-icon"
+      />
+      <CharOdometer text={current.role} />
+    </span>
+  ) : null
+
   return (
     <>
       <span className="seat-change-icon" aria-hidden>
         <SeatChairIcon />
       </span>
+      {/* The role LEADS in the close-out table and TRAILS in the transcript,
+          and that is not a taste difference. A table is read down its first
+          column, so the seat's name has to be the thing the eye lands on — it
+          is what one row is ABOUT. A transcript row is read along its length
+          and is already anchored by the chair glyph; there the name is the
+          answer to "who moved", so it comes after the seat it describes.
+          Ordering is DOM order, no flex `order`: the reading order and the
+          visual order must not disagree for a screen reader. */}
+      {inline ? role : null}
       <SeatClusterChip view={current} animate />
       <SeatPermissionChip view={current} animate />
-      {current.role && (
-        <span
-          className="seat-change-role"
-          style={{ color: `var(--provider-${current.hue}-color, var(--accent))` }}
-          title={participantRoleIconTitle(current.authority, current.stageRole) || undefined}
-        >
-          {/* Outside the odometer on purpose: an SVG has no character runs to
-              roll, and nesting it would give CharOdometer a slot it cannot
-              measure. The glyph swaps instantly while the text rolls. */}
-          <ParticipantRoleIcon
-            authority={current.authority}
-            stageRole={current.stageRole}
-            className="seat-change-role-icon"
-          />
-          <CharOdometer text={current.role} />
-        </span>
-      )}
+      {inline ? null : role}
       {time && <span className="seat-change-time">{time}</span>}
     </>
   )
