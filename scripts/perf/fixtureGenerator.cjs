@@ -557,6 +557,12 @@ function generatePerfFixture(options) {
       appChatId,
       title: `Perf fixture ${scaledShape.workload} #${c + 1}`,
       provider: participants[0].provider,
+      // Global scope, deliberately: sanitizeChatForSave rejects any
+      // non-global chat without a REGISTERED workspace id+path, and the
+      // harness materializes no workspace registry. Without this, every T2
+      // replay saveChat rejects at the IPC boundary and the run measures
+      // nothing (writeJson path is identical for global chats).
+      scope: 'global',
       createdAt: baseTs,
       updatedAt: t,
       persistenceRevision: 1,

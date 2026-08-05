@@ -43,6 +43,7 @@ const {
   SESSION_CHECKPOINT_RELATIVE_PATH
 } = require('./materializeUserData.cjs')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
+const { createCdpEvaluateAdapter } = require('./replayDriver.cjs')
 const { runBaselineCli } = require('./runBaseline.cjs')
 const { dirtyTreeFingerprint, collectRepoProvenance } = require('./repoProvenance.cjs')
 
@@ -205,6 +206,31 @@ describe('perf fixture generator (scaled)', () => {
     expect(fixtureFingerprint(a)).toBe(fixtureFingerprint(b))
     expect(a.totals).toEqual(b.totals)
     expect(a.replaySchedule.length).toBe(b.replaySchedule.length)
+  })
+
+  it('emits chats the main save-scope gate accepts (global scope or workspace identity)', () => {
+    // sanitizeChatForSave (src/main/index.ts) throws 'Workspace chat must
+    // include a workspace id and path.' for any chat that is neither
+    // scope:'global' nor carrying a registered workspace identity. A fixture
+    // that violates this makes EVERY T2 replay saveChat reject at the IPC
+    // boundary, so the harness measures nothing while events still "complete"
+    // — exactly how runs perf-t2-30seat-42 (2026-08-04 and both 2026-08-05
+    // attempts) burned hours without a single hot-chat write.
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 42,
+      baseTimestamp: 1_700_000_000_000,
+      lean: true,
+      scaleDown: 4
+    })
+    for (const chat of fixture.chats) {
+      const acceptedBySaveGate =
+        chat.scope === 'global' || Boolean(chat.workspaceId && chat.workspacePath)
+      expect(
+        acceptedBySaveGate,
+        `${chat.appChatId} would be rejected by sanitizeChatForSave — replay saves would silently no-op`
+      ).toBe(true)
+    }
   })
 
   it('455_soak is a literal soak-turn schedule (not system hop markers)', () => {
@@ -624,9 +650,7 @@ describe('T1b numeric gPerf + profile digests', () => {
       reasonMix: { normal: 10, terminal: 0, approval: 0, 'history-deletion': 0, shutdown: 0 }
     }
     const baselineStillExempt = evaluateNumericPerfGates(afterReport, beforeReport)
-    expect(
-      baselineStillExempt.refuseReasons.some((r: string) => /coalescing/i.test(r))
-    ).toBe(false)
+    expect(baselineStillExempt.refuseReasons.some((r: string) => /coalescing/i.test(r))).toBe(false)
   })
 
   it('validates the T4b coalescing/journal reporting seam without breaking the T2 baseline', () => {
@@ -977,6 +1001,38 @@ describe('T1b preload probe (disabled by default)', () => {
     const unsupported = on.wrapStringifyOrMarkUnsupported(null)
     expect(unsupported.supported).toBe(false)
     expect(lines.some((l) => l.includes('stringify_unsupported'))).toBe(true)
+  })
+})
+
+describe('T2 CDP evaluate adapter (renderer failures must abort, not vanish)', () => {
+  it('throws when Runtime.evaluate reports exceptionDetails', async () => {
+    // A rejected window.api promise arrives as exceptionDetails with no
+    // returnByValue payload. The pre-fix adapter returned null, so a replay
+    // whose every save rejected still "completed" all its events. The renderer
+    // failure must abort the replay with the page's own error text.
+    const adapter = createCdpEvaluateAdapter({
+      send: async () => ({
+        result: {
+          type: 'object',
+          subtype: 'error',
+          description: 'Error: Workspace chat must include a workspace id and path.'
+        },
+        exceptionDetails: {
+          text: 'Uncaught (in promise)',
+          exception: {
+            description: 'Error: Workspace chat must include a workspace id and path.'
+          }
+        }
+      })
+    })
+    await expect(adapter.evaluate('window.api.saveChat({})')).rejects.toThrow(
+      /Workspace chat must include a workspace id and path/
+    )
+  })
+
+  it('returns the value for clean evaluations', async () => {
+    const adapter = createCdpEvaluateAdapter({ send: async () => ({ result: { value: 7 } }) })
+    await expect(adapter.evaluate('7')).resolves.toBe(7)
   })
 })
 
@@ -3017,7 +3073,7 @@ describe('T9a main persistence stats collector', () => {
     })
     expect(seen).toContain(PERF_STATS_GLOBAL)
     // typeof-guarded so a missing handle refuses cleanly instead of throwing
-    expect(seen).toContain("typeof globalThis")
+    expect(seen).toContain('typeof globalThis')
   })
 
   it('fails closed on every degraded path rather than half-populating', async () => {

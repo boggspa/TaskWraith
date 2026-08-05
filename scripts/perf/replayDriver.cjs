@@ -128,7 +128,7 @@ function createCdpEvaluateAdapter(cdpSession) {
   return {
     async evaluate(expression) {
       const result =
-        /** @type {{ result?: { value?: unknown, unserializableValue?: string, subtype?: string } }} */ (
+        /** @type {{ result?: { value?: unknown, unserializableValue?: string, subtype?: string }, exceptionDetails?: { text?: string, exception?: { description?: string, value?: unknown } } }} */ (
           await cdpSession.send('Runtime.evaluate', {
             expression,
             awaitPromise: true,
@@ -136,6 +136,25 @@ function createCdpEvaluateAdapter(cdpSession) {
             userGesture: false
           })
         )
+      // A rejected promise (or thrown page error) arrives as exceptionDetails,
+      // usually with no returnByValue payload. Returning null here is how the
+      // seed-42 runs "completed" thousands of saves that all rejected at the
+      // save-scope gate: the failure must abort the replay with the page's own
+      // error text, never dissolve into a null result.
+      if (result && result.exceptionDetails) {
+        const details = result.exceptionDetails
+        const description =
+          (details.exception &&
+            (details.exception.description ||
+              (details.exception.value != null ? String(details.exception.value) : ''))) ||
+          details.text ||
+          'unknown renderer exception'
+        const error = new Error(
+          `T2 replay page evaluation failed: ${String(description).slice(0, 500)}`
+        )
+        error.code = 'T2_REPLAY_PAGE_EXCEPTION'
+        throw error
+      }
       if (!result || !result.result) return null
       if (Object.prototype.hasOwnProperty.call(result.result, 'value')) {
         return result.result.value
@@ -153,7 +172,7 @@ function createCdpEvaluateAdapter(cdpSession) {
 function buildMessagePrefixBatches(fullChat, batchSize = DEFAULT_BATCH_SIZE) {
   const messages = Array.isArray(fullChat.messages) ? fullChat.messages : []
   const batches = []
-  for (let end = 0; end < messages.length;) {
+  for (let end = 0; end < messages.length; ) {
     end = Math.min(messages.length, end + batchSize)
     batches.push({
       endIndex: end,
