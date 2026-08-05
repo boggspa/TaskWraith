@@ -498,8 +498,10 @@ export function createChatJournal(baseDir: string): ChatJournal {
       merged.push(entry)
     }
 
-    // Write the merged snapshot atomically
-    const snapBytes = atomicWrite(snapshotPath(chatId), JSON.stringify(merged, null, 2))
+    // Compact JSON — pretty-print of 1k+ entries blocks the suite and the
+    // hot path for no durability gain (atomic rename already makes the
+    // whole snapshot appear or not).
+    const snapBytes = atomicWrite(snapshotPath(chatId), JSON.stringify(merged))
 
     // Truncate journal — the snapshot now carries all state
     try {
@@ -517,7 +519,7 @@ export function createChatJournal(baseDir: string): ChatJournal {
 
   const compactAll = (): number => {
     let count = 0
-    for (const chatId of chats.keys()) {
+    for (const chatId of Array.from(chats.keys())) {
       if (compact(chatId)) count += 1
     }
     return count
