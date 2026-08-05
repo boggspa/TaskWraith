@@ -906,10 +906,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     return () => cancelAnimationFrame(raf)
   }, [composerAreaRef, transcriptRoot])
 
+  // Only the composer that actually HAS the terminal open touches this class.
+  //
+  // `isTerminalOpen` is per-CHAT state, but `transcriptRoot` is a per-PANE
+  // element that successive chats share. An instance whose chat has the
+  // terminal closed used to run `classList.remove` outright, and it registered
+  // a cleanup that removed the class unconditionally — so a closed-terminal
+  // composer stripped the class a live one had set, and did it again on
+  // unmount. Measured after creating a workspace chat with the terminal open:
+  // the split was rendered and `--workspace-terminal-height` was written to the
+  // pane (both gated on the same resolved root, so the root and open-state were
+  // fine), yet `.workspace-terminal-open` matched ZERO elements. That silently
+  // disables every rule keyed on the class, including the one that lifts the
+  // composer clear of the terminal.
+  //
+  // Bailing out when closed is not a behaviour change for the OWNING instance:
+  // flipping open→closed changes the dependency, which fires the cleanup below
+  // and clears the class exactly as before.
   useEffect(() => {
-    if (!transcriptRoot) return
-    if (isTerminalOpen) transcriptRoot.classList.add('workspace-terminal-open')
-    else transcriptRoot.classList.remove('workspace-terminal-open')
+    if (!transcriptRoot || !isTerminalOpen) return
+    transcriptRoot.classList.add('workspace-terminal-open')
     return () => {
       transcriptRoot.classList.remove('workspace-terminal-open')
     }
