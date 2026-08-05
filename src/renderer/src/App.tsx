@@ -54,6 +54,7 @@ import {
 } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 import { applyChatUpdateDelivery, type ChatUpdateBaseline } from '../../shared/chatUpdateTransport'
+import { buildChatUpdateAck } from './lib/chatUpdateAck'
 import {
   TASKWRAITH_CLOSEOUT_KIND,
   closeoutAiSummaryFromMetadata,
@@ -12044,7 +12045,10 @@ function App(): React.JSX.Element {
       addIpcSubscription(
         window.api.onChatUpdated((delivery) => {
           const baselines = chatUpdateBaselineByIdRef.current
-          const acknowledge = (wasApplied: boolean): void => {
+          const acknowledge = (
+            wasApplied: boolean,
+            appliedBaseline?: ChatUpdateBaseline
+          ): void => {
             if (!wasApplied) baselines.delete(delivery.chatId)
             // ACK means the revision was validated and accepted into renderer
             // state. Waiting for requestAnimationFrame made progress depend on
@@ -12052,8 +12056,17 @@ function App(): React.JSX.Element {
             // the frame never arrived, main retained one in-flight delivery,
             // and every later transcript/tool patch was intentionally withheld.
             // Main still caps accepted traffic at 10 Hz and keeps only latest.
+            // T6c: successful ACKs carry revision + recordHash so main can keep
+            // a compact hash+generation baseline without a third full ChatRecord.
             if (typeof window.api.ackChatUpdated === 'function') {
-              window.api.ackChatUpdated({ deliveryId: delivery.deliveryId, applied: wasApplied })
+              window.api.ackChatUpdated(
+                buildChatUpdateAck({
+                  delivery,
+                  applied: wasApplied,
+                  appliedChat: appliedBaseline?.chat,
+                  appliedRecordHash: appliedBaseline?.recordHash
+                })
+              )
             }
           }
           const applied = applyChatUpdateDelivery(delivery, baselines.get(delivery.chatId))
@@ -12076,7 +12089,7 @@ function App(): React.JSX.Element {
             clearedChatIdsRef.current.has(chat.appChatId) &&
             !chatByIdRef.current.has(chat.appChatId)
           ) {
-            acknowledge(true)
+            acknowledge(true, applied.baseline)
             return
           }
         // Stream-safe merge: main may broadcast a disk-stale `ChatRecord`
@@ -12266,7 +12279,7 @@ function App(): React.JSX.Element {
             setIsThinking(true)
           }
         }
-        acknowledge(true)
+        acknowledge(true, applied.baseline)
         })
       )
     }

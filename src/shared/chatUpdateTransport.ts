@@ -108,6 +108,37 @@ export interface ChatUpdateBaseline {
   recordHash?: string
 }
 
+/**
+ * Compact main-side ACK baseline (T6c). Retains generation + hashes only —
+ * never a full ChatRecord. Used by the delivery coordinator so acknowledged
+ * state cannot accumulate a third full-chat ref alongside inFlight/pending.
+ */
+export interface CompactChatUpdateBaseline {
+  revision: number
+  recordHash: string
+  ensembleRevision?: number
+  runsRevision?: number
+  /** Cheap retained-byte estimate for statsForTarget meters. */
+  retainedBytes: number
+}
+
+/**
+ * Cheap retained-byte estimate for delivery stats. Prefers message content
+ * lengths over JSON.stringify so the hot ACK path stays O(messages).
+ */
+export function estimateChatRecordBytes(chat: ChatRecord): number {
+  let bytes = 256
+  for (const message of chat.messages) {
+    bytes += 64
+    if (typeof message.content === 'string') bytes += message.content.length
+    else if (message.content != null) bytes += 128
+  }
+  const runs = chat.runs
+  if (Array.isArray(runs)) bytes += runs.length * 48
+  if (chat.ensemble != null) bytes += 512
+  return bytes
+}
+
 export type ApplyChatUpdateResult =
   | { ok: true; baseline: ChatUpdateBaseline }
   | { ok: false; reason: string }

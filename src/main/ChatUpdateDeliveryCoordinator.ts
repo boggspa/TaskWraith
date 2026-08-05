@@ -4,10 +4,13 @@ import {
   CHAT_UPDATE_PROTOCOL_V1,
   CHAT_UPDATE_PROTOCOL_V2,
   buildChatUpdateDelivery,
+  computeChatSubRevisions,
+  estimateChatRecordBytes,
   type ChatUpdateAck,
   type ChatUpdateBaseline,
   type ChatUpdateDelivery,
-  type ChatUpdateProtocolVersion
+  type ChatUpdateProtocolVersion,
+  type CompactChatUpdateBaseline
 } from '../shared/chatUpdateTransport'
 
 export interface ChatUpdateDeliveryTarget {
@@ -23,13 +26,24 @@ interface PendingChatUpdate {
 
 interface InFlightChatUpdate extends PendingChatUpdate {
   deliveryId: string
+  recordHash: string
 }
 
 interface TargetChatState {
   target: ChatUpdateDeliveryTarget
   chatId: string
   nextRevision: number
-  acknowledged?: ChatUpdateBaseline
+  /**
+   * Compact ACK baseline (hash + generation). Never holds a ChatRecord —
+   * that would make acknowledged + inFlight + pending three full refs.
+   */
+  acknowledged?: CompactChatUpdateBaseline
+  /**
+   * Full chat retained solely for the next patch build. Cleared after the
+   * following delivery is built so idle/in-flight state never stacks a third
+   * full ChatRecord beside pending.
+   */
+  baselineChat?: ChatRecord
   inFlight?: InFlightChatUpdate
   pending?: PendingChatUpdate
   timer?: ReturnType<typeof setTimeout>
@@ -44,6 +58,8 @@ export interface ChatUpdateDeliveryStats {
   inFlight: number
   pending: number
   retainedMessages: number
+  /** Sum of retained baseline/in-flight/pending chat byte estimates. */
+  retainedBaselineBytes: number
 }
 
 export interface ChatUpdateDeliveryCoordinatorOptions {
@@ -75,12 +91,38 @@ function resolveEmitProtocolVersion(
   return CHAT_UPDATE_PROTOCOL_V1
 }
 
+function toCompactBaseline(chat: ChatRecord, revision: number): CompactChatUpdateBaseline {
+  const sub = computeChatSubRevisions(chat)
+  return {
+    revision,
+    recordHash: sub.recordHash,
+    ensembleRevision: sub.ensembleRevision,
+    runsRevision: sub.runsRevision,
+    retainedBytes: estimateChatRecordBytes(chat)
+  }
+}
+
+function toPatchBaseline(
+  acknowledged: CompactChatUpdateBaseline,
+  baselineChat: ChatRecord
+): ChatUpdateBaseline {
+  return {
+    revision: acknowledged.revision,
+    chat: baselineChat,
+    ensembleRevision: acknowledged.ensembleRevision,
+    runsRevision: acknowledged.runsRevision,
+    recordHash: acknowledged.recordHash
+  }
+}
+
 /**
  * ACK-gated, latest-wins delivery for main-owned chat projections.
  *
  * Each renderer/chat may own at most one native IPC payload in flight and one
- * replaceable pending ChatRecord. A slow or hung renderer therefore creates a
- * fixed-size backlog instead of an unbounded queue of multi-megabyte clones.
+ * replaceable pending ChatRecord. Acknowledged state is hash+generation only,
+ * so a target never retains three full ChatRecord refs at once. A slow or hung
+ * renderer therefore creates a fixed-size backlog instead of an unbounded queue
+ * of multi-megabyte clones.
  */
 export class ChatUpdateDeliveryCoordinator {
   private readonly statesByTarget = new Map<number, Map<string, TargetChatState>>()
@@ -146,11 +188,23 @@ export class ChatUpdateDeliveryCoordinator {
     }
     state.inFlight = undefined
     state.lastTouchedAt = this.now()
-    if (ack.applied) {
-      state.acknowledged = { revision: inFlight.revision, chat: inFlight.chat }
+
+    const revisionMismatch = typeof ack.revision === 'number' && ack.revision !== inFlight.revision
+    const hashMismatch =
+      typeof ack.recordHash === 'string' &&
+      ack.recordHash.length > 0 &&
+      ack.recordHash !== inFlight.recordHash
+    const applied = ack.applied === true && !revisionMismatch && !hashMismatch
+
+    if (applied) {
+      // Compact fingerprint only — the full chat is kept in baselineChat for
+      // the next patch build, never as a third acknowledged ChatRecord ref.
+      state.acknowledged = toCompactBaseline(inFlight.chat, inFlight.revision)
+      state.baselineChat = inFlight.chat
       state.consecutiveRejects = 0
     } else {
       state.acknowledged = undefined
+      state.baselineChat = undefined
       state.consecutiveRejects += 1
       // One immediate snapshot retry repairs a missing/stale renderer base.
       // If that snapshot is also rejected, wait for a future producer update
@@ -173,18 +227,46 @@ export class ChatUpdateDeliveryCoordinator {
 
   statsForTarget(targetId: number): ChatUpdateDeliveryStats {
     const states = this.statesByTarget.get(targetId)
-    if (!states) return { trackedChats: 0, inFlight: 0, pending: 0, retainedMessages: 0 }
+    if (!states) {
+      return {
+        trackedChats: 0,
+        inFlight: 0,
+        pending: 0,
+        retainedMessages: 0,
+        retainedBaselineBytes: 0
+      }
+    }
     let inFlight = 0
     let pending = 0
     let retainedMessages = 0
+    let retainedBaselineBytes = 0
     for (const state of states.values()) {
-      if (state.inFlight) inFlight += 1
-      if (state.pending) pending += 1
-      retainedMessages += state.acknowledged?.chat.messages.length ?? 0
-      retainedMessages += state.inFlight?.chat.messages.length ?? 0
-      retainedMessages += state.pending?.chat.messages.length ?? 0
+      if (state.inFlight) {
+        inFlight += 1
+        retainedMessages += state.inFlight.chat.messages.length
+        retainedBaselineBytes += estimateChatRecordBytes(state.inFlight.chat)
+      }
+      if (state.pending) {
+        pending += 1
+        retainedMessages += state.pending.chat.messages.length
+        retainedBaselineBytes += estimateChatRecordBytes(state.pending.chat)
+      }
+      if (state.baselineChat) {
+        retainedMessages += state.baselineChat.messages.length
+        retainedBaselineBytes += estimateChatRecordBytes(state.baselineChat)
+      } else if (state.acknowledged) {
+        // Compact fingerprint only — charge a small constant, not the prior
+        // full-chat estimate (that chat is no longer retained on main).
+        retainedBaselineBytes += 64
+      }
     }
-    return { trackedChats: states.size, inFlight, pending, retainedMessages }
+    return {
+      trackedChats: states.size,
+      inFlight,
+      pending,
+      retainedMessages,
+      retainedBaselineBytes
+    }
   }
 
   private maybeSend(state: TargetChatState): void {
@@ -206,14 +288,29 @@ export class ChatUpdateDeliveryCoordinator {
     const next = state.pending
     state.pending = undefined
     const deliveryId = `chat-update-${++this.deliverySequence}`
+    // Patch only when we still hold the baseline chat. Compact acknowledged
+    // alone forces a snapshot — that is the byte-aware miss path (one retry).
+    const baseline: ChatUpdateBaseline | undefined =
+      state.acknowledged && state.baselineChat
+        ? toPatchBaseline(state.acknowledged, state.baselineChat)
+        : undefined
     const delivery: ChatUpdateDelivery = buildChatUpdateDelivery({
       deliveryId,
       revision: next.revision,
       chat: next.chat,
-      baseline: state.acknowledged,
+      baseline,
       protocolVersion: this.emitProtocolVersion
     })
-    state.inFlight = { ...next, deliveryId }
+    const recordHash =
+      delivery.kind === 'snapshot'
+        ? (delivery.recordHash ?? computeChatSubRevisions(next.chat).recordHash)
+        : delivery.protocolVersion === CHAT_UPDATE_PROTOCOL_V2
+          ? (delivery.recordHash ?? computeChatSubRevisions(next.chat).recordHash)
+          : computeChatSubRevisions(next.chat).recordHash
+    state.inFlight = { ...next, deliveryId, recordHash }
+    // Drop the patch-base chat once the next full payload is in flight so we
+    // never retain acknowledged+baselineChat+inFlight+pending as three+ fulls.
+    state.baselineChat = undefined
     state.lastSentAt = this.now()
     state.lastTouchedAt = state.lastSentAt
     this.deliveryIndex.set(deliveryId, { targetId: state.target.id, chatId: state.chatId })
@@ -228,6 +325,7 @@ export class ChatUpdateDeliveryCoordinator {
           // A renderer that cannot ACK cannot share a revision baseline. The
           // newest pending update will therefore repair itself as a snapshot.
           state.acknowledged = undefined
+          state.baselineChat = undefined
           state.lastTouchedAt = this.now()
           this.maybeSend(state)
           this.pruneTarget(state.target.id)
@@ -257,5 +355,7 @@ export class ChatUpdateDeliveryCoordinator {
     if (state.timer) this.clearTimer(state.timer)
     if (state.ackTimer) this.clearTimer(state.ackTimer)
     if (state.inFlight) this.deliveryIndex.delete(state.inFlight.deliveryId)
+    state.baselineChat = undefined
+    state.acknowledged = undefined
   }
 }

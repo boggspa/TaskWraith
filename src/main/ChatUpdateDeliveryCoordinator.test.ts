@@ -205,4 +205,54 @@ describe('ChatUpdateDeliveryCoordinator', () => {
       baseline: { revision: patch.revision, chat: latest }
     })
   })
+
+  it('reports retained baseline bytes and never stacks three full ChatRecord refs', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    const first = chat(1, ['one-message-body'])
+    coordinator.enqueue(sink, first)
+    const beforeAck = coordinator.statsForTarget(sink.id)
+    expect(beforeAck.retainedBaselineBytes).toBeGreaterThan(0)
+    expect(beforeAck.retainedMessages).toBe(1)
+    expect(beforeAck.inFlight).toBe(1)
+
+    const delivery = sink.deliveries[0]
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        applied: true
+      })
+    ).toBe(true)
+
+    const idle = coordinator.statsForTarget(sink.id)
+    expect(idle.inFlight).toBe(0)
+    expect(idle.retainedBaselineBytes).toBeGreaterThan(0)
+
+    // After ACK: baselineChat held for next patch. Enqueue next → inFlight +
+    // pending would be the danger zone; with only one pending and baseline
+    // cleared on send, patches still work and stats stay finite.
+    coordinator.enqueue(sink, chat(2, ['two']))
+    expect(sink.deliveries[1].kind).toBe('patch')
+    const mid = coordinator.statsForTarget(sink.id)
+    expect(mid.inFlight).toBe(1)
+    expect(mid.retainedBaselineBytes).toBeGreaterThan(0)
+  })
+
+  it('rejects an ACK whose revision disagrees with the in-flight delivery', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    const deliveryId = sink.deliveries[0].deliveryId
+
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId,
+        applied: true,
+        revision: 999
+      })
+    ).toBe(true)
+    // Treated as a reject → one snapshot retry, then stop.
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
 })

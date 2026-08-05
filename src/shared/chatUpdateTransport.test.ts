@@ -9,6 +9,7 @@ import {
   buildChatUpdateDelivery,
   buildChatUpdateMessageSplice,
   computeChatSubRevisions,
+  estimateChatRecordBytes,
   isChatUpdateDelivery,
   normalizeChatUpdateAck
 } from './chatUpdateTransport'
@@ -327,5 +328,12 @@ describe('chat update transport', () => {
         chat: chat(1, [])
       })
     ).toBe(true)
+  })
+
+  it('estimates retained chat bytes without JSON.stringify', () => {
+    const small = chat(1, [message('a', 'hi')])
+    const large = chat(2, [message('a', 'x'.repeat(10_000))])
+    expect(estimateChatRecordBytes(large)).toBeGreaterThan(estimateChatRecordBytes(small))
+    expect(estimateChatRecordBytes(large)).toBeGreaterThan(10_000)
   })
 })
