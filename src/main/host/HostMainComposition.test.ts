@@ -1,0 +1,502 @@
+import { existsSync, readFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  HOST_PROTOCOL_VERSION,
+  type HostActorIdentity,
+  type HostAuthenticatedClientIdentity,
+  type HostCapability,
+  type HostCommand,
+  type HostHealthProjection
+} from '../../shared/hostProtocol'
+import {
+  TASKWRAITH_HOST_DISCOVERY_FILE,
+  TASKWRAITH_HOST_SOCKET_FILE,
+  TASKWRAITH_HOST_TOKEN_FILE
+} from '../../shared/taskWraithHostPaths.node'
+import type {
+  AppStoreHostAuthorityExecutor,
+  AppStoreHostAuthoritySnapshotDonorFamilies
+} from './AppStoreHostAuthority'
+import type { HostAuthorityCallContext } from './HostAuthority'
+import { HostDeferredCommandBridge } from './HostDeferredCommandBridge'
+import {
+  createHostMainComposition,
+  createUnwiredDeferredResolutionPorts,
+  HOST_DEFERRED_RESOLUTION_UNWIRED_CODE,
+  HOST_RUNTIME_DATA_DIR_NAME,
+  hostRuntimeDataDir,
+  type HostMainComposition,
+  type HostMainCompositionInput
+} from './HostMainComposition'
+
+const ACTOR_A: HostActorIdentity = {
+  actorId: 'actor-a',
+  clientId: 'client-a',
+  clientClass: 'desktop'
+}
+
+const CLIENT_A: HostAuthenticatedClientIdentity = {
+  clientId: 'client-a',
+  clientClass: 'desktop',
+  clientVersion: '1.9.2'
+}
+
+const NOW = '2026-08-04T09:00:00.000Z'
+
+const DEFERRED_COMMAND_ID = '11111111-1111-4111-8111-111111111111'
+const DEFERRED_IDEMPOTENCY_KEY = 'desktop:client-a:22222222-2222-4222-8222-222222222222'
+const SESSION_ID = '44444444-4444-4444-8444-444444444444'
+
+/** A distinctive body value — a body-free projection must never echo it. */
+const SECRET_TARGET_ID = 'thread-body-secret-do-not-project'
+
+const CAPABILITIES: readonly HostCapability[] = [
+  'bootstrap',
+  'snapshot',
+  'deltas',
+  'commands',
+  'receipts',
+  'health',
+  'recovery'
+]
+
+function contextFor(actor: HostActorIdentity): HostAuthorityCallContext {
+  return {
+    actor,
+    client: {
+      clientId: actor.clientId,
+      clientClass: actor.clientClass,
+      clientVersion: CLIENT_A.clientVersion
+    }
+  }
+}
+
+function makeCommand(
+  overrides: Partial<HostCommand> & Pick<HostCommand, 'commandId' | 'idempotencyKey' | 'actor'>
+): HostCommand {
+  return {
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    name: 'thread.select',
+    target: { threadId: SECRET_TARGET_ID },
+    arguments: {},
+    issuedAt: NOW,
+    ...overrides
+  }
+}
+
+function donorFamilies(): AppStoreHostAuthoritySnapshotDonorFamilies {
+  return {
+    health: {
+      hostStatus: 'ok',
+      connectionPhase: 'live',
+      supervised: true,
+      freshness: 'live'
+    },
+    workspaces: [],
+    threads: [],
+    runs: [],
+    missions: [],
+    rounds: [],
+    participants: [],
+    providers: [],
+    questions: [],
+    approvals: [],
+    schedules: [],
+    usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
+    artifacts: [],
+    warnings: []
+  }
+}
+
+const HEALTH: HostHealthProjection = {
+  hostStatus: 'ok',
+  connectionPhase: 'live',
+  supervised: true,
+  freshness: 'live'
+}
+
+describe('HostMainComposition', () => {
+  let userDataPath: string
+  let executor: ReturnType<typeof vi.fn>
+  let composition: HostMainComposition
+
+  const open = (overrides: Partial<HostMainCompositionInput> = {}): HostMainComposition =>
+    createHostMainComposition({
+      userDataPath,
+      commandExecutor: executor as unknown as AppStoreHostAuthorityExecutor,
+      snapshotDonor: () => donorFamilies(),
+      authorityEvaluator: () => ({ decision: 'allowed' as const }),
+      healthProvider: () => HEALTH,
+      host: { hostId: 'host-1', hostVersion: '1.9.2' },
+      hostCapabilityOffer: CAPABILITIES,
+      now: () => NOW,
+      ...overrides
+    })
+
+  beforeEach(() => {
+    userDataPath = mkdtempSync(join(tmpdir(), 'host-main-composition-'))
+    executor = vi.fn(async () => ({ status: 'succeeded' as const, resultSummary: 'ok' }))
+  })
+
+  afterEach(() => {
+    rmSync(userDataPath, { recursive: true, force: true })
+  })
+
+  // -----------------------------------------------------------------------
+  // Deterministic host data directory
+  // -----------------------------------------------------------------------
+
+  describe('hostDataDir', () => {
+    it('is a deterministic documented subdirectory of the injected userData path', () => {
+      expect(HOST_RUNTIME_DATA_DIR_NAME).toBe('host-runtime')
+      expect(hostRuntimeDataDir('/tmp/user-data')).toBe(join('/tmp/user-data', 'host-runtime'))
+
+      composition = open()
+      expect(composition.hostDataDir).toBe(join(userDataPath, HOST_RUNTIME_DATA_DIR_NAME))
+    })
+
+    it('does not collide with existing userData entries or the v2 control artifacts', () => {
+      // Real userData entry names observed in src/main at the time of writing.
+      const existingUserDataEntries = [
+        'agent-stats',
+        'approval-ledger.json',
+        'audit-runs.json',
+        'bridge-logs',
+        'canvas',
+        'chats',
+        'chat-list-index.json',
+        'checkpoints',
+        'evidence-packs.json',
+        'gemini-oauth-profiles',
+        'handoff-cards.json',
+        'login',
+        'mistral',
+        'plugins',
+        'projects.json',
+        'run-artifacts',
+        'run-events',
+        'run-queue.json',
+        'run-recovery.json',
+        'runtime-profiles.json',
+        'scheduled-tasks.json',
+        'settings.json',
+        'subthread-mailboxes.json'
+      ]
+      expect(existingUserDataEntries).not.toContain(HOST_RUNTIME_DATA_DIR_NAME)
+
+      // Wave 3.1 v2 control artifacts stay FILES at the userData root.
+      expect([
+        TASKWRAITH_HOST_DISCOVERY_FILE,
+        TASKWRAITH_HOST_TOKEN_FILE,
+        TASKWRAITH_HOST_SOCKET_FILE
+      ]).not.toContain(HOST_RUNTIME_DATA_DIR_NAME)
+    })
+
+    it('confines every durable Host write to that subdirectory', async () => {
+      composition = open()
+      const result = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({ commandId: 'cmd-confine', idempotencyKey: 'key-confine', actor: ACTOR_A })
+      )
+      expect(result.ok).toBe(true)
+      composition.getRecoverySummary()
+      await composition.shutdown()
+
+      expect(existsSync(composition.hostDataDir)).toBe(true)
+      expect(readdirSync(userDataPath)).toEqual([HOST_RUNTIME_DATA_DIR_NAME])
+      expect(readdirSync(composition.hostDataDir).length).toBeGreaterThan(0)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Fail-closed construction
+  // -----------------------------------------------------------------------
+
+  describe('fail-closed construction', () => {
+    it('rejects a missing userDataPath', () => {
+      expect(() => open({ userDataPath: '' })).toThrow(/userDataPath/)
+    })
+
+    it('rejects a missing executor port', () => {
+      expect(() =>
+        open({ commandExecutor: undefined as unknown as AppStoreHostAuthorityExecutor })
+      ).toThrow(/commandExecutor/)
+    })
+
+    it('rejects missing donor / evaluator / health ports', () => {
+      expect(() => open({ snapshotDonor: undefined as never })).toThrow(/snapshotDonor/)
+      expect(() => open({ authorityEvaluator: undefined as never })).toThrow(/authorityEvaluator/)
+      expect(() => open({ healthProvider: undefined as never })).toThrow(/healthProvider/)
+    })
+
+    it('rejects an incomplete host identity or capability offer', () => {
+      expect(() => open({ host: { hostId: '', hostVersion: '1.9.2' } })).toThrow(/host identity/)
+      expect(() => open({ host: { hostId: 'host-1', hostVersion: '' } })).toThrow(/host identity/)
+      expect(() => open({ hostCapabilityOffer: undefined as never })).toThrow(/hostCapabilityOffer/)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Executor injection (the W3-P3 seam)
+  // -----------------------------------------------------------------------
+
+  describe('executor injection', () => {
+    it('routes an allowed command through the injected executor exactly once', async () => {
+      composition = open()
+      const result = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({ commandId: 'cmd-exec-1', idempotencyKey: 'key-exec-1', actor: ACTOR_A })
+      )
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.value.status).toBe('succeeded')
+      expect(executor).toHaveBeenCalledTimes(1)
+      const [command] = executor.mock.calls[0] as [HostCommand]
+      expect(command.commandId).toBe('cmd-exec-1')
+      expect(command.name).toBe('thread.select')
+    })
+
+    it('passes the terminal executor status through instead of rewriting it', async () => {
+      executor = vi.fn(async () => ({
+        status: 'cancelled' as const,
+        errorCode: 'provider_cancelled'
+      }))
+      composition = open()
+      const result = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({ commandId: 'cmd-exec-2', idempotencyKey: 'key-exec-2', actor: ACTOR_A })
+      )
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.value.status).toBe('cancelled')
+    })
+
+    it('never constructs an executor of its own when one is injected', async () => {
+      const injected = vi.fn(async () => ({ status: 'failed' as const, errorCode: 'nope' }))
+      composition = open({
+        commandExecutor: injected as unknown as AppStoreHostAuthorityExecutor
+      })
+      await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({ commandId: 'cmd-exec-3', idempotencyKey: 'key-exec-3', actor: ACTOR_A })
+      )
+      expect(injected).toHaveBeenCalledTimes(1)
+      expect(executor).not.toHaveBeenCalled()
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Deferred ask wiring (envelope store + composition-owned bridge)
+  // -----------------------------------------------------------------------
+
+  describe('deferred ask wiring', () => {
+    const deferredComposition = (): HostMainComposition =>
+      open({ authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'approval' }) })
+
+    it('persists a deferred ask into both durable halves without executing', async () => {
+      composition = deferredComposition()
+      const result = await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({
+          commandId: DEFERRED_COMMAND_ID,
+          idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+          actor: ACTOR_A
+        })
+      )
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.value.status).toBe('pending')
+      expect(executor).not.toHaveBeenCalled()
+
+      const summary = composition.getRecoverySummary()
+      expect(summary.envelopes.availability).toBe('available')
+      if (summary.envelopes.availability !== 'available') return
+      expect(summary.envelopes.size).toBe(1)
+      // Bridge half is supplied by composition, so bootstrap can count it.
+      expect(summary.deferred.availability).toBe('available')
+      expect(summary.deferred.size).toBe(1)
+    })
+
+    it('keeps the recovery summary body-free', async () => {
+      composition = deferredComposition()
+      await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({
+          commandId: DEFERRED_COMMAND_ID,
+          idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+          actor: ACTOR_A
+        })
+      )
+
+      const serialized = JSON.stringify(composition.getRecoverySummary())
+      expect(serialized).not.toContain(SECRET_TARGET_ID)
+      expect(serialized).not.toContain('thread.select')
+    })
+
+    it('leaves the deferred summary unavailable-free when nothing is deferred', () => {
+      composition = open()
+      const summary = composition.getRecoverySummary()
+      expect(summary.deferred.availability).toBe('available')
+      expect(summary.deferred.size).toBe(0)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Unwired deferred resolution — fail closed, never fake success
+  // -----------------------------------------------------------------------
+
+  describe('unwired deferred resolution ports', () => {
+    it('refuses every resolve-side port', () => {
+      const ports = createUnwiredDeferredResolutionPorts()
+      expect(() => ports.executeCommand({} as never)).toThrow(HOST_DEFERRED_RESOLUTION_UNWIRED_CODE)
+      expect(() => ports.publishEffects({} as never)).toThrow(HOST_DEFERRED_RESOLUTION_UNWIRED_CODE)
+      expect(() => ports.completeReceipt({} as never)).toThrow(
+        HOST_DEFERRED_RESOLUTION_UNWIRED_CODE
+      )
+    })
+
+    it('terminalizes an allow decision as failed rather than succeeded', async () => {
+      const bridge = new HostDeferredCommandBridge({
+        dataDir: join(userDataPath, HOST_RUNTIME_DATA_DIR_NAME),
+        ports: createUnwiredDeferredResolutionPorts()
+      })
+      const actor = { clientId: 'client-a', actorId: 'actor-a', clientClass: 'desktop' as const }
+      const registered = bridge.register({
+        commandId: DEFERRED_COMMAND_ID,
+        idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+        commandFingerprint: 'a'.repeat(64),
+        commandName: 'thread.select',
+        actor,
+        challengeId: '33333333-3333-4333-8333-333333333333',
+        challengeKind: 'approval'
+      })
+      expect(registered.kind).toBe('created')
+
+      const resolved = await bridge.resolve({
+        challengeId: '33333333-3333-4333-8333-333333333333',
+        actor,
+        decision: 'allow'
+      })
+
+      expect(resolved.kind).toBe('failed')
+      if (resolved.kind !== 'failed') return
+      expect(resolved.code).toBe('executor_failed')
+      expect(resolved.record?.state).toBe('failed')
+      expect(resolved.record?.state).not.toBe('succeeded')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Position + session binding
+  // -----------------------------------------------------------------------
+
+  describe('position and session', () => {
+    it('reports position from the sole journal', async () => {
+      composition = open()
+      const before = composition.getPosition()
+      expect(typeof before.generation).toBe('number')
+      expect(typeof before.cursor).toBe('number')
+
+      await composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({ commandId: 'cmd-pos-1', idempotencyKey: 'key-pos-1', actor: ACTOR_A })
+      )
+      const after = composition.getPosition()
+      expect(after.generation).toBe(before.generation)
+      expect(after.cursor).toBeGreaterThanOrEqual(before.cursor)
+      expect(after).toEqual(composition.getRecoverySummary().position)
+    })
+
+    it('binds an authenticated client through the composed session', () => {
+      composition = open({ sessionIdFactory: () => SESSION_ID })
+      const bound = composition.session.bind({
+        verifiedContext: {
+          clientClass: CLIENT_A.clientClass,
+          clientId: CLIENT_A.clientId,
+          actorId: CLIENT_A.clientId
+        },
+        authenticatedClient: CLIENT_A,
+        clientCapabilityRequest: ['snapshot', 'commands']
+      })
+
+      expect(bound.ok ? 'ok' : bound.error).toBe('ok')
+      if (!bound.ok) return
+      expect(bound.value.sessionId).toBe(SESSION_ID)
+      expect(bound.value.boundGeneration).toBe(composition.getPosition().generation)
+      expect(bound.value.boundCursor).toBe(composition.getPosition().cursor)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Shutdown / flush
+  // -----------------------------------------------------------------------
+
+  describe('shutdown', () => {
+    it('flushes durable state once however often it is called', async () => {
+      const onShutdown = vi.fn()
+      composition = open({ onShutdown })
+
+      await composition.shutdown()
+      await composition.shutdown()
+      await composition.shutdown()
+
+      expect(onShutdown).toHaveBeenCalledTimes(1)
+    })
+
+    it('shares one idempotent flush with the authoritative host shutdown', async () => {
+      const onShutdown = vi.fn()
+      composition = open({ onShutdown })
+
+      const stopped = await composition.authority.shutdown(contextFor(ACTOR_A))
+      expect(stopped.ok).toBe(true)
+      await composition.shutdown()
+
+      expect(onShutdown).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not open or close any listener', async () => {
+      composition = open()
+      await composition.shutdown()
+      // Wave 3.1 control artifacts belong to the supervisor slice, not here.
+      expect(existsSync(join(userDataPath, TASKWRAITH_HOST_DISCOVERY_FILE))).toBe(false)
+      expect(existsSync(join(userDataPath, TASKWRAITH_HOST_TOKEN_FILE))).toBe(false)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Import isolation (W3-P3 seam)
+  // -----------------------------------------------------------------------
+
+  describe('import isolation', () => {
+    it('imports no electron, AppStore singleton, provider, or listener module', () => {
+      const source = readFileSync(join(__dirname, 'HostMainComposition.ts'), 'utf8')
+      const importLines = source
+        .split('\n')
+        .filter((line) => /^\s*(import|export .*from|const .*= require\()/.test(line))
+        .join('\n')
+
+      expect(importLines).not.toMatch(/['"]electron['"]/)
+      // The AppStore module itself lives outside src/main/host — the Authority
+      // class merely carries the historic name and reads no AppStore.
+      expect(importLines).not.toMatch(/from ['"]\.\.\/AppStore/)
+      expect(importLines).not.toMatch(/from ['"]\.\.\/BridgeActionExecutor/)
+      expect(importLines).not.toMatch(/from ['"]\.\.\/providers/)
+      expect(importLines).not.toMatch(/workLocks/)
+      expect(importLines).not.toMatch(/workProvenance/)
+      expect(importLines).not.toMatch(/HostLocalServer/)
+      expect(importLines).not.toMatch(/from ['"].*\/index['"]/)
+    })
+
+    it('constructs no HostLocalServer — the supervisor owns listener lifecycle', () => {
+      const source = readFileSync(join(__dirname, 'HostMainComposition.ts'), 'utf8')
+      expect(source).not.toMatch(/new HostLocalServer/)
+    })
+  })
+})
