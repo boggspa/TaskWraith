@@ -1563,6 +1563,12 @@ import {
   type AntigravityPermissionLease
 } from './antigravity/AntigravityPermissionLease'
 import {
+  buildAgyHookBridgeNamedHook,
+  createAgyHookBridgeToken,
+  startAgyHookBridgeServer,
+  type AgyHookBridgeServer
+} from './antigravity/AntigravityHookBridge'
+import {
   formatAgyProjectBoundSessionId,
   readAgyConversationReceipt
 } from './antigravity/AntigravityConversationReceipt'
@@ -32475,6 +32481,19 @@ async function runAntigravityProvider(
  */
 const antigravityPermissionLeases = new AntigravityPermissionLeaseCoordinator()
 
+// One loopback bridge server for the app lifetime; each agy launch registers
+// its own token so a stale hook overlay can never reach another run's gate.
+let agyHookBridgeServerPromise: Promise<AgyHookBridgeServer> | null = null
+function agyHookBridgeServer(): Promise<AgyHookBridgeServer> {
+  if (!agyHookBridgeServerPromise) {
+    agyHookBridgeServerPromise = startAgyHookBridgeServer()
+    agyHookBridgeServerPromise.catch(() => {
+      agyHookBridgeServerPromise = null
+    })
+  }
+  return agyHookBridgeServerPromise
+}
+
 function antigravityCliSettingsPath(): string {
   return join(app.getPath('home'), '.gemini', 'antigravity-cli', 'settings.json')
 }
@@ -32531,6 +32550,7 @@ async function runAntigravityAgyProvider(
     ? null
     : await readAgyConversationReceipt(payload.workspace)
   let permissionLease: AntigravityPermissionLease | undefined
+  let releaseHookBridgeRun: (() => void) | undefined
   if (payload.workspace && providerTransportLaunchAuthorized('antigravity', payload, route)) {
     const permissions = payload.effectivePermissions
     const allowShell =
@@ -32540,15 +32560,67 @@ async function runAntigravityAgyProvider(
       launch.mode === 'accept-edits' &&
       permissions?.readOnly !== true &&
       antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges)
+    // PreToolUse hook bridge: agy's only per-tool seam. Every native shell
+    // command routes through the SAME approval orchestration as every other
+    // provider — universal read-only fast path, tier holds, real Ask cards —
+    // and a gate deny is a recoverable tool decision instead of the fatal
+    // headless soft-deny. Bridge failure never widens anything: the hook
+    // falls back to `{}` and agy's native confirmation flow resumes.
+    const workspacePath = payload.workspace
+    let hookOverlay: Parameters<typeof antigravityPermissionLeases.acquire>[0]['hookOverlay']
+    try {
+      const bridge = await agyHookBridgeServer()
+      const token = createAgyHookBridgeToken()
+      releaseHookBridgeRun = bridge.registerRun(token, async (toolCall) => {
+        if (toolCall.name !== 'run_command' || !toolCall.command) return { decision: 'none' }
+        const allowed = await requestAgenticServiceApproval(
+          event.sender,
+          'antigravity',
+          'shellCommands',
+          workspacePath,
+          {
+            method: 'agy_native_command',
+            title: 'AntiGravity shell command',
+            body: toolCall.command,
+            preview: {
+              toolName: 'run_command',
+              command: toolCall.command,
+              params: { command: toolCall.command }
+            },
+            runId: route.appRunId
+          }
+        )
+        return allowed
+          ? { decision: 'allow' }
+          : {
+              decision: 'deny',
+              reason:
+                'TaskWraith declined this command under the current permission tier. Continue with permitted read-only inspection or adjust the approach.'
+            }
+      })
+      hookOverlay = {
+        hooksPath: join(workspacePath, '.agents', 'hooks.json'),
+        ...buildAgyHookBridgeNamedHook({ port: bridge.port, token })
+      }
+    } catch {
+      // No bridge, no overlay: the run proceeds exactly as before the bridge
+      // existed (projection rules only).
+      releaseHookBridgeRun?.()
+      releaseHookBridgeRun = undefined
+      hookOverlay = undefined
+    }
     try {
       permissionLease = await antigravityPermissionLeases.acquire({
         settingsPath: antigravityCliSettingsPath(),
         workspacePath: payload.workspace,
         allowShell,
         allowWrite,
+        ...(hookOverlay ? { hookOverlay } : {}),
         signal: payload.providerSetupAbortSignal
       })
     } catch (error) {
+      releaseHookBridgeRun?.()
+      releaseHookBridgeRun = undefined
       if (
         error instanceof AntigravityPermissionLeaseAbortedError ||
         payload.providerSetupAbortSignal?.aborted
@@ -32574,6 +32646,8 @@ async function runAntigravityAgyProvider(
   }
 
   const releasePermissionLease = async (): Promise<void> => {
+    releaseHookBridgeRun?.()
+    releaseHookBridgeRun = undefined
     if (!permissionLease) return
     const lease = permissionLease
     permissionLease = undefined

@@ -29,7 +29,7 @@ function settings(
 }
 
 describe('ProviderCapabilities', () => {
-  it('describes AntiGravity as the sandboxed official CLI without claiming a tool bridge', () => {
+  it('describes AntiGravity as the sandboxed official CLI with the hook approval bridge', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'antigravity',
       settings: settings(),
@@ -39,8 +39,13 @@ describe('ProviderCapabilities', () => {
 
     expect(contract.approvals.providerMode).toContain('--sandbox --mode plan')
     expect(contract.approvals.inAppApprovals).toBe(false)
-    expect(contract.approvals.notes.join(' ')).toContain('no credential access')
-    expect(contract.approvals.notes.join(' ')).toContain('isolated worktrees')
+    const notes = contract.approvals.notes.join(' ')
+    expect(notes).toContain('No credential is ever read')
+    expect(notes).toContain('PreToolUse hook routes agy shell commands')
+    // The skip flag exists only as the signed Full Access posture behaviour —
+    // the copy must keep saying so rather than reading as a general bypass.
+    expect(notes).toContain('only under a signed non-read-only Full Access posture')
+    expect(notes).toContain('isolated worktrees')
     expect(contract.mcp.state).toBe('unavailable')
     expect(contract.tools.mcpTools.state).toBe('unavailable')
     expect(contract.tools.delegate.state).toBe('unavailable')
@@ -271,7 +276,8 @@ describe('ProviderCapabilities', () => {
         binaryPath: '/usr/local/bin/agy',
         binaryProvenance: 'mismatch',
         binaryTeamId: 'ABCDE12345',
-        binaryProvenanceDetail: 'The resolved agy executable is signed by team ABCDE12345, not Google (EQHXZ8M8AV).'
+        binaryProvenanceDetail:
+          'The resolved agy executable is signed by team ABCDE12345, not Google (EQHXZ8M8AV).'
       }
     })
 

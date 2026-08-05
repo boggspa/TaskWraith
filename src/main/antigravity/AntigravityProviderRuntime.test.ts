@@ -260,6 +260,64 @@ describe('prepareAntigravityProviderLaunch', () => {
     expect(launch.args).not.toContain('--dangerously-skip-permissions')
   })
 
+  it('auto-approves native confirmations only for a signed non-read-only Full Access posture', async () => {
+    const deps = {
+      resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'path' as const })
+    }
+    const fullAccess = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Run the migration.',
+        approvalMode: 'default',
+        effectivePermissions: { presetId: 'full_access', readOnly: false },
+        isolatedMutationWorkspace: true
+      },
+      deps
+    )
+    // Full Access already pregrants every native capability, so agy's own
+    // confirmation layer is skipped — while the sandbox and TaskWraith's
+    // hook-bridge holds (remote egress, rm -r) remain in force.
+    expect(fullAccess.args).toContain('--dangerously-skip-permissions')
+    expect(fullAccess.args).toContain('--sandbox')
+    expect(fullAccess.mode).toBe('accept-edits')
+
+    const readOnlyFullAccess = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Inspect only.',
+        approvalMode: 'default',
+        effectivePermissions: { presetId: 'full_access', readOnly: true }
+      },
+      deps
+    )
+    expect(readOnlyFullAccess.args).not.toContain('--dangerously-skip-permissions')
+
+    const deniedServices = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Run the migration.',
+        approvalMode: 'default',
+        effectivePermissions: { presetId: 'full_access', readOnly: false },
+        agenticServices: { shellCommands: 'deny', fileChanges: 'allow' },
+        isolatedMutationWorkspace: true
+      },
+      deps
+    )
+    expect(deniedServices.args).not.toContain('--dangerously-skip-permissions')
+
+    const workspaceWrite = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Run the migration.',
+        approvalMode: 'default',
+        effectivePermissions: { presetId: 'workspace_write', readOnly: false },
+        isolatedMutationWorkspace: true
+      },
+      deps
+    )
+    expect(workspaceWrite.args).not.toContain('--dangerously-skip-permissions')
+  })
+
   it('keeps a write-approved shared checkout in plan mode without an exact bridge', async () => {
     const launch = await prepareAntigravityProviderLaunch(
       {

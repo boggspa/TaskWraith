@@ -17,10 +17,15 @@ describe('AntigravityOptInCard', () => {
     expect(html).toContain('TaskWraith never reads, copies, or stores')
     // The card is the lane's consent document: every local read/write the
     // adapter performs must stay disclosed here. The settings lease writes a
-    // temporary permission overlay into agy's own settings file each run.
+    // temporary permission overlay into agy's own settings file each run, and
+    // the hook bridge adds a TaskWraith-named entry to the workspace
+    // hooks.json so agy's confirmations route through TaskWraith's gate.
     expect(html).toContain('~/.gemini/antigravity-cli/settings.json')
     expect(html).toContain('restoring your original settings')
+    expect(html).toContain('.agents/hooks.json')
+    expect(html).toContain('removed again with the run')
     expect(html).toContain('pre-authorized inside')
+    expect(html).toContain('duplicate confirmation layer is skipped')
     expect(html).toContain('Accept risk and enable')
     expect(html).toContain('disabled=""')
     expect(html).not.toContain('Open Terminal to sign in')

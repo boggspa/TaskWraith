@@ -344,22 +344,28 @@ export function AntigravityOptInCard({
         <code>agy models</code> to list what your account can use; continuing a conversation reads
         one non-secret entry from <code>agy</code>&apos;s own cache — the workspace-to-
         conversation-ID map it writes at <code>~/.gemini/antigravity-cli/cache/</code> — so a
-        follow-up turn resumes instead of starting over; and each run temporarily writes this
-        run&apos;s signed permissions into <code>agy</code>&apos;s settings file at{' '}
+        follow-up turn resumes instead of starting over; each run temporarily writes this run&apos;s
+        signed permissions into <code>agy</code>&apos;s settings file at{' '}
         <code>~/.gemini/antigravity-cli/settings.json</code>, restoring your original settings when
-        the run ends (or at the next TaskWraith launch after a crash). No credentials, no
-        transcripts, and no plugins or hooks are installed into <code>agy</code>.
+        the run ends (or at the next TaskWraith launch after a crash); and each run temporarily adds
+        one TaskWraith-named entry to the workspace&apos;s <code>.agents/hooks.json</code> —{' '}
+        <code>agy</code>&apos;s official lifecycle-hook file — so the CLI&apos;s shell-command
+        confirmations route to TaskWraith&apos;s own approval system on this machine, removed again
+        with the run. No credentials and no transcripts are read, and nothing calls out beyond your
+        machine.
       </p>
       <p className="settings-provider-auth-hint">
-        TaskWraith&apos;s own per-tool approval cards do not apply inside <code>agy</code> — it has
-        no approval bridge, so its own sandbox and permission rules govern once a turn starts.
-        TaskWraith still owns run admission, cancellation and the audit trail, and if you set Shell
-        commands or File changes to <strong>Deny</strong> under Agentic services, this lane launches
-        read-only rather than ignoring you. Read-only inspection commands (<code>git status</code> /{' '}
+        With that hook in place, TaskWraith&apos;s per-command permission gate applies inside{' '}
+        <code>agy</code>: read-only inspection commands (<code>git status</code> /{' '}
         <code>git log</code> / <code>git diff</code>, <code>ls</code>, <code>cat</code>,{' '}
         <code>grep</code>, …) are pre-authorized inside <code>agy</code>&apos;s sandbox at every
-        permission tier — the same universal read-only fast path TaskWraith&apos;s own shell gate
-        applies — while anything broader stays denied unless your tier pre-grants it.
+        permission tier, the Ask tier genuinely asks with an approval card, and a declined command
+        is reported back to the model instead of ending the turn. On the Full Access tier — and only
+        there — <code>agy</code>&apos;s own duplicate confirmation layer is skipped (its terminal
+        sandbox stays on, and TaskWraith&apos;s always-ask holds for network egress and recursive
+        deletion still apply). TaskWraith still owns run admission, cancellation and the audit
+        trail, and if you set Shell commands or File changes to <strong>Deny</strong> under Agentic
+        services, this lane launches read-only rather than ignoring you.
       </p>
 
       {!consentRecorded ? (

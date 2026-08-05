@@ -98,6 +98,18 @@ export interface AntigravityPermissionLeaseRequest {
   readonly workspacePath: string
   readonly allowShell: boolean
   readonly allowWrite: boolean
+  /**
+   * Optional PreToolUse hook-bridge overlay, installed as one namespaced key
+   * in the workspace customization root's `hooks.json` and removed with the
+   * lease. A stale overlay after a crash is fail-safe by construction: its
+   * bridge port is dead, the hook command's `|| printf {}` yields
+   * no-decision, and the next acquire for the workspace recovers it.
+   */
+  readonly hookOverlay?: {
+    readonly hooksPath: string
+    readonly hookName: string
+    readonly namedHook: JsonObject
+  }
   readonly signal?: AbortSignal
 }
 
@@ -354,6 +366,118 @@ export async function recoverInterruptedAntigravityPermissionLease(
   return true
 }
 
+// ── Hook overlay (workspace hooks.json) ────────────────────────────────────
+// Same discipline as the settings lease: durable receipt beside the file,
+// byte-exact restore when untouched, three-way merge that removes only the
+// TaskWraith-namespaced hook key when the user edited hooks.json mid-run.
+
+interface AntigravityHookLeaseReceipt {
+  readonly schemaVersion: 1
+  readonly hooksPath: string
+  readonly hookName: string
+  readonly originalExists: boolean
+  readonly originalContentBase64: string
+  readonly originalSha256: string
+  readonly installedSha256: string
+}
+
+function hookReceiptPathFor(hooksPath: string): string {
+  return join(dirname(hooksPath), '.taskwraith-hook-lease.json')
+}
+
+async function readHookReceipt(receiptPath: string): Promise<AntigravityHookLeaseReceipt | null> {
+  const content = await readOptionalRegularFile(receiptPath, MAX_RECEIPT_BYTES)
+  if (content === null) return null
+  const parsed = parseSettings(content, 'AntiGravity TaskWraith hook receipt')
+  if (
+    parsed.schemaVersion !== RECEIPT_SCHEMA_VERSION ||
+    typeof parsed.hooksPath !== 'string' ||
+    typeof parsed.hookName !== 'string' ||
+    typeof parsed.originalExists !== 'boolean' ||
+    typeof parsed.originalContentBase64 !== 'string' ||
+    typeof parsed.originalSha256 !== 'string' ||
+    typeof parsed.installedSha256 !== 'string'
+  ) {
+    throw new Error('AntiGravity TaskWraith hook receipt is malformed.')
+  }
+  return parsed as unknown as AntigravityHookLeaseReceipt
+}
+
+async function cleanHookReceipt(
+  hooksPath: string,
+  receiptPath: string,
+  receipt: AntigravityHookLeaseReceipt
+): Promise<void> {
+  if (resolve(receipt.hooksPath) !== resolve(hooksPath)) {
+    throw new Error('AntiGravity hook receipt belongs to a different hooks path.')
+  }
+  const originalContent = Buffer.from(receipt.originalContentBase64, 'base64').toString('utf8')
+  if (sha256(originalContent) !== receipt.originalSha256) {
+    throw new Error('AntiGravity hook receipt original-content hash does not match.')
+  }
+  const currentContent = await readOptionalRegularFile(hooksPath)
+  if (currentContent === null || sha256(currentContent) === receipt.originalSha256) {
+    await unlink(receiptPath)
+    return
+  }
+  if (sha256(currentContent) === receipt.installedSha256) {
+    if (receipt.originalExists) await writeAtomic(hooksPath, originalContent)
+    else await unlink(hooksPath)
+    await unlink(receiptPath)
+    return
+  }
+  // User (or another tool) edited hooks.json during the run: remove only the
+  // TaskWraith-namespaced key and keep everything else exactly as found.
+  const current = parseSettings(currentContent, 'Changed AntiGravity hooks configuration')
+  delete current[receipt.hookName]
+  await writeAtomic(hooksPath, `${JSON.stringify(current, null, 2)}\n`)
+  await unlink(receiptPath)
+}
+
+export async function recoverInterruptedAntigravityHookLease(hooksPath: string): Promise<boolean> {
+  const receiptPath = hookReceiptPathFor(hooksPath)
+  const receipt = await readHookReceipt(receiptPath)
+  if (!receipt) return false
+  await cleanHookReceipt(hooksPath, receiptPath, receipt)
+  return true
+}
+
+async function installHookOverlay(
+  overlay: NonNullable<AntigravityPermissionLeaseRequest['hookOverlay']>
+): Promise<{ release: () => Promise<void> }> {
+  const hooksPath = resolve(overlay.hooksPath)
+  if (!overlay.hookName || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(overlay.hookName)) {
+    throw new Error('AntiGravity hook overlay requires a namespaced hook name.')
+  }
+  await recoverInterruptedAntigravityHookLease(hooksPath)
+  const existingOriginalContent = await readOptionalRegularFile(hooksPath)
+  const originalContent = existingOriginalContent ?? ''
+  const original = parseSettings(originalContent || '{}', 'AntiGravity hooks configuration')
+  const installed = cloneObject(original)
+  installed[overlay.hookName] = cloneObject(overlay.namedHook)
+  const installedContent = `${JSON.stringify(installed, null, 2)}\n`
+  const receipt: AntigravityHookLeaseReceipt = {
+    schemaVersion: RECEIPT_SCHEMA_VERSION,
+    hooksPath,
+    hookName: overlay.hookName,
+    originalExists: existingOriginalContent !== null,
+    originalContentBase64: Buffer.from(originalContent, 'utf8').toString('base64'),
+    originalSha256: sha256(originalContent),
+    installedSha256: sha256(installedContent)
+  }
+  const receiptPath = hookReceiptPathFor(hooksPath)
+  await writeAtomic(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
+  try {
+    await writeAtomic(hooksPath, installedContent)
+  } catch (error) {
+    await cleanHookReceipt(hooksPath, receiptPath, receipt).catch(() => undefined)
+    throw error
+  }
+  return {
+    release: () => cleanHookReceipt(hooksPath, receiptPath, receipt)
+  }
+}
+
 async function installPermissionLease(
   input: AntigravityPermissionLeaseRequest
 ): Promise<AntigravityPermissionLeaseReceipt> {
@@ -440,6 +564,20 @@ export class AntigravityPermissionLeaseCoordinator {
       releaseQueue()
       throw error
     }
+    let hookRelease: (() => Promise<void>) | undefined
+    if (input.hookOverlay) {
+      try {
+        hookRelease = (await installHookOverlay(input.hookOverlay)).release
+      } catch (error) {
+        await cleanReceipt(
+          receipt.settingsPath,
+          receiptPathFor(receipt.settingsPath),
+          receipt
+        ).catch(() => undefined)
+        releaseQueue()
+        throw error
+      }
+    }
 
     let releaseOperation: Promise<void> | undefined
     return Object.freeze({
@@ -447,11 +585,13 @@ export class AntigravityPermissionLeaseCoordinator {
       settingsPath: receipt.settingsPath,
       release: () => {
         if (!releaseOperation) {
-          releaseOperation = cleanReceipt(
-            receipt.settingsPath,
-            receiptPathFor(receipt.settingsPath),
-            receipt
-          ).finally(releaseQueue)
+          // Hook overlay first: once it is gone no further tool call can reach
+          // the bridge, so the settings restore never races a late hook.
+          releaseOperation = (hookRelease ? hookRelease() : Promise.resolve())
+            .then(() =>
+              cleanReceipt(receipt.settingsPath, receiptPathFor(receipt.settingsPath), receipt)
+            )
+            .finally(releaseQueue)
         }
         return releaseOperation
       }

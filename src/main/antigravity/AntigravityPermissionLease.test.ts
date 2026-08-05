@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -6,6 +6,7 @@ import {
   AGY_READ_ONLY_SHELL_PROJECTION_RULES,
   AntigravityPermissionLeaseAbortedError,
   AntigravityPermissionLeaseCoordinator,
+  recoverInterruptedAntigravityHookLease,
   recoverInterruptedAntigravityPermissionLease
 } from './AntigravityPermissionLease'
 import { isReadOnlyGitShellCommand } from '../ReadOnlyGitShellCommand'
@@ -167,6 +168,102 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
       toolPermission: 'strict',
       theme: 'light'
     })
+  })
+
+  it('installs and cleanly removes the hook-bridge overlay alongside the settings lease', async () => {
+    const { settingsPath, original } = await makeSettings({ model: 'gemini-3.1-pro-high' })
+    const workspace = await mkdtemp(join(tmpdir(), 'taskwraith-agy-hooks-ws-'))
+    tempDirectories.push(workspace)
+    const hooksPath = join(workspace, '.agents', 'hooks.json')
+    await writeFile(
+      join(workspace, 'placeholder.txt'),
+      'workspace exists before the .agents dir does\n',
+      'utf8'
+    )
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const namedHook = {
+      PreToolUse: [
+        {
+          matcher: 'run_command',
+          hooks: [{ type: 'command', command: '/usr/bin/curl …', timeout: 600 }]
+        }
+      ]
+    }
+    const lease = await coordinator.acquire({
+      settingsPath,
+      workspacePath: workspace,
+      allowShell: false,
+      allowWrite: false,
+      hookOverlay: { hooksPath, hookName: 'taskwraith-approval-bridge', namedHook }
+    })
+
+    const installed = JSON.parse(await readFile(hooksPath, 'utf8'))
+    expect(installed['taskwraith-approval-bridge']).toEqual(namedHook)
+
+    await lease.release()
+    // hooks.json did not exist before → removed outright; settings byte-exact.
+    await expect(readFile(hooksPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(settingsPath, 'utf8')).toBe(original)
+  })
+
+  it('preserves user hooks edited mid-run and removes only the TaskWraith key', async () => {
+    const { settingsPath } = await makeSettings({ model: 'gemini-3.1-pro-high' })
+    const workspace = await mkdtemp(join(tmpdir(), 'taskwraith-agy-hooks-ws-'))
+    tempDirectories.push(workspace)
+    const hooksPath = join(workspace, '.agents', 'hooks.json')
+    await mkdir(join(workspace, '.agents'), { recursive: true })
+    await writeFile(
+      hooksPath,
+      `${JSON.stringify({ 'user-linter': { PostToolUse: [] } }, null, 2)}\n`,
+      'utf8'
+    )
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await coordinator.acquire({
+      settingsPath,
+      workspacePath: workspace,
+      allowShell: false,
+      allowWrite: false,
+      hookOverlay: {
+        hooksPath,
+        hookName: 'taskwraith-approval-bridge',
+        namedHook: { PreToolUse: [] }
+      }
+    })
+    // The user adds another hook while the run is live.
+    const during = JSON.parse(await readFile(hooksPath, 'utf8'))
+    during['user-formatter'] = { PostToolUse: [] }
+    await writeFile(hooksPath, `${JSON.stringify(during, null, 2)}\n`, 'utf8')
+
+    await lease.release()
+    const restored = JSON.parse(await readFile(hooksPath, 'utf8'))
+    expect(restored).toEqual({
+      'user-linter': { PostToolUse: [] },
+      'user-formatter': { PostToolUse: [] }
+    })
+  })
+
+  it('recovers an interrupted hook overlay from its durable receipt', async () => {
+    const { settingsPath } = await makeSettings({ model: 'gemini-3.1-pro-high' })
+    const workspace = await mkdtemp(join(tmpdir(), 'taskwraith-agy-hooks-ws-'))
+    tempDirectories.push(workspace)
+    const hooksPath = join(workspace, '.agents', 'hooks.json')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    await coordinator.acquire({
+      settingsPath,
+      workspacePath: workspace,
+      allowShell: false,
+      allowWrite: false,
+      hookOverlay: {
+        hooksPath,
+        hookName: 'taskwraith-approval-bridge',
+        namedHook: { PreToolUse: [] }
+      }
+    })
+
+    await expect(recoverInterruptedAntigravityHookLease(hooksPath)).resolves.toBe(true)
+    await expect(readFile(hooksPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(recoverInterruptedAntigravityHookLease(hooksPath)).resolves.toBe(false)
+    await recoverInterruptedAntigravityPermissionLease(settingsPath)
   })
 
   it('recovers an interrupted overlay from its durable receipt', async () => {

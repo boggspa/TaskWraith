@@ -9,10 +9,7 @@ import type { AgenticServicesSettings, AppSettings, EffectiveRunPermissions } fr
 import { agenticServicesDenyWrites } from '../AgenticServiceWriteClamp'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from './AntigravityGeminiApiKeyConfiguredSignal'
-import {
-  verifyAgyBinaryProvenance,
-  type AgyBinaryProvenance
-} from './AntigravityBinaryProvenance'
+import { verifyAgyBinaryProvenance, type AgyBinaryProvenance } from './AntigravityBinaryProvenance'
 import {
   AGY_BINARY_NAME,
   buildAgyReadOnlyPrintArgs,
@@ -24,12 +21,18 @@ import {
 import { parseAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
 
 export interface PrepareAntigravityProviderLaunchInput {
-  settings: Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'> | null | undefined
+  settings:
+    | Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'>
+    | null
+    | undefined
   prompt: string
   model?: string | null
   reasoningEffort?: string | null
   approvalMode?: string | null
-  effectivePermissions?: Pick<EffectiveRunPermissions, 'readOnly'> | null
+  effectivePermissions?:
+    | (Pick<EffectiveRunPermissions, 'readOnly'> &
+        Partial<Pick<EffectiveRunPermissions, 'presetId'>>)
+    | null
   /**
    * The user's shell/file service policy. Required for a write-capable turn to
    * be honest: agy has no per-tool approval bridge, so a `deny` can only be
@@ -72,7 +75,10 @@ export interface AntigravityProviderRuntimeDependencies {
 }
 
 export interface AntigravityProviderStatusInput {
-  settings: Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'> | null | undefined
+  settings:
+    | Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'>
+    | null
+    | undefined
 }
 
 export interface AntigravityProviderStatusDependencies {
@@ -125,7 +131,9 @@ export async function prepareAntigravityProviderLaunch(
 
   const binary = await (deps.resolveBinary ?? resolveAgyCliBinary)()
   if (!binary.binaryPath) {
-    throw new Error(binary.error || `The official Antigravity CLI (${AGY_BINARY_NAME}) was not found.`)
+    throw new Error(
+      binary.error || `The official Antigravity CLI (${AGY_BINARY_NAME}) was not found.`
+    )
   }
 
   const mode = writeCapableAgyMode(input) ? 'accept-edits' : 'plan'
@@ -134,17 +142,29 @@ export async function prepareAntigravityProviderLaunch(
     prompt: input.prompt,
     model: selectedAgyModel(input.model),
     reasoningEffort: input.reasoningEffort,
-    ...(resumedConversationId
-      ? { conversationId: resumedConversationId }
-      : { newProject: true })
+    ...(resumedConversationId ? { conversationId: resumedConversationId } : { newProject: true })
+  }
+  const args =
+    mode === 'plan'
+      ? buildAgyReadOnlyPrintArgs(argsInput)
+      : buildAgyWriteCapablePrintArgs(argsInput)
+  // Signed Full Access is the one posture where every native capability is
+  // already pregranted, so agy's own confirmation layer (fatal under headless
+  // print mode) is skipped. This is NOT a general bypass: the terminal
+  // sandbox stays on, and the PreToolUse hook bridge still routes every
+  // command through TaskWraith's gate, whose universal holds (remote egress,
+  // catastrophic deletion) hold at Full Access too.
+  if (
+    input.effectivePermissions?.presetId === 'full_access' &&
+    input.effectivePermissions.readOnly !== true &&
+    !agenticServicesDenyWrites(input.agenticServices)
+  ) {
+    args.unshift('--dangerously-skip-permissions')
   }
   return {
     binary,
     resumedConversationId,
-    args:
-      mode === 'plan'
-        ? buildAgyReadOnlyPrintArgs(argsInput)
-        : buildAgyWriteCapablePrintArgs(argsInput),
+    args,
     // Every launch uses the central S2 sanitizer. No runtime profile, secret,
     // OAuth token, or credential selector is consulted or forwarded here.
     env: (deps.createEnv ?? createAgyCliEnv)(
