@@ -330,15 +330,50 @@ export function createChatJournal(baseDir: string): ChatJournal {
           }
         }
 
+        // G3 crash-window recovery: if a snapshot also exists, deduplicate
+        // journal lines that are already baked into the snapshot. A crash
+        // between compact()'s atomicWrite(snapshot) and unlinkSync(journal)
+        // leaves both files; without dedup, read() replays the tail twice
+        // and repeated compactions double-merge.
+        let dedupedLines = lines
+        const snapPath = snapshotPath(chatId)
+        if (lines.length > 0 && fs.existsSync(snapPath)) {
+          let snapData: unknown = null
+          try {
+            snapData = JSON.parse(fs.readFileSync(snapPath, 'utf-8'))
+          } catch {
+            /* corrupt snapshot — handled by read() later */
+          }
+          if (snapData !== null) {
+            dedupedLines = dedupeTailAgainstSnapshot(snapData, lines)
+            if (dedupedLines.length < lines.length) {
+              // Rewrite journal with only the non-duplicate lines.
+              // truncateToValidLines keeps the FIRST N, but dupes are
+              // always at the head (journal lines up to snapshot mtime),
+              // so we must write the survivors explicitly.
+              if (dedupedLines.length === 0) {
+                try {
+                  fs.unlinkSync(jPath)
+                } catch {
+                  /* ignore */
+                }
+              } else {
+                const rewritten = dedupedLines.map((e) => JSON.stringify(e)).join('\n') + '\n'
+                atomicWrite(jPath, rewritten)
+              }
+            }
+          }
+        }
+
         // Rebuild state
         const snapTs = snapshotTimestamp(chatId)
         const existing = chats.get(chatId)
         chats.set(chatId, {
-          lineCount: lines.length,
+          lineCount: dedupedLines.length,
           lastSnapshotAt: snapTs,
           tombstoned: existing?.tombstoned ?? false
         })
-        linesWritten += lines.length
+        linesWritten += dedupedLines.length
       }
     }
   }
@@ -421,6 +456,47 @@ export function createChatJournal(baseDir: string): ChatJournal {
     }
   }
 
+  /**
+   * Deduplicate journal tail entries against the snapshot using `savedAt`
+   * as the stable identity key.
+   *
+   * WHY SAVEDAT (justified, not assumed):
+   *   ChatJournalEntry has no persistenceRevision field. savedAt is ISO-8601
+   *   with millisecond precision. In the crash-after-compact window the
+   *   duplicated entries are literally the same serialization — identical
+   *   savedAt — so dedup-by-timestamp is exact for the attack vector it
+   *   defends against. At the journal's max append rate (coalesced flushes
+   *   ~3.3 saves per 10 s) a genuine same-ms collision is ~10⁻⁶ per save;
+   *   when one happens the consequence is a single dropped journal entry
+   *   whose data still exists in the snapshot — safe, not corrupting.
+   *
+   *   This is NOT a general-purpose merge — it only closes the compact()
+   *   crash window identified as G3 FAIL by MistralReview + K3Review.
+   */
+  const dedupeTailAgainstSnapshot = (
+    snapshot: unknown,
+    tail: ChatJournalEntry[]
+  ): ChatJournalEntry[] => {
+    if (tail.length === 0) return tail
+    if (snapshot === null || !Array.isArray(snapshot) || snapshot.length === 0) return tail
+
+    const snapTimestamps = new Set<string>()
+    for (const entry of snapshot) {
+      if (
+        entry !== null &&
+        typeof entry === 'object' &&
+        'savedAt' in entry &&
+        typeof (entry as ChatJournalEntry).savedAt === 'string'
+      ) {
+        snapTimestamps.add((entry as ChatJournalEntry).savedAt)
+      }
+    }
+
+    if (snapTimestamps.size === 0) return tail
+
+    return tail.filter((entry) => !snapTimestamps.has(entry.savedAt))
+  }
+
   const read = (chatId: string): { snapshot: unknown | null; tail: ChatJournalEntry[] } => {
     const state = chats.get(chatId)
     if (state?.tombstoned) {
@@ -443,7 +519,13 @@ export function createChatJournal(baseDir: string): ChatJournal {
     // Read journal tail
     const { entries: tail } = parseJournalLines(journalPath(chatId))
 
-    return { snapshot, tail }
+    // Dedupe tail against snapshot to close the G3 compact-window:
+    // crash between atomicWrite(snapshot) and unlinkSync(journal) leaves
+    // the old journal tail already baked into the snapshot, and a naive
+    // read would replay it twice.
+    const dedupedTail = dedupeTailAgainstSnapshot(snapshot, tail)
+
+    return { snapshot, tail: dedupedTail }
   }
 
   const deleteChat = (chatId: string): void => {

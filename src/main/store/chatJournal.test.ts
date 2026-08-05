@@ -459,4 +459,242 @@ describe('ChatJournal', () => {
     expect(s.linesWritten).toBe(0)
     expect(s.appends).toBe(0)
   })
+
+  // -----------------------------------------------------------------------
+  // G3 — Compact-window deduplication (MistralReview + K3Review FAIL)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Simulate the exact crash window:
+   *   1. Append lines → compact (writes snapshot, unlinks journal)
+   *   2. Append more lines → compact AGAIN — but manually re-create the
+   *      journal AFTER the second compact's snapshot write and BEFORE it
+   *      would unlink the journal. This leaves:
+   *        snapshot = [...batch1, ...batch2]
+   *        journal  = [...batch2]          ← duplicated in snapshot
+   *   3. read() must return NO duplicate tail entries
+   *   4. A subsequent compact() must NOT double-merge
+   *   5. Stats must be consistent
+   */
+  it('G3: read() deduplicates journal tail against snapshot after crash window', () => {
+    // Batch 1 — compact
+    const r1 = chatRecord('g3', 'batch1-a')
+    const r2 = chatRecord('g3', 'batch1-b')
+    journal.append('g3', r1)
+    journal.append('g3', r2)
+    journal.compact('g3')
+
+    // Batch 2 — compact
+    const r3 = chatRecord('g3', 'batch2-a')
+    const r4 = chatRecord('g3', 'batch2-b')
+    journal.append('g3', r3)
+    journal.append('g3', r4)
+    journal.compact('g3')
+
+    // Verify clean state after normal compaction
+    let result = journal.read('g3')
+    expect(result.snapshot).not.toBeNull()
+    const cleanSnap = result.snapshot as ChatJournalEntry[]
+    expect(cleanSnap).toHaveLength(4)
+    expect(result.tail).toHaveLength(0)
+
+    // --- SIMULATE CRASH WINDOW ---
+    // Append batch 3 and manually re-create the journal after snapshot write
+    const r5 = chatRecord('g3', 'batch3-a')
+    const r6 = chatRecord('g3', 'batch3-b')
+    journal.append('g3', r5)
+    journal.append('g3', r6)
+
+    // Read the current snapshot (has batches 1-2)
+    const snapBeforeCrash = journal.read('g3')
+    const snapEntries = snapBeforeCrash.snapshot as ChatJournalEntry[]
+    const tailEntries = snapBeforeCrash.tail as ChatJournalEntry[]
+
+    // Manually write: snapshot with ALL entries merged. The journal file
+    // still exists on disk from the normal appends — this IS the crash
+    // window: compact() wrote snapshot then crashed before unlinkSync(journal).
+    const snapPath = path.join(baseDir, 'g3.snapshot.json')
+
+    const mergedEntries = [...snapEntries, ...tailEntries]
+    fs.writeFileSync(snapPath, JSON.stringify(mergedEntries), 'utf-8')
+    // Journal still has the tail — this IS the crash window:
+    // compact() wrote snapshot then crashed before unlinkSync(journal)
+
+    // --- RECOVER ---
+    const recovered = createChatJournal(baseDir)
+    const recResult = recovered.read('g3')
+
+    // ASSERTION 1: read() returns NO duplicate tail entries
+    expect(recResult.snapshot).not.toBeNull()
+    const recSnap = recResult.snapshot as ChatJournalEntry[]
+    expect(recSnap).toHaveLength(6) // all 6 entries in snapshot
+
+    // The journal tail was already in the snapshot — must be deduped
+    expect(recResult.tail).toHaveLength(0)
+
+    // ASSERTION 2: A subsequent compact() does NOT double-merge
+    const afterRec = chatRecord('g3', 'post-recovery')
+    recovered.append('g3', afterRec)
+    recovered.compact('g3')
+
+    const finalResult = recovered.read('g3')
+    const finalSnap = finalResult.snapshot as ChatJournalEntry[]
+    // 6 original + 1 post-recovery = 7 — NOT 6+3+1=10 (no double-merge)
+    expect(finalSnap).toHaveLength(7)
+    expect(finalResult.tail).toHaveLength(0)
+
+    // ASSERTION 3: Stats consistent — initDirectory deduped the journal
+    const s = recovered.stats()
+    // The 2 batch3 tail entries were deduped against the snapshot, then
+    // one post-recovery append happened → linesWritten = 1
+    expect(s.linesWritten).toBe(1)
+    expect(s.tornLinesRecovered).toBe(0)
+  })
+
+  it('G3: initDirectory truncates journal when all lines are already in snapshot', () => {
+    // Pre-populate: snapshot with entries, journal with same entries
+    const r1 = chatRecord('g3-init', 'a')
+    const r2 = chatRecord('g3-init', 'b')
+
+    const snapPath = path.join(baseDir, 'g3-init.snapshot.json')
+    const jPath = path.join(baseDir, 'g3-init.jsonl')
+
+    const entries: ChatJournalEntry[] = [
+      { savedAt: '2026-08-04T00:00:00.000Z', record: r1 },
+      { savedAt: '2026-08-04T00:00:01.000Z', record: r2 }
+    ]
+    fs.writeFileSync(snapPath, JSON.stringify(entries), 'utf-8')
+    fs.writeFileSync(
+      jPath,
+      entries.map((e) => JSON.stringify(e)).join('\n') + '\n',
+      'utf-8'
+    )
+
+    // Recover — initDirectory must dedupe
+    const recovered = createChatJournal(baseDir)
+
+    // Journal should be truncated (or removed if empty after dedup)
+    const journalAfter = journalContent(jPath)
+    // After dedup, all 2 lines were already in snapshot → journal removed
+    expect(journalAfter).toBeNull()
+
+    const result = recovered.read('g3-init')
+    expect(result.snapshot).not.toBeNull()
+    const snap = result.snapshot as ChatJournalEntry[]
+    expect(snap).toHaveLength(2)
+    expect(result.tail).toHaveLength(0)
+
+    // Stats: no lines counted from the journal (all duped)
+    const s = recovered.stats()
+    expect(s.linesWritten).toBe(0)
+  })
+
+  it('G3: initDirectory preserves journal lines that postdate the snapshot', () => {
+    // Snapshot has entries 1-2, journal has entries 1-2-3
+    const r1 = chatRecord('g3-partial', 'a')
+    const r2 = chatRecord('g3-partial', 'b')
+    const r3 = chatRecord('g3-partial', 'c')
+
+    const snapPath = path.join(baseDir, 'g3-partial.snapshot.json')
+    const jPath = path.join(baseDir, 'g3-partial.jsonl')
+
+    fs.writeFileSync(
+      snapPath,
+      JSON.stringify([
+        { savedAt: '2026-08-04T00:00:00.000Z', record: r1 },
+        { savedAt: '2026-08-04T00:00:01.000Z', record: r2 }
+      ]),
+      'utf-8'
+    )
+    fs.writeFileSync(
+      jPath,
+      [
+        JSON.stringify({ savedAt: '2026-08-04T00:00:00.000Z', record: r1 }),
+        JSON.stringify({ savedAt: '2026-08-04T00:00:01.000Z', record: r2 }),
+        JSON.stringify({ savedAt: '2026-08-04T00:00:02.000Z', record: r3 })
+      ].join('\n') + '\n',
+      'utf-8'
+    )
+
+    const recovered = createChatJournal(baseDir)
+
+    // Journal should still exist with only line 3
+    const journalLines = journalContent(jPath)!.split('\n').filter(Boolean)
+    expect(journalLines).toHaveLength(1)
+    const parsed = JSON.parse(journalLines[0]) as ChatJournalEntry
+    expect(parsed.record).toEqual(r3)
+
+    const result = recovered.read('g3-partial')
+    expect(result.snapshot).not.toBeNull()
+    expect(result.tail).toHaveLength(1)
+    expect(result.tail[0].record).toEqual(r3)
+
+    // Stats: only the 1 non-dup line counted
+    const s = recovered.stats()
+    expect(s.linesWritten).toBe(1)
+  })
+
+  it('G3: snapshot-only chat (no journal) is unaffected by dedup', () => {
+    // Normal compaction: snapshot exists, journal was properly removed
+    const r1 = chatRecord('g3-clean', 'a')
+    const r2 = chatRecord('g3-clean', 'b')
+    journal.append('g3-clean', r1)
+    journal.append('g3-clean', r2)
+    journal.compact('g3-clean')
+
+    // Verify journal is gone, snapshot has both
+    expect(journalContent(path.join(baseDir, 'g3-clean.jsonl'))).toBeNull()
+    const result = journal.read('g3-clean')
+    expect(result.snapshot).not.toBeNull()
+    const snap = result.snapshot as ChatJournalEntry[]
+    expect(snap).toHaveLength(2)
+    expect(result.tail).toHaveLength(0)
+
+    // Re-init is a no-op
+    const recovered = createChatJournal(baseDir)
+    const recResult = recovered.read('g3-clean')
+    expect(recResult.snapshot).not.toBeNull()
+    expect(recResult.tail).toHaveLength(0)
+  })
+
+  it('G3: journal-only chat (no snapshot) is unaffected by dedup', () => {
+    const r1 = chatRecord('g3-journalonly', 'a')
+    journal.append('g3-journalonly', r1)
+
+    const result = journal.read('g3-journalonly')
+    expect(result.snapshot).toBeNull()
+    expect(result.tail).toHaveLength(1)
+    expect(result.tail[0].record).toEqual(r1)
+  })
+
+  it('G3: tombstoned chats are not affected by initDirectory dedup', () => {
+    // Write a chat, compact it, then manually create the crash window,
+    // then tombstone it
+    const r1 = chatRecord('g3-tomb', 'a')
+    journal.append('g3-tomb', r1)
+    journal.compact('g3-tomb')
+    journal.delete('g3-tomb')
+
+    // Manually re-create snapshot + journal (simulating crash before unlink)
+    const snapPath = path.join(baseDir, 'g3-tomb.snapshot.json')
+    const jPath = path.join(baseDir, 'g3-tomb.jsonl')
+    const tombPath = path.join(baseDir, 'g3-tomb.tombstone')
+    fs.writeFileSync(
+      snapPath,
+      JSON.stringify([{ savedAt: '2026-08-04T00:00:00.000Z', record: r1 }]),
+      'utf-8'
+    )
+    fs.writeFileSync(
+      jPath,
+      JSON.stringify({ savedAt: '2026-08-04T00:00:00.000Z', record: r1 }) + '\n',
+      'utf-8'
+    )
+    // Tombstone still exists
+
+    const recovered = createChatJournal(baseDir)
+    const result = recovered.read('g3-tomb')
+    expect(result.snapshot).toBeNull()
+    expect(result.tail).toEqual([])
+    expect(fs.existsSync(tombPath)).toBe(true)
+  })
 })
