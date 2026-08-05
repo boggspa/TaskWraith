@@ -241,12 +241,37 @@ explicitly out of the current release, a worktree is the answer, not a marker.
 - **Stage by explicit path. Never `git add -A`, `git add .`, or `-u`.** Other
   sessions' files live in this tree and bulk staging sweeps them into your
   commit. Diff-audit what you staged before committing.
-- **In a large shared file, stage hunks — not the file.** `git add -p -- <file>`.
-  Pathspec-adding a monolith takes *every* change in it, including hunks another
-  session left there mid-edit; you then commit their half-written work under
-  your message and they lose it on their next checkout. `index.ts` is ~49k lines
-  and `App.tsx` ~30k: assume someone else is in there. The remainder staying
-  unstaged after you commit is the expected, healthy state during a hot session.
+- **In a large shared file, commit a hunk subset through a PRIVATE index — not
+  `git add -p`.** Staging a monolith wholesale takes *every* change in it,
+  including hunks another session left there mid-edit; you then commit their
+  half-written work under your message and they lose it on their next checkout.
+  `index.ts` is ~49k lines and `App.tsx` ~30k: assume someone else is in there.
+
+  `git add -p` looks like the answer and is not, because neither completion is
+  safe. A **pathspec** commit runs in `--only` mode and rebuilds the tree from
+  HEAD plus the **working-tree** content of the named path — it discards your
+  hunk selection and commits the foreign hunk anyway (measured 2026-08-05: the
+  index held one hunk, the commit landed both). A **bare** commit takes the
+  whole **shared** index, sweeping whatever a concurrent session has staged.
+  `git add -p` is also interactive, which most agent harnesses cannot run.
+
+  Do this instead, which never reads or writes the shared index:
+
+  ```bash
+  rm -f /tmp/c.idx; export GIT_INDEX_FILE=/tmp/c.idx
+  git read-tree HEAD
+  git apply --cached your-isolated-hunks.patch
+  git diff --cached          # PROVE only your hunks are there
+  git commit -F msg          # bare is safe: the index is private
+  unset GIT_INDEX_FILE
+  git restore --staged -- <your paths>   # re-sync the shared index, NOT optional
+  ```
+
+  To *produce* the isolated patch without hand-splitting `@@` blocks, make your
+  edits in a detached worktree at HEAD (`git worktree add --detach <scratch>
+  HEAD`) and `git -C <scratch> diff` — that tree holds only your changes.
+  The remainder staying unstaged in the shared tree afterwards is the expected,
+  healthy state during a hot session.
 - **Never `git stash`** while another session may be live — it pockets their
   uncommitted work too.
 - Do not revert, format, or "tidy" a file you did not change.

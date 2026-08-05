@@ -566,4 +566,55 @@ else
   exit 1
 fi
 
+write_monolith() {
+  local repo="$1" body="$2"
+  node -e "process.stdout.write('$body\\n'.repeat(6000))" > "$repo/src/monolith.css"
+}
+
+# Section 2's REMEDY, not just its trigger. `git add -p` cannot be completed
+# safely in this repo: a pathspec commit rebuilds the tree from HEAD plus the
+# WORKING-TREE content of the named path, discarding the hunk selection, and a
+# bare commit takes the whole shared index. It is also interactive, which the
+# agent harnesses this hook exists to bind cannot run.
+repo="$(new_repo monolith-advice)"
+write_monolith "$repo" '.a{color:red}'
+git -C "$repo" add src/monolith.css
+git -C "$repo" commit -qm monolith
+write_monolith "$repo" '.b{color:blue}'
+git -C "$repo" add src/monolith.css
+expect_allow 'whole-file staging of a monolith is flagged' "$repo"
+if [[ "$hook_output" != *'staged all of'* ]]; then
+  printf 'FAIL: monolith staging was not flagged\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+if [[ "$hook_output" == *'add -p'* ]]; then
+  printf 'FAIL: section 2 still recommends `git add -p`, which cannot be completed safely\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+if [[ "$hook_output" != *'GIT_INDEX_FILE'* ]]; then
+  printf 'FAIL: section 2 does not point at the private-index route\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+# An unstaged remainder means hunks were picked — the healthy case. Stay quiet.
+repo="$(new_repo monolith-partial)"
+write_monolith "$repo" '.a{color:red}'
+git -C "$repo" add src/monolith.css
+git -C "$repo" commit -qm monolith
+write_monolith "$repo" '.b{color:blue}'
+git -C "$repo" add src/monolith.css
+printf '.trailing{color:green}\n' >> "$repo/src/monolith.css"
+expect_allow 'a monolith with an unstaged remainder stays quiet' "$repo"
+if [[ "$hook_output" == *'staged all of'* ]]; then
+  printf 'FAIL: monolith note fired despite an unstaged remainder\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
 printf 'pre-commit marker tests passed (%s assertions)\n' "$assertions"

@@ -486,8 +486,17 @@ shopt -u nullglob
 
 # ── 2. ADVISE: whole-file staging of a monolith ─────────────────────────────
 # Staging a large shared file wholesale sweeps in any hunks another session
-# left there. `git add -p` stages only your own. Threshold is high on purpose:
-# this should fire on index.ts and App.tsx, not on ordinary modules.
+# left there. Threshold is high on purpose: this should fire on index.ts and
+# App.tsx, not on ordinary modules.
+#
+# This used to recommend `git add -p`, which is wrong here, because neither way
+# of completing it is safe. A pathspec commit runs in --only mode and rebuilds
+# the tree from HEAD plus the WORKING-TREE content of the named path, so it
+# discards the hunk selection and commits the foreign hunk regardless (measured:
+# index held one hunk, the commit landed both). A bare commit takes the whole
+# SHARED index, sweeping whatever a concurrent session has staged. `git add -p`
+# is also interactive, and the agent harnesses this hook exists to bind cannot
+# run interactive git. Only a PRIVATE index isolates a hunk subset safely.
 MONOLITH_LINES=5000
 for f in "${staged_paths[@]}"; do
   [ -f "$f" ] || continue
@@ -498,8 +507,11 @@ for f in "${staged_paths[@]}"; do
     # Unstaged remainder in the same file means hunks were picked — that is the
     # good case, so stay quiet.
     if git diff --quiet -- "$f" 2>/dev/null; then
-      printf '  note: staged all of %s (%s lines). If another session also edits it,\n' "$f" "$lines"
-      printf '        prefer `git add -p -- %s` so you commit only your hunks.\n' "$f"
+      printf '  note: staged all of %s (%s lines). Hunks another session left in\n' "$f" "$lines"
+      printf '        it land in your commit too, and hunk-staging does NOT fix that: a\n'
+      printf '        pathspec commit re-reads the working tree, a bare commit takes the\n'
+      printf '        shared index. Isolate yours in a private index (GIT_INDEX_FILE +\n'
+      printf '        `git apply --cached`) — AGENTS.md: Committing.\n'
       warn=1
     fi
   fi
