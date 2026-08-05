@@ -1634,3 +1634,88 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('class="ensemble-above-row-controls"')
   })
 })
+
+describe('seat-change failure supersede display', () => {
+  const failedLaneRound = (
+    laneOverrides: Partial<import('../../../main/store/types').ConcurrentLane> = {}
+  ): NonNullable<ChatRecord['ensemble']>['activeRound'] => ({
+    roundId: 'round-1',
+    status: 'completed',
+    prompt: 'Fan out.',
+    startedAt: '2026-08-05T00:00:00.000Z',
+    endedAt: '2026-08-05T00:05:00.000Z',
+    participants: [
+      {
+        participantId: 'ensemble-claude',
+        provider: 'claude',
+        role: 'Explorer',
+        order: 1,
+        status: 'idle'
+      }
+    ],
+    lanes: {
+      'lane-round-1-ensemble-claude-1': {
+        laneId: 'lane-round-1-ensemble-claude-1',
+        participantId: 'ensemble-claude',
+        provider: 'claude',
+        status: 'failed',
+        intent: 'read',
+        startedAt: '2026-08-05T00:01:00.000Z',
+        reason: 'Lane dispatch failed.',
+        ...laneOverrides
+      }
+    }
+  })
+
+  it('still paints an ordinary failed lane as failed (baseline)', () => {
+    const chat = makeChat([makeParticipant({ id: 'ensemble-claude', role: 'Explorer' })])
+    chat.ensemble!.activeRound = failedLaneRound()
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    expect(html).toContain('status-failed')
+    expect(html).toContain('is-failed-accent')
+    expect(html).toContain('failed: Lane dispatch failed.')
+  })
+
+  it('drops the failed paint for a lane superseded by an authoritative seat change', () => {
+    const chat = makeChat([makeParticipant({ id: 'ensemble-claude', role: 'Explorer' })])
+    chat.ensemble!.activeRound = failedLaneRound({
+      failureSupersededBySeatChangeAt: '2026-08-05T00:30:00.000Z'
+    })
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    // The cleared round state (idle) shows; neither the red accent nor the
+    // stale lane failure reason survives the seat change.
+    expect(html).not.toContain('status-failed')
+    expect(html).not.toContain('is-failed-accent')
+    expect(html).not.toContain('Lane dispatch failed.')
+    expect(html).toContain('status-idle')
+  })
+
+  it('keeps live lane paint intact for superseded-marker-free running lanes', () => {
+    const chat = makeChat([makeParticipant({ id: 'ensemble-claude', role: 'Explorer' })])
+    chat.ensemble!.activeRound = failedLaneRound({ status: 'running', reason: undefined })
+    chat.ensemble!.activeRound!.status = 'running'
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    expect(html).toContain('status-speaking')
+  })
+})

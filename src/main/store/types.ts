@@ -1125,6 +1125,14 @@ export interface ConcurrentLane {
   cancellationRequestedAt?: string
   /** Last failure or block reason, surfaced in tooltips. */
   reason?: string
+  /**
+   * Set when an authoritative seat change (user or Boss/Captain) landed AFTER
+   * this lane failed/blocked, making the failure a stale signal for the seat's
+   * NEW config. The lane keeps its factual terminal status — this stamp only
+   * tells presentation surfaces (the composer chip strip) to stop painting the
+   * failure. See shared/ensembleSeatFailureClear.ts, the single writer.
+   */
+  failureSupersededBySeatChangeAt?: string
 }
 
 /**

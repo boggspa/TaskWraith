@@ -1,6 +1,10 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
+import {
+  clearEnsembleRoundFailureForSeatChange,
+  ensembleSeatExecutionConfigChanged
+} from '../../shared/ensembleSeatFailureClear'
 import type {
   AgentRunPayload,
   AgentRunRoute,
@@ -7247,9 +7251,23 @@ export class EnsembleOrchestrator {
     const nextParticipants = chat.ensemble!.participants.map((participant) =>
       participant.id === before.id ? { ...after, order: participant.order } : participant
     )
-    const activeRound = runtime && updateActiveRound
+    const editedActiveRound = runtime && updateActiveRound
       ? this.applyRosterEditToActiveRound(chat.ensemble!.activeRound, runtime.roundId, nextParticipants)
       : chat.ensemble!.activeRound
+    // An execution-config change makes a standing failed/unreachable marker a
+    // false alarm for the seat's NEW config: clear the round-state warning (and
+    // stamp superseded failed lanes) whether the round is live or long over.
+    // Identity-only edits (role rename etc.) leave the failure standing.
+    const executionConfigChanged = ensembleSeatExecutionConfigChanged(before, after)
+    const activeRound =
+      executionConfigChanged && updateActiveRound
+        ? clearEnsembleRoundFailureForSeatChange(editedActiveRound, before.id, nowIso)
+        : editedActiveRound
+    if (executionConfigChanged && runtime) {
+      // The probe verdict described the old config; let Boss routing and
+      // continuation paths reach the fixed seat again this round.
+      runtime.unreachableParticipantIds?.delete(before.id)
+    }
     const activityEntry = this.createSeatChangeActivityEntry(
       before,
       after,

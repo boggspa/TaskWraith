@@ -70,6 +70,7 @@ import {
   isExternalSeat,
   type ExternalSeatInput
 } from '../../../shared/effectiveEnsembleRoster'
+import { isLaneFailureSupersededBySeatChange } from '../../../shared/ensembleSeatFailureClear'
 import {
   MIN_LIVE_ENSEMBLE_PARTICIPANTS,
   resolveEnsembleCollapseTarget
@@ -1459,7 +1460,13 @@ export function EnsembleParticipantsAboveRow({
             (item) => item.participantId === participant.id
           )
           const lane = latestLaneForParticipant(activeRound?.lanes, participant.id)
-          const laneStatusLabel = lane ? laneStatusToParticipantLabel(lane.status) : null
+          // An authoritative seat change after this lane failed marks the
+          // failure superseded (shared/ensembleSeatFailureClear.ts) — fall
+          // back to the participant's (cleared) round state instead of
+          // painting a warning about a config that no longer exists.
+          const laneFailureSuperseded = lane ? isLaneFailureSupersededBySeatChange(lane) : false
+          const laneStatusLabel =
+            lane && !laneFailureSuperseded ? laneStatusToParticipantLabel(lane.status) : null
           const active =
             activeRound?.activeParticipantId === participant.id ||
             lane?.status === 'running' ||
@@ -1474,7 +1481,7 @@ export function EnsembleParticipantsAboveRow({
           // failure metadata so the chip falls back to the bare
           // status label.
           const statusTooltip =
-            lane?.reason ||
+            (laneFailureSuperseded ? '' : lane?.reason) ||
             state?.lastFailureReason ||
             (state?.status === 'failed' ? state?.reason : '') ||
             ''

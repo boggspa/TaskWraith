@@ -70,6 +70,10 @@ import {
   LIVE_SELECTABLE_PROVIDER_IDS
 } from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
+import {
+  clearEnsembleRoundFailureForSeatChange,
+  ensembleSeatExecutionConfigChanged
+} from '../../shared/ensembleSeatFailureClear'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
 import {
@@ -20704,6 +20708,28 @@ function App(): React.JSX.Element {
       participantId: string,
       patch: Partial<EnsembleParticipant>
     ): ChatRecord => {
+      const beforeParticipant = sourceChat.ensemble?.participants.find(
+        (participant) => participant.id === participantId
+      )
+      // A model/settings change makes a standing failed/unreachable marker a
+      // false alarm for the seat's new config — clear the stale round-state
+      // warning alongside the patch (shared/ensembleSeatFailureClear.ts).
+      // Identity edits (role rename etc.) leave the failure standing. The
+      // live-round paths clear through the orchestrator's seat-change apply
+      // instead; this seam only runs when the seat gate skipped runtime sync.
+      const activeRound =
+        sourceChat.ensemble &&
+        beforeParticipant &&
+        ensembleSeatExecutionConfigChanged(beforeParticipant, {
+          ...beforeParticipant,
+          ...patch
+        })
+          ? clearEnsembleRoundFailureForSeatChange(
+              sourceChat.ensemble.activeRound,
+              participantId,
+              new Date().toISOString()
+            )
+          : sourceChat.ensemble?.activeRound
       const patchedChat: ChatRecord = {
         ...sourceChat,
         ensemble: sourceChat.ensemble
@@ -20712,6 +20738,7 @@ function App(): React.JSX.Element {
               participants: sourceChat.ensemble.participants.map((participant) =>
                 participant.id === participantId ? { ...participant, ...patch } : participant
               ),
+              activeRound,
               updatedAt: new Date().toISOString()
             }
           : sourceChat.ensemble,
