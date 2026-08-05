@@ -476,6 +476,40 @@ export function shouldRollOllamaRunSummary(toolTurnCount: number): boolean {
   return toolTurnCount > 0 && toolTurnCount % OLLAMA_ROLLING_SUMMARY_AFTER_TOOL_TURNS === 0
 }
 
+/**
+ * Share of the usable context window at which the in-flight message list is
+ * compressed down to the working-memory block.
+ */
+export const OLLAMA_COMPRESSION_PRESSURE_SHARE = 0.65
+
+/**
+ * Compression exists to protect tiny windows, but the fixed 3-turn cadence
+ * applied it to every model — erasing file content one to two turns after a
+ * model read it, while the follow-up guidance told it to edit using an exact
+ * old_string from that content. The forced re-read then returned an identical
+ * result and fed the repeat-call nudge: the read-loop class in one mechanism.
+ *
+ * With a MEASURED window (daemon `/api/show`, bounded by the profile cap) the
+ * transcript is kept raw until it genuinely approaches the window; a large
+ * local model may never need compression at all. An unmeasured window keeps
+ * the conservative cadence — same doctrine as the context-budget floors: only
+ * a measurement may widen behavior.
+ */
+export function shouldCompressOllamaMessagesForPressure(input: {
+  estimatedPromptTokens: number
+  usableContextTokens?: number | null
+  toolTurnCount: number
+}): boolean {
+  const usable =
+    typeof input.usableContextTokens === 'number' &&
+    Number.isFinite(input.usableContextTokens) &&
+    input.usableContextTokens > 0
+      ? input.usableContextTokens
+      : undefined
+  if (!usable) return shouldRollOllamaRunSummary(input.toolTurnCount)
+  return input.estimatedPromptTokens > usable * OLLAMA_COMPRESSION_PRESSURE_SHARE
+}
+
 /** Replace raw tool I/O in the in-flight message list with a stable working-memory block. */
 export function compressOllamaMessagesWithWorkingMemory(
   messages: OllamaLoopMessage[],

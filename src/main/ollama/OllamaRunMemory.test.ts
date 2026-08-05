@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   CANVAS_FILL_RESULT_REDACTED,
+  OLLAMA_COMPRESSION_PRESSURE_SHARE,
   appendOllamaTrajectoryEntry,
   compressOllamaMessagesWithWorkingMemory,
   createEmptyOllamaSessionMemory,
   normalizeOllamaSessionMemoryMap,
   pruneOllamaSessionMemoryForPersist,
   resolveOllamaWorkingMemoryLimits,
+  shouldCompressOllamaMessagesForPressure,
   shouldRollOllamaRunSummary,
   upsertOllamaSessionMemory
 } from './OllamaRunMemory'
@@ -19,6 +21,59 @@ describe('OllamaRunMemory', () => {
   it('rolls working memory after every third tool turn', () => {
     expect(shouldRollOllamaRunSummary(3)).toBe(true)
     expect(shouldRollOllamaRunSummary(2)).toBe(false)
+  })
+
+  it('falls back to the turn cadence when the window is unmeasured', () => {
+    expect(
+      shouldCompressOllamaMessagesForPressure({
+        estimatedPromptTokens: 2_000,
+        usableContextTokens: undefined,
+        toolTurnCount: 3
+      })
+    ).toBe(true)
+    expect(
+      shouldCompressOllamaMessagesForPressure({
+        estimatedPromptTokens: 2_000,
+        usableContextTokens: null,
+        toolTurnCount: 2
+      })
+    ).toBe(false)
+  })
+
+  it('keeps a measured large window uncompressed until real context pressure', () => {
+    expect(
+      shouldCompressOllamaMessagesForPressure({
+        estimatedPromptTokens: 5_000,
+        usableContextTokens: 262_144,
+        toolTurnCount: 3
+      })
+    ).toBe(false)
+    expect(
+      shouldCompressOllamaMessagesForPressure({
+        estimatedPromptTokens: 180_000,
+        usableContextTokens: 262_144,
+        toolTurnCount: 1
+      })
+    ).toBe(true)
+  })
+
+  it('compresses only above the pressure share, not at it', () => {
+    const usable = 100_000
+    const threshold = Math.round(usable * OLLAMA_COMPRESSION_PRESSURE_SHARE)
+    expect(
+      shouldCompressOllamaMessagesForPressure({
+        estimatedPromptTokens: threshold,
+        usableContextTokens: usable,
+        toolTurnCount: 3
+      })
+    ).toBe(false)
+    expect(
+      shouldCompressOllamaMessagesForPressure({
+        estimatedPromptTokens: threshold + 1,
+        usableContextTokens: usable,
+        toolTurnCount: 1
+      })
+    ).toBe(true)
   })
 
   it('compresses the in-flight loop to system + initial user + working memory', () => {

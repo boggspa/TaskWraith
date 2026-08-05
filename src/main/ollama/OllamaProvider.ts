@@ -38,7 +38,7 @@ import {
   appendOllamaTrajectoryEntry,
   compressOllamaMessagesWithWorkingMemory,
   pruneOllamaSessionMemoryForPersist,
-  shouldRollOllamaRunSummary,
+  shouldCompressOllamaMessagesForPressure,
   type OllamaSessionMemory
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
@@ -2740,6 +2740,15 @@ export async function runOllamaProvider(
       measuredContextTokens: modelInfo?.contextLength,
       contextCapTokens: runProfile.contextCapTokens
     })
+    // Defined only when the daemon measured this model's window; transcript
+    // compression then keys on real context pressure instead of a turn cadence.
+    const measuredRuntimeContextTokens =
+      typeof modelInfo?.contextLength === 'number' && modelInfo.contextLength > 0
+        ? resolveOllamaRuntimeContextLimit({
+            modelInfo,
+            contextCapTokens: runProfile.contextCapTokens
+          })
+        : undefined
     const ensembleRun = Boolean(payload.ensembleRun)
     const chatId = route.appChatId || payload.appChatId
     const memoryKey = launchPlan.memoryKey ?? undefined
@@ -3328,7 +3337,16 @@ export async function runOllamaProvider(
           )
           break
         }
-        if (shouldRollOllamaRunSummary(sessionMemory.toolTurnCount)) {
+        if (
+          shouldCompressOllamaMessagesForPressure({
+            estimatedPromptTokens: estimateOllamaContextTokens({
+              messages,
+              tools: nativeToolDefs
+            }),
+            usableContextTokens: measuredRuntimeContextTokens,
+            toolTurnCount: sessionMemory.toolTurnCount
+          })
+        ) {
           messages.splice(
             0,
             messages.length,
