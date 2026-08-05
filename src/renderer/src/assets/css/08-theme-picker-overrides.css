@@ -11994,3 +11994,194 @@
     var(--transcript-sky-reveal-solid) 100%
   ) !important;
 }
+
+/* ══════════════════════════════════════════════════════════════
+ * AUTHORITATIVE SEAT-CHANGE TRANSCRIPT ROW (owner spec 2026-08-05)
+ * --------------------------------------------------------------
+ * The row reuses the REAL `.composer-combined-picker-trigger`
+ * class on plain spans so every font / hue / reasoning-shimmer /
+ * permission-tint rule applies verbatim, then `.seat-change-chip`
+ * strips ONLY the chip chrome (pill background, border, padding,
+ * height) — the mock-approved "no containers, just like a tool
+ * call" look. Keep the strip to box properties: text colors must
+ * keep flowing from the tint rules above.
+ * ══════════════════════════════════════════════════════════════ */
+
+.composer-combined-picker-trigger.seat-change-chip {
+  height: auto;
+  min-height: 0;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0;
+  background: none !important;
+  box-shadow: none !important;
+  cursor: inherit;
+  gap: 7px;
+  /* The composer shell assigns its controls flex `order` (permission = 2) —
+   * inside the transcript row the chips must keep their DOM order. */
+  order: 0 !important;
+  margin: 0 !important;
+}
+
+.seat-change-message {
+  margin: 6px 0;
+}
+
+.seat-change-row {
+  display: flex;
+  align-items: center;
+  /* Left-packed with modest gaps (owner feedback 2026-08-05): the role +
+   * permission group sits close after the cluster, not flung to the far
+   * edge by a full-justify. */
+  gap: 14px;
+  width: 100%;
+  padding: 3px 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.seat-change-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+}
+
+/* The SVG hardcodes the Crown/Hat family 14x14; the transcript row runs it
+ * at the mock-approved 16px. */
+.seat-change-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.seat-change-role {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+}
+
+.seat-change-time {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Character wheels: widths are measured per character, and a width
+ * transition carries old→new advances in lockstep with the roll. */
+.char-odometer__slot {
+  width: auto;
+  transition: width 430ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* Coalesced replacement rows hop into their new (newest) transcript
+ * position — the mock's land-and-settle. Scoped to `.is-fresh` so a
+ * settled tombstone never re-animates on scroll-back remounts. */
+.seat-change-message.is-fresh .seat-change-row {
+  animation: seat-change-hop 460ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes seat-change-hop {
+  0% {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Click-to-expand: the static "was" line under the live row. */
+.seat-change-was {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0 3px 28px;
+  opacity: 0.72;
+}
+
+.seat-change-was-label {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 46%, transparent);
+  font-style: italic;
+}
+
+:root[data-reduce-motion="true"] .seat-change-message.is-fresh .seat-change-row {
+  animation: none !important;
+}
+
+:root[data-reduce-motion="true"] .char-odometer__slot {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seat-change-message.is-fresh .seat-change-row {
+    animation: none !important;
+  }
+  .char-odometer__slot {
+    transition: none !important;
+  }
+}
+
+/* Seat-change row, Max/Ultra tiers: the composer paints the shimmer with
+ * background-clip:text on the suffix span — but that cannot composite through
+ * the odometer's clipped + translated CELLS, so the word renders as an
+ * invisible gap. Repaint the SAME gradient at the cell level (the elements
+ * that directly own the glyphs). Static tombstone rows keep the composer's
+ * own suffix-level sweep; sparkles ride TriggerReasoningSuffix unchanged, so
+ * the more-for-higher / less-for-lower tier ladder matches the picker. */
+.composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell,
+.composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell {
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 92%, var(--text-primary) 8%) 0%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 92%, var(--text-primary) 8%) 28%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 55%, #ffffff) 50%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 92%, var(--text-primary) 8%) 72%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 92%, var(--text-primary) 8%) 100%
+  );
+  background-size: 240% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer-sweep 3.2s linear infinite;
+}
+
+:root[data-reduce-motion="true"]
+  .composer-combined-picker-trigger.seat-change-chip
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell,
+[data-reduce-motion="true"]
+  .composer-combined-picker-trigger.seat-change-chip
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell {
+  animation: none;
+  background-image: none;
+  color: inherit;
+  -webkit-text-fill-color: inherit;
+}
+
+/* Owner call 2026-08-05: the row reuses the composer picker tokens verbatim —
+ * chips take the trigger class's own font token; the role matches it. No
+ * per-row size overrides. */

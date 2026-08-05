@@ -955,13 +955,17 @@ export function ReasoningLadderSlider({
 /** The chip's reasoning suffix ("Ultra" / "Max" / "Extra" …). The hue/shimmer
  * treatment rides CSS keyed off the trigger's data-selected-reasoning; this
  * component only adds the twinkling sparkle overlay — the full field at
- * Max/Ultra, a smaller dimmer one at Extra, none below. */
-function TriggerReasoningSuffix({
+ * Max/Ultra, a smaller dimmer one at Extra, none below.
+ * Exported for the seat-change transcript row, which renders the SAME suffix
+ * element with a CharOdometer as `children` so the tiers stay one visual. */
+export function TriggerReasoningSuffix({
   text,
-  sparkle
+  sparkle,
+  children
 }: {
   text: string
   sparkle: ChipSparkleTier
+  children?: React.ReactNode
 }): React.JSX.Element {
   const sparkles =
     sparkle === 'full'
@@ -971,7 +975,7 @@ function TriggerReasoningSuffix({
         : []
   return (
     <span className="composer-combined-picker-trigger-suffix">
-      {text}
+      {children ?? text}
       {sparkles.length > 0 && (
         <span
           className={`composer-combined-picker-trigger-sparkles${
