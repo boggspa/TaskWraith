@@ -564,11 +564,7 @@ describe('ChatJournal', () => {
       { savedAt: '2026-08-04T00:00:01.000Z', record: r2 }
     ]
     fs.writeFileSync(snapPath, JSON.stringify(entries), 'utf-8')
-    fs.writeFileSync(
-      jPath,
-      entries.map((e) => JSON.stringify(e)).join('\n') + '\n',
-      'utf-8'
-    )
+    fs.writeFileSync(jPath, entries.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
 
     // Recover — initDirectory must dedupe
     const recovered = createChatJournal(baseDir)
@@ -696,5 +692,70 @@ describe('ChatJournal', () => {
     expect(result.snapshot).toBeNull()
     expect(result.tail).toEqual([])
     expect(fs.existsSync(tombPath)).toBe(true)
+  })
+})
+
+describe('ChatJournal compaction bounds journal BYTES, not just lines', () => {
+  /**
+   * MEASURED on a live install 2026-08-05: one 60 MB chat produced a
+   * **42.67 GB** journal growing 389 MB/min, which filled the disk and took
+   * the app down. Two compounding defects in `shouldCompact`:
+   *
+   *  1. The only size trigger was `lineCount > 1000`. A journal line holds the
+   *     WHOLE record, so a 60 MB chat needs ~60 GB before compaction fires.
+   *  2. The age trigger was guarded by `lastSnapshotAt > 0`, so a journal that
+   *     has NEVER been snapshotted could never compact by age — precisely the
+   *     case that needs it.
+   *
+   * Compaction must therefore be bounded by bytes written since the last
+   * snapshot, independent of line count.
+   */
+  let baseDir: string
+  let journal: ChatJournal
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-journal-bytes-'))
+    journal = createChatJournal(baseDir)
+  })
+
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  it('compacts a large-record chat long before the 1000-line threshold', () => {
+    const chatId = 'fat-chat'
+    // ~1 MB per record: 40 appends is ~40 MB of journal but only 40 lines, so
+    // the line threshold cannot save us.
+    const fat = 'x'.repeat(1024 * 1024)
+    for (let i = 0; i < 40; i += 1) {
+      journal.append(chatId, { id: chatId, blob: fat, updatedAt: i })
+    }
+
+    const journalPath = path.join(baseDir, `${chatId}.jsonl`)
+    const journalBytes = fs.existsSync(journalPath) ? fs.statSync(journalPath).size : 0
+    const stats = journal.stats()
+
+    expect(
+      stats.snapshotsWritten,
+      'no snapshot was taken — a large-record chat grows the journal without bound'
+    ).toBeGreaterThan(0)
+    // After compaction the live journal tail must be far smaller than the
+    // total bytes appended; without a byte trigger it is the full ~40 MB.
+    expect(
+      journalBytes,
+      `journal tail is ${(journalBytes / 1048576).toFixed(1)} MB — compaction is not bounding bytes`
+    ).toBeLessThan(24 * 1024 * 1024)
+  })
+
+  it('still replays the exact latest record after byte-triggered compaction', () => {
+    const chatId = 'fat-chat-replay'
+    const fat = 'y'.repeat(1024 * 1024)
+    for (let i = 0; i < 40; i += 1) {
+      journal.append(chatId, { id: chatId, blob: fat, updatedAt: i })
+    }
+    const { snapshot, tail } = journal.read(chatId)
+    const latest =
+      tail.length > 0 ? (tail[tail.length - 1].record as Record<string, unknown>) : snapshot
+    expect((latest as Record<string, unknown>).updatedAt).toBe(39)
   })
 })

@@ -33,8 +33,11 @@
  *   - Snapshots are likewise atomic: temp → write → fsync → rename.
  *
  * COMPACTION:
- *   - Snapshot trigger: journal lines > 1000 OR last snapshot ≥ 10 min ago
- *     OR urgent (deletion / shutdown).
+ *   - Snapshot trigger: journal BYTES since the last snapshot > 16 MB OR
+ *     journal lines > 1000 OR last snapshot (or first sighting) ≥ 10 min ago
+ *     OR urgent (deletion / shutdown). Bytes lead because a journal line holds
+ *     the whole record, so line count alone let a 60 MB chat reach a 42.67 GB
+ *     journal on a live install (2026-08-05).
  *   - Compaction merges the current snapshot (if any) + all journal lines
  *     into a new atomic snapshot, then truncates the journal.
  *
@@ -126,6 +129,15 @@ export interface ChatJournal {
 /** Trigger snapshot compaction after this many journal lines. */
 const SNAPSHOT_LINE_THRESHOLD = 1000
 
+/**
+ * Hard ceiling on journal bytes between snapshots. Sized so a big chat
+ * compacts after a handful of saves rather than after 1000 of them: at 60 MB
+ * per record the old line rule allowed ~60 GB, which is what filled a live
+ * disk. A snapshot rewrites one whole record, so this bounds steady-state
+ * amplification to roughly (threshold / record size) appends per snapshot.
+ */
+const SNAPSHOT_BYTE_THRESHOLD = 16 * 1024 * 1024
+
 /** Trigger snapshot compaction after this many ms since the last snapshot. */
 const SNAPSHOT_AGE_THRESHOLD_MS = 10 * 60 * 1000
 
@@ -136,8 +148,24 @@ const SNAPSHOT_AGE_THRESHOLD_MS = 10 * 60 * 1000
 interface ChatState {
   /** Lines since last snapshot, held in memory for fast threshold checks. */
   lineCount: number
+  /**
+   * Journal bytes since the last snapshot.
+   *
+   * A journal LINE holds the whole record, so line count says nothing about
+   * size: measured on a live install 2026-08-05, one 60 MB chat reached a
+   * 42.67 GB journal (~700 lines) growing 389 MB/min and filled the disk.
+   * Bytes are what the disk cares about, so bytes are what bound compaction.
+   */
+  bytesSinceSnapshot: number
   /** Timestamp of the last snapshot (or 0 if never). */
   lastSnapshotAt: number
+  /**
+   * When this chat's journal was first observed this process. Used as the age
+   * baseline when nothing has ever been snapshotted — the old age check was
+   * guarded on `lastSnapshotAt > 0`, so a never-compacted journal (exactly the
+   * one at risk) could never compact by age.
+   */
+  observedAt: number
   /** True when this chat is tombstoned — no further appends are allowed. */
   tombstoned: boolean
 }
@@ -393,7 +421,9 @@ export function createChatJournal(baseDir: string): ChatJournal {
     if (!state) {
       state = {
         lineCount: 0,
+        bytesSinceSnapshot: 0,
         lastSnapshotAt: snapshotTimestamp(chatId),
+        observedAt: Date.now(),
         tombstoned: false
       }
       chats.set(chatId, state)
@@ -404,12 +434,12 @@ export function createChatJournal(baseDir: string): ChatJournal {
   /** Check if a snapshot should be triggered for this chat. */
   const shouldCompact = (state: ChatState): boolean => {
     if (state.lineCount > SNAPSHOT_LINE_THRESHOLD) return true
-    if (
-      state.lastSnapshotAt > 0 &&
-      Date.now() - state.lastSnapshotAt >= SNAPSHOT_AGE_THRESHOLD_MS
-    ) {
-      return true
-    }
+    // Bytes, not lines, are what exhaust a disk.
+    if (state.bytesSinceSnapshot > SNAPSHOT_BYTE_THRESHOLD) return true
+    // Fall back to when the journal was first seen so a never-snapshotted
+    // chat still ages into compaction.
+    const ageBaseline = state.lastSnapshotAt > 0 ? state.lastSnapshotAt : state.observedAt
+    if (ageBaseline > 0 && Date.now() - ageBaseline >= SNAPSHOT_AGE_THRESHOLD_MS) return true
     return false
   }
 
@@ -444,9 +474,11 @@ export function createChatJournal(baseDir: string): ChatJournal {
     // destroy prior lines. appendJournalLine fsyncs the new line; torn
     // tails are recovered on the next createChatJournal().
     appendJournalLine(journalPath(chatId), line)
-    bytesWritten += Buffer.byteLength(line, 'utf-8')
+    const lineBytes = Buffer.byteLength(line, 'utf-8')
+    bytesWritten += lineBytes
     linesWritten += 1
     state.lineCount += 1
+    state.bytesSinceSnapshot += lineBytes
 
     // Auto-compact when the line or age threshold trips — without this
     // call shouldCompact is dead and Gate 3 (snapshot under load) never
@@ -555,8 +587,15 @@ export function createChatJournal(baseDir: string): ChatJournal {
     if (state) {
       state.tombstoned = true
       state.lineCount = 0
+      state.bytesSinceSnapshot = 0
     } else {
-      chats.set(chatId, { lineCount: 0, lastSnapshotAt: 0, tombstoned: true })
+      chats.set(chatId, {
+        lineCount: 0,
+        bytesSinceSnapshot: 0,
+        lastSnapshotAt: 0,
+        observedAt: Date.now(),
+        tombstoned: true
+      })
     }
 
     // Verify no residual bytes — fail loudly in tests, log in production.
@@ -607,6 +646,7 @@ export function createChatJournal(baseDir: string): ChatJournal {
     }
 
     state.lineCount = 0
+    state.bytesSinceSnapshot = 0
     state.lastSnapshotAt = Date.now()
     snapshotsWritten += 1
     bytesWritten += snapBytes
