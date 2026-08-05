@@ -11,6 +11,12 @@ export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = ['antigravity', 'deepseek', 'cer
 
 export type QuotaSnapshotHookProviderId = (typeof QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS)[number]
 
+/** How old a helper reading may get before it must be flagged stale. Shared
+ * because two sides apply the same horizon: the main-process parser stamps
+ * `stale` when it decodes the helper cache, and the renderer's keep-last-known
+ * merge re-derives it while serving cached snapshots through a read outage. */
+export const QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS = 30 * 60 * 1000
+
 export interface QuotaSnapshotHookWindow {
   id: string
   label: string

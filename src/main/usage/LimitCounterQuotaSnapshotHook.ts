@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS,
+  QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
   type QuotaSnapshotHookBalance,
   type QuotaSnapshotHookProviderId,
   type QuotaSnapshotHookSnapshot,
@@ -19,7 +20,6 @@ const MAX_WINDOWS_PER_PROVIDER = 12
 const MAX_BALANCES_PER_PROVIDER = 16
 const MAX_TEXT_LENGTH = 160
 const MAX_METRIC_VALUE = 1_000_000_000_000_000
-const STALE_AFTER_MS = 30 * 60 * 1000
 const PROVIDER_ORDER = new Map(
   QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS.map((provider, index) => [provider, index])
 )
@@ -218,7 +218,8 @@ function parseSnapshot(value: unknown, now: number): QuotaSnapshotHookSnapshot |
     source: 'limit-counter-sanitized-cache',
     configured: true,
     fetchedAt,
-    stale: fetchedAtMs > now + 5 * 60 * 1000 || now - fetchedAtMs > STALE_AFTER_MS,
+    stale:
+      fetchedAtMs > now + 5 * 60 * 1000 || now - fetchedAtMs > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
     ...(planType ? { planType } : {}),
     windows,
     balances
