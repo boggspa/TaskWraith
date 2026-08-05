@@ -2609,13 +2609,15 @@ export interface AppSettings {
   geminiMcpBridgeEnabled: boolean
   geminiMcpBridgeLastStatus?: GeminiMcpBridgeStatus
   /**
-   * Permission-mode ELEVATION warning acknowledgements. Keyed by
-   * `${workspacePath}|${provider}` (see `approvalElevationAckKey` in
+   * Workspace edit-consent acknowledgements. New rows are keyed by
+   * WORKSPACE PATH alone (see `approvalElevationAckKey` in
    * `src/renderer/src/lib/approvalElevation.ts`); a `true` value means the
-   * Tier-1 "raise to Accept Edits" notice has been confirmed once for that
-   * (workspace, provider) and should not be shown again. Tier-2 (Full Workspace
-   * Access) is never suppressed and never recorded here. Optional so older
-   * settings files round-trip without the field.
+   * Tier-1 "Accept Edits" notice has been confirmed once for that workspace
+   * and covers every agent/provider/participant (owner directive 2026-08-05).
+   * Legacy `${workspacePath}|${provider}` rows persist and auto-carry — any
+   * one of them proves the workspace was consented. Tier-2 sheets are never
+   * suppressed by this record (they now also WRITE the workspace key on
+   * confirm). Optional so older settings files round-trip without the field.
    */
   approvalModeElevationAcknowledgements?: Record<string, boolean>
   bridgeDaemonEnabled?: boolean

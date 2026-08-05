@@ -76,7 +76,7 @@ export function ApprovalModeElevationSheetSurface({
           <h2 id="approval-elevation-title" className="creative-approval-modal-title">
             {isFull
               ? `Enable ${elevatedLabel} for ${name}?`
-              : `Let ${name} edit files in ${where}?`}
+              : `Let agents edit files in ${where}?`}
           </h2>
         </header>
 
@@ -109,9 +109,9 @@ export function ApprovalModeElevationSheetSurface({
           </>
         ) : (
           <p className="creative-approval-modal-description">
-            In Accept Edits, {name} can create, edit, and delete files in {where}. You still see
-            every change and can drop back to Read-only at any time. This notice shows once per
-            workspace.
+            In Accept Edits, agents can create, edit, and delete files in {where}. Every change
+            stays visible, and you can drop back to Ask at any time. This notice shows once per
+            workspace and covers every agent and model working here.
           </p>
         )}
 
@@ -130,7 +130,7 @@ export function ApprovalModeElevationSheetSurface({
             title={
               isFull
                 ? `Let ${name} use ${elevatedLabel} until you lower the mode.`
-                : `Let ${name} edit files in ${where}; individual risky actions can still be reviewed.`
+                : `Let agents edit files in ${where}; individual risky actions can still be reviewed.`
             }
             onClick={onConfirm}
             disabled={!canConfirm}

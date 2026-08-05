@@ -344,6 +344,7 @@ import {
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
 import { resolveChatApprovalMode } from './lib/chatComposerSelection'
+import { decideFirstSendWorkspaceConsent } from './lib/approvalElevation'
 import { getLiveToolFileDiffSummaries } from './lib/LiveFileDiffSummary'
 import { attachmentPathsOutsideWorkspace, parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
@@ -2174,6 +2175,10 @@ function App(): React.JSX.Element {
     permissionPresetId?: PermissionPresetId | string
     apply: () => void
   } | null>(null)
+  // True only inside the deferred re-send the workspace consent sheet's
+  // Continue triggers — the one hop where the first-send gate must not
+  // re-fire (the settings ack persists AFTER apply() runs).
+  const firstSendConsentGrantedRef = useRef(false)
   const [claudeBinaryPath, setClaudeBinaryPath] = useState('')
   const [kimiBinaryPath, setKimiBinaryPath] = useState('')
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://127.0.0.1:11434')
@@ -2864,11 +2869,12 @@ function App(): React.JSX.Element {
     },
     [currentChat?.appChatId]
   )
-  // Set of (workspace|provider) keys whose Tier-1 "raise to Accept Edits"
-  // elevation notice has already been acknowledged, derived from the persisted
-  // `approvalModeElevationAcknowledgements` settings Record. Fed into
-  // `decideApprovalElevation` so an acknowledged workspace+provider isn't
-  // warned again. Recomputed only when the Record identity changes.
+  // Ack keys for the Tier-1 workspace edit-consent notice, derived from the
+  // persisted `approvalModeElevationAcknowledgements` settings Record. New
+  // rows are keyed by WORKSPACE alone (one Continue covers every agent —
+  // owner directive 2026-08-05); legacy `workspace|provider` rows remain in
+  // the set and auto-carry via hasApprovalElevationAck. Recomputed only when
+  // the Record identity changes.
   const acknowledgedElevationDefaults = useMemo(() => {
     const record = settings?.approvalModeElevationAcknowledgements
     const acked = new Set<string>()
@@ -15654,6 +15660,55 @@ function App(): React.JSX.Element {
           }
         : undefined
     )
+    // One consent notice per WORKSPACE (owner directive 2026-08-05): the
+    // first prompt sent into a never-consented workspace at an edit-capable
+    // mode raises the generic Tier-1 sheet; Continue records the workspace
+    // ack (covering every agent/provider/participant, like the 'agents'-wide
+    // grants) and resumes this exact send. Read-only sends stay silent and
+    // auto_edit keeps its own always-on Tier-2 raise flow.
+    if (firstSendConsentGrantedRef.current) {
+      firstSendConsentGrantedRef.current = false
+    } else if (baseRequest.scope !== 'global') {
+      const consentModes =
+        baseRequest.chatRecord?.chatKind === 'ensemble'
+          ? (baseRequest.chatRecord.ensemble?.participants ?? [])
+              .filter((participant) => participant.enabled)
+              .map((participant) =>
+                permissionPresetToApprovalMode(participant.permissionPresetId)
+              )
+          : [baseRequest.approvalMode]
+      const firstSendConsent = decideFirstSendWorkspaceConsent({
+        approvalModes: consentModes,
+        workspacePath: baseRequest.chatRecord?.workspacePath ?? currentWorkspacePath,
+        acknowledgedDefault: acknowledgedElevationDefaults
+      })
+      if (firstSendConsent) {
+        setPendingElevation({
+          tier: firstSendConsent.tier,
+          provider: baseRequest.provider,
+          workspaceLabel: currentWorkspace?.displayName ?? null,
+          ackKey: firstSendConsent.ackKey,
+          persistAck: firstSendConsent.persistAckOnConfirm,
+          toMode: 'default',
+          apply: () => {
+            firstSendConsentGrantedRef.current = true
+            try {
+              handleRun(
+                overrideModel,
+                existingPrompt,
+                dmTargetParticipantId,
+                approvalModeOverride,
+                workflowModeOverride,
+                exactPickerParticipantId
+              )
+            } finally {
+              firstSendConsentGrantedRef.current = false
+            }
+          }
+        })
+        return
+      }
+    }
     if (
       baseRequest.chatRecord?.chatKind !== 'ensemble' &&
       !isRunnableProvider(baseRequest.provider)

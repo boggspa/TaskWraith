@@ -23,3 +23,25 @@ describe('ApprovalModeElevationSheet', () => {
     expect(html).toContain('I understand the risks and am on a disposable or recoverable device.')
   })
 })
+describe('Tier 1 — the one-per-workspace edit-consent notice', () => {
+  it('is provider-agnostic: agents wording, Ask label, covers-every-agent line', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalModeElevationSheetSurface
+        tier={1}
+        provider="antigravity"
+        workspaceLabel="AGBench"
+        acknowledged={false}
+        onAcknowledgedChange={() => {}}
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />
+    )
+    expect(html).toContain('Let agents edit files in AGBench?')
+    expect(html).toContain('agents can create, edit, and delete files')
+    expect(html).toContain('drop back to Ask at any time')
+    expect(html).toContain('covers every agent and model working here')
+    // No provider name anywhere in the Tier-1 surface.
+    expect(html).not.toContain('Antigravity')
+    expect(html).not.toContain('Read-only')
+  })
+})

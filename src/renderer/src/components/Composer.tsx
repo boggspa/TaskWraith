@@ -4536,7 +4536,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               const participantElevation = decideApprovalElevation({
                                 from: presetToApprovalMode(effectiveSelectedPermission),
                                 to: presetToApprovalMode(nextPermissionPreset),
-                                provider: effectiveProvider,
                                 workspacePath: currentWorkspacePath,
                                 acknowledgedDefault: acknowledgedElevationDefaults
                               })
@@ -4580,7 +4579,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             const elevation = decideApprovalElevation({
                               from: approvalMode,
                               to: nextApprovalMode,
-                              provider: effectiveProvider,
                               workspacePath: currentWorkspacePath,
                               acknowledgedDefault: acknowledgedElevationDefaults
                             })
