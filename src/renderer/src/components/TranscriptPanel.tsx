@@ -169,6 +169,7 @@ import {
 import { CONTEXT_PRESSURE_WARN_PERCENT } from '../../../shared/contextCompaction'
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
+import { SeatChangeRow } from './SeatChangeRow'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
@@ -813,6 +814,10 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // the question, its options and the user's choice all vanished. A decision
     // the user made deserves the same standing as the agent's own message.
     msg.metadata?.kind !== 'agentQuestion' &&
+    // Authoritative seat changes render as the animated SeatChangeRow card —
+    // never as a foldable one-liner (owner spec: the row collapses with its
+    // ROUND, but must not truncate into system-notice stacks).
+    !msg.metadata?.seatChange &&
     !msg.metadata?.proposedPlan &&
     !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
     Boolean(msg.content && msg.content.trim())
@@ -4337,6 +4342,8 @@ export const TranscriptPanel = memo(
                     }
                     copied={copiedId === msg.id}
                   />
+                ) : msg.metadata?.seatChange ? (
+                  <SeatChangeRow key={msg.id} message={msg} />
                 ) : systemAutoCollapsible ? (
                   <CollapsedTranscriptRow
                     key={msg.id}
