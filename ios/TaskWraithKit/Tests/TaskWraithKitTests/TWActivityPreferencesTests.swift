@@ -77,14 +77,37 @@ struct TWActivityPreferencesTests {
         }
     }
 
-    /// The wire ids must match `ACTIVITY_ARCHETYPES` in
-    /// src/shared/bannerTemplate.ts. A layout added on one side only is either
-    /// unpickable or a dead radio button on the Mac.
-    @Test("archetype ids match the TypeScript contract")
+    /// The PICKABLE ids must match `ACTIVITY_ARCHETYPES` in
+    /// src/shared/bannerTemplate.ts, which is itself pinned 1:1 to the Mac's
+    /// radio buttons (`ACTIVITY_ARCHETYPE_PRESETS`). A layout added on one side
+    /// only is either unpickable or a dead radio button on the Mac.
+    ///
+    /// Deliberately NOT `allCases`: `.workspace` is DERIVED — forced by the
+    /// controller for a multi-run roll-up — so it is renderable but never a
+    /// preference, and it is correctly absent from the TypeScript list.
+    /// `TWRunActivityTests.archetypeIds` pins the full wire set.
+    @Test("selectable archetype ids match the TypeScript contract")
     func archetypeIdsMatchTypeScript() {
         #expect(
-            Set(TWActivityArchetype.allCases.map(\.rawValue))
+            Set(TWActivityArchetype.userSelectable.map(\.rawValue))
                 == ["minimal", "diff", "attention", "ensemble"])
+        // The derived layout stays out of the picker's contract...
+        #expect(!TWActivityArchetype.workspace.isUserSelectable)
+        // ...but must still exist as a case, or the widget cannot render it.
+        #expect(TWActivityArchetype.allCases.contains(.workspace))
+    }
+
+    /// A newer Mac naming a DERIVED layout as the preference must not stick.
+    /// `.workspace` carries counts for two or more runs and has no room for a
+    /// single run's detail, so honouring it would flatten every ordinary
+    /// activity into the roll-up.
+    @Test("a derived archetype is refused as a stored preference")
+    func derivedArchetypeIsNotStorable() {
+        let d = scratchDefaults("derived")
+        TWActivityPreferences.setArchetype(.attention, defaults: d)
+        TWActivityPreferences.apply(
+            TWActivityAppearance(archetype: "workspace"), defaults: d)
+        #expect(TWActivityPreferences.archetype(defaults: d) == .attention)
     }
 
     @Test("the appearance block decodes off a real broadcast payload")

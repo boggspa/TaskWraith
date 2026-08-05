@@ -46,6 +46,27 @@ public enum TWActivityArchetype: String, Codable, Sendable, CaseIterable {
     case workspace
 
     public static let fallback: TWActivityArchetype = .diff
+
+    /// Whether the Mac's Notifications picker may offer this layout as the
+    /// user's default. This is NOT every case: `.workspace` is DERIVED — the
+    /// controller forces it for a multi-run roll-up — and it has nowhere to put
+    /// a single run's detail, so offering it would be a dead radio button.
+    ///
+    /// Exhaustive on purpose: a new case is a compile error here until someone
+    /// decides which side of the line it falls on.
+    public var isUserSelectable: Bool {
+        switch self {
+        case .minimal, .diff, .attention, .ensemble: return true
+        case .workspace: return false
+        }
+    }
+
+    /// The picker's wire contract. Mirrors `ACTIVITY_ARCHETYPES` in
+    /// src/shared/bannerTemplate.ts, which is itself pinned 1:1 to the radio
+    /// buttons in `ACTIVITY_ARCHETYPE_PRESETS`.
+    public static var userSelectable: [TWActivityArchetype] {
+        allCases.filter(\.isUserSelectable)
+    }
 }
 
 /// Where the user's archetype choice lives, and the on/off switch for the
@@ -132,7 +153,13 @@ public enum TWActivityPreferences {
         if let enabled = appearance.enabled {
             defaults?.set(enabled, forKey: enabledKey)
         }
-        if let raw = appearance.archetype, TWActivityArchetype(rawValue: raw) != nil {
+        // A KNOWN id that is not pickable means a newer Mac named a DERIVED
+        // layout as the user's preference. Storing it would pin every
+        // single-run activity to the roll-up, which has no room for one run's
+        // detail — so it is refused exactly like an unparseable id.
+        if let raw = appearance.archetype,
+            let parsed = TWActivityArchetype(rawValue: raw), parsed.isUserSelectable
+        {
             defaults?.set(raw, forKey: archetypeKey)
         }
         if let hex = parseHex(appearance.successColor) {
