@@ -6340,6 +6340,12 @@ export class AppStore {
     // synchronously so filesystem enumeration (getChats, chat search, workspace
     // filtering) sees the chat immediately. Subsequent saves on existing files
     // are coalesced — those are the 8–14 rewrites/10s the T2 baseline measured.
+    // Stat of the bytes actually on disk, threaded into the chat-list index
+    // entry below. Without it the entry carries no sourceChatMtimeMs/Size and
+    // `getChatList` can never serve it from the index — every chat touched in a
+    // session is then fully re-parsed on the next cold launch (measured
+    // 2026-08-05: 136 MB re-parsed every launch, ~100% main CPU for 1-2 min).
+    let indexSourceStat: { mtimeMs: number; size: number } | undefined
     const chatFileExists = fs.existsSync(chatPath)
     if (!chatFileExists) {
       writeJson(chatPath, normalizedChat)
@@ -6356,6 +6362,7 @@ export class AppStore {
           size: postStat.size,
           record: normalizedChat
         })
+        indexSourceStat = { mtimeMs: postStat.mtimeMs, size: postStat.size }
       }
     } else {
       // Optimistic cache with mtimeMs: -1 dirty marker — readChatRecordCached
@@ -6395,6 +6402,24 @@ export class AppStore {
                 record: normalizedChat
               })
             }
+            // When the write ran inline (coalescing disabled, or a barrier
+            // flush) this callback executes BEFORE the index entry is built
+            // below, so hand the stat forward and the entry is born correct.
+            indexSourceStat = { mtimeMs: postStatActual.mtimeMs, size: postStatActual.size }
+            // When the write was genuinely deferred, the entry already exists
+            // and carries the pre-write stat — refresh it now that bytes land.
+            const settled = chatListIndexStore.readAll()[chatId]
+            if (
+              settled &&
+              (settled.sourceChatMtimeMs !== postStatActual.mtimeMs ||
+                settled.sourceChatSize !== postStatActual.size)
+            ) {
+              chatListIndexStore.writeEntry(chatId, {
+                ...settled,
+                sourceChatMtimeMs: postStatActual.mtimeMs,
+                sourceChatSize: postStatActual.size
+              })
+            }
           } catch {
             // Cache was already set optimistically; a stale mtimeMs is harmless.
           }
@@ -6405,7 +6430,7 @@ export class AppStore {
     // The chat-list-index write and harvests stay synchronous — they're cheap
     // thanks to T3c (incremental JSONL) and don't benefit from coalescing.
     const index = chatListIndexStore.readAll()
-    const nextItem = this.toChatListItem(normalizedChat)
+    const nextItem = this.toChatListItem(normalizedChat, indexSourceStat)
     if (this.shouldWriteChatListIndexItem(index[normalizedChat.appChatId], nextItem)) {
       chatListIndexStore.writeEntry(normalizedChat.appChatId, nextItem)
       this.chatListIndexWriteAtByChatId.set(normalizedChat.appChatId, Date.now())

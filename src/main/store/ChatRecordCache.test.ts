@@ -8,7 +8,9 @@ const userDataPath = vi.hoisted(() => `/tmp/taskwraith-chat-cache-test-${process
 
 // T3a-1: Disable the coalescer for cache-behavior tests — these tests verify
 // cache semantics, not coalesce timing. The coalescer has its own test suite.
-vi.hoisted(() => { process.env.TASKWRAITH_SAVE_COALESCE_MS = '-1' })
+vi.hoisted(() => {
+  process.env.TASKWRAITH_SAVE_COALESCE_MS = '-1'
+})
 
 vi.mock('electron', () => ({
   app: {
@@ -35,10 +37,18 @@ function readChatListIndex(): Record<string, ChatRecord & { searchPreview?: stri
         // Re-merge summaries for the test helper.
         const summaryPath = join(userDataPath, 'chat-list-summaries', `${rec.chatId}.json`)
         let summaries: Record<string, unknown> = {}
-        try { summaries = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) } catch { /* ok */ }
-        index[rec.chatId] = { ...rec.entry, ...summaries } as ChatRecord & { searchPreview?: string }
+        try {
+          summaries = JSON.parse(fs.readFileSync(summaryPath, 'utf-8'))
+        } catch {
+          /* ok */
+        }
+        index[rec.chatId] = { ...rec.entry, ...summaries } as ChatRecord & {
+          searchPreview?: string
+        }
       }
-    } catch { /* skip corrupt lines */ }
+    } catch {
+      /* skip corrupt lines */
+    }
   }
   return index
 }
@@ -232,7 +242,11 @@ describe('AppStore chat record cache', () => {
     rawIndex[chat.appChatId].title = 'Edited index outside the store'
     // Write in JSONL format — one line per entry.
     const lines = Object.entries(rawIndex).map(
-      ([id, entry]) => JSON.stringify({ chatId: id, entry: { ...entry, runsSummary: undefined, lastRun: undefined } }) + '\n'
+      ([id, entry]) =>
+        JSON.stringify({
+          chatId: id,
+          entry: { ...entry, runsSummary: undefined, lastRun: undefined }
+        }) + '\n'
     )
     fs.writeFileSync(chatListIndexPath, lines.join(''))
     const future = new Date(Date.now() + 5000)
@@ -259,5 +273,63 @@ describe('AppStore chat record cache', () => {
       'Edited chat outside the index'
     )
     expect(readChatListIndex()[chat.appChatId].title).toBe('Edited chat outside the index')
+  })
+})
+
+describe('chat-list index freshness after save (cold-launch re-parse guard)', () => {
+  /**
+   * MEASURED on a live install 2026-08-05: every cold launch stalled 1-2 min
+   * with main pegged at ~100% CPU and RSS sawtoothing 1.2-2.8 GB. Cause:
+   * `getChatList()` only serves an index entry without re-reading the chat when
+   * `sourceChatMtimeMs`/`sourceChatSize` match the file. `saveChat` wrote its
+   * index entry via `toChatListItem(chat)` with NO stat argument, so those two
+   * fields were absent entirely and the entry could never match — every chat
+   * touched in a session was fully re-parsed on the next launch.
+   *
+   * Measured impact on that install: 49 of 204 chats permanently stale = 136 MB
+   * of chat JSON re-parsed on every cold launch, dominated by the big ensemble
+   * chats (61.8 MB, 20.6 MB, 19.4 MB). The rebuild never stuck: re-measuring
+   * right after a launch that had just rebuilt showed the same 49 stale.
+   */
+  beforeEach(() => {
+    AppStore.resetTransientDeletionGuardsForTests()
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(chatsDir, { recursive: true })
+  })
+
+  it('records the on-disk mtime+size so the next launch serves from the index', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    AppStore.saveChat({
+      ...chat,
+      title: 'Saved once',
+      messages: [message('hello')]
+    } as ChatRecord)
+
+    const stat = fs.statSync(diskPath(chat.appChatId))
+    const entry = readChatListIndex()[chat.appChatId] as unknown as {
+      sourceChatMtimeMs?: number
+      sourceChatSize?: number
+    }
+    expect(entry, 'no index entry written for the saved chat').toBeTruthy()
+    expect(
+      entry.sourceChatMtimeMs,
+      'index entry has no source mtime — getChatList will fully re-parse this chat on every launch'
+    ).toBe(stat.mtimeMs)
+    expect(entry.sourceChatSize, 'index entry has no source size').toBe(stat.size)
+  })
+
+  it('stays fresh across repeated saves', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    let current = chat
+    for (let i = 0; i < 3; i += 1) {
+      current = AppStore.saveChat({ ...current, title: `Save ${i}` } as ChatRecord)
+    }
+    const stat = fs.statSync(diskPath(chat.appChatId))
+    const entry = readChatListIndex()[chat.appChatId] as unknown as {
+      sourceChatMtimeMs?: number
+      sourceChatSize?: number
+    }
+    expect(entry.sourceChatMtimeMs).toBe(stat.mtimeMs)
+    expect(entry.sourceChatSize).toBe(stat.size)
   })
 })
