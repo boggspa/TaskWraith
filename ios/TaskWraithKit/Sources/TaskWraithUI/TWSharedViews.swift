@@ -1211,11 +1211,11 @@ struct ProviderModelPicker: View {
         guard let effort = reasoningEffort,
             !twReasoningOptions(in: currentCatalog, modelId: modelId).isEmpty
         else { return nil }
-        if isKimiProvider && effort.lowercased() == "on" { return "Thinking" }
         // Provider-idiomatic wording on the chip (Claude "Low" vs Codex "Light";
-        // Codex "Extra High" vs Claude "Extra") — mirrors Electron's chip
-        // reasoningSuffix. The in-popover ladder keeps its unified Off→Ultracode
-        // terms; only this collapsed summary speaks each provider's vocabulary.
+        // Codex "Extra High" vs Claude "Extra"; Kimi's thinking toggle as
+        // "Thinking") — mirrors Electron's chip reasoningSuffix. The in-popover
+        // ladder keeps its unified Off→Ultracode terms; only this collapsed
+        // summary speaks each provider's vocabulary.
         return twReasoningDisplayLabel(effort, provider: provider)
     }
 
@@ -2306,7 +2306,11 @@ private func twLadderStopLabel(_ index: Int, provider: String?) -> String {
 /// Off/unknown keep the plain muted suffix. Reduce Motion pins the static
 /// base hue and freezes the sparkles, matching the desktop's reduce-motion
 /// override.
-private struct ChipReasoningSuffix: View {
+///
+/// Module-scope (not file-private) so the ensemble seat strip wears the exact
+/// same ladder as the composer trigger — a second copy of this table is how a
+/// tier silently stops shimmering on one surface only.
+struct ChipReasoningSuffix: View {
     let label: String
     let effort: String?
     let accent: Color
@@ -2802,10 +2806,18 @@ private func twNormalizeReasoningSelection(
     reasoningEffort = twDefaultReasoningEffort(for: option)
 }
 
-private func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
+/// Provider-idiomatic wording for a reasoning effort token. Module-scope (not
+/// file-private) because the ensemble seat strip renders the same vocabulary as
+/// the composer chip — one rule, two surfaces.
+func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
     let isCodex = provider?.lowercased() == "codex"
     switch effort.lowercased() {
     case "off": return "Off"
+    // Kimi's thinking toggle is a separate input from the effort ladder, but it
+    // lands on the same ordinal stop and reads as "Thinking" on the chip. This
+    // is the ONE place that rule lives — the composer picker and the seat strip
+    // both route through it rather than re-testing the provider at the call site.
+    case "on": return provider?.lowercased() == "kimi" ? "Thinking" : "On"
     // Codex names its lowest tier "Light" (both `low` and `light` wire tokens
     // land here); Claude, Grok and Cursor Grok call it "Low". Mirrors Electron's
     // codexReasoningDisplayLabel vs claude/grokReasoningDisplayLabel.
@@ -4667,11 +4679,16 @@ public struct MarkdownLite: View {
 
     private func tableView(_ table: MarkdownTable) -> some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let columnWidths = tableColumnWidths(table)
         return ScrollView(.horizontal, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 0) {
-                tableRow(table.headers, table: table, header: true, rowIndex: 0)
+                tableRow(
+                    table.headers, table: table, header: true, rowIndex: 0,
+                    columnWidths: columnWidths)
                 ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
-                    tableRow(row, table: table, header: false, rowIndex: rowIndex + 1)
+                    tableRow(
+                        row, table: table, header: false, rowIndex: rowIndex + 1,
+                        columnWidths: columnWidths)
                 }
             }
             .fixedSize(horizontal: true, vertical: true)
@@ -4688,11 +4705,10 @@ public struct MarkdownLite: View {
         _ cells: [String],
         table: MarkdownTable,
         header: Bool,
-        rowIndex: Int
+        rowIndex: Int,
+        columnWidths: [CGFloat]
     ) -> some View {
-        let columnWidth = tableColumnWidth(for: table.columnCount)
-
-        return HStack(alignment: .top, spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             ForEach(0..<table.columnCount, id: \.self) { column in
                 tableCell(
                     column < cells.count ? cells[column] : "",
@@ -4701,7 +4717,7 @@ public struct MarkdownLite: View {
                     alignment: table.alignments[column],
                     rowIndex: rowIndex,
                     columnIndex: column,
-                    columnWidth: columnWidth
+                    columnWidth: columnWidths[column]
                 )
             }
         }
@@ -4710,11 +4726,64 @@ public struct MarkdownLite: View {
             Rectangle().fill(TWTheme.border.opacity(0.72)).frame(height: 1)
         }
         .overlay(alignment: .leading) {
-            tableColumnDividers(columnCount: table.columnCount, columnWidth: columnWidth)
+            tableColumnDividers(columnWidths: columnWidths)
         }
     }
 
+    @ViewBuilder
     private func tableCell(
+        _ raw: String,
+        header: Bool,
+        columnHeader: String,
+        alignment: MarkdownTableAlignment,
+        rowIndex: Int,
+        columnIndex: Int,
+        columnWidth: CGFloat
+    ) -> some View {
+        // The round close-out's Seat column is one `ensemble-seat://` link per
+        // row. Swap the link for the live seat strip; if the href does not
+        // decode, render the link's plain TEXT — which the Mac writes as the
+        // full seat description precisely so a surface that can't render the
+        // element still reads every field. Never leave a link this device has
+        // no handler for.
+        let seat = header ? nil : twSeatTableCell(raw)
+        if let seat {
+            Group {
+                if let link = seat.link {
+                    TWSeatStrip(link: link)
+                } else {
+                    inlineText(seat.text.isEmpty ? " " : seat.text)
+                        .font(TWFont.transcript(13))
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: columnWidth, alignment: .leading)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                tableAccessibilityLabel(
+                    seat.text,
+                    columnHeader: columnHeader,
+                    rowIndex: rowIndex,
+                    columnIndex: columnIndex
+                )
+            )
+        } else {
+            plainTableCell(
+                raw,
+                header: header,
+                columnHeader: columnHeader,
+                alignment: alignment,
+                rowIndex: rowIndex,
+                columnIndex: columnIndex,
+                columnWidth: columnWidth
+            )
+        }
+    }
+
+    private func plainTableCell(
         _ raw: String,
         header: Bool,
         columnHeader: String,
@@ -4757,19 +4826,41 @@ public struct MarkdownLite: View {
         columnWidth + 16
     }
 
+    /// Per-column widths. Uniform, EXCEPT for a column carrying the round
+    /// close-out's seat element: a seat is a whole configuration (provider,
+    /// model, reasoning, permission tier, grants, role) and reads as nonsense
+    /// squeezed into the width a word like "Turns" needs. The table already
+    /// scrolls horizontally, so the extra width costs the other columns
+    /// nothing.
+    private func tableColumnWidths(_ table: MarkdownTable) -> [CGFloat] {
+        let base = tableColumnWidth(for: table.columnCount)
+        let seatWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 300 : 236
+        return (0..<table.columnCount).map { column in
+            let carriesSeat = table.rows.contains { row in
+                column < row.count && twSeatTableCell(row[column]) != nil
+            }
+            return carriesSeat ? max(base, seatWidth) : base
+        }
+    }
+
     @ViewBuilder
-    private func tableColumnDividers(columnCount: Int, columnWidth: CGFloat) -> some View {
-        if columnCount > 1 {
-            let cellWidth = tableCellTotalWidth(columnWidth)
+    private func tableColumnDividers(columnWidths: [CGFloat]) -> some View {
+        if columnWidths.count > 1 {
+            let cellWidths = columnWidths.map(tableCellTotalWidth)
+            // Offsets accumulate: with a widened seat column the dividers can
+            // no longer be a multiple of one uniform cell width.
+            let offsets = cellWidths.dropLast().reduce(into: [CGFloat]()) { out, width in
+                out.append((out.last ?? 0) + width)
+            }
             ZStack(alignment: .leading) {
-                ForEach(1..<columnCount, id: \.self) { column in
+                ForEach(Array(offsets.enumerated()), id: \.offset) { _, x in
                     Rectangle()
                         .fill(TWTheme.border.opacity(0.72))
                         .frame(width: 1)
-                        .offset(x: CGFloat(column) * cellWidth - 0.5)
+                        .offset(x: x - 0.5)
                 }
             }
-            .frame(width: CGFloat(columnCount) * cellWidth, alignment: .leading)
+            .frame(width: cellWidths.reduce(0, +), alignment: .leading)
             .allowsHitTesting(false)
         }
     }
@@ -4838,6 +4929,18 @@ public struct MarkdownLite: View {
             attributed[run.range].font = .system(size: 14, design: .monospaced)
             attributed[run.range].foregroundColor = TWTheme.textPrimary
             attributed[run.range].backgroundColor = TWTheme.appBgSunken
+        }
+        // Custom in-app schemes have no `CFBundleURLTypes` handler and no
+        // `openURL` override, so a preserved `.link` renders as a system link
+        // that does NOTHING when tapped. Strip it and keep the text: the seat
+        // element renders these in the table-cell path, and everywhere else the
+        // link text IS the content. `ensemble-dm://` is stripped for the same
+        // reason — a mention is already tinted by the pass below.
+        for run in attributed.runs where run.link != nil {
+            guard let scheme = run.link?.scheme?.lowercased(),
+                scheme == "ensemble-seat" || scheme == "ensemble-dm"
+            else { continue }
+            attributed[run.range].link = nil
         }
         // Tint known participant mentions.
         if !participants.isEmpty {

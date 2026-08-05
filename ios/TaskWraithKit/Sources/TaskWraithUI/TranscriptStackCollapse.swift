@@ -48,11 +48,15 @@ public struct TWCollapsedStackSummary: Equatable, Sendable {
 /// one-line summary. A fan-out lane result and a provider run failure join the
 /// original four for different reasons: the fan-out card IS the only thing
 /// attributing a lane to its seat, and a failure folded into "Used 3 tools"
-/// would hide an error behind a summary that reads like success.
+/// would hide an error behind a summary that reads like success. The seat
+/// change joins them because it is a plain SYSTEM row: without this it folds
+/// into "System · Authoritative seat change applied." and the whole seat — what
+/// the model, tier and grants moved to — collapses into a sentence that says a
+/// change happened without saying what it was.
 private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
     row.agentQuestion != nil || row.proposedPlan != nil || row.participantHealth != nil
         || row.subThreadReturn != nil || row.subThreadDelegation != nil
-        || row.fanoutResult != nil || row.runFailure != nil
+        || row.fanoutResult != nil || row.runFailure != nil || row.seatChange != nil
 }
 
 /// True when the transcript window carries a row that explains why `runId`

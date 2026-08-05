@@ -1696,6 +1696,14 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let bodyTruncated: Bool?
         }
         public let proposedPlan: ProposedPlan?
+        /// Authoritative seat change (`metadata.seatChange` on the Mac) —
+        /// drives the seat strip: provider, model, reasoning, permission tier,
+        /// grants and #N role, held on the BEFORE seat then moved to AFTER.
+        /// The row keeps its plain sentence in `preview`, so an older build (or
+        /// an older Mac, which projects nothing here) renders exactly what it
+        /// always did. Shape mirrors the close-out link's seat 1:1, so ONE
+        /// value type decodes both surfaces.
+        public let seatChange: TWSeatChangePayload?
         /// ask_user_question prompt anchored to this (asking) row — drives the
         /// inline question card. `promptId` === the registry questionId, so the
         /// inline card resolves the same parked tool the top banner does.

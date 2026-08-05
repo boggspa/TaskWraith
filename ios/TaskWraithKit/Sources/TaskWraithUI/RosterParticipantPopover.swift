@@ -526,48 +526,15 @@ struct RosterPermissionSidecarPicker: View {
     @State private var trustedSessionAcknowledged = false
     @State private var trustedSessionBusy = false
 
-    // Desktop permission colour-coding (08-theme-picker-overrides.css,
-    // shell-agnostic block): Plan / Read-only → blue, Default → neutral,
-    // Full WS Access → amber, Full Access → dark red. The selected
-    // checkmark and the closed trigger adopt the same tier tint so the
-    // colour identity reads across closed + open states.
-    private static let tierBlue = Color(hex: 0x6FB6FF)
-    private static let tierAmber = Color(hex: 0xF59E0B)
-    private static let tierRed = Color(hex: 0xDC2626)
-
-    private struct Tier: Identifiable {
-        let id: String
-        let short: String
-        let label: String
-        let systemImage: String
-        /// nil = neutral (Accept Edits keeps the untinted palette).
-        var tint: Color? = nil
-    }
-
-    private static let tiers: [Tier] = [
-        Tier(
-            id: "plan", short: "Plan", label: "Plan",
-            systemImage: "list.clipboard", tint: tierBlue),
-        Tier(
-            id: "read_only", short: "Ask", label: "Ask",
-            systemImage: "lock.shield", tint: tierBlue),
-        Tier(
-            id: "default", short: "Accept", label: "Accept Edits",
-            systemImage: "checkmark.shield"),
-        Tier(
-            id: "workspace_write", short: "Full WS", label: "Full WS Access",
-            systemImage: "pencil.and.outline", tint: tierAmber),
-        Tier(
-            id: "full_access", short: "Full", label: "Full Access",
-            systemImage: "bolt.shield", tint: tierRed),
-    ]
+    // Tier labels, icons and tints come from the one shared table
+    // (PermissionTierTable.swift) — the seat strip and the composer read the
+    // same rows, so a rename can never land on one surface only.
+    private static let tiers: [TWPermissionTier] = TWPermissionTiers.all
 
     private var selectedId: String { permissionPresetId ?? "default" }
     private var hasTrustedSession: Bool { trustedSessionEnabled || locallyTrusted }
 
-    private var selectedTier: Tier {
-        Self.tiers.first { $0.id == selectedId } ?? Self.tiers[2]
-    }
+    private var selectedTier: TWPermissionTier { TWPermissionTiers.tier(selectedId) }
 
     var body: some View {
         Button {
@@ -639,7 +606,7 @@ struct RosterPermissionSidecarPicker: View {
     }
 
     @ViewBuilder
-    private func tierRow(_ tier: Tier) -> some View {
+    private func tierRow(_ tier: TWPermissionTier) -> some View {
         let selected = tier.id == selectedId
         Button {
             if tier.id == "full_access", !hasTrustedSession {

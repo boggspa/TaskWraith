@@ -125,14 +125,12 @@ struct Composer: View {
         default: return "checkmark.shield"
         }
     }
+    /// One spelling of the five presets, shared with the roster picker and the
+    /// ensemble seat strip (PermissionTierTable.swift). The icon above stays
+    /// local: the composer's glyphs are deliberately its own (a filled bolt, an
+    /// eye) and differ from the picker's shield family.
     private var approvalDisplayLabel: String {
-        switch approvalMode {
-        case "plan": return "Plan"
-        case "read_only": return "Ask"
-        case "workspace_write": return "Full WS Access"
-        case "full_access": return "Full Access"
-        default: return "Accept Edits"
-        }
+        TWPermissionTiers.label(approvalMode)
     }
     @State private var selectedProvider: String = "claude"
     @State private var selectedModelId: String?

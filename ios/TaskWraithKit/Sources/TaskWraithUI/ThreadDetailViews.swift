@@ -4358,7 +4358,7 @@ struct ThreadRowView: View, Equatable {
         (row.truncated == true || hasElidedFanoutParts) && !hasParticipantHealthCard
             && !hasProposedPlanCard && !hasAgentQuestionCard && !hasContextCompactionCard
             && !hasRunFailureCard && !hasTrustAwareCard && !hasSubThreadReturnCard
-            && !hasAgentInvocationCard
+            && !hasAgentInvocationCard && !hasSeatChangeCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
@@ -4401,6 +4401,12 @@ struct ThreadRowView: View, Equatable {
         hasAgentInvocationCard || hasSubThreadReturnCard
     }
     private var hasProposedPlanCard: Bool { row.proposedPlan != nil }
+    /// The authoritative seat change OWNS its row, exactly as on the desktop:
+    /// the strip replaces the plain sentence rather than sitting under it, and
+    /// carries its own timestamp. An older Mac projects no `seatChange`, so the
+    /// sentence keeps rendering there untouched.
+    private var seatChangeLink: TWSeatChangeLink? { row.seatChange?.renderableLink }
+    private var hasSeatChangeCard: Bool { seatChangeLink != nil }
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
     private var hasContextCompactionCard: Bool {
         ContextCompactionSummaryCard.matches(
@@ -4452,11 +4458,12 @@ struct ThreadRowView: View, Equatable {
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard
                     || hasFanoutResultCard || hasRunFailureCard || hasTrustAwareCard
-                    || hasDelegationLifecycleCard)
+                    || hasDelegationLifecycleCard || hasSeatChangeCard)
             VStack(alignment: .leading, spacing: 4) {
                 if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard
                     && !hasFanoutResultCard && !hasRunFailureCard && !hasTrustAwareCard
+                    && !hasSeatChangeCard
                 {
                     HStack(spacing: 0) {
                         Text(label)
@@ -4489,6 +4496,11 @@ struct ThreadRowView: View, Equatable {
                     )
                 } else if let agentQuestion = row.agentQuestion, agentQuestion.promptId != nil {
                     AgentQuestionRow(model: model, question: agentQuestion)
+                } else if let seatChangeLink {
+                    TWSeatStrip(
+                        link: seatChangeLink,
+                        showsChair: true,
+                        timestamp: row.seatChange?.appliedAt ?? row.timestamp)
                 } else if hasContextCompactionCard {
                     ContextCompactionSummaryCard(preview: row.preview ?? "")
                 } else if let plan = row.proposedPlan {
@@ -4635,7 +4647,7 @@ struct ThreadRowView: View, Equatable {
                 }
                 if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard
-                    && !hasTrustAwareCard,
+                    && !hasTrustAwareCard && !hasSeatChangeCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {
