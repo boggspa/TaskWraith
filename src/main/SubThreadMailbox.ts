@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import type { LinkedChildRelation } from './LinkedChildReturn'
 import type { ProviderId, SubThreadJoinPolicy } from './store/types'
+import type { SeatChangeSeatState } from '../shared/seatChange'
 
 export const SUBTHREAD_MAILBOX_SCHEMA_VERSION = 1 as const
 export const MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS = 12_000
@@ -26,6 +27,14 @@ export interface SubThreadMailboxEvent {
     relation: LinkedChildRelation
     subThreadId: string
     subThreadProvider?: ProviderId
+    /**
+     * The child's seat as configured when it RETURNED, so the parent's return
+     * card can say which participant produced the result rather than only which
+     * provider. Optional: absent for records written before capture existed and
+     * for a child whose provider/model could not both be resolved, both of
+     * which render the seatless heading.
+     */
+    subThreadSeat?: SeatChangeSeatState
     subThreadTitle: string
     sourceAssistantMessageId: string
     sourceRunId?: string
@@ -58,6 +67,8 @@ export interface SubThreadMailboxEventInput {
   parentChatId: string
   subThreadId: string
   subThreadProvider?: ProviderId
+  /** Resolved by the store at enqueue time; never supplied by a caller. */
+  subThreadSeat?: SeatChangeSeatState
   subThreadTitle: string
   sourceRelation?: LinkedChildRelation
   sourceAssistantMessageId: string
@@ -178,6 +189,31 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
   const provider = PROVIDERS.has(source.subThreadProvider as ProviderId)
     ? (source.subThreadProvider as ProviderId)
     : undefined
+  // Re-validated on decode: this is persisted JSON by the time it is read back,
+  // and it is rendered as the identity of whoever produced an UNTRUSTED child
+  // result. Provider and model are both required — the seat element draws an
+  // empty span for a missing model, which reads as a seat with no model rather
+  // than as the absence of a seat.
+  const seatSource = recordOrNull(source.subThreadSeat)
+  const seatProvider = nonEmptyString(seatSource?.provider)
+  const seatModel = nonEmptyString(seatSource?.model)
+  const subThreadSeat: SeatChangeSeatState | undefined =
+    seatProvider && seatModel
+      ? {
+          provider: seatProvider,
+          model: seatModel,
+          ...(nonEmptyString(seatSource?.role) ? { role: nonEmptyString(seatSource?.role)! } : {}),
+          ...(nonEmptyString(seatSource?.reasoningEffort)
+            ? { reasoningEffort: nonEmptyString(seatSource?.reasoningEffort)! }
+            : {}),
+          ...(typeof seatSource?.thinkingEnabled === 'boolean'
+            ? { thinkingEnabled: seatSource.thinkingEnabled }
+            : {}),
+          ...(nonEmptyString(seatSource?.permissionPresetId)
+            ? { permissionPresetId: nonEmptyString(seatSource?.permissionPresetId)! }
+            : {})
+        }
+      : undefined
   const lastError = recordOrNull(event.lastDeliveryError)
   const lastErrorAt = nonEmptyString(lastError?.at)
   const lastErrorMessage = nonEmptyString(lastError?.message)
@@ -203,6 +239,7 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
       relation,
       subThreadId,
       ...(provider ? { subThreadProvider: provider } : {}),
+      ...(subThreadSeat ? { subThreadSeat } : {}),
       subThreadTitle,
       sourceAssistantMessageId,
       ...(nonEmptyString(source.sourceRunId)

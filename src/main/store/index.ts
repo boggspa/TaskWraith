@@ -300,6 +300,7 @@ import {
   type SubThreadMailboxEventInput,
   type SubThreadMailboxLedger
 } from '../SubThreadMailbox'
+import { seatFromSoloChat } from '../ThreadMessageSeatCapture'
 import {
   acknowledgeThreadMessagesInLedger,
   enqueueThreadMessageInLedger,
@@ -7545,7 +7546,18 @@ export class AppStore {
       runIds: [input.sourceRunId]
     })
     const ledger = readSubThreadMailboxLedger()
-    const result = enqueueMailboxEvent(ledger.mailboxes[input.parentChatId], input, options)
+    // Capture the child's seat HERE rather than at each of the six call sites:
+    // this method runs when the child returns, so resolving now IS capture at
+    // return time. Reading it later, when the parent renders the card, would
+    // let a subsequent reconfiguration of the child rewrite what the reader is
+    // told about a result they already received. Never taken from the caller —
+    // a seat supplied as an argument could misattribute the result.
+    const seat = seatFromSoloChat(this.getChat(input.subThreadId))
+    const result = enqueueMailboxEvent(
+      ledger.mailboxes[input.parentChatId],
+      { ...input, ...(seat ? { subThreadSeat: seat } : {}) },
+      options
+    )
     if (result.inserted) {
       ledger.mailboxes[input.parentChatId] = result.mailbox
       writeSubThreadMailboxLedger(ledger)

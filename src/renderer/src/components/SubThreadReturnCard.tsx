@@ -7,6 +7,8 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { MessageActionsChip } from './MessageActionsChip'
 import { PillButton } from './PillButton'
 import { ProviderSatelliteLabel } from './ProviderSatelliteLabel'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { composedSeatRole, seatFromSubThreadMetadata } from '../lib/transcriptSeat'
 import { linkedChildReturnRelation, subThreadReturnBody } from './SubThreadReturnCardModel'
 
 interface SubThreadReturnCardProps {
@@ -55,6 +57,10 @@ export function SubThreadReturnCard({
     textValue(metadata.subThreadTitle) ||
     (isSideChatReturn ? 'Untitled side chat' : 'Untitled sub-thread')
   const subThreadId = textValue(metadata.subThreadId)
+  // Captured on the mailbox record when the child returned, so a result read
+  // back later still names the seat it actually ran as.
+  const seat = seatFromSubThreadMetadata(metadata)
+  const seatRole = composedSeatRole(seat)
   // Deterministic per-sub-thread identity (same id -> same character on
   // every delegation surface: this card, the Agent-Invocation card, the
   // delegation timeline). Seeded by the sub-thread chat id.
@@ -101,10 +107,31 @@ export function SubThreadReturnCard({
               <span className="subthread-return-agent-name">{agentIdentity.name}</span>
             </span>
           )}
-          <ProviderSatelliteLabel
-            provider={typeof provider === 'string' ? provider : undefined}
-            className="subthread-return-provider"
-          />
+          {seat ? (
+            // The seat element, same as the fan-out lane and peer-message cards:
+            // a child result is worth weighing by what produced it, and a bare
+            // provider label cannot tell a read-only Sonnet from a full-access
+            // Opus. Role leads, in the seat's own accent, then the config.
+            <>
+              {seatRole && (
+                <strong
+                  className="subthread-return-title subthread-return-seat-role"
+                  style={{ color: seatAccentVar(seat) }}
+                >
+                  {seatRole}
+                </strong>
+              )}
+              <SeatStateChips seat={seat} className="subthread-return-seat" />
+            </>
+          ) : (
+            // No seat captured — a record written before capture existed, or a
+            // child whose provider and model did not both resolve. The original
+            // provider label is honest about knowing less.
+            <ProviderSatelliteLabel
+              provider={typeof provider === 'string' ? provider : undefined}
+              className="subthread-return-provider"
+            />
+          )}
           <strong className="subthread-return-title">{title}</strong>
         </div>
         {subThreadId && (onOpenSubThread || onOpenSubThreadInSidePanel) && (

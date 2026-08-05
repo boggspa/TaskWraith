@@ -8045,3 +8045,31 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     animation: none;
   }
 }
+
+/*
+ * Seat element inside the two delegation/fan-out headers (2026-08-05).
+ *
+ * These headers used to carry their own chip vocabularies — `segmented-control-action`
+ * pills on the fan-out lane, a bare `ProviderSatelliteLabel` on the sub-thread
+ * return — while the transcript's seat-change row, the round close-out and the
+ * peer thread-message card all spoke the composer's. They now share one element,
+ * so the same seat reads identically wherever it appears.
+ *
+ * Layout only, deliberately. `color` must never be set here: the provider hues,
+ * permission tints and reasoning shimmer flow into `.seat-change-chip` from the
+ * composer's own rules, and a colour declared on the wrapper would kill them.
+ */
+.ensemble-fanout-result-seat,
+.subthread-return-seat {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+/* The role leads in the seat's own accent (`seatAccentVar`), so it matches the
+ * chips beneath it. `flex: 0 0 auto` keeps a long role from being the thing
+ * that shrinks when the header is tight — the config chips wrap first. */
+.ensemble-fanout-result-seat-role,
+.subthread-return-seat-role {
+  flex: 0 0 auto;
+  font-weight: 600;
+}

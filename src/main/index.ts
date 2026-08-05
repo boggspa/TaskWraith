@@ -8485,6 +8485,12 @@ async function maybePropagateLinkedChildResult(
       kind: 'subThreadReturn',
       subThreadId: linkedChild.appChatId,
       subThreadProvider: linkedChild.provider,
+      // Read back off the durable mailbox record rather than re-resolved from
+      // the child here, so the transcript row and the ledger can never disagree
+      // about which seat produced the result.
+      ...(mailboxResult.event.source.subThreadSeat
+        ? { subThreadSeat: mailboxResult.event.source.subThreadSeat }
+        : {}),
       subThreadTitle: linkedChild.title,
       sourceAssistantMessageId,
       sourceRunId,
