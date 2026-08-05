@@ -867,4 +867,392 @@ describe('AppStoreHostAuthority', () => {
     expect(result.value).not.toHaveProperty('policy')
     expect(result.value).not.toHaveProperty('recoveryState')
   })
+
+  it('S4b: absent E-first ports keep approval.decide on verbatim H (byte-compat)', async () => {
+    const authority = open()
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'decide-h-1',
+        idempotencyKey: 'decide-h-k',
+        actor: ACTOR_A,
+        name: 'approval.decide',
+        target: { approvalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+        arguments: { decision: 'accept' }
+      })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.status).toBe('succeeded')
+    expect(executorCalls).toBe(1)
+  })
+
+  it('S4b: not_found falls through to live-Bridge H unchanged', async () => {
+    const getByChallengeId = vi.fn(async () => ({ kind: 'not_found' as const }))
+    const resolve = vi.fn()
+    const authority = open({
+      ports: {
+        deferredAsk: {
+          envelopeStorePut: async () => ({ kind: 'created' as const }),
+          bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+          getByChallengeId,
+          resolve
+        }
+      }
+    })
+    const challengeId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'decide-nf-1',
+        idempotencyKey: 'decide-nf-k',
+        actor: ACTOR_A,
+        name: 'approval.decide',
+        target: { approvalId: challengeId },
+        arguments: { decision: 'accept' }
+      })
+    )
+    expect(result.ok).toBe(true)
+    expect(getByChallengeId).toHaveBeenCalledTimes(1)
+    expect(resolve).not.toHaveBeenCalled()
+    expect(executorCalls).toBe(1)
+  })
+
+  it('S4b RED: matched resolve never calls H (double-H-on-match)', async () => {
+    const challengeId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    const originalCommandId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    const record = {
+      schemaVersion: 1 as const,
+      deferredId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      commandId: originalCommandId,
+      idempotencyKey: 'orig-key',
+      commandFingerprint: 'fp',
+      commandName: 'thread.select' as const,
+      actor: ACTOR_A,
+      challengeId,
+      challengeKind: 'approval' as const,
+      state: 'succeeded' as const,
+      createdAt: NOW,
+      updatedAt: NOW,
+      completedAt: NOW,
+      decision: 'allow' as const
+    }
+    // Seed the original deferred receipt so E-owned projection can return it.
+    const originalCmd = makeCommand({
+      commandId: originalCommandId,
+      idempotencyKey: 'orig-key',
+      actor: ACTOR_A
+    })
+    const seeded = open()
+    await seeded.command(contextFor(ACTOR_A, CLIENT_A), originalCmd)
+    expect(executorCalls).toBe(1)
+    executorCalls = 0
+
+    const getByChallengeId = vi.fn(async () => ({ kind: 'found' as const, record }))
+    const resolve = vi.fn(async () => ({ kind: 'completed' as const, record }))
+    const authority = open({
+      ports: {
+        deferredAsk: {
+          envelopeStorePut: async () => ({ kind: 'created' as const }),
+          bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+          getByChallengeId,
+          resolve
+        }
+      }
+    })
+
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'decide-match-1',
+        idempotencyKey: 'decide-match-k',
+        actor: ACTOR_A,
+        name: 'approval.decide',
+        target: { approvalId: challengeId },
+        arguments: { decision: 'accept' }
+      })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.commandId).toBe(originalCommandId)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(resolve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        challengeId,
+        decision: 'allow',
+        actor: ACTOR_A
+      })
+    )
+    expect(executorCalls).toBe(0)
+  })
+
+  it('S4b RED: E non-success on match never falls through to H', async () => {
+    const challengeId = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+    const record = {
+      schemaVersion: 1 as const,
+      deferredId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      commandId: '11111111-2222-4333-8444-555555555555',
+      idempotencyKey: 'fail-orig',
+      commandFingerprint: 'fp',
+      commandName: 'thread.select' as const,
+      actor: ACTOR_A,
+      challengeId,
+      challengeKind: 'approval' as const,
+      state: 'awaiting' as const,
+      createdAt: NOW,
+      updatedAt: NOW
+    }
+    const getByChallengeId = vi.fn(async () => ({ kind: 'found' as const, record }))
+    const resolve = vi.fn(async () => ({
+      kind: 'failed' as const,
+      code: 'executor_failed' as const,
+      record
+    }))
+    const authority = open({
+      ports: {
+        deferredAsk: {
+          envelopeStorePut: async () => ({ kind: 'created' as const }),
+          bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+          getByChallengeId,
+          resolve
+        }
+      }
+    })
+
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'decide-fail-1',
+        idempotencyKey: 'decide-fail-k',
+        actor: ACTOR_A,
+        name: 'approval.decide',
+        target: { approvalId: challengeId },
+        arguments: { decision: 'decline' }
+      })
+    )
+    expect(result).toEqual({ ok: false, error: 'host_unavailable' })
+    expect(resolve).toHaveBeenCalledWith(expect.objectContaining({ challengeId, decision: 'deny' }))
+    expect(executorCalls).toBe(0)
+  })
+
+  it('S4b: challengeKind mismatch rejects zero-H and never resolves', async () => {
+    const challengeId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeffff'
+    const record = {
+      schemaVersion: 1 as const,
+      deferredId: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+      commandId: '22222222-3333-4444-8555-666666666666',
+      idempotencyKey: 'kind-orig',
+      commandFingerprint: 'fp',
+      commandName: 'thread.select' as const,
+      actor: ACTOR_A,
+      challengeId,
+      challengeKind: 'question' as const,
+      state: 'awaiting' as const,
+      createdAt: NOW,
+      updatedAt: NOW
+    }
+    const getByChallengeId = vi.fn(async () => ({ kind: 'found' as const, record }))
+    const resolve = vi.fn()
+    const authority = open({
+      ports: {
+        deferredAsk: {
+          envelopeStorePut: async () => ({ kind: 'created' as const }),
+          bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+          getByChallengeId,
+          resolve
+        }
+      }
+    })
+
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'decide-kind-1',
+        idempotencyKey: 'decide-kind-k',
+        actor: ACTOR_A,
+        name: 'approval.decide',
+        target: { approvalId: challengeId },
+        arguments: { decision: 'accept' }
+      })
+    )
+    expect(result).toEqual({ ok: false, error: 'invalid_lookup' })
+    expect(resolve).not.toHaveBeenCalled()
+    expect(executorCalls).toBe(0)
+  })
+
+  it('S4b: correlated question.answer answer is body-free non-success, zero H, zero resolve', async () => {
+    const challengeId = '33333333-4444-4555-8666-777777777777'
+    const record = {
+      schemaVersion: 1 as const,
+      deferredId: '44444444-5555-4666-8777-888888888888',
+      commandId: '55555555-6666-4777-8888-999999999999',
+      idempotencyKey: 'q-orig',
+      commandFingerprint: 'fp',
+      commandName: 'thread.select' as const,
+      actor: ACTOR_A,
+      challengeId,
+      challengeKind: 'question' as const,
+      state: 'awaiting' as const,
+      createdAt: NOW,
+      updatedAt: NOW
+    }
+    const getByChallengeId = vi.fn(async () => ({ kind: 'found' as const, record }))
+    const resolve = vi.fn()
+    const authority = open({
+      ports: {
+        deferredAsk: {
+          envelopeStorePut: async () => ({ kind: 'created' as const }),
+          bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+          getByChallengeId,
+          resolve
+        }
+      }
+    })
+
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'q-ans-1',
+        idempotencyKey: 'q-ans-k',
+        actor: ACTOR_A,
+        name: 'question.answer',
+        target: { questionId: challengeId },
+        arguments: { decision: 'answer', answer: 'hello' }
+      })
+    )
+    expect(result).toEqual({ ok: false, error: 'invalid_lookup' })
+    expect(resolve).not.toHaveBeenCalled()
+    expect(executorCalls).toBe(0)
+  })
+
+  it('S4b: question.answer dismiss maps to cancel on correlated challenge', async () => {
+    const challengeId = '66666666-7777-4888-8999-aaaaaaaaaaaa'
+    const originalCommandId = '77777777-8888-4999-8aaa-bbbbbbbbbbbb'
+    const record = {
+      schemaVersion: 1 as const,
+      deferredId: '88888888-9999-4aaa-8bbb-cccccccccccc',
+      commandId: originalCommandId,
+      idempotencyKey: 'dismiss-orig',
+      commandFingerprint: 'fp',
+      commandName: 'thread.select' as const,
+      actor: ACTOR_A,
+      challengeId,
+      challengeKind: 'question' as const,
+      state: 'cancelled' as const,
+      createdAt: NOW,
+      updatedAt: NOW,
+      completedAt: NOW,
+      decision: 'cancel' as const
+    }
+    // Seed original receipt so E-owned projection can return it.
+    await open().command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: originalCommandId,
+        idempotencyKey: 'dismiss-orig',
+        actor: ACTOR_A
+      })
+    )
+    executorCalls = 0
+
+    const getByChallengeId = vi.fn(async () => ({ kind: 'found' as const, record }))
+    const resolve = vi.fn(async () => ({ kind: 'completed' as const, record }))
+    const authority = open({
+      ports: {
+        deferredAsk: {
+          envelopeStorePut: async () => ({ kind: 'created' as const }),
+          bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+          getByChallengeId,
+          resolve
+        }
+      }
+    })
+
+    const result = await authority.command(
+      contextFor(ACTOR_A, CLIENT_A),
+      makeCommand({
+        commandId: 'q-dismiss-1',
+        idempotencyKey: 'q-dismiss-k',
+        actor: ACTOR_A,
+        name: 'question.answer',
+        target: { questionId: challengeId },
+        arguments: { decision: 'dismiss' }
+      })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.commandId).toBe(originalCommandId)
+    expect(resolve).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId, decision: 'cancel' })
+    )
+    expect(executorCalls).toBe(0)
+  })
+
+  it('S4b: acceptForSession/acceptForWorkspace map to allow (scoped-grant honesty)', async () => {
+    const challengeId = '99999999-aaaa-4bbb-8ccc-dddddddddddd'
+    const record = {
+      schemaVersion: 1 as const,
+      deferredId: 'aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      commandId: 'bbbb2222-cccc-4ddd-8eee-ffffffffffff',
+      idempotencyKey: 'grant-orig',
+      commandFingerprint: 'fp',
+      commandName: 'thread.select' as const,
+      actor: ACTOR_A,
+      challengeId,
+      challengeKind: 'approval' as const,
+      state: 'awaiting' as const,
+      createdAt: NOW,
+      updatedAt: NOW
+    }
+    const resolve = vi.fn(async () => ({
+      kind: 'failed' as const,
+      code: 'executor_failed' as const,
+      record
+    }))
+    const authority = open({
+      ports: {
+        deferredAsk: {
+          envelopeStorePut: async () => ({ kind: 'created' as const }),
+          bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+          getByChallengeId: async () => ({ kind: 'found' as const, record }),
+          resolve
+        }
+      }
+    })
+
+    for (const decision of ['acceptForSession', 'acceptForWorkspace'] as const) {
+      resolve.mockClear()
+      executorCalls = 0
+      const result = await authority.command(
+        contextFor(ACTOR_A, CLIENT_A),
+        makeCommand({
+          commandId: `grant-${decision}`,
+          idempotencyKey: `grant-k-${decision}`,
+          actor: ACTOR_A,
+          name: 'approval.decide',
+          target: { approvalId: challengeId },
+          arguments: { decision }
+        })
+      )
+      expect(result, decision).toEqual({ ok: false, error: 'host_unavailable' })
+      expect(resolve).toHaveBeenCalledWith(
+        expect.objectContaining({ challengeId, decision: 'allow' })
+      )
+      expect(executorCalls, decision).toBe(0)
+    }
+  })
+
+  it('rejects deferredAsk when only one of getByChallengeId/resolve is supplied', () => {
+    expect(() =>
+      open({
+        ports: {
+          deferredAsk: {
+            envelopeStorePut: async () => ({ kind: 'created' as const }),
+            bridgeRegister: async () => ({ kind: 'created' as const, record: {} as never }),
+            resolve: async () => ({ kind: 'not_found' as const })
+          }
+        }
+      })
+    ).toThrow(/complete injected ports/)
+  })
 })

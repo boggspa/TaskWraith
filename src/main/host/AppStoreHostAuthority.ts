@@ -35,8 +35,13 @@ import { projectHostCommandReceipt } from './HostCommandReceiptProjection'
 import { mintHostCommandId } from './HostCommandIdentity'
 import type {
   HostDeferredChallengeKind,
+  HostDeferredCommandActor,
+  HostDeferredCommandLookupResult,
   HostDeferredCommandRegisterInput,
-  HostDeferredCommandRegisterResult
+  HostDeferredCommandRegisterResult,
+  HostDeferredCommandResolveInput,
+  HostDeferredCommandResolveResult,
+  HostDeferredDecision
 } from './HostDeferredCommandBridge'
 import type {
   HostDeferredCommandEnvelopePutInput,
@@ -127,6 +132,18 @@ export interface HostDeferredAskPorts {
   readonly bridgeRegister: (
     input: HostDeferredCommandRegisterInput
   ) => HostDeferredCommandRegisterResult | Promise<HostDeferredCommandRegisterResult>
+  /**
+   * Optional E-first correlation (S4b). Absent ⇒ approval.decide / question.answer
+   * keep today's verbatim H path. When either resolve hook is present, both must
+   * be functions (lookup before resolve so challengeKind can fail closed).
+   */
+  readonly getByChallengeId?: (
+    challengeId: string,
+    actor: HostDeferredCommandActor
+  ) => HostDeferredCommandLookupResult | Promise<HostDeferredCommandLookupResult>
+  readonly resolve?: (
+    input: HostDeferredCommandResolveInput
+  ) => HostDeferredCommandResolveResult | Promise<HostDeferredCommandResolveResult>
 }
 
 /**
@@ -184,6 +201,67 @@ function compactTarget(command: HostCommand, targetKind: string): HostCommandRec
   return { kind: targetKind, id }
 }
 
+function isValidDeferredAskPorts(ports: HostDeferredAskPorts): boolean {
+  if (
+    !ports ||
+    typeof ports.envelopeStorePut !== 'function' ||
+    typeof ports.bridgeRegister !== 'function'
+  ) {
+    return false
+  }
+  const hasGet = ports.getByChallengeId !== undefined
+  const hasResolve = ports.resolve !== undefined
+  if (hasGet !== hasResolve) return false
+  if (hasGet && typeof ports.getByChallengeId !== 'function') return false
+  if (hasResolve && typeof ports.resolve !== 'function') return false
+  return true
+}
+
+function deferredAskHasEFirstPorts(
+  ports: HostDeferredAskPorts | undefined
+): ports is HostDeferredAskPorts & {
+  getByChallengeId: NonNullable<HostDeferredAskPorts['getByChallengeId']>
+  resolve: NonNullable<HostDeferredAskPorts['resolve']>
+} {
+  return (
+    !!ports && typeof ports.getByChallengeId === 'function' && typeof ports.resolve === 'function'
+  )
+}
+
+function toDeferredActor(actor: HostActorIdentity): HostDeferredCommandActor {
+  return {
+    actorId: actor.actorId,
+    clientId: actor.clientId,
+    clientClass: actor.clientClass
+  }
+}
+
+/** PIN S4-V vocabulary join for approval.decide → E decision. */
+function mapApprovalDecideToDeferred(decision: unknown): HostDeferredDecision | null {
+  if (
+    decision === 'accept' ||
+    decision === 'acceptForSession' ||
+    decision === 'acceptForWorkspace'
+  ) {
+    return 'allow'
+  }
+  if (decision === 'decline') return 'deny'
+  if (decision === 'cancel') return 'cancel'
+  return null
+}
+
+type QuestionDecideMap =
+  | { kind: 'deferred'; decision: HostDeferredDecision }
+  | { kind: 'answer_unsupported' }
+  | { kind: 'unmapped' }
+
+/** PIN S4-V: dismiss→cancel; answer→slice-1 unsupported on correlated challenges. */
+function mapQuestionAnswerToDeferred(decision: unknown): QuestionDecideMap {
+  if (decision === 'dismiss') return { kind: 'deferred', decision: 'cancel' }
+  if (decision === 'answer') return { kind: 'answer_unsupported' }
+  return { kind: 'unmapped' }
+}
+
 function projectFoundReceipt(
   record: HostCommandReceiptRecord
 ): HostAuthorityResult<HostCommandReceipt> {
@@ -234,10 +312,7 @@ export class AppStoreHostAuthority implements HostAuthority {
       typeof ports.commandExecutor !== 'function' ||
       typeof ports.healthProvider !== 'function' ||
       typeof ports.onShutdown !== 'function' ||
-      (ports.deferredAsk !== undefined &&
-        (!ports.deferredAsk ||
-          typeof ports.deferredAsk.envelopeStorePut !== 'function' ||
-          typeof ports.deferredAsk.bridgeRegister !== 'function'))
+      (ports.deferredAsk !== undefined && !isValidDeferredAskPorts(ports.deferredAsk))
     ) {
       throw new Error('AppStoreHostAuthority requires complete injected ports')
     }
@@ -383,6 +458,21 @@ export class AppStoreHostAuthority implements HostAuthority {
         evaluation.decision !== 'deferred')
     ) {
       return { ok: false, error: 'host_unavailable' }
+    }
+
+    // S4b: E-first pre-route for decision commands when resolve hooks are wired.
+    // Runs before begin so a correlated E outcome never leaves an orphan decide
+    // receipt and never falls through to H — even on E non-success.
+    if (
+      evaluation.decision === 'allowed' &&
+      deferredAskHasEFirstPorts(this.deferredAsk) &&
+      (hostCommand.name === 'approval.decide' || hostCommand.name === 'question.answer')
+    ) {
+      const preRoute = await this.tryEFirstDecisionPreRoute(hostCommand, context)
+      if (preRoute.action === 'return') {
+        return preRoute.result
+      }
+      // action === 'fallthrough' → uncorrelated live Bridge card; verbatim H below.
     }
 
     const begin = this.runtime.receiptStore.begin({
@@ -533,6 +623,135 @@ export class AppStoreHostAuthority implements HostAuthority {
       return { ok: false, error: 'host_unavailable' }
     }
     return projectFoundReceipt(found.receipt)
+  }
+
+  /**
+   * S4b E-first pre-route for approval.decide / question.answer.
+   *
+   * - not_found → fall through to live-Bridge H (unchanged)
+   * - challengeKind mismatch / actor_mismatch / correlated answer → body-free
+   *   reject, zero H, zero resolve (answer keeps challenge awaiting)
+   * - any resolve outcome including non-success → E owns terminalization, zero H
+   */
+  private async tryEFirstDecisionPreRoute(
+    hostCommand: HostCommand,
+    context: HostAuthorityCallContext
+  ): Promise<
+    | { action: 'fallthrough' }
+    | { action: 'return'; result: HostAuthorityResult<HostCommandReceipt> }
+  > {
+    const deferredAsk = this.deferredAsk
+    if (!deferredAskHasEFirstPorts(deferredAsk)) {
+      return { action: 'fallthrough' }
+    }
+
+    const expectedKind: HostDeferredChallengeKind | null =
+      hostCommand.name === 'approval.decide'
+        ? 'approval'
+        : hostCommand.name === 'question.answer'
+          ? 'question'
+          : null
+    if (!expectedKind) return { action: 'fallthrough' }
+
+    const challengeId =
+      expectedKind === 'approval' ? hostCommand.target.approvalId : hostCommand.target.questionId
+    if (typeof challengeId !== 'string' || challengeId.length === 0) {
+      // Let H validate malformed targets (byte-compat for live cards).
+      return { action: 'fallthrough' }
+    }
+
+    let deferredDecision: HostDeferredDecision | null = null
+    if (expectedKind === 'approval') {
+      deferredDecision = mapApprovalDecideToDeferred(hostCommand.arguments.decision)
+      if (!deferredDecision) return { action: 'fallthrough' }
+    } else {
+      const mapped = mapQuestionAnswerToDeferred(hostCommand.arguments.decision)
+      if (mapped.kind === 'unmapped') return { action: 'fallthrough' }
+      if (mapped.kind === 'answer_unsupported') {
+        // Correlated vs uncorrelated decided after lookup — unsupported only
+        // when E owns the challenge; uncorrelated falls through to live H.
+        let lookup: HostDeferredCommandLookupResult
+        try {
+          lookup = await deferredAsk.getByChallengeId(challengeId, toDeferredActor(context.actor))
+        } catch {
+          return {
+            action: 'return',
+            result: { ok: false, error: 'host_unavailable' }
+          }
+        }
+        if (lookup.kind === 'not_found') return { action: 'fallthrough' }
+        if (lookup.kind === 'actor_mismatch') {
+          return { action: 'return', result: { ok: false, error: 'invalid_lookup' } }
+        }
+        if (lookup.record.challengeKind !== 'question') {
+          return { action: 'return', result: { ok: false, error: 'invalid_lookup' } }
+        }
+        // GAP 2 / PIN S4-V: correlated answer is slice-1 unsupported — challenge
+        // stays awaiting; dismiss/restart still terminalize; zero H / zero allow.
+        return { action: 'return', result: { ok: false, error: 'invalid_lookup' } }
+      }
+      deferredDecision = mapped.decision
+    }
+
+    let lookup: HostDeferredCommandLookupResult
+    try {
+      lookup = await deferredAsk.getByChallengeId(challengeId, toDeferredActor(context.actor))
+    } catch {
+      return { action: 'return', result: { ok: false, error: 'host_unavailable' } }
+    }
+
+    if (lookup.kind === 'not_found') {
+      return { action: 'fallthrough' }
+    }
+    if (lookup.kind === 'actor_mismatch') {
+      return { action: 'return', result: { ok: false, error: 'invalid_lookup' } }
+    }
+
+    // challengeKind mismatch rejected zero-H (never resolve, never H).
+    if (lookup.record.challengeKind !== expectedKind) {
+      return { action: 'return', result: { ok: false, error: 'invalid_lookup' } }
+    }
+
+    let resolveResult: HostDeferredCommandResolveResult
+    try {
+      resolveResult = await deferredAsk.resolve({
+        challengeId,
+        actor: toDeferredActor(context.actor),
+        decision: deferredDecision
+      })
+    } catch {
+      return { action: 'return', result: { ok: false, error: 'host_unavailable' } }
+    }
+
+    // Any non-not_found resolve outcome (incl. failed/indeterminate): E owns it.
+    // A not_found after a successful lookup is a race — still no H fall-through.
+    if (resolveResult.kind === 'not_found') {
+      return { action: 'return', result: { ok: false, error: 'host_unavailable' } }
+    }
+
+    if (resolveResult.kind === 'actor_mismatch' || resolveResult.kind === 'command_mismatch') {
+      return { action: 'return', result: { ok: false, error: 'invalid_lookup' } }
+    }
+
+    if (
+      resolveResult.kind === 'completed' ||
+      resolveResult.kind === 'existing' ||
+      resolveResult.kind === 'indeterminate' ||
+      resolveResult.kind === 'not_awaiting'
+    ) {
+      const found = this.runtime.receiptStore.getByCommandId(
+        resolveResult.record.commandId,
+        toReceiptActor(context.actor)
+      )
+      if (found.kind === 'found') {
+        return { action: 'return', result: projectFoundReceipt(found.receipt) }
+      }
+      // E terminalized but receipt projection unavailable — body-free non-success.
+      return { action: 'return', result: { ok: false, error: 'host_unavailable' } }
+    }
+
+    // failed (and any future closed kinds): E already attempted; never H.
+    return { action: 'return', result: { ok: false, error: 'host_unavailable' } }
   }
 
   private async persistDeferredAsk(
