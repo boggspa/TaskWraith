@@ -4855,24 +4855,18 @@
   flex-shrink: 0;
 }
 
+/* Satellite marks — no container. The tinted square + 1px rim each icon used
+ * to sit in read as a row of chips rather than a row of participants; the
+ * brand artwork already carries the provider's identity, so the box was
+ * chrome around chrome. The 16px box STAYS: `.provider-brand-logo-image` is
+ * `width/height: 100%`, so this element is what sizes the artwork, and the
+ * gap between marks is unchanged. */
 .ensemble-round-card-provider {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 16px;
   height: 16px;
-  border-radius: 5px;
-  background: color-mix(
-    in srgb,
-    var(--ensemble-round-provider-accent, var(--accent)) 10%,
-    transparent
-  );
-  box-shadow: inset 0 0 0 1px
-    color-mix(
-      in srgb,
-      var(--ensemble-round-provider-accent, var(--accent)) 30%,
-      transparent
-    );
 }
 
 .ensemble-round-card-provider svg {

@@ -1,5 +1,4 @@
 import React from 'react'
-import type { CSSProperties } from 'react'
 import type { ChatMessage, ProviderId } from '../../../main/store/types'
 import { readEnsembleRoundHeader } from '../lib/ensembleRoundCards'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
@@ -88,11 +87,6 @@ export function EnsembleRoundCardHeader({
                   data-provider={attribution.provider}
                   data-provider-hue={hueClass}
                   data-model={attribution.model || undefined}
-                  style={
-                    {
-                      '--ensemble-round-provider-accent': `var(--provider-${hueClass}-color, var(--accent))`
-                    } as CSSProperties
-                  }
                   title={
                     attribution.role
                       ? `${getProviderName(provider)} / ${attribution.role}`
