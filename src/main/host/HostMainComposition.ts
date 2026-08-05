@@ -126,11 +126,31 @@ export interface HostMainCompositionInput {
   /** Extra durable-state flush performed after the Host's own flush. */
   readonly onShutdown?: AppStoreHostAuthorityShutdownCallback
   /**
-   * AllowPipeline for deferred allow execution (S4c required).
+   * AllowPipeline for deferred allow execution (S4c).
    * Composition builds the S4a adapter over this and installs it as Bridge
    * resolve ports — no optional refusal default remains on the production path.
+   *
+   * Supply EXACTLY ONE of `pipeline` or `pipelineFactory`. Supplying neither
+   * keeps S4c's fail-closed rejection verbatim; supplying both is rejected
+   * rather than silently preferring one.
    */
-  readonly pipeline: HostDeferredAllowPipeline
+  readonly pipeline?: HostDeferredAllowPipeline
+  /**
+   * Wave 3.6a seam.
+   *
+   * A REAL AllowPipeline binds the resolver/mutation/coordinator chain to the
+   * delta, receipt and envelope stores that HostRuntimeBootstrap owns — and
+   * this module deliberately keeps those private (public surface is only
+   * authority/session/getPosition/getRecoverySummary/shutdown). A composition
+   * root therefore cannot build one without constructing a SECOND bootstrap
+   * over the same hostDataDir, which is the forbidden second journal.
+   *
+   * This closure is the narrow way out: it is handed the composition's own
+   * runtime, exactly once, after bootstrap and before the Authority exists.
+   * One injected function sees the stores instead of every future consumer,
+   * which is why it was ruled over public store-port accessors.
+   */
+  readonly pipelineFactory?: (runtime: HostRuntimeBootstrap) => HostDeferredAllowPipeline
   readonly sessionIdFactory?: HostSessionIdFactory
   /** Injected ISO clock for tests. */
   readonly now?: () => string
@@ -159,6 +179,23 @@ function requireFunction(value: unknown, label: string): void {
 }
 
 /**
+ * The ONE pipeline predicate.
+ *
+ * Applied identically to a directly injected `pipeline` and to whatever
+ * `pipelineFactory` returns, so a factory cannot smuggle in a value that a
+ * direct injection would have been rejected for. Same checks, same messages.
+ */
+function requirePipeline(
+  candidate: HostDeferredAllowPipeline | undefined
+): HostDeferredAllowPipeline {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('HostMainComposition requires an injected pipeline')
+  }
+  requireFunction(candidate.execute, 'pipeline.execute')
+  return candidate
+}
+
+/**
  * Bounded approval card from an awaiting Bridge row (GAP-A / PIN S4-Q).
  * Body-free: challengeId as id, commandName as actionKind, no args/fingerprint.
  */
@@ -180,9 +217,23 @@ function awaitingApprovalCardFromBridgeRecord(record: {
 /**
  * Compose the production in-main Host.
  *
- * Construction order matters: the bridge is built first so that bootstrap can
- * take its `list()` as the bridge half of deferred recovery, and the Authority
- * last so it can receive both durable halves as narrow ask ports.
+ * CONSTRUCTION ORDER IS LOAD-BEARING — read this before reordering anything.
+ * It changed in Wave 3.6a and the previous comment here described the old
+ * order, which was bridge-first:
+ *
+ *   1. HostRuntimeBootstrap FIRST, so `pipelineFactory` can be handed the real
+ *      stores. This is what avoids a second bootstrap over the same
+ *      hostDataDir (the forbidden second journal). It is safe because the
+ *      bridge half of deferred recovery is a LAZY closure: the bootstrap
+ *      constructor only stores `deferredRecovery` and does not call `list()`
+ *      until getRecoverySummary() runs.
+ *   2. the AllowPipeline — injected directly or built by the factory, both
+ *      validated by the same predicate.
+ *   3. the S4a resolve adapter over that pipeline.
+ *   4. the deferred Bridge, which back-fills `deferredBridgeRef` so the
+ *      recovery closure from step 1 resolves.
+ *   5. the Authority LAST, so it receives both durable halves as narrow ask
+ *      ports.
  */
 export function createHostMainComposition(input: HostMainCompositionInput): HostMainComposition {
   if (!input || typeof input !== 'object') {
@@ -207,23 +258,47 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
   if (!Array.isArray(input.hostCapabilityOffer)) {
     throw new Error('HostMainComposition requires an injected hostCapabilityOffer')
   }
-  if (!input.pipeline || typeof input.pipeline !== 'object') {
-    throw new Error('HostMainComposition requires an injected pipeline')
+  // Exactly one deferred-execution source. Both is a wiring mistake worth
+  // failing on rather than silently preferring one; neither keeps S4c's
+  // original rejection verbatim.
+  if (input.pipeline !== undefined && input.pipelineFactory !== undefined) {
+    throw new Error(
+      'HostMainComposition accepts either an injected pipeline or a pipelineFactory, not both'
+    )
   }
-  requireFunction(input.pipeline.execute, 'pipeline.execute')
+  if (input.pipelineFactory !== undefined) {
+    requireFunction(input.pipelineFactory, 'pipelineFactory')
+  } else {
+    requirePipeline(input.pipeline)
+  }
 
   const hostDataDir = hostRuntimeDataDir(input.userDataPath)
   const now = input.now
 
-  // Lazy runtime ref: adapter execute runs after construction; envelope store
-  // owns the durable idempotencyKey (S4a injection seam — zero store imports
-  // inside the adapter module).
-  let runtimeRef: HostRuntimeBootstrap | null = null
+  // 3.6a construction order: BOOTSTRAP FIRST.
+  //
+  // Safe because the bridge half of deferred recovery is lazy — the bootstrap
+  // constructor only STORES `deferredRecovery`; list() is not called until
+  // getRecoverySummary() runs. That is precisely what lets pipelineFactory be
+  // handed the real stores without a second bootstrap on the same hostDataDir.
+  let deferredBridgeRef: HostDeferredCommandBridge | null = null
+  const runtime = new HostRuntimeBootstrap({
+    hostDataDir,
+    deferredRecovery: { list: () => deferredBridgeRef?.list() ?? [] }
+  })
+
+  // Exactly once, after bootstrap, before the Authority exists.
+  const pipeline = input.pipelineFactory
+    ? requirePipeline(input.pipelineFactory(runtime))
+    : requirePipeline(input.pipeline)
+
+  // Envelope store owns the durable idempotencyKey (S4a injection seam — zero
+  // store imports inside the adapter module). The runtime already exists at
+  // this point, so the lazy ref S4c needed here is gone.
   const adapterPorts = createHostDeferredResolutionAdapter({
-    pipeline: input.pipeline,
+    pipeline,
     resolveIdempotencyKey: (executeInput) => {
-      if (!runtimeRef) return null
-      const lookup = runtimeRef.envelopeStore.getByDeferredId(
+      const lookup = runtime.envelopeStore.getByDeferredId(
         executeInput.deferredId,
         executeInput.actor
       )
@@ -237,6 +312,7 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     ports: adapterPorts,
     ...(now ? { now } : {})
   })
+  deferredBridgeRef = deferredBridge
 
   // GAP-A donor wrap: publish Host-minted challengeId as approval card id.
   // Approval-kind + awaiting only (PIN S4-Q excludes question-kind publish).
@@ -255,12 +331,6 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
       approvals: merged
     }
   }
-
-  const runtime = new HostRuntimeBootstrap({
-    hostDataDir,
-    deferredRecovery: { list: () => deferredBridge.list() }
-  })
-  runtimeRef = runtime
 
   // Idempotent so an authoritative host shutdown and a supervisor stop cannot
   // double-flush, and so shutdown can never re-enter through the Authority.

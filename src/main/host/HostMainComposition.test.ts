@@ -21,8 +21,14 @@ import type {
   AppStoreHostAuthoritySnapshotDonorFamilies
 } from './AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from './HostAuthority'
+import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
+import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import { HostDeferredCommandBridge } from './HostDeferredCommandBridge'
-import type { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
+import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelopeResolver'
+import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
+import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
+import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
+import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import {
   createHostMainComposition,
   createUnwiredDeferredResolutionPorts,
@@ -639,6 +645,127 @@ describe('HostMainComposition', () => {
       // Wave 3.1 control artifacts belong to the supervisor slice, not here.
       expect(existsSync(join(userDataPath, TASKWRAITH_HOST_DISCOVERY_FILE))).toBe(false)
       expect(existsSync(join(userDataPath, TASKWRAITH_HOST_TOKEN_FILE))).toBe(false)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Wave 3.6a — pipelineFactory seam
+  // -----------------------------------------------------------------------
+
+  describe('pipelineFactory seam', () => {
+    it('rejects supplying both a pipeline and a pipelineFactory', () => {
+      expect(() => open({ pipelineFactory: () => mockPipeline })).toThrow(/not both/)
+    })
+
+    it('keeps the S4c rejection verbatim when neither is supplied', () => {
+      expect(() => open({ pipeline: undefined })).toThrow(
+        'HostMainComposition requires an injected pipeline'
+      )
+    })
+
+    it('validates a factory result with the same predicate a direct pipeline faces', () => {
+      const empty = {} as unknown as HostDeferredAllowPipeline
+      // Identical message from both routes => literally one predicate, not two
+      // parallel ones that could drift apart later.
+      expect(() => open({ pipeline: empty })).toThrow(
+        'HostMainComposition requires an injected pipeline.execute'
+      )
+      expect(() => open({ pipeline: undefined, pipelineFactory: () => empty })).toThrow(
+        'HostMainComposition requires an injected pipeline.execute'
+      )
+    })
+
+    it('invokes the factory exactly once, after bootstrap, with the real runtime', () => {
+      const seen: HostRuntimeBootstrap[] = []
+      const factory = vi.fn((runtime: HostRuntimeBootstrap) => {
+        seen.push(runtime)
+        return mockPipeline
+      })
+
+      composition = open({ pipeline: undefined, pipelineFactory: factory })
+
+      expect(factory).toHaveBeenCalledTimes(1)
+      const runtime = seen[0]!
+      // A constructed bootstrap, not a placeholder: all three stores exist...
+      expect(runtime.deltaStore).toBeTruthy()
+      expect(runtime.receiptStore).toBeTruthy()
+      expect(runtime.envelopeStore).toBeTruthy()
+      // ...and it is the SAME journal the composition itself reports from,
+      // which is what proves no second bootstrap was created.
+      expect(runtime.getPosition()).toEqual(composition.getPosition())
+    })
+
+    it('rejects the both-supplied wiring mistake WITHOUT invoking the factory', () => {
+      // K3Review asked for "factory not invoked when a direct pipeline is set".
+      // That state is unreachable — XOR rejects both-supplied — so the only
+      // reachable form of the question is whether the rejection happens BEFORE
+      // the factory runs. It must: a mis-wired root should never get a
+      // half-built pipeline (or its side effects) out of a call that throws.
+      const factory = vi.fn(() => mockPipeline)
+      expect(() => open({ pipelineFactory: factory })).toThrow(/not both/)
+      expect(factory).not.toHaveBeenCalled()
+    })
+
+    it('composes the real resolver/mutation/coordinator chain over the real stores', async () => {
+      let built: HostDeferredAllowPipeline | null = null
+
+      const realChain = (runtime: HostRuntimeBootstrap): HostDeferredAllowPipeline => {
+        const resolver = new HostDeferredCommandEnvelopeResolver({
+          envelopeStore: runtime.envelopeStore,
+          receiptStore: runtime.receiptStore,
+          // The AllowPipeline consumes only verifyCommand (zero-H). If this ever
+          // runs, a second execution route has been opened by mistake.
+          executor: {
+            execute: async () => {
+              throw new Error('resolver executor must never run under the AllowPipeline')
+            }
+          } as unknown as ConstructorParameters<
+            typeof HostDeferredCommandEnvelopeResolver
+          >[0]['executor']
+        })
+        const publisher = new HostDomainDeltaPublisher({ store: runtime.deltaStore })
+        const coordinator = new HostMutationCompletionCoordinator({
+          publishEffects: (effects) => publisher.publish(effects),
+          getPosition: () => runtime.getPosition(),
+          completeReceipt: (i) => runtime.receiptStore.complete(i),
+          markIndeterminate: (i) => runtime.receiptStore.markIndeterminate(i)
+        })
+        const mutation = new HostCommandMutationPipeline({
+          observe: async (command) =>
+            new HostObservedMutationExecutor({
+              captureSnapshot: async () => {
+                throw new Error('capture is not reached on the unknown-envelope path')
+              },
+              executeCommand: async () => ({ status: 'succeeded' as const })
+            }).execute(command),
+          complete: (i) => coordinator.complete(i)
+        })
+        built = new HostDeferredAllowPipeline({
+          verifyCommand: (i) => resolver.verifyCommand(i),
+          pipeline: mutation
+        })
+        return built
+      }
+
+      composition = open({ pipeline: undefined, pipelineFactory: realChain })
+      expect(built).not.toBeNull()
+
+      // Drive the REAL chain. This deferred id has no envelope, so the real
+      // resolver reads the real envelope store and refuses — proving the chain
+      // is bound to live stores rather than mocks, with zero domain execution.
+      const outcome = await built!.execute({
+        deferredId: '33333333-3333-4333-8333-333333333333',
+        commandId: DEFERRED_COMMAND_ID,
+        idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+        commandFingerprint: 'a'.repeat(64),
+        commandName: 'thread.select',
+        actor: ACTOR_A,
+        challengeId: '55555555-5555-4555-8555-555555555555',
+        challengeKind: 'approval'
+      })
+
+      expect(outcome.kind).not.toBe('completed')
+      expect(executor).not.toHaveBeenCalled()
     })
   })
 
