@@ -282,7 +282,13 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
         {...makeProps({
           virtualize: false,
           isThinking: true,
-          currentChat: activeEnsembleChat(ensembleParticipant()),
+          // A durable accumulator from this seat's completed turns. Without one
+          // the telemetry has no usage to show and renders its "— tokens"
+          // branch instead of the odometer — that is the honest-usage
+          // behaviour, not this test's subject.
+          currentChat: activeEnsembleChat(
+            ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } })
+          ),
           currentProviderLabel: 'Ensemble',
           currentProvider: 'codex',
           thinkingProviderLabel: 'Ensemble',

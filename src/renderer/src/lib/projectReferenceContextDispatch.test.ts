@@ -125,11 +125,15 @@ describe('project reference context dispatch acceptance', () => {
       'const persistExternalPathGrantPrompt ='
     )
 
+    // One re-check per point where this loop resumes after an await and then
+    // touches shared state: before picking each gap, before writing a failure
+    // onto the card (added with the grant-card dead-end fix), and before
+    // clearing the prompt to dispatch. A newer prompt must survive all three.
     expect(
       persistence.match(
         /externalPathGrantPromptByChatIdRef\.current\[chatId\] !== prompt/g
       )
-    ).toHaveLength(2)
+    ).toHaveLength(3)
     expect(persistence).toContain('prev[chatId] === prompt')
     expect(persistence.indexOf('prev[chatId] === prompt')).toBeLessThan(
       persistence.indexOf('executeExternalPathGrantRunRef.current(resumeRun)')

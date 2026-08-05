@@ -40,7 +40,12 @@ function makeChat(participants: EnsembleParticipant[]): ChatRecord {
       enabled: true,
       maxParticipants: participants.length,
       fanoutPolicy: 'read_only',
-      participants
+      participants,
+      // Pin the Boss to the LAST seat. Without one, authority recovery lands on
+      // the lowest-order seat — which is the actively-executing seat these
+      // tests queue changes against, and removing a Boss is refused outright.
+      // The subject here is the seat queue, not authority.
+      bossmanParticipantId: participants[participants.length - 1]?.id
     }
   }
 }

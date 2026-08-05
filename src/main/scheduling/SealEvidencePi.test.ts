@@ -177,21 +177,30 @@ describe('Pi scheduled launch evidence', () => {
   })
 
   it('keeps native Pi tools read-only even when exact brokered edits are approved', async () => {
-    const readOnlyDigests = new Set<string>()
-    for (const approvalMode of ['plan', 'acceptEdits', 'auto_edit', 'never']) {
+    // Pi launches its own tools with `--no-approve`, so the native list never
+    // widens: the policy digest is byte-identical under every posture, which is
+    // what this test's title is about. What DOES move with the approval mode is
+    // `writeCapable` — the gate on TaskWraith's exact file bridge, not on Pi's
+    // own tools. PiNativeToolPosture owns that set; keep the two in lockstep.
+    const nativeToolDigests = new Set<string>()
+    for (const [approvalMode, writeCapable] of [
+      ['plan', false],
+      ['never', false],
+      ['acceptEdits', true],
+      ['auto_edit', true],
+      ['allow-all', true],
+      ['default', true]
+    ] as const) {
       const authority = await buildPiSealEvidence(deps(), facts({ approvalMode }))
-      expect(authority.controls.writeCapable, approvalMode).toBe(false)
+      expect(authority.controls.writeCapable, approvalMode).toBe(writeCapable)
       expect(authority.controls.nativeToolPolicySha256).toBe(authority.tools.nativeToolPolicySha256)
-      readOnlyDigests.add(authority.tools.nativeToolPolicySha256)
+      nativeToolDigests.add(authority.tools.nativeToolPolicySha256)
     }
-    expect(readOnlyDigests.size).toBe(1)
+    expect(nativeToolDigests.size).toBe(1)
 
-    const write = await buildPiSealEvidence(deps(), facts({ approvalMode: 'default' }))
     const writeResult = await resolvePiSealEvidence(deps(), facts({ approvalMode: 'default' }))
-    expect(write.controls.writeCapable).toBe(true)
     expect(writeResult.args[writeResult.args.indexOf('--tools') + 1]).toBe(PI_WRITE_TOOLS.join(','))
     expect(PI_WRITE_TOOLS).toEqual(PI_READ_ONLY_TOOLS)
-    expect(write.tools.nativeToolPolicySha256).toBe([...readOnlyDigests][0])
   })
 
   it.each([
