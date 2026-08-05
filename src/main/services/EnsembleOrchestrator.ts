@@ -83,6 +83,8 @@ import type {
   UsageRecord
 } from '../store/types'
 import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
+import type { SeatChangeSeatState } from '../store/types'
+import { coalesceSeatChangeMessages } from '../../shared/seatChange'
 import {
   findAllMentions,
   resolvePhraseToParticipant,
@@ -2346,6 +2348,26 @@ function titleCaseToolName(toolName: string): string {
 function participantLabel(participant?: EnsembleParticipant): string {
   if (!participant) return 'Participant'
   return participant.role || participant.provider
+}
+
+/**
+ * Snapshot one side of an authoritative seat change for the transcript row.
+ * The preset fallback mirrors the seat-snapshot rule (`|| 'default'`) so the
+ * row shows the tier the dispatch layer would actually resolve.
+ */
+function seatChangeSeatState(
+  participant: EnsembleParticipant,
+  grantsCount?: number
+): SeatChangeSeatState {
+  return {
+    provider: participant.provider,
+    model: participant.model || '',
+    ...(participant.role ? { role: participant.role } : {}),
+    ...(participant.order ? { seatNumber: participant.order } : {}),
+    ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+    permissionPresetId: participant.permissionPresetId || 'default',
+    ...(grantsCount === undefined ? {} : { grantsCount })
+  }
 }
 
 function participantSeatValue(participant: EnsembleParticipant): string {
@@ -6309,7 +6331,11 @@ export class EnsembleOrchestrator {
       action === 'edit_participant' && affectedBefore && affectedAfter
         ? `Authoritative seat change applied for ${label}: ${participantSeatValue(affectedBefore)} -> ${participantSeatValue(affectedAfter)}.`
         : `Boss ${verb} ${label}.`
-    this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+    if (action === 'edit_participant' && affectedBefore && affectedAfter) {
+      this.appendSeatChange(runtime.chatId, runtime.roundId, affectedBefore, affectedAfter, message)
+    } else {
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+    }
     return {
       ok: true,
       tool: 'ensemble_roster_edit',
@@ -7306,7 +7332,7 @@ export class EnsembleOrchestrator {
       const message =
         `Authoritative seat change ${boundary ? 'applied at execution boundary' : 'applied'} for ` +
         `${participantLabel(before)}: ${participantSeatChangeValue(before, after, before)} -> ${participantSeatChangeValue(before, after, after)}.`
-      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+      this.appendSeatChange(runtime.chatId, runtime.roundId, before, after, message)
     }
     return this.deps.getChat(chat.appChatId) || saved
   }
@@ -18307,6 +18333,67 @@ export class EnsembleOrchestrator {
     // swallows its own errors, so it cannot throw. A catch here would be
     // unreachable code implying a failure mode that does not exist.
     for (const entry of settled) queue.markMaterialised(entry.entryId)
+  }
+
+  /**
+   * Authoritative seat change → structured transcript row (owner spec
+   * 2026-08-05). The plain sentence stays as `content` so TUI/iOS/plaintext
+   * surfaces degrade to exactly the old system line; the renderer promotes
+   * `metadata.seatChange` into the animated row. Rapid adjustments to the same
+   * participant within the sliding window coalesce (see SeatChangeMessages.ts):
+   * the superseded row is removed in the SAME checkpoint that appends the
+   * fresh one, preserving the lose-one/gain-one row invariance. Deliberately
+   * NO laneId — that keeps the row out of fan-out viewport folds.
+   */
+  private appendSeatChange(
+    chatId: string,
+    roundId: string,
+    before: EnsembleParticipant,
+    after: EnsembleParticipant,
+    content: string
+  ): string | null {
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) return null
+    const grantsCount = chat.workspacePath
+      ? (this.deps.getSettings().agenticWorkspaceGrants || []).filter(
+          (grant) => grant.workspacePath === chat.workspacePath
+        ).length
+      : undefined
+    const timestamp = this.deps.nowIso()
+    const { messages, payload } = coalesceSeatChangeMessages(
+      chat.messages,
+      {
+        participantId: before.id,
+        label: participantLabel(after) || participantLabel(before),
+        before: seatChangeSeatState(before, grantsCount),
+        after: seatChangeSeatState(after, grantsCount),
+        appliedAt: timestamp
+      },
+      this.deps.now()
+    )
+    const id = `ensemble-seat-change-${roundId}-${this.deps.now()}-${this.nextStatusSeq()}`
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [
+          ...messages,
+          {
+            id,
+            role: 'system',
+            content,
+            timestamp,
+            metadata: {
+              kind: 'ensembleSeatChange',
+              ensembleRoundId: roundId,
+              seatChange: payload
+            }
+          }
+        ],
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
+    return id
   }
 
   private appendRoundStatus(

@@ -6,6 +6,8 @@ import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
+import type { SeatChangePayload } from '../../shared/seatChange'
+export type { SeatChangePayload, SeatChangeSeatState } from '../../shared/seatChange'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowSnapshot } from '../../shared/chatGitWorkflow'
 import type { ActivityArchetype, BannerTemplate } from '../../shared/bannerTemplate'
@@ -3410,6 +3412,15 @@ export interface ChatMessage {
       reason?: string
       note?: string
     }
+    /** Authoritative ensemble seat change — the animated transcript row
+     * (SeatChangeRow): chair glyph + composer-identical provider/model/
+     * reasoning cluster + permission chip, rolling before -> after with the
+     * odometer trick. Collapsed shows `after`; click expands `before`.
+     * Coalescing (120 s sliding window, same participant) and tombstoning
+     * semantics live in shared/seatChange.ts. `content` keeps the plain
+     * sentence as a fallback for surfaces that don't render the card
+     * (TUI / iOS / legacy transcripts). */
+    seatChange?: SeatChangePayload
     /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
      *  Persisted on the message so the card survives reload + the decision,
      *  and the raw <proposed_plan> block is stripped from `content`. */

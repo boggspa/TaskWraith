@@ -8849,6 +8849,69 @@ Next action:
     ).toBe(true)
   })
 
+  it('emits a structured seatChange transcript row and coalesces rapid edits to one row', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    // Boss (claude) is executing; editing the idle codex seat applies immediately.
+    const first = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'codex',
+      participant: { provider: 'codex', model: 'gpt-5.5', role: 'Worker' }
+    })
+    expect(first).toMatchObject({ ok: true, participantId: 'codex' })
+
+    const seatChangeMessages = () =>
+      harness.chat.messages.filter(
+        (message) => message.metadata?.seatChange?.participantId === 'codex'
+      )
+    expect(seatChangeMessages()).toHaveLength(1)
+    const firstRow = seatChangeMessages()[0]
+    expect(firstRow.metadata?.kind).toBe('ensembleSeatChange')
+    expect(firstRow.content).toContain('Authoritative seat change applied')
+    expect(firstRow.metadata?.seatChange).toMatchObject({
+      before: {
+        provider: 'codex',
+        model: 'codex-model',
+        role: 'Worker',
+        permissionPresetId: 'workspace_write',
+        seatNumber: 2
+      },
+      after: { provider: 'codex', model: 'gpt-5.5', role: 'Worker', seatNumber: 2 }
+    })
+
+    // A second tweak inside the window replaces the row (lose one, gain one)
+    // and inherits the ORIGINAL before-state.
+    const second = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'codex',
+      participant: { provider: 'codex', model: 'gpt-5.5-codex', role: 'Worker' }
+    })
+    expect(second).toMatchObject({ ok: true, participantId: 'codex' })
+    expect(seatChangeMessages()).toHaveLength(1)
+    expect(seatChangeMessages()[0].metadata?.seatChange).toMatchObject({
+      before: { provider: 'codex', model: 'codex-model' },
+      after: { provider: 'codex', model: 'gpt-5.5-codex' }
+    })
+    expect(seatChangeMessages()[0].id).not.toBe(firstRow.id)
+  })
+
   it('merges active-seat picker edits and applies them at the execution boundary', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
