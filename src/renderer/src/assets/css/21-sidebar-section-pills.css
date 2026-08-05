@@ -1,15 +1,27 @@
 /* Sidebar hierarchy section-header capsules.
  *
+ * The pill wears the SAME material as the Model Usage pane below it
+ * (components/ModelUsageCard.css): a 65%-alpha neutral fill over a desaturated
+ * backdrop blur. They are the only two pieces of chrome floating on the
+ * sidebar's own background, and at 90% opaque the pill read as a solid black or
+ * white lozenge stuck on top of the sidebar while the pane read as part of it.
+ *
  * Keep the alpha on the background itself so the disclosure icon, title, and
  * count remain fully opaque. The late, attribute-qualified selectors match the
- * specificity of the themed native-glass hover rules defined in shard 08. */
+ * specificity of the themed native-glass hover rules defined in shard 08.
+ */
 .app-sidebar {
-  --sidebar-section-header-pill-bg: rgba(0, 0, 0, 0.9);
+  /* Matches .app-sidebar .model-usage-summary--sidebar. */
+  --sidebar-section-header-pill-bg: rgba(22, 22, 22, 0.65);
+  /* Reduce-transparency and no-backdrop-filter fallbacks: a 65% fill with no
+   * blur behind it is not a material, it is just a washed-out pill. */
+  --sidebar-section-header-pill-bg-solid: rgb(22, 22, 22);
 }
 
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .app-sidebar {
-  --sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.9);
+  --sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.65);
+  --sidebar-section-header-pill-bg-solid: rgb(255, 255, 255);
 }
 
 /* A small breath below the fixed search chrome. This inset belongs to the
@@ -26,4 +38,36 @@
   .app-sidebar
   .sidebar-section-header-toggle:is(:hover, :focus-visible) {
   background: var(--sidebar-section-header-pill-bg) !important;
+}
+
+/* The blur is what turns a 65% fill into the pane's material. Gated on
+ * transparency being allowed, exactly as the pane's own glass rules are. */
+[data-reduce-transparency='false'] .app-sidebar .sidebar-section-header-toggle {
+  backdrop-filter: blur(22px) saturate(0%) brightness(0.96);
+  -webkit-backdrop-filter: blur(22px) saturate(0%) brightness(0.96);
+}
+
+/* The pane thins its blur under the glass appearances; the pill follows, or the
+ * two sit side by side sampling the sidebar at different strengths. */
+:is([data-appearance='soft_glass'], [data-appearance='native_glass'])[data-reduce-transparency='false']
+  .app-sidebar
+  .sidebar-section-header-toggle {
+  backdrop-filter: blur(16px) saturate(0%) brightness(0.96);
+  -webkit-backdrop-filter: blur(16px) saturate(0%) brightness(0.96);
+}
+
+[data-reduce-transparency='true'] .app-sidebar .sidebar-section-header-toggle,
+[data-reduce-transparency='true']
+  .app-sidebar
+  .sidebar-section-header-toggle:is(:hover, :focus-visible) {
+  background: var(--sidebar-section-header-pill-bg-solid) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app-sidebar .sidebar-section-header-toggle,
+  .app-sidebar .sidebar-section-header-toggle:is(:hover, :focus-visible) {
+    background: var(--sidebar-section-header-pill-bg-solid) !important;
+  }
 }

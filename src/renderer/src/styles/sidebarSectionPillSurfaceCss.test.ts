@@ -17,14 +17,37 @@ describe('sidebar section header pill surfaces', () => {
     expect(sectionPills).toBeGreaterThan(themeOverrides)
   })
 
-  it('uses a 90% black background in dark themes and 90% white in light themes', () => {
+  it('wears the SAME material as the Model Usage pane, not a solid lozenge', () => {
     const css = readRepoFile(cssPath)
+    const pane = readRepoFile('src/renderer/src/components/ModelUsageCard.css')
 
-    expect(css).toContain('--sidebar-section-header-pill-bg: rgba(0, 0, 0, 0.9)')
+    // The two pieces of chrome floating on the sidebar background must agree.
+    // Read the pane's own fills rather than restating them, so a change there
+    // fails here instead of silently drifting apart.
+    expect(pane).toContain('background-color: rgba(22, 22, 22, 0.65);')
+    expect(pane).toContain('background-color: rgba(255, 255, 255, 0.65);')
+    expect(css).toContain('--sidebar-section-header-pill-bg: rgba(22, 22, 22, 0.65)')
+    expect(css).toContain('--sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.65)')
     expect(css).toContain(
       ":is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])"
     )
-    expect(css).toContain('--sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.9)')
+    // No solid 90% fill survives in either family.
+    expect(css).not.toContain('rgba(0, 0, 0, 0.9)')
+    expect(css).not.toContain('rgba(255, 255, 255, 0.9)')
+  })
+
+  it('carries the blur that makes a 65% fill a material, and an opaque fallback without it', () => {
+    const css = readRepoFile(cssPath)
+
+    // A 65% fill with nothing blurred behind it is not glass, it is a washed-out
+    // pill — so the translucent form is gated on transparency being allowed,
+    // exactly as the pane's own glass rules are.
+    expect(css).toContain("[data-reduce-transparency='false']")
+    expect(css).toContain('backdrop-filter: blur(22px) saturate(0%) brightness(0.96)')
+    expect(css).toContain("[data-reduce-transparency='true']")
+    expect(css).toContain('--sidebar-section-header-pill-bg-solid: rgb(22, 22, 22)')
+    expect(css).toContain('--sidebar-section-header-pill-bg-solid: rgb(255, 255, 255)')
+    expect(css).toContain('@supports not ((backdrop-filter: blur(1px))')
   })
 
   it('adds a small unpainted gap between the search chrome and first section', () => {
