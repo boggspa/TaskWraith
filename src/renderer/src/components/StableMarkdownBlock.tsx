@@ -23,6 +23,7 @@ import { AgentMention } from './AgentMention'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { ParticipantMention } from './ParticipantMention'
 import { SeatChangeInlineStrip } from './SeatChangeRow'
+import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SEAT_CHANGE_LINK_PREFIX, decodeSeatChangeLink } from '../../../shared/seatChange'
 import { FaviconLink } from './FaviconLink'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
@@ -425,6 +426,28 @@ function MarkdownExternalLink({
   )
 }
 
+/** Close-out status glyph — literally the roster chip's icon and its colour
+ * class, so the table and the participants-above row read as one vocabulary
+ * rather than two lookalikes. It rides the END of the work cell ("37k Tks /
+ * 1 Turn ✓") instead of owning a column, which never earned its width. The
+ * link text stays the status word: it is the accessible name, and it is what
+ * plain-text surfaces show. */
+const ENSEMBLE_STATUS_LINK_PREFIX = 'ensemble-status://'
+
+function EnsembleStatusGlyph({ status }: { status: string }): React.JSX.Element {
+  const slug = status.toLowerCase().replace(/\s+/g, '-')
+  return (
+    <span
+      className={`ensemble-above-chip-status status-${slug} closeout-status-glyph`}
+      role="img"
+      aria-label={status}
+      title={status}
+    >
+      <ParticipantStatusIcon status={status} />
+    </span>
+  )
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   a({ href, children }) {
     if (typeof href === 'string' && href.startsWith('agent://')) {
@@ -439,6 +462,10 @@ const MARKDOWN_COMPONENTS: Components = {
     // five plain-text columns it replaced. The link TEXT is the full
     // plain-text seat description, so a surface that does not intercept the
     // scheme (TUI, iOS, copy-paste) still reads every field.
+    if (typeof href === 'string' && href.startsWith(ENSEMBLE_STATUS_LINK_PREFIX)) {
+      const status = href.slice(ENSEMBLE_STATUS_LINK_PREFIX.length).trim()
+      return status ? <EnsembleStatusGlyph status={status} /> : <>{children}</>
+    }
     if (typeof href === 'string' && href.startsWith(SEAT_CHANGE_LINK_PREFIX)) {
       const link = decodeSeatChangeLink(href)
       return link ? <SeatChangeInlineStrip link={link} /> : <>{children}</>
@@ -577,7 +604,8 @@ const SAFE_HTML_SCHEMA = {
       ...(defaultSchema.protocols?.href || []),
       'agent',
       'ensemble-dm',
-      'ensemble-seat'
+      'ensemble-seat',
+      'ensemble-status'
     ]
   }
 }
@@ -597,7 +625,8 @@ function markdownUrlTransform(value: string): string {
   if (
     value.startsWith('agent://') ||
     value.startsWith('ensemble-dm://') ||
-    value.startsWith(SEAT_CHANGE_LINK_PREFIX)
+    value.startsWith(SEAT_CHANGE_LINK_PREFIX) ||
+    value.startsWith(ENSEMBLE_STATUS_LINK_PREFIX)
   ) {
     return value
   }

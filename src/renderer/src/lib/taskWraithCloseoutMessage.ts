@@ -1152,7 +1152,7 @@ function formatParticipantTableSection(
       tokens,
       estimatedTokenParticipants.has(participant.participantId)
     )
-    return `| [${seatText}](${seatHref}) | ${workCell} |`
+    return `| [${seatText}](${seatHref}) | ${workCell} ${statusGlyph(participant.status)} |`
   })
   const totalWorkCell = formatParticipantWorkCell(
     totalTurns,
@@ -1380,6 +1380,18 @@ function formatPermissionPreset(presetId: PermissionPresetId): string {
   if (presetId === 'full_access') return TRUSTED_SESSION_LABEL
   if (presetId === 'custom') return 'Custom'
   return DEFAULT_APPROVAL_LABEL
+}
+
+/**
+ * The seat's status, riding the END of the work cell rather than owning a
+ * column — a column of glyphs never earned its width. The renderer swaps this
+ * link for the roster chip's own `ParticipantStatusIcon` plus its `status-*`
+ * colour class, so the table and the participants-above row stay one
+ * vocabulary; the link text is the status word, which is the accessible name
+ * and what plain-text surfaces read.
+ */
+function statusGlyph(status: EnsembleParticipantStatus): string {
+  return `[${status.charAt(0).toUpperCase()}${status.slice(1)}](ensemble-status://${status})`
 }
 
 /** Turns and tokens share one column: "939k Tks / 4 Turns". */

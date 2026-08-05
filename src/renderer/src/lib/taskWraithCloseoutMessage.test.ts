@@ -873,19 +873,19 @@ Next action:
     expect(closeout.content).toContain(
       '| [@Builder · Codex · GPT-5.6-Sol · Ultra · Full WS Access]' +
         '(ensemble-seat://p1?p=codex&m=gpt-5.6-sol&role=Builder&n=1&r=ultracode&k=workspace_write)' +
-        ' | 2k Tks / 2 Turns |'
+        ' | 2k Tks / 2 Turns [Answered](ensemble-status://answered) |'
     )
     expect(closeout.content).toContain(
       '| [@Reviewer · Claude · Fable 5 · Max · Ask]' +
         '(ensemble-seat://p2?p=claude&m=claude-fable-5&role=Reviewer&n=2&r=max&k=read_only)' +
-        ' | 500 Tks / 1 Turn |'
+        ' | 500 Tks / 1 Turn [Yielded](ensemble-status://yielded) |'
     )
     // No turns: no work cell at all, and the seat falls back to the
     // round-entry snapshot rather than inventing a change.
     expect(closeout.content).toContain(
       '| [@Cursor · Cursor · Composer 2.5 Fast · Accept Edits]' +
         '(ensemble-seat://p3?p=cursor&m=composer-2.5-fast&role=Cursor&n=3&k=default)' +
-        ' | — |'
+        ' | — [Skipped](ensemble-status://skipped) |'
     )
     // Kimi's "Thinking" comes from the thinking flag, not a reasoning effort —
     // the seat must carry it or the element renders a blank where the text
@@ -893,7 +893,7 @@ Next action:
     expect(closeout.content).toContain(
       '| [@Kimi · Kimi · K2.7 Coding · Thinking · Plan]' +
         '(ensemble-seat://p4?p=kimi&m=kimi-k2.7-code&role=Kimi&n=4&t=1&k=plan)' +
-        ' | ~300 Tks / 1 Turn |'
+        ' | ~300 Tks / 1 Turn [Failed](ensemble-status://failed) |'
     )
     expect(closeout.content).toContain('| **Round Total** | ~2k Tks / 4 Turns |')
     expect(closeout.content).toContain('The round used about 2k tokens in total.')
@@ -942,7 +942,8 @@ Next action:
     expect(closeout.content).not.toContain('✅')
     expect(closeout.content).not.toContain('💤')
     expect(closeout.content).not.toContain('❌')
-    expect(closeout.content).not.toContain('Status')
+    // The status COLUMN is still gone; the glyph rides the work cell instead.
+    expect(closeout.content).not.toContain('| Status |')
     expect(closeout.content).toContain('The round was completed.')
     expect(closeout.content).not.toContain('Participants:')
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
@@ -1051,8 +1052,10 @@ Next action:
         ' · Accept Edits → Full WS Access → Ask]' +
         '(ensemble-seat://seat?p=codex&m=gpt-5.6-sol&role=Lead&n=1&r=high&k=read_only' +
         '&bp=claude&bm=claude-fable-5&brole=Lead&bn=1&br=ultracode&bk=default)' +
-        ' | 3 Turns |'
+        ' | 3 Turns [Answered](ensemble-status://answered) |'
     )
+    // The total row carries NO glyph: a round has many statuses and no single
+    // one, so a glyph there would have to pick a winner.
     expect(closeout.content).toContain('| **Round Total** | 3 Turns |')
   })
 
