@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord } from '../main/store/types'
 import {
+  CHAT_UPDATE_PROTOCOL_V1,
+  CHAT_UPDATE_PROTOCOL_V2,
   applyChatUpdateDelivery,
+  buildChatRecordDelta,
+  buildChatTranscriptOps,
   buildChatUpdateDelivery,
   buildChatUpdateMessageSplice,
+  computeChatSubRevisions,
+  isChatUpdateDelivery,
   normalizeChatUpdateAck
 } from './chatUpdateTransport'
 
@@ -11,7 +17,11 @@ function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
 }
 
-function chat(revision: number, messages: ChatMessage[]): ChatRecord {
+function chat(
+  revision: number,
+  messages: ChatMessage[],
+  extras: Partial<ChatRecord> = {}
+): ChatRecord {
   return {
     appChatId: 'chat-1',
     title: 'Large ensemble',
@@ -22,7 +32,8 @@ function chat(revision: number, messages: ChatMessage[]): ChatRecord {
     runs: [],
     createdAt: 1,
     updatedAt: revision,
-    persistenceRevision: revision
+    persistenceRevision: revision,
+    ...extras
   } as ChatRecord
 }
 
@@ -52,6 +63,7 @@ describe('chat update transport', () => {
       baseline: { revision: 1, chat: first }
     })
     expect(delivery.kind).toBe('patch')
+    expect(delivery.protocolVersion).toBe(CHAT_UPDATE_PROTOCOL_V1)
     const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
     expect(applied).toEqual({ ok: true, baseline: { revision: 2, chat: next } })
   })
@@ -118,5 +130,202 @@ describe('chat update transport', () => {
     })
     expect(normalizeChatUpdateAck({ deliveryId: '', applied: true })).toBeNull()
     expect(normalizeChatUpdateAck({ deliveryId: 'delivery-1', applied: 'yes' })).toBeNull()
+    expect(
+      normalizeChatUpdateAck({
+        deliveryId: 'delivery-1',
+        applied: true,
+        revision: 9,
+        recordHash: 'deadbeef'
+      })
+    ).toEqual({
+      deliveryId: 'delivery-1',
+      applied: true,
+      revision: 9,
+      recordHash: 'deadbeef'
+    })
+  })
+
+  it('dual-reads v1 and v2 patches to the same chat (field-mask + splice/ops)', () => {
+    const first = chat(1, [message('a', 'A'), message('b', 'B')], {
+      title: 'Before',
+      pinnedNotes: 'keep-me'
+    })
+    const next = chat(2, [message('a', 'A'), message('b', 'B grew'), message('c', 'C')], {
+      title: 'After'
+    })
+
+    const v1 = buildChatUpdateDelivery({
+      deliveryId: 'v1',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V1
+    })
+    const v2 = buildChatUpdateDelivery({
+      deliveryId: 'v2',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+
+    expect(v1.protocolVersion).toBe(CHAT_UPDATE_PROTOCOL_V1)
+    expect(v2.protocolVersion).toBe(CHAT_UPDATE_PROTOCOL_V2)
+    expect(v1.kind).toBe('patch')
+    expect(v2.kind).toBe('patch')
+    if (v2.kind !== 'patch' || v2.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(v2.recordMask).toEqual(
+      expect.arrayContaining(['title', 'updatedAt', 'persistenceRevision', 'pinnedNotes'])
+    )
+    expect(v2.recordDelta.title).toBe('After')
+    expect(v2.recordCleared).toContain('pinnedNotes')
+    // Never ship a full non-message record on v2.
+    expect('record' in v2).toBe(false)
+    expect(Object.keys(v2.recordDelta).length).toBeLessThan(Object.keys(next).length)
+
+    const appliedV1 = applyChatUpdateDelivery(v1, { revision: 1, chat: first })
+    const appliedV2 = applyChatUpdateDelivery(v2, { revision: 1, chat: first })
+    expect(appliedV1.ok).toBe(true)
+    expect(appliedV2.ok).toBe(true)
+    if (!appliedV1.ok || !appliedV2.ok) throw new Error('apply failed')
+    expect(appliedV1.baseline.chat).toEqual(next)
+    expect(appliedV2.baseline.chat).toEqual(next)
+    expect(isChatUpdateDelivery(v1)).toBe(true)
+    expect(isChatUpdateDelivery(v2)).toBe(true)
+  })
+
+  it('emits transcript append/update/delete ops and applies them preferentially on v2', () => {
+    const first = chat(1, [message('a', 'A'), message('b', 'B'), message('c', 'C')])
+    const next = chat(2, [message('a', 'A'), message('c', 'C rewritten'), message('d', 'D')])
+    // delete b, update c, append d — surviving order a,c preserved.
+    const ops = buildChatTranscriptOps(first.messages, next.messages)
+    expect(ops).toEqual([
+      { op: 'delete', id: 'b' },
+      { op: 'update', id: 'c', message: message('c', 'C rewritten') },
+      { op: 'append', messages: [message('d', 'D')] }
+    ])
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'ops',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(delivery.transcriptOps).toEqual(ops)
+    expect(delivery.messages).toBeDefined()
+
+    const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
+    expect(applied).toMatchObject({
+      ok: true,
+      baseline: { revision: 2, chat: next }
+    })
+  })
+
+  it('falls back to splice on v2 when transcript ops cannot express a reorder', () => {
+    const first = chat(1, [message('a', 'A'), message('b', 'B')])
+    const next = chat(2, [message('b', 'B'), message('a', 'A')])
+    expect(buildChatTranscriptOps(first.messages, next.messages)).toBeNull()
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'reorder',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(delivery.transcriptOps).toBeUndefined()
+    expect(delivery.messages).toEqual({ start: 0, deleteCount: 2, items: next.messages })
+    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toEqual({
+      ok: true,
+      baseline: {
+        revision: 2,
+        chat: next,
+        ensembleRevision: delivery.ensembleRevision,
+        runsRevision: delivery.runsRevision,
+        recordHash: delivery.recordHash
+      }
+    })
+  })
+
+  it('builds a top-level field mask without copying unchanged large fields', () => {
+    const bulkyRuns = Array.from({ length: 40 }, (_, index) => ({
+      id: `run-${index}`,
+      status: 'done' as const
+    }))
+    const first = chat(1, [message('a', 'A')], {
+      runs: bulkyRuns as ChatRecord['runs'],
+      title: 'Same title'
+    })
+    const next = chat(2, [message('a', 'A'), message('b', 'B')], {
+      runs: bulkyRuns as ChatRecord['runs'],
+      title: 'Same title'
+    })
+    const { messages: _m1, ...prevRecord } = first
+    const { messages: _m2, ...nextRecord } = next
+    const delta = buildChatRecordDelta(prevRecord, nextRecord)
+    expect(delta.recordMask).not.toContain('runs')
+    expect(delta.recordDelta.runs).toBeUndefined()
+    expect(delta.recordMask).toEqual(expect.arrayContaining(['updatedAt', 'persistenceRevision']))
+
+    const v2 = buildChatUpdateDelivery({
+      deliveryId: 'mask',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(v2.kind).toBe('patch')
+    if (v2.kind !== 'patch' || v2.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(JSON.stringify(v2).length).toBeLessThan(
+      JSON.stringify({ ...next, runs: bulkyRuns }).length
+    )
+    expect(v2.recordDelta.runs).toBeUndefined()
+  })
+
+  it('computes stable sub-revisions and record hashes for v2 envelopes', () => {
+    const sample = chat(3, [message('a', 'A')], {
+      ensemble: { participants: [{ id: 'p1' }] } as ChatRecord['ensemble']
+    })
+    const again = computeChatSubRevisions(sample)
+    expect(computeChatSubRevisions(sample)).toEqual(again)
+    expect(again.recordHash).toMatch(/^[0-9a-f]{8}$/)
+    expect(Number.isSafeInteger(again.ensembleRevision)).toBe(true)
+    expect(Number.isSafeInteger(again.runsRevision)).toBe(true)
+  })
+
+  it('rejects unknown protocol versions while accepting both dual-read versions', () => {
+    expect(
+      isChatUpdateDelivery({
+        protocolVersion: 99,
+        kind: 'snapshot',
+        deliveryId: 'x',
+        chatId: 'c',
+        revision: 1,
+        chat: chat(1, [])
+      })
+    ).toBe(false)
+    expect(
+      isChatUpdateDelivery({
+        protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
+        kind: 'snapshot',
+        deliveryId: 'x',
+        chatId: 'c',
+        revision: 1,
+        chat: chat(1, [])
+      })
+    ).toBe(true)
   })
 })

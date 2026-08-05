@@ -2,7 +2,20 @@ import type { ChatMessage, ChatRecord } from '../main/store/types'
 
 export const CHAT_UPDATE_CHANNEL = 'chat-updated'
 export const CHAT_UPDATE_ACK_CHANNEL = 'chat-updated:ack'
-export const CHAT_UPDATE_PROTOCOL_VERSION = 1 as const
+
+/** Legacy wire shape: full non-message record on every patch. */
+export const CHAT_UPDATE_PROTOCOL_V1 = 1 as const
+/**
+ * Compact wire shape: top-level field mask + recordDelta, optional transcript
+ * ops, and sub-revision/hash envelopes. Emit remains opt-in (default v1).
+ */
+export const CHAT_UPDATE_PROTOCOL_V2 = 2 as const
+/** Highest protocol the dual-read stack understands. */
+export const CHAT_UPDATE_PROTOCOL_VERSION = CHAT_UPDATE_PROTOCOL_V2
+
+export type ChatUpdateProtocolVersion =
+  | typeof CHAT_UPDATE_PROTOCOL_V1
+  | typeof CHAT_UPDATE_PROTOCOL_V2
 
 export type ChatUpdateRecord = Omit<ChatRecord, 'messages'>
 
@@ -12,17 +25,33 @@ export interface ChatUpdateMessageSplice {
   items: ChatMessage[]
 }
 
+/** T6b transcript ops — identity-preserving alternatives to a raw splice. */
+export type ChatTranscriptOp =
+  | { op: 'append'; messages: ChatMessage[] }
+  | { op: 'update'; id: string; message: ChatMessage }
+  | { op: 'delete'; id: string }
+
+export interface ChatUpdateSubRevisions {
+  ensembleRevision: number
+  runsRevision: number
+  recordHash: string
+}
+
 export interface ChatUpdateSnapshotDelivery {
-  protocolVersion: typeof CHAT_UPDATE_PROTOCOL_VERSION
+  protocolVersion: ChatUpdateProtocolVersion
   kind: 'snapshot'
   deliveryId: string
   chatId: string
   revision: number
   chat: ChatRecord
+  ensembleRevision?: number
+  runsRevision?: number
+  recordHash?: string
 }
 
-export interface ChatUpdatePatchDelivery {
-  protocolVersion: typeof CHAT_UPDATE_PROTOCOL_VERSION
+/** v1 patch: full non-message record (legacy clients / default emit). */
+export interface ChatUpdatePatchDeliveryV1 {
+  protocolVersion: typeof CHAT_UPDATE_PROTOCOL_V1
   kind: 'patch'
   deliveryId: string
   chatId: string
@@ -32,16 +61,51 @@ export interface ChatUpdatePatchDelivery {
   messages: ChatUpdateMessageSplice
 }
 
+/**
+ * v2 patch: only changed top-level fields. Message splice is retained during
+ * dual-read when transcript ops cannot express the change; both may appear
+ * only when ops are present as the preferred path and splice is a safety copy
+ * — apply prefers transcriptOps when present.
+ */
+export interface ChatUpdatePatchDeliveryV2 {
+  protocolVersion: typeof CHAT_UPDATE_PROTOCOL_V2
+  kind: 'patch'
+  deliveryId: string
+  chatId: string
+  baseRevision: number
+  revision: number
+  /** Keys whose values changed (set or cleared). */
+  recordMask: string[]
+  /** Changed top-level fields only (never a full Omit<ChatRecord, messages>). */
+  recordDelta: Partial<ChatUpdateRecord>
+  /** Keys present on the baseline record that must be deleted. */
+  recordCleared?: string[]
+  /** Retained for dual-read when transcriptOps is absent or incomplete. */
+  messages?: ChatUpdateMessageSplice
+  transcriptOps?: ChatTranscriptOp[]
+  ensembleRevision?: number
+  runsRevision?: number
+  recordHash?: string
+}
+
+export type ChatUpdatePatchDelivery = ChatUpdatePatchDeliveryV1 | ChatUpdatePatchDeliveryV2
+
 export type ChatUpdateDelivery = ChatUpdateSnapshotDelivery | ChatUpdatePatchDelivery
 
 export interface ChatUpdateAck {
   deliveryId: string
   applied: boolean
+  /** Optional T6c-forward fields; ignored by v1 ACK consumers. */
+  revision?: number
+  recordHash?: string
 }
 
 export interface ChatUpdateBaseline {
   revision: number
   chat: ChatRecord
+  ensembleRevision?: number
+  runsRevision?: number
+  recordHash?: string
 }
 
 export type ApplyChatUpdateResult =
@@ -79,6 +143,40 @@ function plainDataEqual(a: unknown, b: unknown): boolean {
   return true
 }
 
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`
+  }
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record).sort()
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
+}
+
+function fnv1aHex(text: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+function fingerprintNumber(value: unknown): number {
+  return Number.parseInt(fnv1aHex(stableStringify(value)), 16)
+}
+
+export function computeChatSubRevisions(chat: ChatRecord): ChatUpdateSubRevisions {
+  const record = chatRecordWithoutMessages(chat)
+  return {
+    ensembleRevision: fingerprintNumber(record.ensemble ?? null),
+    runsRevision: fingerprintNumber(record.runs ?? []),
+    recordHash: fnv1aHex(stableStringify(record))
+  }
+}
+
 export function buildChatUpdateMessageSplice(
   previous: readonly ChatMessage[],
   next: readonly ChatMessage[]
@@ -104,9 +202,187 @@ export function buildChatUpdateMessageSplice(
   }
 }
 
+/**
+ * Express a transcript delta as identity-preserving ops when the change is a
+ * pure append, in-place updates by id, and/or deletes by id that preserve the
+ * relative order of surviving messages. Returns null when the delta needs a
+ * splice (reorder, id collision, insert-before-survivor, etc.).
+ */
+export function buildChatTranscriptOps(
+  previous: readonly ChatMessage[],
+  next: readonly ChatMessage[]
+): ChatTranscriptOp[] | null {
+  const prevById = new Map<string, ChatMessage>()
+  for (const message of previous) {
+    if (!message?.id || prevById.has(message.id)) return null
+    prevById.set(message.id, message)
+  }
+  const nextIds = new Set<string>()
+  for (const message of next) {
+    if (!message?.id || nextIds.has(message.id)) return null
+    nextIds.add(message.id)
+  }
+
+  const ops: ChatTranscriptOp[] = []
+  for (const message of previous) {
+    if (!nextIds.has(message.id)) {
+      ops.push({ op: 'delete', id: message.id })
+    }
+  }
+
+  const survivingPrev = previous.filter((message) => nextIds.has(message.id))
+  let survivingIndex = 0
+  const appendBatch: ChatMessage[] = []
+
+  for (const message of next) {
+    const prior = prevById.get(message.id)
+    if (!prior) {
+      // New ids are only valid as a trailing append after all survivors.
+      if (survivingIndex !== survivingPrev.length) return null
+      appendBatch.push(message)
+      continue
+    }
+    if (appendBatch.length > 0) return null
+    if (survivingPrev[survivingIndex]?.id !== message.id) return null
+    survivingIndex += 1
+    if (!plainDataEqual(prior, message)) {
+      ops.push({ op: 'update', id: message.id, message })
+    }
+  }
+
+  if (survivingIndex !== survivingPrev.length) return null
+  if (appendBatch.length > 0) {
+    ops.push({ op: 'append', messages: appendBatch })
+  }
+  return ops
+}
+
+export function applyChatTranscriptOps(
+  messages: readonly ChatMessage[],
+  ops: readonly ChatTranscriptOp[]
+): ChatMessage[] | null {
+  const next = messages.slice()
+  const indexById = new Map<string, number>()
+  for (let index = 0; index < next.length; index += 1) {
+    const id = next[index]?.id
+    if (!id || indexById.has(id)) return null
+    indexById.set(id, index)
+  }
+
+  for (const op of ops) {
+    if (op.op === 'append') {
+      if (!Array.isArray(op.messages) || op.messages.length === 0) return null
+      for (const message of op.messages) {
+        if (!message?.id || indexById.has(message.id)) return null
+        indexById.set(message.id, next.length)
+        next.push(message)
+      }
+      continue
+    }
+    if (op.op === 'update') {
+      const index = indexById.get(op.id)
+      if (index === undefined || !op.message || op.message.id !== op.id) return null
+      next[index] = op.message
+      continue
+    }
+    if (op.op === 'delete') {
+      const index = indexById.get(op.id)
+      if (index === undefined) return null
+      next.splice(index, 1)
+      indexById.delete(op.id)
+      for (let cursor = index; cursor < next.length; cursor += 1) {
+        indexById.set(next[cursor].id, cursor)
+      }
+      continue
+    }
+    return null
+  }
+  return next
+}
+
 function chatRecordWithoutMessages(chat: ChatRecord): ChatUpdateRecord {
   const { messages: _messages, ...record } = chat
   return record
+}
+
+export function buildChatRecordDelta(
+  previous: ChatUpdateRecord,
+  next: ChatUpdateRecord
+): {
+  recordMask: string[]
+  recordDelta: Partial<ChatUpdateRecord>
+  recordCleared: string[]
+} {
+  const previousKeys = Object.keys(previous)
+  const nextKeys = Object.keys(next)
+  const keySet = new Set([...previousKeys, ...nextKeys])
+  const recordMask: string[] = []
+  const recordDelta: Partial<ChatUpdateRecord> = {}
+  const recordCleared: string[] = []
+  const previousRecord = previous as Record<string, unknown>
+  const nextRecord = next as Record<string, unknown>
+
+  for (const key of keySet) {
+    const had = Object.prototype.hasOwnProperty.call(previousRecord, key)
+    const has = Object.prototype.hasOwnProperty.call(nextRecord, key)
+    if (had && !has) {
+      recordMask.push(key)
+      recordCleared.push(key)
+      continue
+    }
+    if (!plainDataEqual(previousRecord[key], nextRecord[key])) {
+      recordMask.push(key)
+      ;(recordDelta as Record<string, unknown>)[key] = nextRecord[key]
+    }
+  }
+
+  return { recordMask, recordDelta, recordCleared }
+}
+
+function applyRecordDelta(
+  baseline: ChatUpdateRecord,
+  patch: Pick<ChatUpdatePatchDeliveryV2, 'recordMask' | 'recordDelta' | 'recordCleared'>
+): ChatUpdateRecord {
+  const next = { ...baseline } as Record<string, unknown>
+  for (const key of patch.recordCleared ?? []) {
+    delete next[key]
+  }
+  for (const [key, value] of Object.entries(patch.recordDelta ?? {})) {
+    next[key] = value
+  }
+  // Mask is advisory for meters/debug; delta+cleared are authoritative.
+  void patch.recordMask
+  return next as ChatUpdateRecord
+}
+
+function applyMessageSplice(
+  baselineMessages: readonly ChatMessage[],
+  splice: ChatUpdateMessageSplice
+): ChatMessage[] | null {
+  const { start, deleteCount, items } = splice
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(deleteCount) ||
+    start < 0 ||
+    deleteCount < 0 ||
+    start > baselineMessages.length ||
+    start + deleteCount > baselineMessages.length ||
+    !Array.isArray(items)
+  ) {
+    return null
+  }
+  return [
+    ...baselineMessages.slice(0, start),
+    ...items,
+    ...baselineMessages.slice(start + deleteCount)
+  ]
+}
+
+function resolveEmitProtocolVersion(
+  requested?: ChatUpdateProtocolVersion
+): ChatUpdateProtocolVersion {
+  if (requested === CHAT_UPDATE_PROTOCOL_V2) return CHAT_UPDATE_PROTOCOL_V2
+  return CHAT_UPDATE_PROTOCOL_V1
 }
 
 export function buildChatUpdateDelivery(input: {
@@ -116,16 +392,25 @@ export function buildChatUpdateDelivery(input: {
   baseline?: ChatUpdateBaseline
   /** Fall back to a snapshot when a splice replaces this fraction of the list. */
   snapshotReplacementRatio?: number
+  /**
+   * Emit protocol. Default remains v1 for compatibility; pass 2 (or enable the
+   * coordinator flag) to emit compact field-mask patches.
+   */
+  protocolVersion?: ChatUpdateProtocolVersion
 }): ChatUpdateDelivery {
   const { baseline, chat, deliveryId, revision } = input
+  const protocolVersion = resolveEmitProtocolVersion(input.protocolVersion)
+  const sub = computeChatSubRevisions(chat)
+
   if (!baseline || baseline.chat.appChatId !== chat.appChatId) {
     return {
-      protocolVersion: CHAT_UPDATE_PROTOCOL_VERSION,
+      protocolVersion,
       kind: 'snapshot',
       deliveryId,
       chatId: chat.appChatId,
       revision,
-      chat
+      chat,
+      ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
     }
   }
 
@@ -135,25 +420,53 @@ export function buildChatUpdateDelivery(input: {
   const replacementLimit = Math.max(48, Math.ceil(chat.messages.length * ratio))
   if (replacedRows > replacementLimit) {
     return {
-      protocolVersion: CHAT_UPDATE_PROTOCOL_VERSION,
+      protocolVersion,
       kind: 'snapshot',
       deliveryId,
       chatId: chat.appChatId,
       revision,
-      chat
+      chat,
+      ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
     }
   }
 
-  return {
-    protocolVersion: CHAT_UPDATE_PROTOCOL_VERSION,
+  if (protocolVersion === CHAT_UPDATE_PROTOCOL_V1) {
+    return {
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V1,
+      kind: 'patch',
+      deliveryId,
+      chatId: chat.appChatId,
+      baseRevision: baseline.revision,
+      revision,
+      record: chatRecordWithoutMessages(chat),
+      messages
+    }
+  }
+
+  const previousRecord = chatRecordWithoutMessages(baseline.chat)
+  const nextRecord = chatRecordWithoutMessages(chat)
+  const { recordMask, recordDelta, recordCleared } = buildChatRecordDelta(
+    previousRecord,
+    nextRecord
+  )
+  const transcriptOps = buildChatTranscriptOps(baseline.chat.messages, chat.messages)
+  const patch: ChatUpdatePatchDeliveryV2 = {
+    protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
     kind: 'patch',
     deliveryId,
     chatId: chat.appChatId,
     baseRevision: baseline.revision,
     revision,
-    record: chatRecordWithoutMessages(chat),
-    messages
+    recordMask,
+    recordDelta,
+    ...(recordCleared.length > 0 ? { recordCleared } : {}),
+    // Dual-read: prefer ops when expressible; always keep splice as fallback
+    // so a v2-aware client that only implements splice still converges.
+    ...(transcriptOps ? { transcriptOps } : {}),
+    messages,
+    ...sub
   }
+  return patch
 }
 
 export function applyChatUpdateDelivery(
@@ -164,46 +477,74 @@ export function applyChatUpdateDelivery(
     if (delivery.chat.appChatId !== delivery.chatId) {
       return { ok: false, reason: 'Snapshot chat id does not match its envelope.' }
     }
-    return {
-      ok: true,
-      baseline: { revision: delivery.revision, chat: delivery.chat }
+    const nextBaseline: ChatUpdateBaseline = {
+      revision: delivery.revision,
+      chat: delivery.chat
     }
+    if (delivery.ensembleRevision !== undefined) {
+      nextBaseline.ensembleRevision = delivery.ensembleRevision
+    }
+    if (delivery.runsRevision !== undefined) {
+      nextBaseline.runsRevision = delivery.runsRevision
+    }
+    if (delivery.recordHash !== undefined) {
+      nextBaseline.recordHash = delivery.recordHash
+    }
+    return { ok: true, baseline: nextBaseline }
   }
 
   if (!baseline) return { ok: false, reason: 'Patch has no renderer baseline.' }
   if (baseline.revision !== delivery.baseRevision) {
     return { ok: false, reason: 'Patch base revision is stale.' }
   }
-  if (
-    baseline.chat.appChatId !== delivery.chatId ||
-    delivery.record.appChatId !== delivery.chatId
-  ) {
+  if (baseline.chat.appChatId !== delivery.chatId) {
     return { ok: false, reason: 'Patch chat id does not match its baseline.' }
   }
 
-  const { start, deleteCount, items } = delivery.messages
-  if (
-    !Number.isSafeInteger(start) ||
-    !Number.isSafeInteger(deleteCount) ||
-    start < 0 ||
-    deleteCount < 0 ||
-    start > baseline.chat.messages.length ||
-    start + deleteCount > baseline.chat.messages.length ||
-    !Array.isArray(items)
-  ) {
-    return { ok: false, reason: 'Patch message splice is invalid.' }
+  if (delivery.protocolVersion === CHAT_UPDATE_PROTOCOL_V1) {
+    if (delivery.record.appChatId !== delivery.chatId) {
+      return { ok: false, reason: 'Patch chat id does not match its baseline.' }
+    }
+    const spliced = applyMessageSplice(baseline.chat.messages, delivery.messages)
+    if (!spliced) return { ok: false, reason: 'Patch message splice is invalid.' }
+    return {
+      ok: true,
+      baseline: {
+        revision: delivery.revision,
+        chat: { ...delivery.record, messages: spliced }
+      }
+    }
   }
 
-  const messages = [
-    ...baseline.chat.messages.slice(0, start),
-    ...items,
-    ...baseline.chat.messages.slice(start + deleteCount)
-  ]
+  if (delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+    return { ok: false, reason: 'Unsupported chat-update protocol version.' }
+  }
+
+  const record = applyRecordDelta(chatRecordWithoutMessages(baseline.chat), delivery)
+  if (record.appChatId !== delivery.chatId) {
+    return { ok: false, reason: 'Patch chat id does not match its baseline.' }
+  }
+
+  let messages: ChatMessage[] | null = null
+  if (delivery.transcriptOps && delivery.transcriptOps.length > 0) {
+    messages = applyChatTranscriptOps(baseline.chat.messages, delivery.transcriptOps)
+    if (!messages) return { ok: false, reason: 'Patch transcript ops are invalid.' }
+  } else if (delivery.messages) {
+    messages = applyMessageSplice(baseline.chat.messages, delivery.messages)
+    if (!messages) return { ok: false, reason: 'Patch message splice is invalid.' }
+  } else {
+    return { ok: false, reason: 'Patch has neither transcript ops nor a message splice.' }
+  }
+
+  const chat = { ...record, messages }
   return {
     ok: true,
     baseline: {
       revision: delivery.revision,
-      chat: { ...delivery.record, messages }
+      chat,
+      ensembleRevision: delivery.ensembleRevision,
+      runsRevision: delivery.runsRevision,
+      recordHash: delivery.recordHash
     }
   }
 }
@@ -211,8 +552,11 @@ export function applyChatUpdateDelivery(
 export function isChatUpdateDelivery(value: unknown): value is ChatUpdateDelivery {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<ChatUpdateDelivery>
+  const version = candidate.protocolVersion
+  if (version !== CHAT_UPDATE_PROTOCOL_V1 && version !== CHAT_UPDATE_PROTOCOL_V2) {
+    return false
+  }
   return (
-    candidate.protocolVersion === CHAT_UPDATE_PROTOCOL_VERSION &&
     (candidate.kind === 'snapshot' || candidate.kind === 'patch') &&
     typeof candidate.deliveryId === 'string' &&
     candidate.deliveryId.length > 0 &&
@@ -233,5 +577,15 @@ export function normalizeChatUpdateAck(value: unknown): ChatUpdateAck | null {
   ) {
     return null
   }
-  return { deliveryId: candidate.deliveryId, applied: candidate.applied }
+  const ack: ChatUpdateAck = {
+    deliveryId: candidate.deliveryId,
+    applied: candidate.applied
+  }
+  if (Number.isSafeInteger(candidate.revision)) {
+    ack.revision = candidate.revision
+  }
+  if (typeof candidate.recordHash === 'string' && candidate.recordHash.length <= 64) {
+    ack.recordHash = candidate.recordHash
+  }
+  return ack
 }

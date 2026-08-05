@@ -1,10 +1,13 @@
 import type { ChatRecord } from './store/types'
 import {
   CHAT_UPDATE_CHANNEL,
+  CHAT_UPDATE_PROTOCOL_V1,
+  CHAT_UPDATE_PROTOCOL_V2,
   buildChatUpdateDelivery,
   type ChatUpdateAck,
   type ChatUpdateBaseline,
-  type ChatUpdateDelivery
+  type ChatUpdateDelivery,
+  type ChatUpdateProtocolVersion
 } from '../shared/chatUpdateTransport'
 
 export interface ChatUpdateDeliveryTarget {
@@ -50,9 +53,26 @@ export interface ChatUpdateDeliveryCoordinatorOptions {
   ackTimeoutMs?: number
   /** Bounds acknowledged baselines retained for patch generation per renderer. */
   maxTrackedChatsPerTarget?: number
+  /**
+   * Wire protocol for buildChatUpdateDelivery. Default remains v1; set to 2
+   * (or TASKWRAITH_CHAT_UPDATE_PROTOCOL=2) to emit compact field-mask patches.
+   * Apply dual-reads both versions regardless of this flag.
+   */
+  emitProtocolVersion?: ChatUpdateProtocolVersion
   now?: () => number
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+}
+
+function resolveEmitProtocolVersion(
+  requested?: ChatUpdateProtocolVersion
+): ChatUpdateProtocolVersion {
+  if (requested === CHAT_UPDATE_PROTOCOL_V1 || requested === CHAT_UPDATE_PROTOCOL_V2) {
+    return requested
+  }
+  const fromEnv = process.env.TASKWRAITH_CHAT_UPDATE_PROTOCOL?.trim()
+  if (fromEnv === '2') return CHAT_UPDATE_PROTOCOL_V2
+  return CHAT_UPDATE_PROTOCOL_V1
 }
 
 /**
@@ -68,6 +88,7 @@ export class ChatUpdateDeliveryCoordinator {
   private readonly minDeliveryIntervalMs: number
   private readonly ackTimeoutMs: number
   private readonly maxTrackedChatsPerTarget: number
+  private readonly emitProtocolVersion: ChatUpdateProtocolVersion
   private readonly now: () => number
   private readonly setTimer: (
     callback: () => void,
@@ -80,6 +101,7 @@ export class ChatUpdateDeliveryCoordinator {
     this.minDeliveryIntervalMs = Math.max(0, options.minDeliveryIntervalMs ?? 100)
     this.ackTimeoutMs = Math.max(0, options.ackTimeoutMs ?? 5_000)
     this.maxTrackedChatsPerTarget = Math.max(2, options.maxTrackedChatsPerTarget ?? 24)
+    this.emitProtocolVersion = resolveEmitProtocolVersion(options.emitProtocolVersion)
     this.now = options.now ?? Date.now
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer))
@@ -188,7 +210,8 @@ export class ChatUpdateDeliveryCoordinator {
       deliveryId,
       revision: next.revision,
       chat: next.chat,
-      baseline: state.acknowledged
+      baseline: state.acknowledged,
+      protocolVersion: this.emitProtocolVersion
     })
     state.inFlight = { ...next, deliveryId }
     state.lastSentAt = this.now()

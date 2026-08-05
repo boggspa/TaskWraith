@@ -53,6 +53,8 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('patch')
     if (sink.deliveries[1].kind !== 'patch') throw new Error('Expected patch')
+    expect(sink.deliveries[1].protocolVersion).toBe(1)
+    if (sink.deliveries[1].protocolVersion !== 1) throw new Error('Expected v1 patch')
     expect(sink.deliveries[1].record.updatedAt).toBe(3)
   })
 
@@ -160,7 +162,47 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     vi.advanceTimersByTime(100)
     expect(sink.deliveries).toHaveLength(2)
     if (sink.deliveries[1].kind !== 'patch') throw new Error('Expected patch')
+    expect(sink.deliveries[1].protocolVersion).toBe(1)
+    if (sink.deliveries[1].protocolVersion !== 1) throw new Error('Expected v1 patch')
     expect(sink.deliveries[1].record.updatedAt).toBe(2)
     vi.useRealTimers()
+  })
+
+  it('emits v2 field-mask patches when emitProtocolVersion is flagged', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const first = chat(1, ['one', 'stable'])
+    const latest = {
+      ...chat(3, ['one', 'stable', 'tail']),
+      title: 'Updated'
+    }
+    coordinator.enqueue(sink, first)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      applied: true
+    })
+    coordinator.enqueue(sink, latest)
+
+    const patch = sink.deliveries[1]
+    expect(patch.kind).toBe('patch')
+    expect(patch.protocolVersion).toBe(2)
+    if (patch.kind !== 'patch' || patch.protocolVersion !== 2) {
+      throw new Error('Expected v2 patch')
+    }
+    expect('record' in patch).toBe(false)
+    expect(patch.recordDelta.title).toBe('Updated')
+    expect(patch.recordMask).toEqual(expect.arrayContaining(['title', 'updatedAt']))
+
+    const firstApplied = applyChatUpdateDelivery(sink.deliveries[0])
+    expect(firstApplied.ok).toBe(true)
+    if (!firstApplied.ok) throw new Error(firstApplied.reason)
+    const patched = applyChatUpdateDelivery(patch, firstApplied.baseline)
+    expect(patched).toMatchObject({
+      ok: true,
+      baseline: { revision: patch.revision, chat: latest }
+    })
   })
 })
