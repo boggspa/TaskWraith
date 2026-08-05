@@ -448,9 +448,25 @@ for marker in .WORK-IN-PROGRESS-*.md; do
 
   # Human markers use the historical pid-ancestry rule.
   is_own_marker_claim "$marker" "$m_pid" && continue
-  # A manual marker with no pid predates the format; advise, never block.
+  # An empty pid has two very different causes and they need different words.
+  # `marker_scalar` enters a frontmatter block only on a line that is exactly
+  # `---`, and every key lookup is gated on that — so a marker without the
+  # delimiters parses EVERY field empty: pid, expires, worktree, and the whole
+  # paths list. It does not claim less, it claims nothing. Calling that "no pid"
+  # sends its author hunting for a line that is already sitting in the file
+  # (observed 2026-08-06 on two live markers, one otherwise perfectly formed).
   if [ -z "$m_pid" ]; then
-    printf '  note: %s has no pid — treating as advisory (see AGENTS.md).\n' "$marker"
+    if ! grep -qx -- '---' "$marker" 2>/dev/null; then
+      printf '  note: %s has no --- frontmatter delimiters, so every\n' "$marker"
+      printf '        field parses empty and it claims NOTHING. Wrap the fields in a\n'
+      printf '        --- ... --- block (AGENTS.md: Marker format).\n'
+    elif grep -q '^[[:space:]]*pid:' "$marker" 2>/dev/null; then
+      printf '  note: %s has a pid: line the frontmatter parser cannot\n' "$marker"
+      printf '        reach, so it claims NOTHING. Every field must sit inside the\n'
+      printf '        --- ... --- block (AGENTS.md: Marker format).\n'
+    else
+      printf '  note: %s has no pid — treating as advisory (see AGENTS.md).\n' "$marker"
+    fi
     warn=1
     continue
   fi

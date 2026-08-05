@@ -314,6 +314,51 @@ write_derived_marker "$repo" owner-unreadable false '' src/hunk.ts "$foreign_pid
 set_marker_expires "$repo/.WORK-IN-PROGRESS-taskwraith-runtime-test.md" 'tomorrow-ish'
 expect_block 'derived projections with an unreadable lease still fail closed' "$repo"
 
+# A marker whose fields are NOT wrapped in `---` parses every field empty — pid,
+# expires, worktree and the whole paths list — so it claims nothing at all. The
+# hook used to report that as "has no pid", which sent its author hunting for a
+# line that was already there. Observed in the wild 2026-08-06: two live markers
+# in this shape, one of them otherwise perfectly formed.
+write_delimiterless_marker() {
+  local repo="$1" marker_pid="$2" path="$3"
+  printf '%s\n' \
+    "pid: $marker_pid" \
+    'expires: 2099-07-29T00:00:00Z' \
+    'paths:' \
+    "  - $path" \
+    'no delimiters anywhere' > "$repo/.WORK-IN-PROGRESS-manual-test.md"
+}
+
+repo="$(new_repo delimiterless-marker)"
+stage_file "$repo" src/manual.ts
+write_delimiterless_marker "$repo" "$foreign_pid" src/manual.ts
+expect_allow 'a marker with no --- delimiters cannot block' "$repo"
+if [[ "$hook_output" != *'claims NOTHING'* ]]; then
+  printf 'FAIL: delimiterless marker was not diagnosed honestly\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+if [[ "$hook_output" == *'has no pid'* ]]; then
+  printf 'FAIL: delimiterless marker still misreported as "has no pid"\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+# A marker that genuinely omits pid keeps the historical advisory wording.
+repo="$(new_repo genuinely-pidless)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+sed '/^pid:/d' "$repo/.WORK-IN-PROGRESS-manual-test.md" \
+  > "$repo/.WORK-IN-PROGRESS-manual-test.md.next"
+mv "$repo/.WORK-IN-PROGRESS-manual-test.md.next" "$repo/.WORK-IN-PROGRESS-manual-test.md"
+expect_allow 'a marker that genuinely omits pid stays advisory' "$repo"
+if [[ "$hook_output" != *'has no pid'* ]]; then
+  printf 'FAIL: genuinely pidless marker lost its advisory note\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
 # Section 4's mirror: the hook must say something to a session that is committing
 # with no claim of its own. Path COVERAGE is deliberately not checked here —
 # work-guard section 6 already owns "dirty path no live claim covers"; this owns
