@@ -43,7 +43,7 @@ const {
   SESSION_CHECKPOINT_RELATIVE_PATH
 } = require('./materializeUserData.cjs')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
-const { createCdpEvaluateAdapter } = require('./replayDriver.cjs')
+const { createCdpEvaluateAdapter, runDeterministicReplay } = require('./replayDriver.cjs')
 const { runBaselineCli } = require('./runBaseline.cjs')
 const { dirtyTreeFingerprint, collectRepoProvenance } = require('./repoProvenance.cjs')
 
@@ -1033,6 +1033,75 @@ describe('T2 CDP evaluate adapter (renderer failures must abort, not vanish)', (
   it('returns the value for clean evaluations', async () => {
     const adapter = createCdpEvaluateAdapter({ send: async () => ({ result: { value: 7 } }) })
     await expect(adapter.evaluate('7')).resolves.toBe(7)
+  })
+})
+
+describe('T2 replay against a revision-CAS store (ChatService contract)', () => {
+  // ChatService.saveChatInternal rejects any save whose persistenceRevision
+  // differs from the current canonical record — silently, by returning the
+  // current record. Main then assigns canonical = previous + 1 on acceptance.
+  // A driver that synthesizes revisions instead of consuming the returned
+  // canonical lands exactly ONE save (the seed) and no-ops every later event,
+  // which is how seed-42 attempt 3 ran 300+ events against a coalescer that
+  // scheduled once. Every save-kind event must land against a CAS store.
+  function createRevisionCasApi(fixture) {
+    /** @type {Map<string, { revision: number }>} */
+    const canonical = new Map()
+    for (const chat of fixture.chats) {
+      canonical.set(chat.appChatId, { revision: chat.persistenceRevision || 1 })
+    }
+    let accepted = 0
+    let rejected = 0
+    return {
+      stats() {
+        return { accepted, rejected }
+      },
+      async getChat(chatId) {
+        const entry = canonical.get(chatId)
+        if (!entry) return null
+        const chat = fixture.chats.find((c) => c.appChatId === chatId)
+        return { ...chat, persistenceRevision: entry.revision }
+      },
+      async saveChat(chat) {
+        const entry = canonical.get(chat.appChatId)
+        if (!entry) return null
+        if ((chat.persistenceRevision || 1) !== entry.revision) {
+          rejected += 1
+          // ChatService returns the CURRENT record unchanged on CAS mismatch.
+          return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+        }
+        entry.revision += 1
+        accepted += 1
+        return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+      }
+    }
+  }
+
+  it('lands every save-kind event (consumes the returned canonical revision)', async () => {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 42,
+      baseTimestamp: 1_700_000_000_000,
+      lean: true,
+      scaleDown: 8
+    })
+    const api = createRevisionCasApi(fixture)
+    const saveKinds = new Set([
+      'seed_chat',
+      'append_user',
+      'append_assistant',
+      'tool_batch_complete',
+      'durability_soft_flush'
+    ])
+    const expectedSaves = fixture.replaySchedule.filter((e) => saveKinds.has(e.kind)).length
+    expect(expectedSaves).toBeGreaterThan(4)
+    const result = await runDeterministicReplay({ fixture, api })
+    expect(result.ok).toBe(true)
+    expect(
+      api.stats().rejected,
+      'CAS store rejected replay saves — the driver is not consuming canonical revisions'
+    ).toBe(0)
+    expect(api.stats().accepted).toBe(expectedSaves)
   })
 })
 

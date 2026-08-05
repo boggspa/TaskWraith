@@ -114,7 +114,10 @@ function createCdpPageApiAdapter(page) {
     },
     async saveChat(chat) {
       // Pass chat via JSON to avoid expression injection; still bounded by CDP.
-      const expr = `(function(){ const chat = ${JSON.stringify(chat)}; return Promise.resolve(window.api.saveChat(chat)); })()`
+      // Return ONLY the canonical ack fields: returning the full canonical
+      // record would ship the whole multi-MB chat back over CDP per save, and
+      // the driver needs nothing but the revision to stamp its next save.
+      const expr = `(function(){ const chat = ${JSON.stringify(chat)}; return Promise.resolve(window.api.saveChat(chat)).then((saved) => saved && typeof saved === 'object' ? { persistenceRevision: saved.persistenceRevision, updatedAt: saved.updatedAt } : saved); })()`
       return await page.evaluate(expr)
     }
   }
@@ -188,6 +191,48 @@ function buildMessagePrefixBatches(fullChat, batchSize = DEFAULT_BATCH_SIZE) {
 }
 
 /**
+ * Save one record through the page API, sending the CURRENT canonical
+ * revision and consuming the revision the store returns.
+ *
+ * ChatService.saveChatInternal is a compare-and-swap: a save whose
+ * persistenceRevision differs from the canonical record is dropped by
+ * returning the current record, with no error. Main assigns canonical =
+ * previous + 1 on acceptance. So the driver must (a) stamp each save with the
+ * canonical revision it last observed, and (b) treat a non-advancing ack as
+ * the rejection it is. Synthesizing revisions client-side is how seed-42
+ * attempt 3 completed 300+ events while the store's coalescer scheduled once.
+ *
+ * Acks without a numeric persistenceRevision (test fakes, degraded adapters)
+ * skip the advance assertion — the CDP page adapter always returns one.
+ *
+ * @param {object} ctx
+ * @param {object} event
+ * @param {object} record
+ */
+async function performTrackedSave(ctx, event, record) {
+  const chatId = event.appChatId
+  const known = ctx.canonicalRevisions.get(chatId)
+  const sentRevision = known != null ? known : record.persistenceRevision || 1
+  record.persistenceRevision = sentRevision
+  const ack = await ctx.api.saveChat(record)
+  const ackRevision =
+    ack && typeof ack.persistenceRevision === 'number' ? ack.persistenceRevision : null
+  if (ackRevision != null) {
+    if (ackRevision <= sentRevision) {
+      const error = new Error(
+        `T2 replay save did not advance the canonical revision at seq=${String(event.seq)} ` +
+          `(${String(event.kind)}): sent ${sentRevision}, store returned ${ackRevision} — ` +
+          `the store rejected the save`
+      )
+      error.code = 'T2_REPLAY_SAVE_REJECTED'
+      throw error
+    }
+    ctx.canonicalRevisions.set(chatId, ackRevision)
+  }
+  ctx.savedCounts.set(chatId, (ctx.savedCounts.get(chatId) || 0) + 1)
+}
+
+/**
  * Apply a single replay schedule event against in-memory chat + page API.
  * @param {object} ctx
  * @param {object} event
@@ -206,8 +251,7 @@ async function applyReplayEvent(ctx, event) {
         return { ok: false, unsupported: true }
       }
       // Seed: save full fixture chat once so subsequent prefix saves mutate HEAD paths.
-      await ctx.api.saveChat(structuredCloneChat(chat))
-      ctx.savedCounts.set(event.appChatId, (ctx.savedCounts.get(event.appChatId) || 0) + 1)
+      await performTrackedSave(ctx, event, structuredCloneChat(chat))
       return { ok: true, kind: event.kind }
     }
     case 'append_user':
@@ -235,8 +279,6 @@ async function applyReplayEvent(ctx, event) {
       const next = structuredCloneChat(chat)
       next.messages = chat.messages.slice(0, Math.max(end, 0))
       next.updatedAt = (chat.updatedAt || 0) + (event.seq || 1)
-      next.persistenceRevision =
-        (chat.persistenceRevision || 1) + (ctx.savedCounts.get(event.appChatId) || 0) + 1
       // Explicit unsupported: integrated orchestrator live ticks are not simulated.
       if (event.kind === 'durability_soft_flush') {
         unsupported.push({
@@ -246,8 +288,7 @@ async function applyReplayEvent(ctx, event) {
             'fixture replay does not drive EnsembleOrchestrator; D1 soft flush approximated via saveChat only'
         })
       }
-      await ctx.api.saveChat(next)
-      ctx.savedCounts.set(event.appChatId, (ctx.savedCounts.get(event.appChatId) || 0) + 1)
+      await performTrackedSave(ctx, event, next)
       return { ok: true, kind: event.kind, messageCount: next.messages.length }
     }
     case 'run_still_running': {
@@ -335,7 +376,9 @@ async function runDeterministicReplay(options) {
   const unsupported = []
   /** @type {Map<string, number>} */
   const savedCounts = new Map()
-  const ctx = { api: options.api, chatsById, unsupported, savedCounts }
+  /** Canonical persistenceRevision per chat, as returned by the store. */
+  const canonicalRevisions = new Map()
+  const ctx = { api: options.api, chatsById, unsupported, savedCounts, canonicalRevisions }
 
   const maxEvents = options.maxEvents == null ? fixture.replaySchedule.length : options.maxEvents
   const events = fixture.replaySchedule.slice(0, maxEvents)
