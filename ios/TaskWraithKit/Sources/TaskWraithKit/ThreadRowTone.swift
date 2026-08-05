@@ -12,6 +12,9 @@ import Foundation
 /// change to the Mac-side thread projection was needed.
 public enum TWThreadRowTone: String, Sendable, Equatable, CaseIterable {
     case waiting
+    /// Parked on a CLOCK rather than on a person: nothing is owed, the run
+    /// wakes itself. Live state like `waiting` - no acknowledgement, no epoch.
+    case sleeping
     case success
     case failure
 }
@@ -40,6 +43,7 @@ public enum TWThreadRowToneResolver {
     /// purpose, so it is neither news nor a problem.
     private static let neutralStatuses: Set<String> = ["cancelled", "canceled"]
     private static let runningStatuses: Set<String> = ["running", "queued"]
+    private static let sleepingStatuses: Set<String> = ["sleeping"]
 
     /// Formatters are built per call rather than cached: ISO8601DateFormatter
     /// is not Sendable, so a static one is a strict-concurrency error. Matches
@@ -69,6 +73,11 @@ public enum TWThreadRowToneResolver {
         runningStatuses.contains(card.status ?? "")
     }
 
+    /// Is the newest run asleep, waiting on a clock to wake it?
+    public static func isSleeping(_ card: RemoteTaskCard) -> Bool {
+        sleepingStatuses.contains((card.status ?? "").lowercased())
+    }
+
     /// The latest durable result, or nil while the thread is unsettled or its
     /// ending was neutral.
     ///
@@ -92,7 +101,7 @@ public enum TWThreadRowToneResolver {
             // Concrete failure evidence still surfaces.
             if successStatuses.contains(status) { return nil }
         }
-        if neutralStatuses.contains(status) || isRunning(card) { return nil }
+        if neutralStatuses.contains(status) || isRunning(card) || isSleeping(card) { return nil }
 
         let tone: TWThreadRowTone
         if successStatuses.contains(status) {
@@ -125,12 +134,14 @@ public enum TWThreadRowToneResolver {
         return settledAt < epoch
     }
 
-    /// Full resolution, in the desktop's precedence order.
+    /// Full resolution, in the desktop's precedence order:
+    /// waiting > sleeping > settled outcome.
     ///
     /// A thread parked on the user outranks any unread settled outcome, and —
     /// unlike those — survives the running check: the run is blocked, not
     /// finished. It also needs no acknowledgement, clearing itself when the
-    /// answer lands.
+    /// answer lands. Sleeping behaves the same way, on a clock instead of a
+    /// person.
     public static func tone(
         for card: RemoteTaskCard,
         isSelected: Bool,
@@ -140,9 +151,16 @@ public enum TWThreadRowToneResolver {
         // The open thread shows its own modal/card; the row need not shout.
         if isSelected { return nil }
         if isAwaitingUserResponse(card) { return .waiting }
+        // A person outranks a clock; a clock outranks a finished result,
+        // because the thread has not actually finished.
+        if isSleeping(card) { return .sleeping }
         if isRunning(card) { return nil }
         guard let outcome = outcome(for: card) else { return nil }
         if successInkPredatesEpoch(outcome, epoch: successInkEpoch) { return nil }
+        // Failure ink is NOT unread-scoped. A success is news - once seen it
+        // retires. A failure is a standing condition: the thread is broken
+        // until a NEW result changes it, and reading it does not fix it.
+        if outcome.tone == .failure { return .failure }
         guard acknowledgements[card.id] != outcome.fingerprint else { return nil }
         return outcome.tone
     }

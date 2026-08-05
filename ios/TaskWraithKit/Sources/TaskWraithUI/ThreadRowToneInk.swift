@@ -18,9 +18,23 @@ public enum TWThreadRowToneInk {
     public static func color(for tone: TWThreadRowTone) -> Color {
         switch tone {
         case .waiting: return TWTheme.statusAttention
+        case .sleeping: return sleepingInk
         case .success: return TWTheme.diffStatAdd
         case .failure: return TWTheme.diffStatDel
         }
+    }
+
+    /// Sea blue — neither "finished" nor "needs you", the two things a
+    /// sleeping run must not be mistaken for.
+    ///
+    /// The only tone that varies by theme brightness. The other three are
+    /// legible either way (the diff hues are the user's own; amber carries on
+    /// white), but a blue bright enough for dark chrome washes out on a light
+    /// thread list. The pair is contrast-BALANCED rather than merely passing —
+    /// 7.9:1 on the dark list, 7.0:1 on the light one — and matches the
+    /// desktop sidebar's #57b6d9 / #15607a exactly.
+    static var sleepingInk: Color {
+        TWThemeStore.shared.systemTheme.isLight ? Color(hex: 0x15607A) : Color(hex: 0x57B6D9)
     }
 
     /// Sweep period, matching the desktop keyframe duration.
@@ -29,6 +43,7 @@ public enum TWThreadRowToneInk {
     public static func accessibilityLabel(for tone: TWThreadRowTone, title: String) -> String {
         switch tone {
         case .waiting: return "\(title), waiting on your response"
+        case .sleeping: return "\(title), sleeping until its next wake-up"
         case .success: return "\(title), completed successfully, unread"
         case .failure: return "\(title), blocked or failed, unread"
         }

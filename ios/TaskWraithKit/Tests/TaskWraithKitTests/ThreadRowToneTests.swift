@@ -225,3 +225,68 @@ struct ThreadRowToneStoreTests {
         #expect(reloaded.currentAcknowledgements["chat-1"] == "run:1:success")
     }
 }
+
+@Suite("Thread row tone — sleeping")
+struct ThreadRowToneSleepingTests {
+    @Test("a sleeping run inks sleeping and is not an outcome")
+    func sleepingIsNotAnOutcome() {
+        let napping = card(status: "sleeping")
+        #expect(TWThreadRowToneResolver.isSleeping(napping))
+        // Nothing has settled — a sleeping run has not finished anything.
+        #expect(TWThreadRowToneResolver.outcome(for: napping) == nil)
+        #expect(
+            TWThreadRowToneResolver.tone(
+                for: napping, isSelected: false, acknowledgements: [:], successInkEpoch: epoch)
+                == .sleeping)
+    }
+
+    @Test("a person outranks a clock")
+    func waitingBeatsSleeping() {
+        let tone = TWThreadRowToneResolver.tone(
+            for: card(status: "sleeping", pendingApprovalCount: 1), isSelected: false,
+            acknowledgements: [:], successInkEpoch: epoch)
+        #expect(tone == .waiting)
+    }
+
+    @Test("it needs no acknowledgement — it retires when the run wakes")
+    func clearsOnWake() {
+        let awake = card(status: "running")
+        #expect(
+            TWThreadRowToneResolver.tone(
+                for: awake, isSelected: false, acknowledgements: [:], successInkEpoch: epoch) == nil)
+    }
+}
+
+@Suite("Thread row tone — failure persistence")
+struct ThreadRowToneFailurePersistenceTests {
+    @Test("red stands after acknowledgement — reading it does not fix it")
+    func failureIgnoresTheAckGate() {
+        let broken = card(status: "failed", updatedAt: afterEpoch)
+        let outcome = TWThreadRowToneResolver.outcome(for: broken)!
+        #expect(
+            TWThreadRowToneResolver.tone(
+                for: broken, isSelected: false,
+                acknowledgements: ["chat-1": outcome.fingerprint], successInkEpoch: epoch)
+                == .failure)
+    }
+
+    @Test("green still retires — success is news, failure is a condition")
+    func successStillRetires() {
+        let ok = card(status: "success", updatedAt: afterEpoch)
+        let outcome = TWThreadRowToneResolver.outcome(for: ok)!
+        #expect(
+            TWThreadRowToneResolver.tone(
+                for: ok, isSelected: false, acknowledgements: ["chat-1": outcome.fingerprint],
+                successInkEpoch: epoch) == nil)
+    }
+
+    @Test("a later success supersedes it rather than stacking")
+    func newResultSupersedes() {
+        let recovered = card(status: "success", runId: "run-2", updatedAt: afterEpoch)
+        #expect(
+            TWThreadRowToneResolver.tone(
+                for: recovered, isSelected: false, acknowledgements: [:], successInkEpoch: epoch)
+                == .success)
+    }
+}
+
