@@ -72,7 +72,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
   it('uses opaque black for Reduce Transparency and pure white for light themes', () => {
     const reduced = rule("[data-appearance='solid']")
     const light = rule(
-      ":is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-appearance]"
+      ":is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])[data-appearance]"
     )
 
     expect(reduced).toContain("[data-reduce-transparency='true']")
@@ -140,5 +140,18 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(rows).toContain('border-radius: 9px;')
     expect(rows).toContain('gap: 1px;')
     expect(value).toContain('border-radius: 999px;')
+  })
+})
+
+describe('Model Usage pane light-family coverage', () => {
+  it('treats citrus as light, like every other light-family theme', () => {
+    // citrus sets --app-bg: #f8fafc and is grouped with light/mist/sage in
+    // theme.css, but the pane's light override omitted it — so the pane painted
+    // its DARK 22,22,22 material on a pale sidebar. The sidebar section pills
+    // that now share this material always had citrus in their list, which is
+    // how the gap surfaced.
+    expect(css).toContain("[data-theme='citrus']")
+    const lightBlock = css.slice(css.indexOf("[data-theme='light']"))
+    expect(lightBlock).toContain('background-color: rgba(255, 255, 255, 0.65);')
   })
 })
