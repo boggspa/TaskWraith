@@ -787,7 +787,12 @@ export function ThinkingIndicator({
         </span>
       </span>
       <span className="message-working-text">
-        <span className="message-working-label">{label}</span>
+        {/* data-label feeds the glow/sweep layers, which echo the text via
+            attr() so neither has to repaint the other. This span's own text
+            stays for assistive tech. */}
+        <span className="message-working-label" data-label={label}>
+          {label}
+        </span>
         <span className="thinking-dots" aria-hidden>
           <span className="thinking-dot" />
           <span className="thinking-dot" />

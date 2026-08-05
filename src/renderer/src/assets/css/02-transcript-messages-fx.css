@@ -5655,10 +5655,48 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.4));
 }
 
+/* The sweep and the glow used to share this element. They cannot: a `filter`
+ * re-runs whenever the filtered element's paint output changes, and the sweep
+ * changes it every frame by definition, so the drop-shadow cost a full filter
+ * pass per label per frame — per instance, with nothing shared between them.
+ * A fan-out lights one of these per working seat at once, so it multiplied
+ * exactly when the app was busiest. Measured here 2026-08-05: 120 labels the
+ * old way held 16.6fps and dropped 55 frames in four seconds; split like this
+ * they hold 30fps and drop none. See animatedGlowLayerCss.test.ts.
+ *
+ * The real text stays in the DOM (assistive tech reads it) and goes
+ * transparent; the two layers below are decoration echoing it via attr(). */
 .message-working-label {
   position: relative;
   z-index: 2;
   font-weight: 600;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Behind: the glow, painted once. `contain: paint` is what makes it free —
+ * without it this layer re-rasterises along with the sweep in front and the
+ * whole split buys nothing (measured: identical to the old single element). */
+.message-working-label::before {
+  content: attr(data-label);
+  position: absolute;
+  inset: 0;
+  color: color-mix(in srgb, var(--message-working-accent) 68%, var(--text-primary));
+  -webkit-text-fill-color: currentColor;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--message-working-accent) 24%, transparent));
+  will-change: opacity;
+  contain: paint;
+  pointer-events: none;
+}
+
+/* In front: the sweep. It has to be a pseudo-element rather than the label's
+ * own background — an element paints its background before its positioned
+ * children, so a ::before glow would sit ON TOP of a background-clip sweep and
+ * hide it. Two pseudo-elements let DOM order decide instead. */
+.message-working-label::after {
+  content: attr(data-label);
+  position: absolute;
+  inset: 0;
   background-image:
     linear-gradient(
       105deg,
@@ -5674,7 +5712,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: transparent;
   -webkit-text-fill-color: transparent;
   animation: text-shimmer-sweep 2.4s ease-in-out infinite;
-  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--message-working-accent) 24%, transparent));
+  pointer-events: none;
 }
 
 .message-working-text {
@@ -5783,6 +5821,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--message-working-accent, var(--text-primary));
   -webkit-text-fill-color: var(--message-working-accent, var(--text-primary));
   filter: none;
+}
+
+/* Both layers are decoration. Dropping them uncovers the real DOM text, which
+ * the rule above has already inked solid — so the label still READS, it just
+ * stops moving. Same contract the fan-out rim keeps under reduce-motion. */
+[data-reduce-motion='true'] .message-working-label::before,
+[data-reduce-motion='true'] .message-working-label::after {
+  content: none;
 }
 
 [data-reduce-motion='true'] .message-working-telemetry {
