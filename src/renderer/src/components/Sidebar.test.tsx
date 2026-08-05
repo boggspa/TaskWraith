@@ -23,7 +23,9 @@ import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
 import {
+  SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY,
   SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY,
+  loadOrSeedSidebarSuccessInkEpoch,
   projectSidebarTerminalOutcome
 } from '../lib/sidebarTerminalOutcome'
 
@@ -147,6 +149,12 @@ function makeWorkspaceBoard(
 
 function stubSidebarStorage(values: Record<string, string>) {
   const store = new Map(Object.entries(values))
+  // Established install by default: the success-ink epoch is already seeded
+  // and long past, so settled fixtures read as post-upgrade results. Tests
+  // that exercise the FIRST launch after upgrading set it themselves.
+  if (!store.has(SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY)) {
+    store.set(SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY, '1')
+  }
   if (
     store.has(COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY) &&
     !store.has(COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY)
@@ -1719,6 +1727,111 @@ describe('Sidebar unread terminal outcome accent', () => {
     expect(renderSidebar([completed, viewer], { activeChatId: 'viewer' })).not.toContain(
       'sidebar-terminal-outcome-success'
     )
+  })
+})
+
+describe('Sidebar success-ink epoch (first launch after upgrading)', () => {
+  const settledRun = (endedAt: string) => ({
+    runId: 'run-1',
+    startedAt: '2026-08-03T20:00:00.000Z',
+    endedAt,
+    status: 'success' as const,
+    exitCode: 0
+  })
+  const failedRun = (endedAt: string) => ({
+    runId: 'run-2',
+    startedAt: '2026-08-03T20:00:00.000Z',
+    endedAt,
+    status: 'failed' as const,
+    exitCode: 1
+  })
+  const EPOCH = Date.parse('2026-08-05T00:00:00.000Z')
+  const BEFORE = '2026-08-04T12:00:00.000Z'
+  const AFTER = '2026-08-05T12:00:00.000Z'
+
+  it('withholds green from work that had already finished before the upgrade', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents'),
+      [SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY]: String(EPOCH)
+    })
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'old-success',
+          title: 'Old success',
+          updatedAt: 3,
+          runs: [settledRun(BEFORE)]
+        }),
+        makeChat({ appChatId: 'viewer', updatedAt: 1 })
+      ],
+      { activeChatId: 'viewer' }
+    )
+    // Upgrading must not light a year of finished work green at once.
+    expect(html).not.toContain('sidebar-terminal-outcome-success')
+    expect(html).toContain('Old success')
+  })
+
+  it('still flags an old FAILURE — unfinished business the user may never have seen', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents'),
+      [SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY]: String(EPOCH)
+    })
+    expect(
+      renderSidebar(
+        [
+          makeChat({
+            appChatId: 'old-failure',
+            title: 'Old failure',
+            updatedAt: 3,
+            runs: [failedRun(BEFORE)]
+          }),
+          makeChat({ appChatId: 'viewer', updatedAt: 1 })
+        ],
+        { activeChatId: 'viewer' }
+      )
+    ).toContain('sidebar-terminal-outcome-failure')
+  })
+
+  it('greens a result that settled after the upgrade, on any thread', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents'),
+      [SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY]: String(EPOCH)
+    })
+    // Per-RESULT, not per-thread: this thread is ancient, its newest run is
+    // not, so it reads like any other fresh success.
+    expect(
+      renderSidebar(
+        [
+          makeChat({
+            appChatId: 'revived',
+            title: 'Revived thread',
+            createdAt: 1,
+            updatedAt: 2,
+            runs: [settledRun(AFTER)]
+          }),
+          makeChat({ appChatId: 'viewer', updatedAt: 1 })
+        ],
+        { activeChatId: 'viewer' }
+      )
+    ).toContain('sidebar-terminal-outcome-success')
+  })
+
+  it('seeds the epoch on first read and never moves it again', () => {
+    const setItem = vi.fn()
+    const store = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        setItem(key, value)
+        store.set(key, value)
+      }
+    }
+    expect(loadOrSeedSidebarSuccessInkEpoch(1_000, storage)).toBe(1_000)
+    expect(setItem).toHaveBeenCalledWith(SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY, '1000')
+    // A later launch reads the seed back rather than re-stamping "now",
+    // otherwise every launch would re-hide the previous session's results.
+    expect(loadOrSeedSidebarSuccessInkEpoch(9_999, storage)).toBe(1_000)
+    expect(setItem).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -3,6 +3,8 @@ import type { ChatListItem, ChatRecord, ChatRun } from '../../../main/store/type
 export const SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY =
   'taskwraith-sidebar-terminal-outcome-acknowledgements-v1'
 
+export const SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY = 'taskwraith-sidebar-success-ink-epoch-v1'
+
 export type SidebarTerminalOutcomeTone = 'success' | 'failure'
 
 /**
@@ -54,6 +56,10 @@ export interface SidebarTerminalOutcomeProjection {
   fingerprint: string
   source: 'goal' | 'round' | 'run'
   tone: SidebarTerminalOutcomeTone
+  /** When this result landed (epoch ms), for the success-ink epoch below.
+   * Falls back to the chat's own `updatedAt` when the run/round/goal did not
+   * record an end timestamp. */
+  settledAtMs: number | null
 }
 
 export type SidebarTerminalOutcomeAcknowledgements = Record<string, string>
@@ -67,6 +73,8 @@ interface TerminalEvidence {
   activeGoalId?: string
   fingerprint: string
   startedAt?: string
+  /** When the unit ended, when it recorded one. */
+  endedAt?: string
   tone: SidebarTerminalOutcomeTone | null
 }
 
@@ -104,6 +112,7 @@ function terminalRunEvidence(run: ChatRun | undefined): TerminalEvidence | null 
   return {
     ...(run.activeGoalId ? { activeGoalId: run.activeGoalId } : {}),
     ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+    ...(run.endedAt ? { endedAt: run.endedAt } : {}),
     fingerprint: [
       'run',
       run.runId,
@@ -146,6 +155,7 @@ function terminalRoundEvidence(chat: ChatRecord): TerminalEvidence | null {
       blockerKinds.join(',')
     ].join(':'),
     startedAt: round.startedAt,
+    ...(round.endedAt ? { endedAt: round.endedAt } : {}),
     tone
   }
 }
@@ -168,6 +178,15 @@ function parseTimestamp(value: string | undefined): number | null {
   if (!value) return null
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+/** Best available "when did this land". A terminal unit that recorded no end
+ * timestamp falls back to the chat's own `updatedAt`, which is the closest
+ * durable proxy — better than treating the result as undateable, which would
+ * park it on the wrong side of the success-ink epoch forever. */
+function settledAtMsFor(chat: ChatRecord, preferred: number | null): number | null {
+  if (preferred !== null) return preferred
+  return typeof chat.updatedAt === 'number' ? chat.updatedAt : null
 }
 
 function terminalGoalTimestamp(chat: ChatRecord): string | undefined {
@@ -223,7 +242,8 @@ export function projectSidebarTerminalOutcome(
         evidence?.fingerprint || 'standalone'
       ].join(':'),
       source: 'goal',
-      tone: goal.status === 'completed' ? 'success' : 'failure'
+      tone: goal.status === 'completed' ? 'success' : 'failure',
+      settledAtMs: settledAtMsFor(chat, parseTimestamp(goalTimestamp) ?? parseTimestamp(evidence?.endedAt))
     }
   }
 
@@ -239,7 +259,8 @@ export function projectSidebarTerminalOutcome(
   return {
     fingerprint: evidence.fingerprint,
     source: chat.ensemble?.activeRound ? 'round' : 'run',
-    tone: evidence.tone
+    tone: evidence.tone,
+    settledAtMs: settledAtMsFor(chat, parseTimestamp(evidence.endedAt))
   }
 }
 
@@ -279,6 +300,60 @@ export function persistSidebarTerminalOutcomeAcknowledgements(
   } catch {
     // Renderer-local acknowledgement is best effort when storage is unavailable.
   }
+}
+
+/**
+ * First moment this install could have shown success ink, seeded on first read
+ * and never moved again.
+ *
+ * Without it, the very first launch after upgrading lights up EVERY settled
+ * thread in the sidebar green at once: the unread check is fingerprint-based,
+ * and a fresh install has acknowledged nothing, so a year of finished work all
+ * reads as brand-new. That is noise, not news.
+ *
+ * An epoch rather than bulk-acknowledging every existing outcome: it is one
+ * value instead of thousands (the ack store caps at 2,000 entries and would
+ * silently drop the overflow), and it stays correct for threads that were not
+ * loaded at seed time.
+ */
+export function loadOrSeedSidebarSuccessInkEpoch(
+  nowMs: number,
+  storage: SidebarTerminalOutcomeStorage | null = defaultStorage()
+): number {
+  if (!storage) return nowMs
+  try {
+    const raw = storage.getItem(SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY)
+    const parsed = raw === null ? Number.NaN : Number(raw)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+    storage.setItem(SIDEBAR_SUCCESS_INK_EPOCH_STORAGE_KEY, String(nowMs))
+    return nowMs
+  } catch {
+    return nowMs
+  }
+}
+
+/**
+ * Should this outcome's ink be withheld as pre-existing history?
+ *
+ * SUCCESS only. A failure from before the upgrade is still worth flagging —
+ * it is unfinished business the user may never have seen — while a success
+ * from before the upgrade is a result they already lived through.
+ *
+ * The cutoff is per-RESULT, not per-thread: an old thread that runs again and
+ * succeeds settles after the epoch and shows green like any other new result.
+ * Only what had already finished before the upgrade stays quiet.
+ */
+export function sidebarSuccessInkPredatesEpoch(
+  outcome: SidebarTerminalOutcomeProjection,
+  epochMs: number | null
+): boolean {
+  if (outcome.tone !== 'success') return false
+  if (epochMs === null) return false
+  // An undateable success is treated as history. Every live code path stamps
+  // one (run/round/goal end, else the chat's updatedAt), so this is the
+  // defensive arm — and erring toward quiet is the whole point of the epoch.
+  if (outcome.settledAtMs === null) return true
+  return outcome.settledAtMs < epochMs
 }
 
 export function acknowledgeSidebarTerminalOutcome(

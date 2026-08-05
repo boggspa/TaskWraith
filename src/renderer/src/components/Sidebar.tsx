@@ -91,10 +91,12 @@ import {
   acknowledgeSidebarTerminalOutcome,
   chatIsAwaitingUserResponse,
   isSidebarTerminalOutcomeUnread,
+  loadOrSeedSidebarSuccessInkEpoch,
   loadSidebarTerminalOutcomeAcknowledgements,
   persistSidebarTerminalOutcomeAcknowledgements,
   projectSidebarTerminalOutcome,
   sidebarRowToneClass,
+  sidebarSuccessInkPredatesEpoch,
   type SidebarRowTone
 } from '../lib/sidebarTerminalOutcome'
 
@@ -3130,6 +3132,10 @@ export function Sidebar({
   } | null>(null)
   const [terminalOutcomeAcknowledgements, setTerminalOutcomeAcknowledgements] =
     useState(loadSidebarTerminalOutcomeAcknowledgements)
+  // Seeded once, on the first render this install ever performs. Everything
+  // that had already finished by then is history and stays quiet; see
+  // loadOrSeedSidebarSuccessInkEpoch.
+  const [successInkEpochMs] = useState(() => loadOrSeedSidebarSuccessInkEpoch(Date.now()))
   const terminalOutcomeAcknowledgementsRef = useRef(terminalOutcomeAcknowledgements)
   terminalOutcomeAcknowledgementsRef.current = terminalOutcomeAcknowledgements
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
@@ -3743,6 +3749,7 @@ export function Sidebar({
       const outcome = projectSidebarTerminalOutcome(chat)
       if (
         outcome &&
+        !sidebarSuccessInkPredatesEpoch(outcome, successInkEpochMs) &&
         isSidebarTerminalOutcomeUnread(terminalOutcomeAcknowledgements, chat.appChatId, outcome)
       ) {
         tones.set(chat.appChatId, outcome.tone)
@@ -3754,6 +3761,7 @@ export function Sidebar({
     pendingAttentionSources,
     runningChatIds,
     selectedChatId,
+    successInkEpochMs,
     terminalOutcomeAcknowledgements
   ])
   const selectedChatSurfaceKey = selectedChat

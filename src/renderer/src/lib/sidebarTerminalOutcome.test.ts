@@ -6,11 +6,13 @@ import {
   SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY,
   acknowledgeSidebarTerminalOutcome,
   chatIsAwaitingUserResponse,
+  sidebarSuccessInkPredatesEpoch,
   sidebarRowToneClass,
   isSidebarTerminalOutcomeUnread,
   loadSidebarTerminalOutcomeAcknowledgements,
   persistSidebarTerminalOutcomeAcknowledgements,
-  projectSidebarTerminalOutcome
+  projectSidebarTerminalOutcome,
+  type SidebarTerminalOutcomeProjection
 } from './sidebarTerminalOutcome'
 
 const ISO_START = '2026-08-03T20:00:00.000Z'
@@ -277,6 +279,55 @@ describe('sidebar row tone ink', () => {
     expect(lists).toBe(3)
     expect(css.split('.sidebar-attention-waiting').length - 1).toBe(4)
     expect(css).toContain('animation: sidebar-terminal-outcome-shimmer 10s linear infinite')
+  })
+})
+
+describe('sidebarSuccessInkPredatesEpoch', () => {
+  const outcome = (
+    tone: 'success' | 'failure',
+    settledAtMs: number | null
+  ): SidebarTerminalOutcomeProjection => ({
+    fingerprint: 'run:1',
+    source: 'run',
+    tone,
+    settledAtMs
+  })
+
+  it('withholds only SUCCESS that finished before the epoch', () => {
+    expect(sidebarSuccessInkPredatesEpoch(outcome('success', 500), 1_000)).toBe(true)
+    expect(sidebarSuccessInkPredatesEpoch(outcome('success', 1_500), 1_000)).toBe(false)
+  })
+
+  it('never withholds a failure — old failures are unfinished business', () => {
+    expect(sidebarSuccessInkPredatesEpoch(outcome('failure', 500), 1_000)).toBe(false)
+  })
+
+  it('treats an exactly-at-epoch success as new, and an undateable one as history', () => {
+    expect(sidebarSuccessInkPredatesEpoch(outcome('success', 1_000), 1_000)).toBe(false)
+    expect(sidebarSuccessInkPredatesEpoch(outcome('success', null), 1_000)).toBe(true)
+  })
+
+  it('withholds nothing when no epoch is known', () => {
+    expect(sidebarSuccessInkPredatesEpoch(outcome('success', 500), null)).toBe(false)
+    expect(sidebarSuccessInkPredatesEpoch(outcome('success', null), null)).toBe(false)
+  })
+})
+
+describe('projectSidebarTerminalOutcome settle timestamps', () => {
+  it('stamps the run end, falling back to the chat updatedAt', () => {
+    const dated = chat({
+      updatedAt: 4_242,
+      runs: [run({ endedAt: '2026-08-04T10:00:00.000Z' })]
+    })
+    expect(projectSidebarTerminalOutcome(dated)?.settledAtMs).toBe(
+      Date.parse('2026-08-04T10:00:00.000Z')
+    )
+
+    const undated = chat({
+      updatedAt: 4_242,
+      runs: [{ runId: 'r2', startedAt: ISO_START, status: 'success', exitCode: 0 }]
+    })
+    expect(projectSidebarTerminalOutcome(undated)?.settledAtMs).toBe(4_242)
   })
 })
 
