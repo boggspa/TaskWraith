@@ -31,39 +31,78 @@ import type { ThreadMessageInboxSummary } from '../../../shared/threadMessage'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { LiveActivityViewport } from './LiveActivityViewport'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 
 interface ThreadMessageInboxCardProps {
   message: ThreadMessageCardInput
+  /**
+   * Open the sending thread. Optional: where it is absent the name renders as
+   * plain text rather than a dead affordance — a control that looks clickable
+   * and is not is the same defect as a chevron promising a disclosure that does
+   * not exist.
+   */
+  onOpenSenderThread?: (chatId: string) => void
 }
 
-export function ThreadMessageInboxCard({ message }: ThreadMessageInboxCardProps) {
+export function ThreadMessageInboxCard({
+  message,
+  onOpenSenderThread
+}: ThreadMessageInboxCardProps) {
   const model = threadMessageCardModel(message)
   // A peer thread keeps one visual identity everywhere this inbox is rendered.
   // The chat id is stable and display-only here; routing still uses the durable
   // message record in main, never anything rendered into this card.
   const peerIdentity = assignAgentIdentityFromSeed(message.fromChatId)
+  // The seat's own hue, so line 1's lead matches the chips beneath it. Taken
+  // from `seatAccentVar` rather than re-derived: the hue resolves from the
+  // HUMANISED model label, so re-deriving it silently diverges for Ollama and
+  // Pi seats, which wear their upstream brand's colour.
+  const leadAccent = model.seat ? seatAccentVar(model.seat) : undefined
+  const canOpenSender = Boolean(onOpenSenderThread && message.fromChatId)
   return (
     <article
       className="thread-message-card"
       data-attribution={model.attribution}
       data-wake={model.requestsWake ? 'true' : 'false'}
+      aria-label={model.headerText}
       style={{ ['--peer-rim']: peerIdentity.accent } as CSSProperties}
     >
       <header className="thread-message-card-header">
         <div className="thread-message-card-heading">
-          <span className="thread-message-card-glyph" aria-hidden="true">
-            ↩
-          </span>
           <span className="thread-message-card-identity">
             <AgentIdentityIcon
               name={peerIdentity.key}
               color={peerIdentity.accent}
-              size={30}
+              size={22}
               className="thread-message-card-identity-icon"
               title={`Peer thread “${model.senderLabel}”`}
             />
           </span>
-          <span className="thread-message-card-heading-text">{model.headerText}</span>
+          <div className="thread-message-card-heading-stack">
+            <div className="thread-message-card-heading-lead">
+              <span className="thread-message-card-lead" style={{ color: leadAccent }}>
+                {model.leadLabel}
+              </span>
+              <span className="thread-message-card-from">from</span>
+              {canOpenSender ? (
+                <button
+                  type="button"
+                  className="thread-message-card-sender is-interactive"
+                  title={`Open “${model.senderLabel}”`}
+                  onClick={() => onOpenSenderThread?.(message.fromChatId)}
+                >
+                  {model.senderLabel}
+                </button>
+              ) : (
+                <span className="thread-message-card-sender">{model.senderLabel}</span>
+              )}
+            </div>
+            {model.seat ? (
+              <div className="thread-message-card-heading-config">
+                <SeatStateChips seat={model.seat} className="thread-message-seat" />
+              </div>
+            ) : null}
+          </div>
         </div>
         {model.requestsWake ? (
           <span className="thread-message-card-badge" title="This sender asked to start a turn now">

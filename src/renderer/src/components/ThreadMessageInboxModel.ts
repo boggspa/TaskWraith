@@ -15,6 +15,7 @@
  */
 
 import type { ThreadMessageInboxSummary } from '../../../shared/threadMessage'
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 
 /**
  * Who a row is from, as far as the UI is concerned. Deliberately has no 'system'
@@ -28,14 +29,34 @@ export interface ThreadMessageCardModel {
   /** Display name of the sending thread. Never used for routing. */
   senderLabel: string
   attribution: ThreadMessageAttribution
-  /** Short prose for the card header, e.g. 'Sent by someone in “Byte pin fix”'. */
+  /**
+   * The full sentence, e.g. 'Sent by the agent in “Byte pin fix”'.
+   *
+   * No longer drawn: the header renders `leadLabel` + 'from' + `senderLabel`
+   * across two lines. It survives as the card's ACCESSIBLE NAME, because the
+   * visual layout splits the same fact across several spans and a screen reader
+   * should get one coherent sentence rather than fragments.
+   */
   headerText: string
+  /**
+   * Who sent it, for the start of line 1 — the seat's role where there is one,
+   * else an honest generic. Never a seat number: `seatNumber` is roster-local,
+   * so a peer sender's "#3" names a position in a roster the reader is not in.
+   */
+  leadLabel: string
   body: string
   /** True when the sender asked this thread to start a turn. */
   requestsWake: boolean
   /** True when the stored body was clamped, so the reader knows it is partial. */
   truncated: boolean
   createdAt: number
+  /**
+   * The sending seat, when one was captured. Absent for user-composed sends,
+   * for senders whose provider/model could not both be resolved, and for every
+   * record written before capture existed — the card drops line 2 entirely
+   * rather than rendering an identity-shaped strip that says nothing.
+   */
+  seat?: SeatChangeSeatState
 }
 
 export interface ThreadMessageIndicatorModel {
@@ -58,6 +79,14 @@ export interface ThreadMessageCardInput {
   requestedDelivery: 'queue' | 'wake'
   createdAt: number
   truncated?: boolean
+  /**
+   * The sending seat as it was configured when it sent, for the card's "who
+   * sent this" heading. Absent for user-composed sends (there is no agent seat
+   * to describe), for solo senders whose provider/model could not both be
+   * resolved, and for every record written before capture existed — all three
+   * render the seatless heading rather than an empty strip.
+   */
+  seat?: SeatChangeSeatState
 }
 
 /** Badge text stops counting up past this; the exact number stops mattering. */
@@ -81,11 +110,20 @@ export function threadMessageCardModel(input: ThreadMessageCardInput): ThreadMes
     input.origin === 'user'
       ? `You sent this from “${senderLabel}”`
       : `Sent by the agent in “${senderLabel}”`
+  // Line 1 leads with WHO. A user-composed relay says "You" — still followed by
+  // "from <thread>", so it reads as coming from elsewhere rather than as a
+  // direct instruction in this thread. An agent seat leads with its role; with
+  // no role (a solo sender has no roster) it falls back to a generic rather
+  // than inventing an identity.
+  const leadLabel =
+    input.origin === 'user' ? 'You' : (input.seat?.role || '').trim() || 'An agent'
   return {
     id: input.id,
     senderLabel,
     attribution,
     headerText,
+    leadLabel,
+    ...(input.seat ? { seat: input.seat } : {}),
     body: input.body,
     requestsWake: input.requestedDelivery === 'wake',
     truncated: input.truncated === true,

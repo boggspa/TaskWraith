@@ -111,6 +111,94 @@
   color: var(--rightdock-text);
 }
 
+/*
+ * Header, layout B (owner call 2026-08-05, chosen against a rendered column):
+ * line 1 answers WHO and WHERE, line 2 carries the config. The reverse — the
+ * full seat strip first — pushes the thread name past ~40 characters of chrome
+ * and onto the wake badge's line, which reads as noise in a column of cards.
+ */
+.thread-message-card-heading-stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.thread-message-card-heading-lead {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+/* Muted so the seat strip stays secondary to the identity above it. Opacity
+ * rather than a colour: the chips' provider hues and reasoning shimmer flow
+ * from the composer's own rules, and setting `color` here would kill them. */
+.thread-message-card-heading-config {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  opacity: 0.82;
+}
+
+/* Falls back to the card's own text colour when no seat was captured, so the
+ * lead never renders in an accent that belongs to nothing. */
+.thread-message-card-lead {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--rightdock-text);
+}
+
+.thread-message-card-from {
+  flex: 0 0 auto;
+  font-weight: 400;
+  color: var(--rightdock-text-muted);
+}
+
+/*
+ * The sending thread's name. Takes the TYPOGRAPHY CONTRACT of the transcript's
+ * collapsed-row label — not the component, which is a disclosure control whose
+ * accessible name would announce "Expand thread: …" for a disclosure that does
+ * not exist here. `overflow: hidden` also resolves the flex item's automatic
+ * min-width to 0, so a long title shrinks instead of widening the card.
+ */
+.thread-message-card-sender {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--transcript-font-family);
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  color: var(--rightdock-text);
+}
+
+/* Only the navigating variant gets affordance styling. Primary weight in the
+ * transcript already reads as interactive, so the button form must actually
+ * behave like one — and where no handler is wired the plain span above stays
+ * inert rather than looking clickable and doing nothing. */
+button.thread-message-card-sender {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px solid transparent;
+  transition: border-color 140ms ease;
+}
+
+button.thread-message-card-sender:hover,
+button.thread-message-card-sender:focus-visible {
+  border-bottom-color: color-mix(in srgb, var(--rightdock-text) 45%, transparent);
+}
+
+button.thread-message-card-sender:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--peer-rim, var(--accent)) 70%, transparent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
 .thread-message-card-badge {
   flex: 0 0 auto;
   font-size: 11px;

@@ -172,3 +172,86 @@ describe('ThreadMessageIndicator', () => {
     expect(html).toContain('>9+<')
   })
 })
+
+describe('the header answers WHO sent this', () => {
+  const SEAT = {
+    provider: 'claude',
+    model: 'claude-opus-5',
+    role: 'Reviewer',
+    reasoningEffort: 'xhigh',
+    // Real preset id. The ladder is plan/read_only/default/workspace_write/
+    // full_access — `trusted_session` is a real identifier but in a DIFFERENT
+    // union (NativeApprovalPolicy's approval `reason`, i.e. why something was
+    // auto-allowed). Its label constant is still named TRUSTED_SESSION_LABEL
+    // while holding the renamed value 'Full Access', which is what makes the
+    // two easy to conflate.
+    permissionPresetId: 'full_access'
+  }
+  const html = (over: Partial<ThreadMessageCardInput> = {}, onOpen?: (id: string) => void) =>
+    renderToStaticMarkup(
+      <ThreadMessageInboxCard message={message(over)} onOpenSenderThread={onOpen} />
+    )
+
+  it('renders the seat as chips, not as a decorative identicon alone', () => {
+    const out = html({ seat: SEAT })
+    expect(out).toContain('seat-state-chips')
+    expect(out).toContain('Opus 5')
+    expect(out).toContain('Full Access')
+  })
+
+  it('leads with the seat role and names the sending thread', () => {
+    const out = html({ seat: SEAT })
+    expect(out).toContain('Reviewer')
+    expect(out).toContain('Byte pin fix')
+  })
+
+  it('DROPS the config line entirely when no seat was captured', () => {
+    // Pre-capture records and solo senders with no resolvable model. An
+    // identity-shaped strip saying nothing is worse than no strip.
+    const out = html()
+    expect(out).not.toContain('seat-state-chips')
+    expect(out).toContain('An agent')
+  })
+
+  it('says "You" for a message you composed in another thread', () => {
+    const out = html({ origin: 'user' })
+    // Still followed by the thread, so it never reads as a direct instruction
+    // issued in THIS thread.
+    expect(out).toContain('You')
+    expect(out).toContain('Byte pin fix')
+  })
+
+  it('never renders a seat number — it is roster-local and the reader is elsewhere', () => {
+    const out = html({ seat: { ...SEAT, seatNumber: 3 } as never })
+    expect(out).not.toContain('#3')
+  })
+
+  it('keeps the full sentence as the accessible name, not as visible prose', () => {
+    // The visual splits this across spans; a screen reader should still get one
+    // coherent sentence.
+    expect(html({ seat: SEAT })).toContain('aria-label="Sent by the agent in')
+  })
+})
+
+describe('the sending thread is an affordance only when it works', () => {
+  const open = () => {}
+
+  it('renders a real button when a handler is wired', () => {
+    const out = renderToStaticMarkup(
+      <ThreadMessageInboxCard message={message()} onOpenSenderThread={open} />
+    )
+    expect(out).toContain('<button')
+    expect(out).toContain('thread-message-card-sender is-interactive')
+  })
+
+  it('renders inert text when no handler is wired', () => {
+    // The inverse of a chevron promising a disclosure that does not exist: a
+    // control that looks clickable and does nothing is the same defect.
+    const out = renderToStaticMarkup(<ThreadMessageInboxCard message={message()} />)
+    expect(out).toContain('thread-message-card-sender')
+    // Scoped to the sender: the bounded body viewport has its own toggle
+    // button, so a bare `not.toContain('<button')` would be testing that.
+    expect(out).not.toContain('thread-message-card-sender is-interactive')
+    expect(out).not.toMatch(/<button[^>]*thread-message-card-sender/)
+  })
+})

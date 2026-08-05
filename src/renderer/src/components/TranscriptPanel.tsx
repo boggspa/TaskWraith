@@ -4199,7 +4199,10 @@ export const TranscriptPanel = memo(
                       )
                     }
                   >
-                    <ThreadMessageTranscriptCard message={msg} />
+                    <ThreadMessageTranscriptCard
+                      message={msg}
+                      onOpenSenderThread={onOpenSubThread}
+                    />
                   </div>
                 ) : isFanoutResultCard ? (
                   <div

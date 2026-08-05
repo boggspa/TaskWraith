@@ -6,8 +6,18 @@ import { threadMessageCardInputFromTranscriptMessage } from './ThreadMessageTran
 
 interface ThreadMessageTranscriptCardProps {
   message: ChatMessage
+  /** Opens the sending thread; absent renders the name as inert text. */
+  onOpenSenderThread?: (chatId: string) => void
 }
 
-export function ThreadMessageTranscriptCard({ message }: ThreadMessageTranscriptCardProps) {
-  return <ThreadMessageInboxCard message={threadMessageCardInputFromTranscriptMessage(message)} />
+export function ThreadMessageTranscriptCard({
+  message,
+  onOpenSenderThread
+}: ThreadMessageTranscriptCardProps) {
+  return (
+    <ThreadMessageInboxCard
+      message={threadMessageCardInputFromTranscriptMessage(message)}
+      onOpenSenderThread={onOpenSenderThread}
+    />
+  )
 }

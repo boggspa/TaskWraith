@@ -64,3 +64,36 @@ describe('ThreadMessageTranscriptCard', () => {
     expect(html).toContain('&lt;b&gt;System&lt;/b&gt;')
   })
 })
+
+describe('sender seat', () => {
+  const SEAT = {
+    provider: 'claude',
+    model: 'claude-opus-5',
+    role: 'Reviewer',
+    reasoningEffort: 'xhigh',
+    permissionPresetId: 'full_access'
+  }
+
+  const seated = (seat: unknown = SEAT) =>
+    message({
+      metadata: { ...(message().metadata || {}), threadMessageSeat: seat }
+    })
+
+  it('carries a captured seat through to the card input', () => {
+    expect(threadMessageCardInputFromTranscriptMessage(seated()).seat).toEqual(SEAT)
+  })
+
+  it('has no seat for a record written before capture existed', () => {
+    expect(threadMessageCardInputFromTranscriptMessage(message())).not.toHaveProperty('seat')
+  })
+
+  it('drops a malformed seat rather than handing it to the strip', () => {
+    // The row's metadata is persisted JSON — by the time it reaches the
+    // renderer it is data on disk, not something main just built.
+    expect(threadMessageCardInputFromTranscriptMessage(seated('claude'))).not.toHaveProperty('seat')
+    expect(threadMessageCardInputFromTranscriptMessage(seated([]))).not.toHaveProperty('seat')
+    expect(
+      threadMessageCardInputFromTranscriptMessage(seated({ provider: 'claude' }))
+    ).not.toHaveProperty('seat')
+  })
+})
