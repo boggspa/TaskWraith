@@ -123,9 +123,13 @@ describe('seat-change chrome strip CSS', () => {
     expect(start).toBeGreaterThanOrEqual(0)
     const end = cssSource.indexOf('}', start)
     const block = cssSource.slice(start, end)
-    // Composer parity includes SPACING: narrowed to 7px, the provider and the
-    // model read as one run of text at normal size.
-    expect(block).toContain('gap: 9px')
+    // Composer parity includes SPACING — and it has to WIN. The composer shell
+    // overrides use `!important`: `[data-composer-style="claude"]` sets
+    // `gap: 0 !important` (right for its own chip, which separates segments
+    // with nbsp text), which collapsed the provider and model into one word for
+    // everyone on that shell. This strip lives in the transcript; its
+    // appearance must not follow the composer shell.
+    expect(block).toContain('gap: 9px !important')
     expect(block).toContain('background: none !important')
     expect(block).toContain('border: 0 !important')
     expect(block).not.toContain('color:')

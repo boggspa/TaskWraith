@@ -12039,11 +12039,16 @@
   background: none !important;
   box-shadow: none !important;
   cursor: inherit;
-  /* The composer trigger's own gap. It was narrowed to 7px when this strip was
-   * written, which read as no space at all between the provider and the model
-   * at normal size — and the whole point of borrowing the class is that the
-   * spacing matches the composer too. */
-  gap: 9px;
+  /* The composer trigger's own gap — `!important` because the strip has to
+   * survive the composer SHELL overrides, which use it. `[data-composer-style=
+   * "claude"] .composer-combined-picker-trigger` sets `gap: 0 !important`
+   * (correct for the composer's claude chip, which separates its segments with
+   * nbsp text instead), and that silently collapsed the provider and the model
+   * into one word for anyone on that shell. This strip lives in the TRANSCRIPT,
+   * not the composer: it borrows the chip vocabulary deliberately, but its
+   * appearance must not change because the user picked a different composer
+   * shell. */
+  gap: 9px !important;
   /* The composer shell assigns its controls flex `order` (permission = 2) —
    * inside the transcript row the chips must keep their DOM order. */
   order: 0 !important;
