@@ -40,6 +40,10 @@
 /** Stable, bounded vocabulary of persistence targets. */
 export type PersistenceTargetClass =
   | 'chat'
+  // T4a: the dual-write journal is a SEPARATE class on purpose. Legacy and
+  // journal bytes must not be summed into one number, or the comparison run
+  // cannot tell whether the journal is paying for itself.
+  | 'chat-journal'
   | 'chat-list-index'
   | 'session-checkpoints'
   | 'session-checkpoints-archive'
@@ -143,6 +147,11 @@ export function classifyPersistenceTarget(filePath: string): PersistenceTargetCl
   if (base === 'scheduled-tasks.json') return 'scheduled-tasks'
   if (base === 'workflows.json') return 'workflows'
   if (/\/chats\/[^/]+\.json$/.test(normalized)) return 'chat'
+  // Journal appends, snapshots and tombstones all live under one directory.
+  // They share a class: the append/snapshot split is reported separately by
+  // the journal's own stats (bytesWritten vs snapshotsWritten), so the
+  // bounded target vocabulary only grows by one.
+  if (/\/chat-journal\//.test(normalized)) return 'chat-journal'
   return 'other'
 }
 

@@ -26,8 +26,17 @@ import {
   type UsageHistoryPurgeReport
 } from './UsageJournalStore'
 import { coerceProviderForPersistence } from './ProviderOfferPersistence'
-import { beginPersistenceWrite } from './persistenceProbes'
-import { createSaveCoalescer, type FlushReason } from './saveCoalescer'
+import {
+  beginPersistenceWrite,
+  isPersistenceProbeEnabled,
+  recordPersistenceWrite
+} from './persistenceProbes'
+import { createChatJournal, type ChatJournalStats } from './chatJournal'
+import {
+  createSaveCoalescer,
+  type FlushReason,
+  type SaveCoalescerStats
+} from './saveCoalescer'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
@@ -552,6 +561,81 @@ const saveCoalescer =
   saveCoalesceMaxMs === undefined
     ? createSaveCoalescer(saveCoalesceMs)
     : createSaveCoalescer(saveCoalesceMs, saveCoalesceMaxMs)
+
+/**
+ * T4a: dual-write chat journal. Side-band this tranche — `chats/{id}.json`
+ * stays read-authoritative, so a journal failure can never fail a save.
+ *
+ * BYTE HONESTY: `append` writes the WHOLE record per save, so dual-write
+ * roughly DOUBLES bytes-per-save rather than reducing them. That is expected
+ * and Boss-accepted for this tranche: the journal's value is that it makes
+ * incremental (delta) writes possible in T5, at which point the legacy
+ * whole-file write is what disappears. Anyone reading the comparison report
+ * must expect chat-journal bytes to ADD to chat bytes here, not replace them.
+ */
+const chatJournal = createChatJournal(path.join(userDataPath, 'chat-journal'))
+
+/**
+ * Remove every journal artifact for a deleted chat, including the tombstone.
+ *
+ * `chatJournal.delete` deliberately leaves a `{chatId}.tombstone` marker so a
+ * concurrent append cannot recreate the files. That marker is named after the
+ * chat, so leaving it behind would make a deleted chat's id survive on disk —
+ * something the legacy chat path never does, and a history-deletion
+ * regression this wiring would otherwise introduce (NON-NEGOTIABLE #4).
+ *
+ * Dropping the marker is safe here specifically because deletion already
+ * called `saveCoalescer.discard(chatId)`, so no pending timer write remains,
+ * and `deletedChatIds` blocks re-saves. The journal keeps its in-process
+ * tombstoned state either way.
+ */
+function purgeChatJournalArtifacts(chatId: string): void {
+  try {
+    chatJournal.delete(chatId)
+  } catch (e) {
+    console.error('Failed to tombstone chat journal', chatId, e)
+  }
+  const journalDir = path.join(userDataPath, 'chat-journal')
+  for (const suffix of ['.tombstone', '.jsonl', '.snapshot.json']) {
+    try {
+      fs.rmSync(path.join(journalDir, `${chatId}${suffix}`), { force: true })
+    } catch (e) {
+      console.error('Failed to remove chat journal artifact', chatId, suffix, e)
+    }
+  }
+}
+
+/**
+ * Append one save to the journal. Never throws: the journal is side-band, so
+ * a journal fault must degrade to "legacy-only persistence", never to a lost
+ * or failed chat save. Bytes are attributed to the `chat-journal` probe class
+ * using the journal's own accounting, so legacy and journal bytes stay
+ * separable on the comparison report.
+ */
+function appendChatJournalEntry(chatId: string, record: ChatRecord): void {
+  const probing = isPersistenceProbeEnabled()
+  const before = probing ? chatJournal.stats().bytesWritten : 0
+  const startedAt = probing ? Date.now() : 0
+  try {
+    chatJournal.append(chatId, record)
+  } catch (e) {
+    console.error('Chat journal append failed; legacy chat file remains authoritative', e)
+    return
+  }
+  if (!probing) return
+  recordPersistenceWrite({
+    target: 'chat-journal',
+    bytes: Math.max(0, chatJournal.stats().bytesWritten - before),
+    // The journal owns its own syscall sequence, so only the wall time of the
+    // whole append is attributable here. Splitting it further would mean
+    // inventing phase numbers this call site cannot observe.
+    serializeMs: 0,
+    writeMs: 0,
+    fsyncMs: 0,
+    renameMs: 0,
+    totalMs: Math.max(0, Date.now() - startedAt)
+  })
+}
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
 const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
@@ -6199,6 +6283,9 @@ export class AppStore {
     const chatFileExists = fs.existsSync(chatPath)
     if (!chatFileExists) {
       writeJson(chatPath, normalizedChat)
+      // Same contract ordering as the coalesced path: the journal must mirror
+      // every legacy write, including the synchronous first save.
+      appendChatJournalEntry(normalizedChat.appChatId, normalizedChat)
       let postStat: fs.Stats | null = null
       try {
         postStat = fs.statSync(chatPath)
@@ -6236,6 +6323,15 @@ export class AppStore {
         () => {
           const preStatActual = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
           writeJson(chatPath, normalizedChat)
+          // T4a INTEGRATION CONTRACT step 2: legacy write -> journal append.
+          // Ordering matters only between these two. A crash in between leaves
+          // the legacy file AHEAD of the journal, which is the safe direction
+          // because the legacy file is read-authoritative and the journal
+          // replays forward. The chat-list index write that follows is
+          // deliberately NOT ordered against these: it self-heals, because
+          // getChatList validates every entry against the chat file's
+          // mtime+size and rebuilds from the file on mismatch.
+          appendChatJournalEntry(chatId, normalizedChat)
           try {
             const postStatActual = fs.statSync(chatPath)
             const wrote =
@@ -6299,6 +6395,34 @@ export class AppStore {
    */
   static flushAllChatSaves(): void {
     saveCoalescer.flushAll()
+  }
+
+  /**
+   * T4b reporting seam. The perf harness samples this through the main
+   * inspector so `saveChat`-class metrics on the comparison report are
+   * genuinely MEASURED rather than declared.
+   *
+   * Why this has to exist: the T2 baseline had to report
+   * `metricsCollected: false` because the production probes did not exist,
+   * and the runner contract forbids inventing values. These counters are the
+   * honest source for the write-amplification claim — `coalesced` is the
+   * reduction, `reasonMix` is why, `ceilingFlushes` shows the ceiling doing
+   * its job, and the journal counters keep dual-write bytes separable from
+   * legacy bytes. Read-only: sampling must never perturb what it measures.
+   */
+  static getPersistenceCoalescingStats(): {
+    coalescer: SaveCoalescerStats
+    journal: ChatJournalStats
+    config: { coalesceMs: number; maxLatencyMs: number | null }
+  } {
+    return {
+      coalescer: saveCoalescer.stats(),
+      journal: chatJournal.stats(),
+      config: {
+        coalesceMs: saveCoalesceMs,
+        maxLatencyMs: saveCoalesceMaxMs ?? null
+      }
+    }
   }
 
   private static historyDeletionRunning = false
@@ -6986,6 +7110,10 @@ export class AppStore {
         // reappear in the list (NON-NEGOTIABLE #4).
         saveCoalescer.discardAll()
         removePathStrict(chatsDir, 'chat history directory')
+        // T4a: the journal is a second durable copy of chat history. Deleting
+        // the legacy files while leaving the journal intact would leave the
+        // deleted transcript recoverable on disk (NON-NEGOTIABLE #4).
+        removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
       } else if (intent.kind === 'truncate') {
         const chatId = intent.rootChatId!
         const chatPath = chatPathForId(chatsDir, chatId)
@@ -7066,6 +7194,10 @@ export class AppStore {
         // deleted must be dropped before the file is unlinked, or the timer
         // recreates it and getChats() lists a deleted chat again.
         for (const chatId of intent.chatIds) saveCoalescer.discard(chatId)
+        // Tombstone before unlinking: the journal must refuse late appends for
+        // a chat whose history is being destroyed, and its own files must go
+        // with the legacy record rather than outliving it.
+        for (const chatId of intent.chatIds) purgeChatJournalArtifacts(chatId)
         removePathsStrict(
           intent.chatIds.map((chatId) => ({
             targetPath: chatPathForId(chatsDir, chatId),

@@ -72,6 +72,14 @@ export interface SaveCoalescerStats {
   ceilingFlushes: number
   /** Pending writes dropped without writing, because their chat was deleted. */
   discarded: number
+  /**
+   * Saves per FlushReason. Without this the comparison run can report that
+   * throughput went flat but not WHY: a run where every save was a `terminal`
+   * barrier and a run where every save coalesced look identical in
+   * write counts alone, yet mean completely different things about whether
+   * coalescing did any work. Attribution requires the mix.
+   */
+  reasonMix: Record<FlushReason, number>
 }
 
 export interface SaveCoalescer {
@@ -131,6 +139,13 @@ export function createSaveCoalescer(
   let urgentFlushes = 0
   let ceilingFlushes = 0
   let discarded = 0
+  const reasonMix: Record<FlushReason, number> = {
+    normal: 0,
+    terminal: 0,
+    approval: 0,
+    'history-deletion': 0,
+    shutdown: 0
+  }
 
   /**
    * Run one write callback. Counted even when it throws: the write was
@@ -169,6 +184,9 @@ export function createSaveCoalescer(
 
   return {
     schedule(chatId: string, write: () => void, reason: FlushReason): number {
+      // Counted before any early return so the mix covers every save the store
+      // made, including those taken while coalescing is disabled.
+      reasonMix[reason] = (reasonMix[reason] ?? 0) + 1
       // Disabled: preserve today's exact synchronous behaviour.
       if (delayMs < 0) {
         runWrite(write)
@@ -248,7 +266,8 @@ export function createSaveCoalescer(
         pending: pending.size,
         urgentFlushes,
         ceilingFlushes,
-        discarded
+        discarded,
+        reasonMix: { ...reasonMix }
       }
     }
   }

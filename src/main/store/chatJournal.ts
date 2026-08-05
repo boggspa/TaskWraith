@@ -201,7 +201,21 @@ export function createChatJournal(baseDir: string): ChatJournal {
    * truncated by `parseJournalLines` on recovery.
    */
   const appendJournalLine = (filePath: string, line: string): void => {
-    const fd = fs.openSync(filePath, 'a', 0o600)
+    let fd: number
+    try {
+      fd = fs.openSync(filePath, 'a', 0o600)
+    } catch (error: unknown) {
+      // The base directory is created once at construction, but history
+      // deletion legitimately removes the whole journal directory. Without
+      // this self-heal every later append would throw ENOENT for the rest of
+      // the process lifetime and journaling would silently stay dead — the
+      // caller treats the journal as side-band and swallows the error.
+      // Recovering only on the failure path keeps the hot path free of an
+      // extra syscall per save.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 })
+      fd = fs.openSync(filePath, 'a', 0o600)
+    }
     try {
       fs.writeSync(fd, line)
       fs.fsyncSync(fd)

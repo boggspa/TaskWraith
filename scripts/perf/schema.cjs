@@ -19,6 +19,40 @@ const FX_POSTURES = Object.freeze([
 
 const MATERIALIZE_MODES = Object.freeze(['legacy_v1', 'future_v2'])
 
+/**
+ * T4b: the save-coalescer / chat-journal reporting seam. These names mirror
+ * `SaveCoalescerStats` and `ChatJournalStats` in src/main/store exactly — if
+ * either shape changes, this list must change with it or the harness will
+ * validate a stale contract.
+ */
+const FLUSH_REASONS = Object.freeze([
+  'normal',
+  'terminal',
+  'approval',
+  'history-deletion',
+  'shutdown'
+])
+
+const COALESCER_STAT_FIELDS = Object.freeze([
+  'scheduled',
+  'coalesced',
+  'flushed',
+  'pending',
+  'urgentFlushes',
+  'ceilingFlushes',
+  'discarded'
+])
+
+const CHAT_JOURNAL_STAT_FIELDS = Object.freeze([
+  'appends',
+  'linesWritten',
+  'bytesWritten',
+  'snapshotsWritten',
+  'chatsDeleted',
+  'tombstoneRejects',
+  'tornLinesRecovered'
+])
+
 const SCHEMA_VERSION = 1
 
 const CORRECTNESS_BOOL_KEYS = Object.freeze([
@@ -181,6 +215,43 @@ function validatePerfMetrics(metrics) {
       dualStatShape('main.saveChat.fsyncMs', sc.fsyncMs, errors)
       if (sc.stringifyMsUnsupported != null && typeof sc.stringifyMsUnsupported !== 'boolean') {
         errors.push('main.saveChat.stringifyMsUnsupported must be boolean when present')
+      }
+      // T4b reporting seam. Optional-when-absent on purpose: the frozen T2
+      // baseline predates these probes and must keep validating, or the
+      // comparison it is the denominator for could never run. Present-but-
+      // malformed is an error, so a partially wired sampler fails loudly
+      // instead of silently reporting an unattributable run.
+      if (sc.coalescing != null) {
+        if (!isPlainObject(sc.coalescing)) {
+          errors.push('main.saveChat.coalescing must be an object when present')
+        } else {
+          const co = sc.coalescing
+          for (const field of COALESCER_STAT_FIELDS) {
+            if (!isFiniteNumber(co[field])) {
+              errors.push(`main.saveChat.coalescing.${field} must be finite`)
+            }
+          }
+          if (!isPlainObject(co.reasonMix)) {
+            errors.push('main.saveChat.coalescing.reasonMix required')
+          } else {
+            for (const reason of FLUSH_REASONS) {
+              if (!isFiniteNumber(co.reasonMix[reason])) {
+                errors.push(`main.saveChat.coalescing.reasonMix.${reason} must be finite`)
+              }
+            }
+          }
+        }
+      }
+      if (sc.journal != null) {
+        if (!isPlainObject(sc.journal)) {
+          errors.push('main.saveChat.journal must be an object when present')
+        } else {
+          for (const field of CHAT_JOURNAL_STAT_FIELDS) {
+            if (!isFiniteNumber(sc.journal[field])) {
+              errors.push(`main.saveChat.journal.${field} must be finite`)
+            }
+          }
+        }
       }
     }
     if (!isPlainObject(metrics.main.checkpointWriteBytes)) {
