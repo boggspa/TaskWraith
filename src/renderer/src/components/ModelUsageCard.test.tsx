@@ -491,8 +491,11 @@ describe('ModelUsageCard', () => {
     // No dedicated MO row: monthly rides the Extra X1 slot like Cursor.
     expect(html).not.toContain('>MO</th>')
     expect(html).toContain('>X1</th>')
-    // A rough € figure (hedged with ~), never the old qualitative "~NEAR" band.
-    expect(html).toContain('>~$8.00</td>')
+    // A rough € figure, never the old qualitative "~NEAR" band. The cell value
+    // is unhedged even for a local estimate — the ~ prefix pushed the column
+    // into its neighbour; the tooltip and is-estimated styling carry the hedge.
+    expect(html).toContain('>$8.00</td>')
+    expect(html).not.toContain('>~$8.00</td>')
     expect(html).not.toContain('NEAR</td>')
     expect(html).toContain('provider-mistral is-warning is-estimated')
     expect(html).toContain('~$8.00 of ~$9.25')
@@ -548,7 +551,7 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>Mistral</th>')
     expect(html).toContain('>DeepSeek</th>')
     expect(html).toContain('>Cerebras</th>')
-    expect(html).toContain('>~$8.00</td>')
+    expect(html).toContain('>$8.00</td>')
     expect(html).toContain('>$0.92</td>')
     expect(html).toContain('>$1.36</td>')
   })
@@ -562,8 +565,9 @@ describe('ModelUsageCard', () => {
         locale="en-GB"
       />
     )
-    // $8 → €7.36 at 0.92; the cell and its tooltip both convert.
-    expect(html).toContain('>~€7.36</td>')
+    // $8 → €7.36 at 0.92; the cell and its tooltip both convert. Only the
+    // tooltip hedges — the cell value stays bare so it fits its column.
+    expect(html).toContain('>€7.36</td>')
     expect(html).toContain('~€7.36 of')
     expect(html).not.toContain('$8.00')
   })
@@ -652,10 +656,12 @@ describe('ModelUsageCard', () => {
       />
     )
 
-    // Mistral-sourced (anchored/reported): the spend figure drops its ~ hedge.
+    // Mistral-sourced (anchored/reported): even the tooltip drops its ~ hedge,
+    // and the cell loses its is-estimated styling.
     expect(html).toContain('>$8.00</td>')
     expect(html).not.toContain('>~$8.00</td>')
     expect(html).toContain('$8.00 of $10.00')
+    expect(html).not.toContain('~$8.00 of')
     expect(html).toContain('Mistral-sourced figures')
     expect(html).not.toContain('provider-mistral is-warning is-estimated')
   })
@@ -668,7 +674,8 @@ describe('ModelUsageCard', () => {
       />
     )
 
-    expect(html).toContain('>~$0.194</td>')
+    expect(html).toContain('>$0.194</td>')
+    expect(html).not.toContain('>~$0.194</td>')
     expect(html).toContain('+ ~$0.004 tracked locally since reading')
     expect(html).toContain('Mistral baseline + local estimate')
     expect(html).toContain('provider-mistral is-estimated')

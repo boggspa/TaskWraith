@@ -477,12 +477,13 @@ function compactMistralCell(
   // General) via the shared FX table — the reverse of the conversion the
   // console reading went through on entry, so a €0.32 reading reads €0.32.
   const money = (usd: number): string => formatCostAlwaysOn(usd, currency ?? 'USD', locale)
-  const spentText = `${spendFromVendor ? '' : '~'}${formatMistralAccumulatedSpend(
+  const spentAmountText = formatMistralAccumulatedSpend(
     estimate.spentUsd,
     locallyEstimatedSinceReadingUsd,
     currency ?? 'USD',
     locale
-  )}`
+  )
+  const spentText = `${spendFromVendor ? '' : '~'}${spentAmountText}`
   const ceilingText = `${ceilingFromVendor ? '' : '~'}${money(estimate.estimatedCeilingUsd)}`
   const sourceText = measured
     ? 'Mistral-sourced figures'
@@ -510,10 +511,11 @@ function compactMistralCell(
 
   return {
     // Show the actual spend figure, not the qualitative band — the compact
-    // grid's "~LOW" read as an opaque label. `spentText` already carries the
-    // `~` hedge unless the number is Mistral-sourced (anchored/reported), so
-    // it reads honestly either way. The band still drives tone + the tooltip.
-    value: spentText,
+    // grid's "~LOW" read as an opaque label. The cell value is unhedged even
+    // for a local estimate: the `~` prefix pushed the column into its
+    // neighbour, and the hedged tooltip + `is-estimated` styling already say
+    // it's estimated. The band still drives tone + the tooltip.
+    value: spentAmountText,
     fraction,
     title,
     estimated: !measured,
