@@ -618,20 +618,22 @@ export function createChatJournal(baseDir: string): ChatJournal {
     const { snapshot: currentSnap, tail } = read(chatId)
     if (tail.length === 0) return false
 
-    // Merge: the snapshot is a flat array of ChatJournalEntry values.
-    // Spread it so the compacted snapshot stays flat — pushing the
-    // array as one element would nest it and break subsequent reads.
-    const merged: unknown[] = []
-    if (currentSnap !== null) {
-      if (Array.isArray(currentSnap)) {
-        for (const item of currentSnap) merged.push(item)
-      } else {
-        merged.push(currentSnap)
-      }
-    }
-    for (const entry of tail) {
-      merged.push(entry)
-    }
+    // COLLAPSE to the newest entry. The snapshot is still a flat array (one
+    // element) so the read contract is unchanged.
+    //
+    // `append` writes the WHOLE chat record per line, so the newest entry IS
+    // complete state and every earlier copy is dead weight. This previously
+    // kept `[...previousSnapshot, ...tail]`, making the "snapshot" an
+    // append-only archive: measured 2026-08-05 on a real 62 MB chat it reached
+    // 488 MB after a handful of saves, and because compaction rewrites the file
+    // wholesale, bounding the journal by bytes then made total write volume
+    // QUADRATIC in save count — the journal shrank and the snapshot took over.
+    // Nothing in production calls `read()`; it is staged for T5 incremental
+    // writes, so no consumer loses anything by collapsing. When T5 lands and
+    // entries become deltas rather than whole records, this must be revisited:
+    // deltas are NOT independently complete and cannot be collapsed this way.
+    const newest = tail[tail.length - 1]
+    const merged: unknown[] = [newest]
 
     // Compact JSON — pretty-print of 1k+ entries blocks the suite and the
     // hot path for no durability gain (atomic rename already makes the

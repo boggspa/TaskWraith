@@ -182,13 +182,15 @@ describe('ChatJournal', () => {
     // Journal must be gone
     expect(journalContent(path.join(baseDir, 'chat-compact.jsonl'))).toBeNull()
 
-    // Snapshot must hold both entries as a flat array
+    // Snapshot COLLAPSES to the newest entry (still a flat array of one).
+    // Each entry is a whole record, so the newest is complete state; keeping
+    // earlier copies made the snapshot an unbounded archive (2026-08-05).
     const snapContent = journalContent(path.join(baseDir, 'chat-compact.snapshot.json'))
     expect(snapContent).not.toBeNull()
     const snap = JSON.parse(snapContent!) as ChatJournalEntry[]
-    expect(snap).toHaveLength(2)
-    expect(snap[0].record).toEqual(r1)
-    expect(snap[1].record).toEqual(r2)
+    expect(snap).toHaveLength(1)
+    expect(snap[0].record).toEqual(r2)
+    expect(r1).not.toEqual(r2) // guards the assertion above against a fixture that cannot distinguish them
   })
 
   it('compacts an empty chat to false (no-op)', () => {
@@ -210,15 +212,13 @@ describe('ChatJournal', () => {
     journal.append('chat-merge', r4)
     journal.compact('chat-merge')
 
-    // Read back — snapshot must be a flat array of 4
+    // Read back — successive compactions COLLAPSE rather than accumulate, so
+    // the snapshot holds only the newest record across both batches.
     const result = journal.read('chat-merge')
     expect(result.snapshot).not.toBeNull()
     const snap = result.snapshot as ChatJournalEntry[]
-    expect(snap).toHaveLength(4)
-    expect(snap[0].record).toEqual(r1)
-    expect(snap[1].record).toEqual(r2)
-    expect(snap[2].record).toEqual(r3)
-    expect(snap[3].record).toEqual(r4)
+    expect(snap).toHaveLength(1)
+    expect(snap[0].record).toEqual(r4)
   })
 
   it('read() returns snapshot + any un-compacted journal tail', () => {
@@ -263,7 +263,9 @@ describe('ChatJournal', () => {
     const snap = JSON.parse(
       journalContent(path.join(baseDir, 'chat-threshold.snapshot.json'))!
     ) as ChatJournalEntry[]
-    expect(snap).toHaveLength(1001)
+    // Collapsed: 1001 whole-record lines reduce to the newest one.
+    expect(snap).toHaveLength(1)
+    expect((snap[0].record as Record<string, unknown>).id).toBe('chat-threshold')
   })
 
   it('compactAll compacts multiple chats', () => {
@@ -495,7 +497,9 @@ describe('ChatJournal', () => {
     let result = journal.read('g3')
     expect(result.snapshot).not.toBeNull()
     const cleanSnap = result.snapshot as ChatJournalEntry[]
-    expect(cleanSnap).toHaveLength(4)
+    // Collapsed to the newest whole record across both batches.
+    expect(cleanSnap).toHaveLength(1)
+    expect(cleanSnap[0].record).toEqual(r4)
     expect(result.tail).toHaveLength(0)
 
     // --- SIMULATE CRASH WINDOW ---
@@ -527,7 +531,8 @@ describe('ChatJournal', () => {
     // ASSERTION 1: read() returns NO duplicate tail entries
     expect(recResult.snapshot).not.toBeNull()
     const recSnap = recResult.snapshot as ChatJournalEntry[]
-    expect(recSnap).toHaveLength(6) // all 6 entries in snapshot
+    // Collapsed snapshot (1 entry) + the 2 hand-merged batch-3 entries = 3.
+    expect(recSnap).toHaveLength(3)
 
     // The journal tail was already in the snapshot — must be deduped
     expect(recResult.tail).toHaveLength(0)
@@ -539,8 +544,11 @@ describe('ChatJournal', () => {
 
     const finalResult = recovered.read('g3')
     const finalSnap = finalResult.snapshot as ChatJournalEntry[]
-    // 6 original + 1 post-recovery = 7 — NOT 6+3+1=10 (no double-merge)
-    expect(finalSnap).toHaveLength(7)
+    // Compaction collapses to the newest whole record, so the post-recovery
+    // save is the snapshot. The no-double-merge property this guards is now
+    // structural: a collapsed snapshot cannot accumulate a replayed tail.
+    expect(finalSnap).toHaveLength(1)
+    expect(finalSnap[0].record).toEqual(afterRec)
     expect(finalResult.tail).toHaveLength(0)
 
     // ASSERTION 3: Stats consistent — initDirectory deduped the journal
@@ -643,7 +651,9 @@ describe('ChatJournal', () => {
     const result = journal.read('g3-clean')
     expect(result.snapshot).not.toBeNull()
     const snap = result.snapshot as ChatJournalEntry[]
-    expect(snap).toHaveLength(2)
+    // Collapsed to the newest entry.
+    expect(snap).toHaveLength(1)
+    expect(snap[0].record).toEqual(r2)
     expect(result.tail).toHaveLength(0)
 
     // Re-init is a no-op
@@ -757,5 +767,73 @@ describe('ChatJournal compaction bounds journal BYTES, not just lines', () => {
     const latest =
       tail.length > 0 ? (tail[tail.length - 1].record as Record<string, unknown>) : snapshot
     expect((latest as Record<string, unknown>).updatedAt).toBe(39)
+  })
+})
+
+describe('compaction collapses history instead of accumulating it', () => {
+  /**
+   * REGRESSION GUARD, measured 2026-08-05 on a real 62 MB / 26k-message chat.
+   *
+   * `compact()` used to build the new snapshot as
+   * `[...previousSnapshotEntries, ...tail]`, so the "snapshot" was an
+   * append-only ARCHIVE. Every entry holds a WHOLE chat record, so after N
+   * saves it held N copies — observed at 488 MB after a handful of saves.
+   *
+   * That interacts badly with bounding the journal by bytes: the byte trigger
+   * makes compaction fire on nearly every save of a large chat, and each
+   * compaction rewrites the whole archive, so total write volume became
+   * QUADRATIC in save count. Collapsing is what makes the byte threshold safe.
+   *
+   * NOTE FOR T5: this is only sound while a journal entry is a COMPLETE
+   * record. When entries become deltas they are not independently complete and
+   * must not be collapsed this way.
+   */
+  let baseDir: string
+  let journal: ChatJournal
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-journal-collapse-'))
+    journal = createChatJournal(baseDir)
+  })
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  it('keeps the snapshot at one record regardless of how many saves compacted', () => {
+    const chatId = 'collapse'
+    const blob = 'q'.repeat(1024 * 1024) // 1 MB per record
+    for (let i = 0; i < 60; i += 1) {
+      journal.append(chatId, { id: chatId, blob, updatedAt: i })
+    }
+    journal.compact(chatId)
+
+    const snapPath = path.join(baseDir, `${chatId}.snapshot.json`)
+    const snapBytes = fs.existsSync(snapPath) ? fs.statSync(snapPath).size : 0
+    expect(journal.stats().snapshotsWritten).toBeGreaterThan(0)
+    // One ~1 MB record, not 60 of them. Generous ceiling for JSON overhead.
+    expect(
+      snapBytes,
+      `snapshot is ${(snapBytes / 1048576).toFixed(1)} MB — it is accumulating records, not collapsing them`
+    ).toBeLessThan(4 * 1024 * 1024)
+  })
+
+  it('still replays the exact latest record after collapsing', () => {
+    const chatId = 'collapse-replay'
+    const blob = 'r'.repeat(1024 * 1024)
+    for (let i = 0; i < 40; i += 1) {
+      journal.append(chatId, { id: chatId, blob, updatedAt: i })
+    }
+    journal.compact(chatId)
+    const { snapshot, tail } = journal.read(chatId)
+    const entries = [
+      ...(Array.isArray(snapshot)
+        ? (snapshot as ChatJournalEntry[])
+        : snapshot
+          ? [snapshot as ChatJournalEntry]
+          : []),
+      ...tail
+    ]
+    const latest = entries[entries.length - 1]
+    expect((latest.record as Record<string, unknown>).updatedAt).toBe(39)
   })
 })
