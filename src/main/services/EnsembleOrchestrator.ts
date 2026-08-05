@@ -17438,11 +17438,33 @@ export class EnsembleOrchestrator {
     if (run.terminalFinalized) {
       if (suppressOwnedFanout) {
         // The round may stop while a provider-terminal fan-out owner is still
-        // retained solely to settle its lanes. Suppress/release that held
-        // transcript, but never rewrite the provider's immutable terminal
-        // outcome (or send a late cancellation to its completed transport).
-        this.flushRun(run, true, run.terminalReason)
+        // retained solely to settle its lanes. Release/suppress that held
+        // transcript — and, ONLY when the suppression actually costs the user
+        // something, adopt the outcome they just asked for.
+        //
+        // The discriminator is whether this owner produced anything after it
+        // fanned out. If it did, that synthesis never reaches the transcript,
+        // and leaving the seat reading 'answered' would have the panel claim an
+        // answer nobody can see. If it did not, the seat said everything it had
+        // before the boundary, the transcript is complete, and its provider
+        // outcome is the honest one — that is the case Stop must leave alone.
+        //
+        // Either way this is the ROUND's view of the seat, never the
+        // transport's: no late cancellation is sent to a provider that already
+        // completed. cancelRound's `liveActiveRuns` filter and
+        // skipActiveParticipant's `ownerWasTerminal` guard still spare it that.
+        const withheldSynthesis =
+          run.ownedFanoutTranscriptBoundary !== undefined &&
+          (run.timeline?.length || 0) > run.ownedFanoutTranscriptBoundary
+        if (withheldSynthesis) {
+          run.status = status
+          run.terminalReason = reason
+        }
+        this.flushRun(run, true, withheldSynthesis ? reason : run.terminalReason)
         this.applyTerminalRunSideEffects(run)
+        if (withheldSynthesis) {
+          this.updateParticipantState(run.chatId, run.roundId, run.participant.id, status, reason)
+        }
       }
       return
     }
