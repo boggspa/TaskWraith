@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { join, posix, win32 } from 'node:path'
+import { join } from 'node:path'
 
 /**
  * Host Arc v2 local-control paths.
@@ -33,20 +33,6 @@ import { join, posix, win32 } from 'node:path'
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Join using the SEMANTICS OF THE REQUESTED PLATFORM, not the host's.
- *
- * These helpers take a `platform` argument, which promises a caller can
- * derive another platform's path. `node:path`'s bare `join` always uses the
- * host's separator, so asking for a darwin path on Windows returned
- * `\\Users\\example\\...` and the promise was false. Production always passes
- * the host platform, so this is behaviour-preserving there; it only makes the
- * cross-platform case — which the signature already advertised — actually work.
- */
-function joinFor(platform: NodeJS.Platform, ...parts: string[]): string {
-  return platform === 'win32' ? win32.join(...parts) : posix.join(...parts)
-}
 
 // ---------------------------------------------------------------------------
 // File-name constants (distinct v2 namespace — see header table)
