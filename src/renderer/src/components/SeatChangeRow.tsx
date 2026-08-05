@@ -14,6 +14,7 @@ import { humaniseModelId } from '../lib/modelDisplayName'
 import { reasoningDisplayLabel } from '../lib/composerChipFormat'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { SEAT_CHANGE_COALESCE_WINDOW_MS } from '../../../shared/seatChange'
+import type { SeatChangeLink, SeatChangePayload } from '../../../shared/seatChange'
 
 /**
  * SeatChangeRow — the authoritative seat-change transcript element (owner spec
@@ -50,7 +51,9 @@ interface SeatSideView {
 function seatSideView(state: SeatChangeSeatState): SeatSideView {
   const provider = state.provider as ProviderId
   const modelLabel = humaniseModelId(provider, state.model) || state.model
-  const reasoningLabel = state.reasoningEffort
+  const reasoningLabel = (
+    state.reasoningEffort || state.thinkingEnabled !== undefined
+  )
     ? reasoningDisplayLabel({
         provider,
         composerStyle: 'default',
@@ -60,7 +63,8 @@ function seatSideView(state: SeatChangeSeatState): SeatSideView {
         claudeReasoningEffort: state.reasoningEffort,
         grokReasoningEffort: state.reasoningEffort,
         cursorReasoningEffort: state.reasoningEffort,
-        kimiReasoningEffort: state.reasoningEffort
+        kimiReasoningEffort: state.reasoningEffort,
+        kimiThinkingEnabled: state.thinkingEnabled
       })
     : ''
   const presetId = state.permissionPresetId || 'default'
@@ -166,6 +170,73 @@ function SeatPermissionChip({
   )
 }
 
+/**
+ * The seat strip itself: chair glyph, cluster + permission chips, role. Shared
+ * by the transcript row and the round close-out table so both surfaces roll
+ * the same element with the same chips — the close-out just renders it inline
+ * in a table cell, without the timestamp or the click-to-expand.
+ */
+function SeatStrip({
+  seatChange,
+  timestamp,
+  inline
+}: {
+  seatChange: SeatChangePayload | SeatChangeLink
+  timestamp?: string
+  inline: boolean
+}): JSX.Element | null {
+  const [phase, setPhase] = useState<'before' | 'after'>('before')
+
+  useEffect(() => {
+    if (phase === 'after') return
+    // 2 s pre-wait (owner call): the old seat holds long enough to be READ
+    // before the odometer rolls it to the new one.
+    const timer = window.setTimeout(() => setPhase('after'), 2000)
+    return () => window.clearTimeout(timer)
+  }, [phase])
+
+  const before = useMemo(() => seatSideView(seatChange.before), [seatChange])
+  const after = useMemo(() => seatSideView(seatChange.after), [seatChange])
+  const current = phase === 'before' ? before : after
+  const time = inline ? '' : formatSeatChangeTime(timestamp)
+
+  return (
+    <>
+      <span className="seat-change-icon" aria-hidden>
+        <SeatChairIcon />
+      </span>
+      <SeatClusterChip view={current} animate />
+      <SeatPermissionChip view={current} animate />
+      {current.role && (
+        <span
+          className="seat-change-role"
+          style={{ color: `var(--provider-${current.hue}-color, var(--accent))` }}
+        >
+          <CharOdometer text={current.role} />
+        </span>
+      )}
+      {time && <span className="seat-change-time">{time}</span>}
+    </>
+  )
+}
+
+/**
+ * Close-out variant: the same strip, inline in a markdown table cell. No
+ * timestamp (the close-out header carries the time), no click-to-expand, and
+ * no button — a table cell's seat is a RECORD, and the roll replaying every
+ * time the row scrolls back into view is how the before state is shown.
+ * Spans throughout, so it is valid inside a `<td>` with no block wrapper.
+ */
+export function SeatChangeInlineStrip({ link }: { link: SeatChangeLink }): JSX.Element {
+  return (
+    <span className="seat-change-message is-inline">
+      <span className="seat-change-row">
+        <SeatStrip seatChange={link} inline />
+      </span>
+    </span>
+  )
+}
+
 export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Element | null {
   const seatChange = message.metadata?.seatChange
   // Fresh = still inside the coalescing window at MOUNT — gates only the HOP
@@ -176,26 +247,12 @@ export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Elemen
   const [fresh] = useState(() =>
     Boolean(
       seatChange &&
-      Date.now() - Date.parse(seatChange.appliedAt || '') < SEAT_CHANGE_COALESCE_WINDOW_MS
+        Date.now() - Date.parse(seatChange.appliedAt || '') < SEAT_CHANGE_COALESCE_WINDOW_MS
     )
   )
-  const [phase, setPhase] = useState<'before' | 'after'>('before')
   const [expanded, setExpanded] = useState(false)
-
-  useEffect(() => {
-    if (phase === 'after') return
-    // 2 s pre-wait (owner call): the old seat holds long enough to be READ
-    // before the odometer rolls it to the new one.
-    const timer = window.setTimeout(() => setPhase('after'), 2000)
-    return () => window.clearTimeout(timer)
-  }, [phase])
-
   const before = useMemo(() => (seatChange ? seatSideView(seatChange.before) : null), [seatChange])
-  const after = useMemo(() => (seatChange ? seatSideView(seatChange.after) : null), [seatChange])
-  if (!seatChange || !before || !after) return null
-
-  const current = phase === 'before' ? before : after
-  const time = formatSeatChangeTime(message.timestamp)
+  if (!seatChange || !before) return null
 
   return (
     <div
@@ -212,20 +269,7 @@ export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Elemen
           expanded ? 'Hide the previous seat configuration' : 'Show the previous seat configuration'
         }
       >
-        <span className="seat-change-icon" aria-hidden>
-          <SeatChairIcon />
-        </span>
-        <SeatClusterChip view={current} animate />
-        <SeatPermissionChip view={current} animate />
-        {current.role && (
-          <span
-            className="seat-change-role"
-            style={{ color: `var(--provider-${current.hue}-color, var(--accent))` }}
-          >
-            <CharOdometer text={current.role} />
-          </span>
-        )}
-        {time && <span className="seat-change-time">{time}</span>}
+        <SeatStrip seatChange={seatChange} timestamp={message.timestamp} inline={false} />
       </button>
       {expanded && (
         <div className="seat-change-was">

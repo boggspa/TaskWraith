@@ -103,10 +103,89 @@ describe('seat-change chrome strip CSS', () => {
     expect(block).not.toContain('color:')
   })
 
+  it('repaints the shimmer for EVERY swept reasoning tier, at cell level', () => {
+    // `background-clip: text` on the suffix span cannot composite through the
+    // odometer's clipped, translated cells — the label renders as an invisible
+    // gap. Any tier the composer sweeps must therefore be repainted on the
+    // CELLS; a tier present in the composer rules but missing here is a
+    // silently blank reasoning label (xhigh was exactly that).
+    const sweptTiers = new Set(
+      [...cssSource.matchAll(
+        /\.composer-combined-picker-trigger\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix[^{]*\{([^}]*)\}/g
+      )]
+        .filter(([, , body]) => body.includes('background-clip'))
+        .map(([, tier]) => tier)
+    )
+    const repainted = new Set(
+      [...cssSource.matchAll(
+        /\.composer-combined-picker-trigger\.seat-change-chip\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix\s*\n\s*\.digit-odometer__cell/g
+      )].map(([, tier]) => tier)
+    )
+    expect(sweptTiers.size).toBeGreaterThan(0)
+    for (const tier of sweptTiers) expect(repainted).toContain(tier)
+  })
+
   it('nulls the hop and width transitions under reduce-motion', () => {
     expect(cssSource).toContain(
       ':root[data-reduce-motion="true"] .seat-change-message.is-fresh .seat-change-row'
     )
     expect(cssSource).toContain(':root[data-reduce-motion="true"] .char-odometer__slot')
+  })
+})
+
+describe('close-out table reuses the seat element', () => {
+  const closeoutSource = readFileSync(
+    new URL('../lib/taskWraithCloseoutMessage.ts', import.meta.url),
+    'utf8'
+  )
+  const markdownSource = readFileSync(
+    new URL('./StableMarkdownBlock.tsx', import.meta.url),
+    'utf8'
+  )
+
+  it('renders the inline strip from the link, with no timestamp and no expand button', () => {
+    expect(rowSource).toContain('export function SeatChangeInlineStrip')
+    // Spans only — a `<div>` is invalid inside the `<td>` this lands in.
+    expect(rowSource).toContain('<span className="seat-change-message is-inline">')
+    const start = rowSource.indexOf('export function SeatChangeInlineStrip')
+    const region = rowSource.slice(start, rowSource.indexOf('export function SeatChangeRow'))
+    expect(region).not.toContain('<button')
+    expect(region).not.toContain('onClick')
+  })
+
+  it('both surfaces share one strip, so the chips can never drift apart', () => {
+    expect(rowSource).toContain('function SeatStrip(')
+    expect(rowSource.split('<SeatStrip ').length - 1).toBe(2)
+  })
+
+  it('markdown intercepts the seat and status schemes, and the sanitizer allows them', () => {
+    expect(markdownSource).toContain('decodeSeatChangeLink(href)')
+    expect(markdownSource).toContain('<SeatChangeInlineStrip link={link} />')
+    expect(markdownSource).toContain("'ensemble-seat'")
+    // urlTransform strips unknown schemes before `components.a` ever sees the
+    // href — both new schemes must be listed there too, not just in the
+    // sanitizer, or the cells render as inert text.
+    const transformStart = markdownSource.indexOf('function markdownUrlTransform')
+    const transform = markdownSource.slice(transformStart, transformStart + 400)
+    expect(transform).toContain('SEAT_CHANGE_LINK_PREFIX')
+  })
+
+  it('collapses five seat columns into one and merges turns with tokens', () => {
+    expect(closeoutSource).toContain("'| Seat | Turns & Tokens |'")
+    expect(closeoutSource).not.toContain('✅')
+    expect(closeoutSource).toContain("`${turns} ${turns === 1 ? 'Turn' : 'Turns'}`")
+    expect(closeoutSource).toContain('Tks`')
+  })
+
+  it('derives the element sides and the link text from ONE compaction', () => {
+    // The href and the link text beside it are two renderings of the same row.
+    // Deriving them separately is how they drift (a turn that captured no
+    // permission preset reading as a tier change the text never showed).
+    expect(closeoutSource).toContain('function seatFieldSequence<T>(')
+    const start = closeoutSource.indexOf('function participantSeatChangeLink(')
+    const region = closeoutSource.slice(start, start + 900)
+    expect(region).toContain("fields.provider[which]")
+    expect(region).toContain("fields.model[which]")
+    expect(region).toContain('fields.permission[which]')
   })
 })

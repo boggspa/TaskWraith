@@ -12139,13 +12139,22 @@
   }
 }
 
-/* Seat-change row, Max/Ultra tiers: the composer paints the shimmer with
- * background-clip:text on the suffix span — but that cannot composite through
- * the odometer's clipped + translated CELLS, so the word renders as an
- * invisible gap. Repaint the SAME gradient at the cell level (the elements
- * that directly own the glyphs). Static tombstone rows keep the composer's
- * own suffix-level sweep; sparkles ride TriggerReasoningSuffix unchanged, so
- * the more-for-higher / less-for-lower tier ladder matches the picker. */
+/* Seat-change row, swept reasoning tiers: the composer paints the shimmer with
+ * `background-clip: text` on the suffix span — but that cannot composite
+ * through the odometer's clipped + translated CELLS, so the word renders as an
+ * invisible gap (this is what blanked xhigh's "Extra High").
+ *
+ * Repaint the gradient on the CELLS, which are the elements that directly own
+ * the glyphs. It has to be re-declared rather than inherited down the odometer
+ * chain: `inherit` reads the DIRECT parent, so every link would need it, and
+ * an ancestor carrying a gradient without a text clip paints it as a SOLID
+ * BLOCK behind the row.
+ *
+ * The tier list must cover EVERY tier whose composer rule sets
+ * `background-clip: text` — one missing tier is one silently blank reasoning
+ * label. SeatChangeRow.test.ts pins the two lists together. Keep each
+ * gradient identical to that tier's composer rule above; they are the same
+ * treatment seen through a different element. */
 .composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="ultracode"]
   .composer-combined-picker-trigger-suffix
   .digit-odometer__cell,
@@ -12168,6 +12177,25 @@
   animation: text-shimmer-sweep 3.2s linear infinite;
 }
 
+.composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="xhigh"]
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell {
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 0%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 34%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 78%, #ffffff) 50%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 66%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 100%
+  );
+  background-size: 240% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer-sweep 4.6s linear infinite;
+}
+
 :root[data-reduce-motion="true"]
   .composer-combined-picker-trigger.seat-change-chip
   .composer-combined-picker-trigger-suffix
@@ -12185,3 +12213,26 @@
 /* Owner call 2026-08-05: the row reuses the composer picker tokens verbatim —
  * chips take the trigger class's own font token; the role matches it. No
  * per-row size overrides. */
+
+/* Inline (close-out table) seat strip. Spans throughout so it is valid inside
+ * a `<td>`; no row margins, no timestamp, no hop — a table row is a record,
+ * and the roll replaying on scroll-back is how its before state is shown. */
+.seat-change-message.is-inline,
+.seat-change-message.is-inline .seat-change-row {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+.seat-change-message.is-inline .seat-change-row {
+  gap: 12px;
+  width: auto;
+  cursor: default;
+}
+
+/* The role is right-aligned in the transcript row by the flex gap alone; in a
+ * table cell it sits directly after the permission chip. */
+.seat-change-message.is-inline .seat-change-role {
+  margin-left: 0;
+}

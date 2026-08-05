@@ -22,6 +22,8 @@ import { HighlightedCodeBlock } from './HighlightedCodeBlock'
 import { AgentMention } from './AgentMention'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { ParticipantMention } from './ParticipantMention'
+import { SeatChangeInlineStrip } from './SeatChangeRow'
+import { SEAT_CHANGE_LINK_PREFIX, decodeSeatChangeLink } from '../../../shared/seatChange'
 import { FaviconLink } from './FaviconLink'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
@@ -433,6 +435,14 @@ const MARKDOWN_COMPONENTS: Components = {
       const participantId = href.slice('ensemble-dm://'.length).trim()
       return <ParticipantMention reference={participantId}>{children}</ParticipantMention>
     }
+    // Round close-out table: one seat element per participant in place of the
+    // five plain-text columns it replaced. The link TEXT is the full
+    // plain-text seat description, so a surface that does not intercept the
+    // scheme (TUI, iOS, copy-paste) still reads every field.
+    if (typeof href === 'string' && href.startsWith(SEAT_CHANGE_LINK_PREFIX)) {
+      const link = decodeSeatChangeLink(href)
+      return link ? <SeatChangeInlineStrip link={link} /> : <>{children}</>
+    }
     const classification = classifyMarkdownLink(href)
     const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
       event.preventDefault()
@@ -563,7 +573,12 @@ const SAFE_HTML_SCHEMA = {
   ...defaultSchema,
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href || []), 'agent', 'ensemble-dm']
+    href: [
+      ...(defaultSchema.protocols?.href || []),
+      'agent',
+      'ensemble-dm',
+      'ensemble-seat'
+    ]
   }
 }
 const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
@@ -579,7 +594,13 @@ const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
 // sanitizer so external-link security posture (blocking javascript:, data:,
 // etc.) is unchanged.
 function markdownUrlTransform(value: string): string {
-  if (value.startsWith('agent://') || value.startsWith('ensemble-dm://')) return value
+  if (
+    value.startsWith('agent://') ||
+    value.startsWith('ensemble-dm://') ||
+    value.startsWith(SEAT_CHANGE_LINK_PREFIX)
+  ) {
+    return value
+  }
   return defaultUrlTransform(value)
 }
 
