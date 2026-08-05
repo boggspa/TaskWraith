@@ -1882,6 +1882,76 @@ describe('Sidebar success-ink epoch (first launch after upgrading)', () => {
   })
 })
 
+describe('Sidebar failure ink persistence', () => {
+  const failedRun = {
+    runId: 'boom',
+    startedAt: '2026-08-05T10:00:00.000Z',
+    endedAt: '2026-08-05T10:05:00.000Z',
+    status: 'failed' as const,
+    exitCode: 1
+  }
+  const broken = () =>
+    makeChat({ appChatId: 'broken', title: 'Broken thread', updatedAt: 2, runs: [failedRun] })
+
+  it('keeps red after the outcome has been acknowledged — reading it does not fix it', () => {
+    const outcome = projectSidebarTerminalOutcome(broken())!
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents'),
+      [SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY]: JSON.stringify({ broken: outcome.fingerprint })
+    })
+    expect(
+      renderSidebar([broken(), makeChat({ appChatId: 'viewer', updatedAt: 1 })], {
+        activeChatId: 'viewer'
+      })
+    ).toContain('sidebar-terminal-outcome-failure')
+  })
+
+  it('still retires GREEN on acknowledgement — success is news, failure is a condition', () => {
+    const ok = makeChat({
+      appChatId: 'fine',
+      title: 'Fine thread',
+      updatedAt: 2,
+      runs: [{ ...failedRun, runId: 'ok', status: 'success' as const, exitCode: 0 }]
+    })
+    const outcome = projectSidebarTerminalOutcome(ok)!
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents'),
+      [SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY]: JSON.stringify({ fine: outcome.fingerprint })
+    })
+    expect(
+      renderSidebar([ok, makeChat({ appChatId: 'viewer', updatedAt: 1 })], {
+        activeChatId: 'viewer'
+      })
+    ).not.toContain('sidebar-terminal-outcome-success')
+  })
+
+  it('is superseded by a later successful run rather than lingering', () => {
+    const recovered = makeChat({
+      appChatId: 'broken',
+      title: 'Recovered thread',
+      updatedAt: 3,
+      runs: [
+        failedRun,
+        {
+          runId: 'fixed',
+          startedAt: '2026-08-05T11:00:00.000Z',
+          endedAt: '2026-08-05T11:05:00.000Z',
+          status: 'success' as const,
+          exitCode: 0
+        }
+      ]
+    })
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar([recovered, makeChat({ appChatId: 'viewer', updatedAt: 1 })], {
+      activeChatId: 'viewer'
+    })
+    expect(html).toContain('sidebar-terminal-outcome-success')
+    expect(html).not.toContain('sidebar-terminal-outcome-failure')
+  })
+})
+
 describe('Sidebar sleeping accent', () => {
   const sleepingRun = { runId: 'nap', startedAt: '2026-08-05T10:00:00.000Z', status: 'sleeping' }
 

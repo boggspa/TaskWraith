@@ -3762,7 +3762,14 @@ export function Sidebar({
       if (
         outcome &&
         !sidebarSuccessInkPredatesEpoch(outcome, successInkEpochMs) &&
-        isSidebarTerminalOutcomeUnread(terminalOutcomeAcknowledgements, chat.appChatId, outcome)
+        // Failure ink is NOT unread-scoped. Success is news — once seen, it
+        // retires. A failure is a standing condition: the thread is broken
+        // until something changes it, and the status chips that used to say so
+        // in the subline are gone. Reading it does not fix it, so red persists
+        // until a NEW result supersedes it (a fresh run mints a new
+        // fingerprint, and a success replaces the tone outright).
+        (outcome.tone === 'failure' ||
+          isSidebarTerminalOutcomeUnread(terminalOutcomeAcknowledgements, chat.appChatId, outcome))
       ) {
         tones.set(chat.appChatId, outcome.tone)
       }
