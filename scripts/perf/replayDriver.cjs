@@ -96,10 +96,41 @@ function applyReplayEventWithTimeout(ctx, event, meta, options) {
  * @typedef {object} PageApiAdapter
  * @property {(chatId: string) => Promise<object|null>} getChat
  * @property {(chat: object) => Promise<object|unknown>} saveChat
+ * @property {(base: object, patch: object) => Promise<object|unknown>} [savePrefix]
  */
+
+/** Page-global holding seeded fixture records for bounded prefix commands. */
+const PAGE_FIXTURE_GLOBAL = '__TASKWRAITH_PERF_REPLAY_FIXTURE__'
+
+/**
+ * Compact ack projection, shared by every save shape. Returning the full
+ * canonical record would ship the whole multi-MB chat BACK over CDP per save;
+ * the driver needs only the revision to stamp its next save.
+ */
+const ACK_PROJECTION =
+  '(saved) => saved && typeof saved === "object" ' +
+  '? { persistenceRevision: saved.persistenceRevision, updatedAt: saved.updatedAt } : saved'
 
 /**
  * Build a page API adapter from a CDP-like evaluator.
+ *
+ * WHY `savePrefix` EXISTS (measured 2026-08-05, live child on port 46110):
+ * embedding the whole record in each `Runtime.evaluate` source costs ~50 ms per
+ * MB — V8 must parse megabytes of source text per event — so a 3.67 MB prefix
+ * cost 159-250 ms of the ~319 ms event while the app's own `writeJson` was
+ * 1.21% of replay wall time. That term grows linearly with the prefix, which is
+ * precisely the "throughput decay" earlier runs reported as an app property.
+ * An instrument that owns ~78% of the clock cannot measure the thing it is
+ * pointed at, and the coalescing ratio is worse than merely noisy: it is a
+ * function of event ARRIVAL RATE against the 1 s trailing window, so a slow
+ * harness silently manufactures its own coalescing result.
+ *
+ * So the record is seeded into the page ONCE per chat and each save sends a
+ * ~350-byte command that slices the prefix in-page. What main receives over IPC
+ * is byte-identical — the renderer→main structured clone of the whole record is
+ * a REAL app cost and is deliberately preserved. Only the harness's own
+ * CDP→renderer hop is removed.
+ *
  * @param {{ evaluate: (expression: string) => Promise<unknown> }} page
  * @returns {PageApiAdapter}
  */
@@ -107,17 +138,47 @@ function createCdpPageApiAdapter(page) {
   if (!page || typeof page.evaluate !== 'function') {
     throw new Error('page.evaluate adapter required')
   }
+  /** Chat ids whose full record is already resident in the page. */
+  const seeded = new Set()
+
+  const seedChat = async (chat) => {
+    const chatId = chat.appChatId
+    if (seeded.has(chatId)) return
+    const expr =
+      `(function(){ const store = window.${PAGE_FIXTURE_GLOBAL} = ` +
+      `window.${PAGE_FIXTURE_GLOBAL} || {}; ` +
+      `store[${JSON.stringify(chatId)}] = ${JSON.stringify(chat)}; ` +
+      `return { seeded: ${JSON.stringify(chatId)} }; })()`
+    await page.evaluate(expr)
+    seeded.add(chatId)
+  }
+
   return {
     async getChat(chatId) {
       const expr = `Promise.resolve(window.api.getChat(${JSON.stringify(chatId)}))`
       return /** @type {object|null} */ (await page.evaluate(expr))
     },
+
+    /**
+     * Save a message-prefix of an already-seeded record. Bounded payload: the
+     * expression carries three numbers and an id, never the record.
+     */
+    async savePrefix(base, patch) {
+      await seedChat(base)
+      const chatId = base.appChatId
+      const expr =
+        `(function(){ const base = (window.${PAGE_FIXTURE_GLOBAL} || {})[${JSON.stringify(chatId)}]; ` +
+        `if (!base) throw new Error("perf replay fixture not seeded: " + ${JSON.stringify(chatId)}); ` +
+        `const chat = Object.assign({}, base, { messages: base.messages.slice(0, ${Number(patch.messageCount)}), ` +
+        `updatedAt: ${Number(patch.updatedAt)}, persistenceRevision: ${Number(patch.persistenceRevision)} }); ` +
+        `return Promise.resolve(window.api.saveChat(chat)).then(${ACK_PROJECTION}); })()`
+      return await page.evaluate(expr)
+    },
+
     async saveChat(chat) {
+      // Fallback for records that are not a prefix of a seeded fixture chat.
       // Pass chat via JSON to avoid expression injection; still bounded by CDP.
-      // Return ONLY the canonical ack fields: returning the full canonical
-      // record would ship the whole multi-MB chat back over CDP per save, and
-      // the driver needs nothing but the revision to stamp its next save.
-      const expr = `(function(){ const chat = ${JSON.stringify(chat)}; return Promise.resolve(window.api.saveChat(chat)).then((saved) => saved && typeof saved === 'object' ? { persistenceRevision: saved.persistenceRevision, updatedAt: saved.updatedAt } : saved); })()`
+      const expr = `(function(){ const chat = ${JSON.stringify(chat)}; return Promise.resolve(window.api.saveChat(chat)).then(${ACK_PROJECTION}); })()`
       return await page.evaluate(expr)
     }
   }
@@ -209,12 +270,22 @@ function buildMessagePrefixBatches(fullChat, batchSize = DEFAULT_BATCH_SIZE) {
  * @param {object} event
  * @param {object} record
  */
-async function performTrackedSave(ctx, event, record) {
+async function performTrackedSave(ctx, event, record, prefix) {
   const chatId = event.appChatId
   const known = ctx.canonicalRevisions.get(chatId)
   const sentRevision = known != null ? known : record.persistenceRevision || 1
   record.persistenceRevision = sentRevision
-  const ack = await ctx.api.saveChat(record)
+  // Bounded path when the adapter supports it: the record is already resident
+  // in the page, so the per-event payload does not scale with the transcript.
+  // Identical bytes reach main either way.
+  const ack =
+    prefix && typeof ctx.api.savePrefix === 'function'
+      ? await ctx.api.savePrefix(prefix.base, {
+          messageCount: prefix.messageCount,
+          updatedAt: record.updatedAt,
+          persistenceRevision: sentRevision
+        })
+      : await ctx.api.saveChat(record)
   const ackRevision =
     ack && typeof ack.persistenceRevision === 'number' ? ack.persistenceRevision : null
   if (ackRevision != null) {
@@ -251,7 +322,10 @@ async function applyReplayEvent(ctx, event) {
         return { ok: false, unsupported: true }
       }
       // Seed: save full fixture chat once so subsequent prefix saves mutate HEAD paths.
-      await performTrackedSave(ctx, event, structuredCloneChat(chat))
+      await performTrackedSave(ctx, event, structuredCloneChat(chat), {
+        base: chat,
+        messageCount: chat.messages.length
+      })
       return { ok: true, kind: event.kind }
     }
     case 'append_user':
@@ -288,7 +362,10 @@ async function applyReplayEvent(ctx, event) {
             'fixture replay does not drive EnsembleOrchestrator; D1 soft flush approximated via saveChat only'
         })
       }
-      await performTrackedSave(ctx, event, next)
+      await performTrackedSave(ctx, event, next, {
+        base: chat,
+        messageCount: next.messages.length
+      })
       return { ok: true, kind: event.kind, messageCount: next.messages.length }
     }
     case 'run_still_running': {

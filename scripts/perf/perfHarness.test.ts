@@ -43,7 +43,11 @@ const {
   SESSION_CHECKPOINT_RELATIVE_PATH
 } = require('./materializeUserData.cjs')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
-const { createCdpEvaluateAdapter, runDeterministicReplay } = require('./replayDriver.cjs')
+const {
+  createCdpEvaluateAdapter,
+  createCdpPageApiAdapter,
+  runDeterministicReplay
+} = require('./replayDriver.cjs')
 const { runBaselineCli } = require('./runBaseline.cjs')
 const { dirtyTreeFingerprint, collectRepoProvenance } = require('./repoProvenance.cjs')
 
@@ -1036,6 +1040,78 @@ describe('T2 CDP evaluate adapter (renderer failures must abort, not vanish)', (
   })
 })
 
+describe('T2 page adapter payload (the instrument must not dominate the measurement)', () => {
+  // MEASURED 2026-08-05 against the live isolated child at 46110: embedding the
+  // whole record in each Runtime.evaluate source costs ~50 ms per MB, so a
+  // 3.67 MB prefix cost 159-250 ms while the app's own writeJson was 1.2% of
+  // replay wall time. That per-event transport grows linearly with the prefix
+  // and is what produced the "throughput decay" earlier runs reported as an app
+  // property. Seed the record once, then send prefix COMMANDS.
+  function recordingPage() {
+    const expressions: string[] = []
+    return {
+      expressions,
+      async evaluate(expression: string) {
+        expressions.push(expression)
+        return { persistenceRevision: expressions.length + 1, updatedAt: 5 }
+      }
+    }
+  }
+
+  const bigChat = {
+    appChatId: 'perf-30seat-chat-01',
+    scope: 'global',
+    persistenceRevision: 1,
+    updatedAt: 1,
+    messages: Array.from({ length: 2000 }, (_, i) => ({
+      id: `m-${i}`,
+      role: 'assistant',
+      content: 'x'.repeat(600)
+    }))
+  }
+
+  it('sends a bounded per-save payload after seeding the record once', async () => {
+    const page = recordingPage()
+    const api = createCdpPageApiAdapter(page)
+    expect(typeof api.savePrefix).toBe('function')
+
+    await api.savePrefix(bigChat, {
+      messageCount: 900,
+      updatedAt: 11,
+      persistenceRevision: 1
+    })
+    await api.savePrefix(bigChat, {
+      messageCount: 1800,
+      updatedAt: 12,
+      persistenceRevision: 2
+    })
+
+    // One seed carrying the record, then one command per save.
+    const seeds = page.expressions.filter((e) => e.length > 100_000)
+    expect(seeds).toHaveLength(1)
+    const commands = page.expressions.filter((e) => e.length <= 100_000)
+    expect(commands).toHaveLength(2)
+    for (const command of commands) {
+      expect(
+        command.length,
+        'per-save payload must not scale with the record — it becomes the measurement'
+      ).toBeLessThan(1_000)
+    }
+    // The command must still drive the real save path with the real prefix.
+    expect(commands[1]).toContain('window.api.saveChat')
+    expect(commands[1]).toContain('1800')
+  })
+
+  it('re-seeds per chat id, not once globally', async () => {
+    const page = recordingPage()
+    const api = createCdpPageApiAdapter(page)
+    const other = { ...bigChat, appChatId: 'perf-30seat-chat-02' }
+    await api.savePrefix(bigChat, { messageCount: 10, updatedAt: 1, persistenceRevision: 1 })
+    await api.savePrefix(other, { messageCount: 10, updatedAt: 1, persistenceRevision: 1 })
+    expect(page.expressions.filter((e) => e.length > 100_000)).toHaveLength(2)
+  })
+})
+
 describe('T2 replay against a revision-CAS store (ChatService contract)', () => {
   // ChatService.saveChatInternal rejects any save whose persistenceRevision
   // differs from the current canonical record — silently, by returning the
@@ -1102,6 +1178,37 @@ describe('T2 replay against a revision-CAS store (ChatService contract)', () => 
       'CAS store rejected replay saves — the driver is not consuming canonical revisions'
     ).toBe(0)
     expect(api.stats().accepted).toBe(expectedSaves)
+  })
+
+  it('prefers the bounded savePrefix path when the adapter offers it', async () => {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 42,
+      baseTimestamp: 1_700_000_000_000,
+      lean: true,
+      scaleDown: 8
+    })
+    const cas = createRevisionCasApi(fixture)
+    let wholeRecordSaves = 0
+    let prefixSaves = 0
+    const api = {
+      getChat: cas.getChat,
+      async saveChat(chat) {
+        wholeRecordSaves += 1
+        return cas.saveChat(chat)
+      },
+      async savePrefix(base, patch) {
+        prefixSaves += 1
+        return cas.saveChat({ ...base, persistenceRevision: patch.persistenceRevision })
+      }
+    }
+    await runDeterministicReplay({ fixture, api })
+    expect(prefixSaves).toBeGreaterThan(4)
+    expect(
+      wholeRecordSaves,
+      'driver fell back to whole-record saves despite a savePrefix-capable adapter'
+    ).toBe(0)
+    expect(cas.stats().rejected).toBe(0)
   })
 })
 
