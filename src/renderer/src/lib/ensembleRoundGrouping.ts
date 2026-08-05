@@ -91,9 +91,17 @@ export function groupEnsembleMessagesByRound(
     // Collect a run of consecutive messages with the same
     // roundId. Adjacency only — a roundId change ends the
     // group; non-adjacent same-id messages would start a new
-    // group entry.
+    // group entry. An UNSTAMPED `agentQuestionReply` row is
+    // adopted into the open group: historical reply writers
+    // never stamped `ensembleRoundId`, and without adoption the
+    // reply splits its round into two headers with the naked
+    // answer bubble floating between them. The reply answers a
+    // question asked in this round, so it belongs to it.
     const group: ChatMessage[] = []
-    while (i < messages.length && extractRoundId(messages[i]) === roundId) {
+    while (
+      i < messages.length &&
+      (extractRoundId(messages[i]) === roundId || isAdoptableQuestionReply(messages[i]))
+    ) {
       group.push(messages[i])
       i += 1
     }
@@ -116,6 +124,11 @@ function extractRoundId(message: ChatMessage): string | null {
   const metadata = message.metadata as Record<string, unknown> | undefined
   const value = metadata?.ensembleRoundId
   return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+/** Unstamped answer row eligible for adoption into the open round group. */
+function isAdoptableQuestionReply(message: ChatMessage): boolean {
+  return message.metadata?.kind === 'agentQuestionReply' && !extractRoundId(message)
 }
 
 function pickRoundSummary(chat: ChatRecord, roundId: string): string | null {

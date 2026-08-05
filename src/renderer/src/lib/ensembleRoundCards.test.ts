@@ -265,6 +265,124 @@ describe('buildEnsembleRoundCardRows', () => {
     expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
   })
 
+  /* A question the agent asked and the user answered is a decision record —
+   * the round fold must not bury it. The marker row (which carries the
+   * settled card) and its reply row (which the tombstone reads the answer
+   * from, rendered zero-height by the suppression pass) both stay standing
+   * directly after their round's header. */
+  it('hoists the ask_user_question trail out of a collapsed round', () => {
+    const marker: ChatMessage = {
+      id: 'agent-question-q1',
+      role: 'system',
+      content: 'Codex asked you to pick an option:',
+      timestamp: '2026-05-27T12:00:30.000Z',
+      metadata: {
+        kind: 'agentQuestion',
+        questionId: 'q1',
+        agentQuestion: 'Ship it?',
+        agentQuestionOptions: ['Yes', 'No'],
+        ensembleRoundId: 'r1'
+      }
+    } as ChatMessage
+    const reply: ChatMessage = {
+      id: 'agent-question-reply-q1',
+      role: 'user',
+      content: 'Yes',
+      timestamp: '2026-05-27T12:00:40.000Z',
+      metadata: {
+        kind: 'agentQuestionReply',
+        questionId: 'q1',
+        respondedToMessageId: 'agent-question-q1',
+        isCustomAnswer: false,
+        ensembleRoundId: 'r1'
+      }
+    } as ChatMessage
+    const display = [
+      userPrompt('u1', 'r1'),
+      message('a1', { roundId: 'r1' }),
+      marker,
+      reply,
+      message('a1b', { roundId: 'r1' }),
+      userPrompt('u2', 'r2'),
+      message('a2', { roundId: 'r2' })
+    ]
+    const result = buildEnsembleRoundCardRows({
+      chat: chat({
+        ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES
+    })
+    // r1 collapsed: header, then the hoisted Q&A trail — nothing else from the
+    // round body. r2 latest → expanded as before.
+    expect(result.map((m) => m.id)).toEqual([
+      ensembleRoundHeaderId('r1'),
+      'agent-question-q1',
+      'agent-question-reply-q1',
+      ensembleRoundHeaderId('r2'),
+      'u2',
+      'a2'
+    ])
+    expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
+  })
+
+  it('does not duplicate the question trail when its round is expanded', () => {
+    const marker: ChatMessage = {
+      id: 'agent-question-q2',
+      role: 'system',
+      content: 'Kimi asked you a question:',
+      timestamp: '2026-05-27T12:00:30.000Z',
+      metadata: {
+        kind: 'agentQuestion',
+        questionId: 'q2',
+        agentQuestion: 'Continue?',
+        ensembleRoundId: 'r1'
+      }
+    } as ChatMessage
+    const display = [userPrompt('u1', 'r1'), marker, message('a1', { roundId: 'r1' })]
+    const result = buildEnsembleRoundCardRows({
+      chat: chat({
+        ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES
+    })
+    // Latest idle round stays expanded — the marker renders exactly once.
+    expect(result.map((m) => m.id)).toEqual([
+      ensembleRoundHeaderId('r1'),
+      'u1',
+      'agent-question-q2',
+      'a1'
+    ])
+  })
+
+  it('hoists the question trail when a round is manually collapsed', () => {
+    const marker: ChatMessage = {
+      id: 'agent-question-q3',
+      role: 'system',
+      content: 'Grok asked you to pick an option:',
+      timestamp: '2026-05-27T12:00:30.000Z',
+      metadata: {
+        kind: 'agentQuestion',
+        questionId: 'q3',
+        agentQuestion: 'Pick one',
+        ensembleRoundId: 'r1'
+      }
+    } as ChatMessage
+    const display = [userPrompt('u1', 'r1'), marker, message('a1', { roundId: 'r1' })]
+    const result = buildEnsembleRoundCardRows({
+      chat: chat({
+        ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: new Map([['r1', false]])
+    })
+    expect(result.map((m) => m.id)).toEqual([ensembleRoundHeaderId('r1'), 'agent-question-q3'])
+  })
+
   it('hides fan-out disclosures with the rest of a collapsed round', () => {
     const roundId = 'r-fanout'
     const fanoutLane = message('fanout-lane', {

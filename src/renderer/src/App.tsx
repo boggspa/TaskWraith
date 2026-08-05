@@ -19183,6 +19183,12 @@ function App(): React.JSX.Element {
         return
       }
       updateChatById(targetChatId, (prev) => {
+        // The reply inherits the marker's round id so round grouping keeps
+        // the Q&A trail inside one round group — an unstamped reply used to
+        // split its round into two headers. (Legacy unstamped rows are
+        // adopted by groupEnsembleMessagesByRound instead.)
+        const markerRoundId = prev.messages?.find((m) => m.id === pending.messageId)?.metadata
+          ?.ensembleRoundId
         const replyMsg: ChatMessage = {
           id: `agent-question-reply-${questionId}`,
           role: 'user',
@@ -19192,7 +19198,10 @@ function App(): React.JSX.Element {
             kind: 'agentQuestionReply',
             questionId,
             respondedToMessageId: pending.messageId,
-            isCustomAnswer: isCustom
+            isCustomAnswer: isCustom,
+            ...(typeof markerRoundId === 'string' && markerRoundId
+              ? { ensembleRoundId: markerRoundId }
+              : {})
           }
         }
         // Idempotent: don't append a duplicate if the user double-

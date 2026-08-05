@@ -187,4 +187,59 @@ describe('groupEnsembleMessagesByRound (AV1)', () => {
       expect(items[0].summary).toBeNull()
     }
   })
+
+  /* Historical `agentQuestionReply` rows predate the writers stamping
+   * `ensembleRoundId`. Without adoption, an unstamped reply is a flat item
+   * that splits its round into TWO adjacent groups — two "Round N" headers
+   * for one round, with the naked answer bubble floating between them. The
+   * reply semantically belongs to the round whose question it answered, so
+   * it adopts the group that is open around it. */
+  it('adopts an unstamped agentQuestionReply into the surrounding round group', () => {
+    const reply: ChatMessage = {
+      id: 'agent-question-reply-q1',
+      role: 'user',
+      content: 'Yes',
+      timestamp: '2026-05-27T12:00:40.000Z',
+      metadata: {
+        kind: 'agentQuestionReply',
+        questionId: 'q1',
+        respondedToMessageId: 'agent-question-q1',
+        isCustomAnswer: false
+      }
+    } as ChatMessage
+    const items = groupEnsembleMessagesByRound(
+      chat({
+        messages: [
+          message('a1', { roundId: 'r1' }),
+          reply,
+          message('a2', { roundId: 'r1' }),
+          message('b1', { roundId: 'r2' })
+        ]
+      })
+    )
+    expect(items.map((item) => item.type)).toEqual(['round-group', 'round-group'])
+    if (items[0].type === 'round-group') {
+      expect(items[0].roundId).toBe('r1')
+      expect(items[0].messages.map((m) => m.id)).toEqual(['a1', 'agent-question-reply-q1', 'a2'])
+    }
+  })
+
+  it('leaves an unstamped reply flat when no round group is open around it', () => {
+    const reply: ChatMessage = {
+      id: 'agent-question-reply-q2',
+      role: 'user',
+      content: 'Alpha',
+      timestamp: '2026-05-27T12:00:40.000Z',
+      metadata: {
+        kind: 'agentQuestionReply',
+        questionId: 'q2',
+        respondedToMessageId: 'agent-question-q2',
+        isCustomAnswer: false
+      }
+    } as ChatMessage
+    const items = groupEnsembleMessagesByRound(
+      chat({ messages: [message('a1'), reply, message('a2')] })
+    )
+    expect(items.map((item) => item.type)).toEqual(['message', 'message', 'message'])
+  })
 })

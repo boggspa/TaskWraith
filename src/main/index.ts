@@ -2609,6 +2609,11 @@ remoteQuestionRegistry.subscribe((event) => {
       const chat = AppStore.getChat(record.threadId)
       const replyId = `agent-question-reply-${record.questionId}`
       if (chat && !chat.messages?.some((message) => message.id === replyId)) {
+        // Mirror the desktop writer: inherit the marker's round id so the
+        // reply stays inside its round group instead of splitting it.
+        const markerRoundId = chat.messages?.find(
+          (message) => message.id === `agent-question-${record.questionId}`
+        )?.metadata?.ensembleRoundId
         const replyMessage: ChatMessage = {
           id: replyId,
           role: 'user',
@@ -2618,7 +2623,10 @@ remoteQuestionRegistry.subscribe((event) => {
             kind: 'agentQuestionReply',
             questionId: record.questionId,
             respondedToMessageId: `agent-question-${record.questionId}`,
-            isCustomAnswer: event.isCustom
+            isCustomAnswer: event.isCustom,
+            ...(typeof markerRoundId === 'string' && markerRoundId
+              ? { ensembleRoundId: markerRoundId }
+              : {})
           }
         }
         const updated: ChatRecord = {

@@ -8,6 +8,7 @@ import {
 } from '../../../shared/chatPopoutTransfer'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
 import { buildEnsembleFanoutViewportRanges } from './ensembleFanoutViewportGroups'
+import { isAgentQuestionMarker, isAgentQuestionReply } from './agentQuestionTombstone'
 import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGrouping'
 
 /**
@@ -432,6 +433,24 @@ export function buildEnsembleRoundCardRowsWithRanges(
     })
     if (expanded) {
       out.push(...visibleRoundRanges())
+    } else {
+      // A question the agent asked the user is a decision record with the same
+      // standing as the user's own prompts — the round fold must not bury it.
+      // Hoist the Q&A trail out of the collapsed body, directly after the
+      // header: the marker row carries the settled card (or the still-pending
+      // live card), and the reply row rides along zero-height because the
+      // tombstone reads the chosen answer from it (without the reply in the
+      // display list, an answered question would settle as "Skipped"). Ranges
+      // overlap the header's span exactly like the expanded branch's rows.
+      for (let localIndex = 0; localIndex < messages.length; localIndex += 1) {
+        const candidate = messages[localIndex]
+        if (!isAgentQuestionMarker(candidate) && !isAgentQuestionReply(candidate)) continue
+        out.push({
+          message: candidate,
+          startIndex: groupStartIndex + localIndex,
+          endIndex: groupStartIndex + localIndex + 1
+        })
+      }
     }
     sourceIndex = groupEndIndex
   }

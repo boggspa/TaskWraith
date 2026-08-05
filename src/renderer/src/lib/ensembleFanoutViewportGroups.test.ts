@@ -291,6 +291,47 @@ describe('fan-out disclosure groups', () => {
     ])
   })
 
+  /* A fan-out lane participant can call ask_user_question mid-wave. The
+   * marker row carries the settled Q&A card and bears round-level hierarchy —
+   * it must ride ABOVE the wave fold as its own row, never nested inside the
+   * fan-out viewport, whether the wave is collapsed or expanded. */
+  it('passes an ask_user_question marker through a folded wave as its own row', () => {
+    const roundId = 'round-question'
+    const marker: ChatMessage = {
+      id: 'agent-question-q-lane',
+      role: 'system',
+      content: 'Pi asked you to pick an option:',
+      timestamp: '2026-05-27T12:00:30.000Z',
+      metadata: {
+        kind: 'agentQuestion',
+        questionId: 'q-lane',
+        agentQuestion: 'Which branch should the lane target?',
+        ensembleRoundId: roundId
+      }
+    } as ChatMessage
+    const messages = [
+      status('dispatch', roundId, 'Worker fan-out · 2 participant(s) dispatched concurrently.'),
+      lane('worker-a', roundId, { ensembleStageRole: 'worker' }),
+      marker,
+      lane('worker-b', roundId, { ensembleStageRole: 'worker' }),
+      serialTurn('serial-a', roundId)
+    ]
+    const collapsed = buildEnsembleFanoutViewportRanges({
+      chatId: 'chat-q',
+      roundId,
+      messages,
+      sourceOffset: 0,
+      expandedViewportIds: new Set()
+    })
+    const collapsedIds = collapsed.map((entry) => entry.message.id)
+    expect(collapsedIds).toContain('agent-question-q-lane')
+    expect(isEnsembleFanoutViewportHeaderMessage(collapsed[0].message)).toBe(true)
+    // The marker is not swept into the header's constituents.
+    expect(collapsed[0].message.metadata?.groupedFanoutMessageIds).not.toContain(
+      'agent-question-q-lane'
+    )
+  })
+
   it('folds only the completed wave when the next fan-out stage begins', () => {
     const roundId = 'round-stage-boundary'
     const result = buildEnsembleFanoutViewportRanges({
