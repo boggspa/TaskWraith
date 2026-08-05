@@ -576,6 +576,46 @@ const saveCoalescer =
 const chatJournal = createChatJournal(path.join(userDataPath, 'chat-journal'))
 
 /**
+ * T4c — decide whether this save may be deferred, and record WHY.
+ *
+ * Every name used here was verified against the live type definitions rather
+ * than assumed. Two candidate signals were checked and REJECTED as fabrication:
+ * `RunStatus` has no approval member (it is
+ * success|success_with_warnings|failed|cancelled|running|sleeping), and
+ * `waiting_for_input` does not exist anywhere in the source.
+ *
+ * The real approval signal is `ConcurrentLaneStatus.'awaiting-approval'` plus
+ * `ConcurrentLane.approvalsQueued`, reachable at
+ * `chat.ensemble.activeRound.lanes`. KNOWN LIMIT: lanes are only populated for
+ * concurrent-mode rounds, so a serial-dispatch approval has no chat-record
+ * signal. That is acceptable rather than a hole — approval DECISIONS are
+ * durable in their own `approval-ledger.json`, written synchronously and never
+ * routed through this coalescer. What this barrier protects is the transcript
+ * rendering of an open approval, which would otherwise sit in a pending timer.
+ */
+function deriveSaveFlushReason(chat: ChatRecord): FlushReason {
+  // A chat whose history is being destroyed must never sit in a timer: the
+  // deletion transaction is running concurrently with this save.
+  if (deletedChatIds.has(chat.appChatId)) return 'history-deletion'
+
+  const lanes = chat.ensemble?.activeRound?.lanes
+  if (lanes) {
+    for (const lane of Object.values(lanes)) {
+      if (lane.status === 'awaiting-approval' || (lane.approvalsQueued ?? 0) > 0) {
+        return 'approval'
+      }
+    }
+  }
+
+  // Deferral is only safe while a run is actively streaming: that is both
+  // where the measured 8-14 rewrites per 10 s come from, and the only window
+  // in which a superseding save is guaranteed to follow. Once no run is
+  // running the chat sits at a terminal/idle boundary, so the next reader —
+  // bridge broadcast, iOS, crash recovery — must find it on disk.
+  return (chat.runs ?? []).some((run) => run.status === 'running') ? 'normal' : 'terminal'
+}
+
+/**
  * Remove every journal artifact for a deleted chat, including the tombstone.
  *
  * `chatJournal.delete` deliberately leaves a `{chatId}.tombstone` marker so a
@@ -6307,17 +6347,7 @@ export class AppStore {
         record: normalizedChat
       })
       const chatId = normalizedChat.appChatId
-      // T3a-1 durability barrier. Deferral is only safe while a run is
-      // actively streaming: that is both where the measured 8-14 rewrites per
-      // 10 s come from, and the only window a superseding save is guaranteed
-      // to follow. Once no run is running the chat sits at a terminal/idle
-      // boundary, so the next reader — bridge broadcast, iOS, crash recovery —
-      // must find it on disk rather than in a pending timer.
-      const flushReason: FlushReason = (normalizedChat.runs ?? []).some(
-        (run) => run.status === 'running'
-      )
-        ? 'normal'
-        : 'terminal'
+      const flushReason = deriveSaveFlushReason(normalizedChat)
       saveCoalescer.schedule(
         chatId,
         () => {
