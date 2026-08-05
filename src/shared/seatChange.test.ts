@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   SEAT_CHANGE_COALESCE_WINDOW_MS,
+  SEAT_CHANGE_LINK_PREFIX,
   coalesceSeatChangeMessages,
+  decodeSeatChangeLink,
+  encodeSeatChangeLink,
   type SeatChangePayload,
   type SeatChangeCarrierMessage
 } from './seatChange'
@@ -104,5 +107,64 @@ describe('coalesceSeatChangeMessages (120 s sliding window, tombstoning)', () =>
     // cannot positively identify as an in-window sibling)
     const r2 = coalesceSeatChangeMessages([malformed], nextPayload, T0)
     expect(r2.messages.map((m) => m.id)).toEqual(['bad'])
+  })
+})
+
+describe('close-out seat links', () => {
+  const after = {
+    provider: 'claude',
+    model: 'claude-opus-5',
+    role: 'GemProWork',
+    seatNumber: 8,
+    reasoningEffort: 'max',
+    permissionPresetId: 'default',
+    grantsCount: 2
+  }
+  const before = {
+    provider: 'grok',
+    model: 'grok-4.5-fast',
+    role: 'GemProWork',
+    seatNumber: 8,
+    reasoningEffort: 'high',
+    permissionPresetId: 'default',
+    grantsCount: 2
+  }
+
+  it('round-trips both sides of a changed seat', () => {
+    const href = encodeSeatChangeLink({ participantId: 'p-8', before, after })
+    expect(href.startsWith(SEAT_CHANGE_LINK_PREFIX)).toBe(true)
+    expect(decodeSeatChangeLink(href)).toEqual({ participantId: 'p-8', before, after })
+  })
+
+  it('omits the before side for an unchanged seat, decoding to identical sides', () => {
+    const href = encodeSeatChangeLink({ participantId: 'p-8', before: after, after })
+    expect(href).not.toContain('bp=')
+    expect(decodeSeatChangeLink(href)).toEqual({ participantId: 'p-8', before: after, after })
+  })
+
+  it('survives values that would break a markdown link or a naive query parser', () => {
+    // `)` would close the markdown destination, `&`/`=`/`+`/space would be
+    // mis-split or mis-decoded by a hand-rolled or URLSearchParams parser.
+    const awkward = {
+      provider: 'ollama',
+      model: 'qwen3-coder:30b+tools (q4_K_M)',
+      role: 'R&D = Lead',
+      seatNumber: 3
+    }
+    const href = encodeSeatChangeLink({ participantId: 'a b', before: awkward, after: awkward })
+    expect(href).not.toContain(')')
+    expect(href).not.toContain(' ')
+    expect(decodeSeatChangeLink(href)).toEqual({
+      participantId: 'a b',
+      before: awkward,
+      after: awkward
+    })
+  })
+
+  it('rejects hrefs that are not seat links, or carry no resolvable seat', () => {
+    expect(decodeSeatChangeLink('ensemble-dm://p-8')).toBeNull()
+    expect(decodeSeatChangeLink('ensemble-seat://p-8')).toBeNull()
+    expect(decodeSeatChangeLink('ensemble-seat://p-8?m=claude-opus-5')).toBeNull()
+    expect(decodeSeatChangeLink('ensemble-seat://?p=claude')).toBeNull()
   })
 })

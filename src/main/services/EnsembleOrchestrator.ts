@@ -2366,6 +2366,9 @@ function seatChangeSeatState(
     ...(participant.role ? { role: participant.role } : {}),
     ...(participant.order ? { seatNumber: participant.order } : {}),
     ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+    ...(participant.thinkingEnabled === undefined
+      ? {}
+      : { thinkingEnabled: participant.thinkingEnabled }),
     permissionPresetId: participant.permissionPresetId || 'default',
     ...(grantsCount === undefined ? {} : { grantsCount })
   }

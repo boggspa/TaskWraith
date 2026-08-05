@@ -17,6 +17,8 @@ import {
   taskWraithRoundCloseoutId,
   taskWraithRunCloseoutId
 } from '../../../shared/taskWraithCloseout'
+import { encodeSeatChangeLink } from '../../../shared/seatChange'
+import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
 import { formatContextTokens } from './contextWindows'
 import { reasoningDisplayLabel } from './composerChipFormat'
 import { humaniseModelIdCompact } from './modelDisplayName'
@@ -1065,15 +1067,9 @@ function formatParticipantTableSection(
   const totalTurns = Array.from(turnCounts.values()).reduce((sum, count) => sum + count, 0)
   const totalTokens = Array.from(tokenCounts.values()).reduce((sum, count) => sum + count, 0)
   const rows = participants.map((participant) => {
-    const label = escapeMarkdownTableCell(
-      participant.role?.trim() || getProviderLabel(participant.provider)
-    )
+    const label = participant.role?.trim() || getProviderLabel(participant.provider)
     const turns = turnCounts.get(participant.participantId) || 0
     const tokens = tokenCounts.get(participant.participantId) || 0
-    const tokenCell = formatParticipantTokenCell(
-      tokens,
-      estimatedTokenParticipants.has(participant.participantId)
-    )
     const participantRuns = [...(runsByParticipant.get(participant.participantId) || [])].sort(
       (left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt)
     )
@@ -1081,64 +1077,130 @@ function formatParticipantTableSection(
     const turnConfigurations = participantRuns.map((run) =>
       participantTurnConfiguration(chat, participant, run)
     )
-    const providerCell = escapeMarkdownTableCell(
-      formatCellSequence(
-        turnConfigurations.map((configuration) => getProviderLabel(configuration.provider)),
-        getProviderLabel(fallbackSnapshot.provider)
-      )
+    const providerSeq = seatFieldSequence<ProviderId>(
+      turnConfigurations.map((configuration) => ({
+        raw: configuration.provider,
+        display: getProviderLabel(configuration.provider)
+      })),
+      {
+        raw: fallbackSnapshot.provider,
+        display: getProviderLabel(fallbackSnapshot.provider)
+      }
     )
-    const modelCell = escapeMarkdownTableCell(
-      formatCellSequence(
-        turnConfigurations.map((configuration) =>
-          configuration.modelId
-            ? formatParticipantModel(configuration.provider, configuration.modelId)
-            : null
-        ),
-        formatParticipantModel(fallbackSnapshot.provider, fallbackSnapshot.model)
-      )
+    const modelSeq = seatFieldSequence<string>(
+      turnConfigurations.map((configuration) => ({
+        raw: configuration.modelId,
+        display: configuration.modelId
+          ? formatParticipantModel(configuration.provider, configuration.modelId)
+          : null
+      })),
+      {
+        raw: fallbackSnapshot.model || '',
+        display: formatParticipantModel(fallbackSnapshot.provider, fallbackSnapshot.model)
+      }
     )
-    const reasoningCell = escapeMarkdownTableCell(
-      formatCellSequence(
-        turnConfigurations.map((configuration) =>
-          configuration.reasoningCaptured ? formatParticipantReasoning(configuration) : null
-        ),
-        formatParticipantReasoning({
+    const reasoningSeq = seatFieldSequence<SeatReasoningRaw>(
+      turnConfigurations.map((configuration) => ({
+        raw: {
+          reasoningEffort: configuration.reasoningEffort,
+          thinkingEnabled: configuration.thinkingEnabled
+        },
+        display: configuration.reasoningCaptured ? formatParticipantReasoning(configuration) : null
+      })),
+      {
+        raw: {
+          reasoningEffort: fallbackSnapshot.reasoningEffort,
+          thinkingEnabled: fallbackSnapshot.thinkingEnabled
+        },
+        display: formatParticipantReasoning({
           provider: fallbackSnapshot.provider,
           modelId: fallbackSnapshot.model || '',
           reasoningEffort: fallbackSnapshot.reasoningEffort,
           thinkingEnabled: fallbackSnapshot.thinkingEnabled
         })
-      )
+      }
     )
-    const permissionCell = escapeMarkdownTableCell(
-      formatCellSequence(
-        turnConfigurations.map((configuration) =>
-          configuration.permissionPresetId
-            ? formatPermissionPreset(configuration.permissionPresetId)
-            : null
-        ),
-        formatPermissionPreset(fallbackSnapshot.configuredPermissionPresetId)
-      )
+    const permissionSeq = seatFieldSequence<PermissionPresetId>(
+      turnConfigurations.map((configuration) => ({
+        raw: configuration.permissionPresetId || fallbackSnapshot.configuredPermissionPresetId,
+        display: configuration.permissionPresetId
+          ? formatPermissionPreset(configuration.permissionPresetId)
+          : null
+      })),
+      {
+        raw: fallbackSnapshot.configuredPermissionPresetId,
+        display: formatPermissionPreset(fallbackSnapshot.configuredPermissionPresetId)
+      }
     )
-    const statusCell = formatParticipantStatusIcon(participant.status)
-    return `| [@${label}](ensemble-dm://${participant.participantId}) | ${providerCell} | ${modelCell} | ${reasoningCell} | ${permissionCell} | ${turns} | ${tokenCell} | ${statusCell} |`
+    // Link TEXT keeps every field the five culled columns used to carry, so
+    // surfaces that don't intercept the scheme lose nothing but the motion.
+    const seatText = escapeMarkdownTableCell(
+      [`@${label}`, providerSeq.text, modelSeq.text, reasoningSeq.text, permissionSeq.text]
+        .filter((part) => part && part !== '—')
+        .join(' · ')
+    )
+    const seatHref = encodeSeatChangeLink(
+      participantSeatChangeLink(participant, label, {
+        provider: providerSeq,
+        model: modelSeq,
+        reasoning: reasoningSeq,
+        permission: permissionSeq
+      })
+    )
+    const workCell = formatParticipantWorkCell(
+      turns,
+      tokens,
+      estimatedTokenParticipants.has(participant.participantId)
+    )
+    return `| [${seatText}](${seatHref}) | ${workCell} |`
   })
-  const totalTokenCell = formatParticipantTokenCell(
+  const totalWorkCell = formatParticipantWorkCell(
+    totalTurns,
     totalTokens,
     estimatedTokenParticipants.size > 0
   )
-  const totalStatusCell = `**${participants.length}**`
-  rows.push(
-    `| **Round Total** | — | — | — | — | ${totalTurns} | ${totalTokenCell} | ${totalStatusCell} |`
-  )
+  rows.push(`| **Round Total** | ${totalWorkCell} |`)
   return [
     '',
     '**Participants**',
     '',
-    '| Participant | Provider | Model | Reasoning | Permissions | Turns | Tokens | Status |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Seat | Turns & Tokens |',
+    '| --- | --- |',
     ...rows
   ]
+}
+
+/**
+ * The seat as it entered and left the round — the ends of each field's
+ * sequence, so the element's before/after always match the link text beside
+ * it. Captured into the close-out CONTENT so it is tombstoned: later rounds
+ * renaming the role or swapping the model can never rewrite what this round
+ * actually ran.
+ */
+function participantSeatChangeLink(
+  participant: EnsembleRoundParticipantState,
+  label: string,
+  fields: {
+    provider: SeatFieldSequence<ProviderId>
+    model: SeatFieldSequence<string>
+    reasoning: SeatFieldSequence<SeatReasoningRaw>
+    permission: SeatFieldSequence<PermissionPresetId>
+  }
+): SeatChangeLink {
+  const side = (which: 'first' | 'last'): SeatChangeSeatState => ({
+    provider: fields.provider[which],
+    model: fields.model[which],
+    role: label,
+    ...(participant.order ? { seatNumber: participant.order } : {}),
+    ...(fields.reasoning[which].reasoningEffort
+      ? { reasoningEffort: fields.reasoning[which].reasoningEffort }
+      : {}),
+    ...(fields.reasoning[which].thinkingEnabled === undefined
+      ? {}
+      : { thinkingEnabled: fields.reasoning[which].thinkingEnabled }),
+    permissionPresetId: fields.permission[which]
+  })
+  return { participantId: participant.participantId, before: side('first'), after: side('last') }
 }
 
 type ParticipantTurnConfiguration = {
@@ -1221,14 +1283,59 @@ function formatParticipantModel(provider: ProviderId, modelId?: string): string 
   return humaniseModelIdCompact(provider, modelId) || modelId
 }
 
-function formatCellSequence(values: Array<string | null | undefined>, fallback: string): string {
-  const compact: string[] = []
-  for (const rawValue of values) {
-    const value = rawValue?.trim()
-    if (!value || compact[compact.length - 1] === value) continue
-    compact.push(value)
+/**
+ * One field's journey across a round's turns, rendered two ways at once.
+ *
+ * The close-out seat cell is a LINK: the rendered element reads the raw ids
+ * out of the href, and the link text is the plain-text fallback for surfaces
+ * that don't intercept the scheme. They are two renderings of the same row,
+ * so they must never disagree — which means one compaction has to produce
+ * both. Turns that didn't capture the field are dropped and adjacent repeats
+ * collapse (so a seat that never moved shows a single value and rolls
+ * nothing); `first`/`last` are the raw ids for the element's before/after,
+ * and `text` is the display sequence.
+ *
+ * Deriving the element's sides per-TURN instead invents changes the text
+ * never shows: a turn that captured no permission preset would fall back to
+ * the round-entry snapshot and read as a tier change.
+ */
+interface SeatFieldTurn<T> {
+  raw: T
+  display?: string | null
+}
+
+interface SeatFieldSequence<T> {
+  text: string
+  first: T
+  last: T
+}
+
+function seatFieldSequence<T>(
+  turns: Array<SeatFieldTurn<T>>,
+  fallback: { raw: T; display: string }
+): SeatFieldSequence<T> {
+  const compact: Array<{ raw: T; display: string }> = []
+  for (const turn of turns) {
+    const display = turn.display?.trim()
+    if (!display) continue
+    if (compact[compact.length - 1]?.display === display) continue
+    compact.push({ raw: turn.raw, display })
   }
-  return compact.length > 0 ? compact.join(' → ') : fallback
+  if (compact.length === 0) {
+    return { text: fallback.display, first: fallback.raw, last: fallback.raw }
+  }
+  return {
+    text: compact.map((entry) => entry.display).join(' → '),
+    first: compact[0].raw,
+    last: compact[compact.length - 1].raw
+  }
+}
+
+/** Reasoning has two raw inputs (effort token and Kimi's thinking flag) that
+ * together produce one display label, so they travel as one raw payload. */
+interface SeatReasoningRaw {
+  reasoningEffort?: string
+  thinkingEnabled?: boolean
 }
 
 function formatParticipantReasoning(input: {
@@ -1275,11 +1382,12 @@ function formatPermissionPreset(presetId: PermissionPresetId): string {
   return DEFAULT_APPROVAL_LABEL
 }
 
-function formatParticipantStatusIcon(status: EnsembleParticipantStatus): string {
-  if (status === 'answered' || status === 'yielded') return '✅'
-  if (status === 'failed' || status === 'unreachable') return '❌'
-  if (status === 'idle' || status === 'skipped' || status === 'sleeping') return '💤'
-  return '⚠️'
+/** Turns and tokens share one column: "939k Tks / 4 Turns". */
+function formatParticipantWorkCell(turns: number, tokens: number, estimated: boolean): string {
+  const parts: string[] = []
+  if (tokens > 0) parts.push(`${formatParticipantTokenCell(tokens, estimated)} Tks`)
+  if (turns > 0) parts.push(`${turns} ${turns === 1 ? 'Turn' : 'Turns'}`)
+  return parts.length > 0 ? parts.join(' / ') : '—'
 }
 
 function formatParticipantTokenCell(totalTokens: number, estimated = false): string {

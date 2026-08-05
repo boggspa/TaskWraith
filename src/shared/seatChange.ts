@@ -34,6 +34,9 @@ export interface SeatChangeSeatState {
    * approval-modal @Role #N vocabulary). */
   seatNumber?: number
   reasoningEffort?: string
+  /** Kimi's thinking toggle — a separate input from `reasoningEffort` that
+   * produces the same chip suffix, so the seat cannot show it without this. */
+  thinkingEnabled?: boolean
   permissionPresetId?: string
   /** Chat-level workspace grant count at emit time (the permission chip's
    * "N grants" suffix). */
@@ -92,4 +95,149 @@ export function coalesceSeatChangeMessages<T extends SeatChangeCarrierMessage>(
     }
   }
   return { messages: [...messages], payload: next }
+}
+
+/* ── Close-out table links ──────────────────────────────────────────
+ * The round close-out table embeds one seat element per participant
+ * instead of five plain-text columns. Markdown has no place to hang a
+ * component, so the seat state travels in a custom link href that the
+ * renderer intercepts (the same mechanism `ensemble-dm://` mentions
+ * already use), and the link TEXT carries the full plain-text seat
+ * description so TUI / iOS / copy-paste degrade to exactly the
+ * information the culled columns used to show.
+ *
+ * Encoding the state in the persisted message content — rather than
+ * resolving it live from the roster — is the point: a close-out is a
+ * tombstone. Rounds that ran hours ago keep the seats they actually
+ * ran with, even after later rounds rename roles or swap models.
+ */
+export const SEAT_CHANGE_LINK_PREFIX = 'ensemble-seat://'
+
+export interface SeatChangeLink {
+  participantId: string
+  before: SeatChangeSeatState
+  after: SeatChangeSeatState
+}
+
+/** After-side keys, and the `b`-prefixed before-side mirror. Short
+ * because every close-out row carries one of these. */
+const SEAT_LINK_KEYS = {
+  provider: 'p',
+  model: 'm',
+  role: 'role',
+  seatNumber: 'n',
+  reasoningEffort: 'r',
+  thinkingEnabled: 't',
+  permissionPresetId: 'k',
+  grantsCount: 'g'
+} as const
+
+/**
+ * `encodeURIComponent` deliberately leaves `!'()*` unescaped — and a bare
+ * `)` inside a markdown link destination CLOSES the link, truncating the
+ * href mid-query (an Ollama tag like `qwen3-coder:30b (q4_K_M)` is enough to
+ * do it). Percent-encode those too; `decodeURIComponent` reverses all of it.
+ */
+function encodeLinkComponent(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  )
+}
+
+/** Hand-rolled rather than URLSearchParams: that class decodes `+` as a
+ * space, which would silently corrupt any model id containing one. */
+function encodeParams(params: Array<[string, string]>): string {
+  return params
+    .map(([key, value]) => `${encodeLinkComponent(key)}=${encodeLinkComponent(value)}`)
+    .join('&')
+}
+
+function decodeParams(query: string): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const pair of query.split('&')) {
+    if (!pair) continue
+    const eq = pair.indexOf('=')
+    if (eq < 0) continue
+    try {
+      out.set(decodeURIComponent(pair.slice(0, eq)), decodeURIComponent(pair.slice(eq + 1)))
+    } catch {
+      // A malformed escape drops that field rather than the whole row.
+    }
+  }
+  return out
+}
+
+function seatParams(state: SeatChangeSeatState, prefix: string): Array<[string, string]> {
+  const params: Array<[string, string]> = [
+    [`${prefix}${SEAT_LINK_KEYS.provider}`, state.provider],
+    [`${prefix}${SEAT_LINK_KEYS.model}`, state.model]
+  ]
+  if (state.role) params.push([`${prefix}${SEAT_LINK_KEYS.role}`, state.role])
+  if (state.seatNumber) {
+    params.push([`${prefix}${SEAT_LINK_KEYS.seatNumber}`, String(state.seatNumber)])
+  }
+  if (state.reasoningEffort) {
+    params.push([`${prefix}${SEAT_LINK_KEYS.reasoningEffort}`, state.reasoningEffort])
+  }
+  if (state.thinkingEnabled !== undefined) {
+    params.push([`${prefix}${SEAT_LINK_KEYS.thinkingEnabled}`, state.thinkingEnabled ? '1' : '0'])
+  }
+  if (state.permissionPresetId) {
+    params.push([`${prefix}${SEAT_LINK_KEYS.permissionPresetId}`, state.permissionPresetId])
+  }
+  if (state.grantsCount !== undefined) {
+    params.push([`${prefix}${SEAT_LINK_KEYS.grantsCount}`, String(state.grantsCount)])
+  }
+  return params
+}
+
+function readSeat(params: Map<string, string>, prefix: string): SeatChangeSeatState | null {
+  const provider = params.get(`${prefix}${SEAT_LINK_KEYS.provider}`)
+  if (!provider) return null
+  const seatNumber = Number(params.get(`${prefix}${SEAT_LINK_KEYS.seatNumber}`))
+  const grantsCount = Number(params.get(`${prefix}${SEAT_LINK_KEYS.grantsCount}`))
+  const role = params.get(`${prefix}${SEAT_LINK_KEYS.role}`)
+  const reasoningEffort = params.get(`${prefix}${SEAT_LINK_KEYS.reasoningEffort}`)
+  const permissionPresetId = params.get(`${prefix}${SEAT_LINK_KEYS.permissionPresetId}`)
+  const thinkingEnabled = params.get(`${prefix}${SEAT_LINK_KEYS.thinkingEnabled}`)
+  return {
+    provider,
+    model: params.get(`${prefix}${SEAT_LINK_KEYS.model}`) || '',
+    ...(role ? { role } : {}),
+    ...(Number.isFinite(seatNumber) && seatNumber > 0 ? { seatNumber } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(thinkingEnabled === undefined ? {} : { thinkingEnabled: thinkingEnabled === '1' }),
+    ...(permissionPresetId ? { permissionPresetId } : {}),
+    ...(Number.isFinite(grantsCount) && grantsCount >= 0 ? { grantsCount } : {})
+  }
+}
+
+/**
+ * `ensemble-seat://<participantId>?<after fields>&<b-prefixed before
+ * fields>`. The before side is omitted entirely when the seat never
+ * changed, so an unchanged seat decodes to identical sides and the
+ * element renders with nothing to roll.
+ */
+export function encodeSeatChangeLink(link: SeatChangeLink): string {
+  const changed = JSON.stringify(link.before) !== JSON.stringify(link.after)
+  const params = [...seatParams(link.after, ''), ...(changed ? seatParams(link.before, 'b') : [])]
+  return `${SEAT_CHANGE_LINK_PREFIX}${encodeLinkComponent(link.participantId)}?${encodeParams(params)}`
+}
+
+export function decodeSeatChangeLink(href: string): SeatChangeLink | null {
+  if (!href.startsWith(SEAT_CHANGE_LINK_PREFIX)) return null
+  const rest = href.slice(SEAT_CHANGE_LINK_PREFIX.length)
+  const queryStart = rest.indexOf('?')
+  if (queryStart < 0) return null
+  let participantId: string
+  try {
+    participantId = decodeURIComponent(rest.slice(0, queryStart))
+  } catch {
+    return null
+  }
+  const params = decodeParams(rest.slice(queryStart + 1))
+  const after = readSeat(params, '')
+  if (!participantId || !after) return null
+  return { participantId, before: readSeat(params, 'b') || after, after }
 }

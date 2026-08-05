@@ -867,22 +867,35 @@ Next action:
     })
 
     expect(closeout.content).toContain('**Participants**')
+    expect(closeout.content).toContain('| Seat | Turns & Tokens |')
+    // Five columns collapse into one seat link: the element renders from the
+    // href, and the link TEXT is what plain-text surfaces still read.
     expect(closeout.content).toContain(
-      '| Participant | Provider | Model | Reasoning | Permissions | Turns | Tokens | Status |'
+      '| [@Builder · Codex · GPT-5.6-Sol · Ultra · Full WS Access]' +
+        '(ensemble-seat://p1?p=codex&m=gpt-5.6-sol&role=Builder&n=1&r=ultracode&k=workspace_write)' +
+        ' | 2k Tks / 2 Turns |'
     )
     expect(closeout.content).toContain(
-      '| [@Builder](ensemble-dm://p1) | Codex | GPT-5.6-Sol | Ultra | Full WS Access | 2 | 2k | ✅ |'
+      '| [@Reviewer · Claude · Fable 5 · Max · Ask]' +
+        '(ensemble-seat://p2?p=claude&m=claude-fable-5&role=Reviewer&n=2&r=max&k=read_only)' +
+        ' | 500 Tks / 1 Turn |'
     )
+    // No turns: no work cell at all, and the seat falls back to the
+    // round-entry snapshot rather than inventing a change.
     expect(closeout.content).toContain(
-      '| [@Reviewer](ensemble-dm://p2) | Claude | Fable 5 | Max | Ask | 1 | 500 | ✅ |'
+      '| [@Cursor · Cursor · Composer 2.5 Fast · Accept Edits]' +
+        '(ensemble-seat://p3?p=cursor&m=composer-2.5-fast&role=Cursor&n=3&k=default)' +
+        ' | — |'
     )
+    // Kimi's "Thinking" comes from the thinking flag, not a reasoning effort —
+    // the seat must carry it or the element renders a blank where the text
+    // beside it says Thinking.
     expect(closeout.content).toContain(
-      '| [@Cursor](ensemble-dm://p3) | Cursor | Composer 2.5 Fast | — | Accept Edits | 0 | — | 💤 |'
+      '| [@Kimi · Kimi · K2.7 Coding · Thinking · Plan]' +
+        '(ensemble-seat://p4?p=kimi&m=kimi-k2.7-code&role=Kimi&n=4&t=1&k=plan)' +
+        ' | ~300 Tks / 1 Turn |'
     )
-    expect(closeout.content).toContain(
-      '| [@Kimi](ensemble-dm://p4) | Kimi | K2.7 Coding | Thinking | Plan | 1 | ~300 | ❌ |'
-    )
-    expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 4 | ~2k | **4** |')
+    expect(closeout.content).toContain('| **Round Total** | ~2k Tks / 4 Turns |')
     expect(closeout.content).toContain('The round used about 2k tokens in total.')
     expect(closeout.content).not.toContain('Participants:')
     expect(closeout.content).not.toContain('- Tokens:')
@@ -923,15 +936,17 @@ Next action:
       completedAt: round.endedAt!
     })
 
-    expect(closeout.content).toContain('[@Answered](ensemble-dm://ok) | Codex |')
-    expect(closeout.content).toMatch(/\[@Answered\].*\| ✅ \|/)
-    expect(closeout.content).toMatch(/\[@Cancelled\].*\| ⚠️ \|/)
-    expect(closeout.content).toMatch(/\[@Unreachable\].*\| ❌ \|/)
-    expect(closeout.content).toMatch(/\[@Sleeping\].*\| 💤 \|/)
+    // The status column is gone (owner call 2026-08-05: it earned no width in
+    // a two-column table) — and with it the emoji vocabulary it carried.
+    expect(closeout.content).toContain('[@Answered · Codex')
+    expect(closeout.content).not.toContain('✅')
+    expect(closeout.content).not.toContain('💤')
+    expect(closeout.content).not.toContain('❌')
+    expect(closeout.content).not.toContain('Status')
     expect(closeout.content).toContain('The round was completed.')
     expect(closeout.content).not.toContain('Participants:')
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
-    expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 0 | — | **4** |')
+    expect(closeout.content).toContain('| **Round Total** | — |')
   })
 
   it('reports per-turn seat changes and keeps contributors removed from the live round', () => {
@@ -1027,10 +1042,18 @@ Next action:
     })
 
     expect(closeout.content).not.toContain('Participants:')
+    // The link text keeps the full per-turn journey; the href carries only its
+    // ENDS, which is what the element rolls between. Both are derived from one
+    // compaction, so a mid-round value (Full WS Access) can never appear as an
+    // end state.
     expect(closeout.content).toContain(
-      '| [@Lead](ensemble-dm://seat) | Claude → Codex | Fable 5 → GPT-5.6-Sol | Ultracode → High | Accept Edits → Full WS Access → Ask | 3 | — | ✅ |'
+      '| [@Lead · Claude → Codex · Fable 5 → GPT-5.6-Sol · Ultracode → High' +
+        ' · Accept Edits → Full WS Access → Ask]' +
+        '(ensemble-seat://seat?p=codex&m=gpt-5.6-sol&role=Lead&n=1&r=high&k=read_only' +
+        '&bp=claude&bm=claude-fable-5&brole=Lead&bn=1&br=ultracode&bk=default)' +
+        ' | 3 Turns |'
     )
-    expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 3 | — | **1** |')
+    expect(closeout.content).toContain('| **Round Total** | 3 Turns |')
   })
 
   it('prefers an AI summary over the final assistant text and records provenance', () => {
