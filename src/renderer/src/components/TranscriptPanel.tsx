@@ -116,6 +116,11 @@ import {
   createTranscriptScrollAnimator,
   type TranscriptScrollAnimator
 } from '../lib/transcriptSmoothScroll'
+import {
+  transcriptAuxiliaryChatsSignature,
+  transcriptPanelPropsEqual,
+  transcriptRunningChatIdsSignature
+} from '../lib/transcriptPanelMemoProps'
 import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import {
   CollapsedActivityStackRow,
@@ -622,41 +627,13 @@ const FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS = 900
 export const FILE_CHANGE_SUMMARY_PAGE_SIZE = 24
 export const FILE_CHANGE_SUMMARY_MAX_VISIBLE = 120
 
-export function transcriptRunningChatIdsSignature(ids: readonly string[] | undefined): string {
-  if (!ids || ids.length === 0) return ''
-  return Array.from(new Set(ids)).sort().join('\u0000')
-}
-
-export function transcriptAuxiliaryChatsSignature(chats: readonly ChatRecord[]): string {
-  if (chats.length === 0) return ''
-  return chats
-    .map((chat) => {
-      const lastRun = chat.runs?.[chat.runs.length - 1]
-      const dispatchError = chat.delegationContext?.dispatchError
-      return [
-        chat.appChatId,
-        chat.title || '',
-        chat.updatedAt || '',
-        chat.delegationContext?.resultReturnedAt || '',
-        typeof dispatchError?.message === 'string' ? dispatchError.message : '',
-        lastRun?.runId || '',
-        lastRun?.status || '',
-        lastRun?.endedAt || ''
-      ].join('\u0001')
-    })
-    .sort()
-    .join('\u0002')
-}
-
-function transcriptAuxiliaryChatsEqual(
-  previous: readonly ChatRecord[],
-  next: readonly ChatRecord[]
-): boolean {
-  return (
-    previous === next ||
-    transcriptAuxiliaryChatsSignature(previous) === transcriptAuxiliaryChatsSignature(next)
-  )
-}
+export {
+  transcriptAuxiliaryChatsEqual,
+  transcriptAuxiliaryChatsSignature,
+  transcriptChatIdentityEqual,
+  transcriptPanelPropsEqual,
+  transcriptRunningChatIdsSignature
+} from '../lib/transcriptPanelMemoProps'
 
 export interface FileChangeSummaryWindow {
   canShowFewer: boolean
@@ -5409,61 +5386,5 @@ export const TranscriptPanel = memo(
       </div>
     )
   },
-  (previous, next) =>
-    previous.scrollRef === next.scrollRef &&
-    previous.contentRef === next.contentRef &&
-    previous.endRef === next.endRef &&
-    previous.messages === next.messages &&
-    previous.isWelcomeChat === next.isWelcomeChat &&
-    previous.isThinking === next.isThinking &&
-    previous.pendingPlanChoice === next.pendingPlanChoice &&
-    previous.pendingProposedPlan === next.pendingProposedPlan &&
-    previous.pendingAgentQuestions === next.pendingAgentQuestions &&
-    previous.onAgentQuestionSubmit === next.onAgentQuestionSubmit &&
-    previous.onAgentQuestionDismiss === next.onAgentQuestionDismiss &&
-    previous.onEnsemblePollVote === next.onEnsemblePollVote &&
-    previous.runCompleteNotice === next.runCompleteNotice &&
-    previous.runCompleteDurationText === next.runCompleteDurationText &&
-    previous.currentRun === next.currentRun &&
-    previous.currentChat === next.currentChat &&
-    previous.currentWorkspacePath === next.currentWorkspacePath &&
-    previous.currentProviderLabel === next.currentProviderLabel &&
-    previous.currentProvider === next.currentProvider &&
-    previous.thinkingProviderLabel === next.thinkingProviderLabel &&
-    previous.thinkingProvider === next.thinkingProvider &&
-    previous.thinkingProviderClass === next.thinkingProviderClass &&
-    previous.thinkingModelBadge === next.thinkingModelBadge &&
-    previous.displayFileChangeSummaries === next.displayFileChangeSummaries &&
-    previous.roundFileChangeSummaries === next.roundFileChangeSummaries &&
-    previous.fileChangeSummaryText === next.fileChangeSummaryText &&
-    previous.fileChangeShouldShowStats === next.fileChangeShouldShowStats &&
-    previous.fileChangeDisplayAdds === next.fileChangeDisplayAdds &&
-    previous.fileChangeDisplayDels === next.fileChangeDisplayDels &&
-    transcriptAuxiliaryChatsEqual(previous.chats, next.chats) &&
-    transcriptRunningChatIdsSignature(previous.runningChatIds) ===
-      transcriptRunningChatIdsSignature(next.runningChatIds) &&
-    previous.onOpenFileChangeInWorkbench === next.onOpenFileChangeInWorkbench &&
-    previous.onCopyMessage === next.onCopyMessage &&
-    previous.onAddMessageToPrompt === next.onAddMessageToPrompt &&
-    previous.onDeleteMessage === next.onDeleteMessage &&
-    previous.onTogglePinMessage === next.onTogglePinMessage &&
-    previous.onMessageFeedback === next.onMessageFeedback &&
-    previous.onMessageSelectionCandidate === next.onMessageSelectionCandidate &&
-    previous.onOpenSideChatFromMessage === next.onOpenSideChatFromMessage &&
-    previous.sideChatSeedMessageId === next.sideChatSeedMessageId &&
-    previous.jumpToMessageRequest?.messageId === next.jumpToMessageRequest?.messageId &&
-    previous.jumpToMessageRequest?.rowKey === next.jumpToMessageRequest?.rowKey &&
-    previous.jumpToMessageRequest?.requestId === next.jumpToMessageRequest?.requestId &&
-    previous.externalRestoreAnchorMessageId === next.externalRestoreAnchorMessageId &&
-    previous.onManualTranscriptJump === next.onManualTranscriptJump &&
-    previous.onJumpToLatest === next.onJumpToLatest &&
-    previous.onPreviewImage === next.onPreviewImage &&
-    previous.onDetachToPane === next.onDetachToPane &&
-    previous.copiedId === next.copiedId &&
-    previous.copy === next.copy &&
-    previous.virtualize === next.virtualize &&
-    previous.autoFollowRef === next.autoFollowRef &&
-    previous.onProgrammaticScrollWrite === next.onProgrammaticScrollWrite &&
-    previous.collapseOlderRounds === next.collapseOlderRounds &&
-    previous.userMessageGutterEnabled === next.userMessageGutterEnabled
+  transcriptPanelPropsEqual
 )

@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ChatListItem, ChatRecord } from '../../../main/store/types'
-import { resolveChatHydration } from './chatHydrationMerge'
+import { commitHydratedChat, resolveChatHydration } from './chatHydrationMerge'
 import { ChatUpdateHydrationQueue } from './chatUpdateHydrationQueue'
+import { ChatByteLru } from './chatByteLru'
+import { ChatTranscriptStore } from './chatTranscriptStore'
 
 function chat(title: string): ChatRecord {
   return {
@@ -125,5 +127,24 @@ describe('resolveChatHydration', () => {
     expect(deleteAll).toContain('summaryChatUpdateQueueRef.current.clear()')
     expect(reap).toContain('summaryChatUpdateQueueRef.current.cancel(id)')
     expect(reap).toContain('saveChatTimersRef.current.delete(id)')
+  })
+})
+
+describe('commitHydratedChat', () => {
+  it('ingests transcript into the external store and pins via the byte LRU', () => {
+    const store = new ChatTranscriptStore()
+    const lru = new ChatByteLru()
+    const full = {
+      ...chat('Hydrated'),
+      messages: [{ id: 'm1', role: 'user' as const, content: 'hi', createdAt: 1 }]
+    }
+    commitHydratedChat({
+      chat: full,
+      transcriptStore: store,
+      byteLru: lru,
+      pinReason: 'focused'
+    })
+    expect(store.get('chat-a')?.messages).toHaveLength(1)
+    expect(lru.isPinned('chat-a')).toBe(true)
   })
 })
