@@ -24,6 +24,7 @@ export interface ThreadMessageSeatParticipant {
   provider?: string
   model?: string
   role?: string
+  stageRole?: string
   reasoningEffort?: string
   thinkingEnabled?: boolean
   permissionPresetId?: string
@@ -61,10 +62,19 @@ export function seatFromParticipant(
   const role = trimmed(participant.role)
   const reasoningEffort = trimmed(participant.reasoningEffort)
   const permissionPresetId = trimmed(participant.permissionPresetId)
+  // What KIND of seat sent this. Unlike `seatNumber`, which is an ordinal in a
+  // roster the reader is not in, a stage role is a universal concept and is
+  // exactly what a reader wants to know about an unfamiliar sender.
+  const stage = trimmed(participant.stageRole)
+  const stageRole =
+    stage === 'scout' || stage === 'worker' || stage === 'reviewer' || stage === 'background'
+      ? stage
+      : undefined
   return {
     provider,
     model,
     ...(role ? { role } : {}),
+    ...(stageRole ? { stageRole } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     // A separate input from `reasoningEffort` that renders the same chip
     // suffix; `false` is meaningful, so this is a type check, not truthiness.

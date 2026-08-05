@@ -400,3 +400,30 @@ describe('sender seat capture', () => {
     expect(decoded.deliveredIds).toEqual(['old-1'])
   })
 })
+
+describe('sender seat glyph fields survive the allowlist', () => {
+  // A live QA pass caught these being silently dropped: the seat sanitizer is an
+  // ALLOWLIST, so a field added to the type but not to it renders nowhere.
+  it('carries stageRole and authority', () => {
+    const seat = event({
+      seat: { provider: 'claude', model: 'm', stageRole: 'scout', authority: 'boss' }
+    })?.seat
+    expect(seat?.stageRole).toBe('scout')
+    expect(seat?.authority).toBe('boss')
+  })
+
+  it('drops values outside the closed unions', () => {
+    const seat = event({
+      seat: { provider: 'claude', model: 'm', stageRole: 'overlord', authority: 'king' }
+    })?.seat
+    expect(seat).not.toHaveProperty('stageRole')
+    expect(seat).not.toHaveProperty('authority')
+  })
+
+  it('survives a reload', () => {
+    const built = event({ seat: { provider: 'claude', model: 'm', stageRole: 'reviewer' } })!
+    const inbox = enqueueThreadMessage(emptyThreadMessageInbox('chat-b'), built)
+    const reloaded = normalizeThreadMessageInbox(JSON.parse(JSON.stringify(inbox)), 'chat-b')
+    expect(reloaded.pending[0]?.seat?.stageRole).toBe('reviewer')
+  })
+})

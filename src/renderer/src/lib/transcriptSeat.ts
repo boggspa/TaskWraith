@@ -117,10 +117,19 @@ export function seatFromSubThreadMetadata(
   const role = trimmed(record.role)
   const reasoningEffort = trimmed(record.reasoningEffort)
   const permissionPresetId = trimmed(record.permissionPresetId)
+  const stage = trimmed(record.stageRole)
+  const stageRole =
+    stage === 'scout' || stage === 'worker' || stage === 'reviewer' || stage === 'background'
+      ? stage
+      : undefined
+  const auth = trimmed(record.authority)
+  const authority = auth === 'boss' || auth === 'captain' ? auth : undefined
   return {
     provider,
     model,
     ...(role ? { role } : {}),
+    ...(stageRole ? { stageRole } : {}),
+    ...(authority ? { authority } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(typeof record.thinkingEnabled === 'boolean'
       ? { thinkingEnabled: record.thinkingEnabled }

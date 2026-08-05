@@ -211,6 +211,14 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
             : {}),
           ...(nonEmptyString(seatSource?.permissionPresetId)
             ? { permissionPresetId: nonEmptyString(seatSource?.permissionPresetId)! }
+            : {}),
+          ...(['scout', 'worker', 'reviewer', 'background'].includes(
+            String(seatSource?.stageRole)
+          )
+            ? { stageRole: seatSource?.stageRole as SeatChangeSeatState['stageRole'] }
+            : {}),
+          ...(['boss', 'captain'].includes(String(seatSource?.authority))
+            ? { authority: seatSource?.authority as SeatChangeSeatState['authority'] }
             : {})
         }
       : undefined

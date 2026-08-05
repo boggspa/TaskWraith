@@ -135,3 +135,19 @@ describe('resolveThreadMessageSenderSeat', () => {
     expect(resolveThreadMessageSenderSeat(null)).toBeNull()
   })
 })
+
+describe('the stage role reaches the glyph', () => {
+  it('captures a valid stage role', () => {
+    expect(seatFromParticipant({ ...PARTICIPANT, stageRole: 'scout' })?.stageRole).toBe('scout')
+  })
+
+  it('drops an unknown stage role rather than passing it to the icon resolver', () => {
+    expect(seatFromParticipant({ ...PARTICIPANT, stageRole: 'overlord' })).not.toHaveProperty(
+      'stageRole'
+    )
+  })
+
+  it('has none when the participant has none', () => {
+    expect(seatFromParticipant(PARTICIPANT)).not.toHaveProperty('stageRole')
+  })
+})

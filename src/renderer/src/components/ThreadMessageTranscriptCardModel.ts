@@ -26,10 +26,19 @@ function seatMetadata(value: unknown): SeatChangeSeatState | null {
   const role = stringMetadata(record.role)
   const reasoningEffort = stringMetadata(record.reasoningEffort)
   const permissionPresetId = stringMetadata(record.permissionPresetId)
+  const stage = stringMetadata(record.stageRole)
+  const stageRole =
+    stage === 'scout' || stage === 'worker' || stage === 'reviewer' || stage === 'background'
+      ? stage
+      : undefined
+  const auth = stringMetadata(record.authority)
+  const authority = auth === 'boss' || auth === 'captain' ? auth : undefined
   return {
     provider,
     model,
     ...(role ? { role } : {}),
+    ...(stageRole ? { stageRole } : {}),
+    ...(authority ? { authority } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(typeof record.thinkingEnabled === 'boolean'
       ? { thinkingEnabled: record.thinkingEnabled }

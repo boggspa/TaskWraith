@@ -242,10 +242,21 @@ function sanitizeSeat(value: unknown): SeatChangeSeatState | null {
   const role = field('role')
   const reasoningEffort = field('reasoningEffort')
   const permissionPresetId = field('permissionPresetId')
+  // Closed unions, validated here: these drive an icon component that switches
+  // on them, so an unknown value must never survive the allowlist.
+  const stage = field('stageRole')
+  const stageRole =
+    stage === 'scout' || stage === 'worker' || stage === 'reviewer' || stage === 'background'
+      ? stage
+      : ''
+  const auth = field('authority')
+  const authority = auth === 'boss' || auth === 'captain' ? auth : ''
   return {
     provider,
     model,
     ...(role ? { role } : {}),
+    ...(stageRole ? { stageRole } : {}),
+    ...(authority ? { authority } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     // Strictly boolean: `thinkingEnabled` is a SEPARATE input from
     // `reasoningEffort` that produces the same chip suffix, and `false` is a
