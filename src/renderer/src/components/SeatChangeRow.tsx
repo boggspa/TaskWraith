@@ -240,9 +240,15 @@ function SeatStrip({
 
   return (
     <>
-      <span className="seat-change-icon" aria-hidden>
-        <SeatChairIcon />
-      </span>
+      {/* The chair marks a seat CHANGE. In the close-out table every row is a
+          seat, so the glyph says nothing per-row and only costs the left edge
+          the #N and role now occupy — dropped there, kept in the transcript
+          where it is the row's anchor and its type marker. */}
+      {inline ? null : (
+        <span className="seat-change-icon" aria-hidden>
+          <SeatChairIcon />
+        </span>
+      )}
       {/* The role LEADS in the close-out table and TRAILS in the transcript,
           and that is not a taste difference. A table is read down its first
           column, so the seat's name has to be the thing the eye lands on — it

@@ -175,6 +175,16 @@ describe('close-out table reuses the seat element', () => {
     'utf8'
   )
 
+  it('drops the chair glyph in the table but keeps it in the transcript', () => {
+    // The chair marks a seat CHANGE. Every close-out row is a seat, so there it
+    // says nothing per-row and only costs the left edge the #N and role occupy.
+    expect(rowSource).toContain('{inline ? null : (')
+    const start = rowSource.indexOf('function SeatStrip(')
+    const region = rowSource.slice(start, rowSource.indexOf('export function seatAccentVar'))
+    expect(region).toContain('<SeatChairIcon />')
+    expect(region.indexOf('{inline ? null : (')).toBeLessThan(region.indexOf('<SeatChairIcon />'))
+  })
+
   it('renders the inline strip from the link, with no timestamp and no expand button', () => {
     expect(rowSource).toContain('export function SeatChangeInlineStrip')
     // Spans only — a `<div>` is invalid inside the `<td>` this lands in.
@@ -210,6 +220,14 @@ describe('close-out table reuses the seat element', () => {
     expect(markdownSource).toContain('decodeSeatChangeLink(href)')
     expect(markdownSource).toContain('<SeatChangeInlineStrip link={link} />')
     expect(markdownSource).toContain("'ensemble-seat'")
+    // Status rides the work cell, drawn with the roster chip's OWN icon and
+    // colour class so the two surfaces cannot drift into lookalikes.
+    expect(markdownSource).toContain("'ensemble-status'")
+    expect(markdownSource).toContain('<EnsembleStatusGlyph status={status} />')
+    expect(markdownSource).toContain('`ensemble-above-chip-status status-${slug}')
+    expect(markdownSource).toContain(
+      "import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'"
+    )
     // urlTransform strips unknown schemes before `components.a` ever sees the
     // href — both new schemes must be listed there too, not just in the
     // sanitizer, or the cells render as inert text.
