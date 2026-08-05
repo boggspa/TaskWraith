@@ -243,6 +243,30 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
     const routed = routeWithRunId(provider, route)
     const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
     const actions: AgentApprovalAction[] = request.actions || ['accept', 'decline', 'cancel']
+    // Ensemble seat attribution — the service path has carried this since AR3;
+    // main-authority prompts (tool permission retries, session trust, host
+    // reruns) looked anonymous in a multi-seat roster: "Allow Pi to retry…"
+    // with no way to tell WHICH Pi seat asked. Derived from the run session,
+    // never from caller-supplied text, so a solo approval can't gain a label.
+    const mainSession = deps.runManager.get(routed.appRunId)
+    const mainEnsembleRun = mainSession?.state?.ensembleRun as EnsembleRunIdentity | undefined
+    const mainAttribution =
+      mainEnsembleRun &&
+      typeof mainEnsembleRun.participantId === 'string' &&
+      mainEnsembleRun.participantId &&
+      typeof mainEnsembleRun.role === 'string' &&
+      mainEnsembleRun.role
+        ? {
+            title: `${mainEnsembleRun.role}: ${request.title}`,
+            preview: {
+              participantId: mainEnsembleRun.participantId,
+              role: mainEnsembleRun.role,
+              ...(mainEnsembleRun.stageRole ? { stageRole: mainEnsembleRun.stageRole } : {}),
+              ...(mainEnsembleRun.laneId ? { laneId: mainEnsembleRun.laneId } : {})
+            }
+          }
+        : null
+    const attributedTitle = mainAttribution?.title ?? request.title
     return new Promise((resolveApproval) => {
       const approvalService = deps.getApprovalService()
       if (!approvalService) {
@@ -259,7 +283,7 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         // exact failure the Gemini-tool registration documents). The desktop
         // never noticed: its modal reads title/body from the IPC payload
         // below, not from this registration.
-        title: request.title,
+        title: attributedTitle,
         body: request.body,
         remoteIncomplete: request.remoteIncomplete,
         allowedActions: actions,
@@ -285,9 +309,13 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         id: approvalId,
         approvalId,
         method: request.method,
-        title: request.title,
+        title: attributedTitle,
         body: request.body,
-        preview: { ...(isRecord(request.preview) ? request.preview : {}), actions },
+        preview: {
+          ...(isRecord(request.preview) ? request.preview : {}),
+          ...(mainAttribution ? { ensembleParticipant: mainAttribution.preview } : {}),
+          actions
+        },
         actions
       }
       const durableApprovalPayload = redactCanvasFillValueForDurableStorage(
@@ -303,7 +331,7 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         routed,
         'approval_request',
         'control',
-        request.title,
+        attributedTitle,
         durableApprovalPayload
       )
       deps.recordApprovalLedgerRequest(provider, routed, durableApprovalPayload, {
@@ -315,7 +343,7 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         approvalId,
         workspaceId: deps.workspaceIdForApprovalPush(request.workspacePath),
         threadId: routed.appChatId ?? routed.appRunId ?? approvalId,
-        summary: request.title
+        summary: attributedTitle
       })
     })
   }

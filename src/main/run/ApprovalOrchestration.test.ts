@@ -194,11 +194,10 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     )
 
     expect(result).toBe(false)
-    expect(deps.networkAccessBlockedToolName).toHaveBeenCalledWith(
-      'browser_open',
-      undefined,
-      { url: 'https://example.com', show: true }
-    )
+    expect(deps.networkAccessBlockedToolName).toHaveBeenCalledWith('browser_open', undefined, {
+      url: 'https://example.com',
+      show: true
+    })
     expect(order).toEqual(['audit:autoDeny:policy', 'safeSendToSender:agent-error'])
     // #1: resolve NEVER runs on the network-block path.
     expect(vi.mocked(deps.permissionService.resolvePermission)).not.toHaveBeenCalled()
@@ -220,7 +219,13 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     })
     vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true) // YOLO on — must NOT rescue a deny
 
-    const result = await createApprovalOrchestration(deps)(sender, 'gemini', 'mcpTools', '/repo', request())
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'gemini',
+      'mcpTools',
+      '/repo',
+      request()
+    )
 
     expect(result).toBe(false)
     expect(order).toContain('audit:autoDeny:policy')
@@ -268,7 +273,13 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     const deps = makeDeps(order)
     vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
 
-    const result = await createApprovalOrchestration(deps)(sender, 'gemini', 'mcpTools', '/repo', request())
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'gemini',
+      'mcpTools',
+      '/repo',
+      request()
+    )
 
     expect(result).toBe(true)
     expect(order).toContain('audit:autoAllow:session_yolo')
@@ -287,7 +298,13 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       decision: 'allow'
     })
 
-    const result = await createApprovalOrchestration(deps)(sender, 'codex', 'mcpTools', '/repo', request())
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'mcpTools',
+      '/repo',
+      request()
+    )
 
     expect(result).toBe(true)
     expect(order).toContain('audit:autoAllow:workspace_grant')
@@ -305,7 +322,9 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       'claude',
       'fileChanges',
       '/repo',
-      request({ externalPathDetection: { provider: 'claude', path: '/tmp/output.txt', access: 'write' } })
+      request({
+        externalPathDetection: { provider: 'claude', path: '/tmp/output.txt', access: 'write' }
+      })
     )
 
     expect(result).toBe(true)
@@ -327,7 +346,13 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     const deps = makeDeps(order)
     vi.mocked(deps.bossmanAutoApprovalMetadata).mockReturnValue({ bossman: 'auto' })
 
-    const result = await createApprovalOrchestration(deps)(sender, 'claude', 'mcpTools', '/repo', request())
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'mcpTools',
+      '/repo',
+      request()
+    )
 
     expect(result).toBe(true)
     expect(order).toContain('audit:autoAllow:bossman_auto')
@@ -342,7 +367,13 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     const order: string[] = []
     const deps = makeDeps(order)
 
-    const promise = createApprovalOrchestration(deps)(sender, 'gemini', 'mcpTools', '/repo', request())
+    const promise = createApprovalOrchestration(deps)(
+      sender,
+      'gemini',
+      'mcpTools',
+      '/repo',
+      request()
+    )
     // The prompt promise only resolves on user action; assert the synchronous
     // registration side-effects, then leave it pending.
     await Promise.resolve()
@@ -741,8 +772,10 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     await Promise.resolve()
 
     const livePayload = vi.mocked(deps.safeSendToSender).mock.calls[0]?.[2] as any
-    const durableRunPayload = vi.mocked(deps.appendDurableRunEventForRoute).mock.calls[0]?.[5] as any
-    const durableLedgerPayload = vi.mocked(deps.recordApprovalLedgerRequest).mock.calls[0]?.[2] as any
+    const durableRunPayload = vi.mocked(deps.appendDurableRunEventForRoute).mock
+      .calls[0]?.[5] as any
+    const durableLedgerPayload = vi.mocked(deps.recordApprovalLedgerRequest).mock
+      .calls[0]?.[2] as any
 
     expect(livePayload.preview.params.script).toBe(script)
     expect(JSON.stringify(durableRunPayload)).not.toContain('APPROVAL-SECRET')
@@ -833,8 +866,10 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     await Promise.resolve()
 
     const livePayload = vi.mocked(deps.safeSendToSender).mock.calls[0]?.[2] as any
-    const durableRunPayload = vi.mocked(deps.appendDurableRunEventForRoute).mock.calls[0]?.[5] as any
-    const durableLedgerPayload = vi.mocked(deps.recordApprovalLedgerRequest).mock.calls[0]?.[2] as any
+    const durableRunPayload = vi.mocked(deps.appendDurableRunEventForRoute).mock
+      .calls[0]?.[5] as any
+    const durableLedgerPayload = vi.mocked(deps.recordApprovalLedgerRequest).mock
+      .calls[0]?.[2] as any
 
     // The human still sees exactly what will be typed.
     expect(livePayload.preview.params.value).toBe(typed)
@@ -922,11 +957,15 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     const order: string[] = []
     const deps = makeMainDeps(order)
 
-    expect(await createMainApprovalOrchestration(deps)(null, 'gemini', null, mainRequest())).toBe(false)
+    expect(await createMainApprovalOrchestration(deps)(null, 'gemini', null, mainRequest())).toBe(
+      false
+    )
     expect(order).toEqual([])
 
     const destroyed = { isDestroyed: () => true, send: vi.fn() } as never
-    expect(await createMainApprovalOrchestration(deps)(destroyed, 'gemini', null, mainRequest())).toBe(false)
+    expect(
+      await createMainApprovalOrchestration(deps)(destroyed, 'gemini', null, mainRequest())
+    ).toBe(false)
     expect(order).toEqual([])
   })
 
@@ -955,6 +994,90 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
       'notifyPairedDevicesOfApproval'
     ])
     expect(deps.getApprovalService).toHaveBeenCalled()
+  })
+
+  // (m2a2) Ensemble seat attribution. The service orchestration has carried
+  // the requesting participant since AR3, but the MAIN authority path (tool
+  // permission retries, session trust, host reruns) never looked the session
+  // up — so a multi-seat ensemble showed "Allow Pi to retry write_file once?"
+  // with no way to tell WHICH Pi seat was asking. The title gains the seat
+  // role and the preview gains the bounded identity the renderer's
+  // attribution section already knows how to show.
+  it('(m2a2) attributes a main approval to the requesting ensemble seat', async () => {
+    const order: string[] = []
+    const sent: Array<Record<string, unknown>> = []
+    const registered: Array<Record<string, unknown>> = []
+    const deps = {
+      ...makeMainDeps(order),
+      runManager: {
+        get: vi.fn((runId: string) =>
+          runId === 'run-1'
+            ? {
+                runId: 'run-1',
+                appChatId: 'chat-1',
+                state: {
+                  ensembleRun: {
+                    roundId: 'round-1',
+                    participantId: 'ensemble-participant-14',
+                    provider: 'pi',
+                    role: 'K3Review',
+                    stageRole: 'reviewer'
+                  }
+                }
+              }
+            : undefined
+        ),
+        registerApproval: vi.fn(() => order.push('runManager.registerApproval'))
+      },
+      getApprovalService: vi.fn(() => ({
+        registerMain: vi.fn((_id: string, info: Record<string, unknown>) => {
+          registered.push(info)
+          return true
+        })
+      })),
+      safeSendToSender: vi.fn((_sender: unknown, _channel: string, payload: unknown) => {
+        sent.push(payload as Record<string, unknown>)
+      })
+    } as never
+    createMainApprovalOrchestration(deps)(
+      mainSender,
+      'pi',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      mainRequest({ title: 'Allow Pi to retry write_file once?' })
+    )
+    await Promise.resolve()
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0].title).toBe('K3Review: Allow Pi to retry write_file once?')
+    expect(registered[0].title).toBe('K3Review: Allow Pi to retry write_file once?')
+    expect((sent[0].preview as Record<string, unknown>).ensembleParticipant).toEqual({
+      participantId: 'ensemble-participant-14',
+      role: 'K3Review',
+      stageRole: 'reviewer'
+    })
+  })
+
+  // (m2a3) Solo runs stay untouched — no session, no ensemble identity, no
+  // misleading label.
+  it('(m2a3) leaves solo main approvals unattributed', async () => {
+    const order: string[] = []
+    const sent: Array<Record<string, unknown>> = []
+    const deps = {
+      ...makeMainDeps(order),
+      safeSendToSender: vi.fn((_sender: unknown, _channel: string, payload: unknown) => {
+        sent.push(payload as Record<string, unknown>)
+      })
+    } as never
+    createMainApprovalOrchestration(deps)(
+      mainSender,
+      'pi',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      mainRequest({ title: 'Allow Pi to retry write_file once?' })
+    )
+    await Promise.resolve()
+    expect(sent).toHaveLength(1)
+    expect(sent[0].title).toBe('Allow Pi to retry write_file once?')
+    expect((sent[0].preview as Record<string, unknown>).ensembleParticipant).toBeUndefined()
   })
 
   // (m2b) The registration must carry the request's own title/body. They were
@@ -1154,15 +1277,22 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     createMainApprovalOrchestration(deps)(mainSender, 'gemini', null, mainRequest())
     await Promise.resolve()
 
-    expect(vi.mocked(deps.runManager.registerApproval)).toHaveBeenCalledWith(expect.stringContaining('gemini-'), expect.any(String))
-    expect(vi.mocked(deps.safeSendToSender)).toHaveBeenCalledWith(mainSender, 'agent-approval-request', expect.objectContaining({
-      appRunId: expect.stringContaining('gemini-'),
-      appChatId: undefined,
-      title: 'Approve workspace trust',
-      preview: expect.objectContaining({
-        actions: ['accept', 'decline', 'cancel']
+    expect(vi.mocked(deps.runManager.registerApproval)).toHaveBeenCalledWith(
+      expect.stringContaining('gemini-'),
+      expect.any(String)
+    )
+    expect(vi.mocked(deps.safeSendToSender)).toHaveBeenCalledWith(
+      mainSender,
+      'agent-approval-request',
+      expect.objectContaining({
+        appRunId: expect.stringContaining('gemini-'),
+        appChatId: undefined,
+        title: 'Approve workspace trust',
+        preview: expect.objectContaining({
+          actions: ['accept', 'decline', 'cancel']
+        })
       })
-    }))
+    )
   })
 
   // (m6) Paired-device fan-out should include workspace-derived thread and summary metadata.
@@ -1171,7 +1301,12 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     const deps = makeMainDeps(order)
     vi.mocked(deps.workspaceIdForApprovalPush).mockReturnValue('ws-id')
 
-    createMainApprovalOrchestration(deps)(mainSender, 'gemini', { appRunId: 'run-1', appChatId: 'chat-1' }, mainRequest())
+    createMainApprovalOrchestration(deps)(
+      mainSender,
+      'gemini',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      mainRequest()
+    )
     await Promise.resolve()
 
     const notifyCall = vi.mocked(deps.notifyPairedDevicesOfApproval).mock.calls[0]
