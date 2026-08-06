@@ -4037,6 +4037,14 @@ export class EnsembleOrchestrator {
   }
 
   private saveChatWithCheckpoint(chat: ChatRecord, reason: SessionCheckpointReason): void {
+    // A multi-lane flush holds an in-memory overlay so sibling flushes share
+    // one save. Any other writer (seat change, round status, …) that persists
+    // during that window must advance the overlay too — otherwise the flush
+    // tail saveChat reverts the store to a pre-mutation projection and can
+    // drop the mutation's transcript row or revive wiped lane cards.
+    if (this.flushChatOverlay?.chatId === chat.appChatId) {
+      this.flushChatOverlay.chat = chat
+    }
     this.deps.saveChat(chat)
     if (chat.ensemble?.activeRound?.status !== 'running') return
     // T3b: skip checkpoint persist for participant-updated while round is
@@ -7363,6 +7371,19 @@ export class EnsembleOrchestrator {
     })
   }
 
+  /**
+   * Freshest chat bytes for a mutation that must not clobber concurrent
+   * transcript writers. Fan-out lane flushes debounce through
+   * `flushChatOverlay`; a seat-change save that spreads a pre-flush snapshot
+   * would wipe those lane cards and the Fan-Out Scout disclosure can never
+   * form (expectedLaneCount never met). Prefer the in-flight overlay, then
+   * the store, then the caller snapshot.
+   */
+  private latestChatForMutation(chatId: string, fallback: ChatRecord): ChatRecord {
+    if (this.flushChatOverlay?.chatId === chatId) return this.flushChatOverlay.chat
+    return this.deps.getChat(chatId) || fallback
+  }
+
   private applyParticipantSeatChangeToChat(input: {
     chat: ChatRecord
     runtime?: ActiveRoundRuntime
@@ -7374,13 +7395,18 @@ export class EnsembleOrchestrator {
     updateActiveRound?: boolean
   }): ChatRecord {
     const { chat, runtime, before, after, changedBy, reason, boundary, updateActiveRound = true } = input
+    // Rebase onto the latest snapshot. Callers often hand in the chat they
+    // read at request start; scout/review lane flushes can land in the store
+    // (or the shared flush overlay) before this save runs.
+    const latest = this.latestChatForMutation(chat.appChatId, chat)
+    if (!latest.ensemble) return this.deps.getChat(chat.appChatId) || latest
     const nowIso = this.deps.nowIso()
-    const nextParticipants = chat.ensemble!.participants.map((participant) =>
+    const nextParticipants = latest.ensemble.participants.map((participant) =>
       participant.id === before.id ? { ...after, order: participant.order } : participant
     )
     const editedActiveRound = runtime && updateActiveRound
-      ? this.applyRosterEditToActiveRound(chat.ensemble!.activeRound, runtime.roundId, nextParticipants)
-      : chat.ensemble!.activeRound
+      ? this.applyRosterEditToActiveRound(latest.ensemble.activeRound, runtime.roundId, nextParticipants)
+      : latest.ensemble.activeRound
     // An execution-config change makes a standing failed/unreachable marker a
     // false alarm for the seat's NEW config: clear the round-state warning (and
     // stamp superseded failed lanes) whether the round is live or long over.
@@ -7402,25 +7428,25 @@ export class EnsembleOrchestrator {
       reason,
       nowIso
     )
-    const bossmanParticipantId = chat.ensemble!.bossmanParticipantId
+    const bossmanParticipantId = latest.ensemble.bossmanParticipantId
     const captainParticipantIds = configuredEnsembleCaptainParticipantIds({
       participants: nextParticipants,
       bossmanParticipantId,
-      captainParticipantIds: chat.ensemble!.captainParticipantIds,
-      secondInCommandParticipantId: chat.ensemble!.secondInCommandParticipantId
+      captainParticipantIds: latest.ensemble.captainParticipantIds,
+      secondInCommandParticipantId: latest.ensemble.secondInCommandParticipantId
     })
     const saved: ChatRecord = {
-      ...chat,
+      ...latest,
       ensemble: {
-        ...chat.ensemble!,
+        ...latest.ensemble,
         participants: nextParticipants,
         bossmanParticipantId,
         captainParticipantIds,
         secondInCommandParticipantId: captainParticipantIds[0],
-        bossmanAutoApprovals: chat.ensemble!.bossmanAutoApprovals,
+        bossmanAutoApprovals: latest.ensemble.bossmanAutoApprovals,
         activeRound,
         sessionActivityLedger: [
-          ...(chat.ensemble!.sessionActivityLedger || []),
+          ...(latest.ensemble.sessionActivityLedger || []),
           activityEntry
         ].slice(-SESSION_ACTIVITY_LEDGER_LIMIT),
         updatedAt: nowIso
