@@ -286,6 +286,73 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
     }
   )
 
+  it(
+    'releases a late owner continuation before the deferred drain auto-continues',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness(
+        [
+          participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+          participant('claude', 'claude', 'Reviewer', 2, 'read_only')
+        ],
+        { ownedFanoutSettlementTimeoutMs: 50 }
+      )
+      harness.chat.ensemble!.orchestrationMode = 'continuous'
+      harness.chat.ensemble!.maxContinuationHops = 1
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Keep the late synthesis and continue the round.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      const fanout = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Return after the owner handoff window.'
+      })
+      expect(fanout.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+      // The owner writes while its lane is still outstanding. The synthesis is
+      // intentionally held until the lane settlement has completed.
+      stream(harness, 0, 'LATE-OWNER-SYNTHESIS.')
+      await sleep(FLUSH_MS)
+      expect(rowIndex(harness, 'LATE-OWNER-SYNTHESIS.')).toBe(-1)
+      complete(harness, 0)
+
+      // The short test timeout forces the serial drain into its deferred-lane
+      // path while the lane remains live. A terminal lane status must not let
+      // that path close the round before the owner settlement releases prose.
+      await sleep(FLUSH_MS)
+      expect(harness.chat.ensemble!.activeRound!.status).toBe('running')
+      expect(harness.dispatched).toHaveLength(2)
+
+      complete(harness, 1)
+      await vi.waitFor(() => {
+        expect(harness.dispatched).toHaveLength(3)
+        expect(rowIndex(harness, 'LATE-OWNER-SYNTHESIS.')).toBeGreaterThanOrEqual(0)
+      })
+      expect(harness.dispatched[2].provider).toBe('codex')
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            typeof message.content === 'string' &&
+            message.content.includes('auto-continuing for pass 2')
+        )
+      ).toBe(true)
+
+      complete(harness, 2)
+      await vi.waitFor(() => expect(harness.chat.ensemble!.activeRound!.status).toBe('completed'))
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            typeof message.content === 'string' &&
+            message.content.includes('written after it fanned out was discarded')
+        )
+      ).toBe(false)
+    }
+  )
+
   /*
    * Lockstep guard. The foreground handoff window is a LIVENESS BACKSTOP, not
    * the effective cap on a lane — the same doctrine MCP_BROKER_LONG_POLL_TIMEOUT_MS

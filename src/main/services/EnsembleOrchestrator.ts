@@ -15969,6 +15969,16 @@ export class EnsembleOrchestrator {
     return Boolean(run.pendingFanoutDispatches?.size || run.ownedFanoutSettlements?.size)
   }
 
+  private hasPendingOwnedFanoutSettlements(chatId: string, roundId: string): boolean {
+    return [...this.runsByRunId.values()].some(
+      (run) =>
+        run.chatId === chatId &&
+        run.roundId === roundId &&
+        !run.laneId &&
+        this.hasOwnedFanoutWork(run)
+    )
+  }
+
   /**
    * Warn-and-continue for seats without image transport: strip paths, emit a
    * participant-health notice, and let the text turn dispatch.
@@ -16092,7 +16102,10 @@ export class EnsembleOrchestrator {
    * superseded) while deferred, the entry is dropped — `cancelRound`
    * already closed the round.
    */
-  private maybeResumeDeferredDrain(chatId: string): void {
+  private maybeResumeDeferredDrain(
+    chatId: string,
+    options: { allowAutoContinuation?: boolean } = {}
+  ): void {
     const runtime = this.deferredLaneDrainByChatId.get(chatId)
     if (!runtime) return
     const round = this.deps.getChat(chatId)?.ensemble?.activeRound
@@ -16101,6 +16114,12 @@ export class EnsembleOrchestrator {
       return
     }
     if (roundHasActiveLanes(round) || runtime.fanoutReservedParticipantIds?.size) return
+    // A lane's durable status becomes terminal before the detached fan-out
+    // settlement finishes its owner cleanup. Do not close the round in that
+    // window: the owner may already have post-fan-out prose buffered behind
+    // its transcript boundary, and Continuous mode still needs the ordinary
+    // drain hook to decide whether to auto-continue.
+    if (this.hasPendingOwnedFanoutSettlements(chatId, runtime.roundId)) return
     this.deferredLaneDrainByChatId.delete(chatId)
     const pendingSerialParticipants = runtime.remainingParticipants || []
     if (pendingSerialParticipants.length > 0 && !runtime.cancelled) {
@@ -16120,6 +16139,22 @@ export class EnsembleOrchestrator {
         this.runRound(runtime, [steeringBoundaryParticipant], { skipPreamble: true })
       )
       return
+    }
+    if (options.allowAutoContinuation && !runtime.cancelled && runtime.queuedPrompts.length === 0) {
+      const chat = this.deps.getChat(chatId)
+      if (chat) {
+        const continuationRoster = this.tryAutoContinueRound(runtime, chat)
+        if (continuationRoster && continuationRoster.length > 0 && !runtime.cancelled) {
+          void this.trackRoundActivity(
+            runtime,
+            this.runRound(runtime, continuationRoster, {
+              skipPreamble: true,
+              repeatOpeningScoutFanout: true
+            })
+          )
+          return
+        }
+      }
     }
     this.finalizeDrainedRound(runtime)
   }
@@ -17410,6 +17445,13 @@ export class EnsembleOrchestrator {
               sourceOwner.ownedFanoutSettlements = undefined
             }
             this.releaseOwnedFanoutHold(sourceOwner)
+            // The round drain must run after the held owner transcript has been
+            // released. `finishFanoutPass` marks the lane terminal before this
+            // cleanup callback, so resuming from its inner finally can otherwise
+            // finish the round and make the owner's continuation look late.
+            this.maybeResumeDeferredDrain(sourceOwner.chatId, {
+              allowAutoContinuation: true
+            })
           })
           .catch(() => undefined)
       }
