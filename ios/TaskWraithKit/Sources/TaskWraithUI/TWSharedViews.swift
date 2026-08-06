@@ -5261,6 +5261,10 @@ private struct ToolActivityViewportHeightKey: PreferenceKey {
 struct ToolActivityViewport<Content: View>: View {
     private let maxHeight: CGFloat
     private let fadeHeight: CGFloat
+    /// Extra height allowed before clamping. Tool cards keep a small slack to
+    /// avoid flicker near the cap; fan-out result lanes pass 0 for Electron
+    /// LiveActivityViewport parity (hard `max-height`).
+    private let overflowSlack: CGFloat
     private let expandLabel: String?
     private let collapseLabel: String?
     private let content: Content
@@ -5270,19 +5274,21 @@ struct ToolActivityViewport<Content: View>: View {
     init(
         maxHeight: CGFloat = 172,
         fadeHeight: CGFloat = 34,
+        overflowSlack: CGFloat = 8,
         expandLabel: String? = nil,
         collapseLabel: String? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.maxHeight = maxHeight
         self.fadeHeight = fadeHeight
+        self.overflowSlack = overflowSlack
         self.expandLabel = expandLabel
         self.collapseLabel = collapseLabel
         self.content = content()
     }
 
     private var shouldScroll: Bool {
-        contentHeight > maxHeight + 8
+        contentHeight > maxHeight + overflowSlack
     }
 
     var body: some View {
