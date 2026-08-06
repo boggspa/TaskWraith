@@ -554,6 +554,8 @@ import {
   requestNativeWindowControlConsent
 } from './nativeWindow/NativeWindowConsentDialog'
 import { createNativeProcessStartedAtResolver } from './nativeWindow/NativeProcessIdentityResolver'
+import { createNativeWindowProcessAncestryResolver } from './nativeWindow/NativeWindowProcessAncestryClient'
+import { resolveAppDriveEnsembleAuthority } from './appDrive/AppDriveEnsembleAuthority'
 import { createNativeWindowClickAuditClaim } from './nativeWindow/NativeWindowClickAudit'
 import { AuditService } from './services/AuditService'
 import {
@@ -3908,6 +3910,37 @@ const resolveNativeProcessStartedAt = createNativeProcessStartedAtResolver({
   platform: process.platform
 })
 
+/**
+ * Proves one process descends from another, with a birth receipt per link.
+ * Used both to admit a window owned by a descendant of a launch, and to admit
+ * a process the run spawned through its own shell.
+ */
+const resolveNativeProcessAncestry = createNativeWindowProcessAncestryResolver({
+  daemon: nativeWindowDaemonProxy,
+  platform: process.platform
+})
+
+/**
+ * Best-effort command line for an adoption approval card, so the human sees
+ * WHAT they are adopting rather than a bare PID. Display only: it never feeds
+ * an authority decision, and a failure must not block an approved adoption.
+ */
+async function describeNativeProcessForAdoption(
+  pid: number
+): Promise<{ command?: string; cwd?: string } | null> {
+  if (process.platform !== 'darwin' || !Number.isSafeInteger(pid) || pid <= 1) return null
+  return new Promise((resolve) => {
+    try {
+      execFile('ps', ['-o', 'command=', '-p', String(pid)], { timeout: 2_000 }, (error, stdout) => {
+        const command = typeof stdout === 'string' ? stdout.trim() : ''
+        resolve(error || !command ? null : { command })
+      })
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
 function currentNativeWindowProtectedPids(): ReadonlySet<number> {
   const protectedPids = new Set<number>([process.pid])
   for (const contents of electronWebContents.getAllWebContents()) {
@@ -5146,6 +5179,34 @@ function hasNonExternalApprovalAuthority(
   if (!chatId || !resolveExternalCollaboratorSeatIds) return true
   const externals = new Set(resolveExternalCollaboratorSeatIds(chatId))
   return assigned.some((id) => !externals.has(id))
+}
+
+/**
+ * App Drive authority for the calling run.
+ *
+ * Putting a real running app under agent control is a control action, so in an
+ * Ensemble it belongs to the Boss and its Captains. Solo threads are
+ * unaffected. The caller's participant id comes from the live run (falling back
+ * to the persisted run record); authority is then decided purely by id
+ * equality against the roster — never by `role`/`stageRole`, which
+ * participants can patch through `ensemble_roster_edit`.
+ */
+function appDriveEnsembleAuthorityForRun(
+  appChatId: string | undefined,
+  appRunId: string | undefined
+): { ok: true } | { ok: false; reason: string } {
+  const chat = appChatId ? AppStore.getChat(appChatId) : null
+  const ensemble = chat?.ensemble
+  if (!ensemble) return { ok: true }
+  const session = appRunId ? runManager.get(appRunId) : null
+  const state = session?.state as { ensembleRun?: { participantId?: string } } | undefined
+  const persisted = appRunId
+    ? (chat?.runs || []).find((run) => run.runId === appRunId)
+    : undefined
+  return resolveAppDriveEnsembleAuthority({
+    ensemble,
+    callerParticipantId: state?.ensembleRun?.participantId || persisted?.ensembleParticipantId
+  })
 }
 
 const threadMessageAccessResolver = createThreadMessageAccessResolver({
@@ -36305,7 +36366,12 @@ async function executeGeminiMcpTool(
       const canvasResult = await canvasToolExecutors.executeCanvasTool(
         toolName,
         args,
-        { ...context, canvasEvalApproval },
+        {
+          ...context,
+          canvasEvalApproval,
+          assertAppDriveAuthority: () =>
+            appDriveEnsembleAuthorityForRun(context.appChatId, context.appRunId)
+        },
         parentProvider
       )
       if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
@@ -36333,7 +36399,11 @@ async function executeGeminiMcpTool(
         await launchMcpExecutors.executeLaunchTool(
           toolName,
           args,
-          workspaceExecutionContext,
+          {
+            ...workspaceExecutionContext,
+            assertAppDriveAuthority: () =>
+              appDriveEnsembleAuthorityForRun(context.appChatId, context.appRunId)
+          },
           parentProvider
         )
       )
@@ -48102,6 +48172,14 @@ if (isGeminiMcpBridgeProcess) {
       appRootPath: () => app.getAppPath(),
       appExecutablePath: () => process.execPath,
       resolveProcessStartedAt: resolveNativeProcessStartedAt,
+      // Process adoption anchors every proof on this exact TaskWraith process:
+      // a PID is adoptable only when it is a live descendant of us, which is
+      // what makes it "something this run started" rather than any PID an agent
+      // can name.
+      hostProcessPid: () => process.pid,
+      getHostProtectedPids: currentNativeWindowProtectedPids,
+      resolveProcessAncestry: resolveNativeProcessAncestry,
+      describeProcess: describeNativeProcessForAdoption,
       trackSpawn: (spawn) => spawnRegistry.track(spawn),
       untrackSpawn: (pid) => spawnRegistry.untrack(pid),
       recordLifecycleEvent: appendLaunchLifecycleRunEvent,
@@ -48124,6 +48202,11 @@ if (isGeminiMcpBridgeProcess) {
         )
       },
       getHostProtectedPids: currentNativeWindowProtectedPids,
+      // Without this, only a window owned by the exact spawned PID could earn
+      // control — which is almost never the app itself, because the recorded
+      // PID is the spawn's direct child (`npm`) and the window belongs to a
+      // descendant several generations down.
+      resolveProcessAncestry: resolveNativeProcessAncestry,
       requestSecondConsent: (request) =>
         requestNativeWindowControlConsent(
           mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
@@ -48233,6 +48316,17 @@ if (isGeminiMcpBridgeProcess) {
           target,
           chatId,
           runId,
+          ...(assertMutationAuthorized ? { assertMutationAuthorized } : {})
+        }),
+      adopt: ({ provider, pid, workspacePath, chatId, runId, label, sender, assertMutationAuthorized }) =>
+        launchManager.adoptProcess({
+          sender: (sender as Electron.WebContents | null | undefined) ?? null,
+          provider: assertLiveProviderId(provider),
+          pid,
+          workspacePath: workspacePath ? requireRegisteredWorkspace(workspacePath, 'Workspace') : '',
+          chatId,
+          runId,
+          ...(label ? { label } : {}),
           ...(assertMutationAuthorized ? { assertMutationAuthorized } : {})
         }),
       stop: (attemptId) => launchManager.stopAttempt(attemptId),

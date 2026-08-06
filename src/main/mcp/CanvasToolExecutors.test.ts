@@ -556,7 +556,40 @@ describe('executeCanvasTool', () => {
       attemptId: 'att1'
     })
     expect(String(result.structuredContent?.guidance)).toMatch(/Screen Watch.*View & Control/)
+    expect(result.structuredContent?.retryable).toBe(true)
     expect(opened).toBe(false)
+  })
+
+  it('canvas_open_launch tells the agent which precondition failed, and whether retrying helps', async () => {
+    const cases = [
+      { reason: 'view-control-not-approved', retryable: true, guidance: /only for viewing/i },
+      // Retrying these cannot succeed, which is exactly what the old single
+      // generic message failed to say.
+      { reason: 'target-unavailable', retryable: false, guidance: /descend|open -a/i },
+      { reason: 'native-bridge-unavailable', retryable: false, guidance: /native bridge is not running/i },
+      { reason: 'attachment-stale', retryable: false, guidance: /no longer matches/i }
+    ] as const
+
+    for (const expected of cases) {
+      const { executeCanvasTool } = createCanvasToolExecutors({
+        controller: fakeController({}),
+        launchAttempts: () => [
+          fakeLaunchAttempt({
+            detectedUrls: [],
+            targetSnapshot: { platform: 'macos' } as LaunchAttempt['targetSnapshot']
+          })
+        ],
+        resolveWindowOpenTarget: async () => ({ ok: false, reason: expected.reason })
+      })
+
+      const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+
+      expect(result.structuredContent).toMatchObject({
+        reason: expected.reason,
+        retryable: expected.retryable
+      })
+      expect(String(result.structuredContent?.guidance)).toMatch(expected.guidance)
+    }
   })
 
   it('canvas_open_launch denies a same-chat attempt from another run before resolving', async () => {
@@ -1094,5 +1127,67 @@ describe('executeCanvasTool', () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
     await executeCanvasTool('canvas_snapshot', { canvasId: 'c1' }, ctx, 'grok')
     expect(seen).toEqual({ provider: 'grok', chatId: 'chat1', runId: 'run1', workspacePath: '/ws' })
+  })
+})
+
+describe('canvas_open_launch Ensemble authority', () => {
+  function nativeAttempt() {
+    return fakeLaunchAttempt({
+      detectedUrls: [],
+      targetSnapshot: { platform: 'macos' } as LaunchAttempt['targetSnapshot']
+    })
+  }
+
+  it('refuses the native window branch without Boss/Captain authority', async () => {
+    let resolved = false
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller: fakeController({}),
+      launchAttempts: () => [nativeAttempt()],
+      resolveWindowOpenTarget: async () => {
+        resolved = true
+        return { ok: false, reason: 'attachment-required' }
+      }
+    })
+
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1' },
+      { ...ctx, assertAppDriveAuthority: () => ({ ok: false, reason: 'Boss or a Captain only.' }) },
+      'claude'
+    )
+
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error)).toMatch(/Boss or a Captain/)
+    expect(resolved).toBe(false)
+  })
+
+  it('still lets any participant preview a detected localhost URL', async () => {
+    // Previewing a dev server is ordinary lane work: gating it would take away
+    // something every participant could already do.
+    let openedUrl = ''
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller: fakeController({
+        open: async (input: { url?: string }) => {
+          openedUrl = String(input.url || '')
+          return {
+            canvasId: 'c1',
+            url: openedUrl,
+            title: 'T',
+            viewport: { width: 1, height: 1 }
+          }
+        }
+      }),
+      launchAttempts: () => [fakeLaunchAttempt({ detectedUrls: ['http://localhost:5173'] })]
+    })
+
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1' },
+      { ...ctx, assertAppDriveAuthority: () => ({ ok: false, reason: 'Boss or a Captain only.' }) },
+      'claude'
+    )
+
+    expect(result.isError).toBeFalsy()
+    expect(openedUrl).toContain('localhost:5173')
   })
 })

@@ -77,6 +77,13 @@ export interface CanvasToolContext {
   appRunId?: string
   workspacePath?: string
   canvasEvalApproval?: CanvasEvalApprovalReceipt
+  /**
+   * Gates the NATIVE window branch of canvas_open_launch on Ensemble
+   * Boss/Captain authority. The detected-loopback-URL branch is deliberately
+   * NOT gated: previewing a dev server is ordinary lane work, and every
+   * participant could already do it.
+   */
+  assertAppDriveAuthority?: () => { ok: true } | { ok: false; reason: string }
 }
 
 export type CanvasWindowOpenUnavailableReason =
@@ -331,18 +338,43 @@ ${truncated}
 </html>`
 }
 
+/**
+ * One reason, one instruction. A single generic "attach it in Screen Watch"
+ * for every failure is why an agent that had already been attached kept
+ * retrying: the message never distinguished "the human has not done their part
+ * yet" from "no amount of retrying will help".
+ */
+const NATIVE_WINDOW_GUIDANCE: Readonly<Record<CanvasWindowOpenUnavailableReason, string>> =
+  Object.freeze({
+    'attachment-required':
+      'Ask the user to open Screen Watch for this chat, pick this launch’s window, and approve View & Control. You cannot initiate the pick.',
+    'view-control-not-approved':
+      'A window is attached but only for viewing. Ask the user to approve View & Control for this launch, then retry.',
+    'attachment-stale':
+      'The attached window or its control lease no longer matches this launch. Ask the user to attach the window again.',
+    'target-unavailable':
+      'The attached window does not belong to this launch, or could not be proved to descend from it. Check that the window is one this run started — an app opened through `open -a` is started by launchd, not by TaskWraith, so run its executable directly instead.',
+    'not-native-macos-launch':
+      'Native window control needs macOS 15.2 or newer. Use the launch’s detected localhost URL with canvas_open instead, or read launch_status output.',
+    'native-bridge-unavailable':
+      'The native bridge is not running, so no window can be driven. Report this to the user rather than retrying.'
+  })
+
 function nativeWindowGuidance(
   attemptId: string,
   reason: CanvasWindowOpenUnavailableReason
 ): McpToolExecutionResult {
   const guidance =
+    NATIVE_WINDOW_GUIDANCE[reason] ??
     'Open Screen Watch for this launch, attach the app window, and approve View & Control; then retry canvas_open_launch.'
   const value = {
     ok: false,
     tool: 'canvas_open_launch',
     attemptId,
     reason,
-    guidance
+    guidance,
+    /** Retrying an unchanged call cannot succeed for these. */
+    retryable: reason === 'attachment-required' || reason === 'view-control-not-approved'
   }
   const text = JSON.stringify(value)
   return {
@@ -526,6 +558,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           }
 
           if (liveLaunchAttempt(attempt)) {
+            const authority = context.assertAppDriveAuthority?.()
+            if (authority && !authority.ok) return fail(toolName, authority.reason)
             let resolution: CanvasWindowOpenTargetResolution | undefined
             if (deps.resolveWindowOpenTarget) {
               try {
