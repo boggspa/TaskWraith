@@ -146,6 +146,9 @@ import {
   isAgentQuestionMarker,
   type AgentQuestionTombstone
 } from '../lib/agentQuestionTombstone'
+import { agentQuestionSeatKey, composedSeatRole, seatFromChatRun } from '../lib/transcriptSeat'
+import { agentQuestionHeaderLineFor } from '../../../shared/agentQuestionTranscript'
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
@@ -3235,6 +3238,29 @@ export const TranscriptPanel = memo(
       return map
     }, [displayMessages, pendingAgentQuestions])
 
+    /**
+     * The seat behind each RUN, so a question card can name the participant that
+     * asked instead of its provider.
+     *
+     * Keyed by run rather than by marker because the two question surfaces reach
+     * it from different directions: an anchored card has the marker row (and its
+     * `runId`), while the tail fallback has only the pending question's
+     * `appRunId`. The run is the thing they share.
+     *
+     * Derived, never persisted. The marker carries no seat of its own and never
+     * has — MEASURED across the real chat store, 0 of 15 — so stamping one at
+     * write time would leave every question already in the transcript still
+     * saying "Claude asked". See `seatFromChatRun`.
+     */
+    const agentQuestionSeatsByRunId = useMemo(() => {
+      const byRunId = new Map<string, SeatChangeSeatState>()
+      for (const run of currentChat?.runs || []) {
+        const seat = seatFromChatRun(run)
+        if (seat) byRunId.set(run.runId, seat)
+      }
+      return byRunId
+    }, [currentChat?.runs])
+
     /** Reply rows the tombstone now speaks for — rendering both would print the
      *  answer twice, back to back. */
     const suppressedReplyMessageIds = useMemo(() => {
@@ -3988,6 +4014,29 @@ export const TranscriptPanel = memo(
             const pendingAgentQuestionsKey = pendingQuestionsForRow
               .map((question) => `${question.questionId}:${question.askedAt}`)
               .join('\u0000')
+            // The seat that asked, for whichever question surface this row
+            // carries. Resolved only for question rows — this loop runs per
+            // message, and every other row would pay the lookup for nothing.
+            const agentQuestionSeat =
+              (questionTombstone || pendingQuestionsForRow.length > 0) && msg.runId
+                ? (agentQuestionSeatsByRunId.get(msg.runId) ?? null)
+                : null
+            // The stored line names the provider, because the writer knows
+            // nothing else. Where a seat resolves the transcript does know, and
+            // a line reading "Claude asked…" directly above a card headed
+            // "#1 SolBoss" is not merely redundant, it contradicts it.
+            //
+            // Display only — the stored string stays as written. It is the
+            // plain-text rendering every non-renderer surface reads (iOS, TUI,
+            // copy-paste, notifications), the same split the close-out row makes
+            // between its link text and the strip the renderer swaps in.
+            const agentQuestionHeaderOverride = (() => {
+              if (!agentQuestionSeat || msg.metadata?.kind !== 'agentQuestion') return null
+              const asker = composedSeatRole(agentQuestionSeat)
+              if (!asker) return null
+              const options = msg.metadata?.agentQuestionOptions
+              return agentQuestionHeaderLineFor(asker, Array.isArray(options) && options.length > 0)
+            })()
             const auxiliaryKey =
               isDelegationCard || isReturnCard
                 ? `${runningChatIdsSignature}|${auxiliaryChatsSignature}`
@@ -4092,6 +4141,11 @@ export const TranscriptPanel = memo(
                 questionTombstone,
                 questionReplyHidden
               ),
+              // A seat resolves from the RUN, not from this row, so it can
+              // appear after the row was first cached (the snapshot lands with
+              // the run record). Without it here the card keeps the cached
+              // element and never picks the seat up.
+              agentQuestionSeatKey: agentQuestionSeatKey(agentQuestionSeat),
               assistantRunModelKey,
               renameContinuityKey,
               auxiliaryKey: auxiliaryKeyWithToolActions,
@@ -4857,7 +4911,7 @@ export const TranscriptPanel = memo(
                             {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
                               usesRevealLifecycle ? (
                                 <RevealingMarkdownMessage
-                                  content={msg.content}
+                                  content={agentQuestionHeaderOverride ?? msg.content}
                                   chat={currentChat || undefined}
                                   isLive={isLiveRevealRow}
                                   messageId={rowKey}
@@ -4874,7 +4928,7 @@ export const TranscriptPanel = memo(
                                 />
                               ) : (
                                 <MarkdownMessage
-                                  content={msg.content}
+                                  content={agentQuestionHeaderOverride ?? msg.content}
                                   chat={currentChat || undefined}
                                   mediaRefs={mediaRefs}
                                   workspacePath={currentChat?.workspacePath}
@@ -4958,6 +5012,7 @@ export const TranscriptPanel = memo(
                           null
                         }
                         providerLabel={currentProviderLabel}
+                        seat={agentQuestionSeat}
                       />
                     )}
                     {pendingQuestionsForRow.map((question) => (
@@ -4968,6 +5023,7 @@ export const TranscriptPanel = memo(
                           onAgentQuestionSubmit(question.questionId, answer, isCustom)
                         }
                         onDismiss={() => onAgentQuestionDismiss(question.questionId)}
+                        seat={agentQuestionSeat}
                       />
                     ))}
                     {msg.metadata?.kind === 'ensembleBossmanPoll' &&
@@ -5040,6 +5096,10 @@ export const TranscriptPanel = memo(
                     onAgentQuestionSubmit(question.questionId, answer, isCustom)
                   }
                   onDismiss={() => onAgentQuestionDismiss(question.questionId)}
+                  // No marker row to read the run off here — that is the whole
+                  // reason this fallback exists — so the pending question's own
+                  // `appRunId` is the way in.
+                  seat={agentQuestionSeatsByRunId.get(question.appRunId) ?? null}
                 />
               </div>
             ))}

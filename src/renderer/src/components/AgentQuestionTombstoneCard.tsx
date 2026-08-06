@@ -1,6 +1,8 @@
 import type { ReactElement } from 'react'
 import type { ProviderId } from '../../../main/store/types'
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import type { AgentQuestionTombstone } from '../lib/agentQuestionTombstone'
+import { AgentQuestionAsker } from './AgentQuestionAsker'
 
 /**
  * The settled twin of `AgentQuestionCard` — what an `ask_user_question` leaves
@@ -18,8 +20,12 @@ import type { AgentQuestionTombstone } from '../lib/agentQuestionTombstone'
 export interface AgentQuestionTombstoneCardProps {
   tombstone: AgentQuestionTombstone
   provider: ProviderId | null
-  /** Who asked, already labelled ("Codex"). Absent falls back to "Agent". */
+  /** Who asked, already labelled ("Codex"). Absent falls back to "Agent". Only
+   *  reached when no seat resolves — see `AgentQuestionAsker`. */
   providerLabel?: string
+  /** The seat that asked, resolved from the marker's run. Null for a solo or
+   *  chat-level turn, which genuinely has no seat. */
+  seat?: SeatChangeSeatState | null
 }
 
 function formatTime(iso: string | undefined): string | null {
@@ -32,7 +38,8 @@ function formatTime(iso: string | undefined): string | null {
 export function AgentQuestionTombstoneCard({
   tombstone,
   provider,
-  providerLabel
+  providerLabel,
+  seat = null
 }: AgentQuestionTombstoneCardProps): ReactElement {
   const providerClass = provider ? ` provider-${provider}` : ''
   const answered = tombstone.outcome === 'answered'
@@ -47,7 +54,7 @@ export function AgentQuestionTombstoneCard({
       className={`plan-choice-card agent-question-card agent-question-card--settled${providerClass}`}
       data-outcome={tombstone.outcome}
     >
-      <div className="agent-question-card-settled-kicker">{providerLabel || 'Agent'} asked</div>
+      <AgentQuestionAsker seat={seat} providerLabel={providerLabel} />
       <div className="plan-choice-question agent-question-card-question">{tombstone.question}</div>
       {tombstone.context && <div className="agent-question-card-context">{tombstone.context}</div>}
 

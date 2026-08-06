@@ -41,6 +41,11 @@ export interface TranscriptRowRenderSignature {
    *  suppressed reply. Without it the cache serves a card that still shows the
    *  question as unanswered after the user answers it. */
   agentQuestionTombstoneKey: string
+  /** The seat that asked, as rendered on either question card. Its own key
+   *  because it resolves from the RUN rather than from the row, so it can land
+   *  after the row was first cached — a marker written before its run record
+   *  carried a seat snapshot would otherwise keep saying "Claude asked". */
+  agentQuestionSeatKey: string
   assistantRunModelKey: string
   renameContinuityKey: string
   auxiliaryKey: string
@@ -264,6 +269,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
   if (prev.pendingAgentQuestionsKey !== next.pendingAgentQuestionsKey) return false
   if (prev.agentQuestionTombstoneKey !== next.agentQuestionTombstoneKey) return false
+  if (prev.agentQuestionSeatKey !== next.agentQuestionSeatKey) return false
   if (prev.assistantRunModelKey !== next.assistantRunModelKey) return false
   if (prev.renameContinuityKey !== next.renameContinuityKey) return false
   if (prev.auxiliaryKey !== next.auxiliaryKey) return false

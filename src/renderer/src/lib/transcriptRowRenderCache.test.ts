@@ -53,6 +53,7 @@ const signature = (
   pendingPlanChoiceKey: '',
   pendingAgentQuestionsKey: '',
   agentQuestionTombstoneKey: '',
+  agentQuestionSeatKey: '',
   assistantRunModelKey: '',
   renameContinuityKey: '',
   auxiliaryKey: '',
@@ -220,6 +221,14 @@ describe('transcriptRowRenderCache', () => {
       transcriptRowRenderSignatureEqual(
         signature(),
         signature({ agentQuestionTombstoneKey: 'answered|Replace|preset||shown' })
+      )
+    ).toBe(false)
+    // The seat resolves from the run, so it can appear after the row was first
+    // cached. Without this the card keeps saying "Claude asked" forever.
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature(),
+        signature({ agentQuestionSeatKey: 'claude|claude-fable-5|SolBoss|1||||false|workspace_write' })
       )
     ).toBe(false)
     expect(transcriptRowRenderSignatureEqual(signature(), signature({ virtualized: false }))).toBe(false)

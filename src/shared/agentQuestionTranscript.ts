@@ -68,7 +68,24 @@ export function agentQuestionHeaderLine(
   provider: ProviderId | undefined,
   hasOptions: boolean
 ): string {
-  const asker = provider ? getProviderLabel(provider) : 'Agent'
+  return agentQuestionHeaderLineFor(provider ? getProviderLabel(provider) : 'Agent', hasOptions)
+}
+
+/**
+ * The same line for an asker the writer could not name.
+ *
+ * Both writers know only the provider — neither is the orchestrator, so neither
+ * holds the participant — which is why the stored line says "Claude asked you to
+ * pick an option:" even in a fifty-seat round where six seats are Claude. The
+ * transcript CAN resolve the seat (from the run behind the marker), so it
+ * rebuilds the line naming it.
+ *
+ * Rebuilt from the same inputs rather than patched over the stored string: the
+ * asker's name is interpolated into two different sentences, and string-matching
+ * one of them back out is the kind of thing that silently stops working the day
+ * the wording changes.
+ */
+export function agentQuestionHeaderLineFor(asker: string, hasOptions: boolean): string {
   return hasOptions ? `${asker} asked you to pick an option:` : `${asker} asked you a question:`
 }
 

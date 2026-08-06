@@ -2173,6 +2173,93 @@ describe('settled ask_user_question tombstone', () => {
     expect(html).toContain('Do Channels replace General chats?')
   })
 
+  /**
+   * Who asked, in a round where "Claude" names six seats.
+   *
+   * The marker records no seat and never has (measured: 0 of 15 across the real
+   * chat store), so the card resolves it from the RUN behind the question. That
+   * is also what makes every question already in a transcript name its asker.
+   */
+  describe('names the seat, not the provider', () => {
+    const SEATED_MARKER: ChatMessage = {
+      ...questionExchange[0],
+      runId: 'run-solboss'
+    } as ChatMessage
+
+    const seatedRun = {
+      runId: 'run-solboss',
+      startedAt: '2026-07-27T14:29:00.000Z',
+      ensembleRole: 'SolBoss',
+      ensembleOrder: 1,
+      ensembleParticipantId: 'p-1',
+      ensembleSeatSnapshot: {
+        schemaVersion: 1,
+        provider: 'claude',
+        model: 'claude-fable-5',
+        reasoningEffort: 'max',
+        configuredPermissionPresetId: 'workspace_write'
+      }
+    }
+
+    function renderSeated(runs: unknown[]): string {
+      return renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            currentProviderLabel: 'Claude',
+            currentProvider: 'claude',
+            messages: [SEATED_MARKER, questionExchange[1], questionExchange[2]],
+            currentChat: { id: 'c1', appChatId: 'c1', messages: [], runs } as unknown as ChatRecord
+          })}
+        />
+      )
+    }
+
+    it('puts the seat element on the card instead of the provider label', () => {
+      const html = renderSeated([seatedRun])
+      expect(html).toContain('agent-question-card-asker')
+      // The seat's own name and number, which is the only thing that tells six
+      // Claude seats apart.
+      expect(html).toContain('#1 SolBoss')
+      // The shared element, not a fifth chip vocabulary invented here.
+      expect(html).toContain('seat-state-chips')
+      // The bare provider kicker is GONE for a seated asker.
+      expect(html).not.toContain('agent-question-card-settled-kicker')
+    })
+
+    it('rewrites the system line, which otherwise contradicts the card', () => {
+      const html = renderSeated([seatedRun])
+      expect(html).toContain('#1 SolBoss asked you to pick an option:')
+      expect(html).not.toContain('Claude asked you to pick an option:')
+    })
+
+    it('keeps the provider label when the run never sat in a seat', () => {
+      // Solo turns and chat-level runs have no participant behind them — 11 of
+      // the 15 real questions — and inventing a seat for them would be a lie.
+      const html = renderSeated([{ runId: 'run-solboss', startedAt: '2026-07-27T14:29:00.000Z' }])
+      expect(html).toContain('agent-question-card-settled-kicker')
+      expect(html).not.toContain('agent-question-card-asker')
+      expect(html).toContain('Codex asked you to pick an option:')
+    })
+
+    it('makes no permission claim for a seat that recorded no preset', () => {
+      // An absent preset is not the default preset: claiming "Accept Edits" for
+      // a seat that may have run read-only is worse than saying nothing.
+      const html = renderSeated([
+        {
+          ...seatedRun,
+          ensembleSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'claude',
+            model: 'claude-fable-5'
+          }
+        }
+      ])
+      expect(html).toContain('#1 SolBoss')
+      expect(html).not.toContain('data-permission-value')
+    })
+  })
+
   it('shows a skipped question rather than leaving a bare header line', () => {
     const html = renderExchange([questionExchange[0], questionExchange[2]])
     expect(html).toContain('agent-question-card--settled')

@@ -8114,6 +8114,45 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   letter-spacing: 0.04em;
 }
 
+/* Who asked, as the seat element — the same strip the close-out table, the
+ * fan-out lane and the peer-message card use. A DIFFERENT rule from the kicker
+ * above, not a modifier on it, because the element tolerates neither of that
+ * rule's two declarations: `text-transform: uppercase` would shout model names
+ * the composer renders in their real case, and `color` on the wrapper is what
+ * kills the provider hue, the permission tint and the reasoning shimmer that
+ * flow into `.seat-change-chip` from the composer's own rules.
+ *
+ * Layout only, therefore. The one colour here sits on the role span, which is
+ * the seat's own accent and is set inline from `seatAccentVar`. */
+.agent-question-card-asker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-question-card-asker-role {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.agent-question-card-asker-seat {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+/* The verb trails the seat so the row reads as one sentence. Toned down to the
+ * kicker's own weight — it is the least informative word on the line. */
+.agent-question-card-asker-verb {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .agent-question-card--settled .agent-question-card-question {
   color: var(--text-primary);
 }

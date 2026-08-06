@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import type { ChatRun } from '../../../main/store/types'
 import {
   composedSeatRole,
+  seatFromChatRun,
   seatFromEnsembleMetadata,
   seatFromSubThreadMetadata
 } from './transcriptSeat'
@@ -199,5 +201,88 @@ describe('lane authority reaches the glyph', () => {
 
   it('has none for an ordinary lane', () => {
     expect(seatFromEnsembleMetadata(metadata())).not.toHaveProperty('authority')
+  })
+})
+
+describe('seatFromChatRun', () => {
+  const run = (over: Partial<ChatRun> = {}): ChatRun =>
+    ({
+      runId: 'run-1',
+      startedAt: '2026-08-06T10:00:00.000Z',
+      ensembleRole: 'SolBoss',
+      ensembleOrder: 1,
+      ensembleParticipantId: 'p-1',
+      ensembleSeatSnapshot: {
+        schemaVersion: 1,
+        provider: 'claude',
+        model: 'claude-fable-5',
+        reasoningEffort: 'max',
+        configuredPermissionPresetId: 'workspace_write'
+      },
+      ...over
+    }) as ChatRun
+
+  it('reads the whole seat off the run that asked', () => {
+    expect(seatFromChatRun(run())).toEqual({
+      provider: 'claude',
+      model: 'claude-fable-5',
+      role: 'SolBoss',
+      seatNumber: 1,
+      reasoningEffort: 'max',
+      permissionPresetId: 'workspace_write'
+    })
+  })
+
+  it('refuses a run that never sat in a seat', () => {
+    // Solo turns and chat-level runs have no participant behind them. MEASURED
+    // on the real chat store: 11 of 15 question markers resolve to exactly this
+    // shape, and every one of them must keep the plain provider label.
+    expect(seatFromChatRun(run({ ensembleSeatSnapshot: undefined }))).toBeNull()
+    expect(seatFromChatRun(null)).toBeNull()
+    expect(seatFromChatRun(undefined)).toBeNull()
+  })
+
+  it('refuses a snapshot with no model rather than rendering an empty chip', () => {
+    expect(
+      seatFromChatRun(
+        run({
+          ensembleSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'claude',
+            configuredPermissionPresetId: 'read_only'
+          }
+        })
+      )
+    ).toBeNull()
+  })
+
+  it('carries the stage role and drops an unknown one', () => {
+    expect(seatFromChatRun(run({ ensembleStageRole: 'reviewer' }))?.stageRole).toBe('reviewer')
+    expect(seatFromChatRun(run({ ensembleStageRole: 'overlord' as never }))).not.toHaveProperty(
+      'stageRole'
+    )
+  })
+
+  it('carries the thinking flag, including when it is false', () => {
+    const seat = seatFromChatRun(
+      run({
+        ensembleSeatSnapshot: {
+          schemaVersion: 1,
+          provider: 'kimi',
+          model: 'kimi-k2.7-code',
+          thinkingEnabled: false,
+          configuredPermissionPresetId: 'read_only'
+        }
+      })
+    )
+    expect(seat?.thinkingEnabled).toBe(false)
+  })
+
+  it('omits a seat number for a run with no order', () => {
+    expect(seatFromChatRun(run({ ensembleOrder: undefined }))).not.toHaveProperty('seatNumber')
+  })
+
+  it('makes no authority claim — a run does not record one', () => {
+    expect(seatFromChatRun(run())).not.toHaveProperty('authority')
   })
 })

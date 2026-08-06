@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { ProviderId } from '../../../main/store/types'
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { MOTION_DURATIONS, presenceSettleMs, usePresence } from '../hooks/usePanelPresence'
 import { createOneShotLatch } from '../lib/oneShotLatch'
+import { AgentQuestionAsker } from './AgentQuestionAsker'
 
 /**
  * QMOD (1.0.3) — state for an in-flight `ask_user_question` MCP tool
@@ -35,12 +37,23 @@ export interface AgentQuestionCardProps {
   state: AgentQuestionState
   onAnswer: (answer: string, isCustom: boolean) => void
   onDismiss: () => void
+  /**
+   * The seat asking, resolved from the run behind the question.
+   *
+   * Null for a solo or chat-level turn, and then the card shows no asker at all
+   * rather than falling back to a provider label. A live card is anchored to the
+   * marker row that already names the provider, so in a one-seat chat the label
+   * would be the third printing of the same word; the seat element earns its
+   * place only where "which of the fifty?" is a real question.
+   */
+  seat?: SeatChangeSeatState | null
 }
 
 export function AgentQuestionCard({
   state,
   onAnswer,
-  onDismiss
+  onDismiss,
+  seat = null
 }: AgentQuestionCardProps): ReactElement | null {
   const hasOptions = (state.options?.length ?? 0) > 0
   const [showFreeText, setShowFreeText] = useState(!hasOptions)
@@ -166,6 +179,9 @@ export function AgentQuestionCard({
         presence.className ? ` ${presence.className}` : ''
       }`}
     >
+      {/* Present tense: this one is still open. The tombstone's twin reads
+          "asked" because by then it is a record. */}
+      {seat && <AgentQuestionAsker seat={seat} verb="asks" />}
       <div id={questionTitleId} className="plan-choice-question agent-question-card-question">
         {state.question}
       </div>
