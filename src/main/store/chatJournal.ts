@@ -335,7 +335,15 @@ export function createChatJournal(baseDir: string): ChatJournal {
       // Tombstone markers
       if (name.endsWith('.tombstone')) {
         const chatId = name.slice(0, -'.tombstone'.length)
-        chats.set(chatId, { lineCount: 0, lastSnapshotAt: 0, tombstoned: true })
+        // Same completeness requirement as the rebuild below: a tombstoned
+        // chat can be revived, and it would otherwise carry NaN byte state.
+        chats.set(chatId, {
+          lineCount: 0,
+          bytesSinceSnapshot: 0,
+          lastSnapshotAt: 0,
+          observedAt: Date.now(),
+          tombstoned: true
+        })
         continue
       }
 
@@ -393,12 +401,30 @@ export function createChatJournal(baseDir: string): ChatJournal {
           }
         }
 
-        // Rebuild state
+        // Rebuild state.
+        //
+        // Every ChatState field has to be set here. `append` accumulates with
+        // `state.bytesSinceSnapshot += lineBytes`, so omitting it leaves NaN,
+        // and NaN fails every comparison — the byte ceiling then silently never
+        // fires for any chat that existed when the process started, which is
+        // exactly the set of chats whose journals are already large.
+        //
+        // Seed the byte count from what is ACTUALLY on disk rather than 0: a
+        // journal reopened at 80 MB must be over the ceiling immediately, not
+        // 16 MB from now.
         const snapTs = snapshotTimestamp(chatId)
         const existing = chats.get(chatId)
+        let bytesOnDisk = 0
+        try {
+          bytesOnDisk = fs.statSync(jPath).size
+        } catch {
+          /* journal was unlinked above (all lines deduped away) — 0 is right */
+        }
         chats.set(chatId, {
           lineCount: dedupedLines.length,
+          bytesSinceSnapshot: bytesOnDisk,
           lastSnapshotAt: snapTs,
+          observedAt: Date.now(),
           tombstoned: existing?.tombstoned ?? false
         })
         linesWritten += dedupedLines.length
@@ -614,8 +640,10 @@ export function createChatJournal(baseDir: string): ChatJournal {
     const state = chats.get(chatId)
     if (!state || state.tombstoned || state.lineCount === 0) return false
 
-    // Read current snapshot + journal
-    const { snapshot: currentSnap, tail } = read(chatId)
+    // Only the journal tail is needed. The previous snapshot was read here
+    // when compaction merged into it; the collapse below deliberately discards
+    // it, so binding it left an unused variable (and a tsc error).
+    const { tail } = read(chatId)
     if (tail.length === 0) return false
 
     // COLLAPSE to the newest entry. The snapshot is still a flat array (one
