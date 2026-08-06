@@ -213,8 +213,27 @@ function parseMarker(root, file) {
   } catch {
     return null
   }
+  // Claim fields may be read ONLY from the frontmatter block, never from the
+  // prose body. A marker's body routinely discusses these keys — a marker
+  // describing this very mechanism would name `lockOwnerId:` in a sentence —
+  // and before this gate that body text was parsed as a real field. Measured
+  // 2026-08-06: a marker whose frontmatter held `pid: 4242` and whose BODY said
+  // `lockOwnerId: attacker-owned` parsed with that owner id, which under the
+  // owner-id liveness lane would have kept the claim live indefinitely after
+  // its pid died. `.githooks/pre-commit` was never exposed to this (its awk
+  // gates on the block and a test pins body-text masquerade); this brings the
+  // two parsers into line. Same rule as the hook: the first bare `---` opens
+  // the block and the next one closes it.
+  const frontmatter = (() => {
+    const all = text.split(/\r?\n/)
+    const open = all.indexOf('---')
+    if (open === -1) return ''
+    const rest = all.slice(open + 1)
+    const close = rest.indexOf('---')
+    return (close === -1 ? rest : rest.slice(0, close)).join('\n')
+  })()
   const scalar = (key) => {
-    const m = text.match(new RegExp(`^${key}:[ \\t]*(.+)$`, 'm'))
+    const m = frontmatter.match(new RegExp(`^${key}:[ \\t]*(.+)$`, 'm'))
     if (!m) return null
     // Decode the JSON-quoted dialect emitted by TaskWraith's projector (with a
     // small single-quote fallback for manual markers). EVERY runtime scalar arrives quoted
@@ -234,7 +253,10 @@ function parseMarker(root, file) {
     value = String(value).trim()
     return value || null
   }
-  const lines = text.split(/\r?\n/)
+  // Same gate as `scalar`: a `paths:` list in the prose body is prose, not a
+  // claim. Reading one would let a marker silently claim files it only
+  // mentions.
+  const lines = frontmatter.split(/\r?\n/)
   const collectList = (key) => {
     const out = []
     let inList = false

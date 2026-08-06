@@ -22,6 +22,8 @@ type Marker = {
   task?: string | null
   worktree?: string | null
   pid: number | null
+  /** A sandboxed seat's identity, present when it had no pid to record. */
+  lockOwnerId: string | null
   expiresMs: number | null
   paths: string[]
   matchers: ((file: string) => boolean)[]
@@ -278,6 +280,37 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
       })
     )
     expect(liveness(seat, {}, NOW).live).toBe(false)
+  })
+
+  it('never reads a claim field out of the prose body', () => {
+    // A marker's body routinely discusses these keys — one describing this very
+    // mechanism names `lockOwnerId:` in a sentence. Before the frontmatter gate
+    // that text parsed as a real field, which under the owner-id lane would
+    // have kept a claim live indefinitely after its pid died. The hook was
+    // never exposed to this; its awk gates on the block.
+    const root = makeRepo()
+    const file = '.WORK-IN-PROGRESS-prose.md'
+    writeFileSync(
+      join(root, file),
+      [
+        '---',
+        'session: real',
+        `pid: ${DEAD_PID}`,
+        `expires: ${iso(NOW + 3_600_000)}`,
+        'paths:',
+        '  - src/real.ts',
+        '---',
+        'Body prose, not a claim:',
+        'lockOwnerId: not-a-real-owner',
+        'paths:',
+        '  - src/never-claimed.ts'
+      ].join('\n')
+    )
+    const marker = markerFor(root, file)
+    expect(marker.lockOwnerId).toBeNull()
+    expect(marker.paths).toEqual(['src/real.ts'])
+    // Dead pid, no real owner id: the body must not resurrect it.
+    expect(liveness(marker, {}, NOW).live).toBe(false)
   })
 
   it('decays when the lease is missing entirely, so a seat cannot hold forever', () => {
