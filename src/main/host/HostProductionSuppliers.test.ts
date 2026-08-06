@@ -13,10 +13,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { projectHostSnapshot } from './HostSnapshotProjector'
+import type { HostProviderModelProjection } from '../../shared/hostProtocol'
 import {
   createHostProductionSuppliers,
   type HostProductionChatListEntry,
-  type HostProductionChatListPort
+  type HostProductionChatListPort,
+  type HostProductionProviderListPort
 } from './HostProductionSuppliers'
 
 /* ------------------------------------------------------------------ */
@@ -39,6 +41,26 @@ function makeEntry(
 function makePort(entries: HostProductionChatListEntry[] = []): HostProductionChatListPort {
   return {
     getChatList: vi.fn(() => entries)
+  }
+}
+
+function makeProviderPort(
+  rows: HostProviderModelProjection[] = []
+): HostProductionProviderListPort {
+  return {
+    getProviders: vi.fn(() => rows)
+  }
+}
+
+function makeProviderRow(
+  overrides: Partial<HostProviderModelProjection> = {}
+): HostProviderModelProjection {
+  return {
+    providerId: 'codex',
+    displayProvider: 'Codex',
+    shortCode: 'cx',
+    available: true,
+    ...overrides
   }
 }
 
@@ -515,5 +537,110 @@ describe('HostProductionSuppliers store failure', () => {
     await donor()
     await donor()
     expect(getChatList).toHaveBeenCalledTimes(2)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Provider mapping — Wave 5b                                        */
+/* ------------------------------------------------------------------ */
+
+describe('HostProductionSuppliers provider mapping', () => {
+  /* ---- RED PIN 1: exact N rows, never fabricate ---- */
+  it('returns exactly the N provider rows the port reports — never a row the source did not admit', async () => {
+    const rows = [
+      makeProviderRow({ providerId: 'codex', displayProvider: 'Codex', shortCode: 'cx' }),
+      makeProviderRow({ providerId: 'claude', displayProvider: 'Claude', shortCode: 'cl' })
+    ]
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: makeProviderPort(rows)
+    })
+    const families = await donor()
+
+    expect(families.providers).toHaveLength(2)
+    expect(families.providers[0].providerId).toBe('codex')
+    expect(families.providers[1].providerId).toBe('claude')
+  })
+
+  it('returns an empty list when no providers port is supplied', async () => {
+    const donor = createHostProductionSuppliers({ chatList: makePort([]) })
+    const families = await donor()
+
+    expect(families.providers).toEqual([])
+  })
+
+  /* ---- RED PIN 2: throwing source → empty, never fabricate ---- */
+  it('returns empty providers when getProviders throws — never fabricates a row', async () => {
+    const port: HostProductionProviderListPort = {
+      getProviders: () => {
+        throw new Error('provider registry unavailable')
+      }
+    }
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: port
+    })
+    const families = await donor()
+
+    expect(families.providers).toEqual([])
+    // Other families must still be intact — a provider failure does not
+    // cascade into thread loss or health loss.
+    expect(families.health.hostStatus).toBe('ok')
+  })
+
+  /* ---- RED PIN 3: note is passed through faithfully — sanitization is the port's job ---- */
+  it('passes through every field from the port unchanged — never modifies, strips or invents', async () => {
+    const row = makeProviderRow({
+      providerId: 'mistral',
+      displayProvider: 'Mistral',
+      shortCode: 'ms',
+      available: true,
+      modelId: 'mistral-large',
+      modelLabel: 'Mistral Large',
+      hueKey: '#ff7700',
+      note: 'beta-access-granted'
+    })
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: makeProviderPort([row])
+    })
+    const families = await donor()
+
+    expect(families.providers[0]).toEqual(row)
+  })
+
+  /* ---- RED PIN 3 (corollary): the supplier does NOT strip what looks like a token ---- */
+  it('does not sanitize the note field — the port owns that contract', async () => {
+    // The supplier is a conduit.  A credential-shaped note from the port
+    // WILL reach the output, which is correct: sanitization belongs to the
+    // port implementor (the composition root), not the supplier.  This pin
+    // proves the supplier does not second-guess the port.
+    const row = makeProviderRow({
+      providerId: 'pi',
+      displayProvider: 'Pi',
+      shortCode: 'pi',
+      available: true,
+      note: 'key=sk-abc123-def456-ghi789'
+    })
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: makeProviderPort([row])
+    })
+    const families = await donor()
+
+    // The supplier faithfully passes through what the port gave it.
+    expect(families.providers[0].note).toBe('key=sk-abc123-def456-ghi789')
+  })
+
+  it('getProviders is called exactly once per donor invocation', async () => {
+    const getProviders = vi.fn(() => [])
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: { getProviders }
+    })
+
+    await donor()
+    await donor()
+    expect(getProviders).toHaveBeenCalledTimes(2)
   })
 })

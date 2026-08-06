@@ -31,6 +31,7 @@
 
 import type {
   HostHealthProjection,
+  HostProviderModelProjection,
   HostThreadProjection,
   HostUsageObservation,
   HostWorkspaceProjection
@@ -69,6 +70,29 @@ export interface HostProductionChatListEntry {
   readonly provider?: string | null
 }
 
+/**
+ * The single provider-list capability HostProductionSuppliers needs.
+ *
+ * The composition root adapts the real provider admission state to this
+ * port, so this module never imports from provider/store modules.
+ *
+ * NARROW BY DESIGN. This port returns HostProviderModelProjection rows
+ * directly. The composition root owns the mapping from whatever internal
+ * representation it has (discovery snapshots, live-selectable lists,
+ * configured-model catalogues) to the wire shape. The supplier is a
+ * conduit, not a mapper.
+ *
+ * CONTRACT (enforced by the supplier's own tests):
+ * - note MUST be derived from admission state, a bounded set of strings
+ *   the port implementor authors. It must NEVER be a pass-through of
+ *   arbitrary source text, error messages, or config values. A token
+ *   inside a pass-through string reaches the wire and the client
+ *   projection faithfully renders it.
+ */
+export interface HostProductionProviderListPort {
+  getProviders(): HostProviderModelProjection[]
+}
+
 /* ------------------------------------------------------------------ */
 /*  Options                                                           */
 /* ------------------------------------------------------------------ */
@@ -79,6 +103,12 @@ export interface HostProductionSuppliersOptions {
    * ChatStore.getChatList to this port.
    */
   readonly chatList: HostProductionChatListPort
+  /**
+   * Provider-list accessor — the composition root adapts the real
+   * provider admission state to this port. Optional: when absent,
+   * providers is an honest empty array.
+   */
+  readonly providers?: HostProductionProviderListPort
 }
 
 /* ------------------------------------------------------------------ */
@@ -185,6 +215,16 @@ export function createHostProductionSuppliers(
       workspaces = []
     }
 
+    /* ---- providers (from admission port) ---- */
+    let providers: HostProviderModelProjection[]
+    try {
+      providers = options.providers ? options.providers.getProviders() : []
+    } catch {
+      /* Provider read failed — honest empty, never fabricate a row.
+       * "Unavailable telemetry is not zero." */
+      providers = []
+    }
+
     return {
       health: HONEST_HEALTH,
       workspaces,
@@ -193,7 +233,7 @@ export function createHostProductionSuppliers(
       missions: [],
       rounds: [],
       participants: [],
-      providers: [],
+      providers,
       questions: [],
       approvals: [],
       schedules: [],

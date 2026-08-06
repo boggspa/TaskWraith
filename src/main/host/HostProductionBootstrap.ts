@@ -71,7 +71,8 @@ import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
 import { createHostProductionAuthorityEvaluator } from './HostProductionAuthorityEvaluator'
 import {
   createHostProductionSuppliers,
-  type HostProductionChatListPort
+  type HostProductionChatListPort,
+  type HostProductionProviderListPort
 } from './HostProductionSuppliers'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import type { HostSessionHostIdentity } from './HostSession'
@@ -195,6 +196,14 @@ export interface HostProductionBootstrapOptions {
    */
   readonly chatList: HostProductionChatListPort
   /**
+   * Provider-list accessor. The composition root adapts the real provider
+   * admission state to this port. Optional: when absent, providers is an
+   * honest empty array. The guard checks the METHOD (typeof getProviders
+   * === 'function'), not the container — the Step 3 lesson applied to the
+   * new port.
+   */
+  readonly providers?: HostProductionProviderListPort
+  /**
    * Live Bridge action surface. The root passes its BridgeActionExecutor
    * singleton directly; this module builds the HostBridgeCommandExecutor
    * over it so the root never constructs a Host type.
@@ -292,6 +301,9 @@ export function createHostProductionBootstrap(
   if (!options.bridge || typeof options.bridge !== 'object') {
     throw new Error('HostProductionBootstrap requires an injected bridge')
   }
+  if (options.providers !== undefined && typeof options.providers.getProviders !== 'function') {
+    throw new Error('HostProductionBootstrap requires providers.getProviders to be a function')
+  }
   if (
     !options.host ||
     typeof options.host.hostId !== 'string' ||
@@ -315,7 +327,10 @@ export function createHostProductionBootstrap(
   const createSupervisor = options.createSupervisor ?? createHostSupervisor
 
   /* ---- 1. domain ports built HERE, not by the root (R1) ---- */
-  const snapshotDonor = createHostProductionSuppliers({ chatList: options.chatList })
+  const snapshotDonor = createHostProductionSuppliers({
+    chatList: options.chatList,
+    ...(options.providers ? { providers: options.providers } : {})
+  })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
 
   const bridgeExecutor = new HostBridgeCommandExecutor({
