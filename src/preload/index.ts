@@ -47,6 +47,7 @@ import type {
   GitSnapshotInvalidationReason,
   GitSnapshotSubscribeResult
 } from '../main/services/GitSnapshotPublisher'
+import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
@@ -1781,6 +1782,9 @@ const api = {
   getPinnedMessages: (workspaceId?: string) =>
     ipcRenderer.invoke('get-pinned-messages', workspaceId),
   getChat: (chatId: string) => ipcRenderer.invoke('get-chat', chatId),
+  unarchiveChat: (chatId: string) => ipcRenderer.invoke('unarchive-chat', chatId),
+  exportArchivedChat: (input: { chatId: string; format: ArchivedChatExportFormat }) =>
+    ipcRenderer.invoke('export-archived-chat', input),
   createChat: (workspaceId: string, workspacePath: string) =>
     ipcRenderer.invoke('create-chat', workspaceId, workspacePath),
   createGlobalChat: () => ipcRenderer.invoke('create-global-chat'),

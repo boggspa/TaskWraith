@@ -85,6 +85,7 @@ import {
   MemoryProposalPack
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
+import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type { HostCommand, HostCommandReceipt, HostSnapshot } from '../shared/hostProtocol'
 import type {
   LicenseNoticeKind,
@@ -1776,6 +1777,21 @@ declare global {
       getChatList: (workspaceId?: string) => Promise<ChatListItem[]>
       getPinnedMessages: (workspaceId?: string) => Promise<PinnedMessageGroup[]>
       getChat: (chatId: string) => Promise<ChatRecord | null>
+      unarchiveChat: (
+        chatId: string
+      ) => Promise<
+        { ok: true; chat: ChatRecord } | { ok: false; reason: 'not-found' | 'not-archived' }
+      >
+      exportArchivedChat: (input: { chatId: string; format: ArchivedChatExportFormat }) => Promise<{
+        ok: boolean
+        canceled?: boolean
+        path?: string
+        format?: ArchivedChatExportFormat
+        messageCount?: number
+        charCount?: number
+        reason?: 'not-found' | 'not-archived' | 'invalid-request'
+        error?: string
+      }>
       createChat: (workspaceId: string, workspacePath: string) => Promise<ChatRecord>
       createGlobalChat: () => Promise<ChatRecord>
       createEnsembleChat: (args?: {

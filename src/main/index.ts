@@ -1643,6 +1643,7 @@ import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerHostProjectionHandlers } from './ipc/hostProjectionHandlers'
 import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
+import { registerArchivedChatHandlers } from './ipc/archivedChatHandlers'
 import { ScopedHistoryDeletionCoordinator } from './ScopedHistoryDeletionCoordinator'
 import { registerHumanCollaborationHandlers } from './ipc/humanCollaborationHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
@@ -49956,6 +49957,18 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
       assertSenderCanRebindChatWorkspace: (event) => assertMainRendererSender(event),
       assertSenderCanManageChatCollection: (event) => assertMainRendererSender(event)
+    })
+    registerArchivedChatHandlers({
+      chatService,
+      getWorkspaces: () => AppStore.getWorkspaces(),
+      getRequestingWindow: (event) => BrowserWindow.fromWebContents(event.sender),
+      showSaveDialog: (window, options) => dialog.showSaveDialog(window, options),
+      writeFile: (filePath, data) => fs.writeFile(filePath, data),
+      assertSafeChatId,
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+      homedir: () => os.homedir(),
+      broadcastChatUpdated,
+      broadcastThreadList
     })
     const publishCollaborationProjection = (chatId: string): void => {
       humanCollaborationRuntime?.publishProjectionUpdates(chatId).catch((err) => {

@@ -75,6 +75,8 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'get-chat',
   'get-chat-list',
   'get-chats',
+  'unarchive-chat',
+  'export-archived-chat',
   'get-claude-auth-status',
   'get-codex-usage-snapshot',
   'get-diff',

@@ -771,6 +771,15 @@ describe('IpcValidation', () => {
     )
   })
 
+  it('validates archived-thread actions', () => {
+    expect(() => validateIpcArgs('unarchive-chat', ['archived-1'])).not.toThrow()
+    expect(() => validateIpcArgs('unarchive-chat', [''])).toThrow(/non-empty/)
+    expect(() =>
+      validateIpcArgs('export-archived-chat', [{ chatId: 'archived-1', format: 'md' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('export-archived-chat', ['archived-1'])).toThrow(/object/)
+  })
+
   it('accepts bridge daemon status and toggle APIs', () => {
     expect(() => validateIpcArgs('bridge-networking-status', [])).not.toThrow()
     expect(() => validateIpcArgs('set-bridge-daemon-enabled', [true])).not.toThrow()
