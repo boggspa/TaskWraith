@@ -817,6 +817,11 @@ interface ActiveParticipantRun {
   /** Stop/cancel permanently discards post-boundary owner output. Settlement
    * callbacks must never turn this back into a normal tail release. */
   suppressOwnedFanoutTranscriptRelease?: boolean
+  /** Whether the user has been told that discard happened. Deliberately NOT
+   * `suppressOwnedFanoutTranscriptRelease` itself: `finalizeRun` raises that
+   * flag while the lanes are still outstanding, so by the time the discard is
+   * final it is always already true and could never gate a one-shot notice. */
+  discardedSynthesisNoticePosted?: boolean
   /** Terminal provider state can arrive before owned lanes settle. Persist it
    * only when the buffered transcript is released. */
   terminalFinalized?: boolean
@@ -15263,6 +15268,32 @@ export class EnsembleOrchestrator {
         sourceRun.fanoutTimedOut !== true
       if (permanentSuppress || awaitingSynthesis) {
         if (permanentSuppress) {
+          /* Dropping the held tail once the round is gone is defensible.
+           * Dropping it SILENTLY is not: the transcript just stops at the
+           * fan-out call, which is indistinguishable from the provider
+           * truncating the reply, and has repeatedly sent people hunting
+           * max_tokens and context walls for prose this method discarded.
+           *
+           * Only speak when there is something to mourn (`hasPostFanoutTimeline`)
+           * — an owner that never wrote after fanning out has lost nothing.
+           *
+           * Cause comes from the ROUND, not the runtime: by the time a late
+           * settlement lands the runtime is typically already gone (measured:
+           * `runtime` undefined, `round.status` still readable as 'cancelled'),
+           * so reading `runtime?.cancelled` here would report every stop as an
+           * ordinary close. */
+          if (hasPostFanoutTimeline && !sourceRun.discardedSynthesisNoticePosted) {
+            sourceRun.discardedSynthesisNoticePosted = true
+            const cause =
+              round?.status === 'cancelled'
+                ? 'the round was stopped before its fan-out lane(s) returned.'
+                : 'the round had already ended when its fan-out lane(s) returned.'
+            this.appendRoundStatus(
+              sourceRun.chatId,
+              sourceRun.roundId,
+              `${participantDisplayName(sourceRun.participant)}'s continuation written after it fanned out was discarded: ${cause}`
+            )
+          }
           sourceRun.suppressOwnedFanoutTranscriptRelease = true
           sourceRun.releaseOwnedFanoutTranscriptAtTail = undefined
         }

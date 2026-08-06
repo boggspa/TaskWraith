@@ -304,4 +304,86 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
     expect(awaitCeilingMs).toBe(600_000)
     expect(DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS).toBeGreaterThanOrEqual(awaitCeilingMs)
   })
+
+  /*
+   * The other half of the same defect. Raising the handoff window made
+   * permanent suppression RARER; it did not make it visible. When it does
+   * latch, `releaseOwnedFanoutHold` sets two flags and returns — the owner's
+   * held post-fan-out prose is dropped with nothing said, so the transcript
+   * simply stops at the `ensemble_fanout` call.
+   *
+   * That is indistinguishable from provider truncation, and it has cost real
+   * diagnostic time: sessions have gone looking for max_tokens and context
+   * walls for a reply the orchestrator itself discarded. Losing the tail when
+   * the round is already gone is defensible; losing it SILENTLY is not.
+   */
+  it(
+    'says so when a stopped round discards the owner held post-fan-out synthesis',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness([
+        participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+        participant('claude', 'claude', 'Reviewer', 2, 'read_only')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Lead fans out, synthesizes, then the round is stopped.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      const fanout = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Take longer than the round survives.'
+      })
+      expect(fanout.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+      // The Lead writes its synthesis while the lane is still outstanding, so
+      // the hold keeps it back rather than releasing it.
+      stream(harness, 0, 'BOSS-SYNTHESIS-AT-RISK.')
+      await sleep(FLUSH_MS)
+      expect(rowIndex(harness, 'BOSS-SYNTHESIS-AT-RISK.')).toBe(-1)
+
+      // Round is stopped before the lane lands.
+      await harness.orchestrator.cancelRound('ensemble-chat', 'user')
+      await sleep(FLUSH_MS)
+
+      // The lane settles late and finds a dead round: permanentSuppress.
+      complete(harness, 1)
+      await sleep(FLUSH_MS)
+
+      // The held prose is genuinely gone — this test does not assert it comes
+      // back, only that its loss is declared.
+      expect(rowIndex(harness, 'BOSS-SYNTHESIS-AT-RISK.')).toBe(-1)
+
+      const notice = harness.chat.messages.find(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('written after it fanned out was discarded')
+      )
+      expect(
+        notice,
+        'discarding held synthesis must leave a user-facing note, not read as truncation'
+      ).toBeDefined()
+      expect(notice?.metadata?.kind).toBe('ensembleRoundStatus')
+
+      // Assert the whole sentence a human actually reads, not a fragment: it
+      // has to name the seat AND say the round was STOPPED. Reading the cause
+      // off the runtime instead of the round silently degrades this to the
+      // generic "already ended" wording, which a substring check would miss.
+      expect(notice?.content).toBe(
+        "Lead's continuation written after it fanned out was discarded: " +
+          'the round was stopped before its fan-out lane(s) returned.'
+      )
+
+      // One note, however many settlements arrive afterwards.
+      const noticeCount = harness.chat.messages.filter(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('written after it fanned out was discarded')
+      ).length
+      expect(noticeCount).toBe(1)
+    }
+  )
 })
