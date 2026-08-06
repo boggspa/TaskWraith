@@ -361,6 +361,80 @@ export function createChatJournal(
   }
 
   /**
+   * The newest complete entry in a journal, read WITHOUT loading the file.
+   *
+   * `compact` collapses to the newest entry and discards the rest, so this is
+   * everything it needs. It used to get there through `read()`, which reads
+   * the whole journal into one string — making the only operation that BOUNDS
+   * the journal cost O(journal) and fail exactly when the journal had grown
+   * too big to read. `store/index.ts` swallows that throw, and the append has
+   * already landed by then, so every save grew the file AND failed to compact
+   * it. Silent, unbounded, self-reinforcing: one chat reached 2.75 GB with no
+   * snapshot while a sibling chat compacted normally.
+   *
+   * Reads a window off the END and walks backwards to the first parseable
+   * line, widening if the window did not contain a whole one. Walking
+   * backwards also skips a torn tail from a crash mid-append for free.
+   * Splitting on '\n' is safe at an arbitrary byte offset: 0x0A cannot occur
+   * inside a multi-byte UTF-8 sequence, so a complete line never straddles the
+   * cut ambiguously — only the leading partial does, and that one is refused.
+   */
+  const readNewestJournalEntry = (filePath: string): ChatJournalEntry | null => {
+    let size = 0
+    try {
+      size = fs.statSync(filePath).size
+    } catch {
+      return null
+    }
+    if (size === 0) return null
+
+    let fd: number
+    try {
+      fd = fs.openSync(filePath, 'r')
+    } catch {
+      return null
+    }
+
+    try {
+      // A line holds a WHOLE chat record, so start generous. The cap stays far
+      // below V8's string limit — this must never reintroduce the failure it
+      // exists to remove.
+      let window = 1024 * 1024
+      const MAX_WINDOW = 64 * 1024 * 1024
+      for (;;) {
+        const length = Math.min(window, size)
+        const start = size - length
+        const buffer = Buffer.alloc(length)
+        fs.readSync(fd, buffer, 0, length, start)
+        const text = buffer.toString('utf-8')
+        const body = text.endsWith('\n') ? text.slice(0, -1) : text
+        const lines = body.split('\n')
+
+        for (let i = lines.length - 1; i >= 0; i -= 1) {
+          // Element 0 is a partial line whenever the window starts mid-file.
+          if (i === 0 && start > 0) break
+          const raw = lines[i]
+          if (!raw) continue
+          try {
+            return JSON.parse(raw) as ChatJournalEntry
+          } catch {
+            // Torn tail (or a line split by the window) — keep walking back.
+          }
+        }
+
+        if (length >= size || window >= MAX_WINDOW) return null
+        window *= 4
+      }
+    } finally {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+
+  /**
    * Truncate a journal file to the first N complete lines.
    * Called after detecting a torn tail on recovery.
    */
@@ -736,11 +810,16 @@ export function createChatJournal(
     const state = chats.get(chatId)
     if (!state || state.tombstoned || state.lineCount === 0) return false
 
-    // Only the journal tail is needed. The previous snapshot was read here
-    // when compaction merged into it; the collapse below deliberately discards
-    // it, so binding it left an unused variable (and a tsc error).
-    const { tail } = read(chatId)
-    if (tail.length === 0) return false
+    // Only the NEWEST journal entry is needed. The previous snapshot was read
+    // here when compaction merged into it; the collapse below deliberately
+    // discards it, so binding it left an unused variable (and a tsc error).
+    //
+    // Deliberately NOT `read(chatId)`: that loads the entire journal into one
+    // string to hand back a tail whose last element is the only part used, so
+    // compaction failed on exactly the journals that most needed compacting.
+    // See readNewestJournalEntry.
+    const newest = readNewestJournalEntry(journalPath(chatId))
+    if (!newest) return false
 
     // COLLAPSE to the newest entry. The snapshot is still a flat array (one
     // element) so the read contract is unchanged.
@@ -756,7 +835,6 @@ export function createChatJournal(
     // writes, so no consumer loses anything by collapsing. When T5 lands and
     // entries become deltas rather than whole records, this must be revisited:
     // deltas are NOT independently complete and cannot be collapsed this way.
-    const newest = tail[tail.length - 1]
     const merged: unknown[] = [newest]
 
     // Compact JSON — pretty-print of 1k+ entries blocks the suite and the

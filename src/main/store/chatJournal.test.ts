@@ -950,6 +950,44 @@ describe('ChatJournal — oversized journal cannot brick startup', () => {
     expect(journal.read('huge-chat')).toEqual({ snapshot: null, tail: [] })
   })
 
+  /**
+   * The death spiral this whole area exists to prevent.
+   *
+   * `compact()` collapses the journal to `tail[tail.length - 1]` — it needs
+   * the LAST line and nothing else. It used to obtain that by reading the
+   * ENTIRE journal through `read()`, so the one operation that bounds the file
+   * was O(journal) and failed precisely when the file had grown too big to
+   * read. `store/index.ts` swallows the throw ("legacy chat file remains
+   * authoritative"), and the append at the top of `append()` has already
+   * landed by then — so every save added another whole record AND failed to
+   * compact, silently, forever. That is how one chat reached 2.75 GB with no
+   * `.snapshot.json` while a sibling chat compacted normally.
+   *
+   * Pinned with the parse ceiling standing in for "too big to read in one
+   * string": compaction must still work above it.
+   */
+  it('compacts a journal that is too large to read in one string', () => {
+    const jPath = path.join(baseDir, 'spiral.jsonl')
+    const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
+
+    // Build the journal through the real append path, past the ceiling.
+    for (let i = 0; i < 12; i += 1) {
+      journal.append('spiral', { id: 'spiral', seq: i, pad: 'p'.repeat(200) })
+    }
+    expect(fs.statSync(jPath).size).toBeGreaterThan(1024)
+
+    expect(journal.compact('spiral')).toBe(true)
+
+    // Snapshot written, journal truncated — the spiral cannot continue.
+    const snapshot = JSON.parse(
+      fs.readFileSync(path.join(baseDir, 'spiral.snapshot.json'), 'utf-8')
+    ) as { record: { seq: number } }[]
+    expect(snapshot).toHaveLength(1)
+    // Collapsed to the NEWEST record, which is the complete state.
+    expect(snapshot[0].record.seq).toBe(11)
+    expect(fs.existsSync(jPath)).toBe(false)
+  })
+
   it('defends read() too, when a journal crosses the ceiling after init', () => {
     const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
     journal.append('grower', { id: 'grower', messages: [] })
