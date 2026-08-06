@@ -4865,6 +4865,21 @@
   border-color: var(--unified-soft-surface-border);
 }
 
+/* Solid row fills for Task-complete / close-out tables in light themes —
+ * replaces the dark-oriented translucent zebra with one quiet surface. */
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .run-complete-card
+  .file-change-summary-item {
+  background: color-mix(in srgb, var(--surface-1) 88%, var(--unified-soft-surface-bg));
+}
+
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .message-markdown-pro
+  tbody
+  td {
+  background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+}
+
 /* The Default user-bubble choice gets a soft gray card in light themes,
  * matching the native conversation treatment. Keep this explicitly keyed to
  * `system`: named selections in Settings remain intentional color overrides

@@ -5103,8 +5103,10 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.message-markdown-pro tbody tr:nth-child(even) td {
-  background: rgb(255 255 255 / 0.018);
+/* Solid row fill (no zebra). Alternating stripes fought dense seat/commit
+ * tables in close-out and read as noise next to the Task-complete stack. */
+.message-markdown-pro tbody td {
+  background: rgb(255 255 255 / 0.02);
 }
 
 .message-markdown-pro tr:last-child td {

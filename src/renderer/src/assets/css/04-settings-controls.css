@@ -4658,7 +4658,8 @@ input:disabled, select:disabled, textarea:disabled {
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.015);
+  /* Solid fill — no zebra striping (light themes override below via 08). */
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .file-change-summary-item-interactive {
@@ -4670,14 +4671,6 @@ input:disabled, select:disabled, textarea:disabled {
 
 .file-change-summary-item:first-child {
   border-top: none;
-}
-
-.file-change-summary-item:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.01);
-}
-
-.file-change-summary-item:nth-child(even) {
-  background: rgba(255, 255, 255, 0.03);
 }
 
 .file-change-summary-item.has-diff-preview,
