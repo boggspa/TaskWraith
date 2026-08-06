@@ -73,9 +73,22 @@ describe('regenerable history-byte main integration', () => {
       'function isPathInsideRoot('
     )
     expect(soloExpansion).toContain('if (rendered.length === 0) throw pdfAttachmentNoPagesError()')
+    // The property is that nothing PUBLISHES paths derived from PDF rendering
+    // before that render is proved non-empty — so anchor on the assignment that
+    // does the publishing, not on `payload.imagePaths` generally. The
+    // no-silent-omission gate (3b00c4927) legitimately assigns the field twice
+    // earlier: an empty strip on the no-image-transport branch, which returns,
+    // and the resolved pre-expansion paths. A first-occurrence match compares
+    // the guard against one of those and reads as an inversion that never
+    // happened.
+    const publishesRenderedPages = soloExpansion.indexOf('payload.imagePaths = nextPaths.filter(')
+    expect(publishesRenderedPages).toBeGreaterThanOrEqual(0)
     expect(soloExpansion.indexOf('if (rendered.length === 0)')).toBeLessThan(
-      soloExpansion.indexOf('payload.imagePaths =')
+      publishesRenderedPages
     )
+    // ...and that publish is the last word on the field, so a later mutation
+    // cannot reach the payload having skipped the guard above.
+    expect(soloExpansion.lastIndexOf('payload.imagePaths =')).toBe(publishesRenderedPages)
 
     const graphDispatch = between(
       'const dispatchMainOwnedExecutionGraphAttempt =',
