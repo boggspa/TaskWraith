@@ -27,6 +27,7 @@ interface PendingChatUpdate {
 interface InFlightChatUpdate extends PendingChatUpdate {
   deliveryId: string
   recordHash: string
+  compactBaseline: CompactChatUpdateBaseline
 }
 
 interface TargetChatState {
@@ -124,17 +125,6 @@ function resolveEmitProtocolVersion(
   // apply nacks, which drops the baseline and forces a full snapshot next
   // delivery. TASKWRAITH_CHAT_UPDATE_PROTOCOL=1 is the escape hatch.
   return CHAT_UPDATE_PROTOCOL_V2
-}
-
-function toCompactBaseline(chat: ChatRecord, revision: number): CompactChatUpdateBaseline {
-  const sub = computeChatSubRevisions(chat)
-  return {
-    revision,
-    recordHash: sub.recordHash,
-    ensembleRevision: sub.ensembleRevision,
-    runsRevision: sub.runsRevision,
-    retainedBytes: estimateChatRecordBytes(chat)
-  }
 }
 
 function toPatchBaseline(
@@ -239,7 +229,10 @@ export class ChatUpdateDeliveryCoordinator {
     if (applied) {
       // Compact fingerprint only — the full chat is kept in baselineChat for
       // the next patch build, never as a third acknowledged ChatRecord ref.
-      state.acknowledged = toCompactBaseline(inFlight.chat, inFlight.revision)
+      // The fingerprint and retained-byte estimate were computed when this
+      // delivery was built. Recomputing them here made every successful ACK
+      // scan the full transcript again on the main event loop.
+      state.acknowledged = inFlight.compactBaseline
       state.baselineChat = inFlight.chat
       state.consecutiveRejects = 0
     } else {
@@ -294,7 +287,7 @@ export class ChatUpdateDeliveryCoordinator {
       if (state.inFlight) {
         inFlight += 1
         retainedMessages += state.inFlight.chat.messages.length
-        retainedBaselineBytes += estimateChatRecordBytes(state.inFlight.chat)
+        retainedBaselineBytes += state.inFlight.compactBaseline.retainedBytes
       }
       if (state.pending) {
         pending += 1
@@ -351,15 +344,24 @@ export class ChatUpdateDeliveryCoordinator {
       baseline,
       protocolVersion: this.emitProtocolVersion
     })
-    const recordHash =
-      delivery.kind === 'snapshot'
-        ? (delivery.recordHash ?? computeChatSubRevisions(next.chat).recordHash)
-        : delivery.protocolVersion === CHAT_UPDATE_PROTOCOL_V2
-          ? (delivery.recordHash ?? computeChatSubRevisions(next.chat).recordHash)
-          : computeChatSubRevisions(next.chat).recordHash
+    const fallbackSubRevisions =
+      delivery.protocolVersion === CHAT_UPDATE_PROTOCOL_V1 ||
+      delivery.recordHash === undefined ||
+      delivery.ensembleRevision === undefined ||
+      delivery.runsRevision === undefined
+        ? computeChatSubRevisions(next.chat)
+        : undefined
+    const recordHash = delivery.recordHash ?? fallbackSubRevisions!.recordHash
+    const compactBaseline: CompactChatUpdateBaseline = {
+      revision: next.revision,
+      recordHash,
+      ensembleRevision: delivery.ensembleRevision ?? fallbackSubRevisions!.ensembleRevision,
+      runsRevision: delivery.runsRevision ?? fallbackSubRevisions!.runsRevision,
+      retainedBytes: estimateChatRecordBytes(next.chat)
+    }
     if (delivery.kind === 'snapshot') this.counters.snapshots += 1
     else this.counters.patches += 1
-    state.inFlight = { ...next, deliveryId, recordHash }
+    state.inFlight = { ...next, deliveryId, recordHash, compactBaseline }
     // Drop the patch-base chat once the next full payload is in flight so we
     // never retain acknowledged+baselineChat+inFlight+pending as three+ fulls.
     state.baselineChat = undefined
