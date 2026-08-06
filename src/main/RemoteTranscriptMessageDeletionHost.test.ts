@@ -28,17 +28,19 @@ function chat(messages: ChatMessage[]): ChatRecord {
 }
 
 function deps(record: ChatRecord): RemoteTranscriptMessageDeletionHostDeps & {
-  saveChat: ReturnType<typeof vi.fn>
-  broadcastChatUpdated: ReturnType<typeof vi.fn>
-  pushRemoteThreadSnapshot: ReturnType<typeof vi.fn>
+  saveChat: ReturnType<typeof vi.fn<(chat: ChatRecord) => void>>
+  broadcastChatUpdated: ReturnType<typeof vi.fn<(chat: ChatRecord) => void>>
+  pushRemoteThreadSnapshot: ReturnType<
+    typeof vi.fn<(chat: ChatRecord, workspaceId: string) => void>
+  >
 } {
   return {
     getChat: () => record,
     canonicalWorkspaceId: () => 'workspace-1',
     listPendingQuestionIds: () => [],
-    saveChat: vi.fn(),
-    broadcastChatUpdated: vi.fn(),
-    pushRemoteThreadSnapshot: vi.fn(),
+    saveChat: vi.fn<(chat: ChatRecord) => void>(),
+    broadcastChatUpdated: vi.fn<(chat: ChatRecord) => void>(),
+    pushRemoteThreadSnapshot: vi.fn<(chat: ChatRecord, workspaceId: string) => void>(),
     now: () => 99
   }
 }

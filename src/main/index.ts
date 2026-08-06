@@ -53110,6 +53110,12 @@ if (isGeminiMcpBridgeProcess) {
           concurrentMode?: boolean
           fanoutPolicy?: EnsembleFanoutPolicy
           imageAttachments?: Array<{ id?: string; path?: string; name?: string }>
+          imageThumbnails?: Array<{
+            dataBase64: string
+            mimeType: string
+            width?: number
+            height?: number
+          }>
           discordContextSnapshots?: DiscordContextSnapshot[]
           dmTargetParticipantId?: string
           exactPickerParticipantId?: string
