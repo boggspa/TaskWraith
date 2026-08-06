@@ -139,6 +139,32 @@ export class WorkspaceLockProviderCoordinator {
     return this.get(input)?.owner.lockOwnerId ?? null
   }
 
+  /**
+   * Opaque identity handed to a provider child at launch so the seat can prove
+   * to `.githooks/pre-commit` that a `.WORK-IN-PROGRESS-*.md` marker carrying
+   * this id is its own.
+   *
+   * Naming a seat is deliberately not the same act as leasing the checkout.
+   * Provider dispatch is never a workspace mutation, so `admitCoarseWriteRun`
+   * names nobody and this must not wait on it — a sandboxed seat cannot reach a
+   * stable pid either, so waiting left every seat with no identity at all and
+   * peers raising markers with invented owner ids or none, which the hook can
+   * only treat as advisory. This grants no lease and no bypass: the hook accepts
+   * the id solely as proof that a claim is the seat's own.
+   *
+   * Scoped to runId+laneId+participantId exactly as the hook documents, and
+   * identical to the id the brokered-MCP control plane mints for the same seat,
+   * so a derived runtime marker projected for this seat's own brokered mutation
+   * is recognised as its own rather than as a peer's live claim.
+   *
+   * A launch with no run id has no seat to name and gets none; a malformed
+   * coordinate still throws, as it does for every other identity consumer here.
+   */
+  launchOwnerId(input: WorkspaceLockProviderAdmissionKey): string | null {
+    if (!input.runId?.trim()) return null
+    return this.ownerId(input) ?? this.getOrCreateLogicalOwnerId(input)
+  }
+
   async acquireNestedMutationSublease(
     input: WorkspaceLockProviderAdmissionKey,
     expectedAdmission: WorkspaceLockProviderAdmission,

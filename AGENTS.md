@@ -186,8 +186,17 @@ forever. The pid half is the same liveness model the credential authority uses
 
 #### When a pid will not hold your claim — TaskWraith seats
 
-**Use `lockOwnerId:` instead of `pid:`** — the value of
-`TASKWRAITH_LOCK_OWNER_ID`, which every seat already carries in its environment:
+**Use `lockOwnerId:` instead of `pid:`** — the *exact* value of
+`TASKWRAITH_LOCK_OWNER_ID`, which main stamps into your seat's environment at
+launch. Read it; never invent one. It is an opaque id, so a human-readable
+stand-in (`lockOwnerId: MySeatName`) matches nothing at the hook — while
+`work-guard` still counts the field as a held lease, so the two tools then
+contradict each other over your own claim. Verify it in the same shell you will
+commit from, because that is the environment the hook reads:
+
+```bash
+printenv TASKWRAITH_LOCK_OWNER_ID
+```
 
 ```yaml
 ---
@@ -216,7 +225,14 @@ so it identifies **your seat alone**, not your thread. A thread-wide marker is
 the wrong shape: it claims far more than you are editing and collides with work
 done outside TaskWraith in the same checkout.
 
-If no owner id was admitted for your seat, `TASKWRAITH_LOCK_OWNER_ID` is absent
+Not every shell you can reach carries it. It is stamped into the seat process
+itself, so commands your provider runs natively inherit it — but TaskWraith's
+brokered `run_shell_command` rebuilds its environment from scratch and strips
+the key deliberately, and so does `run_task`. Commit from a shell where the
+`printenv` above prints your id, or the hook cannot tell your claim from a
+peer's.
+
+If no owner id was stamped for your seat, `TASKWRAITH_LOCK_OWNER_ID` is absent
 rather than empty. You then have neither identity — say so and coordinate in
 the open rather than raising a marker that claims nothing.
 

@@ -52,6 +52,18 @@ describe('agent doctrine reaches Claude sessions', () => {
     expect(claudeMdText()).toMatch(/---[\s\S]*parses? empty/i)
   })
 
+  it('tells a seat to read its owner id rather than invent one', () => {
+    // Observed 2026-08-06: two live markers carried a hand-written
+    // `lockOwnerId:` — a seat's own display name. That matches nothing at the
+    // hook, yet `work-guard` still counts the field as a held lease, so one
+    // claim reads live to one tool and unauthenticated to the other. Seats
+    // reach for a stand-in when the doctrine names the variable but never says
+    // the value is opaque and not theirs to compose.
+    const text = claudeMdText()
+    expect(text).toContain('TASKWRAITH_LOCK_OWNER_ID')
+    expect(text).toMatch(/never invent one/i)
+  })
+
   it('carries the commit rules that keep a shared index safe', () => {
     const text = claudeMdText()
     expect(text).toMatch(/git add -A/)

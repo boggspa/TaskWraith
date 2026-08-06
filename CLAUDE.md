@@ -61,10 +61,15 @@ passed or cannot be parsed, or a path does not match **exactly**.
 you cannot read one — you can — but because you have no *stable* one: each shell
 invocation is a fresh process, and a provider host pid can rotate mid-session,
 silently decaying your marker while you are still working. Use
-`lockOwnerId: <$TASKWRAITH_LOCK_OWNER_ID>` in place of `pid:` — every seat
-carries that variable, and it is scoped to your seat alone (run + lane +
-participant), not your thread. If it is absent, you have neither identity: say
-so and coordinate in the open rather than raising a marker that claims nothing. Do not fall back to one thread-wide marker: it
+`lockOwnerId: <$TASKWRAITH_LOCK_OWNER_ID>` in place of `pid:` — main stamps that
+variable into your seat at launch, scoped to your seat alone (run + lane +
+participant), not your thread. Read the value; never invent one, because an
+opaque id you made up matches nothing at the hook while still reading as a held
+lease to `work-guard`. Check it in the shell you will actually commit from
+(`printenv TASKWRAITH_LOCK_OWNER_ID`): the brokered `run_shell_command` and
+`run_task` rebuild their environment and strip it. If it is absent, you have
+neither identity: say so and coordinate in the open rather than raising a marker
+that claims nothing. Do not fall back to one thread-wide marker: it
 claims far more than you are editing and collides with work done outside
 TaskWraith in the same checkout. With no pid, `expires` is your claim's only
 decay signal, so keep the lease short and renew it. Either field alone is

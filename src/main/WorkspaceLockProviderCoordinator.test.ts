@@ -334,4 +334,96 @@ describe('WorkspaceLockProviderCoordinator', () => {
       })
     ).rejects.toThrow(/different authority/)
   })
+
+  describe('launchOwnerId', () => {
+    function seatHarness() {
+      let next = 0
+      const identities = new WorkspaceLockExecutionIdentityRegistry({
+        createId: () => `opaque-owner-${(next += 1)}`
+      })
+      const coordinator = new WorkspaceLockProviderCoordinator({
+        getRuntime: () => null,
+        identities
+      })
+      return { coordinator, identities }
+    }
+
+    // Provider dispatch takes no coarse checkout lease, so a seat that waited
+    // for lock admission to name it never carried TASKWRAITH_LOCK_OWNER_ID at
+    // all — leaving a sandboxed seat, which cannot see a stable pid either,
+    // with no identity its own work-in-progress marker could be checked against.
+    it('names a seat at launch even though provider dispatch takes no lease', () => {
+      const { coordinator } = seatHarness()
+
+      const ownerId = coordinator.launchOwnerId({
+        runId: 'run-1',
+        laneId: 'lane-a',
+        participantId: 'participant-a'
+      })
+
+      expect(ownerId).toBe('opaque-owner-1')
+    })
+
+    // The pre-commit hook and the brokered-MCP control plane authenticate the
+    // same seat by string equality, so a launch that minted a second identity
+    // would leave the seat unable to own the very marker its own brokered
+    // mutation projected.
+    it('names a seat the same way the brokered control plane does', () => {
+      const { coordinator } = seatHarness()
+      const seat = { runId: 'run-1', laneId: 'lane-a', participantId: 'participant-a' }
+
+      expect(coordinator.launchOwnerId(seat)).toBe(coordinator.getOrCreateLogicalOwnerId(seat))
+      expect(coordinator.launchOwnerId(seat)).toBe(coordinator.launchOwnerId(seat))
+    })
+
+    it('never lets two seats of one run inherit each other’s identity', () => {
+      const { coordinator } = seatHarness()
+
+      const lead = coordinator.launchOwnerId({
+        runId: 'run-1',
+        laneId: 'lane-a',
+        participantId: 'participant-a'
+      })
+      const peer = coordinator.launchOwnerId({
+        runId: 'run-1',
+        laneId: 'lane-b',
+        participantId: 'participant-b'
+      })
+      const unlaned = coordinator.launchOwnerId({ runId: 'run-1' })
+
+      expect(new Set([lead, peer, unlaned]).size).toBe(3)
+    })
+
+    it('prefers the admitted owner over minting a rival identity', async () => {
+      const { coordinator } = harness()
+      const seat = { runId: 'run-1', laneId: 'lane-a', participantId: 'participant-a' }
+      await coordinator.admitCoarseWriteRun({
+        provider: 'cursor',
+        ...seat,
+        workspacePath: '/workspace',
+        worktreePath: '/workspace-lane-a'
+      })
+
+      expect(coordinator.launchOwnerId(seat)).toBe('opaque-owner')
+    })
+
+    // A launch with no run identity has no seat to name. Throwing here would
+    // turn a naming gap into a failed provider launch.
+    it('declines to name an unrouted launch instead of failing it', () => {
+      const { coordinator } = seatHarness()
+
+      expect(coordinator.launchOwnerId({ runId: '' })).toBeNull()
+      expect(coordinator.launchOwnerId({ runId: '   ' })).toBeNull()
+    })
+
+    it('forgets a seat identity once its run is released', () => {
+      const { coordinator } = seatHarness()
+      const seat = { runId: 'run-1', laneId: 'lane-a' }
+      expect(coordinator.launchOwnerId(seat)).toBe('opaque-owner-1')
+
+      coordinator.forgetRun('run-1')
+
+      expect(coordinator.launchOwnerId(seat)).toBe('opaque-owner-2')
+    })
+  })
 })

@@ -18677,6 +18677,15 @@ async function runCliProviderProcess(
     return transportOperation
   }
   try {
+    // Names this seat so it can own the `.WORK-IN-PROGRESS-*.md` marker it
+    // raises: the pre-commit hook authenticates a manual `lockOwnerId:` claim
+    // by string equality against this variable. Reading it from admission alone
+    // named nobody — provider dispatch takes no checkout lease — so a sandboxed
+    // seat, which has no stable pid either, carried neither identity and could
+    // raise no claim a peer would honour. Still no lease and no bypass, and an
+    // admitted owner still wins: `launchOwnerId` prefers it over minting one.
+    const seatLockOwnerId =
+      workspaceLockProviderCoordinator.launchOwnerId(workspaceLockAdmissionKey) ?? undefined
     const childEnv: Readonly<Record<string, string | undefined>> =
       provider === 'antigravity'
         ? (() => {
@@ -18685,16 +18694,10 @@ async function runCliProviderProcess(
                 'AntiGravity launches require the sanitized official agy environment.'
               )
             }
-            return withExactWorkspaceLockOwnerEnv(
-              options.resolvedEnv,
-              workspaceLockAdmission?.owner.lockOwnerId
-            )
+            return withExactWorkspaceLockOwnerEnv(options.resolvedEnv, seatLockOwnerId)
           })()
         : options.resolvedEnv
-          ? withExactWorkspaceLockOwnerEnv(
-              options.resolvedEnv,
-              workspaceLockAdmission?.owner.lockOwnerId
-            )
+          ? withExactWorkspaceLockOwnerEnv(options.resolvedEnv, seatLockOwnerId)
           : createCliProviderRunEnv({
               provider,
               command,
@@ -18703,7 +18706,7 @@ async function runCliProviderProcess(
               scope: payload.scope,
               workspace: payload.workspace,
               runtimeProfileId: payload.runtimeProfileId,
-              workspaceLockOwnerId: workspaceLockAdmission?.owner.lockOwnerId,
+              workspaceLockOwnerId: seatLockOwnerId,
               auditRun: Boolean(payload.auditRun),
               extraEnv: options.extraEnv
             })
