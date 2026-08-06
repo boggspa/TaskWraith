@@ -344,19 +344,23 @@ export class ChatUpdateDeliveryCoordinator {
       baseline,
       protocolVersion: this.emitProtocolVersion
     })
+    const deliveryRecordHash = 'recordHash' in delivery ? delivery.recordHash : undefined
+    const deliveryEnsembleRevision =
+      'ensembleRevision' in delivery ? delivery.ensembleRevision : undefined
+    const deliveryRunsRevision = 'runsRevision' in delivery ? delivery.runsRevision : undefined
     const fallbackSubRevisions =
       delivery.protocolVersion === CHAT_UPDATE_PROTOCOL_V1 ||
-      delivery.recordHash === undefined ||
-      delivery.ensembleRevision === undefined ||
-      delivery.runsRevision === undefined
+      deliveryRecordHash === undefined ||
+      deliveryEnsembleRevision === undefined ||
+      deliveryRunsRevision === undefined
         ? computeChatSubRevisions(next.chat)
         : undefined
-    const recordHash = delivery.recordHash ?? fallbackSubRevisions!.recordHash
+    const recordHash = deliveryRecordHash ?? fallbackSubRevisions!.recordHash
     const compactBaseline: CompactChatUpdateBaseline = {
       revision: next.revision,
       recordHash,
-      ensembleRevision: delivery.ensembleRevision ?? fallbackSubRevisions!.ensembleRevision,
-      runsRevision: delivery.runsRevision ?? fallbackSubRevisions!.runsRevision,
+      ensembleRevision: deliveryEnsembleRevision ?? fallbackSubRevisions!.ensembleRevision,
+      runsRevision: deliveryRunsRevision ?? fallbackSubRevisions!.runsRevision,
       retainedBytes: estimateChatRecordBytes(next.chat)
     }
     if (delivery.kind === 'snapshot') this.counters.snapshots += 1
