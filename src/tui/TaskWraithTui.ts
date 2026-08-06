@@ -1,5 +1,12 @@
+import { randomUUID } from 'node:crypto'
 import { emitKeypressEvents } from 'node:readline'
 import type { ReadStream, WriteStream } from 'node:tty'
+import {
+  HostProjectionClient,
+  HostProjectionIncompatibleProtocolError
+} from '../main/host/HostProjectionClient'
+import type { HostSnapshot } from '../shared/hostProtocol'
+import { defaultTaskWraithUserDataPath } from '../shared/taskWraithControlPaths.node'
 import type {
   TaskWraithControlModelOffer,
   TaskWraithControlParticipant,
@@ -9,13 +16,16 @@ import type {
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
 import { Ansi, sanitizeTerminalText, type AnsiColorMode } from './ansi'
-import {
-  TaskWraithControlClient,
-  TaskWraithControlIncompatibleProtocolError
-} from './client/TaskWraithControlClient'
 import { renderTaskWraithTui } from './render'
+import {
+  mapHostSnapshotToControlSnapshot,
+  mapHostSnapshotToThreadDetail
+} from './hostProjectionMap'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState, type TuiOverlay } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
+
+/** Wave 4.2a is read-only projection; commands remain on v1 / Wave 4.2b. */
+const READ_ONLY_NOTICE = 'Host projection is read-only · commands land in Wave 4.2b'
 
 interface Keypress {
   name?: string
@@ -110,7 +120,7 @@ export class TaskWraithTui {
     >
   private readonly ansi: Ansi
   private readonly glyphs: TuiGlyphSet
-  private readonly client: TaskWraithControlClient | null
+  private readonly client: HostProjectionClient | null
   private state: TaskWraithTuiState
   private stopped = false
   private terminalActive = false
@@ -122,6 +132,8 @@ export class TaskWraithTui {
   private bracketedPaste = false
   private bracketedPasteBuffer = ''
   private lastError = ''
+  /** Last live HostSnapshot — authority for local read-only thread detail. */
+  private hostSnapshot: HostSnapshot | null = null
   /** Whether a `welcome` has ever been received. Distinguishes a first-time
    *  "offline" state (App never found) from a "reconnecting" state (App was
    *  reachable and the connection dropped). */
@@ -140,9 +152,16 @@ export class TaskWraithTui {
     this.state = options.demo ? createTaskWraithTuiDemoState(this.options.now()) : emptyState()
     this.client = options.demo
       ? null
-      : new TaskWraithControlClient({
-          clientVersion: options.clientVersion,
-          ...(options.userDataPath ? { userDataPath: options.userDataPath } : {})
+      : new HostProjectionClient({
+          client: {
+            clientId: `tui-${randomUUID()}`,
+            clientClass: 'tui',
+            clientVersion: options.clientVersion,
+            displayName: 'TaskWraith TUI'
+          },
+          // Wave 4.2a: snapshot + bootstrap only. Commands stay off the wire.
+          capabilities: ['bootstrap', 'snapshot', 'health'],
+          userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
   }
 
@@ -240,37 +259,20 @@ export class TaskWraithTui {
       this.state.connection = 'connected'
       this.everConnected = true
       this.lastError = ''
-      this.setNotice('Connected to TaskWraith', 'good', 1_500)
+      this.setNotice('Connected to TaskWraith Host', 'good', 1_500)
       this.render()
     })
-    this.client.on('snapshot', (snapshot) => {
-      this.state.snapshot = snapshot
-      const selectedStillExists =
-        this.state.selectedThreadId &&
-        snapshot.threads.some((thread) => thread.id === this.state.selectedThreadId)
-      if (!selectedStillExists) {
-        this.state.selectedThreadId = undefined
-        this.state.thread = undefined
-        const threadId = preferredThread(snapshot, this.options.initialThreadId)
-        if (threadId) void this.openThread(threadId)
-      }
-      this.render()
-    })
-    this.client.on('thread', (thread) => {
-      if (thread.thread.id !== this.state.selectedThreadId) return
-      this.state.thread = thread
-      this.render()
-    })
+    // Wave 4.2a: no delta streaming / push snapshot events — one getSnapshot after connect.
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
       // The host was reachable before, so this is a drop-and-retry rather
       // than "the App was never found" — distinct terminal states.
       this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
-      this.lastError = error?.message ?? 'TaskWraith host disconnected.'
+      this.lastError = error?.message ?? 'TaskWraith Host disconnected.'
       this.setNotice(
         this.everConnected
-          ? 'TaskWraith host disconnected · reconnecting'
-          : 'Electron host offline · retrying',
+          ? 'TaskWraith Host disconnected · reconnecting'
+          : 'Electron Host offline · retrying',
         'warning'
       )
       this.scheduleReconnect()
@@ -278,18 +280,26 @@ export class TaskWraithTui {
     })
   }
 
+  private applyHostSnapshot(snapshot: HostSnapshot): TaskWraithControlSnapshot {
+    this.hostSnapshot = snapshot
+    const mapped = mapHostSnapshotToControlSnapshot(snapshot)
+    this.state.snapshot = mapped
+    return mapped
+  }
+
   private async connect(): Promise<void> {
     if (!this.client || this.stopped) return
     this.state.connection = this.everConnected ? 'reconnecting' : 'connecting'
     this.render()
     try {
-      await this.client.connect()
-      const snapshot = await this.client.getSnapshot()
-      this.state.snapshot = snapshot
+      const welcome = await this.client.connect()
+      this.state.hostVersion = welcome.hostVersion
+      const frame = await this.client.getSnapshot()
+      const mapped = this.applyHostSnapshot(frame.snapshot)
       this.state.connection = 'connected'
       this.everConnected = true
       const threadId = preferredThread(
-        snapshot,
+        mapped,
         this.state.selectedThreadId ?? this.options.initialThreadId
       )
       if (threadId) {
@@ -301,12 +311,12 @@ export class TaskWraithTui {
       this.render()
     } catch (error) {
       if (this.stopped) return
-      if (error instanceof TaskWraithControlIncompatibleProtocolError) {
+      if (error instanceof HostProjectionIncompatibleProtocolError) {
         this.state.connection = 'incompatible-protocol'
         const message = error.message
         if (message !== this.lastError) {
           this.lastError = message
-          this.setNotice('TaskWraith host protocol is incompatible · update the App', 'error')
+          this.setNotice('TaskWraith Host protocol is incompatible · update the App', 'error')
         }
       } else {
         this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
@@ -315,8 +325,8 @@ export class TaskWraithTui {
           this.lastError = message
           this.setNotice(
             this.everConnected
-              ? 'TaskWraith host disconnected · reconnecting'
-              : 'Electron host offline · retrying locally',
+              ? 'TaskWraith Host disconnected · reconnecting'
+              : 'Electron Host offline · retrying locally',
             'warning'
           )
         }
@@ -351,12 +361,28 @@ export class TaskWraithTui {
     }
     this.selectingThread = true
     try {
-      const thread = await this.client.selectThread(threadId)
+      // Wave 4.2a: local map from HostSnapshot only — no thread.select command.
+      const host = this.hostSnapshot
+      if (!host) {
+        this.setNotice('Host snapshot is not loaded yet.', 'warning', 3_000)
+        return
+      }
+      const detail = mapHostSnapshotToThreadDetail(host, threadId)
+      if (!detail) {
+        this.setNotice(`Thread ${threadId} is not in the Host snapshot.`, 'warning', 4_000)
+        return
+      }
       this.state.selectedThreadId = threadId
-      this.state.thread = thread
+      this.state.thread = detail.thread
       this.state.overlay = 'none'
       this.state.scrollOffset = 0
-      this.setNotice(`Opened ${thread.thread.title}`, 'good', 1_800)
+      this.setNotice(
+        detail.previewOnly
+          ? `Opened ${detail.thread.thread.title} · Host preview only`
+          : `Opened ${detail.thread.thread.title}`,
+        'good',
+        1_800
+      )
     } catch (error) {
       this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
     } finally {
@@ -618,18 +644,17 @@ export class TaskWraithTui {
     this.state.offersLoading = true
     this.render()
     try {
-      const offers = await this.client.threadOffers(threadId)
-      if (this.state.selectedThreadId !== threadId) return
-      this.state.offers = offers
-      const currentIndex = offers.models.findIndex((model) => model.current)
-      this.state.overlayIndex = Math.max(0, currentIndex)
-      this.state.tuneEffortIndex = this.effortIndexFor(offers, this.state.overlayIndex)
-    } catch (error) {
-      // Includes an older App that does not know `thread.offers` — close the
-      // lens and surface the host's own message rather than guessing.
-      this.state.offers = undefined
-      if (this.state.overlay === 'tune') this.state.overlay = 'none'
-      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
+      // Wave 4.2a: no Host command surface for offers yet.
+      this.state.offers = {
+        threadId,
+        provider: this.state.thread!.thread.provider,
+        models: [],
+        source: 'curated',
+        locked: READ_ONLY_NOTICE
+      }
+      this.state.overlayIndex = 0
+      this.state.tuneEffortIndex = 0
+      this.setNotice(READ_ONLY_NOTICE, 'warning', 3_000)
     } finally {
       this.state.offersLoading = false
       this.render()
@@ -732,16 +757,7 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    try {
-      const result = await this.client.toggleEnsembleSeat(threadId, seat.id, nextEnabled)
-      this.setNotice(
-        result.message || (result.updated ? 'Seat updated.' : 'Seat unchanged.'),
-        result.updated ? 'good' : 'warning',
-        3_000
-      )
-    } catch (error) {
-      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 5_000)
-    }
+    this.setNotice(READ_ONLY_NOTICE, 'warning', 3_000)
     this.render()
   }
 
@@ -773,32 +789,8 @@ export class TaskWraithTui {
       this.sendDemoPrompt(text)
       return
     }
-    this.sendingPrompt = true
-    const pending = this.state.thread?.thread.ensemble ? undefined : this.state.pendingSelection
-    try {
-      const result = await this.client.sendPrompt(
-        threadId,
-        text,
-        pending
-          ? {
-              model: pending.model,
-              ...(pending.reasoningEffort ? { reasoningEffort: pending.reasoningEffort } : {})
-            }
-          : undefined
-      )
-      if (!result.dispatched) this.restoreComposerText(original)
-      if (result.dispatched && pending) this.state.pendingSelection = undefined
-      this.setNotice(
-        result.message || (result.dispatched ? 'Prompt dispatched' : 'Prompt not dispatched'),
-        result.dispatched ? 'good' : 'warning',
-        result.dispatched ? 2_000 : 4_000
-      )
-    } catch (error) {
-      this.restoreComposerText(original)
-      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 5_000)
-    } finally {
-      this.sendingPrompt = false
-    }
+    this.restoreComposerText(original)
+    this.setNotice(READ_ONLY_NOTICE, 'warning', 4_000)
     this.render()
   }
 
@@ -854,12 +846,7 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    try {
-      const result = await this.client.cancelRun(threadId)
-      this.setNotice(result.message, result.cancelled ? 'good' : 'warning', 3_000)
-    } catch (error) {
-      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 5_000)
-    }
+    this.setNotice(READ_ONLY_NOTICE, 'warning', 3_000)
     this.render()
   }
 

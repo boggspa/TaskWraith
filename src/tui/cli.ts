@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 
+import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
-import type { TaskWraithControlSnapshot } from '../shared/taskWraithControlProtocol'
-import { defaultTaskWraithDevUserDataPath } from '../shared/taskWraithControlPaths.node'
+import { HostProjectionClient } from '../main/host/HostProjectionClient'
+import {
+  defaultTaskWraithDevUserDataPath,
+  defaultTaskWraithUserDataPath
+} from '../shared/taskWraithControlPaths.node'
 import { Ansi, detectAnsiColorMode, type AnsiColorMode } from './ansi'
 import { TaskWraithTui } from './TaskWraithTui'
-import { TaskWraithControlClient } from './client/TaskWraithControlClient'
+import {
+  mapHostSnapshotToControlSnapshot,
+  mapHostSnapshotToThreadDetail
+} from './hostProjectionMap'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
@@ -54,8 +61,10 @@ Interactive keys:
   Ctrl+O context  Ctrl+K threads  Ctrl+P commands  PgUp/PgDn scroll
   Enter send      Ctrl+C clear/quit               /cancel active run
 
-The normal sidecar connects to a running TaskWraith Electron host. Nothing in
-the TUI reads provider credentials or the AppStore directly.`
+The normal sidecar connects to a running TaskWraith Host (v2 local protocol).
+Wave 4.2a is read-only projection (snapshot + welcome). Commands remain on the
+App / Wave 4.2b. v1 TaskWraithControlClient is retained but not used by this
+entry path.`
 }
 
 function positiveInteger(raw: string | undefined, flag: string): number {
@@ -133,7 +142,10 @@ function parseArgs(args: string[]): CliOptions {
   return options
 }
 
-function pickThread(snapshot: TaskWraithControlSnapshot, threadId?: string): string | undefined {
+function pickThread(
+  snapshot: { threads: Array<{ id: string; archived: boolean; updatedAt: number }> },
+  threadId?: string
+): string | undefined {
   if (threadId && snapshot.threads.some((thread) => thread.id === threadId)) return threadId
   return [...snapshot.threads]
     .filter((thread) => !thread.archived)
@@ -145,20 +157,27 @@ function resolveCliGlyphs(options: CliOptions): TuiGlyphSet {
 }
 
 async function connectedSnapshot(options: CliOptions): Promise<TaskWraithTuiState> {
-  const client = new TaskWraithControlClient({
-    clientVersion: TUI_VERSION,
-    ...(options.userDataPath ? { userDataPath: options.userDataPath } : {})
+  const client = new HostProjectionClient({
+    client: {
+      clientId: `tui-snapshot-${randomUUID()}`,
+      clientClass: 'tui',
+      clientVersion: TUI_VERSION,
+      displayName: 'TaskWraith TUI'
+    },
+    capabilities: ['bootstrap', 'snapshot', 'health'],
+    userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
   })
   try {
     const welcome = await client.connect()
-    const snapshot = await client.getSnapshot()
+    const frame = await client.getSnapshot()
+    const snapshot = mapHostSnapshotToControlSnapshot(frame.snapshot)
     const threadId = pickThread(snapshot, options.threadId)
-    const thread = threadId ? await client.selectThread(threadId) : undefined
+    const detail = threadId ? mapHostSnapshotToThreadDetail(frame.snapshot, threadId) : null
     return {
       connection: 'connected',
       hostVersion: welcome.hostVersion,
       snapshot,
-      ...(thread ? { thread, selectedThreadId: thread.thread.id } : {}),
+      ...(detail ? { thread: detail.thread, selectedThreadId: detail.thread.thread.id } : {}),
       input: '',
       inputCursor: 0,
       overlay: 'none',
