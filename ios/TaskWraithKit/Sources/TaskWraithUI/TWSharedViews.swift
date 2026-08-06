@@ -10830,12 +10830,19 @@ struct MiniThreadView: View {
     private var threadId: String { card.id }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[threadId] }
     private var transcriptBottomInset: CGFloat { composerOverlayHeight + 12 }
+    private var isPadInterface: Bool {
+        #if os(iOS)
+            return UIDevice.current.userInterfaceIdiom == .pad
+        #else
+            return false
+        #endif
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
             VStack(alignment: .leading, spacing: 8) {
                 header
-                transcriptStage
+                transcriptStage(proxy: proxy)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .onPreferenceChange(MiniThreadComposerHeightKey.self) { height in
@@ -10853,6 +10860,7 @@ struct MiniThreadView: View {
             }
             .task(id: threadId) {
                 model.requestThreadSnapshot(threadId)
+                followPin.userLatchedOff = false
                 autoFollow = true
                 try? await Task.sleep(nanoseconds: 350_000_000)
                 requestFollowPin(proxy, force: true)
@@ -10861,31 +10869,43 @@ struct MiniThreadView: View {
     }
 
     /// Mirrors ThreadDetailView.requestFollowPin (main transcript): coalesced,
-    /// two-runloop-deferred scroll-to-bottom. Kept as a lightweight instance
-    /// twin rather than shared, since the two views' proxies/sentinel ids
-    /// differ and this panel has no reveal-pump onRevealFrame hook to
-    /// throttle (every call here is a real content change, so there's no
-    /// non-forced path to rate-limit).
+    /// two-runloop-deferred scroll-to-bottom, gated by TranscriptFollowPolicy.
+    /// Kept as a lightweight instance twin rather than shared, since the two
+    /// views' proxies/sentinel ids differ and this panel has no reveal-pump
+    /// onRevealFrame hook to throttle (every call here is a real content
+    /// change, so there's no non-forced path to rate-limit).
     private func requestFollowPin(_ proxy: ScrollViewProxy, force: Bool = false) {
-        guard force || autoFollow else { return }
+        guard autoFollow else { return }
         guard !followPin.scheduled else { return }
         followPin.scheduled = true
         Task { @MainActor in
             defer { followPin.scheduled = false }
             await twAwaitNextMainRunloop()
-            guard force || autoFollow else { return }
+            guard TranscriptFollowPolicy.shouldScroll(
+                autoFollow: autoFollow,
+                force: force,
+                lastUserTouchAt: followPin.lastUserTouchAt
+            ) else { return }
             scrollMiniSentinelToBottomNow(proxy)
             await twAwaitNextMainRunloop()
-            guard force || autoFollow else { return }
+            guard TranscriptFollowPolicy.shouldScroll(
+                autoFollow: autoFollow,
+                force: force,
+                lastUserTouchAt: followPin.lastUserTouchAt
+            ) else { return }
             scrollMiniSentinelToBottomNow(proxy)
         }
     }
 
     private func scrollMiniSentinelToBottomNow(_ proxy: ScrollViewProxy) {
+        followPin.lastProgrammaticPinAt = Date()
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            proxy.scrollTo("mini-transcript-bottom", anchor: .bottom)
+            // Tail id (not the visibility sentinel) — same shape as the main
+            // transcript, so settle pins and sentinel appear/disappear stay
+            // independent.
+            proxy.scrollTo("mini-transcript-tail", anchor: .bottom)
         }
     }
 
@@ -10922,15 +10942,15 @@ struct MiniThreadView: View {
         }
     }
 
-    private var transcriptStage: some View {
+    private func transcriptStage(proxy: ScrollViewProxy) -> some View {
         ZStack(alignment: .bottom) {
-            transcriptArea
+            transcriptArea(proxy: proxy)
             composerOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var transcriptArea: some View {
+    private func transcriptArea(proxy: ScrollViewProxy) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 transcriptContent
@@ -10938,17 +10958,43 @@ struct MiniThreadView: View {
                 // pattern as the main transcript's "transcript-bottom": on
                 // screen ⇒ we're at the latest message (keep following);
                 // off-screen ⇒ the user scrolled up (stop following) until
-                // they scroll back down themselves.
+                // they scroll back down themselves. Touch-gated OFF + pin
+                // grace on ON match ThreadDetailView so layout thrash cannot
+                // latch follow off or yank it back on.
                 Color.clear
                     .frame(height: 1)
                     .id("mini-transcript-bottom")
-                    .onAppear { autoFollow = true }
-                    .onDisappear { autoFollow = false }
+                    .onAppear {
+                        guard TranscriptFollowPolicy.sentinelAppearShouldRearmFollowing(
+                            userLatchedOff: followPin.userLatchedOff,
+                            lastProgrammaticPinAt: followPin.lastProgrammaticPinAt)
+                        else { return }
+                        followPin.userLatchedOff = false
+                        autoFollow = true
+                    }
+                    .onDisappear {
+                        if TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
+                            lastUserTouchAt: followPin.lastUserTouchAt)
+                        {
+                            followPin.userLatchedOff = true
+                            followPin.lastProgrammaticPinAt = .distantPast
+                            autoFollow = false
+                        } else if autoFollow {
+                            requestFollowPin(proxy, force: true)
+                        }
+                    }
+                Color.clear
+                    .frame(height: 1)
+                    .id("mini-transcript-tail")
+                    .accessibilityHidden(true)
                 Color.clear
                     .frame(height: transcriptBottomInset)
                     .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .transcriptTouchTracking(isPadInterface: isPadInterface) {
+            followPin.lastUserTouchAt = Date()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
