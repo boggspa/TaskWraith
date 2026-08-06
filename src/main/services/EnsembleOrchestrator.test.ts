@@ -8785,12 +8785,18 @@ Next action:
       provider: 'claude',
       model: 'claude-model'
     })
-    expect(harness.chat.messages.at(-1)?.content).toContain(
-      'Authoritative seat change queued for Boss'
-    )
-    expect(harness.chat.messages.at(-1)?.content).toContain(
+    // A queued change writes NO transcript row: it has not happened yet, and
+    // the seat element lands at the execution boundary below. The caller is
+    // still told, through the tool result.
+    expect(result.message).toContain('Authoritative seat change queued for Boss')
+    expect(result.message).toContain(
       'It will apply when that participant finishes its current execution.'
     )
+    expect(
+      harness.chat.messages.filter((message) =>
+        (message.content || '').includes('Authoritative seat change queued')
+      )
+    ).toHaveLength(0)
 
     const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('claude', activeRoute, {
@@ -11946,11 +11952,16 @@ Next action:
       model: 'kimi-k2.7-code'
     })
 
+    // Announced exactly once, and now on the tool result rather than the
+    // transcript: the FIRST call reports the queue, the resubmission reports
+    // that there is nothing new to queue.
+    expect(first.message).toContain('Authoritative seat change queued')
+    expect(repeat.message).toContain('nothing queued')
     expect(
       harness.chat.messages.filter((message) =>
-        message.content.includes('Authoritative seat change queued')
+        (message.content || '').includes('Authoritative seat change queued')
       )
-    ).toHaveLength(1)
+    ).toHaveLength(0)
   })
 
   it('skipActiveParticipant returns false when no round is active', async () => {

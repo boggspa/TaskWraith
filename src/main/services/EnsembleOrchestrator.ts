@@ -7190,7 +7190,14 @@ export class EnsembleOrchestrator {
         `Authoritative seat change queued for ${participantLabel(before)}: ` +
         `${participantSeatChangeValue(before, resolvedAfter, before)} -> ${participantSeatChangeValue(before, resolvedAfter, resolvedAfter)}. ` +
         'It will apply when that participant finishes its current execution.'
-      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+      // No transcript row at QUEUE time (owner call 2026-08-06). A queued
+      // change has not happened: the participant is still executing as its
+      // old seat, so a row here would either read as done or need a second,
+      // near identical row when it lands at the execution boundary. The
+      // boundary is usually the next tool call away, and
+      // `applyParticipantSeatChangeToChat` writes the seat element there —
+      // which says the same thing, truthfully, once. `message` still travels
+      // back to the caller, so the authority that made the edit is told.
       return {
         ok: true,
         status: 'queued',
