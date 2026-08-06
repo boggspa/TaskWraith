@@ -30,25 +30,46 @@ final class TranscriptFollowPin {
     /// Wall-clock of the last pin — throttles the ~24fps reveal-driven pins.
     var lastPinAt: Date = .distantPast
     /// Wall-clock of the last user touch on the transcript. Held HERE (a plain
-    /// reference type), not in `@State`: the zero-distance DragGesture tracker
-    /// stamps it on every touch-move sample, and an `@State` write would
-    /// invalidate the whole ThreadDetailView.body — re-running it and
-    /// Equatable-diffing every materialized row on essentially every scroll
-    /// frame (the baseline scroll stutter, independent of streaming).
+    /// reference type), not in `@State`: the DragGesture tracker stamps it on
+    /// every touch-move sample, and an `@State` write would invalidate the
+    /// whole ThreadDetailView.body — re-running it and Equatable-diffing every
+    /// materialized row on essentially every scroll frame (the baseline scroll
+    /// stutter, independent of streaming).
     var lastUserTouchAt: Date = .distantPast
+    /// Wall-clock of the last programmatic scroll-to-tail. Sentinel `onAppear`
+    /// must not re-arm following inside the grace window after this stamp —
+    /// otherwise a deferred settle pin that briefly shows the sentinel yanks
+    /// the user back into follow after they unfollowed.
+    var lastProgrammaticPinAt: Date = .distantPast
+    /// Sticky unfollow: set when the user leaves the bottom via a real touch.
+    /// Cleared by jump-to-latest / scrubber end / thread-open pin / a genuine
+    /// user scroll that brings the sentinel back after the pin-rearm grace.
+    var userLatchedOff = false
 }
 
 enum TranscriptTouchTrackingPolicy {
+    /// Phone stamps on any contact. iPad uses a small threshold so the
+    /// simultaneous drag recognizer does not starve the scroll-view pan
+    /// (zero-distance did), while still stamping once a real pan begins —
+    /// without stamps, touch-gated unfollow never fires on iPad.
+    static func dragMinimumDistance(isPadInterface: Bool) -> CGFloat {
+        isPadInterface ? 12 : 0
+    }
+
     static func usesZeroDistanceDragTracker(isPadInterface: Bool) -> Bool {
-        !isPadInterface
+        dragMinimumDistance(isPadInterface: isPadInterface) == 0
     }
 }
 
 /// Decides whether a deferred transcript follow-pin pass may move the scroll
-/// position. `force` repairs a stale bottom-sentinel / auto-follow reading after
-/// a large layout update, but it must never override an active user gesture.
+/// position. `force` at the call site only bypasses the reveal-pin throttle —
+/// it must never override an explicit unfollow (`autoFollow == false`).
 enum TranscriptFollowPolicy {
-    static let userTouchQuietPeriod: TimeInterval = 0.25
+    /// Quiet window after a finger leaves the transcript (covers scroll inertia).
+    static let userTouchQuietPeriod: TimeInterval = 0.6
+    /// After a programmatic pin, ignore sentinel `onAppear` re-arm so a settle
+    /// pass that briefly shows the bottom cannot undo a user unfollow.
+    static let programmaticPinRearmGrace: TimeInterval = 0.35
 
     static func shouldScroll(
         autoFollow: Bool,
@@ -56,8 +77,28 @@ enum TranscriptFollowPolicy {
         lastUserTouchAt: Date,
         now: Date = Date()
     ) -> Bool {
-        guard force || autoFollow else { return false }
+        // `force` is intentionally unused here: throttle bypass lives only at
+        // the requestFollowPin call site. Unfollow always wins.
+        _ = force
+        guard autoFollow else { return false }
         return now.timeIntervalSince(lastUserTouchAt) >= userTouchQuietPeriod
+    }
+
+    /// May sentinel `onAppear` turn following back on?
+    ///
+    /// - Not latched off: always yes (keeps follow true while streaming pins
+    ///   briefly rematerialize the sentinel).
+    /// - Latched off: yes only after the programmatic-pin grace window, so a
+    ///   settle/layout pin that briefly shows the sentinel cannot undo unfollow.
+    ///   Callers clear `lastProgrammaticPinAt` on touch-unfollow so a user who
+    ///   scrolls back to the bottom can re-arm immediately.
+    static func sentinelAppearShouldRearmFollowing(
+        userLatchedOff: Bool,
+        lastProgrammaticPinAt: Date,
+        now: Date = Date()
+    ) -> Bool {
+        if !userLatchedOff { return true }
+        return now.timeIntervalSince(lastProgrammaticPinAt) >= programmaticPinRearmGrace
     }
 
     /// Does the bottom sentinel going off-screen mean the USER left the bottom?
@@ -83,17 +124,17 @@ enum TranscriptFollowPolicy {
     }
 }
 
-private extension View {
-    @ViewBuilder
-    func transcriptTouchTracking(enabled: Bool, onTouch: @escaping () -> Void) -> some View {
-        if enabled {
-            self.simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in onTouch() }
+extension View {
+    /// Shared by ThreadDetailView and MiniThreadView so iPhone/iPad touch
+    /// stamping stays one policy.
+    func transcriptTouchTracking(isPadInterface: Bool, onTouch: @escaping () -> Void) -> some View {
+        self.simultaneousGesture(
+            DragGesture(
+                minimumDistance: TranscriptTouchTrackingPolicy.dragMinimumDistance(
+                    isPadInterface: isPadInterface)
             )
-        } else {
-            self
-        }
+            .onChanged { _ in onTouch() }
+        )
     }
 }
 
@@ -1907,12 +1948,28 @@ struct ThreadDetailView: View {
                     // as intent latched following off with no way back (see
                     // TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing).
                     // A layout-driven disappearance instead RE-PINS, which is
-                    // what puts the sentinel back on screen.
-                    .onAppear { autoFollow = true }
+                    // what puts the sentinel back on screen (2026-07-28 freeze).
+                    //
+                    // The ON edge ignores appear inside the programmatic-pin
+                    // grace window so a deferred settle that briefly shows the
+                    // sentinel cannot re-arm after the user unfollowed.
+                    .onAppear {
+                        guard TranscriptFollowPolicy.sentinelAppearShouldRearmFollowing(
+                            userLatchedOff: followPin.userLatchedOff,
+                            lastProgrammaticPinAt: followPin.lastProgrammaticPinAt)
+                        else { return }
+                        followPin.userLatchedOff = false
+                        autoFollow = true
+                    }
                     .onDisappear {
                         if TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
                             lastUserTouchAt: followPin.lastUserTouchAt)
                         {
+                            followPin.userLatchedOff = true
+                            // Clear pin grace so scrolling back to the bottom
+                            // can re-arm immediately (grace only blocks appear
+                            // caused by a pin that landed after unfollow).
+                            followPin.lastProgrammaticPinAt = .distantPast
                             autoFollow = false
                         } else if autoFollow {
                             requestFollowPin(proxy, force: true)
@@ -1934,16 +1991,12 @@ struct ThreadDetailView: View {
             }
         }
         .background(TWTheme.appBg)
-        // Observe-only touch tracker (never claims the gesture on iPhone):
-        // stamps `lastUserTouchAt` on every touch-down/move anywhere in the
-        // transcript so a forced follow-pin's settle pass can tell a live
-        // gesture from stale state. iPad disables this zero-distance recognizer
-        // because inside NavigationSplitView it can starve the scroll view pan
-        // recognizer and make the transcript immovable.
-        .transcriptTouchTracking(
-            enabled: TranscriptTouchTrackingPolicy.usesZeroDistanceDragTracker(
-                isPadInterface: isPadInterface)
-        ) {
+        // Observe-only touch tracker (simultaneousGesture): stamps
+        // `lastUserTouchAt` so touch-gated unfollow and settle suppression
+        // work. Phone uses minimumDistance 0; iPad uses 12 so the recognizer
+        // does not starve the scroll pan inside NavigationSplitView, while
+        // still stamping once a real pan begins.
+        .transcriptTouchTracking(isPadInterface: isPadInterface) {
             followPin.lastUserTouchAt = Date()
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -1975,7 +2028,9 @@ struct ThreadDetailView: View {
             HStack(spacing: 10) {
                 if !autoFollow {
                     Button {
+                        followPin.userLatchedOff = false
                         autoFollow = true
+                        followPin.lastProgrammaticPinAt = Date()
                         withAnimation(.easeOut(duration: 0.25)) {
                             // Tail, not sentinel: from a wedged (beyond-end)
                             // offset the lazy band is empty and a lazy-id
@@ -2072,14 +2127,18 @@ struct ThreadDetailView: View {
             switch intent {
             case .begin:
                 activeTurnScrubberMarkerKey = nil
+                followPin.userLatchedOff = true
                 autoFollow = false
                 proxy.scrollTo("transcript-start", anchor: .top)
             case .end:
                 activeTurnScrubberMarkerKey = nil
+                followPin.userLatchedOff = false
                 autoFollow = true
+                followPin.lastProgrammaticPinAt = Date()
                 proxy.scrollTo("transcript-tail", anchor: .bottom)
             case .marker(let marker):
                 activeTurnScrubberMarkerKey = marker.key
+                followPin.userLatchedOff = true
                 autoFollow = false
                 proxy.scrollTo(marker.messageId, anchor: .center)
             }
@@ -2099,6 +2158,7 @@ struct ThreadDetailView: View {
         ) ?? request.sourceRow
         activeTranscriptFilterKeys.removeAll()
         activeTurnScrubberMarkerKey = nil
+        followPin.userLatchedOff = true
         autoFollow = false
         model.pinnedTranscriptJumpRequest = nil
 
@@ -2645,6 +2705,7 @@ struct ThreadDetailView: View {
             model.clearActionMessage()
             model.visibleThreadId = taskId
             requestSnapshotIfNeeded()
+            followPin.userLatchedOff = false
             autoFollow = true
             try? await Task.sleep(nanoseconds: 350_000_000)
             requestFollowPin(proxy, force: true)
@@ -2680,17 +2741,18 @@ struct ThreadDetailView: View {
     /// being committed.
     ///
     /// The scroll is still deferred a main-runloop turn so the bottom sentinel
-    /// has been materialized before we target it. `force` re-pins through a
-    /// transient sentinel flip during a big update so following can't get stuck.
+    /// has been materialized before we target it. `force` only bypasses the
+    /// reveal-pin throttle at this call site — it never overrides unfollow.
     private func requestFollowPin(_ proxy: ScrollViewProxy, force: Bool = false) {
-        guard force || autoFollow else { return }
+        guard autoFollow else { return }
         // Throttle NON-forced pins (chiefly the ~24fps reveal pump's
         // onRevealFrame) to ~10fps. Continuous scrolling during a stream burned
         // CPU and — landing a scroll between a tap's touch-down and touch-up —
         // cancelled the "Show more" tap as a drag. Forced pins (new row, new
         // token batch via onChange(streamingTexts), agent-exit, thread open)
-        // always fire, so the bottom is still reached exactly at every real
-        // content change; the reveal pins only fill in between those.
+        // always fire while still following, so the bottom is still reached
+        // exactly at every real content change; the reveal pins only fill in
+        // between those.
         let now = Date()
         if !force, now.timeIntervalSince(followPin.lastPinAt) < 0.1 { return }
         followPin.lastPinAt = now
@@ -2713,9 +2775,8 @@ struct ThreadDetailView: View {
             // Settle pass: a big layout (long message / a new participant's
             // block) can land the first scroll a hair short — re-pin a runloop
             // later, again after the layout has committed. Re-check the same
-            // policy so a touch that begins between passes suppresses this
-            // correction too. `force` means "don't trust a possibly-stale
-            // `autoFollow`", not "override the user's finger."
+            // policy so unfollow or a touch between passes suppresses this
+            // correction too (`force` does not override autoFollow == false).
             await awaitNextMainRunloop()
             guard TranscriptFollowPolicy.shouldScroll(
                 autoFollow: autoFollow,
@@ -2737,6 +2798,7 @@ struct ThreadDetailView: View {
     }
 
     private func scrollSentinelToBottomNow(_ proxy: ScrollViewProxy) {
+        followPin.lastProgrammaticPinAt = Date()
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
