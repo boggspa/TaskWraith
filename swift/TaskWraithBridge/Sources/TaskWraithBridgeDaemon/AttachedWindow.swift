@@ -111,6 +111,20 @@ struct ProcessIdentityReceipt: Codable, Sendable, Equatable, Hashable {
         ]
     }
 
+    /// Parent PID recorded for this exact process instance.
+    ///
+    /// Deliberately not part of `toJSONObject`: the identity lookup stays a
+    /// birth receipt and nothing more. Ancestry is a separate, narrower request
+    /// that must name the ancestor it expects to find.
+    static func parentPid(of pid: Int) -> Int? {
+        guard pid > 0 else { return nil }
+        var info = proc_bsdinfo()
+        let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
+        let written = proc_pidinfo(pid_t(pid), PROC_PIDTBSDINFO, 0, &info, expectedSize)
+        guard written == expectedSize, Int(info.pbi_pid) == pid else { return nil }
+        return Int(info.pbi_ppid)
+    }
+
     private static func resolve(pid: Int, source: Source) -> ProcessIdentityReceipt? {
         guard pid > 0 else { return nil }
         switch source {
@@ -144,6 +158,73 @@ struct ProcessIdentityReceipt: Codable, Sendable, Equatable, Hashable {
         }
     }
 
+}
+
+/// One generation of a process-ancestry chain: an exact birth receipt for the
+/// process plus the parent recorded for that same instance.
+struct ProcessAncestryLink: Sendable, Equatable {
+    let receipt: ProcessIdentityReceipt
+    let parentPid: Int
+
+    func toJSONObject() -> [String: Any] {
+        return [
+            "pid": receipt.pid,
+            "ppid": parentPid,
+            "launchTimeMicros": receipt.launchTimeMicros,
+            "source": receipt.source.rawValue,
+            "processStartedAt": receipt.processStartedAt
+        ]
+    }
+
+    static func resolve(pid: Int) -> ProcessAncestryLink? {
+        guard
+            let receipt = ProcessIdentityReceipt.resolve(pid: pid),
+            receipt.matchesLiveProcess(),
+            let parentPid = ProcessIdentityReceipt.parentPid(of: pid),
+            parentPid >= 0
+        else {
+            return nil
+        }
+        return ProcessAncestryLink(receipt: receipt, parentPid: parentPid)
+    }
+}
+
+/// Walks a process's parent chain looking for one specific ancestor.
+///
+/// This is not a process browser: it answers "did `pid` descend from
+/// `ancestorPid`, and what is the proof" and returns nothing otherwise. Every
+/// link carries its own birth receipt so Electron can reject a chain that runs
+/// through a recycled PID — a parent that started after its own child.
+enum ProcessAncestry {
+    /// `npm run dev` reaches its window in about four generations; the cap is
+    /// the daemon's own backstop and Electron applies a tighter one.
+    static let maximumDepth = 16
+
+    static func chain(from pid: Int, to ancestorPid: Int, maxDepth: Int) -> [ProcessAncestryLink]? {
+        guard pid > 0, ancestorPid > 0, maxDepth > 0, maxDepth <= maximumDepth else { return nil }
+
+        var links: [ProcessAncestryLink] = []
+        var seen = Set<Int>()
+        var current = pid
+
+        // maxDepth counts generations crossed, so the walk visits maxDepth + 1.
+        while links.count <= maxDepth {
+            guard !seen.contains(current), let link = ProcessAncestryLink.resolve(pid: current) else {
+                return nil
+            }
+            seen.insert(current)
+            links.append(link)
+
+            if current == ancestorPid {
+                return links
+            }
+            // launchd (1) re-parents orphans, so reaching it means the chain to
+            // the requested ancestor no longer exists. Fail rather than guess.
+            guard link.parentPid > 1 else { return nil }
+            current = link.parentPid
+        }
+        return nil
+    }
 }
 
 /// Per-window metadata returned to Electron after a successful pick.

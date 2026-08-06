@@ -422,6 +422,14 @@ struct NativeWindowProcessIdentityParams: Decodable {
     let pid: Int
 }
 
+/// Ancestry is asked as a closed question — "does this PID descend from that
+/// one" — so a caller can never walk the machine's process tree with it.
+struct NativeWindowProcessAncestryParams: Decodable {
+    let pid: Int
+    let ancestorPid: Int
+    let maxDepth: Int
+}
+
 final class NativeWindowRPCSession: @unchecked Sendable {
     struct Active {
         let access: AttachedWindowAccess
@@ -682,6 +690,70 @@ func nativeWindowProcessIdentityResponse(pid: Int) throws -> [String: Any] {
     // `toJSONObject` is intentionally exact: do not expose bundle, argv,
     // parent/group, window, or liveness metadata on this internal lookup.
     return receipt.toJSONObject()
+}
+
+func nativeWindowProcessAncestryResponse(
+    pid: Int,
+    ancestorPid: Int,
+    maxDepth: Int
+) throws -> [String: Any] {
+    guard
+        let checkedPID = Int32(exactly: pid), checkedPID > 0,
+        let checkedAncestorPID = Int32(exactly: ancestorPid), checkedAncestorPID > 0,
+        maxDepth > 0, maxDepth <= ProcessAncestry.maximumDepth
+    else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "nativeWindow.processAncestry requires positive PIDs and a bounded depth."
+        )
+    }
+    guard
+        let links = ProcessAncestry.chain(
+            from: Int(checkedPID),
+            to: Int(checkedAncestorPID),
+            maxDepth: maxDepth
+        )
+    else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.bridgeUnavailable,
+            message: "The requested process is not a live descendant of the expected process."
+        )
+    }
+    // Only the chain that answers the question asked: no argv, bundle, window,
+    // or sibling metadata, and nothing about processes off this path.
+    return ["chain": links.map { $0.toJSONObject() }]
+}
+
+func registerNativeWindowProcessAncestryRPC(on dispatcher: JSONRPCDispatcher) {
+    dispatcher.register("nativeWindow.processAncestry") { params in
+        try performNativeWindowRPC {
+            let dictionary = try requestDictionary(
+                params,
+                method: "nativeWindow.processAncestry"
+            )
+            guard
+                dictionary.count == 3,
+                dictionary["pid"] != nil,
+                dictionary["ancestorPid"] != nil,
+                dictionary["maxDepth"] != nil
+            else {
+                throw JSONRPCError(
+                    code: JSONRPCErrorCode.invalidParams,
+                    message: "nativeWindow.processAncestry expects pid, ancestorPid, and maxDepth."
+                )
+            }
+            let parsed = try decodeNativeWindowParams(
+                dictionary,
+                as: NativeWindowProcessAncestryParams.self,
+                method: "nativeWindow.processAncestry"
+            )
+            return try nativeWindowProcessAncestryResponse(
+                pid: parsed.pid,
+                ancestorPid: parsed.ancestorPid,
+                maxDepth: parsed.maxDepth
+            )
+        }
+    }
 }
 
 func registerNativeWindowProcessIdentityRPC(on dispatcher: JSONRPCDispatcher) {
@@ -972,6 +1044,7 @@ func performNativeWindowRPC<T>(_ operation: () throws -> T) throws -> T {
 }
 
 registerNativeWindowProcessIdentityRPC(on: dispatcher)
+registerNativeWindowProcessAncestryRPC(on: dispatcher)
 
 dispatcher.register("nativeWindow.accessibilityStatus") { _ in
     try performNativeWindowRPC {
