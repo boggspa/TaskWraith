@@ -885,6 +885,14 @@ function renderHud(
             : state.connection === 'incompatible-protocol'
               ? tone(ansi, 'Open TaskWraith to update the App', 'error')
               : tone(ansi, state.connection.toUpperCase(), 'neutral')
+    // Wave 4.2b: deferred thread.select has no thread yet — still show the Host ask.
+    if (state.notice && (!state.notice.expiresAt || state.notice.expiresAt > now)) {
+      return joinLeftRight(
+        ansi.bold('TaskWraith'),
+        tone(ansi, terminalLabel(state.notice.text), state.notice.tone),
+        width
+      )
+    }
     return joinLeftRight(ansi.bold('TaskWraith'), connection, width)
   }
   const workspace =

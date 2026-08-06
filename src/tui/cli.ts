@@ -60,11 +60,13 @@ Options:
 Interactive keys:
   Ctrl+O context  Ctrl+K threads  Ctrl+P commands  PgUp/PgDn scroll
   Enter send      Ctrl+C clear/quit               /cancel active run
+  y/n             Answer a pending Host approval ask (Wave 4.2b)
 
 The normal sidecar connects to a running TaskWraith Host (v2 local protocol).
-Wave 4.2a is read-only projection (snapshot + welcome). Commands remain on the
-App / Wave 4.2b. v1 TaskWraithControlClient is retained but not used by this
-entry path.`
+Wave 4.2b submits mutations over the same HostProjectionClient (commands +
+receipts). Deferred Host asks surface as pending receipts — never as success —
+and resolve via approval.decide or receipt poll. v1 TaskWraithControlClient is
+retained in tree but unused on this entry path.`
 }
 
 function positiveInteger(raw: string | undefined, flag: string): number {

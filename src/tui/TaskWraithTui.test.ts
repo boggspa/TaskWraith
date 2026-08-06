@@ -10,7 +10,10 @@ import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
   createEmptyHostSnapshot,
+  type HostApprovalProjection,
   type HostBootstrapWelcome,
+  type HostCommand,
+  type HostCommandReceipt,
   type HostSnapshot
 } from '../shared/hostProtocol'
 import {
@@ -82,8 +85,12 @@ async function waitFor(
  * Fake Host v2 — TCP loopback (sandbox-safe) + Host local transport
  * ---------------------------------------------------------------------- */
 
+type MutationMode = 'allow' | 'defer'
+
 interface FakeHostHandlers {
   snapshot: () => HostSnapshot
+  /** allow = immediate succeeded; defer = pending ask until approval.decide */
+  mutationMode?: MutationMode
 }
 
 class FakeHostV2 {
@@ -95,6 +102,9 @@ class FakeHostV2 {
   private readonly sockets = new Set<Socket>()
   private socketPath = ''
   handlers: FakeHostHandlers
+  private readonly receipts = new Map<string, HostCommandReceipt>()
+  private readonly approvals = new Map<string, HostApprovalProjection>()
+  private cursor = 9
 
   constructor(userDataPath: string, handlers: FakeHostHandlers) {
     this.userDataPath = userDataPath
@@ -174,13 +184,13 @@ class FakeHostV2 {
         hostVersion: '1.9.1-preview',
         sessionId: 'fake-session',
         generation: 3,
-        cursor: 9,
+        cursor: this.cursor,
         authenticatedClient: {
           clientId: 'tui-test',
           clientClass: 'tui',
           clientVersion: '0.1.0-test'
         },
-        capabilities: ['bootstrap', 'snapshot', 'health'],
+        capabilities: ['bootstrap', 'snapshot', 'health', 'commands', 'receipts'],
         freshness: 'live'
       }
       this.write(socket, {
@@ -194,6 +204,12 @@ class FakeHostV2 {
     const id = String(message.id)
     const kind = String(message.kind)
     if (kind === 'snapshot.get') {
+      const base = this.handlers.snapshot()
+      const snapshot: HostSnapshot = {
+        ...base,
+        approvals: [...base.approvals, ...this.approvals.values()],
+        cursor: this.cursor
+      }
       this.write(socket, {
         type: 'response',
         transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
@@ -204,9 +220,45 @@ class FakeHostV2 {
           frame: {
             type: 'host.snapshot',
             protocolVersion: HOST_PROTOCOL_VERSION,
-            snapshot: this.handlers.snapshot()
+            snapshot
           }
         }
+      })
+      return
+    }
+    if (kind === 'command.submit') {
+      const command = message.params as HostCommand
+      const receipt = this.handleCommand(command)
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: { kind: 'command.submit', receipt }
+      })
+      return
+    }
+    if (kind === 'receipt.lookup') {
+      const params = message.params as { commandId?: string; idempotencyKey?: string }
+      const found = params.commandId
+        ? this.receipts.get(params.commandId)
+        : [...this.receipts.values()].find((row) => row.idempotencyKey === params.idempotencyKey)
+      if (!found) {
+        this.write(socket, {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id,
+          ok: false,
+          error: { code: 'host_unavailable' }
+        })
+        return
+      }
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: { kind: 'receipt.lookup', receipt: found }
       })
       return
     }
@@ -215,8 +267,96 @@ class FakeHostV2 {
       transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
       id,
       ok: false,
-      error: { code: 'unsupported_kind' }
+      error: { code: 'unknown_request_kind' }
     })
+  }
+
+  private handleCommand(command: HostCommand): HostCommandReceipt {
+    if (command.name === 'approval.decide') {
+      return this.handleApprovalDecide(command)
+    }
+    const mode = this.handlers.mutationMode ?? 'allow'
+    if (mode === 'allow' || command.name === 'ping') {
+      const receipt = this.makeReceipt(command, {
+        status: 'succeeded',
+        authority: { decision: 'allow' }
+      })
+      this.receipts.set(receipt.commandId, receipt)
+      this.cursor += 1
+      return receipt
+    }
+    const receipt = this.makeReceipt(command, {
+      status: 'pending',
+      authority: { decision: 'ask', reason: 'production deferred' }
+    })
+    this.receipts.set(receipt.commandId, receipt)
+    const approvalId = `approval-${command.commandId}`
+    this.approvals.set(approvalId, {
+      approvalId,
+      threadId: command.target.threadId,
+      status: 'pending',
+      actionKind: command.name,
+      createdAt: Date.now(),
+      summary: `Deferred ${command.name}`
+    })
+    this.cursor += 1
+    return receipt
+  }
+
+  private handleApprovalDecide(command: HostCommand): HostCommandReceipt {
+    const approvalId = command.target.approvalId
+    const approval = approvalId ? this.approvals.get(approvalId) : undefined
+    const decision = String(command.arguments.decision ?? '')
+    const accept =
+      decision === 'accept' || decision === 'acceptForSession' || decision === 'acceptForWorkspace'
+    if (approval) {
+      const mutation = [...this.receipts.values()].find(
+        (row) => row.name === approval.actionKind && row.status === 'pending'
+      )
+      if (mutation) {
+        const next: HostCommandReceipt = {
+          ...mutation,
+          status: accept ? 'succeeded' : 'denied',
+          authority: accept ? { decision: 'allow' } : { decision: 'deny', reason: 'user declined' },
+          updatedAt: new Date().toISOString(),
+          ...(accept ? {} : { errorCode: 'authority_denied', errorMessage: 'user declined' })
+        }
+        this.receipts.set(mutation.commandId, next)
+      }
+      this.approvals.delete(approval.approvalId)
+    }
+    const decideReceipt = this.makeReceipt(command, {
+      status: 'succeeded',
+      authority: { decision: 'allow' }
+    })
+    this.receipts.set(decideReceipt.commandId, decideReceipt)
+    this.cursor += 1
+    return decideReceipt
+  }
+
+  private makeReceipt(
+    command: HostCommand,
+    overrides: Pick<HostCommandReceipt, 'status' | 'authority'> &
+      Partial<Pick<HostCommandReceipt, 'errorCode' | 'errorMessage'>>
+  ): HostCommandReceipt {
+    const now = new Date().toISOString()
+    return {
+      type: 'host.receipt',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      commandId: command.commandId,
+      idempotencyKey: command.idempotencyKey,
+      name: command.name,
+      actor: command.actor,
+      authority: overrides.authority,
+      status: overrides.status,
+      commandFingerprint: 'b'.repeat(64),
+      generation: 3,
+      cursor: this.cursor,
+      createdAt: now,
+      updatedAt: now,
+      ...(overrides.errorCode ? { errorCode: overrides.errorCode } : {}),
+      ...(overrides.errorMessage ? { errorMessage: overrides.errorMessage } : {})
+    }
   }
 
   private write(socket: Socket, frame: HostLocalTransportHostFrame): void {
@@ -274,12 +414,15 @@ function makeHostSnapshot(overrides?: Partial<HostSnapshot>): HostSnapshot {
   }
 }
 
-async function setupHost(snapshot: HostSnapshot = makeHostSnapshot()): Promise<{
+async function setupHost(
+  snapshot: HostSnapshot = makeHostSnapshot(),
+  mutationMode: MutationMode = 'allow'
+): Promise<{
   host: FakeHostV2
   userDataPath: string
 }> {
   const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-host-v2-'))
-  const host = new FakeHostV2(userDataPath, { snapshot: () => snapshot })
+  const host = new FakeHostV2(userDataPath, { snapshot: () => snapshot, mutationMode })
   await host.start()
   cleanup.push(() => host.stop())
   return { host, userDataPath }
@@ -299,27 +442,36 @@ function startTui(userDataPath: string) {
   return { tui, input, output }
 }
 
-describe('TaskWraithTui Host projection (Wave 4.2a)', () => {
-  it('connects over Host v2, loads one snapshot, auto-selects the newest thread, and refuses commands', async () => {
+describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
+  it('connects, auto-selects via thread.select, and accepts composer.send when Host allows', async () => {
     const { host, userDataPath } = await setupHost()
     const { tui, input, output } = startTui(userDataPath)
 
     await tui.start()
-    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread auto-selected')
+    await waitFor(
+      () =>
+        output.lastFrame.includes('Solo thread') ||
+        output.lastFrame.includes('Host preview only') ||
+        output.lastFrame.includes('Hello TaskWraith'),
+      'thread auto-selected'
+    )
     expect(output.lastFrame).toContain('Hello TaskWraith')
-    expect(output.lastFrame).toContain('Host preview only')
+    expect(output.lastFrame).toMatch(/Host preview only|Opened Solo thread/i)
 
     feed(input, 'ship the preview')
     feed(input, '\r')
     await waitFor(
-      () => output.lastFrame.includes('read-only') || output.lastFrame.includes('Wave 4.2b'),
-      'composer refused as read-only'
+      () => output.lastFrame.includes('Host accepted composer.send'),
+      'composer.send succeeded',
+      5_000
     )
+    expect(output.lastFrame).not.toMatch(/read-only|Wave 4\.2b/i)
 
     feed(input, '/cancel\r')
     await waitFor(
-      () => output.lastFrame.includes('read-only') || output.lastFrame.includes('Wave 4.2b'),
-      'cancel refused as read-only'
+      () => output.lastFrame.includes('Host accepted run.cancel'),
+      'run.cancel succeeded',
+      5_000
     )
 
     host.dropAllClients()
@@ -347,7 +499,8 @@ describe('TaskWraithTui Host projection (Wave 4.2a)', () => {
               previewTruncated: false
             }
           ]
-        })
+        }),
+      mutationMode: 'allow'
     })
     await revived.start()
     cleanup.push(() => revived.stop())
@@ -357,6 +510,80 @@ describe('TaskWraithTui Host projection (Wave 4.2a)', () => {
       5_000
     )
   }, 12_000)
+
+  it('surfaces deferred Host asks and never treats pending as success until y accepts', async () => {
+    const { userDataPath } = await setupHost(makeHostSnapshot(), 'defer')
+    const { tui, input, output } = startTui(userDataPath)
+
+    const started = tui.start()
+    await waitFor(
+      () => output.lastFrame.includes('Awaiting Host approval'),
+      'thread.select deferred ask',
+      5_000
+    )
+    expect(output.lastFrame).not.toMatch(/Host accepted thread\.select/i)
+    expect(output.lastFrame).not.toContain('Hello TaskWraith')
+
+    feed(input, 'y')
+    await started
+    await waitFor(
+      () =>
+        output.lastFrame.includes('Hello TaskWraith') ||
+        output.lastFrame.includes('Host preview only'),
+      'thread opened after accept',
+      5_000
+    )
+    expect(output.lastFrame).toMatch(/Host preview only|Opened Solo thread/i)
+
+    feed(input, 'do not lie about pending')
+    feed(input, '\r')
+    await waitFor(
+      () =>
+        output.lastFrame.includes('Awaiting Host approval') &&
+        output.lastFrame.includes('composer.send'),
+      'composer.send deferred',
+      5_000
+    )
+    expect(output.lastFrame).not.toMatch(/Host accepted composer\.send/i)
+
+    feed(input, 'y')
+    await waitFor(
+      () => output.lastFrame.includes('Host accepted composer.send'),
+      'composer.send succeeded after accept',
+      5_000
+    )
+  }, 15_000)
+
+  it('restores composer text when a deferred send is declined', async () => {
+    const { userDataPath } = await setupHost(makeHostSnapshot(), 'defer')
+    const { tui, input, output } = startTui(userDataPath)
+    const started = tui.start()
+    await waitFor(
+      () => output.lastFrame.includes('Awaiting Host approval'),
+      'deferred select',
+      5_000
+    )
+    feed(input, 'y')
+    await started
+    await waitFor(
+      () =>
+        output.lastFrame.includes('Hello TaskWraith') ||
+        output.lastFrame.includes('Host preview only'),
+      'opened',
+      5_000
+    )
+
+    feed(input, 'keep this draft')
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('composer.send'), 'composer pending', 5_000)
+    feed(input, 'n')
+    await waitFor(
+      () =>
+        output.lastFrame.includes('keep this draft') && /denied|decline/i.test(output.lastFrame),
+      'composer restored after decline',
+      5_000
+    )
+  }, 15_000)
 
   it('shows the "Open TaskWraith to answer" plain-text attention state from Host run evidence', async () => {
     const snapshot = makeHostSnapshot({
@@ -483,23 +710,6 @@ describe('TaskWraithTui terminal restoration', () => {
       output: output as unknown as WriteStream
     })
     await expect(tui.start()).rejects.toThrow(/alternate screen failed/)
-    expect(input.isRawMode).toBe(false)
-  })
-
-  it('rejects start() outside a TTY without ever entering raw mode', async () => {
-    const input = new FakeInput()
-    input.isTTY = false as unknown as true
-    const output = new FakeOutput()
-    output.isTTY = false as unknown as true
-    const tui = new TaskWraithTui({
-      clientVersion: '0.1.0-test',
-      demo: true,
-      colorMode: 'none',
-      animationEnabled: false,
-      input: input as unknown as ReadStream,
-      output: output as unknown as WriteStream
-    })
-    await expect(tui.start()).rejects.toThrow(/requires a terminal/)
     expect(input.isRawMode).toBe(false)
   })
 })

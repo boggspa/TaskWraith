@@ -5,7 +5,14 @@ import {
   HostProjectionClient,
   HostProjectionIncompatibleProtocolError
 } from '../main/host/HostProjectionClient'
-import type { HostSnapshot } from '../shared/hostProtocol'
+import {
+  type HostActorIdentity,
+  type HostApprovalDecideDecision,
+  type HostCommand,
+  type HostCommandName,
+  type HostCommandReceipt,
+  type HostSnapshot
+} from '../shared/hostProtocol'
 import { defaultTaskWraithUserDataPath } from '../shared/taskWraithControlPaths.node'
 import type {
   TaskWraithControlModelOffer,
@@ -16,16 +23,28 @@ import type {
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
 import { Ansi, sanitizeTerminalText, type AnsiColorMode } from './ansi'
+import {
+  buildHostCommand,
+  describeHostReceipt,
+  isTerminalHostReceiptStatus,
+  pollHostReceiptUntilTerminal
+} from './hostCommandFlow'
 import { renderTaskWraithTui } from './render'
 import {
   mapHostSnapshotToControlSnapshot,
   mapHostSnapshotToThreadDetail
 } from './hostProjectionMap'
-import { createTaskWraithTuiDemoState, type TaskWraithTuiState, type TuiOverlay } from './state'
+import {
+  createTaskWraithTuiDemoState,
+  type TaskWraithTuiState,
+  type TuiOverlay,
+  type TuiPendingHostMutation
+} from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 
-/** Wave 4.2a is read-only projection; commands remain on v1 / Wave 4.2b. */
-const READ_ONLY_NOTICE = 'Host projection is read-only · commands land in Wave 4.2b'
+/** Offers / tune catalogue still has no Host command surface. */
+const OFFERS_UNAVAILABLE_NOTICE =
+  'Host model offers are not on the command wire yet · tune staging is local only'
 
 interface Keypress {
   name?: string
@@ -129,15 +148,17 @@ export class TaskWraithTui {
   private demoReplyTimer: ReturnType<typeof setTimeout> | null = null
   private selectingThread = false
   private sendingPrompt = false
+  private mutationInFlight = false
   private bracketedPaste = false
   private bracketedPasteBuffer = ''
   private lastError = ''
-  /** Last live HostSnapshot — authority for local read-only thread detail. */
+  /** Last live HostSnapshot — authority for local thread detail + approvals. */
   private hostSnapshot: HostSnapshot | null = null
   /** Whether a `welcome` has ever been received. Distinguishes a first-time
    *  "offline" state (App never found) from a "reconnecting" state (App was
    *  reachable and the connection dropped). */
   private everConnected = false
+  private clientId = `tui-${randomUUID()}`
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -154,13 +175,13 @@ export class TaskWraithTui {
       ? null
       : new HostProjectionClient({
           client: {
-            clientId: `tui-${randomUUID()}`,
+            clientId: this.clientId,
             clientClass: 'tui',
             clientVersion: options.clientVersion,
             displayName: 'TaskWraith TUI'
           },
-          // Wave 4.2a: snapshot + bootstrap only. Commands stay off the wire.
-          capabilities: ['bootstrap', 'snapshot', 'health'],
+          // Wave 4.2b: same client gains commands + receipts (no parallel v1 socket).
+          capabilities: ['bootstrap', 'snapshot', 'health', 'commands', 'receipts'],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
   }
@@ -345,7 +366,7 @@ export class TaskWraithTui {
   }
 
   private async openThread(threadId: string): Promise<void> {
-    if (!threadId || this.selectingThread) return
+    if (!threadId || this.selectingThread || this.mutationInFlight) return
     if (threadId !== this.state.selectedThreadId) {
       // Offers and staged selections are per-thread state.
       this.state.offers = undefined
@@ -359,23 +380,43 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    const host = this.hostSnapshot
+    if (!host) {
+      this.setNotice('Host snapshot is not loaded yet.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!mapHostSnapshotToThreadDetail(host, threadId)) {
+      this.setNotice(`Thread ${threadId} is not in the Host snapshot.`, 'warning', 4_000)
+      this.render()
+      return
+    }
     this.selectingThread = true
     try {
-      // Wave 4.2a: local map from HostSnapshot only — no thread.select command.
-      const host = this.hostSnapshot
-      if (!host) {
-        this.setNotice('Host snapshot is not loaded yet.', 'warning', 3_000)
-        return
-      }
-      const detail = mapHostSnapshotToThreadDetail(host, threadId)
-      if (!detail) {
-        this.setNotice(`Thread ${threadId} is not in the Host snapshot.`, 'warning', 4_000)
-        return
-      }
-      this.state.selectedThreadId = threadId
-      this.state.thread = detail.thread
-      this.state.overlay = 'none'
-      this.state.scrollOffset = 0
+      const command = this.buildMutation('thread.select', { threadId }, {})
+      if (!command) return
+      await this.runHostMutation(command, {
+        onSucceeded: async () => {
+          await this.refreshHostSnapshot()
+          this.applyLocalThread(threadId, { previewNotice: true })
+        }
+      })
+    } finally {
+      this.selectingThread = false
+      this.render()
+    }
+  }
+
+  private applyLocalThread(threadId: string, options: { previewNotice?: boolean } = {}): void {
+    const host = this.hostSnapshot
+    if (!host) return
+    const detail = mapHostSnapshotToThreadDetail(host, threadId)
+    if (!detail) return
+    this.state.selectedThreadId = threadId
+    this.state.thread = detail.thread
+    this.state.overlay = 'none'
+    this.state.scrollOffset = 0
+    if (options.previewNotice) {
       this.setNotice(
         detail.previewOnly
           ? `Opened ${detail.thread.thread.title} · Host preview only`
@@ -383,11 +424,6 @@ export class TaskWraithTui {
         'good',
         1_800
       )
-    } catch (error) {
-      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
-    } finally {
-      this.selectingThread = false
-      this.render()
     }
   }
 
@@ -426,6 +462,18 @@ export class TaskWraithTui {
     if ((key.ctrl && key.name === 'd' && !this.state.input) || (key.meta && key.name === 'q')) {
       this.stop()
       return
+    }
+    // Wave 4.2b: while a Host mutation is pending an ask, y/n answers it.
+    if (this.state.pendingHostMutation?.approvalId && !key.ctrl && !key.meta) {
+      const answer = (input || key.name || '').toLowerCase()
+      if (answer === 'y') {
+        void this.decidePendingApproval('accept')
+        return
+      }
+      if (answer === 'n') {
+        void this.decidePendingApproval('decline')
+        return
+      }
     }
     if (key.ctrl && key.name === 'l') {
       this.options.output.write('\u001b[2J')
@@ -644,17 +692,17 @@ export class TaskWraithTui {
     this.state.offersLoading = true
     this.render()
     try {
-      // Wave 4.2a: no Host command surface for offers yet.
+      // No Host command yet for model offers — local staging only.
       this.state.offers = {
         threadId,
         provider: this.state.thread!.thread.provider,
         models: [],
         source: 'curated',
-        locked: READ_ONLY_NOTICE
+        locked: OFFERS_UNAVAILABLE_NOTICE
       }
       this.state.overlayIndex = 0
       this.state.tuneEffortIndex = 0
-      this.setNotice(READ_ONLY_NOTICE, 'warning', 3_000)
+      this.setNotice(OFFERS_UNAVAILABLE_NOTICE, 'warning', 3_000)
     } finally {
       this.state.offersLoading = false
       this.render()
@@ -749,7 +797,7 @@ export class TaskWraithTui {
 
   private async toggleSeat(seat: TaskWraithControlParticipant): Promise<void> {
     const threadId = this.state.selectedThreadId
-    if (!threadId) return
+    if (!threadId || this.mutationInFlight) return
     const nextEnabled = !seat.enabled
     if (!this.client) {
       seat.enabled = nextEnabled
@@ -757,8 +805,19 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    this.setNotice(READ_ONLY_NOTICE, 'warning', 3_000)
-    this.render()
+    const command = this.buildMutation(
+      'ensemble.seat.toggle',
+      { threadId },
+      { participantId: seat.id, enabled: nextEnabled }
+    )
+    if (!command) return
+    await this.runHostMutation(command, {
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        seat.enabled = nextEnabled
+        this.setNotice(`${nextEnabled ? 'Enabled' : 'Disabled'} ${seat.role}`, 'good', 2_000)
+      }
+    })
   }
 
   private async submit(): Promise<void> {
@@ -777,7 +836,7 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    if (this.sendingPrompt) {
+    if (this.sendingPrompt || this.mutationInFlight) {
       this.setNotice('The previous prompt is still being accepted.', 'warning', 2_000)
       this.render()
       return
@@ -789,9 +848,32 @@ export class TaskWraithTui {
       this.sendDemoPrompt(text)
       return
     }
-    this.restoreComposerText(original)
-    this.setNotice(READ_ONLY_NOTICE, 'warning', 4_000)
-    this.render()
+    const selection = this.state.pendingSelection
+    const args: Record<string, unknown> = { text }
+    if (selection?.model) args.model = selection.model
+    if (selection?.reasoningEffort) args.reasoningEffort = selection.reasoningEffort
+    const command = this.buildMutation('composer.send', { threadId }, args)
+    if (!command) {
+      this.restoreComposerText(original)
+      this.render()
+      return
+    }
+    this.sendingPrompt = true
+    try {
+      await this.runHostMutation(command, {
+        composerRestore: original,
+        onSucceeded: async () => {
+          this.state.pendingSelection = undefined
+          await this.refreshHostSnapshot()
+          if (this.state.selectedThreadId) {
+            this.applyLocalThread(this.state.selectedThreadId)
+          }
+        }
+      })
+    } finally {
+      this.sendingPrompt = false
+      this.render()
+    }
   }
 
   private restoreComposerText(value: string): void {
@@ -846,8 +928,206 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    this.setNotice(READ_ONLY_NOTICE, 'warning', 3_000)
+    if (this.mutationInFlight) {
+      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+      this.render()
+      return
+    }
+    const command = this.buildMutation('run.cancel', { threadId }, {})
+    if (!command) return
+    await this.runHostMutation(command, {
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        if (this.state.selectedThreadId) {
+          this.applyLocalThread(this.state.selectedThreadId)
+        }
+      }
+    })
+  }
+
+  private actorIdentity(): HostActorIdentity | null {
+    const welcome = this.client?.welcome
+    if (!welcome) return null
+    const client = welcome.authenticatedClient
+    return {
+      actorId: client.clientId,
+      clientId: client.clientId,
+      clientClass: client.clientClass
+    }
+  }
+
+  private buildMutation(
+    name: HostCommandName,
+    target: Record<string, string>,
+    args: Record<string, unknown>
+  ): HostCommand | null {
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return null
+    }
+    return buildHostCommand({
+      name,
+      actor,
+      target,
+      arguments: args,
+      issuedAt: new Date(this.options.now()).toISOString()
+    })
+  }
+
+  private async refreshHostSnapshot(): Promise<void> {
+    if (!this.client?.connected) return
+    const frame = await this.client.getSnapshot()
+    this.applyHostSnapshot(frame.snapshot)
+  }
+
+  private findPendingApprovalId(commandName: HostCommandName): string | undefined {
+    const approvals = this.hostSnapshot?.approvals ?? []
+    const pending = approvals
+      .filter((row) => row.status === 'pending' && row.actionKind === commandName)
+      .sort((left, right) => right.createdAt - left.createdAt)
+    return pending[0]?.approvalId
+  }
+
+  private async decidePendingApproval(decision: HostApprovalDecideDecision): Promise<void> {
+    const pending = this.state.pendingHostMutation
+    if (!pending?.approvalId || !this.client) return
+    const actor = this.actorIdentity()
+    if (!actor) return
+    const decide = buildHostCommand({
+      name: 'approval.decide',
+      actor,
+      target: { approvalId: pending.approvalId },
+      arguments: { decision },
+      issuedAt: new Date(this.options.now()).toISOString()
+    })
+    try {
+      const receipt = await this.client.submitCommand(decide)
+      if (receipt.status === 'pending') {
+        // Should not happen for response commands; surface honestly if it does.
+        const desc = describeHostReceipt(receipt)
+        this.setNotice(desc.text, desc.tone)
+      } else if (receipt.status !== 'succeeded') {
+        const desc = describeHostReceipt(receipt)
+        this.setNotice(desc.text, desc.tone, 4_000)
+      } else {
+        this.setNotice(
+          decision === 'decline' || decision === 'cancel'
+            ? 'Host approval declined · waiting for receipt'
+            : 'Host approval accepted · waiting for receipt',
+          decision === 'decline' || decision === 'cancel' ? 'warning' : 'good',
+          2_500
+        )
+      }
+    } catch (error) {
+      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
+    }
     this.render()
+  }
+
+  /**
+   * Submit a Host mutation and resolve its receipt honestly.
+   *
+   * Receipt mechanism (Wave 4.2b): poll `lookupReceipt({ commandId })` with
+   * bounded backoff. Pending / authority.ask is shown as an approval wait —
+   * never as completed. After the first pending receipt, refresh the snapshot
+   * once so HostApprovalProjection cards can bind y/n → approval.decide.
+   */
+  private async runHostMutation(
+    command: HostCommand,
+    options: {
+      composerRestore?: string
+      onSucceeded?: () => Promise<void> | void
+    } = {}
+  ): Promise<void> {
+    if (!this.client) return
+    if (this.mutationInFlight) {
+      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+      this.render()
+      return
+    }
+    this.mutationInFlight = true
+    const pending: TuiPendingHostMutation = {
+      commandId: command.commandId,
+      name: command.name,
+      ...(options.composerRestore !== undefined ? { composerRestore: options.composerRestore } : {})
+    }
+    this.state.pendingHostMutation = pending
+    this.render()
+    try {
+      const initial = await this.client.submitCommand(command)
+      if (initial.status === 'pending' || initial.authority.decision === 'ask') {
+        const desc = describeHostReceipt(initial)
+        this.setNotice(desc.text, desc.tone)
+        try {
+          await this.refreshHostSnapshot()
+          const approvalId = this.findPendingApprovalId(command.name)
+          if (approvalId) {
+            pending.approvalId = approvalId
+            this.state.pendingHostMutation = { ...pending }
+            this.setNotice(desc.text, desc.tone)
+          }
+        } catch {
+          // Snapshot refresh failure must not invent a terminal outcome.
+        }
+        this.render()
+        const terminal = await pollHostReceiptUntilTerminal({
+          commandId: command.commandId,
+          lookup: (commandId) => this.client!.lookupReceipt({ commandId }),
+          shouldAbort: () => this.stopped || !this.client?.connected,
+          timeoutMs: 60_000,
+          initialDelayMs: 200,
+          maxDelayMs: 1_500,
+          onTick: (receipt) => {
+            if (receipt.status === 'pending') {
+              const tick = describeHostReceipt(receipt)
+              this.setNotice(tick.text, tick.tone)
+              this.render()
+            }
+          }
+        })
+        await this.applyTerminalReceipt(terminal, options)
+        return
+      }
+      await this.applyTerminalReceipt(initial, options)
+    } catch (error) {
+      if (options.composerRestore) this.restoreComposerText(options.composerRestore)
+      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
+    } finally {
+      this.mutationInFlight = false
+      this.state.pendingHostMutation = undefined
+      this.render()
+    }
+  }
+
+  private async applyTerminalReceipt(
+    receipt: HostCommandReceipt,
+    options: {
+      composerRestore?: string
+      onSucceeded?: () => Promise<void> | void
+    }
+  ): Promise<void> {
+    if (!isTerminalHostReceiptStatus(receipt.status)) {
+      if (options.composerRestore) this.restoreComposerText(options.composerRestore)
+      const stuck = describeHostReceipt(receipt)
+      this.setNotice(`${stuck.text} · timed out`, 'warning', 5_000)
+      return
+    }
+    if (receipt.status === 'succeeded') {
+      const noticeBefore = this.state.notice
+      await options.onSucceeded?.()
+      // Prefer a specific notice from onSucceeded (e.g. "Opened …") over the
+      // generic "Host accepted <name>" so the HUD still names the thread.
+      if (this.state.notice === noticeBefore) {
+        const ok = describeHostReceipt(receipt)
+        this.setNotice(ok.text, ok.tone, 2_500)
+      }
+      return
+    }
+    if (options.composerRestore) this.restoreComposerText(options.composerRestore)
+    const failed = describeHostReceipt(receipt)
+    this.setNotice(failed.text, failed.tone, 4_500)
   }
 
   private sendDemoPrompt(text: string): void {

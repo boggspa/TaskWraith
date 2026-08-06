@@ -1,3 +1,4 @@
+import type { HostCommandName } from '../shared/hostProtocol'
 import type {
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
@@ -30,6 +31,19 @@ export interface TuiPendingSelection {
   reasoningEffort?: string
 }
 
+/**
+ * In-flight Host mutation (Wave 4.2b). Pending means Host is waiting on an
+ * approval ask — never treat as completed.
+ */
+export interface TuiPendingHostMutation {
+  commandId: string
+  name: HostCommandName
+  /** HostApprovalProjection.approvalId when a matching pending ask is known. */
+  approvalId?: string
+  /** Composer text to restore if the Host denies/fails the send. */
+  composerRestore?: string
+}
+
 export interface TaskWraithTuiState {
   connection: TuiConnectionState
   hostVersion?: string
@@ -49,6 +63,8 @@ export interface TaskWraithTuiState {
   /** Reasoning column index for the highlighted tune-lens model row. */
   tuneEffortIndex: number
   pendingSelection?: TuiPendingSelection
+  /** Active deferred Host mutation, if any. */
+  pendingHostMutation?: TuiPendingHostMutation
 }
 
 function row(
