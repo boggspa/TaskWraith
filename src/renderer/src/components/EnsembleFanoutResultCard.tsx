@@ -328,6 +328,11 @@ export function EnsembleFanoutResultCard({
       style={cardAccentStyle}
       data-lane-working={working ? 'true' : undefined}
     >
+      {working && (
+        <span className="ensemble-fanout-result-rim" aria-hidden="true">
+          <span className="ensemble-fanout-result-rim-sweep" />
+        </span>
+      )}
       <header className="ensemble-fanout-result-header">
         <div className="ensemble-fanout-result-heading">
           <span aria-hidden="true" className="ensemble-fanout-result-glyph">

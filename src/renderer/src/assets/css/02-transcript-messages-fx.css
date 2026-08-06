@@ -6738,6 +6738,10 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   box-shadow: 0 12px 28px rgb(0 0 0 / 0.13);
   color: var(--text-primary);
   padding: 0.78rem 0.9rem 0.9rem;
+  /* Keep the moving rim and the streaming viewport in separate stacking
+     contexts. The card still participates in normal layout; only paint
+     invalidation is fenced here. */
+  isolation: isolate;
 }
 
 /* ============================================================
@@ -6754,26 +6758,17 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * presentations that drive the "working…" row, so the shimmer
  * stops at the moment that seat's row disappears.
  *
- * Technique is the composer's `obsidian-rim-chase`: a conic
- * gradient rotated through a registered @property angle, then
- * masked with mask-composite so only the rim strip survives.
- * Registering the angle is what makes it animatable at all — an
- * unregistered custom property is a string and cannot tween. A
- * SEPARATE property from the composer's on purpose: reusing an
- * `--obsidian-*` token here would make this shard silently
- * depend on the theme-picker shard's naming.
+ * Technique is the composer's `obsidian-rim-chase`: a static
+ * mask keeps only the rim strip while a child conic-gradient
+ * rotates underneath it. Animating that child's transform keeps
+ * the sweep on a compositor layer instead of repainting a masked
+ * gradient on every frame.
  *
  * Colour comes from the card's own per-participant --accent, so
  * each lane shimmers in its own provider hue — including the
  * brand-spoof overrides, where an Ollama-hosted Qwen chases
  * Alibaba purple rather than Ollama green.
  * ============================================================ */
-@property --fanout-lane-rim-angle {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
-}
-
 .ensemble-fanout-result-card {
   /* One lap. Slow enough to read as "alive, still going" rather
      than "alarm" — this sits in a transcript the user is reading. */
@@ -6781,24 +6776,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   --fanout-lane-rim-width: 1px;
 }
 
-.ensemble-fanout-result-card.is-working::after {
-  content: '';
+.ensemble-fanout-result-rim {
   position: absolute;
   /* Sit ON the existing 1px border rather than inside it, so the
-     chase replaces the static rim instead of drawing a second
-     line just inboard of it. */
+     chase replaces the static rim instead of drawing a second line just
+     inboard of it. The mask is static; only its child sweep moves. */
   inset: calc(var(--fanout-lane-rim-width) * -1);
   border-radius: calc(8px + var(--fanout-lane-rim-width));
   padding: var(--fanout-lane-rim-width);
-  background: conic-gradient(
-    from var(--fanout-lane-rim-angle),
-    transparent 0deg,
-    transparent 186deg,
-    color-mix(in srgb, var(--accent) 26%, transparent) 268deg,
-    color-mix(in srgb, var(--accent) 62%, transparent) 330deg,
-    color-mix(in srgb, var(--accent) 92%, transparent) 353deg,
-    transparent 360deg
-  );
+  contain: paint;
   /* Keep the rim strip, punch out the middle. Without the xor the
      gradient would wash the whole card and fog the transcript text. */
   -webkit-mask:
@@ -6809,14 +6795,34 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  animation: fanout-lane-rim-chase var(--fanout-lane-rim-duration) linear infinite;
   pointer-events: none;
   z-index: 1;
 }
 
+.ensemble-fanout-result-rim-sweep {
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 186deg,
+    color-mix(in srgb, var(--accent) 26%, transparent) 268deg,
+    color-mix(in srgb, var(--accent) 62%, transparent) 330deg,
+    color-mix(in srgb, var(--accent) 92%, transparent) 353deg,
+    transparent 360deg
+  );
+  /* Animate the gradient inside the fixed mask. A transform can stay on a
+     compositor layer; animating the masked conic gradient itself forces a
+     paint on every frame and competes with streamed markdown/tool rows. */
+  transform: translateZ(0);
+  transform-origin: 50% 50%;
+  will-change: transform;
+  animation: fanout-lane-rim-chase var(--fanout-lane-rim-duration) linear infinite;
+}
+
 @keyframes fanout-lane-rim-chase {
   to {
-    --fanout-lane-rim-angle: 360deg;
+    transform: translateZ(0) rotate(360deg);
   }
 }
 
@@ -6825,12 +6831,12 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * than vanishing: the point is identifying the working lane, and
  * that information should survive turning motion off. */
 @media (prefers-reduced-motion: reduce) {
-  .ensemble-fanout-result-card.is-working::after {
+  .ensemble-fanout-result-rim-sweep {
     animation: none;
   }
 }
 
-:root[data-reduce-motion='true'] .ensemble-fanout-result-card.is-working::after {
+:root[data-reduce-motion='true'] .ensemble-fanout-result-rim-sweep {
   animation: none;
 }
 
@@ -6889,6 +6895,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .ensemble-fanout-result-viewport {
   margin: 0;
   padding-left: 12px;
+  /* Streaming markdown/tool rows can invalidate a large subtree. Keep that
+     paint inside the viewport so it cannot dirty the card chrome or the rim
+     layer above it. This does not use size containment: settled lanes still
+     size to their content. */
+  contain: paint;
   /* Softer, more gracious top/bottom fade to match the taller collapsed window
      (COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT) — the longer mask band eases long
      lanes into the scroll edges instead of clipping them abruptly. */

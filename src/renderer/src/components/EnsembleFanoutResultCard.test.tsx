@@ -459,6 +459,8 @@ describe('working-lane rim shimmer', () => {
     )
     expect(html).toContain('is-working')
     expect(html).toContain('data-lane-working="true"')
+    expect(html).toContain('ensemble-fanout-result-rim')
+    expect(html).toContain('ensemble-fanout-result-rim-sweep')
   })
 
   it('leaves a finished lane unmarked — the shimmer is the whole "still going" signal', () => {
@@ -467,6 +469,7 @@ describe('working-lane rim shimmer', () => {
     )
     expect(html).not.toContain('is-working')
     expect(html).not.toContain('data-lane-working')
+    expect(html).not.toContain('ensemble-fanout-result-rim')
   })
 
   it('keeps the participant accent class alongside the working class', () => {
