@@ -223,6 +223,68 @@ describe('fan-out disclosure groups', () => {
     expect(groups.every((group) => group.category === 'user')).toBe(true)
   })
 
+  it('expands a late-flushed User Fan-Out lane under the one-liner, not at its raw transcript index', () => {
+    // Background User Fan-Out: serial rotation continues, then the tagged lane
+    // flushes after intervening turns — the durable wave still owns it.
+    const roundId = 'round-user-fanout-late-lane'
+    const messages = [
+      status(
+        'user-fanout-dispatch-late',
+        roundId,
+        'User Fan-Out · 1 participant(s) dispatched concurrently (1 read / 0 write-intent).',
+        {
+          ensembleFanoutWaveId: 'user-wave-late',
+          ensembleFanoutCategory: 'user',
+          ensembleFanoutLabel: 'User Fan-Out'
+        }
+      ),
+      serialTurn('boss-keeps-talking', roundId),
+      lane('sol-boss-late-lane', roundId, {
+        ensembleProvider: 'claude',
+        ensembleRole: 'SolBoss',
+        ensembleFanoutWaveId: 'user-wave-late'
+      }),
+      serialTurn('next-serial-after-lane', roundId)
+    ]
+
+    const collapsed = buildEnsembleFanoutViewportRanges({
+      chatId: 'chat-user-fanout-late',
+      roundId,
+      messages,
+      sourceOffset: 0,
+      expandedViewportIds: new Set()
+    })
+    const header = readEnsembleFanoutViewportHeader(collapsed[0].message)
+    expect(header).toMatchObject({
+      category: 'user',
+      dispatchLabel: 'User Fan-Out',
+      laneCount: 1,
+      expanded: false
+    })
+    expect(collapsed.map((entry) => entry.message.id)).toEqual([
+      header?.viewportId,
+      'boss-keeps-talking',
+      'next-serial-after-lane'
+    ])
+
+    const expanded = buildEnsembleFanoutViewportRanges({
+      chatId: 'chat-user-fanout-late',
+      roundId,
+      messages,
+      sourceOffset: 0,
+      expandedViewportIds: new Set([header?.viewportId || ''])
+    })
+    // Lane parks under the disclosure — not after boss-keeps-talking where it
+    // was flushed chronologically.
+    expect(expanded.map((entry) => entry.message.id)).toEqual([
+      header?.viewportId,
+      'sol-boss-late-lane',
+      'boss-keeps-talking',
+      'next-serial-after-lane'
+    ])
+    expect(readEnsembleFanoutViewportHeader(expanded[0].message)?.expanded).toBe(true)
+  })
+
   it('recovers legacy lanes without dispatch receipts from their frozen stage role', () => {
     const groups = collectEnsembleFanoutViewportGroups('chat-legacy', 'round-legacy', [
       lane('legacy-a', 'round-legacy', { ensembleStageRole: 'background' }),

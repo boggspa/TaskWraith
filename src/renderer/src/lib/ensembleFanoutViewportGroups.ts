@@ -515,7 +515,13 @@ function shouldCollapseFanoutGroup(
  * Fold only fan-out waves that are fully terminal and have yielded transcript
  * focus to a later turn. Live/current waves remain ordinary lane cards. The
  * dispatch receipt is replaced by the compact disclosure; opening it restores
- * the lane rows without reopening unrelated parts of the round.
+ * the lane rows immediately under that disclosure.
+ *
+ * Lane rows are re-homed next to the header on expand rather than left at
+ * their raw transcript indexes. User Fan-Out (and other background
+ * dispositions) can flush long after intervening serial turns, so restoring
+ * at source order made expand look like a no-op while the lane card sat far
+ * below the one-liner.
  */
 export function buildEnsembleFanoutViewportRanges(input: {
   chatId: string
@@ -581,23 +587,25 @@ export function buildEnsembleFanoutViewportRanges(input: {
         startIndex: input.sourceOffset + Math.min(...ownedIndexes),
         endIndex: input.sourceOffset + Math.max(...ownedIndexes) + 1
       })
-      if (laneGroup && expanded) {
-        ranges.push({
-          message: input.messages[index],
-          startIndex: input.sourceOffset + index,
-          endIndex: input.sourceOffset + index + 1
-        })
+      if (expanded) {
+        // Keep source order among siblings, but always park them under the
+        // disclosure — never leave a late-flushed background lane stranded
+        // below later serial turns.
+        const orderedLanes = [...group.laneRows].sort((left, right) => left.index - right.index)
+        for (const lane of orderedLanes) {
+          ranges.push({
+            message: lane.message,
+            startIndex: input.sourceOffset + lane.index,
+            endIndex: input.sourceOffset + lane.index + 1
+          })
+        }
       }
       continue
     }
 
-    if (laneGroup && input.expandedViewportIds.has(laneGroup.viewportId)) {
-      ranges.push({
-        message: input.messages[index],
-        startIndex: input.sourceOffset + index,
-        endIndex: input.sourceOffset + index + 1
-      })
-    }
+    // Owned by a viewport header emitted at its dispatch anchor — omit here
+    // whether the disclosure is open or closed so late lanes are not restored
+    // at their raw chronological index far below the one-liner.
   }
   return ranges
 }
