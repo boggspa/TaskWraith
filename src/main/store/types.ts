@@ -3421,6 +3421,37 @@ export interface ChatMessage {
     closeoutDurationMs?: number
     closeoutGoalId?: string
     closeoutGoalStatus?: ActiveGoalStatus
+    /**
+     * Structured Participants table for the Task-complete epic stack.
+     * Tombstoned at close-out time; plain objects (SeatChangeLink-shaped).
+     */
+    closeoutParticipantTable?: {
+      rows: Array<{
+        participantId: string
+        seatLink: {
+          participantId: string
+          before: Record<string, unknown>
+          after: Record<string, unknown>
+        }
+        seatText: string
+        workLabel: string
+        status: EnsembleParticipantStatus
+        statusGlyphMarkdown: string
+      }>
+      totalWorkLabel: string
+    }
+    /** Structured Commits rows (optional seat attribution) for Task-complete. */
+    closeoutCommits?: Array<{
+      hash: string
+      subject?: string
+      stats?: string
+      seatLink?: {
+        participantId: string
+        before: Record<string, unknown>
+        after: Record<string, unknown>
+      }
+      participantId?: string
+    }>
     /** User pin timestamp (ms since epoch). Missing means not pinned. */
     pinnedAt?: number
     /** User thumbs feedback on an ASSISTANT message. This field is the render

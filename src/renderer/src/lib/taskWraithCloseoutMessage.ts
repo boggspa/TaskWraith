@@ -78,11 +78,12 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     lines,
     goalSummarySentence(resolveCloseoutGoal(chat.activeGoal, run.activeGoalId), input.now)
   )
-  lines.push(
-    ...formatCommitTableSection(
-      collectCloseoutCommits(chat.messages, (message) => message.runId === run.runId)
-    )
+  const closeoutCommits = collectCloseoutCommits(
+    chat.messages,
+    (message) => message.runId === run.runId,
+    { chat }
   )
+  lines.push(...formatCommitTableSection(closeoutCommits))
 
   return {
     id: taskWraithRunCloseoutId(run.runId),
@@ -98,7 +99,8 @@ export function buildTaskWraithRunCloseoutMessage(input: {
       closeoutStatus: run.status || (exitCode === 0 ? 'success' : 'failed'),
       ...(durationMs > 0 ? { closeoutDurationMs: durationMs } : {}),
       ...(run.activeGoalId ? { closeoutGoalId: run.activeGoalId } : {}),
-      ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {})
+      ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
+      ...(closeoutCommits.length > 0 ? { closeoutCommits } : {})
     }
   }
 }
@@ -127,14 +129,15 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   appendCloseoutProse(lines, tokenUsageSentence('round', roundRuns))
   appendCloseoutProse(lines, validationSummarySentence(chat.messages, roundRunIds))
   appendCloseoutProse(lines, goalSummarySentence(chat.activeGoal, input.now))
+  const participantTable = buildCloseoutParticipantTable(chat, closeoutParticipants, roundRuns)
+  const closeoutCommits = collectCloseoutCommits(
+    chat.messages,
+    (message) => message.metadata?.ensembleRoundId === round.roundId,
+    { chat }
+  )
   lines.push(
     ...formatParticipantTableSection(chat, closeoutParticipants, roundRuns),
-    ...formatCommitTableSection(
-      collectCloseoutCommits(
-        chat.messages,
-        (message) => message.metadata?.ensembleRoundId === round.roundId
-      )
-    )
+    ...formatCommitTableSection(closeoutCommits)
   )
 
   return {
@@ -150,7 +153,9 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
       closeoutStatus: round.status,
       ...(durationMs > 0 ? { closeoutDurationMs: durationMs } : {}),
       ...(chat.activeGoal?.id ? { closeoutGoalId: chat.activeGoal.id } : {}),
-      ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {})
+      ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
+      ...(participantTable ? { closeoutParticipantTable: participantTable } : {}),
+      ...(closeoutCommits.length > 0 ? { closeoutCommits } : {})
     }
   }
 }
@@ -1038,12 +1043,12 @@ function participantStatusFromRun(chat: ChatRecord, run: ChatRun): EnsembleParti
   return 'answered'
 }
 
-function formatParticipantTableSection(
+export function buildCloseoutParticipantTable(
   chat: ChatRecord,
   participants: EnsembleRoundParticipantState[],
   roundRuns: ChatRun[]
-): string[] {
-  if (participants.length === 0) return []
+): CloseoutParticipantTable | null {
+  if (participants.length === 0) return null
   const turnCounts = new Map<string, number>()
   const tokenCounts = new Map<string, number>()
   const estimatedTokenParticipants = new Set<string>()
@@ -1134,32 +1139,51 @@ function formatParticipantTableSection(
     )
     // Link TEXT keeps every field the five culled columns used to carry, so
     // surfaces that don't intercept the scheme lose nothing but the motion.
-    const seatText = escapeMarkdownTableCell(
-      [`@${label}`, providerSeq.text, modelSeq.text, reasoningSeq.text, permissionSeq.text]
-        .filter((part) => part && part !== '—')
-        .join(' · ')
-    )
-    const seatHref = encodeSeatChangeLink(
-      participantSeatChangeLink(participant, label, {
-        provider: providerSeq,
-        model: modelSeq,
-        reasoning: reasoningSeq,
-        permission: permissionSeq
-      })
-    )
-    const workCell = formatParticipantWorkCell(
-      turns,
-      tokens,
-      estimatedTokenParticipants.has(participant.participantId)
-    )
-    return `| [${seatText}](${seatHref}) | ${workCell} ${statusGlyph(participant.status)} |`
+    const seatText = [`@${label}`, providerSeq.text, modelSeq.text, reasoningSeq.text, permissionSeq.text]
+      .filter((part) => part && part !== '—')
+      .join(' · ')
+    const seatLink = participantSeatChangeLink(participant, label, {
+      provider: providerSeq,
+      model: modelSeq,
+      reasoning: reasoningSeq,
+      permission: permissionSeq
+    })
+    return {
+      participantId: participant.participantId,
+      seatLink,
+      seatText,
+      workLabel: formatParticipantWorkCell(
+        turns,
+        tokens,
+        estimatedTokenParticipants.has(participant.participantId)
+      ),
+      status: participant.status,
+      statusGlyphMarkdown: statusGlyph(participant.status)
+    }
   })
-  const totalWorkCell = formatParticipantWorkCell(
-    totalTurns,
-    totalTokens,
-    estimatedTokenParticipants.size > 0
-  )
-  rows.push(`| **Round Total** | ${totalWorkCell} |`)
+  return {
+    rows,
+    totalWorkLabel: formatParticipantWorkCell(
+      totalTurns,
+      totalTokens,
+      estimatedTokenParticipants.size > 0
+    )
+  }
+}
+
+function formatParticipantTableSection(
+  chat: ChatRecord,
+  participants: EnsembleRoundParticipantState[],
+  roundRuns: ChatRun[]
+): string[] {
+  const table = buildCloseoutParticipantTable(chat, participants, roundRuns)
+  if (!table) return []
+  const rows = table.rows.map((row) => {
+    const seatText = escapeMarkdownTableCell(row.seatText)
+    const seatHref = encodeSeatChangeLink(row.seatLink)
+    return `| [${seatText}](${seatHref}) | ${row.workLabel} ${row.statusGlyphMarkdown} |`
+  })
+  rows.push(`| **Round Total** | ${table.totalWorkLabel} |`)
   return [
     '',
     '**Participants**',
@@ -1413,21 +1437,50 @@ export type CloseoutCommit = {
   hash: string
   subject?: string
   stats?: string
+  /** Seat that authored the commit — same element as the Participants column. */
+  seatLink?: SeatChangeLink
+  participantId?: string
+}
+
+export type CloseoutParticipantRow = {
+  participantId: string
+  seatLink: SeatChangeLink
+  /** Plain-text seat fallback used by markdown / non-intercepting surfaces. */
+  seatText: string
+  workLabel: string
+  status: EnsembleParticipantStatus
+  statusGlyphMarkdown: string
+}
+
+export type CloseoutParticipantTable = {
+  rows: CloseoutParticipantRow[]
+  totalWorkLabel: string
 }
 
 export function collectCloseoutCommits(
   messages: ChatMessage[],
-  includeMessage: (message: ChatMessage) => boolean
+  includeMessage: (message: ChatMessage) => boolean,
+  options?: { chat?: ChatRecord }
 ): CloseoutCommit[] {
   const commits = new Map<string, CloseoutCommit>()
   for (const message of messages) {
     if (!includeMessage(message)) continue
+    const seatLink = options?.chat ? seatLinkForCommitMessage(options.chat, message) : null
+    const participantId =
+      typeof message.metadata?.ensembleParticipantId === 'string'
+        ? message.metadata.ensembleParticipantId
+        : undefined
     for (const activity of message.toolActivities || []) {
       if (!isGitCommitActivity(activity)) continue
       for (const commit of extractCommitsFromActivity(activity)) {
+        const attributed: CloseoutCommit = {
+          ...commit,
+          ...(seatLink ? { seatLink } : {}),
+          ...(participantId ? { participantId } : {})
+        }
         const existing = commits.get(commit.hash)
-        if (!existing || scoreCloseoutCommit(commit) > scoreCloseoutCommit(existing)) {
-          commits.set(commit.hash, commit)
+        if (!existing || scoreCloseoutCommit(attributed) > scoreCloseoutCommit(existing)) {
+          commits.set(commit.hash, attributed)
         }
       }
     }
@@ -1436,7 +1489,12 @@ export function collectCloseoutCommits(
 }
 
 function scoreCloseoutCommit(commit: CloseoutCommit): number {
-  return (commit.subject ? 2 : 0) + (commit.stats ? 1 : 0)
+  return (
+    (commit.subject ? 2 : 0) +
+    (commit.stats ? 1 : 0) +
+    (commit.seatLink ? 2 : 0) +
+    (commit.participantId ? 1 : 0)
+  )
 }
 
 function formatCommitTableSection(commits: CloseoutCommit[]): string[] {
@@ -1446,13 +1504,16 @@ function formatCommitTableSection(commits: CloseoutCommit[]): string[] {
     '',
     '**Commits**',
     '',
-    '| Hash | Message | Changes |',
-    '| --- | --- | --- |',
+    '| Hash | Message | Seat | Changes |',
+    '| --- | --- | --- | --- |',
     ...visible.map((commit) => {
       const hash = commit.hash.slice(0, 9)
       const subject = escapeMarkdownTableCell(commit.subject || '—')
       const stats = escapeMarkdownTableCell(commit.stats || '—')
-      return `| \`${hash}\` | ${subject} | ${stats} |`
+      const seat = commit.seatLink
+        ? `[seat](${encodeSeatChangeLink(commit.seatLink)})`
+        : '—'
+      return `| \`${hash}\` | ${subject} | ${seat} | ${stats} |`
     })
   ]
   const overflow = commits.length - visible.length
@@ -1460,6 +1521,54 @@ function formatCommitTableSection(commits: CloseoutCommit[]): string[] {
     lines.push('', `_${overflow} more commit${overflow === 1 ? '' : 's'} not shown._`)
   }
   return lines
+}
+
+function seatLinkForCommitMessage(chat: ChatRecord, message: ChatMessage): SeatChangeLink | null {
+  const participantId =
+    typeof message.metadata?.ensembleParticipantId === 'string'
+      ? message.metadata.ensembleParticipantId
+      : null
+  if (!participantId) return null
+  const rosterSeat = (chat.ensemble?.participants || []).find(
+    (participant) => participant.id === participantId
+  )
+  const provider =
+    (typeof message.metadata?.ensembleProvider === 'string'
+      ? (message.metadata.ensembleProvider as ProviderId)
+      : undefined) ||
+    rosterSeat?.provider
+  if (!provider) return null
+  const model =
+    (typeof message.metadata?.ensembleModel === 'string' ? message.metadata.ensembleModel : '') ||
+    rosterSeat?.model ||
+    ''
+  const role =
+    (typeof message.metadata?.ensembleRole === 'string' ? message.metadata.ensembleRole : '') ||
+    rosterSeat?.role ||
+    getProviderLabel(provider)
+  const permissionPresetId =
+    rosterSeat?.permissionPresetId ||
+    (typeof message.metadata?.ensemblePermissionPresetId === 'string'
+      ? (message.metadata.ensemblePermissionPresetId as PermissionPresetId)
+      : undefined)
+  const reasoningEffort =
+    typeof message.metadata?.ensembleReasoningEffort === 'string'
+      ? message.metadata.ensembleReasoningEffort
+      : rosterSeat?.reasoningEffort
+  const thinkingEnabled =
+    typeof message.metadata?.ensembleThinkingEnabled === 'boolean'
+      ? message.metadata.ensembleThinkingEnabled
+      : rosterSeat?.thinkingEnabled
+  const state: SeatChangeSeatState = {
+    provider,
+    model,
+    role,
+    ...(typeof rosterSeat?.order === 'number' ? { seatNumber: rosterSeat.order } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(thinkingEnabled === undefined ? {} : { thinkingEnabled }),
+    ...(permissionPresetId ? { permissionPresetId } : {})
+  }
+  return { participantId, before: state, after: state }
 }
 
 function escapeMarkdownTableCell(value: string): string {

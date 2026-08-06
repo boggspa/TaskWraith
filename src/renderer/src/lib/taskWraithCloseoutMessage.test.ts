@@ -101,10 +101,17 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
     expect(closeout.content).not.toContain('Changed:')
     expect(closeout.content).toContain('**Commits**')
-    expect(closeout.content).toContain('| Hash | Message | Changes |')
+    expect(closeout.content).toContain('| Hash | Message | Seat | Changes |')
     expect(closeout.content).toContain(
-      '`18003ca96` | Add TaskWraith transcript closeouts | 21 files |'
+      '`18003ca96` | Add TaskWraith transcript closeouts | — | 21 files |'
     )
+    expect(closeout.metadata?.closeoutCommits).toEqual([
+      {
+        hash: '18003ca96',
+        subject: 'Add TaskWraith transcript closeouts',
+        stats: '21 files'
+      }
+    ])
     expect(closeout.content).not.toContain('- Commits:')
   })
 
@@ -463,10 +470,10 @@ describe('taskWraithCloseoutMessage', () => {
     })
 
     expect(closeout.content).toContain(
-      '`d038a820e` | refactor(main-m3): make approval orchestration deps explicit | 1 file, +100 −31 |'
+      '`d038a820e` | refactor(main-m3): make approval orchestration deps explicit | — | 1 file, +100 −31 |'
     )
     expect(closeout.content).toContain(
-      '`bf52e2a62` | test(services): add coverage for M3 approval routing | 1 file, +66 −13 |'
+      '`bf52e2a62` | test(services): add coverage for M3 approval routing | — | 1 file, +66 −13 |'
     )
     expect(closeout.content).not.toContain('\\n')
   })
@@ -899,6 +906,11 @@ Next action:
     expect(closeout.content).toContain('The round used about 2k tokens in total.')
     expect(closeout.content).not.toContain('Participants:')
     expect(closeout.content).not.toContain('- Tokens:')
+    const table = closeout.metadata?.closeoutParticipantTable
+    expect(table?.rows).toHaveLength(4)
+    expect(table?.totalWorkLabel).toBe('~2k Tks / 4 Turns')
+    expect(table?.rows?.[0]?.seatLink?.participantId).toBe('p1')
+    expect(table?.rows?.[0]?.seatText).toContain('Builder')
   })
 
   it('uses compact status icons without repeating participant counts in prose', () => {
