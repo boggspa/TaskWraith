@@ -49,6 +49,15 @@ markers were in exactly that shape on 2026-08-06, one of them otherwise
 perfect. A marker also claims nothing if its pid is dead, its `expires` has
 passed or cannot be parsed, or a path does not match **exactly**.
 
+**If you are a sandboxed TaskWraith seat you cannot read your own pid.** Use
+`lockOwnerId: <$TASKWRAITH_LOCK_OWNER_ID>` in place of `pid:` — every seat
+carries that variable, and it is scoped to your seat alone (run + lane +
+participant), not your thread. Do not fall back to one thread-wide marker: it
+claims far more than you are editing and collides with work done outside
+TaskWraith in the same checkout. With no pid, `expires` is your claim's only
+decay signal, so keep the lease short and renew it. Either field alone is
+enough; supply both if you have both.
+
 Verify yours parses rather than eyeballing it:
 
 ```bash

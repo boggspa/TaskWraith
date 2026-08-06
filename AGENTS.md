@@ -169,6 +169,43 @@ forgotten claim decays on its own instead of blocking the tree forever. This
 is the same liveness model the credential authority already uses (owner pid
 plus process birth identity) — copy it rather than inventing another.
 
+#### If you cannot read your own pid — sandboxed TaskWraith seats
+
+A sandboxed provider seat cannot inspect its own pid, so it can satisfy neither
+half of the pid rule. **Use `lockOwnerId:` instead of `pid:`** — the value of
+`TASKWRAITH_LOCK_OWNER_ID`, which every seat already carries in its environment:
+
+```yaml
+---
+session: <session id>
+agent: <provider/model>
+lockOwnerId: <the exact value of $TASKWRAITH_LOCK_OWNER_ID>
+expires: <ISO-8601 UTC — short lease, renew it>
+paths:
+  - src/main/Thing.ts
+---
+```
+
+That id is issued at the narrowest execution boundary available — it is scoped
+to `runId + laneId + participantId` (`src/main/WorkspaceLockExecutionIdentity.ts`),
+so it identifies **your seat alone**, not your thread. A thread-wide marker is
+the wrong shape: it claims far more than you are editing and collides with work
+done outside TaskWraith in the same checkout.
+
+Ownership is exact string equality against the env var, so an absent or empty
+`TASKWRAITH_LOCK_OWNER_ID` never matches anything. Either field alone is enough;
+supply both if you have both.
+
+**With no pid there is no process to probe, so `expires` is the only decay
+signal your claim has.** A missing or unparseable `expires` is treated as
+decayed — the marker claims nothing — precisely so a dead seat cannot wedge the
+tree forever. Keep the lease short and renew it.
+
+The runtime-derived markers (`.WORK-IN-PROGRESS-taskwraith-runtime-*.md`) are
+**not** a substitute: those are projected while a durable write lease is held
+and released with it, so they exist for seconds. They serialise a mutation;
+they cannot say "I am working on these files for the next two hours."
+
 Read the two liveness signals **asymmetrically**. `expires` is the authority:
 past it, the claim is decayed no matter what the pid says. The pid exists only
 to decay a claim *early* when a session dies; it can never extend one.

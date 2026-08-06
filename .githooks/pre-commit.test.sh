@@ -88,6 +88,24 @@ write_manual_marker() {
     'manual test marker' > "$repo/.WORK-IN-PROGRESS-manual-test.md"
 }
 
+# A manual claim raised by a sandboxed seat: no pid (it cannot inspect one),
+# authenticated instead by the per-seat TASKWRAITH_LOCK_OWNER_ID it already
+# carries in its environment.
+write_owner_id_marker() {
+  local repo="$1" owner_id="$2" path="$3"
+  printf '%s\n' \
+    '---' \
+    'session: seat-test' \
+    'agent: test-seat' \
+    "lockOwnerId: $owner_id" \
+    'started: 2026-08-06T00:00:00Z' \
+    'expires: 2099-07-29T00:00:00Z' \
+    'paths:' \
+    "  - $path" \
+    '---' \
+    'sandboxed seat marker' > "$repo/.WORK-IN-PROGRESS-manual-test.md"
+}
+
 write_derived_marker() {
   local repo="$1" owner_id="$2" workspace_wide="$3" tree="$4" path="$5"
   local marker_pid="${6:-$$}"
@@ -358,6 +376,71 @@ if [[ "$hook_output" != *'has no pid'* ]]; then
   exit 1
 fi
 assertions=$((assertions + 1))
+
+# SANDBOXED SEATS. A TaskWraith provider seat cannot inspect its own pid, so it
+# cannot satisfy the pid lane at all — ownership there is pid ancestry and
+# liveness is `kill -0`. It does carry a per-seat opaque id in its environment
+# (TASKWRAITH_LOCK_OWNER_ID, scoped to runId+laneId+participantId), which the
+# derived lane already trusts. These pin the same identity working for a manual,
+# intent-length claim, since derived markers are lease-transient and cannot
+# express "I am working on these files for the next two hours".
+repo="$(new_repo seat-claim-foreign)"
+stage_file "$repo" src/manual.ts
+write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
+expect_block 'a lock-owner-id claim blocks a session that is not that seat' "$repo" seat-owner-2
+
+repo="$(new_repo seat-claim-empty-env)"
+stage_file "$repo" src/manual.ts
+write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
+# An absent env var must never satisfy an owner id. Anything else would let any
+# process outside TaskWraith inherit every seat's bypass at once.
+expect_block 'an empty lock-owner env never matches a claim' "$repo"
+
+repo="$(new_repo seat-claim-own)"
+stage_file "$repo" src/manual.ts
+write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
+expect_allow 'the exact seat owns its own lock-owner-id claim' "$repo" seat-owner-1
+# Section 4 must recognise the same identity, or a seat holding a perfectly good
+# claim gets told it has none — which would teach seats to ignore the nag.
+if [[ "$hook_output" == *'no live claim of yours'* ]]; then
+  printf 'FAIL: seat with a live lock-owner-id claim was nagged as markerless\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+if [[ "$hook_output" != *'your claim'* ]]; then
+  printf 'FAIL: seat was not told its own lock-owner-id claim is still up\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+# Liveness with no pid rests entirely on `expires`, so it must still decay.
+repo="$(new_repo seat-claim-expired)"
+stage_file "$repo" src/manual.ts
+write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
+expire_marker "$repo/.WORK-IN-PROGRESS-manual-test.md"
+expect_allow 'an expired lock-owner-id claim decays without any pid' "$repo" seat-owner-2
+
+# And an unreadable lease must decay it too, exactly like the pid lane.
+repo="$(new_repo seat-claim-unreadable-lease)"
+stage_file "$repo" src/manual.ts
+write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" 'tomorrow-ish'
+expect_allow 'an unreadable lease decays a lock-owner-id claim too' "$repo" seat-owner-2
+
+# A marker carrying BOTH identities: ownership is either, so a seat that matches
+# the owner id owns the claim even though the pid belongs to someone else.
+repo="$(new_repo seat-claim-both-identities)"
+stage_file "$repo" src/manual.ts
+printf '%s\n' \
+  '---' 'session: manual-test' 'agent: test-agent' \
+  "pid: $foreign_pid" 'lockOwnerId: seat-owner-1' \
+  'started: 2026-07-29T00:00:00Z' 'expires: 2099-07-29T00:00:00Z' \
+  'paths:' '  - src/manual.ts' '---' 'both identities' \
+  > "$repo/.WORK-IN-PROGRESS-manual-test.md"
+expect_allow 'a matching owner id owns a claim whose pid is foreign' "$repo" seat-owner-1
+expect_block 'that same claim still blocks a different seat' "$repo" seat-owner-2
 
 # Section 4's mirror: the hook must say something to a session that is committing
 # with no claim of its own. Path COVERAGE is deliberately not checked here —

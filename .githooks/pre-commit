@@ -119,6 +119,26 @@ is_own_marker_claim() {
   is_own_claim "$claim_pid"
 }
 
+# Manual ownership accepts EITHER identity, because not every agent can produce
+# both. A sandboxed TaskWraith provider seat cannot inspect its own pid, so pid
+# ancestry is unreachable for it — but it does carry a per-seat opaque id in its
+# environment (TASKWRAITH_LOCK_OWNER_ID, scoped to runId+laneId+participantId),
+# which the derived lane already trusts. Accepting it here lets a seat raise a
+# narrow, intent-length claim of its own; derived markers cannot serve that, as
+# they live only as long as the write lease that projects them.
+#
+# An absent or empty env var must NEVER match, or every process outside
+# TaskWraith would inherit every seat's bypass at once.
+is_own_manual_claim() {
+  local claim_pid="$1" claim_owner="$2"
+  if [ -n "$claim_owner" ] &&
+    [ -n "${TASKWRAITH_LOCK_OWNER_ID:-}" ] &&
+    [ "${TASKWRAITH_LOCK_OWNER_ID}" = "$claim_owner" ]; then
+    return 0
+  fi
+  is_own_claim "$claim_pid"
+}
+
 is_runtime_marker_filename() {
   case "$1" in
     .WORK-IN-PROGRESS-taskwraith-runtime-*.md) return 0 ;;
@@ -445,9 +465,11 @@ for marker in .WORK-IN-PROGRESS-*.md; do
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   m_exp="$(marker_scalar "$marker" expires)"
   m_agent="$(marker_scalar "$marker" agent)"
+  m_owner="$(marker_scalar "$marker" lockOwnerId)"
 
-  # Human markers use the historical pid-ancestry rule.
-  is_own_marker_claim "$marker" "$m_pid" && continue
+  # Human markers use pid ancestry, or an exact per-seat owner id when the
+  # author had no pid to give.
+  is_own_manual_claim "$m_pid" "$m_owner" && continue
   # An empty pid has two very different causes and they need different words.
   # `marker_scalar` enters a frontmatter block only on a line that is exactly
   # `---`, and every key lookup is gated on that — so a marker without the
@@ -455,22 +477,28 @@ for marker in .WORK-IN-PROGRESS-*.md; do
   # paths list. It does not claim less, it claims nothing. Calling that "no pid"
   # sends its author hunting for a line that is already sitting in the file
   # (observed 2026-08-06 on two live markers, one otherwise perfectly formed).
-  if [ -z "$m_pid" ]; then
+  if [ -z "$m_pid" ] && [ -z "$m_owner" ]; then
     if ! grep -qx -- '---' "$marker" 2>/dev/null; then
       printf '  note: %s has no --- frontmatter delimiters, so every\n' "$marker"
       printf '        field parses empty and it claims NOTHING. Wrap the fields in a\n'
       printf '        --- ... --- block (AGENTS.md: Marker format).\n'
-    elif grep -q '^[[:space:]]*pid:' "$marker" 2>/dev/null; then
-      printf '  note: %s has a pid: line the frontmatter parser cannot\n' "$marker"
-      printf '        reach, so it claims NOTHING. Every field must sit inside the\n'
-      printf '        --- ... --- block (AGENTS.md: Marker format).\n'
+    elif grep -qE '^[[:space:]]*(pid|lockOwnerId):' "$marker" 2>/dev/null; then
+      printf '  note: %s has an identity line the frontmatter parser\n' "$marker"
+      printf '        cannot reach, so it claims NOTHING. Every field must sit inside\n'
+      printf '        the --- ... --- block (AGENTS.md: Marker format).\n'
     else
-      printf '  note: %s has no pid — treating as advisory (see AGENTS.md).\n' "$marker"
+      printf '  note: %s has no pid or lockOwnerId — treating as advisory.\n' "$marker"
     fi
     warn=1
     continue
   fi
-  kill -0 "$m_pid" 2>/dev/null || continue
+  # Liveness. A pid is the stronger signal, so it rules when present. An
+  # owner-id-only claim has no process to probe, which leaves `expires` as its
+  # sole decay signal — hence the unreadable-lease rule below is load-bearing
+  # for seats in a way it never was for the pid lane.
+  if [ -n "$m_pid" ]; then
+    kill -0 "$m_pid" 2>/dev/null || continue
+  fi
   # `expires` is the authority, and it has to be READABLE to hold. A missing or
   # unparseable lease decays the claim exactly like an elapsed one — otherwise
   # it blocks every other session for as long as the host pid lives, and agent
@@ -556,7 +584,8 @@ for marker in SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md .WORK-IN-PROGRESS-*.md; do
   is_runtime_marker_filename "$marker" && continue
   m_pid="$(marker_scalar "$marker" pid)"
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
-  is_own_marker_claim "$marker" "$m_pid" || continue
+  m_owner="$(marker_scalar "$marker" lockOwnerId)"
+  is_own_manual_claim "$m_pid" "$m_owner" || continue
   printf '  note: your claim %s is still up — drop it when this work is done.\n' "$marker"
   m_exp="$(marker_scalar "$marker" expires)"
   exp_epoch=""
@@ -623,9 +652,10 @@ for marker in .WORK-IN-PROGRESS-*.md; do
   m_pid="$(marker_scalar "$marker" pid)"
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   m_exp="$(marker_scalar "$marker" expires)"
+  m_owner="$(marker_scalar "$marker" lockOwnerId)"
   # Your own decayed marker gets the personal nag from section 4, not the
   # adoption nag.
-  is_own_marker_claim "$marker" "$m_pid" && continue
+  is_own_manual_claim "$m_pid" "$m_owner" && continue
   decayed=0
   if [ -n "$m_pid" ] && ! kill -0 "$m_pid" 2>/dev/null; then
     decayed=1
