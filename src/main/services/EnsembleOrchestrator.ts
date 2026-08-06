@@ -3294,6 +3294,13 @@ interface ActiveRoundRuntime {
    */
   fanoutReservedParticipantIds?: Set<string>
   /**
+   * Boss/Captain who launched (or ended) an owned fan-out wave without
+   * synthesizing. Survives across re-summoned authority turns so ordinary
+   * serial writers cannot start until that seat produces a post-wave answer
+   * (or hands off to another available manager).
+   */
+  pendingAuthorityFanoutSynthesisParticipantId?: string
+  /**
    * Dispatch-start receipts for additive user-tagged fan-out. A serial turn
    * reaching one of these seats waits only for its routing receipt, then skips
    * an accepted lane or proceeds normally after a rejection. This prevents a
@@ -5240,6 +5247,118 @@ export class EnsembleOrchestrator {
       if (!activeParticipantIds.has(participantId)) count += 1
     }
     return Math.max(count, run.pendingFanoutDispatches?.size || 0)
+  }
+
+  private runMissingOwnedFanoutSynthesis(run: ActiveParticipantRun): boolean {
+    return (
+      run.ownedFanoutTranscriptBoundary !== undefined &&
+      (run.timeline?.length || 0) <= run.ownedFanoutTranscriptBoundary &&
+      !run.fanoutTimedOut
+    )
+  }
+
+  private noteMissingOwnedFanoutSynthesis(
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun
+  ): void {
+    if (!this.runMissingOwnedFanoutSynthesis(run)) return
+    if (run.terminalFinalized === true) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${participantDisplayName(run.participant)} ended the turn without synthesizing fan-out results.`
+      )
+      return
+    }
+    run.fanoutSynthesisRequired = true
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${participantDisplayName(run.participant)} must synthesize fan-out results before the turn can advance.`
+    )
+  }
+
+  private pendingYieldTargetsActiveFanoutManager(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun
+  ): boolean {
+    const pending = runtime.yieldRouting
+    if (!pending || pending.kind !== 'queue') return false
+    if (pending.targetParticipantId === run.participant.id) return false
+    const target = chat.ensemble?.participants.find(
+      (entry) => entry.id === pending.targetParticipantId && entry.enabled
+    )
+    if (!target) return false
+    return Boolean(this.fanoutAuthorityRoleForCaller(chat, runtime, target.id))
+  }
+
+  private clearNonAuthorityFanoutYieldRouting(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun
+  ): void {
+    if (this.pendingYieldTargetsActiveFanoutManager(chat, runtime, run)) return
+    if (!runtime.yieldRouting) return
+    runtime.yieldRouting = undefined
+    this.discardYieldReturnFrameForYielder(runtime, run.participant.id)
+  }
+
+  /**
+   * Keep Boss/Captain on the serial queue while an owned fan-out wave still
+   * needs synthesis or settlement. Turn-bound rounds get a force re-queue;
+   * continuous rounds consume a normal continuation hop when eligible.
+   */
+  private requeueAuthorityForActiveFanoutHold(
+    runtime: ActiveRoundRuntime,
+    remaining: EnsembleParticipant[],
+    participant: EnsembleParticipant,
+    statusMessage: string
+  ): boolean {
+    const existingIdx = remaining.findIndex((entry) => entry.id === participant.id)
+    if (existingIdx === 0) {
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
+      return true
+    }
+    if (existingIdx > 0) {
+      const [existing] = remaining.splice(existingIdx, 1)
+      remaining.unshift(existing)
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
+      return true
+    }
+    if (runtime.orchestrationMode === 'continuous') {
+      const continuation = this.tryAppendContinuationTurn(
+        runtime,
+        remaining,
+        participant,
+        statusMessage,
+        {
+          allowAnsweredParticipant: true,
+          allowYieldedParticipant: true
+        }
+      )
+      if (continuation.appended) return true
+      // Hard blocks still fail closed. Hop/budget/status refusals must not let
+      // ordinary writers race an unsettled authority-owned fan-out wave.
+      if (
+        continuation.reason === 'unreachable' ||
+        continuation.reason === 'outside_round_scope' ||
+        continuation.reason === 'active_fanout'
+      ) {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${statusMessage} Could not re-summon ${participantDisplayName(participant)}: ${this.describeContinuationDecline(continuation)}.`
+        )
+        return false
+      }
+    }
+    // Turn-bound seats speak once by default; an active fan-out authority hold
+    // outranks that so ordinary writers cannot race unsettled lanes. The same
+    // force path covers continuous hop/budget refusals above.
+    remaining.unshift(participant)
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
+    return true
   }
 
   private canReceiveActiveFanoutManagerHandoff(
@@ -14801,36 +14920,137 @@ export class EnsembleOrchestrator {
       // below is intentionally evaluated AFTER the wait so its exact target and
       // hop accounting are preserved. Stop/steer still cancels the runtime and
       // releases the wait through lane finalization.
-      if (this.hasOwnedFanoutWork(run)) {
+      //
+      // Boss/Captain authority ring: while owned fan-out is unsettled or the
+      // authority ended without synthesis, do not auto-advance to ordinary
+      // serial writers. Re-summon the authority so it can keep working /
+      // synthesize (ensemble_await / ensemble_lane_result) — the only other
+      // allowed exit is an explicit yield to another available Boss/Captain.
+      const authorityFanoutRole = this.fanoutAuthorityRoleForCaller(
+        chat,
+        runtime,
+        participant.id
+      )
+      const managerFanoutHandoffPending =
+        Boolean(authorityFanoutRole) &&
+        this.pendingYieldTargetsActiveFanoutManager(chat, runtime, run)
+      if (authorityFanoutRole && this.runMissingOwnedFanoutSynthesis(run)) {
+        runtime.pendingAuthorityFanoutSynthesisParticipantId = participant.id
+      }
+      if (
+        managerFanoutHandoffPending &&
+        runtime.yieldRouting?.kind === 'queue' &&
+        runtime.pendingAuthorityFanoutSynthesisParticipantId === participant.id
+      ) {
+        // The peer manager inherits the synthesis obligation for this wave.
+        runtime.pendingAuthorityFanoutSynthesisParticipantId =
+          runtime.yieldRouting.targetParticipantId
+      }
+      if (authorityFanoutRole && !managerFanoutHandoffPending) {
+        const unsettledLaneCount = this.unsettledFanoutLaneCount(runtime, run)
+        const ownedFanoutWork = this.hasOwnedFanoutWork(run)
+        const synthesisPendingForSeat =
+          this.runMissingOwnedFanoutSynthesis(run) ||
+          runtime.pendingAuthorityFanoutSynthesisParticipantId === participant.id
+        const waveActive = ownedFanoutWork || unsettledLaneCount > 0
+        const waveSettled = !waveActive
+        const synthesizedThisTurn =
+          waveSettled &&
+          synthesisPendingForSeat &&
+          run.content.trim().length > 0 &&
+          !this.runMissingOwnedFanoutSynthesis(run)
+        if (synthesizedThisTurn) {
+          runtime.pendingAuthorityFanoutSynthesisParticipantId = undefined
+        } else if (waveSettled && synthesisPendingForSeat && runtime.yieldRouting) {
+          // Post-settlement explicit handoff outranks the synthesis obligation.
+          runtime.pendingAuthorityFanoutSynthesisParticipantId = undefined
+        }
+        let notedMissingSynthesis = false
+        const noteMissingOnce = (): void => {
+          if (notedMissingSynthesis || !this.runMissingOwnedFanoutSynthesis(run)) return
+          this.noteMissingOwnedFanoutSynthesis(runtime, run)
+          notedMissingSynthesis = true
+        }
+        // While lanes are live, keep the authority ring closed (no ordinary
+        // serial writers; non-manager yields stay held). After settlement, an
+        // explicit yield/mention may route normally — only a silent end with a
+        // still-pending synthesis obligation re-summons the authority seat.
+        const retainAuthorityRing =
+          !synthesizedThisTurn &&
+          (waveActive || (synthesisPendingForSeat && !runtime.yieldRouting))
+        if (retainAuthorityRing) {
+          noteMissingOnce()
+          if (waveActive) {
+            this.clearNonAuthorityFanoutYieldRouting(chat, runtime, run)
+          }
+          // Prefer an immediate re-summon so Boss/Captain can keep working
+          // (ensemble_await / more tools) while lanes run. Fall back to the
+          // owned-settlement wait only when the continuation hop is refused.
+          if (
+            this.requeueAuthorityForActiveFanoutHold(
+              runtime,
+              remaining,
+              participant,
+              synthesisPendingForSeat
+                ? unsettledLaneCount > 0 || ownedFanoutWork
+                  ? `${participantDisplayName(participant)} retains the authority turn while ${Math.max(unsettledLaneCount, ownedFanoutWork ? 1 : 0)} fan-out lane(s) remain unsettled; synthesize before ordinary serial writers.`
+                  : `${participantDisplayName(participant)} retains the authority turn to synthesize fan-out results.`
+                : `${participantDisplayName(participant)} retains the authority turn while ${Math.max(unsettledLaneCount, ownedFanoutWork ? 1 : 0)} fan-out lane(s) remain unsettled.`
+            )
+          ) {
+            continue
+          }
+          if (ownedFanoutWork) {
+            await this.waitForOwnedFanoutSettlements(runtime, run)
+            if (runtime.cancelled) break
+          }
+          const stillUnsettledCount = this.unsettledFanoutLaneCount(runtime, run)
+          const stillOwned = this.hasOwnedFanoutWork(run)
+          const stillWaveActive = stillOwned || stillUnsettledCount > 0
+          const stillSynthesisPending =
+            this.runMissingOwnedFanoutSynthesis(run) ||
+            runtime.pendingAuthorityFanoutSynthesisParticipantId === participant.id
+          const stillRetain =
+            stillWaveActive || (stillSynthesisPending && !runtime.yieldRouting)
+          if (stillRetain) {
+            noteMissingOnce()
+            if (stillWaveActive) {
+              this.clearNonAuthorityFanoutYieldRouting(chat, runtime, run)
+            }
+            if (
+              this.requeueAuthorityForActiveFanoutHold(
+                runtime,
+                remaining,
+                participant,
+                `${participantDisplayName(participant)} retains the authority turn while fan-out work remains unsettled.`
+              )
+            ) {
+              continue
+            }
+            if (stillWaveActive && this.ownedFanoutHadWriteIntent(run)) {
+              this.appendRoundStatus(
+                runtime.chatId,
+                runtime.roundId,
+                `Authority fan-out hold: could not re-summon ${participantDisplayName(participant)} while writer lane(s) remain unsettled. Routing paused for this round.`
+              )
+              remaining.length = 0
+              break
+            }
+          }
+        }
+      } else if (this.hasOwnedFanoutWork(run)) {
         await this.waitForOwnedFanoutSettlements(runtime, run)
         if (runtime.cancelled) break
       }
-      // 1.0.7 — Option B enforcement: a Boss/Captain turn that launched owned
-      // fan-out lanes must synthesize the results before the turn ends. If no
-      // post-fan-out timeline content exists after settlements settle, mark a
-      // non-terminal turn as requiring synthesis (the hold releases once the
-      // caller produces prose). Terminal turns get a status note but release
-      // immediately so the queue is never pinned. Timed-out turns are already
-      // announced as proceeding with partial results.
+      // 1.0.7 — Option B enforcement for non-authority owners (and authority
+      // seats that could not be re-queued): mark missing synthesis. Authority
+      // re-summon above is the preferred path so ordinary writers do not start
+      // while Boss/Captain still owes a synthesis turn.
       if (
-        run.ownedFanoutTranscriptBoundary !== undefined &&
-        (run.timeline?.length || 0) <= run.ownedFanoutTranscriptBoundary &&
-        !run.fanoutTimedOut
+        !(authorityFanoutRole && !managerFanoutHandoffPending) &&
+        this.runMissingOwnedFanoutSynthesis(run)
       ) {
-        if (run.terminalFinalized === true) {
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `${participantDisplayName(run.participant)} ended the turn without synthesizing fan-out results.`
-          )
-        } else {
-          run.fanoutSynthesisRequired = true
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `${participantDisplayName(run.participant)} must synthesize fan-out results before the turn can advance.`
-          )
-        }
+        this.noteMissingOwnedFanoutSynthesis(runtime, run)
       }
       // 1.0.7 — Defensive writer-lane conflict guard. The serial queue should
       // already be blocked while owned writer lanes are in flight; if another

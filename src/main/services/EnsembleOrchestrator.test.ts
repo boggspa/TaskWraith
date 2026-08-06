@@ -17286,6 +17286,91 @@ Next action:
     await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
   })
 
+  it('re-summons Boss after a silent fan-out exit instead of advancing ordinary writers', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 8
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'reviewer',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'worker',
+        provider: 'gemini',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Boss fans out and must retain the turn.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossFanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId!, {
+      targets: ['Reviewer'],
+      prompt: 'Review while Boss remains responsible.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    // Boss ends without synthesis while the lane is still live — ordinary
+    // writers must not start; Boss is re-summoned into the authority ring.
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('boss')
+    expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
+    expect(
+      harness.chat.messages.some((message) =>
+        typeof message.content === 'string' &&
+        message.content.includes('retains the authority turn')
+      )
+    ).toBe(true)
+
+    // Lane returns while the re-summoned Boss turn is active.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'LANE-FINDING.' }
+    )
+    completeDispatchedRun(harness, 1)
+    await expect(bossFanout).resolves.toMatchObject({ ok: true })
+
+    // Empty Boss re-summon still owes synthesis — do not hand the baton to Worker.
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('boss')
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[3].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'BOSS-SYNTHESIS after the fan-out wave.' }
+    )
+    completeDispatchedRun(harness, 3)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5), { timeout: 1000 })
+    expect(harness.dispatched[4].ensembleRun?.participantId).toBe('worker')
+    await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
+  })
+
   it('defers an @mention handoff until the caller\'s fan-out lane returns', async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
