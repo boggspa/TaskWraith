@@ -612,19 +612,57 @@ installPerfStatsHandle(() => ({
  * durable in their own `approval-ledger.json`, written synchronously and never
  * routed through this coalescer. What this barrier protects is the transcript
  * rendering of an open approval, which would otherwise sit in a pending timer.
+ *
+ * NARROWED (item 5): the approval barrier fires on the save that OPENS or
+ * CHANGES an open approval, not on every save for as long as one stays open.
+ * It used to re-fsync the whole chat record on every save while a human sat
+ * looking at the dialog — during fan-out that is the amplification this epic
+ * exists to remove, and it bought nothing, because prompt rendering never came
+ * from the chat file:
+ *   - the renderer is pushed `agent-approval-request` directly, and remote
+ *     devices get the APNs attention fanout; neither reads the record;
+ *   - in-process readers cannot be stale anyway, because `saveChat` stamps
+ *     `chatRecordCache` with the `mtimeMs: -1` dirty marker BEFORE scheduling
+ *     and `readChatRecordCached` returns a dirty entry without stat-ing;
+ *   - the decision itself is already durable in `approval-ledger.json`.
+ * What remains is the transition, which is the thing a reader must not miss.
  */
+const openApprovalSignatureByChatId = new Map<string, string>()
+
+/** Stable description of every open approval on a chat; '' when there are none.
+ *  Compared against the previous save to detect a transition. */
+function describeOpenApprovals(chat: ChatRecord): string {
+  const lanes = chat.ensemble?.activeRound?.lanes
+  if (!lanes) return ''
+  const open: string[] = []
+  for (const [laneId, lane] of Object.entries(lanes)) {
+    const queued = lane.approvalsQueued ?? 0
+    if (lane.status === 'awaiting-approval' || queued > 0) {
+      open.push(`${laneId}:${lane.status}:${queued}`)
+    }
+  }
+  return open.sort().join('|')
+}
+
 function deriveSaveFlushReason(chat: ChatRecord): FlushReason {
   // A chat whose history is being destroyed must never sit in a timer: the
-  // deletion transaction is running concurrently with this save.
-  if (deletedChatIds.has(chat.appChatId)) return 'history-deletion'
+  // deletion transaction is running concurrently with this save. Checked
+  // first, and deliberately never narrowed (NON-NEGOTIABLE #4).
+  if (deletedChatIds.has(chat.appChatId)) {
+    openApprovalSignatureByChatId.delete(chat.appChatId)
+    return 'history-deletion'
+  }
 
-  const lanes = chat.ensemble?.activeRound?.lanes
-  if (lanes) {
-    for (const lane of Object.values(lanes)) {
-      if (lane.status === 'awaiting-approval' || (lane.approvalsQueued ?? 0) > 0) {
-        return 'approval'
-      }
+  const openApprovals = describeOpenApprovals(chat)
+  if (openApprovals) {
+    if (openApprovalSignatureByChatId.get(chat.appChatId) !== openApprovals) {
+      openApprovalSignatureByChatId.set(chat.appChatId, openApprovals)
+      return 'approval'
     }
+  } else {
+    // Cleared as soon as the last approval closes, so a later one re-arms the
+    // barrier instead of being mistaken for the one already rendered.
+    openApprovalSignatureByChatId.delete(chat.appChatId)
   }
 
   // Deferral is only safe while a run is actively streaming: that is both
@@ -4357,6 +4395,10 @@ export class AppStore {
     deletedRunIds.clear()
     runEventSequenceCache.clear()
     runEventHashCache.clear()
+    // Otherwise one test's still-open approval makes the next test's identical
+    // approval look like an already-rendered transition, and its barrier
+    // silently stops firing.
+    openApprovalSignatureByChatId.clear()
     this.chatRecordCache.clear()
     chatListIndexStore.clearCache()
     this.orphanSubThreadsReaped = false
@@ -5057,6 +5099,15 @@ export class AppStore {
 
   static toChatListItem(chat: ChatRecord, sourceStat?: Pick<fs.Stats, 'mtimeMs' | 'size'>): ChatListItem {
     const normalizedChat = this.normalizeChatRecord(chat)
+    // A list entry is a ROW, not a record. The full ensemble blob measured
+    // ~229 KB of a 234 KB entry — 98% — which is what grew
+    // chat-list-index.jsonl to ~98.7 MB and made every parse of it ~485 ms.
+    // The earlier T3c split moved runsSummary/lastRun and missed this field.
+    // The row keeps a LEAN ensemble rather than none: the sidebar's Ensembles
+    // section reads activeRound/participants for a row's subtitle and running
+    // state, and sidebarTerminalOutcome reads escalationSignals for its tone —
+    // and for a chat the user has not opened, the row is the only source.
+    const { ensemble, ...listProjection } = normalizedChat
     const messages = Array.isArray(normalizedChat.messages)
       ? normalizedChat.messages.filter((message) => !isRetiredExternalChannelInboundMessage(message))
       : []
@@ -5071,7 +5122,8 @@ export class AppStore {
       .map((message) => previewText(message.content, 180))
       .find(Boolean)
     return {
-      ...normalizedChat,
+      ...listProjection,
+      ...(ensemble ? { ensemble: this.toChatListEnsembleProjection(ensemble) } : {}),
       messages: [],
       runs: [],
       summaryOnly: true,
@@ -5096,10 +5148,75 @@ export class AppStore {
     }
   }
 
+  /** Marks the lean ensemble copy carried by a chat-list row.
+   *
+   *  Deliberately an untyped key: EnsembleConfig lives in types.ts, which this
+   *  change is not scoped to edit, and the flag is an internal store concern —
+   *  nothing outside this file should branch on it. */
+  private static readonly CHAT_LIST_ENSEMBLE_PROJECTION_FLAG = '__chatListProjection'
+
+  /** True when this ensemble is a list-row projection rather than the real
+   *  roster. Load-bearing: `saveChat` must never persist one of these. */
+  static isChatListEnsembleProjection(ensemble: EnsembleConfig | undefined): boolean {
+    if (!ensemble) return false
+    return (
+      (ensemble as unknown as Record<string, unknown>)[
+        this.CHAT_LIST_ENSEMBLE_PROJECTION_FLAG
+      ] === true
+    )
+  }
+
+  /** The lean ensemble a chat-list row carries.
+   *
+   *  Drops the four sub-blobs that make an entry fat and that no list surface
+   *  reads — seat instructions, round summaries, the blackboard and the
+   *  activity ledger — while keeping activeRound, seat roles/providers and
+   *  escalationSignals so sidebar rows still render. Measured on a 15-seat
+   *  round: 111 KB -> 3 KB, i.e. 97.3% of the saving of dropping it outright,
+   *  without blanking the Ensembles list. */
+  static toChatListEnsembleProjection(ensemble: EnsembleConfig): EnsembleConfig {
+    const {
+      roundSummaries: _roundSummaries,
+      blackboard: _blackboard,
+      blackboardTombstones: _blackboardTombstones,
+      wakeups: _wakeups,
+      sessionActivityLedger: _sessionActivityLedger,
+      ...rest
+    } = ensemble
+    return {
+      ...rest,
+      // `instructions` is required on EnsembleParticipant, so blank it rather
+      // than drop it — a row needs the seat's role and provider, never its
+      // brief, and the briefs are the single largest contributor.
+      participants: (rest.participants || []).map((participant) => ({
+        ...participant,
+        instructions: ''
+      })),
+      [this.CHAT_LIST_ENSEMBLE_PROJECTION_FLAG]: true
+    } as EnsembleConfig
+  }
+
+  /** Strip the projection marker without restoring anything — used when a
+   *  projection reaches a save with no persisted roster to fall back to. */
+  private static withoutChatListEnsembleProjectionFlag(ensemble: EnsembleConfig): EnsembleConfig {
+    const copy = { ...(ensemble as unknown as Record<string, unknown>) }
+    delete copy[this.CHAT_LIST_ENSEMBLE_PROJECTION_FLAG]
+    return copy as unknown as EnsembleConfig
+  }
+
   static normalizeChatListItem(item: ChatListItem): ChatListItem {
     const normalized = this.normalizeChatRecord(item)
+    // Project on the READ path too, and keep the marker. normalizeChatRecord
+    // REBUILDS an ensemble (falling back to createDefaultEnsembleConfig's
+    // participants) for any chatKind==='ensemble' record, so without this a
+    // row could come back advertising a DEFAULT roster the user never
+    // configured — and the renderer's mergeChatRecordValue spreads a summary's
+    // fields over the live record. Re-marking is what keeps saveChat's guard
+    // able to recognise a row that has been round-tripped through a merge.
+    const { ensemble, ...listProjection } = normalized
     return {
-      ...normalized,
+      ...listProjection,
+      ...(ensemble ? { ensemble: this.toChatListEnsembleProjection(ensemble) } : {}),
       messages: [],
       runs: [],
       summaryOnly: true,
@@ -5171,7 +5288,13 @@ export class AppStore {
 
   private static chatListItemJson(item: ChatListItem | undefined, includeVolatile: boolean): string {
     if (!item) return ''
-    if (includeVolatile) return JSON.stringify(item)
+    // Compare the projection we actually store. Entries written before the
+    // ensemble split still carry the blob on disk, so without this the diff
+    // would stringify ~229 KB twice on every save, and any round/seat mutation
+    // (which happens constantly during fan-out) would force an index rewrite
+    // for a field the row does not even persist.
+    const { ensemble: _ensemble, ...projected } = item
+    if (includeVolatile) return JSON.stringify(projected)
     const {
       updatedAt: _updatedAt,
       persistenceRevision: _persistenceRevision,
@@ -5180,7 +5303,7 @@ export class AppStore {
       sourceChatMtimeMs: _sourceChatMtimeMs,
       sourceChatSize: _sourceChatSize,
       ...stable
-    } = item
+    } = projected
     return JSON.stringify(stable)
   }
 
@@ -6323,6 +6446,16 @@ export class AppStore {
               (candidate) => ({ ...candidate })
             )
           }
+        : {}),
+      // A chat-list row carries a LEAN ensemble (no seat instructions, round
+      // summaries, blackboard or activity ledger). The renderer merges a
+      // refreshed row over a loaded record and that merge drops `summaryOnly`,
+      // so such a record can reach saveChat looking fully hydrated. Persisting
+      // it would silently erase every seat's brief. The stored roster wins.
+      ...(this.isChatListEnsembleProjection(chat.ensemble)
+        ? previousChatForFeedback?.ensemble
+          ? { ensemble: previousChatForFeedback.ensemble }
+          : { ensemble: this.withoutChatListEnsembleProjectionFlag(chat.ensemble!) }
         : {})
     }
 
@@ -6408,7 +6541,7 @@ export class AppStore {
             indexSourceStat = { mtimeMs: postStatActual.mtimeMs, size: postStatActual.size }
             // When the write was genuinely deferred, the entry already exists
             // and carries the pre-write stat — refresh it now that bytes land.
-            const settled = chatListIndexStore.readAll()[chatId]
+            const settled = chatListIndexStore.readEntry(chatId)
             if (
               settled &&
               (settled.sourceChatMtimeMs !== postStatActual.mtimeMs ||
@@ -6429,9 +6562,13 @@ export class AppStore {
     }
     // The chat-list-index write and harvests stay synchronous — they're cheap
     // thanks to T3c (incremental JSONL) and don't benefit from coalescing.
-    const index = chatListIndexStore.readAll()
+    // Read ONE entry, not the whole index: readAll() re-parses the entire
+    // JSONL plus a summary file per chat (~485 ms on a large profile), and it
+    // ran on every save. Under fan-out each lane arms its own flush, so that
+    // cost was multiplied by the number of concurrent lanes.
+    const previousItem = chatListIndexStore.readEntry(normalizedChat.appChatId)
     const nextItem = this.toChatListItem(normalizedChat, indexSourceStat)
-    if (this.shouldWriteChatListIndexItem(index[normalizedChat.appChatId], nextItem)) {
+    if (this.shouldWriteChatListIndexItem(previousItem, nextItem)) {
       chatListIndexStore.writeEntry(normalizedChat.appChatId, nextItem)
       this.chatListIndexWriteAtByChatId.set(normalizedChat.appChatId, Date.now())
     }

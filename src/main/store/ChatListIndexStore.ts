@@ -13,6 +13,18 @@
  *    lines relative to the live chat count.
  * 4. Lazy migration from the legacy `chat-list-index.json` format —
  *    transparent on first load; old format readable forever.
+ * 5. mtimeMs+size cache stamp so repeat readAll()/readEntry() skips the
+ *    full JSONL parse (and the O(chats) per-summary reads) when the file
+ *    is unchanged. Invalidation is stamped on every mutation path.
+ * 6. List projection carries only the LEAN ensemble (the flagged
+ *    `toChatListEnsembleProjection` output, ~3 KB); the fat blob was ~98% of
+ *    each entry and is not a list-index concern. Dropping `ensemble` outright
+ *    was worse than keeping it lean: `normalizeChatRecord` then rebuilt a
+ *    `createDefaultEnsembleConfig` roster, so rows advertised seats the user
+ *    never configured. One-time compact rewrites historical fat lines so
+ *    existing installs actually shrink, REDUCING each legacy blob to that same
+ *    lean projection rather than dropping it — dropping there reintroduced the
+ *    fabricated roster for every chat not since re-saved.
  *
  * NON-NEGOTIABLE #4 (history deletion) — the `removeEntries` method
  * appends tombstones immediately and then writes a compacted snapshot
@@ -35,11 +47,25 @@ export interface ChatListSummaryFields {
   lastRun?: ChatRun
 }
 
+/**
+ * Fields that must never live in the list-index JSONL line.
+ *
+ * `ensemble` is optional rather than omitted: the line carries the LEAN
+ * projection (flagged `__chatListProjection`) so the sidebar can render a real
+ * roster, and never the fat blob. Omitting it outright made this type lie
+ * about what `stripSummaries` now emits.
+ */
+type ChatListIndexLineEntry = Omit<
+  ChatListItem,
+  'runsSummary' | 'lastRun' | 'ensemble'
+> &
+  Partial<Pick<ChatListItem, 'ensemble'>>
+
 /** A single line in the JSONL index. */
 interface JsonlRecord {
   chatId: string
   /** null ⇒ tombstone (entry was deleted). */
-  entry: Omit<ChatListItem, 'runsSummary' | 'lastRun'> | null
+  entry: ChatListIndexLineEntry | null
 }
 
 // ---------------------------------------------------------------------------
@@ -56,12 +82,110 @@ function atomicWrite(filePath: string, data: string): void {
   fs.renameSync(tmp, filePath)
 }
 
-/** Strip summary fields from a ChatListItem (what the JSONL stores). */
-function stripSummaries(
-  item: ChatListItem
-): Omit<ChatListItem, 'runsSummary' | 'lastRun'> {
-  const { runsSummary: _, lastRun: __, ...rest } = item
-  return rest
+/**
+ * Marker stamped by `AppStore.toChatListEnsembleProjection`, which is the ONLY
+ * producer of a list-sized ensemble (roundSummaries / blackboard / wakeups /
+ * activity ledger dropped, seat `instructions` blanked: 111 KB → 3 KB on a
+ * 15-seat round). Its presence is what separates a LEAN row roster from a
+ * legacy FAT blob, and the whole read/write split below turns on it.
+ *
+ * The literal is mirrored from `store/index.ts` (private there). Keep the two
+ * identical — if they drift, lean rosters get treated as legacy blobs and
+ * every read triggers a compact (see `entryHasUnprojectedEnsemble`).
+ */
+const CHAT_LIST_ENSEMBLE_PROJECTION_FLAG = '__chatListProjection'
+
+/** True when an `ensemble` value is the lean, list-sized projection. */
+function isLeanEnsembleProjection(ensemble: unknown): boolean {
+  if (!ensemble || typeof ensemble !== 'object') return false
+  return (ensemble as Record<string, unknown>)[CHAT_LIST_ENSEMBLE_PROJECTION_FLAG] === true
+}
+
+/**
+ * The store-local mirror of `AppStore.toChatListEnsembleProjection`: drop the
+ * four sub-blobs that make an entry fat and blank the seat briefs, keeping
+ * activeRound / roles / providers so sidebar rows still render.
+ *
+ * It cannot be imported from `store/index.ts` — that module owns this one, so
+ * the dependency would be circular. The duplication is deliberate and narrow;
+ * the projection suite's round-trip test fails if the two drift.
+ */
+function toLeanEnsembleProjection(ensemble: Record<string, unknown>): Record<string, unknown> {
+  const {
+    roundSummaries: _roundSummaries,
+    blackboard: _blackboard,
+    blackboardTombstones: _blackboardTombstones,
+    wakeups: _wakeups,
+    sessionActivityLedger: _sessionActivityLedger,
+    ...rest
+  } = ensemble
+  const participants = Array.isArray(rest.participants) ? rest.participants : []
+  return {
+    ...rest,
+    // `instructions` is required on EnsembleParticipant, so blank it rather
+    // than drop it — a row needs the seat's role and provider, never its brief.
+    participants: participants.map((participant) =>
+      participant && typeof participant === 'object'
+        ? { ...(participant as Record<string, unknown>), instructions: '' }
+        : participant
+    ),
+    [CHAT_LIST_ENSEMBLE_PROJECTION_FLAG]: true
+  }
+}
+
+/**
+ * Strip fields that do not belong in the JSONL list projection:
+ * - runsSummary / lastRun → per-chat summary side files (T3c)
+ * - ensemble → reduced to the LEAN projection, never dropped
+ *
+ * `ensemble` used to be dropped unconditionally for size. That blanked the
+ * roster on every sidebar row, and `normalizeChatRecord` then REBUILT one from
+ * `createDefaultEnsembleConfig` for any `chatKind === 'ensemble'` record — so a
+ * 15-seat chat rendered as ~4 seats the user never configured. Fabricated
+ * rosters are worse than absent ones, so a lean projection is kept.
+ *
+ * An UNFLAGGED ensemble is REDUCED here rather than dropped. Dropping it was
+ * the same fabrication bug one step earlier: the legacy JSONL every existing
+ * install already has is fat and unflagged, it is healed through this function
+ * by the one-time compact, and dropping there handed the sidebar a rosterless
+ * row that `normalizeChatRecord` refilled with default seats — for every chat
+ * the user never happens to re-save. The real roster is present in that line,
+ * so reducing it costs one projection and loses nothing a list surface reads.
+ * Fat in / lean out, never fat in / gone. Size is unaffected in practice: the
+ * lean copy is ~3 KB against the ~229 KB blob it replaces.
+ */
+function stripSummaries(item: ChatListItem): ChatListIndexLineEntry {
+  const {
+    runsSummary: _runsSummary,
+    lastRun: _lastRun,
+    ensemble,
+    ...rest
+  } = item
+  if (!ensemble || typeof ensemble !== 'object') return rest
+  if (isLeanEnsembleProjection(ensemble)) return { ...rest, ensemble }
+  return {
+    ...rest,
+    ensemble: toLeanEnsembleProjection(
+      ensemble as unknown as Record<string, unknown>
+    ) as unknown as ChatListItem['ensemble']
+  }
+}
+
+/**
+ * True when a parsed JSONL entry carries an ensemble that does NOT belong on a
+ * list line — i.e. a legacy fat blob written before the projection existed.
+ *
+ * Gating on the projection flag rather than the bare presence of `ensemble` is
+ * load-bearing: this predicate drives `sawEnsemble → compact()` in `readAll`.
+ * Keyed on presence alone, every healthy lean row would look like a legacy blob
+ * and fire a full compaction on EVERY read — on the path already measured at
+ * ~485 ms per `saveChat`. Legacy lines still heal exactly once, then stop
+ * matching because the rewritten line carries the flag.
+ */
+function entryHasUnprojectedEnsemble(entry: unknown): boolean {
+  if (!entry || typeof entry !== 'object') return false
+  if (!Object.prototype.hasOwnProperty.call(entry, 'ensemble')) return false
+  return !isLeanEnsembleProjection((entry as Record<string, unknown>).ensemble)
 }
 
 /** Extract summary fields from a ChatListItem.
@@ -80,6 +204,18 @@ function extractSummaries(item: ChatListItem): ChatListSummaryFields {
   return result
 }
 
+/** Merge a stripped index line with optional side-file summaries. */
+function mergeEntry(
+  entry: ChatListIndexLineEntry,
+  summaries: ChatListSummaryFields
+): ChatListItem {
+  return {
+    ...entry,
+    ...(summaries.runsSummary ? { runsSummary: summaries.runsSummary } : {}),
+    ...(summaries.lastRun ? { lastRun: summaries.lastRun } : {}),
+  } as ChatListItem
+}
+
 /** True when a JSONL line count warrants compaction. */
 function shouldCompact(lineCount: number, chatCount: number): boolean {
   // Compact when stale lines (old versions of entries) exceed 3× chat count.
@@ -96,6 +232,10 @@ export class ChatListIndexStore {
   private readonly legacyPath: string
   private cache: Record<string, ChatListItem> | null = null
   private cacheLineCount = 0
+  /** mtimeMs of indexPath when `cache` was last stamped from disk. */
+  private cacheMtimeMs = -1
+  /** size of indexPath when `cache` was last stamped from disk. */
+  private cacheSize = -1
   private migrated = false
 
   constructor(userDataPath: string) {
@@ -112,8 +252,14 @@ export class ChatListIndexStore {
   readAll(): Record<string, ChatListItem> {
     this.ensureMigrated()
 
+    if (this.isCacheValid() && this.cache) {
+      // Defensive shallow copy — callers must not mutate the live cache.
+      return { ...this.cache }
+    }
+
     let records: JsonlRecord[]
     let lineCount: number
+    let sawEnsemble = false
     try {
       const raw = fs.readFileSync(this.indexPath, 'utf-8')
       const lines = raw.split('\n')
@@ -123,7 +269,16 @@ export class ChatListIndexStore {
         const trimmed = line.trim()
         if (trimmed.length === 0) continue
         try {
-          records.push(JSON.parse(trimmed))
+          const parsed = JSON.parse(trimmed) as JsonlRecord
+          if (parsed.entry !== null && entryHasUnprojectedEnsemble(parsed.entry)) {
+            sawEnsemble = true
+            // Reduce the legacy fat blob to lean in the in-memory projection
+            // immediately, so the sidebar gets the real roster on this very
+            // read rather than waiting for the compact below. A LEAN
+            // projection is left alone — it is already what rows render from.
+            parsed.entry = stripSummaries(parsed.entry as ChatListItem)
+          }
+          records.push(parsed)
         } catch {
           // Corrupt line — skip; the next write will heal it.
         }
@@ -139,17 +294,37 @@ export class ChatListIndexStore {
         delete index[rec.chatId]
       } else {
         const summaries = this.readSummaries(rec.chatId)
-        index[rec.chatId] = {
-          ...rec.entry,
-          ...(summaries.runsSummary ? { runsSummary: summaries.runsSummary } : {}),
-          ...(summaries.lastRun ? { lastRun: summaries.lastRun } : {}),
-        } as ChatListItem
+        index[rec.chatId] = mergeEntry(rec.entry, summaries)
       }
     }
 
     this.cache = index
     this.cacheLineCount = lineCount
-    return { ...index }
+    this.stampCacheFromDisk()
+
+    // Historical fat lines stay on disk until compacted. Force one rewrite so
+    // the 98.7 MB install actually shrinks; projecting on write alone cannot
+    // reach lines that were already written.
+    if (sawEnsemble) {
+      this.compact()
+    }
+
+    return { ...this.cache! }
+  }
+
+  /**
+   * O(1) single-entry read on a warm/valid cache. Warms via readAll() on miss.
+   * Always returns a defensive copy (R4) — never a live reference into `cache`.
+   */
+  readEntry(chatId: string): ChatListItem | undefined {
+    this.ensureMigrated()
+
+    if (!this.isCacheValid() || !this.cache) {
+      this.readAll()
+    }
+
+    const item = this.cache?.[chatId]
+    return item ? { ...item } : undefined
   }
 
   /**
@@ -182,11 +357,12 @@ export class ChatListIndexStore {
     const line = JSON.stringify({ chatId, entry }) + '\n'
     fs.appendFileSync(this.indexPath, line, { encoding: 'utf-8' })
 
-    // Update cache.
+    // Update cache with the list projection (summaries in, ensemble leaned).
     if (this.cache) {
-      this.cache[chatId] = item
+      this.cache[chatId] = mergeEntry(entry, summaries)
       this.cacheLineCount++
     }
+    this.stampCacheFromDisk()
 
     this.compactIfNeeded()
   }
@@ -221,7 +397,11 @@ export class ChatListIndexStore {
     // Update cache.
     if (this.cache) {
       for (const chatId of chatIds) delete this.cache[chatId]
+      this.cacheLineCount += chatIds.length
     }
+    // Stamp the post-append size before compact rewrites the file; compact()
+    // restamps after the atomic write so a deleted entry cannot be served.
+    this.stampCacheFromDisk()
 
     // Force compaction so deletion is durable (no tombstone-only state).
     this.compact()
@@ -231,14 +411,17 @@ export class ChatListIndexStore {
   clearCache(): void {
     this.cache = null
     this.cacheLineCount = 0
+    this.cacheMtimeMs = -1
+    this.cacheSize = -1
   }
 
-  /** True when the cached index is still valid (same file mtime+size). */
+  /** True when the cached index is still valid (same file mtimeMs + size). */
   isCacheValid(): boolean {
     if (this.cache === null) return false
+    if (this.cacheMtimeMs < 0 || this.cacheSize < 0) return false
     try {
       const stat = fs.statSync(this.indexPath)
-      return stat.size === this.estimatedFileSize()
+      return stat.mtimeMs === this.cacheMtimeMs && stat.size === this.cacheSize
     } catch {
       return false
     }
@@ -247,6 +430,18 @@ export class ChatListIndexStore {
   // -----------------------------------------------------------------------
   // Internal
   // -----------------------------------------------------------------------
+
+  /** Stamp cache validity from the live index file (R1 — every mutation). */
+  private stampCacheFromDisk(): void {
+    try {
+      const stat = fs.statSync(this.indexPath)
+      this.cacheMtimeMs = stat.mtimeMs
+      this.cacheSize = stat.size
+    } catch {
+      this.cacheMtimeMs = -1
+      this.cacheSize = -1
+    }
+  }
 
   private readSummaries(chatId: string): ChatListSummaryFields {
     const summaryPath = path.join(this.summariesDir, `${chatId}.json`)
@@ -258,17 +453,12 @@ export class ChatListIndexStore {
     }
   }
 
-  private estimatedFileSize(): number {
-    // Approximate: cacheLineCount lines × ~average bytes per line.
-    // Not exact but sufficient for cache invalidation.
-    // If cache is stale, readAll() will re-parse.
-    return -1 // Always invalidate by size — rely on readAll's parse.
-  }
-
   /**
    * Compact the JSONL: re-read all lines, keep only the last entry per
-   * chatId, write a fresh file. Called periodically after writes; forced
-   * after removals.
+   * chatId, re-apply stripSummaries (which REDUCES a legacy fat ensemble to
+   * the lean projection — it does not drop it, because the roster is what the
+   * sidebar renders), write a fresh file. Called periodically after writes;
+   * forced after removals and after detecting pre-migration ensemble blobs.
    */
   private compactIfNeeded(): void {
     if (!this.cache) return
@@ -301,15 +491,18 @@ export class ChatListIndexStore {
       latest.set(rec.chatId, rec)
     }
 
-    // Compact: remove tombstones, write only live entries.
+    // Compact: remove tombstones, re-apply the list projection (a legacy fat
+    // ensemble is reduced to lean here, not dropped), write only live entries.
     const lines: string[] = []
     for (const [, rec] of latest) {
       if (rec.entry === null) continue
-      lines.push(JSON.stringify({ chatId: rec.chatId, entry: rec.entry }) + '\n')
+      const entry = stripSummaries(rec.entry as ChatListItem)
+      lines.push(JSON.stringify({ chatId: rec.chatId, entry }) + '\n')
     }
 
     atomicWrite(this.indexPath, lines.join(''))
     this.cacheLineCount = lines.length
+    this.stampCacheFromDisk()
   }
 
   // -----------------------------------------------------------------------
@@ -350,7 +543,7 @@ export class ChatListIndexStore {
         )
       }
 
-      // Write index entry (without summaries).
+      // Write index entry (summaries split out, ensemble reduced to lean).
       const entry = stripSummaries(item)
       lines.push(JSON.stringify({ chatId, entry }) + '\n')
     }
@@ -366,5 +559,6 @@ export class ChatListIndexStore {
     }
 
     this.cacheLineCount = lines.length
+    this.stampCacheFromDisk()
   }
 }

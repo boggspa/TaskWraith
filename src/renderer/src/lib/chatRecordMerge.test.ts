@@ -70,6 +70,74 @@ describe('chat record merge helpers', () => {
     })
   })
 
+  it('keeps hydrated ensemble roster when a lean summary refresh arrives', () => {
+    const hydratedEnsemble = {
+      enabled: true,
+      maxParticipants: 15,
+      participants: [
+        {
+          id: 'seat-1',
+          provider: 'claude' as const,
+          enabled: true,
+          role: 'SolBoss',
+          instructions: 'REAL seat brief — must survive summary refresh',
+          order: 0
+        },
+        {
+          id: 'seat-2',
+          provider: 'cursor' as const,
+          enabled: true,
+          role: 'CursorWork',
+          instructions: 'Another real brief',
+          order: 1
+        }
+      ]
+    }
+    const leanSummaryEnsemble = {
+      enabled: true,
+      maxParticipants: 15,
+      participants: [
+        {
+          id: 'seat-1',
+          provider: 'claude' as const,
+          enabled: true,
+          role: 'SolBoss',
+          instructions: '',
+          order: 0
+        },
+        {
+          id: 'seat-2',
+          provider: 'cursor' as const,
+          enabled: true,
+          role: 'CursorWork',
+          instructions: '',
+          order: 1
+        }
+      ]
+    }
+    const existing = chat({
+      appChatId: 'chat-1',
+      chatKind: 'ensemble',
+      ensemble: hydratedEnsemble
+    })
+    const incoming = summary({
+      appChatId: 'chat-1',
+      chatKind: 'ensemble',
+      title: 'Lean list refresh',
+      ensemble: leanSummaryEnsemble
+    })
+
+    const merged = mergeChatRecordValue(existing, incoming)
+
+    expect(merged.ensemble).toBe(hydratedEnsemble)
+    expect(merged.ensemble?.participants[0]?.instructions).toBe(
+      'REAL seat brief — must survive summary refresh'
+    )
+    expect(merged.ensemble?.participants[1]?.instructions).toBe('Another real brief')
+    expect(merged.title).toBe('Lean list refresh')
+    expect(merged.messages).toBe(existing.messages)
+  })
+
   it('uses incoming records directly when not protecting an existing hydrated chat', () => {
     const incomingSummary = summary()
     const incomingHydrated = chat({ title: 'Incoming hydrated' })

@@ -157,6 +157,7 @@ import {
   type EnsembleMidRunSteeringBoundaryState
 } from './EnsembleMidRunSteering'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
+import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 // M4 (1.0.7) — auto-derive blackboard entries from the synthesizer's
 // round summary at round end, so the panel's agreed decisions / risks /
@@ -930,6 +931,11 @@ interface ActiveParticipantRun {
   providerSessionId?: string
   stats?: any
   completion?: (status: EnsembleParticipantStatus) => void
+  /**
+   * Legacy per-run debounce handle. scheduleFlush is now chat-keyed
+   * (EnsembleChatFlushScheduler); this field remains only so older
+   * immediate-clear paths stay harmless if a stale timer reference lingers.
+   */
   flushTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -3444,6 +3450,21 @@ export class EnsembleOrchestrator {
    * deferred), and by `clearRuntimeIfCurrent` as teardown hygiene.
    */
   private deferredLaneDrainByChatId = new Map<string, ActiveRoundRuntime>()
+  /**
+   * Debounced transcript flush is per-chat, not per-run. Parallel fan-out
+   * lanes all schedule through this scheduler so N dirty seats collapse to
+   * one 250ms timer and one saveChat (see flushScheduledRuns).
+   */
+  private readonly chatFlushScheduler = new EnsembleChatFlushScheduler({
+    delayMs: 250,
+    onFlush: (chatId, runIds) => this.flushScheduledRuns(chatId, runIds)
+  })
+  /**
+   * While flushScheduledRuns is applying several lanes, getChat/saveChat are
+   * redirected through this overlay so intermediate flushRun calls mutate one
+   * in-memory chat and only the final commit hits deps.saveChat.
+   */
+  private flushChatOverlay: { chatId: string; chat: ChatRecord } | null = null
   private bossmanPollTimeoutsById = new Map<
     string,
     {
@@ -3693,6 +3714,7 @@ export class EnsembleOrchestrator {
    */
   private terminallyReleaseRunForHistory(run: ActiveParticipantRun, reason: string): void {
     this.stopCursorCompletionWatchdog(run)
+    this.chatFlushScheduler.cancelRun(run.chatId, run.runId)
     if (run.flushTimer) {
       clearTimeout(run.flushTimer)
       run.flushTimer = undefined
@@ -3761,6 +3783,7 @@ export class EnsembleOrchestrator {
       runtime.resumeWakeup = undefined
       this.signalWakeWaiter(runtime)
     }
+    this.chatFlushScheduler.cancelChat(chatId)
 
     // Advisory polls pre-date roundId stamping. Structured ownership is
     // required here: safe chat ids may contain `:`, so a raw string prefix can
@@ -17654,6 +17677,8 @@ export class EnsembleOrchestrator {
   }
 
   private flushRun(run: ActiveParticipantRun, final = false, reason?: string): void {
+    // Immediate / terminal flushes must not also fire from the chat debounce.
+    this.chatFlushScheduler.cancelRun(run.chatId, run.runId)
     if (run.flushTimer) {
       clearTimeout(run.flushTimer)
       run.flushTimer = undefined
@@ -17676,7 +17701,10 @@ export class EnsembleOrchestrator {
         return
       }
     }
-    const chat = this.deps.getChat(run.chatId)
+    const chat =
+      this.flushChatOverlay?.chatId === run.chatId
+        ? this.flushChatOverlay.chat
+        : this.deps.getChat(run.chatId)
     if (!chat?.ensemble) return
     // Chat-level authority, resolved HERE because it does not live on the
     // participant: a lane card cannot derive Boss/Captain from the seat alone.
@@ -18089,7 +18117,7 @@ export class EnsembleOrchestrator {
       run.injectedBlackboardEntryIds || [],
       run.participant.id
     )
-    this.saveChatWithCheckpoint({
+    const nextChat: ChatRecord = {
       ...chat,
       messages,
       runs,
@@ -18101,7 +18129,12 @@ export class EnsembleOrchestrator {
         updatedAt: timestamp
       },
       updatedAt: this.deps.now()
-    }, 'participant-updated')
+    }
+    if (this.flushChatOverlay?.chatId === run.chatId) {
+      this.flushChatOverlay.chat = nextChat
+    } else {
+      this.saveChatWithCheckpoint(nextChat, 'participant-updated')
+    }
     if (shouldMergeTerminalTokenTotals) run.terminalTokenTotalsApplied = true
     if (run.releaseOwnedFanoutTranscriptAtTail && newTimelineMessages.length > 0) {
       run.releaseOwnedFanoutTranscriptAtTail = undefined
@@ -18109,9 +18142,40 @@ export class EnsembleOrchestrator {
     if (effectiveFinal) this.deps.releaseProviderSessionPersistenceDecision?.(run.runId)
   }
 
+  /**
+   * Debounce transcript persistence per chat. Multiple fan-out lanes calling
+   * this within the 250ms window share one timer; flushScheduledRuns then
+   * applies every pending lane and saves once.
+   */
   private scheduleFlush(run: ActiveParticipantRun): void {
-    if (run.flushTimer) return
-    run.flushTimer = setTimeout(() => this.flushRun(run), 250)
+    this.chatFlushScheduler.schedule(run.chatId, run.runId)
+  }
+
+  /**
+   * Timer callback for the per-chat debounce. One dirty seat flushes normally;
+   * several seats share an in-memory overlay so intermediate flushRun calls do
+   * not each hit deps.saveChat.
+   */
+  private flushScheduledRuns(chatId: string, runIds: string[]): void {
+    const runs = runIds
+      .map((runId) => this.runsByRunId.get(runId))
+      .filter((run): run is ActiveParticipantRun => Boolean(run))
+    if (runs.length === 0) return
+    if (runs.length === 1) {
+      this.flushRun(runs[0])
+      return
+    }
+    const base = this.deps.getChat(chatId)
+    if (!base?.ensemble) return
+    const priorOverlay = this.flushChatOverlay
+    this.flushChatOverlay = { chatId, chat: base }
+    try {
+      for (const run of runs) this.flushRun(run)
+      const result = this.flushChatOverlay.chat
+      if (result !== base) this.saveChatWithCheckpoint(result, 'participant-updated')
+    } finally {
+      this.flushChatOverlay = priorOverlay
+    }
   }
 
   private updateParticipantState(
@@ -19046,6 +19110,7 @@ export class EnsembleOrchestrator {
     if (this.deferredLaneDrainByChatId.get(runtime.chatId) === runtime) {
       this.deferredLaneDrainByChatId.delete(runtime.chatId)
     }
+    this.chatFlushScheduler.cancelChat(runtime.chatId)
   }
 
   private resolveFanoutEligibilityPermissions(

@@ -20,6 +20,7 @@ export function mergeChatRecordValue(
       searchPreview: _searchPreview,
       messages: _messages,
       runs: _runs,
+      ensemble: _ensemble,
       ...summaryFields
     } = incoming
     return {
