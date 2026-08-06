@@ -14,6 +14,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { MascotGhost, SidebarRunningGhost, WorkflowGlyphIcon } from './AppChromeSymbols'
+import { HostStatusRow } from './HostStatusRow'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 import { isUpdatePillVisible, UpdatePill } from './UpdatePill'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
@@ -2964,6 +2965,11 @@ export function DevicesFooterPopover({
       navLabel="Manage devices"
       onNav={onOpenSettings}
     >
+      {/* Host Arc 4.3d — TaskWraith Host is a connection, so it belongs on the
+          connections surface. Always shown, above the paired-device list: it
+          is not a paired device, and its absence would be as meaningful as
+          its presence. */}
+      <HostStatusRow />
       {devices.length === 0 ? (
         <div className="sidebar-footer-popover-empty">No paired devices</div>
       ) : (
