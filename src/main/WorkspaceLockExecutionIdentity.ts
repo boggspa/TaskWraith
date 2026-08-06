@@ -132,6 +132,25 @@ function normalizeIdentityCoordinate(value: string | null | undefined): string {
   return requireIdentityCoordinate(value, 'identity coordinate')
 }
 
+/**
+ * Whether a coordinate is exact enough to key an identity scope, for the one
+ * caller that must ask before naming rather than find out by throwing: naming a
+ * seat is best-effort, but the provider launch it sits inside is not.
+ *
+ * Deliberately asks the thrower instead of restating its rules, so the
+ * predicate and the validator cannot drift apart and admit a coordinate that
+ * would then throw one frame later.
+ */
+export function isExactIdentityCoordinate(value: string | null | undefined): boolean {
+  if (typeof value !== 'string') return false
+  try {
+    requireIdentityCoordinate(value, 'identity coordinate')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function requireIdentityCoordinate(value: string, label: string): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`Workspace-lock ${label} is required.`)

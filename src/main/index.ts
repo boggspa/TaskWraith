@@ -18684,6 +18684,13 @@ async function runCliProviderProcess(
     // seat, which has no stable pid either, carried neither identity and could
     // raise no claim a peer would honour. Still no lease and no bypass, and an
     // admitted owner still wins: `launchOwnerId` prefers it over minting one.
+    //
+    // This stamps INTO `options.resolvedEnv`. No seal compares a sealed env
+    // against the one handed to spawn today, so that is safe — but if the
+    // single-plan handoff that `scheduling/SealEvidencePi.ts` describes ever
+    // lands, `launchEnvironmentHmac` would be computed before this line runs
+    // and every sealed occurrence would fail. Give the seal builder the owner
+    // id too rather than dropping it here.
     const seatLockOwnerId =
       workspaceLockProviderCoordinator.launchOwnerId(workspaceLockAdmissionKey) ?? undefined
     const childEnv: Readonly<Record<string, string | undefined>> =

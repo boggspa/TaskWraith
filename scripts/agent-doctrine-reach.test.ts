@@ -64,6 +64,15 @@ describe('agent doctrine reaches Claude sessions', () => {
     expect(text).toMatch(/never invent one/i)
   })
 
+  it('warns that an owner id has to be re-read at every renewal', () => {
+    // The id is scoped per run, so it rotates every turn. Renewing exactly as
+    // the lease rule says — re-stamp `started` and `expires` — carries a stale
+    // id forward, and the hook then reads the seat's own claim as a peer's:
+    // measured, it blocks the seat's own commit, and keeps blocking for as
+    // long as the seat keeps dutifully renewing.
+    expect(claudeMdText()).toMatch(/changes every turn/i)
+  })
+
   it('carries the commit rules that keep a shared index safe', () => {
     const text = claudeMdText()
     expect(text).toMatch(/git add -A/)

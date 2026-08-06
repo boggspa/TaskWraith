@@ -171,6 +171,14 @@ than all your protection. Renewing means re-stamping **both** `started` and
 anchored to the start. A lease over the ceiling with **no readable `started`**
 cannot be bounded at all and is treated as decayed.
 
+**If your claim carries `lockOwnerId:`, re-read the id and re-stamp that too.**
+It is scoped per *run*, which means per *turn*: the value your seat carried when
+you raised the marker is not the value it carries now. Renewing the two clock
+fields and leaving a stale id behind is the worst of both worlds — measured, it
+blocks *your own* commit on *your own* claim, and does so for as long as you
+keep faithfully renewing the lease. Re-run `printenv TASKWRAITH_LOCK_OWNER_ID`
+at each renewal, not just the first time.
+
 Consequences to plan around rather than be surprised by: your claim will lapse
 during any long stretch of thinking, testing or reviewing, and a lapsed claim is
 **adoptable** — another agent is entitled to harvest its paths. Re-stamp before

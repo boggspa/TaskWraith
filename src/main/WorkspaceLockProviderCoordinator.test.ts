@@ -416,6 +416,24 @@ describe('WorkspaceLockProviderCoordinator', () => {
       expect(coordinator.launchOwnerId({ runId: '   ' })).toBeNull()
     })
 
+    // Naming is best-effort; the launch is not. A coordinate the identity
+    // registry would reject must come back unnamed rather than throw out of the
+    // spawn path, where it would turn a launch that used to succeed into a
+    // visible setup failure.
+    it('declines a malformed seat coordinate instead of failing the launch', () => {
+      const { coordinator } = seatHarness()
+
+      expect(coordinator.launchOwnerId({ runId: ' run-1' })).toBeNull()
+      expect(coordinator.launchOwnerId({ runId: 'run-1', laneId: 'lane-a ' })).toBeNull()
+      // NUL is the separator the scope key joins on, so it is the one character
+      // that could make two different seats key the same identity.
+      expect(
+        coordinator.launchOwnerId({ runId: 'run-1', participantId: 'participant\u0000a' })
+      ).toBeNull()
+      // An absent lane is not malformed — it is how a solo seat is scoped.
+      expect(coordinator.launchOwnerId({ runId: 'run-1', laneId: '' })).toBe('opaque-owner-1')
+    })
+
     it('forgets a seat identity once its run is released', () => {
       const { coordinator } = seatHarness()
       const seat = { runId: 'run-1', laneId: 'lane-a' }

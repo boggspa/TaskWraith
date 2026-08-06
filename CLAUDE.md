@@ -49,7 +49,10 @@ voided. Renew by re-stamping **both** `started` and `expires` — bumping
 `expires` alone does nothing, since the ceiling anchors to the start. Expect it
 to lapse during long thinking, test runs or reviews, and remember a lapsed claim
 is **adoptable**: re-stamp *before* a long operation, and again before your
-final commit if the work ran long.
+final commit if the work ran long. **If your claim uses `lockOwnerId:`, re-read
+that value and re-stamp it at every renewal too** — it is scoped per run, so it
+changes every turn, and renewing only the clock fields blocks your own commit on
+your own claim for as long as you keep renewing.
 
 **Without the opening and closing `---`, every field parses empty** — pid,
 expires, and the whole `paths` list — so the marker claims *nothing*. Two live

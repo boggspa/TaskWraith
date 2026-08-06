@@ -1,5 +1,6 @@
 import type { ProviderId } from './store/types'
 import {
+  isExactIdentityCoordinate,
   WorkspaceLockExecutionIdentityRegistry,
   type WorkspaceLockExecutionIdentityScope
 } from './WorkspaceLockExecutionIdentity'
@@ -157,11 +158,13 @@ export class WorkspaceLockProviderCoordinator {
    * so a derived runtime marker projected for this seat's own brokered mutation
    * is recognised as its own rather than as a peer's live claim.
    *
-   * A launch with no run id has no seat to name and gets none; a malformed
-   * coordinate still throws, as it does for every other identity consumer here.
+   * Naming is best-effort and the launch is not, so a launch this cannot name
+   * exactly comes back unnamed rather than throwing out of the spawn path: an
+   * absent or malformed coordinate would otherwise turn a launch that used to
+   * succeed into a visible setup failure over a marker convenience.
    */
   launchOwnerId(input: WorkspaceLockProviderAdmissionKey): string | null {
-    if (!input.runId?.trim()) return null
+    if (!namesAnExactSeat(input)) return null
     return this.ownerId(input) ?? this.getOrCreateLogicalOwnerId(input)
   }
 
@@ -380,6 +383,19 @@ function requireMatchingAdmission(
     throw new Error('Provider workspace-lock admission was reused with different authority.')
   }
   return admission
+}
+
+/**
+ * Whether every coordinate this seat would be keyed by is exact. An absent lane
+ * or participant is not a defect — that is how a solo seat is scoped — but a
+ * present one that the identity registry would reject means the seat cannot be
+ * named without throwing.
+ */
+function namesAnExactSeat(input: WorkspaceLockProviderAdmissionKey): boolean {
+  if (!isExactIdentityCoordinate(input.runId)) return false
+  return [input.laneId, input.participantId].every(
+    (coordinate) => !coordinate || isExactIdentityCoordinate(coordinate)
+  )
 }
 
 function logicalRunScope(input: {
