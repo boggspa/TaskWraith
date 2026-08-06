@@ -483,10 +483,24 @@ function liveness(marker, side, now) {
   const heartbeatFresh = lastSeen !== null && now - lastSeen < HEARTBEAT_STALE_MS
   const alive = pidAlive(marker.pid)
   const expired = marker.expiresMs !== null && now > marker.expiresMs
+  // A sandboxed seat's claim carries `lockOwnerId` and no pid, so there is no
+  // process to probe and `expires` is its ONLY decay signal — exactly how
+  // `.githooks/pre-commit` treats it. An absent or unreadable lease therefore
+  // cannot be live here either, or a seat could hold a path forever.
+  //
+  // Without this lane the two tools contradict each other: measured 2026-08-06,
+  // a marker the hook was actively BLOCKING on reported live:false here. That
+  // is worse than a cosmetic disagreement, because AGENTS.md defines a decayed
+  // claim as adoptable — the reader is told to harvest its paths and delete it.
+  // The hook also shells to `status --hook` before deciding, so a single run
+  // could print "claimed by nobody" naming the path it then blocked on.
+  const leaseHeld = marker.expiresMs !== null && !expired
+  const ownerHeld = Boolean(marker.lockOwnerId) && leaseHeld
   return {
-    live: heartbeatFresh || (alive && !expired),
+    live: heartbeatFresh || (alive && !expired) || ownerHeld,
     heartbeatFresh,
     alive,
+    ownerHeld,
     expired,
     lastSeen
   }

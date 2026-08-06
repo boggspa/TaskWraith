@@ -118,13 +118,20 @@ function makeRepo(): string {
 function writeMarker(
   root: string,
   slug: string,
-  options: { pid: number | null; expires: string; paths: string[] }
+  options: {
+    pid: number | null
+    expires: string
+    paths: string[]
+    /** A sandboxed seat's identity, used when it has no pid to record. */
+    lockOwnerId?: string
+  }
 ): string {
   const file = `.WORK-IN-PROGRESS-${slug}.md`
   const pidLine = options.pid === null ? '' : `pid: ${options.pid}\n`
+  const ownerLine = options.lockOwnerId ? `lockOwnerId: ${options.lockOwnerId}\n` : ''
   writeFileSync(
     join(root, file),
-    `---\nsession: test-${slug}\nagent: test agent\n${pidLine}expires: ${options.expires}\npaths:\n${options.paths
+    `---\nsession: test-${slug}\nagent: test agent\n${pidLine}${ownerLine}expires: ${options.expires}\npaths:\n${options.paths
       .map((p) => `  - ${p}\n`)
       .join('')}---\nbody\n`
   )
@@ -210,6 +217,79 @@ describe('liveness — backward compatibility', () => {
     expect(liveness(live, {}, NOW).live).toBe(true)
     expect(liveness(expiredMarker, {}, NOW).live).toBe(false)
     expect(liveness(deadMarker, {}, NOW).live).toBe(false)
+  })
+})
+
+describe('liveness — a sandboxed seat claims by lock owner id, not pid', () => {
+  // A seat cannot record a pid, so it authenticates with the per-seat
+  // TASKWRAITH_LOCK_OWNER_ID it carries in its environment, and
+  // `.githooks/pre-commit` BLOCKS on that claim. This tool must agree.
+  //
+  // Measured before this lane existed: a marker the hook was actively blocking
+  // on reported live:false here, and its own claimed paths were simultaneously
+  // listed as unclaimed. That is not a cosmetic split — AGENTS.md defines a
+  // decayed claim as ADOPTABLE, so the reader is told to harvest its paths and
+  // delete it, and `work-guard:check` exits 1 on the claim's own files.
+
+  it('treats an unexpired owner-id claim as live with no pid at all', () => {
+    const root = makeRepo()
+    const seat = markerFor(
+      root,
+      writeMarker(root, 'seat', {
+        pid: null,
+        lockOwnerId: 'seat-owner-1',
+        expires: iso(NOW + 3_600_000),
+        paths: ['src/']
+      })
+    )
+    const result = liveness(seat, {}, NOW)
+    expect(result.live).toBe(true)
+    expect(result.alive).toBe(false)
+    expect(result.ownerHeld).toBe(true)
+  })
+
+  it('is born live — before the seat has dirtied a single claimed path', () => {
+    // Doctrine says raise the claim BEFORE the first edit to a clean file. The
+    // derived heartbeat reads mtimes of DIRTY claimed paths, so at that moment
+    // there is nothing to derive from. The pid lane had a live pid to fall back
+    // on; this lane has only the lease, which is exactly why it must count.
+    const root = makeRepo()
+    const seat = markerFor(
+      root,
+      writeMarker(root, 'seat-clean', {
+        pid: null,
+        lockOwnerId: 'seat-owner-2',
+        expires: iso(NOW + 3_600_000),
+        paths: ['src/untouched.ts']
+      })
+    )
+    expect(liveness(seat, {}, NOW).live).toBe(true)
+  })
+
+  it('decays on expiry, because the lease is its only decay signal', () => {
+    const root = makeRepo()
+    const seat = markerFor(
+      root,
+      writeMarker(root, 'seat-expired', {
+        pid: null,
+        lockOwnerId: 'seat-owner-3',
+        expires: iso(NOW - 60_000),
+        paths: ['src/']
+      })
+    )
+    expect(liveness(seat, {}, NOW).live).toBe(false)
+  })
+
+  it('decays when the lease is missing entirely, so a seat cannot hold forever', () => {
+    const root = makeRepo()
+    const file = '.WORK-IN-PROGRESS-seat-leaseless.md'
+    writeFileSync(
+      join(root, file),
+      '---\nsession: test\nagent: test agent\nlockOwnerId: seat-owner-4\npaths:\n  - src/\n---\nbody\n'
+    )
+    const seat = markerFor(root, file)
+    expect(seat.expiresMs).toBeNull()
+    expect(liveness(seat, {}, NOW).live).toBe(false)
   })
 })
 
