@@ -264,6 +264,21 @@ export interface HostQuestionProjection {
 
 export interface HostApprovalProjection {
   approvalId: string
+  /**
+   * Exact command this approval governs (Wave 4.2c).
+   *
+   * REQUIRED, because an approval always governs some command: the durable
+   * deferred record has carried `commandId` beside `challengeId` all along,
+   * so this publishes an existing fact rather than inventing one.
+   *
+   * Without it the only available binding was `actionKind`, which is a command
+   * NAME, not an identity. With two concurrent asks of the same kind — the
+   * designed end state once Desktop is a second live projection — a client
+   * could resolve the wrong one. This field is the join key in both
+   * directions: an approval names its command, and a client holding a
+   * commandId can find its approval exactly.
+   */
+  commandId: string
   threadId?: string
   status: 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled'
   actionKind: string
@@ -2203,6 +2218,9 @@ function decodeHostApprovalProjection(
   if (typeof value.status !== 'string' || !HOST_APPROVAL_STATUSES.has(value.status)) {
     return { ok: false, error: `${label}.status is invalid` }
   }
+  if (!isNonEmptyString(value.commandId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.commandId is required` }
+  }
   if (!isNonEmptyString(value.actionKind, HOST_PROTOCOL_MAX_SHORT)) {
     return { ok: false, error: `${label}.actionKind is required` }
   }
@@ -2225,6 +2243,9 @@ function decodeHostApprovalProjection(
   }
   const approval: HostApprovalProjection = {
     approvalId: value.approvalId,
+    // ALLOWLIST REBUILD: this literal is the wire boundary. A field absent
+    // here is silently dropped even though it typechecks upstream.
+    commandId: value.commandId,
     status: value.status as HostApprovalProjection['status'],
     actionKind: value.actionKind,
     createdAt: value.createdAt,

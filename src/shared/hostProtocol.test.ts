@@ -835,6 +835,7 @@ describe('Host protocol Wave 2D-1 read frames', () => {
     })
     populated.approvals.push({
       approvalId: 'appr-1',
+      commandId: 'cmd-appr-1',
       threadId: 'thread-1',
       status: 'pending',
       actionKind: 'run_shell_command',
@@ -928,6 +929,28 @@ describe('Host protocol Wave 2D-1 read frames', () => {
     expect(decodeHostSnapshot(fakeZero)).toMatchObject({
       ok: false,
       error: 'unavailable usage must not publish tokens'
+    })
+  })
+
+  it('rejects an approval that cannot name the command it governs (Wave 4.2c)', () => {
+    // DECODER-LAYER PIN. The client RED-proof lives in the TUI and the source
+    // pin lives in HostMainComposition — NEITHER fails if the wire decoder
+    // stops requiring commandId, because both of those supply the field
+    // upstream. This is the only assertion that catches a strip at the decode
+    // boundary, which is exactly where an allowlist rebuild silently drops a
+    // field it was never taught. An approval that cannot name its command is
+    // unbindable, so refusing it is the honest outcome.
+    const uncorrelated = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    ;(uncorrelated.approvals as unknown[]).push({
+      approvalId: 'appr-uncorrelated',
+      status: 'pending',
+      actionKind: 'composer.send',
+      createdAt: 5,
+      summary: 'Deferred composer.send'
+    })
+    expect(decodeHostSnapshot(JSON.parse(JSON.stringify(uncorrelated)))).toMatchObject({
+      ok: false,
+      error: 'approvals[0].commandId is required'
     })
   })
 

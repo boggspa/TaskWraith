@@ -982,12 +982,20 @@ export class TaskWraithTui {
     this.applyHostSnapshot(frame.snapshot)
   }
 
-  private findPendingApprovalId(commandName: HostCommandName): string | undefined {
+  /**
+   * Bind this mutation's approval by EXACT command identity (Wave 4.2c).
+   *
+   * This used to filter on `actionKind === commandName` and take the newest,
+   * because the wire carried no correlation field. `actionKind` is a command
+   * NAME, so with two concurrent asks of the same kind the newest-wins tie
+   * break could resolve another projection's approval. Host now publishes
+   * `commandId` on every approval, so the match is an identity comparison and
+   * there is no tie to break.
+   */
+  private findPendingApprovalId(commandId: string): string | undefined {
     const approvals = this.hostSnapshot?.approvals ?? []
-    const pending = approvals
-      .filter((row) => row.status === 'pending' && row.actionKind === commandName)
-      .sort((left, right) => right.createdAt - left.createdAt)
-    return pending[0]?.approvalId
+    return approvals.find((row) => row.status === 'pending' && row.commandId === commandId)
+      ?.approvalId
   }
 
   private async decidePendingApproval(decision: HostApprovalDecideDecision): Promise<void> {
@@ -1062,7 +1070,7 @@ export class TaskWraithTui {
         this.setNotice(desc.text, desc.tone)
         try {
           await this.refreshHostSnapshot()
-          const approvalId = this.findPendingApprovalId(command.name)
+          const approvalId = this.findPendingApprovalId(pending.commandId)
           if (approvalId) {
             pending.approvalId = approvalId
             this.state.pendingHostMutation = { ...pending }

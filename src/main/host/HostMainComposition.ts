@@ -201,12 +201,17 @@ function requirePipeline(
  */
 function awaitingApprovalCardFromBridgeRecord(record: {
   challengeId: string
+  commandId: string
   commandName: string
   createdAt: string
 }): HostApprovalProjection {
   const parsed = Date.parse(record.createdAt)
   return {
     approvalId: record.challengeId,
+    // Wave 4.2c: the durable deferred record has always carried commandId
+    // beside challengeId. Publishing it is what makes exact binding possible;
+    // nothing here is derived or invented.
+    commandId: record.commandId,
     actionKind: record.commandName,
     status: 'pending',
     createdAt: Number.isFinite(parsed) ? parsed : 0,

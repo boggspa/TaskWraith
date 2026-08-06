@@ -932,6 +932,7 @@ function projectApproval(
   if (typeof raw.status !== 'string' || !APPROVAL_STATUSES.has(raw.status)) {
     return { ok: false, error: `${label}.status is invalid` }
   }
+  if (!isValidId(raw.commandId)) return { ok: false, error: `${label}.commandId is invalid` }
   if (typeof raw.actionKind !== 'string' || raw.actionKind.length === 0) {
     return { ok: false, error: `${label}.actionKind is required` }
   }
@@ -952,6 +953,9 @@ function projectApproval(
   }
   const out: HostApprovalProjection = {
     approvalId: raw.approvalId,
+    // SECOND ALLOWLIST REBUILD (the wire decoder is the other). Both must
+    // learn a new field or it dies before any client sees it.
+    commandId: raw.commandId,
     status: raw.status,
     actionKind: truncatePresentation(raw.actionKind, HOST_PROTOCOL_MAX_SHORT).text,
     createdAt: raw.createdAt,

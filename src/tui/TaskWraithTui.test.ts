@@ -293,6 +293,9 @@ class FakeHostV2 {
     const approvalId = `approval-${command.commandId}`
     this.approvals.set(approvalId, {
       approvalId,
+      // Wave 4.2c: the real Host publishes the governed command on every
+      // approval card, so the fake must too or it stops modelling the wire.
+      commandId: command.commandId,
       threadId: command.target.threadId,
       status: 'pending',
       actionKind: command.name,
@@ -552,6 +555,50 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       'composer.send succeeded after accept',
       5_000
     )
+  }, 15_000)
+
+  it('binds y to its OWN pending ask when another projection has one of the same kind', async () => {
+    // WAVE 4.2c RED-PROOF. Two concurrent pending asks share one actionKind —
+    // the designed end state once Desktop is a second live projection.
+    //
+    // The decoy is deliberately NEWER than the ask this TUI is waiting on. The
+    // old binding filtered by `actionKind === commandName` and sorted newest
+    // first, so it would have resolved the decoy: this client would have
+    // approved ANOTHER projection's command while its own ask hung forever.
+    // Exact commandId binding cannot be fooled by recency, so this test is RED
+    // against the old matching and green only against identity matching.
+    const base = makeHostSnapshot()
+    const decoy: HostApprovalProjection = {
+      approvalId: 'decoy-approval-from-another-projection',
+      commandId: 'decoy-command-that-is-never-ours',
+      status: 'pending',
+      actionKind: 'thread.select',
+      createdAt: Date.now() + 600_000,
+      summary: 'Deferred thread.select raised by another projection'
+    }
+    const { userDataPath } = await setupHost(
+      { ...base, approvals: [...base.approvals, decoy] },
+      'defer'
+    )
+    const { tui, input, output } = startTui(userDataPath)
+
+    const started = tui.start()
+    await waitFor(
+      () => output.lastFrame.includes('Awaiting Host approval'),
+      'our own thread.select deferred ask',
+      5_000
+    )
+
+    feed(input, 'y')
+    await started
+    await waitFor(
+      () =>
+        output.lastFrame.includes('Hello TaskWraith') ||
+        output.lastFrame.includes('Host preview only'),
+      'accept resolved OUR ask rather than the newer decoy',
+      5_000
+    )
+    expect(output.lastFrame).toMatch(/Host preview only|Opened Solo thread/i)
   }, 15_000)
 
   it('restores composer text when a deferred send is declined', async () => {

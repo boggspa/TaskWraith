@@ -130,6 +130,7 @@ const COLLECTION_CASES: Array<{
     entityId: 'a-1',
     payload: {
       approvalId: 'a-1',
+      commandId: 'cmd-a-1',
       status: 'pending',
       actionKind: 'shell',
       createdAt: 5,

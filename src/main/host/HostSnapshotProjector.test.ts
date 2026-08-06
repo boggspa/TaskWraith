@@ -153,6 +153,7 @@ function baseInput(
     approvals: [
       {
         approvalId: 'appr-1',
+        commandId: 'cmd-appr-1',
         threadId: 'thread-1',
         status: 'pending',
         actionKind: 'shellCommands',
@@ -486,6 +487,7 @@ describe('HostSnapshotProjector', () => {
         approvals: [
           {
             approvalId: 'appr-bad',
+            commandId: 'cmd-appr-bad',
             status: 'pending',
             actionKind: 'shellCommands',
             createdAt: 1,

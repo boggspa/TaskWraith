@@ -405,6 +405,11 @@ describe('HostMainComposition', () => {
       expect(published.status).toBe('pending')
       // PIN S4-V / GAP-A: actionKind ← commandName, not challengeKind
       expect(published.actionKind).toBe('thread.select')
+      // WAVE 4.2c SOURCE PIN: the published card must name the EXACT command it
+      // governs. The client-side RED-proof lives in the TUI, but it cannot catch
+      // a strip HERE — a fixture would still supply commandId downstream. This
+      // is the only assertion that fails if the donor wrap stops publishing it.
+      expect(published.commandId).toBe(DEFERRED_COMMAND_ID)
       expect(published.summary).toContain('thread.select')
       expect(published.approvalId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -445,6 +450,7 @@ describe('HostMainComposition', () => {
           approvals: [
             {
               approvalId: '55555555-5555-4555-8555-555555555555',
+              commandId: '55555555-5555-4555-8555-555555555556',
               actionKind: 'pre-existing',
               status: 'pending',
               createdAt: Date.parse(NOW),

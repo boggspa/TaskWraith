@@ -225,6 +225,7 @@ describe('diffHostSnapshotDomainEffects', () => {
       approvals: [
         {
           approvalId: 'a-1',
+          commandId: 'cmd-a-1',
           status: 'pending',
           actionKind: 'shell',
           createdAt: 1,
