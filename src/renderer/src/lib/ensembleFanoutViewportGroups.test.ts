@@ -291,11 +291,14 @@ describe('fan-out disclosure groups', () => {
     ])
   })
 
-  /* A fan-out lane participant can call ask_user_question mid-wave. The
-   * marker row carries the settled Q&A card and bears round-level hierarchy —
-   * it must ride ABOVE the wave fold as its own row, never nested inside the
-   * fan-out viewport, whether the wave is collapsed or expanded. */
-  it('passes an ask_user_question marker through a folded wave as its own row', () => {
+  /* A fan-out lane participant can call ask_user_question mid-wave. BOTH rows
+   * of the exchange carry the settled Q&A card — the marker holds the question
+   * and options, the reply holds the chosen answer, and a tombstone missing
+   * the reply reports an answered question as "Skipped — no answer sent". The
+   * exchange is a round-level decision record, so both must ride ABOVE the
+   * wave fold as their own rows, never nested inside the fan-out viewport,
+   * whether the wave is collapsed or expanded. */
+  it('passes an ask_user_question exchange through a folded wave as its own rows', () => {
     const roundId = 'round-question'
     const marker: ChatMessage = {
       id: 'agent-question-q-lane',
@@ -309,10 +312,24 @@ describe('fan-out disclosure groups', () => {
         ensembleRoundId: roundId
       }
     } as ChatMessage
+    const reply: ChatMessage = {
+      id: 'agent-question-reply-q-lane',
+      role: 'user',
+      content: 'master',
+      timestamp: '2026-05-27T12:00:45.000Z',
+      metadata: {
+        kind: 'agentQuestionReply',
+        questionId: 'q-lane',
+        respondedToMessageId: 'agent-question-q-lane',
+        isCustomAnswer: false,
+        ensembleRoundId: roundId
+      }
+    } as ChatMessage
     const messages = [
       status('dispatch', roundId, 'Worker fan-out · 2 participant(s) dispatched concurrently.'),
       lane('worker-a', roundId, { ensembleStageRole: 'worker' }),
       marker,
+      reply,
       lane('worker-b', roundId, { ensembleStageRole: 'worker' }),
       serialTurn('serial-a', roundId)
     ]
@@ -325,10 +342,14 @@ describe('fan-out disclosure groups', () => {
     })
     const collapsedIds = collapsed.map((entry) => entry.message.id)
     expect(collapsedIds).toContain('agent-question-q-lane')
+    expect(collapsedIds).toContain('agent-question-reply-q-lane')
     expect(isEnsembleFanoutViewportHeaderMessage(collapsed[0].message)).toBe(true)
-    // The marker is not swept into the header's constituents.
+    // Neither row is swept into the header's constituents.
     expect(collapsed[0].message.metadata?.groupedFanoutMessageIds).not.toContain(
       'agent-question-q-lane'
+    )
+    expect(collapsed[0].message.metadata?.groupedFanoutMessageIds).not.toContain(
+      'agent-question-reply-q-lane'
     )
   })
 

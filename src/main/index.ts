@@ -129,6 +129,10 @@ import {
   type KimiPrivateRunCwd
 } from './kimi/KimiProductionContainment'
 import { isKimiAcpProductionPosture } from '../shared/kimiAcpPosture'
+import {
+  appendAgentQuestionMarker,
+  appendAgentQuestionReply
+} from '../shared/agentQuestionTranscript'
 import { admitKimiRuntime, type AdmittedKimiRuntime } from './kimi/KimiRuntimeAdmission'
 import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
 import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from './kimi/KimiAcpUsage'
@@ -2598,50 +2602,67 @@ remoteQuestionRegistry.subscribe((event) => {
             : record.cancellationReason
     })
   }
-  // A remote answer resolves the parked tool but, unlike the desktop modal,
-  // has no renderer to append the `agentQuestionReply` transcript row — and
-  // that row is the ONLY evidence both platforms' tombstone classifiers
-  // accept, so a phone-answered question settled as "Skipped — no answer
-  // sent" (F11). Persist the reply here, in the one place that fires for
-  // every answer origin, shaped exactly like the desktop writer's row and
-  // idempotent on its id in case a desktop-origin path ever double-fires.
-  if (event.type === 'answered' && event.origin === 'remote' && record.threadId) {
+  // Persist the question's two transcript rows HERE, in the one place every
+  // question source and every answer origin reaches.
+  //
+  // The marker used to be renderer-only, and it did not survive being answered:
+  // while pending it is re-appended from the live ref on each merge
+  // (`anchorPendingAgentQuestionMarkers`), which is why the live card always
+  // looked right, but the moment it settles that rescue stops and main's next
+  // authoritative `chat-updated` — built from a store copy that never had the
+  // row — drops it. No marker means no tombstone, so the whole record of what
+  // a participant asked and what the user answered disappeared from the
+  // transcript. Measured on real ensemble chats: eleven reply rows, zero
+  // markers. Main is the store, so its write cannot lose that race.
+  //
+  // The reply is written for EVERY origin for the same reason. Remote answers
+  // never had a renderer to write one (F11: they settled as "Skipped — no
+  // answer sent"), and the desktop modal's own row is a 200ms debounced
+  // `saveChat` that a fan-out's per-lane flushes routinely beat. Both rows are
+  // idempotent on the ids the renderer writers already use, so whichever side
+  // lands first wins and the other is a no-op.
+  if ((event.type === 'registered' || event.type === 'answered') && record.threadId) {
     try {
       const chat = AppStore.getChat(record.threadId)
-      const replyId = `agent-question-reply-${record.questionId}`
-      if (chat && !chat.messages?.some((message) => message.id === replyId)) {
-        // Mirror the desktop writer: inherit the marker's round id so the
-        // reply stays inside its round group instead of splitting it.
-        const markerRoundId = chat.messages?.find(
-          (message) => message.id === `agent-question-${record.questionId}`
-        )?.metadata?.ensembleRoundId
-        const replyMessage: ChatMessage = {
-          id: replyId,
-          role: 'user',
-          content: event.answer,
-          timestamp: record.resolvedAt || new Date().toISOString(),
-          metadata: {
-            kind: 'agentQuestionReply',
+      // Null from either helper means the row is already there — the renderer
+      // writer got in first — so there is nothing to save or broadcast.
+      let messages: ChatMessage[] | null = null
+      if (chat && event.type === 'registered') {
+        messages = appendAgentQuestionMarker(
+          chat.messages || [],
+          {
             questionId: record.questionId,
-            respondedToMessageId: `agent-question-${record.questionId}`,
-            isCustomAnswer: event.isCustom,
-            ...(typeof markerRoundId === 'string' && markerRoundId
-              ? { ensembleRoundId: markerRoundId }
-              : {})
+            question: record.question,
+            ...(record.options ? { options: record.options } : {}),
+            ...(record.context ? { context: record.context } : {}),
+            ...(record.provider ? { provider: record.provider } : {}),
+            createdAt: record.createdAt
+          },
+          {
+            ...(record.runId ? { runId: record.runId } : {}),
+            // Round id only — never lane or participant id, which is what
+            // keeps a fan-out lane's question at round level instead of
+            // folded inside the fan-out viewport.
+            ensembleRoundId: chat.ensemble?.activeRound?.roundId ?? null
           }
-        }
-        const updated: ChatRecord = {
-          ...chat,
-          messages: [...(chat.messages || []), replyMessage],
-          updatedAt: Date.now()
-        }
+        )
+      } else if (chat && event.type === 'answered') {
+        messages = appendAgentQuestionReply(chat.messages || [], {
+          questionId: record.questionId,
+          answer: event.answer,
+          isCustom: event.isCustom,
+          answeredAt: record.resolvedAt || new Date().toISOString()
+        })
+      }
+      if (chat && messages) {
+        const updated: ChatRecord = { ...chat, messages, updatedAt: Date.now() }
         AppStore.saveChat(updated)
         broadcastChatUpdated(updated)
         pushRemoteThreadSnapshotForChat?.(updated)
       }
     } catch (err) {
       console.error(
-        `[remote-question] failed to persist remote answer reply for ${record.questionId}:`,
+        `[remote-question] failed to persist ${event.type} transcript row for ${record.questionId}:`,
         err
       )
     }

@@ -1,22 +1,10 @@
 import type { ProviderId } from '../../../main/store/types'
+// The map itself moved to `shared/` when main started writing provider-labelled
+// transcript copy (the durable ask_user_question marker). Re-exported here so
+// every existing renderer import keeps working against the one source.
+import { getProviderLabel } from '../../../shared/providerLabels'
 
 const providerModelColorClass = (provider: ProviderId): string => `provider-${provider}`
-
-const getProviderLabel = (provider: ProviderId): string => {
-  if (provider === 'codex') return 'Codex'
-  if (provider === 'claude') return 'Claude'
-  if (provider === 'kimi') return 'Kimi'
-  if (provider === 'grok') return 'Grok'
-  if (provider === 'cursor') return 'Cursor'
-  if (provider === 'ollama') return 'Ollama'
-  // AntiGravity predates nothing here — it was simply missing, so every
-  // surface using this map (run labels, working indicator, failure copy,
-  // composer placeholder) called the provider "Gemini".
-  if (provider === 'antigravity') return 'AntiGravity'
-  if (provider === 'pi') return 'Pi'
-  if (provider === 'mistral') return 'Mistral'
-  return 'Gemini'
-}
 
 /**
  * Explain offer policy without implying that run-management maturity controls
