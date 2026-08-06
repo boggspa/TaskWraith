@@ -6846,10 +6846,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   justify-content: space-between;
   gap: var(--space-md);
   margin-bottom: 0.72rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .ensemble-fanout-result-heading {
   min-width: 0;
+  width: 100%;
+  overflow: hidden;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -8357,7 +8361,49 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .ensemble-fanout-result-seat,
 .subthread-return-seat {
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* Long model labels used to shove the permission chip past the card rim
+ * (composer triggers set flex-shrink: 0, which is correct in the toolbar).
+ * Inside a width-bound fan-out / sub-thread header the cluster chip may shrink;
+ * the model primary ellipsises first so provider + permission stay readable. */
+.ensemble-fanout-result-seat.seat-state-chips,
+.subthread-return-seat.seat-state-chips {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+}
+
+.ensemble-fanout-result-seat > .seat-change-chip:not([data-composer-control='permission']),
+.subthread-return-seat > .seat-change-chip:not([data-composer-control='permission']) {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.ensemble-fanout-result-seat > .seat-change-chip[data-composer-control='permission'],
+.subthread-return-seat > .seat-change-chip[data-composer-control='permission'] {
+  flex: 0 0 auto;
+}
+
+.ensemble-fanout-result-seat .composer-combined-picker-trigger-provider,
+.ensemble-fanout-result-seat .composer-combined-picker-trigger-tail,
+.subthread-return-seat .composer-combined-picker-trigger-provider,
+.subthread-return-seat .composer-combined-picker-trigger-tail {
+  flex-shrink: 0;
+}
+
+.ensemble-fanout-result-seat .composer-combined-picker-trigger-primary,
+.subthread-return-seat .composer-combined-picker-trigger-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The role leads in the seat's own accent (`seatAccentVar`), so it matches the

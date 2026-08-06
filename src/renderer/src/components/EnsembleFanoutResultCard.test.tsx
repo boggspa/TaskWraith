@@ -544,6 +544,28 @@ describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
     expect(render({ ensembleSeatSnapshot: SNAPSHOT })).toContain('Ask')
   })
 
+  it('keeps a long model label inside the seat strip with a hover title', () => {
+    // CSS truncates `.composer-combined-picker-trigger-primary` inside the card;
+    // the full name stays on `title` so a narrow Writer fan-out column does not
+    // shove "Accept Edits" past the rim into the neighbouring lane.
+    const html = render({
+      ensembleSeatSnapshot: {
+        ...SNAPSHOT,
+        provider: 'codex',
+        model: 'gpt-5.3-codex-spark',
+        reasoningEffort: 'xhigh',
+        configuredPermissionPresetId: 'workspace_write'
+      },
+      ensembleProvider: 'codex',
+      ensembleModel: 'gpt-5.3-codex-spark',
+      ensembleRole: 'SparkDocs'
+    })
+    expect(html).toContain('ensemble-fanout-result-seat')
+    expect(html).toContain('title="GPT-5.3 Codex Spark"')
+    expect(html).toContain('Full WS Access')
+    expect(html).toContain('data-permission-value="workspace_write"')
+  })
+
   it('KEEPS #N — a fan-out lane sits in the reader’s own roster', () => {
     // Deliberately opposite to the peer thread-message card, where the sender
     // belongs to a roster the reader is not in and a seat number is unreadable.

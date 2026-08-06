@@ -143,7 +143,7 @@ function SeatClusterChip({ view, animate }: { view: SeatSideView; animate: boole
           {seatText(view.providerLabel, animate)}
         </span>
       </span>
-      <span className="composer-combined-picker-trigger-primary">
+      <span className="composer-combined-picker-trigger-primary" title={view.modelLabel}>
         {seatText(view.modelLabel, animate)}
       </span>
       {view.reasoningLabel && (
