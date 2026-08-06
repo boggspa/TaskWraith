@@ -47355,16 +47355,26 @@ if (isGeminiMcpBridgeProcess) {
     // would bind the same host data dir and local socket before quitting —
     // and the bootstrap supervisor registry is process-global, not a
     // cross-process fence.
-    const hostSupervisor = createHostProductionBootstrap({
-      userDataPath: app.getPath('userData'),
-      host: {
-        hostId: resolveHostInstallId({ userDataPath: app.getPath('userData') }),
-        hostVersion: app.getVersion()
-      },
-      chatList: AppStore,
-      bridge: createBridgeActionExecutor()
-    })
-    hostSupervisor.start().catch((error) => {
+    let hostSupervisor: ReturnType<typeof createHostProductionBootstrap> | undefined
+    try {
+      hostSupervisor = createHostProductionBootstrap({
+        userDataPath: app.getPath('userData'),
+        host: {
+          hostId: resolveHostInstallId({ userDataPath: app.getPath('userData') }),
+          hostVersion: app.getVersion()
+        },
+        chatList: AppStore,
+        bridge: createBridgeActionExecutor()
+      })
+    } catch (error) {
+      // Construction runs BEFORE `.start()` exists, so the start catch below can
+      // never observe a throw from here - the statement carrying it never runs.
+      // Wave 4.8 measured exactly that: identity file written, no socket dir, no
+      // log line, app healthy. Argument expressions evaluate before the call, so
+      // this also covers a throw from `AppStore` or `createBridgeActionExecutor()`.
+      console.error('[host] production Host failed to construct', error)
+    }
+    hostSupervisor?.start().catch((error) => {
       // Never `void` this. A discarded rejection would leave the app looking
       // healthy while Host is silently dead — unavailable telemetry is not zero.
       console.error('[host] production Host failed to start', error)
