@@ -71,6 +71,8 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('type="checkbox"')
     expect(html).toContain('<code>ready</code>')
     expect(html).toContain('message-code-shell')
+    expect(html).toContain('message-code-static')
+    expect(html).not.toContain('cm-editor')
     expect(html).toContain('ts')
   })
 

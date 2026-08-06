@@ -5097,7 +5097,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   overflow-wrap: normal;
 }
 
-.message-markdown-pro .markdown-table-scroll code:not(.cm-content code) {
+.message-markdown-pro .markdown-table-scroll code:not(.message-code-content):not(.cm-content code) {
   font-size: 0.9em;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -5116,7 +5116,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   border-right: 0;
 }
 
-.message-markdown-pro code:not(.cm-content code) {
+.message-markdown-pro code:not(.message-code-content):not(.cm-content code) {
   border: 1px solid rgb(var(--agent-accent-rgb) / 0.18);
   border-radius: 6px;
   background: rgb(255 255 255 / 0.055);
@@ -5179,9 +5179,36 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   color: var(--text-primary);
 }
 
-.message-code-shell.wrap .cm-line {
+/* Default: pre (no wrap). `.wrap` toggles pre-wrap — was tied to
+ * `.cm-line` when the body was CodeMirror; static highlighter uses
+ * `.message-code-static` so the toggle actually changes whitespace. */
+.message-code-shell .message-code-static {
+  margin: 0;
+  max-height: 560px;
+  padding: var(--space-sm);
+  overflow: auto;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre;
+  border-radius: 0;
+}
+
+.message-code-shell .message-code-content {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.message-code-shell.wrap .message-code-static {
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-x: hidden;
 }
 
 .message-code-shell .message-code-block {
@@ -5189,10 +5216,6 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-}
-
-.message-code-shell .cm-scroller {
-  max-height: 560px;
 }
 
 /* Live tool diff telemetry — per-row inline odometer ("+46 -23" next to

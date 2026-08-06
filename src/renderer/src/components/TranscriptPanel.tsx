@@ -48,6 +48,10 @@ import {
 } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import {
+  getChatTranscriptStore,
+  useChatTranscript
+} from '../lib/useChatTranscript'
+import {
   deriveActiveEnsembleWorkingPresentation,
   deriveActiveEnsembleWorkingPresentations,
   type WorkingIndicatorPresentation
@@ -2056,12 +2060,19 @@ export const TranscriptPanel = memo(
     userMessageGutterEnabled,
     isGlobal
   }: TranscriptPanelProps) {
+    // Narrow stream subscription: App may retain React chat identity across
+    // coalesced flushes; the store is the live messages/runs source for this
+    // panel. Props remain the fallback for tests / side panes not yet ingested.
+    const chatId = currentChat?.appChatId ?? null
+    const storeTranscript = useChatTranscript(chatId)
+    const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
+    const resolvedMessages = storeReady ? storeTranscript.messages : messages
     const visibleMessages = useMemo(() => {
       if (isWelcomeChat) return EMPTY_CHAT_MESSAGES
       // Queued-run cards were removed from the transcript; drop any historical
       // `queuedRunRequest` system messages so they no longer surface.
-      return messages.filter((message) => message?.metadata?.kind !== 'queuedRunRequest')
-    }, [isWelcomeChat, messages])
+      return resolvedMessages.filter((message) => message?.metadata?.kind !== 'queuedRunRequest')
+    }, [isWelcomeChat, resolvedMessages])
     const hasLiveContextCompactionProgress = useMemo(
       () => contextCompactionProgress.some((event) => event.status === 'started'),
       [contextCompactionProgress]
@@ -2117,17 +2128,18 @@ export const TranscriptPanel = memo(
         workingRoleLabel
       ]
     )
+    const resolvedRuns = storeReady ? storeTranscript.runs : currentChat?.runs || []
     const workingTokenTargets = useMemo(
       () =>
         buildWorkingIndicatorTokenTargets(
-          currentChat?.runs || [],
-          currentChat?.messages || [],
+          resolvedRuns,
+          resolvedMessages,
           workingPresentations.map((presentation) => ({
             runId: presentation.runId,
             tokenAccumulatorBase: presentation.tokenAccumulatorBase
           }))
         ),
-      [currentChat?.messages, currentChat?.runs, workingPresentations]
+      [resolvedMessages, resolvedRuns, workingPresentations]
     )
     // Seats whose "working…" row is live right now, so each fan-out lane card
     // can shimmer its rim while its own seat is busy — the point being that a
@@ -2411,7 +2423,7 @@ export const TranscriptPanel = memo(
           // earlier in the thread would launder a dead run into "work done".
           hadAssistantOutput: Boolean(
             noticeRunId &&
-            messages.some(
+            resolvedMessages.some(
               (message) =>
                 message.role === 'assistant' &&
                 message.runId === noticeRunId &&
@@ -2433,7 +2445,7 @@ export const TranscriptPanel = memo(
       currentRun?.runId,
       displayFileChangeSummaries.length,
       isGlobal,
-      messages,
+      resolvedMessages,
       pendingAgentQuestions,
       pendingPlanChoice,
       runCompleteBlockers,
@@ -3415,7 +3427,6 @@ export const TranscriptPanel = memo(
     useEffect(() => {
       return () => scrollAnimatorRef.current?.cancel()
     }, [])
-    const chatId = currentChat?.appChatId ?? null
     const currentChatRenderSignature = useMemo(
       () => transcriptChatRenderSignature(currentChat),
       [currentChat]
@@ -5253,7 +5264,7 @@ export const TranscriptPanel = memo(
                 </div>
                 <div className="run-complete-actions">
                   {(() => {
-                    const latestAssistantMessage = [...messages]
+                    const latestAssistantMessage = [...resolvedMessages]
                       .reverse()
                       .find((m) => m.role === 'assistant')
                     const latestCopyId = latestAssistantMessage

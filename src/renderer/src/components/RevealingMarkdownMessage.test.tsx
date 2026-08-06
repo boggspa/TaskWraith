@@ -69,6 +69,23 @@ describe('safeMessageSlice', () => {
     expect(safeMessageSlice(content, graphemeCount(content), true)).toBe(content)
   })
 
+  it('keeps mid-word English advances on a stable projection (paint-gate invariant)', () => {
+    // Phase B paint gate commits React state only when this string changes.
+    // Mid-word grapheme cursor advances must not thrash remardown.
+    const prefix = 'Smooth streaming '
+    const word = 'words'
+    const held = safeMessageSlice(prefix + 'w', graphemeCount(prefix + 'w'))
+    expect(held).toBe(prefix)
+
+    for (let index = 1; index < word.length; index += 1) {
+      const partial = prefix + word.slice(0, index + 1)
+      expect(safeMessageSlice(partial, graphemeCount(partial))).toBe(held)
+    }
+
+    const completed = `${prefix}${word} `
+    expect(safeMessageSlice(completed, graphemeCount(completed))).toBe(completed)
+  })
+
   it('preserves the literal trailing newline discarded by the block splitter', () => {
     const content = '- one\n- two\nX'
     const cursor = graphemeCount('- one\n- two\n')

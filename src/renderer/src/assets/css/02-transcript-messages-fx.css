@@ -5574,11 +5574,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     0 0 20px rgb(var(--agent-accent-rgb) / 0.08);
 }
 
-.message-code-block .cm-editor {
+.message-code-block .message-code-static {
   background: transparent;
-}
-
-.message-code-block .cm-scroller {
   max-height: 520px;
 }
 

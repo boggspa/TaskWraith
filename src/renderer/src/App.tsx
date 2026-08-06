@@ -683,6 +683,8 @@ import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
 import { createChatHydrationRuntime, reconcileHydrationOptions } from './lib/chatHydrationRuntime'
+import { shouldRetainReactChatOnFlush } from './lib/chatChromeIdentity'
+import { bindChatTranscriptStore } from './lib/useChatTranscript'
 import {
   applyParticipantPermissionsToEnsemble,
   cloneParticipantPermissionPatch,
@@ -3512,6 +3514,17 @@ function App(): React.JSX.Element {
   // immediately. Gating on ownership lets both flows work: switching to
   // an unrelated chat still clears (stale runId), but switching to a
   // chat that contains the run keeps the inspector open.
+  // Bind the hydration-runtime transcript store once. TranscriptPanel
+  // subscribes by chat id; stream flushes ingest here and may retain React
+  // chat identity so App chrome skips mid-stream re-renders.
+  const chatHydrationRuntimeRef = useRef(
+    (() => {
+      const runtime = createChatHydrationRuntime()
+      bindChatTranscriptStore(runtime.transcriptStore)
+      return runtime
+    })()
+  )
+
   useEffect(() => {
     if (!inspectingRunId) return
     const runs = currentChat?.runs || []
@@ -3860,7 +3873,6 @@ function App(): React.JSX.Element {
   const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
-  const chatHydrationRuntimeRef = useRef(createChatHydrationRuntime())
   // This baseline is deliberately separate from chatByIdRef: the latter may
   // contain optimistic or in-flight renderer-only content and is therefore
   // not a safe base for reconstructing main-owned transport patches.
@@ -5585,11 +5597,19 @@ function App(): React.JSX.Element {
   // Commit every pending coalesced chat from the (authoritative) ref into
   // React state in one batch. Always reads chatByIdRef.current, so it commits
   // the latest byte-exact content and never a stale closed-over snapshot.
+  // Transcript arrays are ingested into ChatTranscriptStore first; when only
+  // messages/runs/updatedAt changed, React keeps the previous chat identity so
+  // App chrome skips the stream-frame re-render (panel reads the store).
   const flushCoalescedChats = useCallback(() => {
     const dirty = pendingChatFlushRef.current
     if (dirty.size === 0) return
     pendingChatFlushRef.current = new Set()
     const byId = chatByIdRef.current
+    const transcriptStore = chatHydrationRuntimeRef.current.transcriptStore
+    for (const chatId of dirty) {
+      const updated = byId.get(chatId)
+      if (updated) transcriptStore.ingest(updated)
+    }
     setChats((prev) => {
       let changed = false
       const seen = new Set<string>()
@@ -5598,6 +5618,9 @@ function App(): React.JSX.Element {
         seen.add(chat.appChatId)
         const updated = byId.get(chat.appChatId)
         if (updated && updated !== chat) {
+          if (shouldRetainReactChatOnFlush(chat, updated)) {
+            return chat
+          }
           changed = true
           return updated
         }
@@ -5615,7 +5638,9 @@ function App(): React.JSX.Element {
     setCurrentChat((prev) => {
       if (!prev || !dirty.has(prev.appChatId)) return prev
       const updated = byId.get(prev.appChatId)
-      return updated && updated !== prev ? updated : prev
+      if (!updated || updated === prev) return prev
+      if (shouldRetainReactChatOnFlush(prev, updated)) return prev
+      return updated
     })
     const pendingFlushChars = pendingStreamFlushCharsByRunIdRef.current
     const pendingItemFlushChars = pendingStreamFlushCharsByRunItemRef.current
@@ -24133,6 +24158,9 @@ function App(): React.JSX.Element {
     })
   }, [currentGitPresentationPath, liveGitInvalidationKey])
 
+  // Welcome / search still read React chat messages. Stream flushes commit the
+  // empty→non-empty boundary so welcome unmounts; mid-stream churn is retained
+  // and TranscriptPanel reads ChatTranscriptStore instead.
   const transcriptMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
   // Welcome-surface gate. Extracted into `lib/welcomeState` so the
   // predicate is independently unit-tested (see `welcomeState.test.ts`).

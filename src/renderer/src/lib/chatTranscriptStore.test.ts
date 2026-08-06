@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
-import { ChatTranscriptStore } from './chatTranscriptStore'
+import {
+  ChatTranscriptStore,
+  EMPTY_CHAT_TRANSCRIPT_PAYLOAD
+} from './chatTranscriptStore'
 import { isChatSummaryRecord } from './chatRecordMerge'
 
 function message(id: string, content: string): ChatMessage {
@@ -69,5 +72,102 @@ describe('ChatTranscriptStore', () => {
     }
     expect(store.ingest(summary)).toBeNull()
     expect(store.stats().chatCount).toBe(0)
+  })
+
+  it('bumps per-chat generation on set/ingest/drop/clear', () => {
+    const store = new ChatTranscriptStore()
+    expect(store.generation('chat-e')).toBe(0)
+
+    const full = chat('chat-e')
+    store.ingest(full)
+    expect(store.generation('chat-e')).toBe(1)
+
+    const nextMessages = [message('m2', 'world')]
+    store.set('chat-e', { messages: nextMessages, runs: [], updatedAt: 3 })
+    expect(store.generation('chat-e')).toBe(2)
+
+    // Referentially identical payload does not bump.
+    store.set('chat-e', { messages: nextMessages, runs: [], updatedAt: 3 })
+    expect(store.generation('chat-e')).toBe(2)
+
+    expect(store.drop('chat-e')).toBe(true)
+    expect(store.generation('chat-e')).toBe(3)
+
+    store.ingest(full)
+    expect(store.generation('chat-e')).toBe(4)
+    store.clear()
+    expect(store.generation('chat-e')).toBe(5)
+    expect(store.has('chat-e')).toBe(false)
+  })
+
+  it('getSnapshot returns a stable reference when unchanged', () => {
+    const store = new ChatTranscriptStore()
+    const missingA = store.getSnapshot('missing')
+    const missingB = store.getSnapshot('missing')
+    expect(missingA).toBe(EMPTY_CHAT_TRANSCRIPT_PAYLOAD)
+    expect(missingB).toBe(missingA)
+    expect(store.getSnapshot(null)).toBe(EMPTY_CHAT_TRANSCRIPT_PAYLOAD)
+    expect(store.getSnapshot(undefined)).toBe(EMPTY_CHAT_TRANSCRIPT_PAYLOAD)
+
+    const full = chat('chat-f')
+    store.ingest(full)
+    const snap1 = store.getSnapshot('chat-f')
+    const snap2 = store.getSnapshot('chat-f')
+    expect(snap1).toBe(snap2)
+    expect(snap1.messages).toBe(full.messages)
+
+    store.set('chat-f', {
+      messages: [message('m2', 'next')],
+      runs: [],
+      updatedAt: 9
+    })
+    const snap3 = store.getSnapshot('chat-f')
+    expect(snap3).not.toBe(snap1)
+    expect(store.getSnapshot('chat-f')).toBe(snap3)
+  })
+
+  it('subscribe notifies only the matching chat; subscribeAll sees every mutation', () => {
+    const store = new ChatTranscriptStore()
+    const onA = vi.fn()
+    const onB = vi.fn()
+    const onAll = vi.fn()
+
+    const unsubA = store.subscribe('chat-a', onA)
+    const unsubB = store.subscribe('chat-b', onB)
+    const unsubAll = store.subscribeAll(onAll)
+
+    store.ingest(chat('chat-a'))
+    expect(onA).toHaveBeenCalledTimes(1)
+    expect(onB).toHaveBeenCalledTimes(0)
+    expect(onAll).toHaveBeenCalledTimes(1)
+
+    store.ingest(chat('chat-b'))
+    expect(onA).toHaveBeenCalledTimes(1)
+    expect(onB).toHaveBeenCalledTimes(1)
+    expect(onAll).toHaveBeenCalledTimes(2)
+
+    store.drop('chat-a')
+    expect(onA).toHaveBeenCalledTimes(2)
+    expect(onAll).toHaveBeenCalledTimes(3)
+
+    unsubA()
+    unsubB()
+    store.set('chat-b', { messages: [], runs: [], updatedAt: 1 })
+    expect(onA).toHaveBeenCalledTimes(2)
+    expect(onB).toHaveBeenCalledTimes(1)
+    expect(onAll).toHaveBeenCalledTimes(4)
+
+    unsubAll()
+    store.clear()
+    expect(onAll).toHaveBeenCalledTimes(4)
+  })
+
+  it('subscribe with nullish chatId is a no-op', () => {
+    const store = new ChatTranscriptStore()
+    const listener = vi.fn()
+    const unsub = store.subscribe(null, listener)
+    store.ingest(chat('chat-z'))
+    expect(listener).not.toHaveBeenCalled()
+    unsub()
   })
 })

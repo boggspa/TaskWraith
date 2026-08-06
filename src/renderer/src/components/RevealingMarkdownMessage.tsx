@@ -394,6 +394,12 @@ function RevealingMarkdownMessageImpl({
   })
   const [revealedLen, setRevealedLen] = useState(initialReveal.revealed)
   const paintedRevealedRef = useRef(initialReveal.revealed)
+  // Paint gate: React remardown only when the structure-safe projection string
+  // would change. The adaptive cursor still advances every frame on refs.
+  const lastCommittedDisplayContentRef = useRef(
+    safeMessageSlice(content, initialReveal.revealed, !isLive, targetGraphemes, false)
+  )
+  const lastCommittedSourceContentRef = useRef(content)
   const controllerRef = useRef(initialReveal.state)
   const [initialCadenceTracker] = useState(() =>
     createRevealCadenceTracker(
@@ -412,6 +418,8 @@ function RevealingMarkdownMessageImpl({
     resolveAdaptiveRevealPresentation(revealCadenceSnapshot(initialCadenceTracker))
   )
   const [releaseTrailingFragment, setReleaseTrailingFragment] = useState(false)
+  const releaseTrailingFragmentRef = useRef(releaseTrailingFragment)
+  releaseTrailingFragmentRef.current = releaseTrailingFragment
   const paintElapsedRef = useRef(0)
   const previousTargetGraphemesRef = useRef(targetGraphemes)
   const previousTargetContentRef = useRef(content)
@@ -459,6 +467,14 @@ function RevealingMarkdownMessageImpl({
     ) {
       controllerRef.current = createAdaptiveRevealState(commonPrefix)
       paintedRevealedRef.current = Math.min(paintedRevealedRef.current, commonPrefix)
+      lastCommittedDisplayContentRef.current = safeMessageSlice(
+        content,
+        paintedRevealedRef.current,
+        !isLive,
+        targetGraphemes,
+        releaseTrailingFragmentRef.current
+      )
+      lastCommittedSourceContentRef.current = content
       setRevealedLen(paintedRevealedRef.current)
     }
     previousTargetGraphemesRef.current = targetGraphemes
@@ -550,8 +566,10 @@ function RevealingMarkdownMessageImpl({
     if (!reduced && (isLive || hasBeenLive)) return
     controllerRef.current = createAdaptiveRevealState(targetLen)
     paintedRevealedRef.current = targetLen
+    lastCommittedDisplayContentRef.current = content
+    lastCommittedSourceContentRef.current = content
     if (revealedLen !== targetLen) setRevealedLen(targetLen)
-  }, [hasBeenLive, isLive, reduced, revealedLen, targetLen])
+  }, [hasBeenLive, isLive, reduced, revealedLen, targetLen, content])
 
   const revealLifecycleActive = isLive || hasBeenLive
   const animationActive = !reduced && revealLifecycleActive && revealedLen < targetLen
@@ -585,16 +603,35 @@ function RevealingMarkdownMessageImpl({
     controllerRef.current = next
     paintElapsedRef.current += dt
     const paintInterval = 1 / presentation.maxPaintFps
-    const mustCommit =
-      next.revealed >= targetGraphemes.length || paintElapsedRef.current >= paintInterval
+    const atEnd = next.revealed >= targetGraphemes.length
+    const mustCommit = atEnd || paintElapsedRef.current >= paintInterval
     if (mustCommit) {
-      paintElapsedRef.current =
-        next.revealed >= targetGraphemes.length
-          ? 0
-          : Math.max(0, paintElapsedRef.current - paintInterval)
-      if (next.revealed !== paintedRevealedRef.current) {
+      paintElapsedRef.current = atEnd
+        ? 0
+        : Math.max(0, paintElapsedRef.current - paintInterval)
+      // Always keep the painted cursor/session refs advancing; React state only
+      // commits when the safe projection string would change, or when the
+      // reveal catches the target / finishes completing.
+      if (next.revealed !== paintedRevealedRef.current || atEnd) {
         paintedRevealedRef.current = next.revealed
-        setRevealedLen(next.revealed)
+        const candidateDisplay = safeMessageSlice(
+          content,
+          next.revealed,
+          !isLive,
+          targetGraphemes,
+          releaseTrailingFragment
+        )
+        const previousDisplay = lastCommittedDisplayContentRef.current
+        const appendOnly = content.startsWith(lastCommittedSourceContentRef.current)
+        const displayForCommit =
+          appendOnly && !candidateDisplay.startsWith(previousDisplay)
+            ? previousDisplay
+            : candidateDisplay
+        if (displayForCommit !== previousDisplay || atEnd) {
+          lastCommittedDisplayContentRef.current = displayForCommit
+          lastCommittedSourceContentRef.current = content
+          setRevealedLen(next.revealed)
+        }
       }
       if (revealLifecycleActive && !settleNotifiedRef.current) {
         writeRevealSession(sessionKey, content, next, paintedRevealedRef.current)
@@ -652,7 +689,7 @@ function RevealingMarkdownMessageImpl({
                 tokenFadeEnabled &&
                 !reduced &&
                 revealLifecycleActive &&
-                index >= displayBlocks.length - 2 &&
+                index >= displayBlocks.length - 1 &&
                 (block.type === 'paragraph' || block.type === 'heading')
               }
               animatedWordWindow={presentation.animatedWordWindow}
