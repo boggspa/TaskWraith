@@ -288,7 +288,7 @@ Reorder `click`/`fill` to match `evaluate`: `require → charge → assertLive �
 
 Emitting the intent *before* execution means a crash or a history-clear race leaves a record that the action was attempted. Emitting the outcome only on failure/unverified keeps it to ~1 event per action against `EVENT_HISTORY_LIMIT = 2000` ([CanvasStore.ts:29](../src/main/canvas/CanvasStore.ts:29)).
 
-**Use best-effort `emit` for ordinary actions and `emitStrict` only for consequential ones (§7).** A strict write is a pinned-fd, fsync'd full-file JSON rewrite; 200 of them per session would be a main-process stall — the known unbounded-sync-`writeJson` freeze class. Audit-before-execute *strictly* only where the action is irreversible.
+**Use best-effort `emit` for ordinary actions and `emitStrict` only for consequential ones (§7).** A strict write is a pinned-fd, fsync'd full-file JSON rewrite; 200 of them per session would be a main-process stall — the known unbounded-sync-`writeJson` freeze class. **Mitigated (dark, `b745115a1`):** item 6 moves the write+fsync+rename+dir-fsync tail (~40 ms of a ~70 ms large-chat save) off main for `normal` saves behind `TASKWRAITH_UTILITY_WRITE=1` with a registered writer; uncontended barriers stay synchronous on main, contended barriers follow the queue (ordering). Flag off by default; no composition-root wiring yet. Audit-before-execute *strictly* only where the action is irreversible.
 
 ---
 

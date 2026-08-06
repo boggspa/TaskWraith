@@ -66,6 +66,12 @@ Ensemble participant / tool tick / fan-out seed
        ├─ deps.saveChat → AppStore.saveChat
        │    ├─ normalizeChatRecord + compactChatForPersist
        │    ├─ writeJson(chats/<id>.json)   // pretty JSON + sync write + fsync + rename + dir fsync
+       │    │    // ── Mitigation landed (item 6, dark): with TASKWRAITH_UTILITY_WRITE=1 + a
+       │    │    //    registered writer, normal saves route serialize (~30ms, on main, in the
+       │    │    //    queue) → enqueue → utility process (write+fsync+rename+dir-fsync, ~40ms
+       │    │    //    off main). Uncontended barriers still write on main; contended barriers
+       │    │    //    follow the queue (ordering). Flag off; no composition-root wiring yet.
+       │    │    //    See §5.2 amendment.
        │    └─ writeChatListIndex           // whole chat-list-index.json when row changes
        ├─ persistSessionCheckpoint → SessionCheckpointStore.upsertFromChat
        │    └─ persistOrThrow               // JSON.stringify(entire this.records[])
@@ -143,6 +149,8 @@ Composed of:
 Dual-read is mandatory until Boss declares cutover complete (see §6).
 
 ### 5.2 Durability classes and ACK semantics — **FROZEN**
+
+**Amendment (2026-08-06, item 6):** A utility-process durable write mitigation is landed dark behind `TASKWRAITH_UTILITY_WRITE=1` (`b745115a1`). For `normal` saves while enabled with a registered writer, the write+fsync+rename+dir-fsync tail (~40 ms of a ~70 ms large-chat save) moves off main into a long-lived queued utility process; serialize (~30 ms) stays on main by design (queue serializes the record on enqueue). Uncontended barriers remain synchronous on main; a barrier for a chat that already has a queued job routes through the queue (ordering over sync durability) and is not awaited at the seam. Today both gates are shut (flag off + zero production `registerPersistenceWriteEnqueue` callers), so every save — barrier and normal — still takes the synchronous `writeJson` path. Crash fallback drains the queue FIFO in the calling thread before killing the worker — the queue owns its own fallback; N callers never race independent fallback writes. This is a quick win that narrows the freeze window until v2 append-oriented persistence lands; it does **not** change the durability class definitions or ACK semantics below.
 
 | Class | Examples | Durability barrier | Client/provider ACK meaning |
 | --- | --- | --- | --- |
@@ -527,7 +535,7 @@ T2  HEAD baseline capture (30/50/dual/soak) under isolated userData   │
      │  authoritative only from clean worktree + fingerprint          │
      │                                                                │
      ├─► T3a Chat-level save coalescer + batched fan-out seed         │
-     │     + durability class hooks (still v1 files)   [@GrokWork1]   │ — per-chat flush landed; full coalescer + fan-out seed batch remain
+     │     + durability class hooks (still v1 files)   [@GrokWork1]   │ — per-chat flush landed; utility-process write landed dark (item 6, TASKWRAITH_UTILITY_WRITE=1); full coalescer + fan-out seed batch remain
      │                                                                │
      ├─► T3b Checkpoint hot/archive + upsert throttle  [@GrokWork1]   │
      │                                                                │
@@ -566,6 +574,8 @@ T10 Cutover S3 + soak + rollback drill → S5                          │
 - Live unrelated claims on composition-root / export / iOS projection paths block workers until cleared or Captain assigns disjoint scopes.
 
 **Quick wins allowed in T3a** (coalesce + batch seed) because they do not change format authority — still require before/after metrics and D2/D3 barrier tests.
+
+**Item 6 (utility-process durable write) — committed, outside this ADR's core tranches:** `b745115a1` landed the worker (`src/main/store/PersistenceWriteWorker.ts` + `.test.ts`, `src/main/workers/persistenceWriteWorker.ts`), seam (`src/main/store/index.ts`), durability tests (`src/main/store/persistenceDurability.test.ts`, 14/14), Phase-0 baseline (`src/main/store/persistenceWriteBaseline.bench.test.ts`), and build entry (`electron.vite.config.ts`). Flag dark (`TASKWRAITH_UTILITY_WRITE=1`), no composition-root wiring. ~40 ms (57%) of the ~70 ms large-save block moves off main; serialize (~30 ms) stays. This narrows the freeze window until T4 — it does not replace v2 append-oriented persistence.
 
 ---
 
