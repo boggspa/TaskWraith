@@ -9235,7 +9235,16 @@
     0 18px 44px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
-  z-index: 1000;
+  /* Portaled-popover band (10060), same as `.ensemble-above-overflow`. This
+   * shell is body-portaled + `position: fixed` (CombinedModelPicker), so it
+   * competes directly with the body-portaled transcript rails (10030/10031).
+   * At the old 1000 the participant-filter rail painted over — and swallowed
+   * clicks on — every picker that opens near the transcript's right edge, most
+   * visibly the participants row's `+` add-participant popover
+   * (.is-ensemble-add-participant), which anchors at the END of that row.
+   * Still below the 12000 modal band. Pinned by
+   * composerPopoverStackingCss.test.ts. */
+  z-index: 10060;
   font-family: inherit;
   font-size: calc(var(--font-size-xs) + 1px);
   color: var(--text-primary);

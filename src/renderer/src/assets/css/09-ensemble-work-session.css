@@ -2066,7 +2066,19 @@
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   isolation: isolate;
-  z-index: 9500;
+  /* Portaled-popover band (10060) — the same band as this component's own
+   * `.ensemble-above-chip-tooltip` and the transcript context menu / file card:
+   * "a portaled transcript popover must clear app chrome + docks". This is
+   * body-portaled and `position: fixed`, so it is a sibling of the two equally
+   * body-portaled transcript rails (gutter 10030, participant-filter rail
+   * 10031) with no stacking context between them — at the old 9500 the filter
+   * rail painted its provider icons OVER this popover and, being
+   * `pointer-events: auto`, ate the clicks too. Pinned by
+   * composerPopoverStackingCss.test.ts, which compares the LIVE numbers.
+   * Do not instead add this popover to the rails' `html:has(...)` hide list:
+   * that list is for full-screen sheets, and blanking a navigation rail every
+   * time a chip is opened would just trade one visual bug for a flicker. */
+  z-index: 10060;
   display: flex;
   flex-direction: column;
   gap: 10px;
