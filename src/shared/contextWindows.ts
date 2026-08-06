@@ -46,6 +46,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'minimax/MiniMax-M2.7': 204_800,
   'mistral/devstral-2512': 262_144,
   'mistral/mistral-medium-3.5': 262_144,
+  'mistral/mistral-large-2512': 262_144,
   // Mistral seat (ProviderId 'mistral', the Vibe CLI over ACP) — NOT the Pi
   // BYOK upstream rows directly above. Bare (no-slash) ids, so they can't
   // collide with the `mistral/<model>` Pi wire ids. The CLI's display model

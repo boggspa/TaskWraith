@@ -68,6 +68,7 @@ public enum ContextWindows {
         "minimax/MiniMax-M2.7": 204_800,
         "mistral/devstral-2512": 262_144,
         "mistral/mistral-medium-3.5": 262_144,
+        "mistral/mistral-large-2512": 262_144,
         // Mistral Vibe CLI seat (ProviderId `mistral`) — a DIFFERENT provider
         // from the Pi upstream directly above, which merely shares the brand
         // word. Seat model ids are always BARE; the presence of a `/` is what

@@ -61,6 +61,7 @@ public enum PiBrandTable {
         "minimax/MiniMax-M2.7": "MiniMax M2.7",
         "mistral/devstral-2512": "Devstral 2512",
         "mistral/mistral-medium-3.5": "Mistral Medium 3.5",
+        "mistral/mistral-large-2512": "Mistral Large 3 (2512)",
         "groq/openai/gpt-oss-120b": "GPT-OSS 120B (Groq)",
         "groq/qwen/qwen3-32b": "Qwen3 32B (Groq)",
         "cerebras/zai-glm-4.7": "GLM-4.7 (Cerebras)",

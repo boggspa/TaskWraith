@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
+import { PI_STATIC_MODELS } from '../../../main/pi/PiModels'
+import { activePiModelRows } from '../../../shared/piModelLifecycle'
 import {
   buildCodexModelChangeParticipantPatch,
   buildProviderModelChangeParticipantPatch,
@@ -690,5 +692,32 @@ describe('mistral reasoning lock (vibe schema: medium-3.5 thinking=high, devstra
   it('keeps Devstral Small reasoning-free (inert rail)', () => {
     expect(getEnsembleReasoningOptions('mistral', 'devstral-small')).toEqual([])
     expect(getEnsembleReasoningOptions('mistral', undefined)).toEqual([])
+  })
+})
+
+/*
+ * PI_MODELS (the add-participant / model popover list) is a SECOND, hand-kept
+ * copy of the Pi catalogue that lives in the renderer because it may not import
+ * from src/main at runtime. Unlike the label map (piBrandTable.test.ts) and the
+ * rate table (ProviderRateService.test.ts), it had no parity guard — so a model
+ * added to the catalogue would appear in the composer picker, which derives
+ * from PI_STATIC_MODELS, while silently never showing up when adding an
+ * ensemble participant. Both lists are filtered through the same retirement
+ * helper so a retiring model can't make this look like drift.
+ */
+describe('Pi add-participant model options', () => {
+  it('offers exactly the active catalogued Pi models, with matching labels', () => {
+    const now = new Date('2026-08-06T00:00:00.000Z')
+    const offered = Object.fromEntries(
+      getEnsembleModelDefaults('pi', now).modelOptions.map((option) => [option.id, option.label])
+    )
+    const catalogued = Object.fromEntries(
+      activePiModelRows(
+        PI_STATIC_MODELS.map((model) => ({ id: model.wireId, label: model.label })),
+        now
+      ).map((model) => [model.id, model.label])
+    )
+
+    expect(offered).toEqual(catalogued)
   })
 })

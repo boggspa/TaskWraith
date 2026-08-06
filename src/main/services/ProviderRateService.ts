@@ -1028,6 +1028,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Priciest wired Mistral row; Mistral also publishes far cheaper tiers pi supports.'
       },
+      {
+        modelId: 'mistral/mistral-large-2512',
+        inputUsdPerMillion: 0.5,
+        outputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.05,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Mistral Large 3. Cheaper per token than medium-3.5 despite being the flagship — do not infer this row from the medium one.'
+      },
       // Groq wire ids carry a SECOND slash — the id below is the whole key.
       {
         modelId: 'groq/openai/gpt-oss-120b',

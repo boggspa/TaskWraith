@@ -244,6 +244,7 @@ const PI_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'minimax/MiniMax-M2.7', label: 'MiniMax M2.7' },
   { id: 'mistral/devstral-2512', label: 'Devstral 2512' },
   { id: 'mistral/mistral-medium-3.5', label: 'Mistral Medium 3.5' },
+  { id: 'mistral/mistral-large-2512', label: 'Mistral Large 3 (2512)' },
   { id: 'groq/openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)' },
   { id: 'groq/qwen/qwen3-32b', label: 'Qwen3 32B (Groq)' },
   { id: 'cerebras/zai-glm-4.7', label: 'GLM-4.7 (Cerebras)' },

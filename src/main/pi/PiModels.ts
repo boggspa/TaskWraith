@@ -50,6 +50,12 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   // Mistral
   { wireId: 'mistral/devstral-2512', upstream: 'mistral', modelId: 'devstral-2512', label: 'Devstral 2512', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: false },
   { wireId: 'mistral/mistral-medium-3.5', upstream: 'mistral', modelId: 'mistral-medium-3.5', label: 'Mistral Medium 3.5', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: true, images: true },
+  // Mistral Large 3 (2512-01) — pi names it "Mistral Large 3"; the label keeps
+  // the dated build because Mistral also ships `mistral-large-2411` and a
+  // floating `mistral-large-latest`. `thinking: false` is pi's own
+  // `reasoning: false`: Large 3 is NOT a reasoning model (Magistral and
+  // mistral-medium-3.5 are), so it deliberately gets no reasoning options.
+  { wireId: 'mistral/mistral-large-2512', upstream: 'mistral', modelId: 'mistral-large-2512', label: 'Mistral Large 3 (2512)', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: true },
   // Groq — open-weights on fast inference silicon
   { wireId: 'groq/openai/gpt-oss-120b', upstream: 'groq', modelId: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)', contextWindow: 131_072, maxOutputTokens: 65_536, thinking: true, images: false },
   { wireId: 'groq/qwen/qwen3-32b', upstream: 'groq', modelId: 'qwen/qwen3-32b', label: 'Qwen3 32B (Groq)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false },
