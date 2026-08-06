@@ -99,6 +99,12 @@ export interface AgentRunPayload {
   /** Per-run Ollama runtime profile override. */
   ollamaRunProfile?: OllamaRunProfileId
   imagePaths?: string[]
+  /**
+   * Set by the shared image-attachment gate when `imagePaths` were stripped
+   * because this provider has no image transport. Callers may surface the
+   * warning; the text turn still dispatches.
+   */
+  imageAttachmentWarning?: string
   providerSessionId?: string | null
   externalPathGrants?: ExternalPathGrant[]
   /** Explicit user-selected Project catalogue context, re-resolved and signed by main. */

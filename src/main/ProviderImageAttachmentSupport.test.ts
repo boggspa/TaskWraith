@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   appendAttachedImageFilesNote,
+  describeImageAttachmentOmissionWarning,
   describeImageAttachmentRefusal,
-  providerDeliversImageAttachments
+  providerDeliversImageAttachments,
+  resolveImagePathsForProvider
 } from './ProviderImageAttachmentSupport'
 
 describe('providerDeliversImageAttachments', () => {
@@ -25,15 +27,38 @@ describe('providerDeliversImageAttachments', () => {
   })
 })
 
-describe('describeImageAttachmentRefusal', () => {
-  it('names the provider, the count, and the remedy', () => {
-    const single = describeImageAttachmentRefusal('Ollama', 1)
+describe('describeImageAttachmentOmissionWarning', () => {
+  it('names the provider, the count, and that the turn continues', () => {
+    const single = describeImageAttachmentOmissionWarning('Ollama', 1)
     expect(single).toContain('Ollama cannot receive image attachments')
     expect(single).toContain('the attached image')
-    expect(single).toContain('not dispatched')
-    const plural = describeImageAttachmentRefusal('Pi', 3)
+    expect(single).toContain('will not be delivered')
+    expect(single).toContain('Continuing without it')
+    const plural = describeImageAttachmentOmissionWarning('Pi', 3)
     expect(plural).toContain('the 3 attached images')
+    expect(plural).toContain('Continuing without them')
     expect(plural).toContain('Claude, Codex, Gemini, or Kimi')
+  })
+
+  it('keeps the refusal alias on the same warn-and-continue copy', () => {
+    expect(describeImageAttachmentRefusal('Pi', 1)).toBe(
+      describeImageAttachmentOmissionWarning('Pi', 1)
+    )
+  })
+})
+
+describe('resolveImagePathsForProvider', () => {
+  it('passes supported lanes through unchanged', () => {
+    expect(resolveImagePathsForProvider('codex', ['/tmp/a.png', ''], 'Codex')).toEqual({
+      imagePaths: ['/tmp/a.png']
+    })
+  })
+
+  it('strips unsupported lanes and returns an omission warning', () => {
+    const resolved = resolveImagePathsForProvider('pi', ['/tmp/a.png', '/tmp/b.png'], 'Pi')
+    expect(resolved.imagePaths).toEqual([])
+    expect(resolved.warning).toContain('Pi cannot receive image attachments')
+    expect(resolved.warning).toContain('Continuing without them')
   })
 })
 
