@@ -1,0 +1,237 @@
+/**
+ * Host Arc Wave 4.3a — Desktop read-only Host projection mapper.
+ *
+ * WHAT THIS IS. A pure translation from `HostSnapshot` (the authoritative
+ * wire projection) into a bounded view model the Desktop renderer can paint.
+ * It is the Desktop counterpart of the TUI's `hostProjectionMap.ts`, and it
+ * deliberately reuses that module's honesty rules rather than re-deriving them.
+ *
+ * WHY IT IS PURE. The renderer runs with `sandbox: true` and
+ * `contextIsolation: true`, so it has no Node access and can never open the
+ * Host socket itself. Everything here is therefore a total function over a
+ * snapshot the transport already fetched — no I/O, no clock, no globals. That
+ * also makes it fully testable without a DOM, which matters because this repo
+ * has no jsdom environment for renderer tests; the established pattern is a
+ * pure-logic / thin-view split.
+ *
+ * THE THREE HONESTY RULES (from the arc goal, and none of them is stylistic):
+ *
+ *  1. CACHED IS NOT LIVE. A snapshot served from cache is labelled `cached`
+ *     and never silently painted as current state.
+ *  2. UNAVAILABLE IS NOT ZERO. When Host reports usage `unavailable`, this
+ *     returns `undefined` — never `0`. A zero would be fabricated telemetry,
+ *     and it reads to a user as "nothing was spent", which is a different and
+ *     false claim from "we do not know".
+ *  3. CONNECTION STATE IS NOT RUN STATE. Client connectivity, Host health,
+ *     run outcome and mission outcome are four distinct facts. A dropped
+ *     socket must never be rendered as a failed run.
+ *
+ * BOUNDARY: read-only. This module never builds, submits or describes a Host
+ * command — Desktop command cutover is Wave 4.3b and is hard-gated on exact
+ * approvalId correlation (Wave 4.2c).
+ */
+
+import type {
+  HostHealthProjection,
+  HostSnapshot,
+  HostThreadProjection,
+  HostUsageObservation,
+  HostWorkspaceProjection
+} from '../../../../shared/hostProtocol'
+
+/* ------------------------------------------------------------------ */
+/*  View model                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How current the projected data is.
+ *
+ * `live` means it came from a Host that answered just now. `cached` means it
+ * is a coherent past snapshot shown while Host is unreachable — legal for
+ * presentation, never legal to treat as authority.
+ */
+export type HostProjectionFreshnessLabel = 'live' | 'cached'
+
+/** Bounded per-thread row. No transcript bodies cross this boundary. */
+export interface HostProjectedThread {
+  readonly id: string
+  readonly workspaceId: string | null
+  readonly title: string
+  readonly chatKind: 'single' | 'ensemble'
+  readonly archived: boolean
+  readonly pinned: boolean
+  readonly updatedAt: number
+  readonly messageCount: number
+  /** Bounded preview only — never the full latest message. */
+  readonly preview?: string
+  /** True when Host itself truncated the preview. */
+  readonly previewTruncated: boolean
+  readonly providerId?: string
+}
+
+export interface HostProjectedWorkspace {
+  readonly id: string
+  readonly name: string
+  readonly path: string
+  readonly pinned: boolean
+  readonly updatedAt: number
+}
+
+/**
+ * Host health as Desktop should render it.
+ *
+ * These fields come straight from Host and are NOT merged with client
+ * connectivity: a client that cannot reach a healthy Host is a client problem,
+ * and conflating the two misreports Host state (Rule 3).
+ */
+export interface HostProjectedHealth {
+  readonly hostStatus: HostHealthProjection['hostStatus']
+  readonly supervised: boolean
+  readonly detail?: string
+}
+
+/**
+ * Usage, or an honest absence.
+ *
+ * Both numbers are `undefined` when Host reports `unavailable`; they are never
+ * coerced to zero. `availability` is carried through verbatim so a view can
+ * say "unknown" rather than implying a measured nil.
+ */
+export interface HostProjectedUsage {
+  readonly availability: HostUsageObservation['availability']
+  readonly costUsd?: number
+  readonly tokens?: number
+}
+
+export interface HostProjectedSnapshot {
+  readonly generation: number
+  readonly cursor: number
+  readonly generatedAt: string
+  readonly freshness: HostProjectionFreshnessLabel
+  readonly health: HostProjectedHealth
+  readonly workspaces: readonly HostProjectedWorkspace[]
+  readonly threads: readonly HostProjectedThread[]
+  readonly usage: HostProjectedUsage
+  /** Counts only — never the underlying rows. */
+  readonly counts: {
+    readonly runs: number
+    readonly missions: number
+    readonly rounds: number
+    readonly questions: number
+    readonly approvals: number
+    readonly warnings: number
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Honest field mappers                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Usage → view, preserving "we do not know".
+ *
+ * Rule 2 lives here. `unavailable` yields `undefined` for both numbers, and a
+ * numeric field is emitted only when Host actually supplied a finite number.
+ */
+export function projectUsage(usage: HostUsageObservation | undefined): HostProjectedUsage {
+  if (!usage || usage.availability === 'unavailable') {
+    return { availability: usage?.availability ?? 'unavailable' }
+  }
+  const record = usage as HostUsageObservation & {
+    costUsd?: unknown
+    tokens?: unknown
+  }
+  const costUsd =
+    typeof record.costUsd === 'number' && Number.isFinite(record.costUsd)
+      ? record.costUsd
+      : undefined
+  const tokens =
+    typeof record.tokens === 'number' && Number.isFinite(record.tokens) ? record.tokens : undefined
+  return {
+    availability: usage.availability,
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(tokens !== undefined ? { tokens } : {})
+  }
+}
+
+/**
+ * Health → view. Rule 3 lives here: this reads ONLY Host-reported health and
+ * accepts no client connection flag, so a transport failure cannot be
+ * laundered into a Host status.
+ */
+export function projectHealth(health: HostHealthProjection): HostProjectedHealth {
+  return {
+    hostStatus: health.hostStatus,
+    supervised: health.supervised,
+    ...(health.detail ? { detail: health.detail } : {})
+  }
+}
+
+function projectThread(thread: HostThreadProjection): HostProjectedThread {
+  return {
+    id: thread.id,
+    workspaceId: thread.workspaceId ?? null,
+    title: thread.title,
+    chatKind: thread.chatKind === 'ensemble' ? 'ensemble' : 'single',
+    archived: thread.archived,
+    pinned: thread.pinned,
+    updatedAt: thread.updatedAt,
+    messageCount: thread.messageCount,
+    ...(thread.latestPreview ? { preview: thread.latestPreview } : {}),
+    previewTruncated: thread.previewTruncated === true,
+    ...(thread.providerId ? { providerId: thread.providerId } : {})
+  }
+}
+
+function projectWorkspace(workspace: HostWorkspaceProjection): HostProjectedWorkspace {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    path: workspace.path,
+    pinned: workspace.pinned,
+    updatedAt: workspace.updatedAt
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Snapshot mapper                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Project a HostSnapshot for Desktop rendering.
+ *
+ * `freshness` is supplied by the CALLER (the store), because the store is the
+ * only component that knows whether this snapshot just arrived or is being
+ * replayed from cache while Host is unreachable.
+ *
+ * Host's own freshness is still respected: if Host says the projection it
+ * served was itself cached, the result can never be upgraded to `live`. That
+ * makes Rule 1 an enforced invariant rather than a convention the caller is
+ * trusted to honour.
+ */
+export function projectHostSnapshot(
+  snapshot: HostSnapshot,
+  freshness: HostProjectionFreshnessLabel
+): HostProjectedSnapshot {
+  const hostSaidCached = snapshot.freshness === 'cached' || snapshot.health.freshness === 'cached'
+  const effectiveFreshness: HostProjectionFreshnessLabel = hostSaidCached ? 'cached' : freshness
+
+  return {
+    generation: snapshot.generation,
+    cursor: snapshot.cursor,
+    generatedAt: snapshot.generatedAt,
+    freshness: effectiveFreshness,
+    health: projectHealth(snapshot.health),
+    workspaces: snapshot.workspaces.map(projectWorkspace),
+    threads: snapshot.threads.map(projectThread),
+    usage: projectUsage(snapshot.usage),
+    counts: {
+      runs: snapshot.runs.length,
+      missions: snapshot.missions.length,
+      rounds: snapshot.rounds.length,
+      questions: snapshot.questions.length,
+      approvals: snapshot.approvals.length,
+      warnings: snapshot.warnings.length
+    }
+  }
+}
