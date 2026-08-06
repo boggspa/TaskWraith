@@ -146,7 +146,9 @@ export function describeHostProviders(state: HostProjectionState): HostProviders
     total,
     // A live empty list is a real answer and says so in words, so it can never
     // be confused with the unknown case above.
-    label: total === 0 ? 'None reported' : `${available} of ${total} available`
+    // Wave 5e — wire `available` means admitted in the configured snapshot,
+    // not runtime-healthy. Say "configured" so the leaf does not overstate.
+    label: total === 0 ? 'None reported' : `${available} of ${total} configured`
   }
 }
 

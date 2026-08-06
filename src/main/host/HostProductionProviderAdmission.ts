@@ -16,9 +16,15 @@
  *   of source text, URLs, headers, or credentials.
  *
  * HONESTY:
- * - snapshot not ready → empty list (fail closed; Desktop paints "None reported");
- * - missing / throwing deps → empty list;
- * - never invents availability for an id the snapshot did not name.
+ * - snapshot not ready → empty list + `sourceReady: false` (Wave 5d). Desktop
+ *   paints "Unknown" via `provider_source_not_ready`, never a confident zero;
+ * - ready + empty → empty list with `sourceReady: true` → Desktop "None reported";
+ * - missing / throwing deps → empty list + `sourceReady: false`;
+ * - never invents a row for an id the snapshot did not name;
+ * - wire `available: true` means admitted/configured in that snapshot, NOT
+ *   runtime-healthy. There is no health producer in this chain; Desktop says
+ *   "configured", not "available" (Wave 5e). Omitting the field is forbidden —
+ *   the decoder requires boolean `available` or the whole snapshot fails.
  */
 
 import type { HostProviderModelProjection } from '../../shared/hostProtocol'

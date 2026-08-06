@@ -163,8 +163,14 @@ export interface HostProviderModelProjection {
   modelLabel?: string
   shortCode: string
   hueKey?: string
+  /**
+   * Whether this provider id is admitted in the configured snapshot.
+   * Required boolean on the wire — omit/undefined fails decodeHostSnapshot.
+   * Does NOT mean runtime-healthy; producers without a health signal must
+   * still emit a boolean, and clients must not paint it as "available".
+   */
   available: boolean
-  /** Admission/availability note only — never credentials. */
+  /** Admission note only (e.g. configured / conditional-offer) — never credentials. */
   note?: string
 }
 

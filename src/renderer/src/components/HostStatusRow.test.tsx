@@ -308,7 +308,10 @@ describe('HostStatusRow · Desktop actually reads providers from Host', () => {
 
     const markup = renderRow(store)
     expect(markup).toContain('Host providers')
-    expect(markup).toContain('1 of 2 available')
+    // Wave 5e — wire `available` means admitted/configured, not runtime-healthy.
+    // The leaf must say "configured"; "available" overstates once rows exist.
+    expect(markup).toContain('1 of 2 configured')
+    expect(markup).not.toContain('1 of 2 available')
   })
 
   it('renders providers as Unknown — never 0 — when Host is unreachable', async () => {
@@ -399,5 +402,25 @@ describe('describeHostProviders · not-ready is not a measured zero', () => {
     expect(view.known).toBe(true)
     expect(view.available).toBe(1)
     expect(view.total).toBe(2)
+    expect(view.label).toBe('1 of 2 configured')
+  })
+})
+
+describe('describeHostProviders · Wave 5e configured wording', () => {
+  /* ---- RED PIN: today's bytes still say "available"; that overstates ---- */
+  it('labels admitted rows as configured, never as available', () => {
+    const view = describeHostProviders(
+      state({
+        status: 'live',
+        projection: projectionWith('live', [
+          { available: true },
+          { available: false },
+          { available: true }
+        ])
+      })
+    )
+    expect(view.known).toBe(true)
+    expect(view.label).toBe('2 of 3 configured')
+    expect(view.label).not.toMatch(/\bavailable\b/)
   })
 })
