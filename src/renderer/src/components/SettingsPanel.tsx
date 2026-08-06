@@ -2489,6 +2489,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
   canvas: [
     'launch_list_targets',
     'launch_start',
+    'launch_adopt',
     'launch_stop',
     'launch_status',
     'canvas_open',

@@ -347,6 +347,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'git_stage',
         'image_edit',
         'image_generate',
+        'launch_adopt',
         'launch_start',
         'launch_stop',
         'mesh_scene_apply',

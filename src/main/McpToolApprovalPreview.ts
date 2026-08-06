@@ -345,11 +345,15 @@ export function createMcpToolApprovalPreviewer(
       }
     }
 
-    if (toolName === 'launch_start' || toolName === 'launch_stop') {
-      const ref = String(args.targetId || args.attemptId || '')
+    if (toolName === 'launch_start' || toolName === 'launch_stop' || toolName === 'launch_adopt') {
+      const ref = String(args.targetId || args.attemptId || args.pid || '')
       return {
         title:
-          toolName === 'launch_start' ? 'Approve Run-Button launch' : 'Approve stopping a launch',
+          toolName === 'launch_start'
+            ? 'Approve Run-Button launch'
+            : toolName === 'launch_adopt'
+              ? 'Approve adopting a running process'
+              : 'Approve stopping a launch',
         body: `${toolName}${ref ? ` ${ref}` : ''}`,
         service: 'shellCommands',
         preview: {

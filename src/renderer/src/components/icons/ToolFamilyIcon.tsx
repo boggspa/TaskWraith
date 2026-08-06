@@ -202,6 +202,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'kill_background_process':
       return 'process'
     case 'launch_list_targets':
+    case 'launch_adopt':
     case 'launch_start':
     case 'launch_stop':
     case 'launch_status':

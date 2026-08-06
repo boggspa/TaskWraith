@@ -30,6 +30,7 @@ import {
 import { MCP_BRIDGE_ENTRY_ARG, MCP_BRIDGE_ROUTE_FROM_ENV_ARG } from '../mcp/McpBridgeRoute'
 import { LaunchAttemptStore } from './LaunchAttemptStore'
 import type {
+  LaunchAdoptInput,
   LaunchAttempt,
   LaunchSnapshot,
   LaunchStartResult,
@@ -106,6 +107,22 @@ export interface LaunchManagerDeps {
    * intentionally view-only to native-window control.
    */
   resolveProcessStartedAt?: (pid: number) => Promise<string | null>
+  /** This TaskWraith process. Adoption anchors every proof on it. */
+  hostProcessPid?: () => number
+  /** Host processes that may never be adopted as a drivable target. */
+  getHostProtectedPids?: () => ReadonlySet<number> | readonly number[]
+  /**
+   * Proves a PID descends from this instance. Without it, adoption is refused:
+   * an unproven PID is just a number the agent supplied.
+   */
+  resolveProcessAncestry?: (request: {
+    leafPid: number
+    leafProcessStartedAt: string
+    rootPid: number
+    rootProcessStartedAt: string
+  }) => Promise<unknown>
+  /** Display-only detail for the adoption approval; never an authority input. */
+  describeProcess?: (pid: number) => Promise<{ command?: string; cwd?: string } | null>
   trackSpawn?: (spawn: TrackedSpawn) => void
   untrackSpawn?: (pid: number) => void
   createKillController?: (pid: number, pgid?: number) => KillController
@@ -166,6 +183,10 @@ export class LaunchManager {
   private readonly isPackagedApp: () => boolean
   private readonly createIsolatedInstanceId: () => string
   private readonly resolveProcessStartedAt: (pid: number) => Promise<string | null>
+  private readonly hostProcessPid: () => number
+  private readonly getHostProtectedPids: () => ReadonlySet<number> | readonly number[]
+  private readonly resolveProcessAncestry?: LaunchManagerDeps['resolveProcessAncestry']
+  private readonly describeProcess?: LaunchManagerDeps['describeProcess']
   private readonly trackSpawn: (spawn: TrackedSpawn) => void
   private readonly untrackSpawn: (pid: number) => void
   private readonly createKillController: (pid: number, pgid?: number) => KillController
@@ -194,6 +215,10 @@ export class LaunchManager {
     this.createIsolatedInstanceId =
       deps.createIsolatedInstanceId || createPackagedIsolatedInstanceId
     this.resolveProcessStartedAt = deps.resolveProcessStartedAt || (async () => null)
+    this.hostProcessPid = deps.hostProcessPid || (() => process.pid)
+    this.getHostProtectedPids = deps.getHostProtectedPids || (() => [])
+    this.resolveProcessAncestry = deps.resolveProcessAncestry
+    this.describeProcess = deps.describeProcess
     this.trackSpawn = deps.trackSpawn || (() => {})
     this.untrackSpawn = deps.untrackSpawn || (() => {})
     this.createKillController =
@@ -860,6 +885,180 @@ export class LaunchManager {
     return this.processExists(attempt.pid)
   }
 
+  /**
+   * Adopt a process the run already started through its own shell.
+   *
+   * `launch_start` covers targets TaskWraith discovered from repo config, which
+   * leaves out the common QA case: an agent builds an app and runs it directly.
+   * Such a process is undrivable today only because nothing records it as a
+   * launch — not because it is any less the run's own work.
+   *
+   * Adoption never starts anything. It admits a PID only when it is provably a
+   * live descendant of this TaskWraith process (so it came from a shell this
+   * instance owns, not from anywhere on the machine), it is not a protected
+   * host process, it carries a canonical birth receipt, and a human approves
+   * the exact process after seeing its command.
+   */
+  async adoptProcess(
+    input: LaunchAdoptInput & {
+      sender: WebContents | null
+      assertMutationAuthorized?: () => void | Promise<void>
+    }
+  ): Promise<LaunchStartResult> {
+    const pid = input?.pid
+    if (!Number.isSafeInteger(pid) || pid <= 1) {
+      return { ok: false, error: 'Adoption requires a positive process id.' }
+    }
+    const chatId = input.chatId?.trim()
+    const runId = input.runId?.trim()
+    if (!chatId || !runId) {
+      return { ok: false, error: 'Adoption requires an exact chat and run owner.' }
+    }
+    const workspacePath = input.workspacePath?.trim()
+    if (!workspacePath) {
+      return { ok: false, error: 'Adoption requires the run’s workspace.' }
+    }
+
+    const hostPid = this.hostProcessPid()
+    const protectedPids = new Set(this.getHostProtectedPids())
+    if (pid === hostPid || protectedPids.has(pid)) {
+      return { ok: false, error: 'That process belongs to TaskWraith itself and cannot be adopted.' }
+    }
+    if (!this.processExists(pid)) {
+      return { ok: false, error: `Process ${pid} is not running.` }
+    }
+
+    // Both receipts are required: the chain is only proof against PID reuse if
+    // its endpoints are pinned to exact process instances.
+    const processStartedAt = await this.resolveCanonicalProcessStartedAt(pid)
+    const hostStartedAt = await this.resolveCanonicalProcessStartedAt(hostPid)
+    if (!processStartedAt || !hostStartedAt) {
+      return {
+        ok: false,
+        error: `Process ${pid} has no canonical process-birth receipt, so its identity cannot be pinned.`
+      }
+    }
+
+    if (!this.resolveProcessAncestry) {
+      return { ok: false, error: 'Process adoption is unavailable on this host.' }
+    }
+    let descends = false
+    try {
+      descends = Boolean(
+        await this.resolveProcessAncestry({
+          leafPid: pid,
+          leafProcessStartedAt: processStartedAt,
+          rootPid: hostPid,
+          rootProcessStartedAt: hostStartedAt
+        })
+      )
+    } catch {
+      descends = false
+    }
+    if (!descends) {
+      return {
+        ok: false,
+        error: `Process ${pid} was not started by this TaskWraith instance, so it cannot be adopted. A GUI app opened with \`open -a\` is started by launchd — run its executable directly instead.`
+      }
+    }
+
+    const described = await this.safeDescribeProcess(pid)
+    const commandText = described?.command?.trim() || `process ${pid}`
+    const cwd = described?.cwd?.trim() || workspacePath
+    const label = input.label?.trim() || `Adopted: ${commandText}`
+
+    const allowed = await this.requestApproval(
+      input.sender,
+      input.provider,
+      'shellCommands',
+      workspacePath,
+      {
+        method: 'launch/adopt',
+        title: 'Adopt a running process',
+        body: `${label}\nPID ${pid}\n${commandText}\n${cwd}`,
+        runId,
+        forcePrompt: true,
+        preview: {
+          kind: 'launch-adopt',
+          pid,
+          command: commandText,
+          cwd,
+          workspacePath,
+          label,
+          disclosure:
+            'Adopting only records this process so Screen Watch and App Drive can target it. It does not grant control on its own.'
+        }
+      }
+    )
+    if (!allowed) {
+      return { ok: false, error: 'Adoption denied by TaskWraith approval policy.' }
+    }
+    await input.assertMutationAuthorized?.()
+
+    const existing = this.store
+      .list()
+      .find(
+        (candidate) =>
+          candidate.adopted === true &&
+          candidate.pid === pid &&
+          candidate.processStartedAt === processStartedAt &&
+          (candidate.status === 'starting' || candidate.status === 'running')
+      )
+    if (existing) return { ok: true, attempt: existing }
+
+    const now = this.isoNow()
+    const snapshot = adoptedTargetSnapshot(workspacePath, label, commandText, cwd)
+    const attempt: LaunchAttempt = {
+      schemaVersion: 1,
+      id: this.store.createId(),
+      targetId: snapshot.id,
+      targetLabel: label,
+      targetSource: snapshot.source,
+      targetKind: snapshot.kind,
+      targetSnapshot: snapshot,
+      targetSnapshotHash: hashTargetSnapshot(snapshot),
+      provider: input.provider,
+      workspacePath,
+      cwd,
+      commandRaw: commandText,
+      argv: [commandText],
+      pid,
+      // Deliberately no pgid: an adopted process shares its group with the
+      // provider process that spawned it, so a group kill would take the agent
+      // down with the app.
+      processStartedAt,
+      adopted: true,
+      status: 'running',
+      startedAt: now,
+      updatedAt: now,
+      outputTail: '',
+      outputTailBytes: 0,
+      outputTruncated: false,
+      chatId,
+      runId
+    }
+    this.store.save(attempt)
+    this.publishSoon()
+    this.recordLifecycleEvent('launch_started', attempt, `Adopted running process: ${label}`, {
+      phase: 'adopt',
+      pid
+    })
+    return { ok: true, attempt }
+  }
+
+  private async safeDescribeProcess(
+    pid: number
+  ): Promise<{ command?: string; cwd?: string } | null> {
+    if (!this.describeProcess) return null
+    try {
+      const described = await this.describeProcess(pid)
+      return described && typeof described === 'object' ? described : null
+    } catch {
+      // Display detail only; its absence must not block an approved adoption.
+      return null
+    }
+  }
+
   private async resolveCanonicalProcessStartedAt(
     pid: number | undefined
   ): Promise<string | undefined> {
@@ -1241,6 +1440,31 @@ function commandWithSanitizedLaunchEnv(
 
 function isTerminal(status: LaunchAttempt['status']): boolean {
   return status === 'stopped' || status === 'failed' || status === 'cancelled' || status === 'interrupted'
+}
+
+/**
+ * A synthetic target for an adopted process. It exists because the launch
+ * record requires one; it is never discovered, never runnable, and must never
+ * be offered to `launch_start`.
+ */
+function adoptedTargetSnapshot(
+  workspacePath: string,
+  label: string,
+  commandText: string,
+  cwd: string
+): LaunchTarget {
+  return {
+    id: `adopted:${cwd}:${commandText}`,
+    label,
+    workspacePath,
+    source: 'adopted-process',
+    kind: 'run',
+    platform: 'macos',
+    confidence: 1,
+    evidence: [],
+    blockers: ['Adopted processes cannot be started by TaskWraith.'],
+    command: { raw: commandText, cwd, longRunning: true }
+  } as unknown as LaunchTarget
 }
 
 function hashTargetSnapshot(target: LaunchTarget): string {

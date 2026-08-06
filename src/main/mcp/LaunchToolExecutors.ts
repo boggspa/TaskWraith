@@ -23,6 +23,7 @@ import type { LaunchAttempt } from '../launch/types'
 export const LAUNCH_MCP_TOOL_NAMES = [
   'launch_list_targets',
   'launch_start',
+  'launch_adopt',
   'launch_stop',
   'launch_status'
 ] as const
@@ -47,6 +48,11 @@ export interface LaunchToolContext {
    * sender would auto-DENY the launch).
    */
   sender?: unknown
+  /**
+   * Refuses the call when an Ensemble participant lacks Boss/Captain
+   * authority. Absent means solo-thread semantics (no ranking to enforce).
+   */
+  assertAppDriveAuthority?: () => { ok: true } | { ok: false; reason: string }
 }
 
 export interface LaunchStartOutcome {
@@ -66,6 +72,21 @@ export interface LaunchController {
     chatId?: string
     runId?: string
     /** Approval surface (Electron WebContents) — required for the human prompt. */
+    sender?: unknown
+    assertMutationAuthorized?: () => void | Promise<void>
+  }): Promise<LaunchStartOutcome>
+  /**
+   * Record a process the run already started so Screen Watch / App Drive can
+   * target it. Optional: a build without it refuses adoption rather than
+   * pretending the process is unknown.
+   */
+  adopt?(input: {
+    provider: string
+    pid: number
+    workspacePath: string | undefined
+    chatId?: string
+    runId?: string
+    label?: string
     sender?: unknown
     assertMutationAuthorized?: () => void | Promise<void>
   }): Promise<LaunchStartOutcome>
@@ -90,6 +111,11 @@ export interface LaunchToolExecutors {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+function asPositiveInteger(value: unknown): number | undefined {
+  const n = typeof value === 'number' ? value : Number(typeof value === 'string' ? value : Number.NaN)
+  return Number.isSafeInteger(n) && n > 1 ? n : undefined
 }
 
 function asOptString(value: unknown): string | undefined {
@@ -203,6 +229,46 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
             return fail(toolName, 'Launch target is unavailable.')
           }
           return jsonResult({ ok: true, tool: toolName, ...attemptView(outcome.attempt) })
+        }
+        case 'launch_adopt': {
+          const pid = asPositiveInteger(args.pid)
+          if (!pid) {
+            return fail(toolName, '`pid` is required: the process id you started.')
+          }
+          if (!context.appChatId || !context.appRunId) {
+            return fail(toolName, 'Launch tools require a chat-scoped run.')
+          }
+          // Driving a real app is a control action, so inside an Ensemble it
+          // belongs to the Boss and its Captains.
+          const authority = context.assertAppDriveAuthority?.()
+          if (authority && !authority.ok) return fail(toolName, authority.reason)
+          if (!controller.adopt) {
+            return fail(toolName, 'Process adoption is unavailable in this build.')
+          }
+          const outcome = await controller.adopt({
+            provider: parentProvider,
+            pid,
+            workspacePath: context.workspacePath,
+            chatId: context.appChatId,
+            runId: context.appRunId,
+            ...(asOptString(args.label) ? { label: asOptString(args.label) } : {}),
+            sender: context.sender,
+            ...(context.assertMutationAuthorized
+              ? { assertMutationAuthorized: context.assertMutationAuthorized }
+              : {})
+          })
+          if (!outcome.ok || !outcome.attempt) {
+            return fail(toolName, outcome.error || 'Adoption failed.')
+          }
+          if (!ownsAttempt(outcome.attempt, context)) {
+            return fail(toolName, 'Adoption failed.')
+          }
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            ...attemptView(outcome.attempt),
+            next: 'Ask the user to attach this window in Screen Watch and approve View & Control, then call canvas_open_launch with this attemptId.'
+          })
         }
         case 'launch_stop': {
           const attemptId = asOptString(args.attemptId)

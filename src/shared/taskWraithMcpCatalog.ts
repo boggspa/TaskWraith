@@ -217,6 +217,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   // land in P1; arbitrary `eval` (P2) is signed-elevated (canvasEval service).
   'launch_list_targets',
   'launch_start',
+  'launch_adopt',
   'launch_stop',
   'launch_status',
   'canvas_open',

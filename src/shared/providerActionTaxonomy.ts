@@ -1595,6 +1595,14 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'runtime',
     'workspace-runtime'
   ),
+  launch_adopt: tool(
+    'workspace_write',
+    'shellCommands',
+    'control.mutate',
+    'launch-control',
+    'runtime',
+    'host-resource'
+  ),
   launch_stop: tool(
     'workspace_write',
     'shellCommands',

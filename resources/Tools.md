@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 182 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 183 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1086,6 +1086,15 @@ Start a discovered Run-Button target by `targetId` (from launch_list_targets) �
 - Access: governed by your run permission role
 - Required args: targetId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"launch_start","arguments":{"targetId":"text"}}}}`
+
+## launch_adopt
+
+Record a process YOU already started (via your own shell) as a launch attempt, so it can be observed and driven. Use this when the app you want to QA is not a discovered launch_list_targets target — e.g. you built it and ran its executable yourself. This NEVER starts, stops, or signals anything: it only registers a PID you pass. TaskWraith refuses unless the process is a live descendant of this TaskWraith instance (proved by a process-birth-receipt chain), is not a TaskWraith process itself, and the user approves the exact process after seeing its command. IMPORTANT: launch a GUI app by running its executable directly (e.g. `MyApp.app/Contents/MacOS/MyApp &`) — an app started with `open -a` is parented to launchd, not to TaskWraith, and cannot be adopted. Returns an `attemptId`; then ask the user to attach that window in Screen Watch and approve View & Control, and open it with canvas_open_launch. Adopted attempts are stopped by exact PID only, never by process group.
+
+- Access: governed by your run permission role
+- Required args: pid
+- Optional args: label
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"launch_adopt","arguments":{"pid":0}}}}`
 
 ## launch_stop
 

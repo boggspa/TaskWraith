@@ -3,7 +3,8 @@ import {
   createLaunchToolExecutors,
   isLaunchMcpToolName,
   LAUNCH_MCP_TOOL_NAMES,
-  type LaunchController
+  type LaunchController,
+  type LaunchStartOutcome
 } from './LaunchToolExecutors'
 import type { LaunchTarget } from '../launchTargets/types'
 import type { LaunchAttempt } from '../launch/types'
@@ -189,5 +190,125 @@ describe('executeLaunchTool', () => {
     expect(r.isError).toBe(true)
     expect(String(r.structuredContent?.error)).toMatch(/not found/)
     expect(stop).not.toHaveBeenCalled()
+  })
+})
+
+describe('launch_adopt', () => {
+  const ctx = { appChatId: 'chat-a', appRunId: 'run-a', workspacePath: '/workspace' }
+
+  function adoptedAttempt(overrides: Partial<LaunchAttempt> = {}): LaunchAttempt {
+    return {
+      ...fakeAttempt(),
+      id: 'adopted-1',
+      pid: 8123,
+      adopted: true,
+      chatId: 'chat-a',
+      runId: 'run-a',
+      ...overrides
+    }
+  }
+
+  it('adopts a process the run started and points at the next step', async () => {
+    const adopt = vi.fn(async () => ({ ok: true, attempt: adoptedAttempt() }))
+    const { executeLaunchTool } = createLaunchToolExecutors({
+      controller: { ...fakeController(), adopt }
+    })
+
+    const result = await executeLaunchTool('launch_adopt', { pid: 8123 }, ctx, 'claude')
+
+    expect(result.isError).toBeFalsy()
+    expect(adopt).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 8123, chatId: 'chat-a', runId: 'run-a' })
+    )
+    expect(String(result.structuredContent?.next)).toMatch(/Screen Watch/)
+  })
+
+  it('requires a real pid and a chat-scoped run', async () => {
+    const adopt = vi.fn(async () => ({ ok: true, attempt: adoptedAttempt() }))
+    const { executeLaunchTool } = createLaunchToolExecutors({
+      controller: { ...fakeController(), adopt }
+    })
+
+    for (const args of [{}, { pid: 0 }, { pid: 1 }, { pid: -5 }, { pid: 'nope' }]) {
+      expect((await executeLaunchTool('launch_adopt', args, ctx, 'claude')).isError).toBe(true)
+    }
+    expect(
+      (await executeLaunchTool('launch_adopt', { pid: 8123 }, { workspacePath: '/w' }, 'claude'))
+        .isError
+    ).toBe(true)
+    expect(adopt).not.toHaveBeenCalled()
+  })
+
+  it('reports adoption as unavailable rather than silently doing nothing', async () => {
+    const { executeLaunchTool } = createLaunchToolExecutors({ controller: fakeController() })
+
+    const result = await executeLaunchTool('launch_adopt', { pid: 8123 }, ctx, 'claude')
+
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error)).toMatch(/unavailable/i)
+  })
+
+  it('never returns another chat’s attempt', async () => {
+    const adopt = vi.fn(async () => ({ ok: true, attempt: adoptedAttempt({ chatId: 'chat-b' }) }))
+    const { executeLaunchTool } = createLaunchToolExecutors({
+      controller: { ...fakeController(), adopt }
+    })
+
+    expect((await executeLaunchTool('launch_adopt', { pid: 8123 }, ctx, 'claude')).isError).toBe(
+      true
+    )
+  })
+})
+
+describe('launch_adopt Ensemble authority', () => {
+  const ctx = { appChatId: 'chat-a', appRunId: 'run-a', workspacePath: '/workspace' }
+
+  function harness() {
+    const adopt = vi.fn(
+      async (_input: unknown): Promise<LaunchStartOutcome> => ({
+        ok: true,
+        attempt: {
+          ...fakeAttempt(),
+          id: 'adopted-1',
+          pid: 8123,
+          adopted: true,
+          chatId: 'chat-a'
+        }
+      })
+    )
+    return {
+      adopt,
+      executors: createLaunchToolExecutors({ controller: { ...fakeController(), adopt } })
+    }
+  }
+
+  it('refuses an Ensemble participant without Boss/Captain authority', async () => {
+    const { adopt, executors } = harness()
+
+    const result = await executors.executeLaunchTool(
+      'launch_adopt',
+      { pid: 8123 },
+      { ...ctx, assertAppDriveAuthority: () => ({ ok: false, reason: 'Boss or a Captain only.' }) },
+      'claude'
+    )
+
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error)).toMatch(/Boss or a Captain/)
+    // Refused before the controller is reached, so nothing is recorded.
+    expect(adopt).not.toHaveBeenCalled()
+  })
+
+  it('allows a Boss/Captain participant', async () => {
+    const { adopt, executors } = harness()
+
+    const result = await executors.executeLaunchTool(
+      'launch_adopt',
+      { pid: 8123 },
+      { ...ctx, assertAppDriveAuthority: () => ({ ok: true }) },
+      'claude'
+    )
+
+    expect(result.isError).toBeFalsy()
+    expect(adopt).toHaveBeenCalled()
   })
 })

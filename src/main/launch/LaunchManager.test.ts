@@ -1466,3 +1466,148 @@ describe('LaunchManager', () => {
     expect(spawnedEnv.VITE_PORT).toBe('5173')
   })
 })
+
+describe('LaunchManager — adopting an agent-spawned process', () => {
+  const HOST_PID = 500
+  const SPAWNED_PID = 8123
+  const RECEIPT = 'procBSDInfo:1774843200900000'
+
+  async function adoptFixture(
+    options: {
+      ancestry?: (request: { leafPid: number; rootPid: number }) => Promise<unknown>
+      startedAt?: (pid: number) => Promise<string | null>
+      approve?: boolean
+      protectedPids?: number[]
+    } = {}
+  ) {
+    const storagePath = await tempFile()
+    const workspacePath = path.dirname(storagePath)
+    const approvals: unknown[] = []
+    const manager = new LaunchManager({
+      store: new LaunchAttemptStore(storagePath),
+      platform: 'darwin',
+      now: () => new Date('2026-06-21T12:00:00.000Z'),
+      requestApproval: vi.fn(async (_sender, _provider, _service, _workspace, request) => {
+        approvals.push(request)
+        return options.approve ?? true
+      }),
+      createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
+      resolveProcessStartedAt: options.startedAt ?? (async () => RECEIPT),
+      hostProcessPid: () => HOST_PID,
+      getHostProtectedPids: () => options.protectedPids ?? [HOST_PID],
+      resolveProcessAncestry:
+        options.ancestry ??
+        (async () => ({
+          rootPid: HOST_PID,
+          rootProcessStartedAt: 'procBSDInfo:1774843200000001',
+          leafPid: SPAWNED_PID,
+          leafProcessStartedAt: RECEIPT,
+          depth: 2,
+          chain: []
+        })),
+      describeProcess: async () => ({ command: '/opt/app/MyApp --qa', cwd: workspacePath }),
+      processExists: () => true
+    })
+    return { manager, workspacePath, approvals }
+  }
+
+  function adoptInput(workspacePath: string, overrides: Record<string, unknown> = {}) {
+    return {
+      sender: null,
+      provider: 'claude' as const,
+      workspacePath,
+      pid: SPAWNED_PID,
+      chatId: 'chat-a',
+      runId: 'run-a',
+      ...overrides
+    }
+  }
+
+  it('adopts a process this run spawned so it can be driven', async () => {
+    const { manager, workspacePath } = await adoptFixture()
+
+    const result = await manager.adoptProcess(adoptInput(workspacePath))
+
+    expect(result.ok).toBe(true)
+    expect(result.attempt).toMatchObject({
+      pid: SPAWNED_PID,
+      processStartedAt: RECEIPT,
+      status: 'running',
+      chatId: 'chat-a',
+      runId: 'run-a',
+      adopted: true
+    })
+    // Killing a process group would reach the provider CLI that spawned it.
+    expect(result.attempt?.pgid).toBeUndefined()
+  })
+
+  it('shows the human what they are adopting before it becomes drivable', async () => {
+    const { manager, workspacePath, approvals } = await adoptFixture()
+
+    await manager.adoptProcess(adoptInput(workspacePath))
+
+    expect(approvals).toHaveLength(1)
+    expect(approvals[0]).toMatchObject({
+      forcePrompt: true,
+      preview: expect.objectContaining({
+        kind: 'launch-adopt',
+        pid: SPAWNED_PID,
+        command: '/opt/app/MyApp --qa'
+      })
+    })
+  })
+
+  it('refuses a process the human did not approve', async () => {
+    const { manager, workspacePath } = await adoptFixture({ approve: false })
+
+    const result = await manager.adoptProcess(adoptInput(workspacePath))
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/approval/i)
+  })
+
+  it('refuses a process this TaskWraith instance did not spawn', async () => {
+    // An app started via `open -a` is parented to launchd, not to us.
+    const { manager, workspacePath } = await adoptFixture({ ancestry: async () => null })
+
+    const result = await manager.adoptProcess(adoptInput(workspacePath))
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/not.*started by|descend/i)
+  })
+
+  it('refuses a protected host process', async () => {
+    const { manager, workspacePath, approvals } = await adoptFixture({
+      protectedPids: [HOST_PID, SPAWNED_PID]
+    })
+
+    const result = await manager.adoptProcess(adoptInput(workspacePath))
+
+    expect(result.ok).toBe(false)
+    expect(approvals).toEqual([])
+  })
+
+  it('refuses adoption without a canonical birth receipt', async () => {
+    const { manager, workspacePath } = await adoptFixture({ startedAt: async () => null })
+
+    const result = await manager.adoptProcess(adoptInput(workspacePath))
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/receipt|identity/i)
+  })
+
+  it('requires an exact chat and run owner', async () => {
+    const { manager, workspacePath } = await adoptFixture()
+
+    for (const missing of [{ chatId: undefined }, { runId: undefined }]) {
+      const result = await manager.adoptProcess(adoptInput(workspacePath, missing))
+      expect(result.ok).toBe(false)
+    }
+  })
+
+  it('refuses a dead process rather than adopting a recycled PID later', async () => {
+    const { manager, workspacePath } = await adoptFixture()
+    const result = await manager.adoptProcess(adoptInput(workspacePath, { pid: 0 }))
+    expect(result.ok).toBe(false)
+  })
+})

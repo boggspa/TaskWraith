@@ -126,6 +126,7 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
   'blackboard_delete',
   'launch_list_targets',
   'launch_start',
+  'launch_adopt',
   'launch_stop',
   'launch_status',
   'canvas_open',

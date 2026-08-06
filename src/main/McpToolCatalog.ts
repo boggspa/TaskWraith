@@ -3619,6 +3619,31 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'launch_adopt',
+      description:
+        "Record a process YOU already started (via your own shell) as a launch attempt, so it can be observed and driven. Use this when the app you want to QA is not a discovered launch_list_targets target — e.g. you built it and ran its executable yourself. This NEVER starts, stops, or signals anything: it only registers a PID you pass. TaskWraith refuses unless the process is a live descendant of this TaskWraith instance (proved by a process-birth-receipt chain), is not a TaskWraith process itself, and the user approves the exact process after seeing its command. IMPORTANT: launch a GUI app by running its executable directly (e.g. `MyApp.app/Contents/MacOS/MyApp &`) — an app started with `open -a` is parented to launchd, not to TaskWraith, and cannot be adopted. Returns an `attemptId`; then ask the user to attach that window in Screen Watch and approve View & Control, and open it with canvas_open_launch. Adopted attempts are stopped by exact PID only, never by process group.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pid: {
+            type: 'number',
+            description: 'Process id of a process this run started (e.g. from `echo $!`).'
+          },
+          label: {
+            type: 'string',
+            description: 'Optional human-facing label shown in the approval and the launch list.'
+          }
+        },
+        required: ['pid']
+      }
+    },
+    {
       name: 'launch_stop',
       description:
         'Stop a running launch attempt by `attemptId` (from launch_start / launch_status). Terminates the spawned process tree.',

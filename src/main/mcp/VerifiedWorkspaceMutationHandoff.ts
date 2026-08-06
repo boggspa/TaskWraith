@@ -127,6 +127,7 @@ const VERIFIED_WORKSPACE_TOOL_NAMES = new Set([
   'kill_background_process',
   'get_diagnostics',
   'launch_start',
+  'launch_adopt',
   'launch_stop',
   'video_probe',
   'video_encode_clip',

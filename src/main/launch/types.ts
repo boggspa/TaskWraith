@@ -37,6 +37,13 @@ export interface LaunchAttempt {
    * view-only rather than guessing across possible PID reuse.
    */
   processStartedAt?: string
+  /**
+   * True when TaskWraith did not spawn this process itself but adopted one the
+   * run had already started, after proving it descends from this instance and
+   * getting explicit human approval. Adopted attempts never record a `pgid`:
+   * the group reaches back to the provider process that spawned them.
+   */
+  adopted?: true
   status: LaunchAttemptStatus
   startedAt: string
   updatedAt: string
@@ -67,6 +74,20 @@ export interface LaunchStartInput {
 
 export interface LaunchStopInput {
   attemptId: string
+}
+
+/**
+ * Adopt a process the agent already started through its own shell, so the
+ * Screen Watch / App Drive path can reach it. Never starts anything.
+ */
+export interface LaunchAdoptInput {
+  workspacePath: string
+  pid: number
+  provider: ProviderId
+  chatId?: string
+  runId?: string
+  /** Human-facing label; the resolved command is shown regardless. */
+  label?: string
 }
 
 export interface LaunchStartResult {
