@@ -1,4 +1,8 @@
 import type { LaunchAttempt, LaunchAttemptStatus } from '../launch/types'
+import {
+  verifyNativeWindowProcessAncestry,
+  type NativeWindowProcessAncestryProof
+} from './NativeWindowProcessAncestry'
 
 /** Native-window control is unavailable below this macOS release. */
 export const NATIVE_WINDOW_TARGET_MINIMUM_MACOS_VERSION = '15.2' as const
@@ -26,8 +30,10 @@ export interface NativeWindowTargetSelectedWindow {
 /**
  * Main-owned inputs for one target-ownership decision. This deliberately has
  * no title, application name, or bundle identifier: exact PID plus canonical
- * process-start identity is the authority boundary. Ancestry and process groups
- * never authorize a selected native window.
+ * process-start identity is the authority boundary. A process group still never
+ * authorizes a selected native window — unrelated processes can join one — but
+ * an explicitly verified parent chain does, because the app an agent starts
+ * almost always paints its window from a descendant of the spawned PID.
  */
 export interface NativeWindowTargetOwnershipInput {
   instanceEpoch: string
@@ -38,6 +44,12 @@ export interface NativeWindowTargetOwnershipInput {
   hostProtectedPids: ReadonlySet<number> | readonly number[]
   attempt: LaunchAttempt | null | undefined
   selectedWindow: NativeWindowTargetSelectedWindow
+  /**
+   * Descent proof from the launch process to the selected window's process.
+   * Absent means only an exact PID match authorizes. Never trusted as given:
+   * the chain inside it is re-verified against these exact endpoints.
+   */
+  ancestry?: NativeWindowProcessAncestryProof | null
 }
 
 /** Immutable identity to carry into the native-window lease. */
@@ -50,7 +62,13 @@ export interface NativeWindowTargetBinding {
   readonly selectedPid: number
   readonly windowId: number
   readonly processStartedAt: string
+  /** How the window earned the launch process's authority. */
+  readonly ownership: NativeWindowTargetOwnershipKind
+  /** Generations between the launch process and the window; 0 when exact. */
+  readonly ancestryDepth: number
 }
+
+export type NativeWindowTargetOwnershipKind = 'exact' | 'descendant'
 
 export type NativeWindowTargetOwnershipErrorCode =
   | 'attempt-identity-mismatch'
@@ -284,11 +302,18 @@ function validateTargetOwnership(
     )
   }
 
-  if (selectedPid !== expectedPid || processStartedAt !== expectedProcessStartedAt) {
-    return fail(
-      'pid-not-owned',
-      'The selected native window does not exactly match the active launch process identity.'
-    )
+  const exact = selectedPid === expectedPid && processStartedAt === expectedProcessStartedAt
+  let ancestryDepth = 0
+  if (!exact) {
+    const descent = verifyDescent(input.ancestry, {
+      leafPid: selectedPid,
+      leafProcessStartedAt: processStartedAt,
+      rootPid: expectedPid,
+      rootProcessStartedAt: expectedProcessStartedAt,
+      hostProtectedPids: protectedPids
+    })
+    if (!descent.ok) return descent.failure
+    ancestryDepth = descent.depth
   }
 
   return succeed({
@@ -299,8 +324,51 @@ function validateTargetOwnership(
     expectedPid,
     selectedPid,
     windowId,
-    processStartedAt
+    processStartedAt,
+    ownership: exact ? 'exact' : 'descendant',
+    ancestryDepth
   })
+}
+
+/**
+ * Re-run the ancestry rules over the supplied chain. The proof's own summary
+ * fields are never the decision — only the chain is, checked against the exact
+ * endpoints this validator already established.
+ */
+function verifyDescent(
+  ancestry: NativeWindowProcessAncestryProof | null | undefined,
+  endpoints: {
+    leafPid: number
+    leafProcessStartedAt: string
+    rootPid: number
+    rootProcessStartedAt: string
+    hostProtectedPids: ReadonlySet<number>
+  }
+): { ok: true; depth: number } | { ok: false; failure: NativeWindowTargetOwnershipFailure } {
+  if (!isRecord(ancestry)) {
+    return {
+      ok: false,
+      failure: fail(
+        'pid-not-owned',
+        'The selected native window is neither the launch process nor a verified descendant of it.'
+      )
+    }
+  }
+
+  const verified = verifyNativeWindowProcessAncestry({
+    chain: (ancestry as NativeWindowProcessAncestryProof).chain,
+    ...endpoints
+  })
+  if (!verified.ok) {
+    return {
+      ok: false,
+      failure: fail(
+        verified.code === 'protected-process' ? 'protected-process' : 'pid-not-owned',
+        `The selected native window could not be proved to descend from the launch process: ${verified.message}`
+      )
+    }
+  }
+  return { ok: true, depth: verified.proof.depth }
 }
 
 function bindingsMatch(left: NativeWindowTargetBinding, right: NativeWindowTargetBinding): boolean {
@@ -312,7 +380,11 @@ function bindingsMatch(left: NativeWindowTargetBinding, right: NativeWindowTarge
     left.expectedPid === right.expectedPid &&
     left.selectedPid === right.selectedPid &&
     left.windowId === right.windowId &&
-    left.processStartedAt === right.processStartedAt
+    left.processStartedAt === right.processStartedAt &&
+    // A window that changes how it earned authority is a different target,
+    // even when every PID still lines up.
+    left.ownership === right.ownership &&
+    left.ancestryDepth === right.ancestryDepth
   )
 }
 

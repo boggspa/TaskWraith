@@ -7,7 +7,6 @@ import type {
   CanvasWindowClickAuthorization,
   CanvasWindowClickAuthorizationRequest,
   CanvasWindowClickRequest,
-  CanvasWindowLeaseIdentity,
   CanvasWindowNativeBridge
 } from './CanvasWindowDriver'
 import {
@@ -21,6 +20,7 @@ import {
 } from './CanvasWindowDriverFactory'
 import type {
   NativeWindowCoordinatorCanvasAccess,
+  NativeWindowCoordinatorCanvasLeaseIdentity,
   NativeWindowCoordinatorCanvasOwner
 } from '../nativeWindow/NativeWindowCoordinator'
 
@@ -32,11 +32,13 @@ const OWNER: NativeWindowCoordinatorCanvasOwner = {
   participantId: null
 }
 
-const LEASE: CanvasWindowLeaseIdentity = {
+const LEASE: NativeWindowCoordinatorCanvasLeaseIdentity = {
   chatId: OWNER.chatId,
   runId: OWNER.runId,
   attemptId: OWNER.launchAttemptId,
   pid: 4242,
+  expectedPid: 4242,
+  ownership: 'exact',
   windowId: 8181,
   processStartedAt: 'procBSDInfo:1774843200123456',
   instanceEpoch: 'instance-epoch-a',
@@ -72,7 +74,7 @@ type DaemonCall = {
 }
 
 class FakeCoordinator implements CanvasWindowCoordinatorPort {
-  current: CanvasWindowLeaseIdentity | null = { ...LEASE }
+  current: NativeWindowCoordinatorCanvasLeaseIdentity | null = { ...LEASE }
   access: NativeWindowCoordinatorCanvasAccess = ACCESS
   readonly resolveCalls: Array<{ owner: NativeWindowCoordinatorCanvasOwner; verb: string }> = []
   readonly actionCalls: Array<{ owner: NativeWindowCoordinatorCanvasOwner; verb: string }> = []
@@ -89,7 +91,7 @@ class FakeCoordinator implements CanvasWindowCoordinatorPort {
 
   currentCanvasLeaseIdentity(
     owner: NativeWindowCoordinatorCanvasOwner
-  ): CanvasWindowLeaseIdentity | null {
+  ): NativeWindowCoordinatorCanvasLeaseIdentity | null {
     this.assertOwner(owner)
     return this.current ? { ...this.current } : null
   }
@@ -572,7 +574,7 @@ describe('CanvasWindowDriverFactory', () => {
   it.each([
     ['lease replacement', { ...LEASE, generation: 8 }],
     ['lease expiry', null]
-  ] as Array<[string, CanvasWindowLeaseIdentity | null]>)(
+  ] as Array<[string, NativeWindowCoordinatorCanvasLeaseIdentity | null]>)(
     'mints no receipt when %s occurs during the confirmation modal',
     async (_label, nextLease) => {
       const daemon = new FakeDaemon()

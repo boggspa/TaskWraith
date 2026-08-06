@@ -125,6 +125,8 @@ function access(
       runId: OWNER.runId,
       attemptId: OWNER.launchAttemptId,
       pid: 102,
+      expectedPid: 102,
+      ownership: 'exact',
       windowId: 42,
       processStartedAt: 'procBSDInfo:1774843200123456',
       instanceEpoch: 'instance-a',
@@ -323,6 +325,60 @@ describe('NativeWindowCanvasOpenResolver', () => {
       }
     })
     expect(reason(resolveNativeWindowCanvasOpenTarget(input({ coordinator: reusedPid })))).toBe(
+      'target-unavailable'
+    )
+  })
+
+  it('issues a target for a window owned by a proved descendant of the launch', () => {
+    // The lease records the descent that was verified during the consented
+    // pick; the window PID legitimately differs from the launch PID here.
+    const coordinator = new FakeCoordinator()
+    const windowPid = 202
+    coordinator.currentObservation = observation({
+      windowMeta: {
+        pid: windowPid,
+        windowID: 42,
+        processStartedAt: 'procBSDInfo:1774843200999999'
+      }
+    })
+    coordinator.currentAccess = access({
+      lease: {
+        ...access().lease,
+        pid: windowPid,
+        expectedPid: 102,
+        ownership: 'descendant',
+        processStartedAt: 'procBSDInfo:1774843200999999'
+      }
+    })
+
+    const issuer = new FakeIssuer()
+    const result = resolveNativeWindowCanvasOpenTarget(input({ coordinator, targetIssuer: issuer }))
+
+    expect(result.ok).toBe(true)
+    expect(issuer.owners).toHaveLength(1)
+  })
+
+  it('refuses a descendant lease that points at a different launch process', () => {
+    const coordinator = new FakeCoordinator()
+    coordinator.currentObservation = observation({
+      windowMeta: {
+        pid: 202,
+        windowID: 42,
+        processStartedAt: 'procBSDInfo:1774843200999999'
+      }
+    })
+    coordinator.currentAccess = access({
+      lease: {
+        ...access().lease,
+        pid: 202,
+        // Not this attempt's PID.
+        expectedPid: 999,
+        ownership: 'descendant',
+        processStartedAt: 'procBSDInfo:1774843200999999'
+      }
+    })
+
+    expect(reason(resolveNativeWindowCanvasOpenTarget(input({ coordinator })))).toBe(
       'target-unavailable'
     )
   })

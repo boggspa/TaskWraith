@@ -12,6 +12,7 @@ import {
   NativeWindowLeaseRegistry,
   type NativeWindowLeaseControlVerb,
   type NativeWindowLeaseExecutorContext,
+  type NativeWindowLeaseOwnershipKind,
   type NativeWindowLeaseReadVerb,
   type NativeWindowLeaseRendererProjection,
   type NativeWindowLeaseRevocation,
@@ -32,6 +33,8 @@ import {
   type NativeWindowTargetBinding,
   type NativeWindowTargetOwnershipInput
 } from './NativeWindowTargetOwnership'
+import type { NativeWindowProcessAncestryProof } from './NativeWindowProcessAncestry'
+import type { NativeWindowProcessAncestryResolver } from './NativeWindowProcessAncestryClient'
 
 export interface NativeWindowCoordinatorDaemon {
   status(): { running: boolean }
@@ -174,6 +177,10 @@ export interface NativeWindowCoordinatorCanvasLeaseIdentity {
   readonly runId: string
   readonly attemptId: string
   readonly pid: number
+  /** The launch process this window's authority descends from. */
+  readonly expectedPid: number
+  /** `descendant` when `pid` is a proved descendant of `expectedPid`. */
+  readonly ownership: NativeWindowLeaseOwnershipKind
   readonly windowId: number
   readonly processStartedAt: string
   readonly instanceEpoch: string
@@ -217,6 +224,13 @@ export interface NativeWindowCoordinatorOptions {
   getLaunchAttempts: () => readonly LaunchAttempt[]
   isRunActive: (chatId: string, runId: string) => boolean
   getHostProtectedPids: () => ReadonlySet<number> | readonly number[]
+  /**
+   * Proves that a picked window's process descends from a launch process.
+   * Omitted, only an exact PID match can earn control — which is almost never
+   * the app an agent just started, since the recorded PID is the spawn's direct
+   * child (`npm`) and the window belongs to a descendant.
+   */
+  resolveProcessAncestry?: NativeWindowProcessAncestryResolver
   requestSecondConsent: (
     request: NativeWindowCoordinatorConsentRequest
   ) => Promise<NativeWindowCoordinatorConsentDecision>
@@ -297,6 +311,15 @@ export class NativeWindowCoordinator {
   private readonly getLaunchAttempts: () => readonly LaunchAttempt[]
   private readonly isRunActive: (chatId: string, runId: string) => boolean
   private readonly getHostProtectedPids: NativeWindowCoordinatorOptions['getHostProtectedPids']
+  private readonly resolveProcessAncestry?: NativeWindowProcessAncestryResolver
+  /**
+   * Verified descent proofs keyed by their exact endpoints. Ancestry is only
+   * resolvable asynchronously, but ownership is revalidated synchronously
+   * before every lease operation, so the proof is resolved once during the pick
+   * and rechecked from here. A key that pins both birth receipts cannot survive
+   * either process being replaced.
+   */
+  private readonly ancestryProofs = new Map<string, NativeWindowProcessAncestryProof>()
   private readonly requestSecondConsent: NativeWindowCoordinatorOptions['requestSecondConsent']
   private readonly frameEgressForProvider: (provider: string) => NativeWindowCoordinatorFrameEgress
   private readonly notifyRenderer?: NativeWindowCoordinatorOptions['notifyRenderer']
@@ -332,6 +355,10 @@ export class NativeWindowCoordinator {
       options.getHostProtectedPids,
       'getHostProtectedPids'
     )
+    this.resolveProcessAncestry =
+      typeof options.resolveProcessAncestry === 'function'
+        ? options.resolveProcessAncestry
+        : undefined
     this.requestSecondConsent = requiredFunction(
       options.requestSecondConsent,
       'requestSecondConsent'
@@ -497,7 +524,7 @@ export class NativeWindowCoordinator {
         await this.detachDaemonAttachment(completed.replaced)
       }
 
-      const selection = this.findControlTarget(nextAttachment)
+      const selection = await this.findControlTarget(nextAttachment)
       if (!selection.target) {
         if (selection.warning) this.setWarning(canonicalChatId, selection.warning)
         return this.finishPick(canonicalChatId, 'view', selection.warning)
@@ -546,7 +573,7 @@ export class NativeWindowCoordinator {
         return this.finishPick(canonicalChatId, 'view', warning)
       }
 
-      const refreshed = this.findControlTarget(nextAttachment)
+      const refreshed = await this.findControlTarget(nextAttachment)
       if (
         !refreshed.target ||
         refreshed.target.attempt.id !== selection.target.attempt.id ||
@@ -570,6 +597,7 @@ export class NativeWindowCoordinator {
           launchAttemptId: refreshed.target.binding.launchAttemptId,
           expectedPid: refreshed.target.binding.expectedPid,
           selectedPid: refreshed.target.binding.selectedPid,
+          ownership: refreshed.target.binding.ownership,
           selectedProcessStartedAt: refreshed.target.binding.processStartedAt,
           windowId: refreshed.target.binding.windowId,
           windowHandleId: nextAttachment.snapshot.handleID,
@@ -990,10 +1018,10 @@ export class NativeWindowCoordinator {
     }
   }
 
-  private findControlTarget(attachment: PrivateAttachment): {
+  private async findControlTarget(attachment: PrivateAttachment): Promise<{
     target: CandidateControlTarget | null
     warning?: string
-  } {
+  }> {
     const capability = this.currentCapability()
     if (!capability.available) {
       return {
@@ -1020,6 +1048,7 @@ export class NativeWindowCoordinator {
     const attempts = this.safeLaunchAttempts()
     const candidates: CandidateControlTarget[] = []
     let ownershipWarning: string | undefined
+    let consideredAnyAttempt = false
     for (const attempt of attempts) {
       if (
         !attempt.chatId ||
@@ -1029,16 +1058,17 @@ export class NativeWindowCoordinator {
       ) {
         continue
       }
+      consideredAnyAttempt = true
+      await this.cacheAncestryProof(attachment, attempt)
       const ownership = validateNativeWindowTargetOwnership(
         this.ownershipInput(attachment, attempt)
       )
       if (!ownership.ok) {
-        if (
-          attempt.chatId === attachment.snapshot.chatID &&
-          attempt.pid === attachment.snapshot.windowMeta.pid
-        ) {
-          ownershipWarning = ownership.error.message
-        }
+        // Record the first real reason. This used to be gated on the window's
+        // PID already matching the attempt's, which meant the single most
+        // common failure — a window owned by a descendant — produced no
+        // warning at all and left the feature looking inert.
+        ownershipWarning ??= ownership.error.message
         continue
       }
       candidates.push(
@@ -1057,11 +1087,49 @@ export class NativeWindowCoordinator {
           'More than one active launch attempt owns the selected process; Screen Watch remains view-only.'
       }
     }
-    return {
-      target: null,
-      ...(ownershipWarning
-        ? { warning: `${ownershipWarning} Screen Watch remains view-only.` }
-        : {})
+    if (ownershipWarning) {
+      return { target: null, warning: `${ownershipWarning} Screen Watch remains view-only.` }
+    }
+    if (!consideredAnyAttempt) {
+      return {
+        target: null,
+        warning:
+          'This chat has no running launch to drive, so the selected window cannot be controlled; Screen Watch remains view-only.'
+      }
+    }
+    return { target: null }
+  }
+
+  /**
+   * Resolve and remember the descent proof for this window/launch pair.
+   *
+   * Failure is deliberately quiet: no proof simply means the ownership gate
+   * falls back to requiring an exact PID, and it produces the refusal message.
+   */
+  private async cacheAncestryProof(
+    attachment: PrivateAttachment,
+    attempt: LaunchAttempt
+  ): Promise<void> {
+    const resolve = this.resolveProcessAncestry
+    const window = attachment.snapshot.windowMeta
+    const rootPid = attempt.pid
+    const rootProcessStartedAt = attempt.processStartedAt
+    if (!resolve || !rootPid || !rootProcessStartedAt) return
+    if (window.pid === rootPid && window.processStartedAt === rootProcessStartedAt) return
+
+    const key = ancestryKey(window.pid, window.processStartedAt, rootPid, rootProcessStartedAt)
+    if (this.ancestryProofs.has(key)) return
+    try {
+      const proof = await resolve({
+        leafPid: window.pid,
+        leafProcessStartedAt: window.processStartedAt,
+        rootPid,
+        rootProcessStartedAt,
+        hostProtectedPids: this.currentProtectedPids()
+      })
+      if (proof) this.ancestryProofs.set(key, proof)
+    } catch {
+      // An unavailable daemon must never widen authority, only withhold it.
     }
   }
 
@@ -1081,7 +1149,18 @@ export class NativeWindowCoordinator {
         pid: attachment.snapshot.windowMeta.pid,
         windowId: attachment.snapshot.windowMeta.windowID,
         processStartedAt: attachment.snapshot.windowMeta.processStartedAt
-      }
+      },
+      ancestry:
+        attempt.pid && attempt.processStartedAt
+          ? (this.ancestryProofs.get(
+              ancestryKey(
+                attachment.snapshot.windowMeta.pid,
+                attachment.snapshot.windowMeta.processStartedAt,
+                attempt.pid,
+                attempt.processStartedAt
+              )
+            ) ?? null)
+          : null
     }
   }
 
@@ -1205,6 +1284,8 @@ export class NativeWindowCoordinator {
       runId: lease.runId,
       attemptId: lease.launchAttemptId,
       pid: lease.selectedPid,
+      expectedPid: lease.expectedPid,
+      ownership: lease.ownership,
       windowId: lease.windowId,
       processStartedAt: lease.selectedProcessStartedAt,
       instanceEpoch: lease.instanceEpoch,
@@ -1779,8 +1860,20 @@ function sameBinding(left: NativeWindowTargetBinding, right: NativeWindowTargetB
     left.expectedPid === right.expectedPid &&
     left.selectedPid === right.selectedPid &&
     left.windowId === right.windowId &&
-    left.processStartedAt === right.processStartedAt
+    left.processStartedAt === right.processStartedAt &&
+    left.ownership === right.ownership &&
+    left.ancestryDepth === right.ancestryDepth
   )
+}
+
+/** Both birth receipts are in the key, so neither process can be swapped. */
+function ancestryKey(
+  leafPid: number,
+  leafProcessStartedAt: string,
+  rootPid: number,
+  rootProcessStartedAt: string
+): string {
+  return `${leafPid}\u0000${leafProcessStartedAt}\u0000${rootPid}\u0000${rootProcessStartedAt}`
 }
 
 function isCancelledPickResponse(value: unknown): boolean {

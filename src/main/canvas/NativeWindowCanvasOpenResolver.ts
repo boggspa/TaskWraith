@@ -105,11 +105,15 @@ function resolve(input: NativeWindowCanvasOpenResolverInput): CanvasWindowOpenTa
 
   const observation = observationForChat(input.coordinator, context.appChatId)
   if (!observation) return unavailable('attachment-stale')
-  if (!matchesAttemptProcess(input.attempt, observation, context.appChatId)) {
+
+  // The lease is read first because it records how this window earned the
+  // launch's authority — an exact PID, or a descendant proved during the
+  // human-consented pick. The checks still report in their original order, so
+  // an unowned window is still `target-unavailable` rather than stale.
+  const access = resolveLease(input.coordinator, owner)
+  if (!matchesAttemptProcess(input.attempt, observation, context.appChatId, access?.lease)) {
     return unavailable('target-unavailable')
   }
-
-  const access = resolveLease(input.coordinator, owner)
   if (!access || !matchesLease(access, owner, observation)) {
     return unavailable('attachment-stale')
   }
@@ -180,7 +184,8 @@ function matchesControl(
 function matchesAttemptProcess(
   attempt: LaunchAttempt,
   observation: NativeWindowCanvasOpenObservation,
-  expectedChatId: string
+  expectedChatId: string,
+  lease: NativeWindowCoordinatorCanvasAccess['lease'] | null | undefined
 ): boolean {
   const window = observation.windowMeta
   if (
@@ -191,9 +196,13 @@ function matchesAttemptProcess(
   ) {
     return false
   }
-  // A process group is neither a stable process identity nor a control grant:
-  // unrelated helpers and descendants can share it. Native control is limited
-  // to the exact PID spawned for this attempt and its canonical birth receipt.
+  // A process group is still neither a stable process identity nor a control
+  // grant: unrelated helpers can share one. What does carry authority is an
+  // explicit descent chain, verified once during the human-consented pick and
+  // recorded on the lease. Anything else needs the exact spawned PID.
+  if (lease?.ownership === 'descendant') {
+    return lease.expectedPid === attempt.pid && window.pid === lease.pid
+  }
   return window.pid === attempt.pid && window.processStartedAt === attempt.processStartedAt
 }
 

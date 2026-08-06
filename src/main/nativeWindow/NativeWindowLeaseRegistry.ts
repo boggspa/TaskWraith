@@ -67,6 +67,12 @@ export class NativeWindowLeaseError extends Error {
   }
 }
 
+/**
+ * Local copy of the ownership vocabulary. The pure ownership gate keeps its own
+ * lease projection for the same reason: neither module may import the other.
+ */
+export type NativeWindowLeaseOwnershipKind = 'exact' | 'descendant'
+
 export interface NativeWindowLeaseGrantInput {
   /** Main-owned process epoch. A lease never crosses an app restart. */
   instanceEpoch: string
@@ -81,6 +87,12 @@ export interface NativeWindowLeaseGrantInput {
   expectedPid: number
   /** PID of the exact window process selected through ScreenCaptureKit. */
   selectedPid: number
+  /**
+   * How the selected process earned the launch's authority. Defaults to
+   * `exact`, which keeps the equality rule; `descendant` is only legitimate
+   * once a verified ancestry chain has been checked by the ownership gate.
+   */
+  ownership?: NativeWindowLeaseOwnershipKind
   /** Start identity of the selected process; closes PID-reuse ambiguity. */
   selectedProcessStartedAt: string
   /** ScreenCaptureKit window id, bound alongside the opaque daemon handle. */
@@ -122,6 +134,7 @@ export interface NativeWindowLeaseSnapshot {
   readonly launchAttemptId: string
   readonly expectedPid: number
   readonly selectedPid: number
+  readonly ownership: NativeWindowLeaseOwnershipKind
   readonly selectedProcessStartedAt: string
   readonly windowId: number
   readonly windowHandleId: string
@@ -499,8 +512,17 @@ function snapshotGrantInput(input: NativeWindowLeaseGrantInput, grantedAt: numbe
   }
   const expectedPid = positiveInteger(input.expectedPid, 'expectedPid')
   const selectedPid = positiveInteger(input.selectedPid, 'selectedPid')
-  if (selectedPid !== expectedPid) {
+  const ownership = input.ownership ?? 'exact'
+  if (ownership !== 'exact' && ownership !== 'descendant') {
+    fail('invalid-input', 'Native window lease ownership must be exact or descendant.')
+  }
+  if (ownership === 'exact' && selectedPid !== expectedPid) {
     fail('invalid-input', 'selectedPid must exactly match expectedPid for native control.')
+  }
+  // A descendant lease that names the launch process is a mislabelled exact
+  // match, and would otherwise be a way to skip the equality rule entirely.
+  if (ownership === 'descendant' && selectedPid === expectedPid) {
+    fail('invalid-input', 'A descendant lease must name a different process than the launch.')
   }
   return {
     schemaVersion: NATIVE_WINDOW_LEASE_SCHEMA_VERSION,
@@ -512,6 +534,7 @@ function snapshotGrantInput(input: NativeWindowLeaseGrantInput, grantedAt: numbe
     launchAttemptId: requiredString(input.launchAttemptId, 'launchAttemptId'),
     expectedPid,
     selectedPid,
+    ownership,
     selectedProcessStartedAt: canonicalIdentityString(
       input.selectedProcessStartedAt,
       'selectedProcessStartedAt'

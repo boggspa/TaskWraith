@@ -169,11 +169,36 @@ describe('NativeWindowLeaseRegistry', () => {
     expect(registry.resolveForExecutor(owner())).toBe(first.lease)
   })
 
+  it('grants a descendant window whose ownership was proved upstream', () => {
+    const { registry } = createRegistry()
+
+    const result = registry.grantOrReplace(
+      grant({ selectedPid: 199, ownership: 'descendant' })
+    )
+
+    expect(result.lease).toMatchObject({ expectedPid: 101, selectedPid: 199, ownership: 'descendant' })
+  })
+
+  it('refuses a descendant claim that names the launch process itself', () => {
+    const { registry } = createRegistry()
+
+    // Mislabelling an exact match as a descendant would let a caller opt out
+    // of the equality rule without ever producing a chain.
+    expectCode(
+      () => registry.grantOrReplace(grant({ selectedPid: 101, ownership: 'descendant' })),
+      'invalid-input'
+    )
+  })
+
   it('requires exact picker identity, a canonical process start, user provenance, and known verbs', () => {
     const { registry } = createRegistry()
 
     expectCode(() => registry.grantOrReplace(grant({ windowId: 0 })), 'invalid-input')
     expectCode(() => registry.grantOrReplace(grant({ selectedPid: 102 })), 'invalid-input')
+    expectCode(
+      () => registry.grantOrReplace(grant({ selectedPid: 102, ownership: 'nonsense' as never })),
+      'invalid-input'
+    )
     expectCode(
       () => registry.grantOrReplace(grant({ selectedProcessStartedAt: 'process-start-e\u0301' })),
       'invalid-input'

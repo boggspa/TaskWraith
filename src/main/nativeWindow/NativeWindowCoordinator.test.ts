@@ -457,6 +457,8 @@ describe('NativeWindowCoordinator', () => {
     })
     expect(access).toEqual({
       lease: {
+        expectedPid: 101,
+        ownership: 'exact',
         chatId: 'chat-a',
         runId: 'run-a',
         attemptId: 'attempt-a',
@@ -627,6 +629,101 @@ describe('NativeWindowCoordinator', () => {
     expect(result.outcome).toBe('view')
     expect(result.status.control).toBeNull()
     expect(harness.coordinator.currentCanvasLeaseIdentity(owner())).toBeNull()
+    // Silence here is what made this look like a broken feature: the user
+    // attaches the window, nothing happens, and nothing says why.
+    expect(result.warning).toBeTruthy()
+  })
+
+  describe('windows owned by a descendant of the launch process', () => {
+    const LAUNCH_STARTED_AT = 'procBSDInfo:1774843200123456'
+    const WINDOW_MICROS = 1_774_843_200_900_000
+    const WINDOW_STARTED_AT = `procBSDInfo:${WINDOW_MICROS}`
+
+    function descendantProof() {
+      return {
+        rootPid: 101,
+        rootProcessStartedAt: LAUNCH_STARTED_AT,
+        leafPid: 199,
+        leafProcessStartedAt: WINDOW_STARTED_AT,
+        depth: 2,
+        chain: [
+          { pid: 199, ppid: 150, processStartedAt: WINDOW_STARTED_AT },
+          { pid: 150, ppid: 101, processStartedAt: 'procBSDInfo:1774843200500000' },
+          { pid: 101, ppid: 1, processStartedAt: LAUNCH_STARTED_AT }
+        ]
+      }
+    }
+
+    function descendantHarness(
+      resolveProcessAncestry: NativeWindowCoordinatorOptions['resolveProcessAncestry']
+    ) {
+      const harness = createHarness({ resolveProcessAncestry })
+      queuePick(harness.daemon, {
+        windowMeta: windowMeta({ pid: 199, processLaunchTimeMicros: WINDOW_MICROS })
+      })
+      return harness
+    }
+
+    it('grants control when the window process is proved to descend from the launch', async () => {
+      // `npm run dev` records the npm PID; Electron paints from a grandchild.
+      const harness = descendantHarness(async () => descendantProof())
+
+      const result = await harness.coordinator.pick('chat-a')
+
+      expect(result.outcome).toBe('control')
+      expect(result.status.control).not.toBeNull()
+      expect(harness.coordinator.currentCanvasLeaseIdentity(owner())).toMatchObject({
+        pid: 199
+      })
+    })
+
+    it('asks the resolver for the exact launch and window identities', async () => {
+      const requests: unknown[] = []
+      const harness = descendantHarness(async (request) => {
+        requests.push(request)
+        return descendantProof()
+      })
+
+      await harness.coordinator.pick('chat-a')
+
+      expect(requests[0]).toMatchObject({
+        leafPid: 199,
+        leafProcessStartedAt: WINDOW_STARTED_AT,
+        rootPid: 101,
+        rootProcessStartedAt: LAUNCH_STARTED_AT
+      })
+    })
+
+    it('stays view-only and says why when descent cannot be proved', async () => {
+      const harness = descendantHarness(async () => null)
+
+      const result = await harness.coordinator.pick('chat-a')
+
+      expect(result.outcome).toBe('view')
+      expect(result.status.control).toBeNull()
+      expect(result.warning).toMatch(/descend/i)
+    })
+
+    it('stays view-only when the resolver itself fails', async () => {
+      const harness = descendantHarness(async () => {
+        throw new Error('daemon gone')
+      })
+
+      const result = await harness.coordinator.pick('chat-a')
+
+      expect(result.outcome).toBe('view')
+      expect(result.warning).toBeTruthy()
+    })
+
+    it('explains that no launch is running rather than failing silently', async () => {
+      const harness = createHarness({ attempts: [] })
+      queuePick(harness.daemon, { windowMeta: windowMeta({ pid: 199 }) })
+
+      const result = await harness.coordinator.pick('chat-a')
+
+      expect(result.outcome).toBe('view')
+      expect(result.warning).toMatch(/no .*launch/i)
+    })
   })
 
   it('keeps observation view-only on older macOS', async () => {

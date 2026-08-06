@@ -114,7 +114,9 @@ describe('NativeWindowTargetOwnership', () => {
       expectedPid: 101,
       selectedPid: 101,
       windowId: 42,
-      processStartedAt: PROCESS_STARTED_AT
+      processStartedAt: PROCESS_STARTED_AT,
+      ownership: 'exact',
+      ancestryDepth: 0
     })
     expect(Object.isFrozen(result)).toBe(true)
     expect(Object.isFrozen(binding)).toBe(true)
@@ -141,6 +143,110 @@ describe('NativeWindowTargetOwnership', () => {
       selectedPgid: 101
     }
     expect(expectFailure(validateNativeWindowTargetOwnership(candidate)).code).toBe('pid-not-owned')
+  })
+
+  describe('descendant windows', () => {
+    // `npm run dev`(101) -> node(150) -> electron(199): the attempt records the
+    // npm PID, but the window the user attaches belongs to the Electron process.
+    const CHILD_STARTED_AT = 'procBSDInfo:1774843200500000'
+    const WINDOW_STARTED_AT = 'procBSDInfo:1774843200800000'
+
+    function descendantChain() {
+      return [
+        { pid: 199, ppid: 150, processStartedAt: WINDOW_STARTED_AT },
+        { pid: 150, ppid: 101, processStartedAt: CHILD_STARTED_AT },
+        { pid: 101, ppid: 1, processStartedAt: PROCESS_STARTED_AT }
+      ]
+    }
+
+    function descendantInput(overrides: Record<string, unknown> = {}) {
+      return input({
+        selectedWindow: { pid: 199, windowId: 43, processStartedAt: WINDOW_STARTED_AT },
+        ancestry: {
+          rootPid: 101,
+          rootProcessStartedAt: PROCESS_STARTED_AT,
+          leafPid: 199,
+          leafProcessStartedAt: WINDOW_STARTED_AT,
+          depth: 2,
+          chain: descendantChain()
+        },
+        ...overrides
+      } as Partial<NativeWindowTargetOwnershipInput>)
+    }
+
+    it('binds a window owned by a descendant of the launch process', () => {
+      const binding = expectBinding(validateNativeWindowTargetOwnership(descendantInput()))
+      expect(binding).toMatchObject({
+        expectedPid: 101,
+        selectedPid: 199,
+        processStartedAt: WINDOW_STARTED_AT,
+        ownership: 'descendant',
+        ancestryDepth: 2
+      })
+    })
+
+    it('still denies a descendant window when no ancestry proof is supplied', () => {
+      const failure = expectFailure(
+        validateNativeWindowTargetOwnership(
+          input({
+            selectedWindow: { pid: 199, windowId: 43, processStartedAt: WINDOW_STARTED_AT }
+          })
+        )
+      )
+      expect(failure.code).toBe('pid-not-owned')
+      // The refusal has to name the real cause or the agent just retries.
+      expect(failure.message).toMatch(/descend/i)
+    })
+
+    it('re-verifies the proof rather than trusting its summary fields', () => {
+      const forged = descendantInput({
+        ancestry: {
+          rootPid: 101,
+          rootProcessStartedAt: PROCESS_STARTED_AT,
+          leafPid: 199,
+          leafProcessStartedAt: WINDOW_STARTED_AT,
+          depth: 2,
+          // The chain never reaches 101; only the summary claims it does.
+          chain: [
+            { pid: 199, ppid: 150, processStartedAt: WINDOW_STARTED_AT },
+            { pid: 150, ppid: 777, processStartedAt: CHILD_STARTED_AT }
+          ]
+        }
+      })
+      expect(expectFailure(validateNativeWindowTargetOwnership(forged)).code).toBe('pid-not-owned')
+    })
+
+    it('denies a proof whose leaf is not the window that was actually attached', () => {
+      const mismatched = descendantInput({
+        selectedWindow: { pid: 198, windowId: 43, processStartedAt: WINDOW_STARTED_AT }
+      })
+      expect(expectFailure(validateNativeWindowTargetOwnership(mismatched)).code).toBe(
+        'pid-not-owned'
+      )
+    })
+
+    it('denies a descendant of a protected host process at the leaf', () => {
+      const hostWindow = descendantInput({ hostProtectedPids: new Set([900, 199]) })
+      expect(expectFailure(validateNativeWindowTargetOwnership(hostWindow)).code).toBe(
+        'protected-process'
+      )
+    })
+
+    it('invalidates a saved binding when the ownership kind changes', () => {
+      const binding = expectBinding(validateNativeWindowTargetOwnership(descendantInput()))
+      const exactCurrent = input()
+      const drifted = revalidateNativeWindowTargetOwnership({ binding, current: exactCurrent })
+      expect(expectFailure(drifted).code).toBe('binding-mismatch')
+    })
+
+    it('revalidates a stable descendant binding', () => {
+      const binding = expectBinding(validateNativeWindowTargetOwnership(descendantInput()))
+      const stable = revalidateNativeWindowTargetOwnership({
+        binding,
+        current: descendantInput()
+      })
+      expect(stable.ok).toBe(true)
+    })
   })
 
   it('fails closed for unsupported macOS, terminal attempts, and non-exact run owners', () => {
