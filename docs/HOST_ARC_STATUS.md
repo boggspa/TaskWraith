@@ -1,20 +1,20 @@
 # Host Arc — Status & Progress Tracker
 
 **Documentarian:** `@SparkDocs` (paperwork owner) · **This refresh:** `@SparkDocs` (Boss rule `host-arc-docs-must-record-DONE-never-IN-FLIGHT` — record closed waves only; never in-flight Cap/adopt status)  
-**Last updated:** 2026-08-06T16:15Z continuous round  
-**Branch ahead of origin/master:** ~425 (moving; `git log --oneline -1` is authoritative for HEAD)  
-**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a–c** + **4.3a pure/wire/adapter** + **Wave 4.4** `402f34e0e` + **Wave 4.3c** `1269e3fc7` + **Wave 4.3d** `e63add3c7` + **Wave 4.6** `d7b44f23c` + **Wave 4.5** `f1f950207` + **Wave 4.3e** `f370800da` + **Wave 4.6a** `3d3d766cc` all **LANDED**. Node production composition boots/serves/stops under test; TUI proves first **real** client round trip against real Host sockets with a hardened connection-evidence pin (three regex layers closed); Desktop mounts provider **and** reads Host via ungated `HostStatusRow` (Approvals). **Does NOT** prove Host under Electron; **does NOT** retire AppStore authority. AC1–6 **PARTIAL** (never PASS). Production Host **STILL never observed running under Electron** — zero `taskwraith-host-v2.json`. Socket suite **CLOSED as seat-specific** — durable seat matrix: **Claude = LISTEN OK · Pi = LISTEN OK · Cursor = EPERM**. **AppStore cutover** / **iOS** remain recon-only (Boss: no implementation until Electron Host observed). **iOS Kit reachable:** Swift **6.2.4**; `test:swift:ios-kit` = **868/115 green ~6s** (warm cache).
+**Last updated:** 2026-08-06T16:54Z continuous round  
+**Branch ahead of origin/master:** moving (`git log --oneline -1` is authoritative for HEAD)  
+**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a–c** + **4.3a pure/wire/adapter** + **Wave 4.4** `402f34e0e` + **Wave 4.3c** `1269e3fc7` + **Wave 4.3d** `e63add3c7` + **Wave 4.6** `d7b44f23c` + **Wave 4.5** `f1f950207` + **Wave 4.3e** `f370800da` + **Wave 4.6a** `3d3d766cc` all **LANDED**. Node production composition boots/serves/stops under test; TUI proves first **real** client round trip against real Host sockets with a hardened connection-evidence pin (three regex layers closed); Desktop mounts provider **and** reads Host via ungated `HostStatusRow` (Approvals). **Does NOT** retire AppStore authority. AC1–6 **PARTIAL** (never PASS). **Wave 4.8 observed under Electron:** Host **constructs** (identity persisted) but **never publishes** discovery — zero `taskwraith-host-v2.json` after a real isolated-dev launch. Socket suite **CLOSED as seat-specific** — durable seat matrix: **Claude = LISTEN OK · Pi = LISTEN OK · Cursor = EPERM**. **AppStore cutover** / **iOS** remain recon-only until Host publishes under Electron. **iOS Kit reachable:** Swift **6.2.4**; `test:swift:ios-kit` = **868/115 green ~6s** (warm cache).
 
 ---
 
-## ⚠ CRITICAL DISTINCTION — “Host is ON” ≠ “Host has booted”
+## ⚠ CRITICAL DISTINCTION — “Host is ON” ≠ “Host has published”
 
-**PRODUCTION HOST HAS NEVER BEEN OBSERVED RUNNING UNDER ELECTRON** (`host-arc-production-host-has-never-actually-run`, measured by `@SolBoss`).
+**UNDER ELECTRON, HOST CONSTRUCTS BUT NEVER PUBLISHES** (`host-arc-52-HOST-CONSTRUCTS-BUT-NEVER-PUBLISHES-under-electron`, `host-arc-53-FAILURE-WINDOW-NARROWED-not-listen-earlier`). See **Wave 4.8** below.
 
 | Claim people will misread | What is actually true |
 |---|---|
 | “Host is ON” | **Wiring is committed** in Electron main (`b45d4297f`). `createHostProductionBootstrap` + `start().catch(...)` + `stopSync` exist in **HEAD** `index.ts`. |
-| “Host has booted / is listening” | **Not observed under Electron.** Zero `taskwraith-host-v2.json` discovery files exist on this machine (prod + TaskWraith Dev userData searched). Running TaskWraith.app started **~2h11m before R4' landed** — it is a **stale binary** that predates Host wiring. Cause (a) stale process, not cause (b) `start()` failing into the logged catch. |
+| “Host has booted / is listening” | **Not observed.** After Wave **4.8**, an isolated-dev Electron launch reached R4' construction and wrote `host-install-identity.json`, but wrote **no** `taskwraith-host-v2.json`, created **no** new `twh2-*` socket dir, and logged **no** `[host] production Host failed to start`. Identity ≠ publish. |
 | TUI Fake Host v2 green | **Client-path evidence over TCP loopback** in-process. Proves connect → snapshot → (4.2b) command submit / receipt poll / deferred ask. **Does not** prove live production Host under Electron. |
 | Wave **4.6** TUI live integration green | **FIRST REAL CLIENT ROUND TRIP** in the arc (`host-arc-46-first-real-client-round-trip-and-two-overclaims-corrected`). **LANDED** `d7b44f23c`. Real `createHostProductionBootstrap` defaults + real unix socket + real `TaskWraithTui`; kill-the-Host RED-proof (unreachable ≠ empty world). Evidence at land: focused **2/2** · full `src/tui/` **58/58** across **7** files · `typecheck:tui` exit 0 (correct project **named**). Cap Cursor seat **EPERM** disclosed; Pi/Claude suite accepted. |
 | Socket suite / `EPERM` | **CLOSED as seat-specific, not environmental.** **Seat matrix (durable routing):** Claude = **LISTEN OK** · Pi = **LISTEN OK** · Cursor = **EPERM**. Cap discloses Cursor `EPERM` rather than claiming sockets. Standing rule: an “environment cannot do X” claim is only environmental after X has been tried on a **different** shell-capable seat. |
@@ -23,7 +23,7 @@
 | “AC1–6 will PASS when 4.5 lands” | **FALSE.** 4.5 commits a **script**. A script that has never run observes nothing. AC1–6 stay **PARTIAL** until a **rebuilt** post-R4' bundle is actually launched and a discovery record is actually seen. |
 | “Invalid package-smoke profile degrades to production” | **FALSE — SUPERSEDED** (`host-arc-45-SUPERSEDED-app-fails-closed-not-open`). The app **FAILS CLOSED**: `devAppName.ts` L159 throws (`TaskWraith refused an invalid private launch posture.`). It does **not** silently degrade to production posture. Four seats (incl. Boss) had this backwards; do not re-inherit the open claim. |
 
-Do **not** inherit the stronger claim by accident in a fresh context. Wave 4.4 green under Node ≠ Host under Electron. Wave 4.6 green under Node+TUI ≠ Electron observation. Live Electron discovery remains unobserved until Wave 4.5 (or an equivalent post-R4' launch) **runs** and produces evidence. **Landing the 4.5 script alone flips nothing on AC1–6.**
+Do **not** inherit the stronger claim by accident in a fresh context. Wave 4.4 green under Node ≠ Host listening under Electron. Wave 4.6 green under Node+TUI ≠ Electron publish. Wave **4.8** reached construction under Electron and **still** never published discovery. Identity alone is not observation success. **Landing the 4.5 script alone flips nothing on AC1–6.**
 
 ---
 
@@ -35,7 +35,7 @@ Do **not** inherit the stronger claim by accident in a fresh context. Wave 4.4 g
 | **Wave 2E-2A** (Primitives A–E) | ✅ **PASS** | `@SolBoss` | Receipt position, actionId binding, read-alias gate, bootstrap recovery |
 | **Wave 2E-2B** (Deferred allow + Authority integration) | ✅ **PASS** | `@SolBoss` / `@GrokCapt` | Resolver `verifyCommand` split @ `aceb0993a`; `HostDeferredAllowPipeline` @ `9d4a2a104`; micro-fix @ `167f6916b` |
 | **Wave 2E-2C** (typecheck debt) | ✅ **PASS** | `@DSeekWork` | `joinFor` cleanup @ `5a0761793`; Ruling-C complete |
-| **Wave 3** (Dedicated Host + supervision) | ✅ **CLOSED** | `@SolBoss` / `@GrokCapt` | Substrate + Gates 1/2/3.6e + R4' wiring all committed. Host **wiring ON** in main. AC1–6 → **PARTIAL** (not PASS). Production Host **never observed running under Electron**. |
+| **Wave 3** (Dedicated Host + supervision) | ✅ **CLOSED** | `@SolBoss` / `@GrokCapt` | Substrate + Gates 1/2/3.6e + R4' wiring all committed. Host **wiring ON** in main. AC1–6 → **PARTIAL** (not PASS). Wave **4.8**: constructs under Electron, never publishes. |
 | **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** — user-gated Electron launch next | `@SolBoss` / `@SolWork` / `@GrokCapt` / `@GrokWork` / `@DSeekWork` | Order ruled **TUI → Desktop → iOS**. **4.2a–c** + **4.3a pure/wire/adapter** + **4.4** + **4.3c** + **4.3d** + **4.6** + **4.5** + **4.3e** + **4.6a** all **LANDED**. Desktop Host consumer **ungated** (`f370800da`). Connection pin hardened (`3d3d766cc`). **4.3b** gated on live Electron Host observation. AppStore/iOS = **recon only** (Boss). |
 | **Wave 5** (`.twmission` flight recorder) | NOT STARTED | `@SolBoss` | Blocked by Waves 3–4 progress; AC9 still NOT STARTED |
 | **Wave 6** (Adversarial review + final gates) | NOT STARTED | `@SolBoss` | Socket **unit** gap closed (seat-specific). Still blocked by Waves 3–5 + **live Electron Host observation** + remaining adversarial gates |
@@ -99,7 +99,7 @@ Verified by `@SolBoss` with shell (`host-arc-wave3-closed-four-shas`); Cap land 
 - **Evidence at adopt:** same-breath Host-only `+31/−0`; typecheck **zero** errors naming `index.ts` / `host/`; non-socket host **888/888**. Socket suite **not** claimed.
 - **K3Review delta:** PASS (`host-arc-r4prime-k3review-delta-pass`)
 - **Marker:** SolWork courtesy fence dropped with atomic commit
-- **Runtime observation (later):** production Host **never observed running under Electron** — see critical distinction above. Wiring SHA stands; Electron boot evidence does not.
+- **Runtime observation (later):** Wave **4.8** — Host **constructs but never publishes** under Electron (identity yes; discovery no). Wiring SHA stands; listening evidence does not.
 
 ### WAVE 4.2a — TUI read-only Host projection — **LANDED**
 
@@ -163,13 +163,13 @@ Verified by `@SolBoss` with shell (`host-arc-wave3-closed-four-shas`); Cap land 
 ### Host process / AC1–6 expectation (binding)
 
 **Host process wiring in main: ON** (`b45d4297f`).  
-**Host process observed running under Electron: NO** (zero `taskwraith-host-v2.json`; stale pre-R4' app).
+**Host process observed listening under Electron: NO** (Wave **4.8** — constructs / identity yes; discovery publish no).
 
-**AC1–6: PARTIAL — never write PASS** (`host-arc-r4prime-does-NOT-pass-ac1-6`, updated after Wave 4.3e land):
+**AC1–6: PARTIAL — never write PASS** (`host-arc-r4prime-does-NOT-pass-ac1-6`, updated after Wave 4.8):
 
 - Process half (wiring): **yes**.
 - Process half (Node production composition boot under test): **yes** — Wave **4.4** `402f34e0e` (real composition + real server; BOOT → SERVE → STOP).
-- Process half (observed boot under Electron): **no** — zero `taskwraith-host-v2.json` on the machine; production Host **STILL never observed running under Electron**. Wave **4.5** harness is **LANDED** `f1f950207` — **landing the script does not flip AC1–6**. Observation still requires a rebuilt post-R4' bundle **launched** and discovery **seen**.
+- Process half (observed under Electron): **constructs, never publishes** — Wave **4.8**. Identity written under `TaskWraith Dev hostobs`; **zero** `taskwraith-host-v2.json`; no new `twh2-*`; no `[host]` rejection. Failure window **before** `HostLocalServer.start()` L225. Wave **4.5** harness remains **LANDED** `f1f950207` — script land ≠ listening.
 - Client projections: **TUI read** (`20a775d96`) + **TUI commands** (`9b48bec48`) + **TUI real Host round trip** (`d7b44f23c`); Desktop **transport + mount + leaf consumer + ungated placement** (`21e625daa` + `dc404bf09` + `1269e3fc7` + `e63add3c7` + `f370800da`); paired-iOS already e2ee-v1 projection client (**zero** Host v2 types in `ios/` — Mac still derives remote snapshots from AppStore); **no** AppStore→Host view cutover.
 - Approval correlation on the wire: ✅ **LANDED** `b74b33e33` (one-field `commandId`).
 - Desktop read-only pure layer: ✅ **LANDED** `78b3845ed`. Live Desktop IPC bridge: ✅ **LANDED** `21e625daa`. Renderer IPC transport: ✅ **LANDED** `dc404bf09`. Production boot proof (Node): ✅ **LANDED** `402f34e0e`. Desktop UI mount: ✅ **LANDED** `1269e3fc7`. Desktop leaf consumer: ✅ **LANDED** `e63add3c7`. Ungated Host surface: ✅ **LANDED** `f370800da`. Electron harness: ✅ **LANDED** `f1f950207` (script only — **not** observation).
@@ -275,6 +275,45 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 27. **iOS Kit is reachable and cheap** — Swift **6.2.4**; `npm run test:swift:ios-kit` = **868/115 green ~6s** warm (`host-arc-ios-kit-baseline-868-green-and-my-mirror-claim-was-too-broad`). Not user-gated.
 28. **Do not port HostSnapshot to Swift for "mirror safety"** — e2ee TS↔Swift is already golden-vector pinned both sides; the real reason is **churn** (HostSnapshot moved this round with 4.2c `commandId`), not technique.
 29. **Sections that duplicate a live source — `git status`, transcript routing — must be deleted, not reconciled.** Four staleness cycles (passes 21/23/25/27) all lived in 'Foreign Dirt' and 'Next actions'. Reconciliation recurs forever; deletion is terminal (`host-arc-delete-the-two-sections-not-the-lines-plus-conditional-owners`).
+30. **Identity file ≠ Host listening.** `resolveHostInstallId` is evaluated **inside** the R4' argument object (`index.ts` L47361) **before** `createHostProductionBootstrap` is entered. `host-runtime/host-install-identity.json` proves the wiring line was **reached**. It proves **nothing** about `start()`, listen, or discovery publish (`host-arc-52-HOST-CONSTRUCTS-BUT-NEVER-PUBLISHES-under-electron`).
+---
+
+## Wave 4.8 — Electron observation: Host constructs but never publishes
+
+Measured by `@GrokWork` (authorized cheaper-path launch) and re-measured by `@SolBoss` / `@GrokCapt`. Residue still on disk at paperwork time (`TaskWraith Dev hostobs/host-runtime/` — exactly one file). **DONE facts only.**
+
+### What was observed
+
+An isolated dev instance (`TASKWRAITH_INSTANCE_ID=hostobs` → `TaskWraith Dev hostobs`) was launched against the rebuilt `out/` and torn down. Production pid **4902** untouched (same start time). First Electron observation of Host wiring in this arc.
+
+### What worked
+
+`host-runtime/host-install-identity.json` written — **107** bytes, mode **0600**, verbatim:
+
+```json
+{"schemaVersion":1,"hostId":"71e44cbd-0c4e-44d4-8688-a448f14be290","createdAt":"2026-08-06T16:40:54.383Z"}
+```
+
+That is Wave **3.6e** `resolveHostInstallId` executing under real Electron for the first time. It validates the `host-arc-hostid-ruling` design (UUID, persisted in the Host runtime data dir).
+
+### What did not
+
+- No `taskwraith-host-v2.json` under the isolated profile (or machine-wide under Application Support).
+- No new `twh2-*` socket directory (newest on machine was ~47 minutes **before** the launch).
+- No `[host] production Host failed to start` line — so `start()` did **not** reject into the R4' `.catch()`.
+
+### Failure window (narrowed)
+
+`HostLocalServer.start()` creates the socket directory at **L225**, twenty-four lines **before** `server.listen()` at **L249**. No new `twh2-*` directory exists from this launch. Therefore `HostLocalServer.start()` was **never reached**, and the hang is **not** in the server — it is earlier, inside `supervisor.start()` before the server is invoked (`host-arc-53-FAILURE-WINDOW-NARROWED-not-listen-earlier`).
+
+### Open confound (unresolved)
+
+`taskwraith-control-v1.json` is also **absent** from that profile. Control-v1 waits for `browser-window-created`; Host v2 does not. The shared absence may be coincidence or a shared startup condition. **Unresolved** — do not assume either way.
+
+### AC1–6 after this measurement
+
+Remain **PARTIAL**. Process half is no longer “never observed”; it is **Host constructs but never publishes under Electron**. Client projections still incomplete for PASS. **Never PASS** on this finding alone.
+
 ---
 
 ## Chronology (Host Arc commits, newest first)
@@ -405,7 +444,7 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 | **AppStore → Host metadata cutover** | `@SolBoss` sequencing (recon `@SolWork`) | 🔍 **RECON ONLY** — HostSnapshot metadata-only; transcripts excluded by design; recommend providers-first (`host-arc-appstore-cutover-gap-map-measured`). |
 | **iOS paired projection** | Downstream of Mac/Desktop cutover (recon `@GrokWork`) | 🔍 **RECON ONLY** — already e2ee-v1 projection client; zero Host types in `ios/`; Swift 6.2.4 + Kit **868/115** green; do **not** port HostSnapshot to Swift (churn, not technique — e2ee already vector-pinned). |
 | **Wave 4.3b — Desktop commands** | `@SolBoss` sequencing | **Unblocked** by 4.2c + consuming view (4.3d/4.3e); after live Electron Host observation. |
-| **Live Electron `taskwraith-host-v2.json`** | Wave 4.5 harness + rebuild/launch | **STILL never observed** — Node 4.4 / 4.6 ≠ Electron Host; 4.5 script land ≠ observation |
+| **Live Electron `taskwraith-host-v2.json`** | Wave 4.8 observation | **ABSENT after Electron launch** — Host constructs (identity yes) but never publishes; window before `HostLocalServer.start()` L225 |
 | **Wave 5 — `.twmission` / AC9** | `@SolBoss` | **NOT STARTED** |
 | **Wave 6 — adversarial + closeout** | `@SolBoss` | Socket **unit** gap **CLOSED** (seat-specific). Live Electron Host observation still required for AC1–6. |
 
@@ -433,7 +472,7 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 
 Foreign markers present (not Host Arc): `.WORK-IN-PROGRESS-observatory-gpu-calm.md`, `.WORK-IN-PROGRESS-seat-strip-desktop.md`, `.WORK-IN-PROGRESS-tool-event-dual-lane-dedupe.md`.
 
-`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent**; **no docs marker raised** (Boss ruling). Waves through **4.6a** `3d3d766cc` **LANDED**; production Host **STILL never observed running under Electron**. This file records **DONE** waves only (`host-arc-docs-must-record-DONE-never-IN-FLIGHT`); commit status is `git log`, not this file.
+`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent**; **no docs marker raised** (Boss ruling). Waves through **4.6a** `3d3d766cc` **LANDED**; Wave **4.8** Electron observation recorded (constructs, never publishes). This file records **DONE** waves only (`host-arc-docs-must-record-DONE-never-IN-FLIGHT`); commit status is `git log`, not this file.
 
 ### R5 — Evaluator Sourcing (DURABLE — unchanged; Gate 1 landed)
 
@@ -453,7 +492,7 @@ Ten names: `snapshot.get`, `deltas.since`, `receipt.lookup`, `ping`, `approval.d
 
 | AC | Status | Note |
 |---|---|---|
-| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Wave **4.4** proves Node production composition boots/serves/stops (`402f34e0e`). Wave **4.6** proves first real client round trip (`d7b44f23c`); Wave **4.6a** hardens the connection pin (`3d3d766cc`). Wave **4.3d/4.3e** Desktop **consumes** Host in ungated UI (`e63add3c7` / `f370800da`). Wave **4.5** harness **LANDED** (`f1f950207`) — **landing a script does not flip PASS.** Production Host **STILL never observed running under Electron** (zero `taskwraith-host-v2.json`). Packaged app in `dist/` predates R4'; `npx electron-vite build` rewrites `out/` only — the 4.5 harness opens a packaged `.app`, so unpackaged rebuild alone does **not** enable observation. TUI read+commands+live round trip in HEAD; iOS is e2ee-v1 projection client (Mac still AppStore-derived — no Host v2 on phone; Kit **868/115** green). Socket **unit** suite **CLOSED** seat-specific (Claude + Pi LISTEN OK; Cursor may EPERM). Fake Host / Node boot-test / harness land ≠ Electron boot. **Never PASS.** |
+| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Wave **4.4** proves Node production composition boots/serves/stops (`402f34e0e`). Wave **4.6** proves first real client round trip (`d7b44f23c`); Wave **4.6a** hardens the connection pin (`3d3d766cc`). Wave **4.3d/4.3e** Desktop **consumes** Host in ungated UI (`e63add3c7` / `f370800da`). Wave **4.5** harness **LANDED** (`f1f950207`) — **landing a script does not flip PASS.** Wave **4.8** Electron observation: Host **constructs but never publishes** under an isolated-dev launch (`TaskWraith Dev hostobs`) — identity written; **zero** `taskwraith-host-v2.json`; no new `twh2-*`; no `[host]` rejection line. Failure window is **before** `HostLocalServer.start()` L225 (not `listen` at L249). Packaged app in `dist/` still predates R4' (optional path; cheaper path already used). TUI read+commands+live round trip in HEAD; iOS is e2ee-v1 projection client (Mac still AppStore-derived — no Host v2 on phone; Kit **868/115** green). Socket **unit** suite **CLOSED** seat-specific (Claude + Pi LISTEN OK; Cursor may EPERM). Identity / Node / Fake Host ≠ listening Host. **Never PASS.** |
 | AC7–AC8 | ⚠️ PARTIAL | Host core authoritative; TUI is first full (read+command+live) projection client; Desktop mounts **and** consumes Host projection ungated (AppStore still authority for most views); iOS already e2ee-v1 projection client (not Host v2) — Mac still derives remote snapshots from AppStore |
 | AC9 | ❌ **NOT STARTED** | `.twmission` / mission evidence not started (Wave 5) |
 | AC10–AC11 | ⚠️ PARTIAL | TUI read+command+live paths live in HEAD; Desktop pure + wire + adapter + mount + leaf + ungated placement landed; Desktop commands not started; iOS Host-shaped work is Mac-side (downstream of AppStore cutover), not a Swift Host port |
