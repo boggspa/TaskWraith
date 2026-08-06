@@ -274,6 +274,7 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 26. **Docs record DONE, never IN-FLIGHT** — continuous rounds race Cap adopts against docs lanes by design; a refresh that says "awaiting Cap" can assert an already-landed wave is unlanded (`host-arc-docs-must-record-DONE-never-IN-FLIGHT`). In-flight status lives in transcript/blackboard. Drop the code-tip line — it duplicates `git log` and goes stale. Keep LANDED SHAs only.
 27. **iOS Kit is reachable and cheap** — Swift **6.2.4**; `npm run test:swift:ios-kit` = **868/115 green ~6s** warm (`host-arc-ios-kit-baseline-868-green-and-my-mirror-claim-was-too-broad`). Not user-gated.
 28. **Do not port HostSnapshot to Swift for "mirror safety"** — e2ee TS↔Swift is already golden-vector pinned both sides; the real reason is **churn** (HostSnapshot moved this round with 4.2c `commandId`), not technique.
+29. **Sections that duplicate a live source — `git status`, transcript routing — must be deleted, not reconciled.** Four staleness cycles (passes 21/23/25/27) all lived in 'Foreign Dirt' and 'Next actions'. Reconciliation recurs forever; deletion is terminal (`host-arc-delete-the-two-sections-not-the-lines-plus-conditional-owners`).
 ---
 
 ## Chronology (Host Arc commits, newest first)
@@ -281,6 +282,7 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 Top-of-tree churns every pass with foreign concurrent-session commits. This table lists **arc-owned commits only** — run `git log --oneline -1` for current HEAD.
 
 ```text
+83432f398  docs(host): record Wave 4.6a land under DONE-only Host Arc status              (@SparkDocs; @GrokCapt adopted)
 3d3d766cc  test(tui): harden Host live connection evidence pin (Wave 4.6a)              (@DSeekWork authored; @GrokCapt adopted; THREE REGEX LAYERS PINNED)
 976c06c3a  docs(host): tip Host Arc status at Wave 4.3e Cap land                          (@SparkDocs; @GrokCapt adopted)
 f370800da  feat(renderer): move Host status row out of iOS-gated Devices chrome (Wave 4.3e) (@SolWork authored; @GrokCapt adopted; UNGATED HOST SURFACE)
@@ -451,7 +453,7 @@ Ten names: `snapshot.get`, `deltas.since`, `receipt.lookup`, `ping`, `approval.d
 
 | AC | Status | Note |
 |---|---|---|
-| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Wave **4.4** proves Node production composition boots/serves/stops (`402f34e0e`). Wave **4.6** proves first real client round trip (`d7b44f23c`); Wave **4.6a** hardens the connection pin (`3d3d766cc`). Wave **4.3d/4.3e** Desktop **consumes** Host in ungated UI (`e63add3c7` / `f370800da`). Wave **4.5** harness **LANDED** (`f1f950207`) — **landing a script does not flip PASS.** Production Host **STILL never observed running under Electron** (zero `taskwraith-host-v2.json`). TUI read+commands+live round trip in HEAD; iOS is e2ee-v1 projection client (Mac still AppStore-derived — no Host v2 on phone; Kit **868/115** green). Socket **unit** suite **CLOSED** seat-specific (Claude + Pi LISTEN OK; Cursor may EPERM). Fake Host / Node boot-test / harness land ≠ Electron boot. **Never PASS.** |
+| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Wave **4.4** proves Node production composition boots/serves/stops (`402f34e0e`). Wave **4.6** proves first real client round trip (`d7b44f23c`); Wave **4.6a** hardens the connection pin (`3d3d766cc`). Wave **4.3d/4.3e** Desktop **consumes** Host in ungated UI (`e63add3c7` / `f370800da`). Wave **4.5** harness **LANDED** (`f1f950207`) — **landing a script does not flip PASS.** Production Host **STILL never observed running under Electron** (zero `taskwraith-host-v2.json`). Packaged app in `dist/` predates R4'; `npx electron-vite build` rewrites `out/` only — the 4.5 harness opens a packaged `.app`, so unpackaged rebuild alone does **not** enable observation. TUI read+commands+live round trip in HEAD; iOS is e2ee-v1 projection client (Mac still AppStore-derived — no Host v2 on phone; Kit **868/115** green). Socket **unit** suite **CLOSED** seat-specific (Claude + Pi LISTEN OK; Cursor may EPERM). Fake Host / Node boot-test / harness land ≠ Electron boot. **Never PASS.** |
 | AC7–AC8 | ⚠️ PARTIAL | Host core authoritative; TUI is first full (read+command+live) projection client; Desktop mounts **and** consumes Host projection ungated (AppStore still authority for most views); iOS already e2ee-v1 projection client (not Host v2) — Mac still derives remote snapshots from AppStore |
 | AC9 | ❌ **NOT STARTED** | `.twmission` / mission evidence not started (Wave 5) |
 | AC10–AC11 | ⚠️ PARTIAL | TUI read+command+live paths live in HEAD; Desktop pure + wire + adapter + mount + leaf + ungated placement landed; Desktop commands not started; iOS Host-shaped work is Mac-side (downstream of AppStore cutover), not a Swift Host port |
@@ -479,29 +481,6 @@ Commits are exact-path only; markers with honest live pid **or** `lockOwnerId` a
 - Provider admission / retirement / live membership / security ceilings
 - Unrelated history-deletion machinery
 - Composition roots (`index.ts`, `App.tsx`, `EnsembleOrchestrator.ts`) — tiny wiring hunks only, with Boss/Cap clearance (R4' already landed under that rule)
-
----
-
-## Foreign Dirt (do not touch)
-
-Snapshot at this paperwork pass (`git status --porcelain`). Re-check before staging. **Not an `index.ts` window claim.**
-
-**Arc-owned (Cap adopts separately):**
-- ` M docs/HOST_ARC_STATUS.md` (this paperwork lane — Cap exact-path adopt alone)
-
-**Foreign / other-session (illustrative — re-measure before acting):**
-- `electron.vite.config.ts`, `src/main/store/{index,PersistenceWriteWorker*,persistenceDurability*,persistenceWriteBaseline*}`, `src/main/workers/persistenceWriteWorker.ts` — **not Host Arc scope**
-
-Exact-path staging only — never `git add -A` / `git add .` / `commit -a`.
-
----
-
-## Next actions (paperwork view)
-
-1. `@GrokCapt` — exact-path adopt this docs refresh alone (`docs/HOST_ARC_STATUS.md`). Exclude foreign dirt. Wave **4.6a** is already **LANDED** `3d3d766cc` — do not re-adopt it.
-2. `@K3Review` / `@GrokReview` / `@MistralReview` — delta-only after Cap lands docs; do not reopen 4.6a.
-3. `@SolBoss` — present **@user** rebuild + isolated launch (`scripts/smoke-host-boot-electron.cjs` at `f1f950207`); keep AppStore/iOS as **recon → sequenced implementation** (not parallel Swift Host port); keep AC1–6 **PARTIAL**.
-4. **PROMINENT:** Production Host **STILL never observed running under Electron** — zero `taskwraith-host-v2.json`. Wave 4.4 / 4.6 / 4.6a green under Node ≠ Electron observation. **4.5 committing a script does not flip AC1–6 PASS.** App **fails closed** on invalid package-smoke posture (throws; does not degrade to production).
 
 ---
 
