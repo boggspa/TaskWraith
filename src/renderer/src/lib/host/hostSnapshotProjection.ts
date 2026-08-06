@@ -28,7 +28,8 @@
  *
  * BOUNDARY: read-only. This module never builds, submits or describes a Host
  * command — Desktop command cutover is Wave 4.3b and is hard-gated on exact
- * approvalId correlation (Wave 4.2c).
+ * commandId correlation (Wave 4.2c, landed at b74b33e33: `commandId` is the
+ * required join key on HostApprovalProjection).
  */
 
 import type {

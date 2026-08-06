@@ -85,6 +85,7 @@ import {
   MemoryProposalPack
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
+import type { HostSnapshot } from '../shared/hostProtocol'
 import type {
   LicenseNoticeKind,
   LicenseNoticeStatus,
@@ -1085,6 +1086,16 @@ declare global {
       runApprovedHostCommand: (requestId: string) => Promise<boolean>
       listGeminiSessions: () => Promise<GeminiSessionListResult>
       getHostWeather: () => Promise<HostWeatherState>
+      /**
+       * Host Arc 4.3a — read-only Desktop Host projection.
+       * Authoritative declaration of the `host-projection:snapshot` channel.
+       * Failure is a VALUE (`ok: false`), never a thrown Error: an Error loses
+       * its type crossing IPC. The renderer adapter converts it to a rejection
+       * so an unreachable Host is reported, never rendered as an empty world.
+       */
+      hostProjectionSnapshot: () => Promise<
+        { ok: true; snapshot: HostSnapshot } | { ok: false; error: string }
+      >
       setAppearanceMode: (
         payload: { mode?: string; reduceTransparency?: boolean } | string
       ) => Promise<boolean>

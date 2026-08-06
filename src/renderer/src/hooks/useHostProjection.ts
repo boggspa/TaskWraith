@@ -11,7 +11,9 @@
  * pure-logic / thin-view split the sidebar work established.
  *
  * READ-ONLY. There is no command surface here. Desktop command cutover is
- * Wave 4.3b and is hard-gated on exact approvalId correlation (Wave 4.2c).
+ * Wave 4.3b and is hard-gated on exact commandId correlation (Wave 4.2c,
+ * landed at b74b33e33: `commandId` is the required join key on
+ * HostApprovalProjection).
  */
 
 import { useEffect, useState } from 'react'
