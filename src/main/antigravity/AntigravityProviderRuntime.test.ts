@@ -157,6 +157,46 @@ describe('prepareAntigravityProviderLaunch', () => {
       expect(launch.mode).toBe('accept-edits')
     })
 
+    /* The two Full tiers (workspace_write "Full WS Access", full_access "Full
+     * Access") carry `approvalMode: 'auto_edit'`, not 'default' — a mode-string
+     * check that only recognised 'default' would leave exactly the tiers the
+     * user expects writes from stuck in plan. */
+    it('allows a write-capable turn for the auto_edit tiers over the bridge', async () => {
+      for (const approvalMode of ['auto_edit', 'default']) {
+        const launch = await prepareAntigravityProviderLaunch(
+          {
+            settings: OPTED_IN,
+            prompt: 'Apply the fix.',
+            approvalMode,
+            isolatedMutationWorkspace: false,
+            perToolApprovalBridge: true,
+            agenticServices: { shellCommands: 'allow', fileChanges: 'allow' }
+          },
+          { resolveBinary }
+        )
+        expect(launch.mode, approvalMode).toBe('accept-edits')
+      }
+    })
+
+    it('keeps both read-only tiers plan-only even with a live bridge', async () => {
+      // read_only ("Ask") and plan both resolve to approvalMode 'plan' +
+      // readOnly true, so agy stays physically plan-contained on this lane.
+      for (const permissions of [{ readOnly: true }, { readOnly: false }]) {
+        const launch = await prepareAntigravityProviderLaunch(
+          {
+            settings: OPTED_IN,
+            prompt: 'Apply the fix.',
+            approvalMode: 'plan',
+            perToolApprovalBridge: true,
+            effectivePermissions: permissions,
+            agenticServices: { shellCommands: 'allow', fileChanges: 'allow' }
+          },
+          { resolveBinary }
+        )
+        expect(launch.mode).toBe('plan')
+      }
+    })
+
     it('stays plan-only in a shared checkout when no bridge is available', async () => {
       const launch = await prepareAntigravityProviderLaunch(
         {
