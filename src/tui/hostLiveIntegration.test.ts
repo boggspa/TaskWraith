@@ -175,11 +175,13 @@ describe('Wave 4.6 — TUI against a real Host', () => {
     // from a real Host over a real unix socket — the first time any client has
     // done this in the arc.
     //
-    // The welcome handler sets a notice "Connected to TaskWraith Host", and
-    // the render cycle paints the live snapshot. Even with empty workspaces
-    // and threads, the TUI renders its chrome — the connection status bar, the
-    // empty-thread message, the composer. None of those exist if the connection
-    // failed: a failed connect lands in "connecting" / "offline" / "incompatible".
+    // The welcome handler sets a notice "Connected to TaskWraith Host" (1.5s),
+    // and renderHud paints a durable "CONNECTED" in the footer bar whenever
+    // state.connection is 'connected' and no thread is selected. This test
+    // catches either form: the transient notice if the poll lands early, or
+    // the durable HUD token after the notice expires. Neither exists if the
+    // connection failed — a failed connect lands in "connecting" / "offline" /
+    // "incompatible".
     expect(output.frames.length).toBeGreaterThan(0)
 
     // The last rendered frame must contain evidence of a live connection, not
@@ -203,10 +205,20 @@ describe('Wave 4.6 — TUI against a real Host', () => {
     // After a real bootstrap, the Host wrote its discovery and token files.
     // The client read them, opened the socket, completed the authenticated
     // handshake, and received a welcome with the identity we injected.
-    // That identity must appear somewhere in the terminal output after a
-    // successful connect — the TUI renders the Host version in its chrome.
+    //
+    // RENDERED CONNECTION EVIDENCE (Wave 4.6a — hardened):
+    // - Transient: "Connected to TaskWraith Host" notice (1.5s expiry).
+    // - Durable:   renderHud paints "CONNECTED" in the footer bar when
+    //              connection='connected' and no thread is active.
+    // Boundary-anchored case-insensitive match catches both forms without
+    // depending on the 1.5s window, and REJECTS "DISCONNECTED" / "disconnected"
+    // (no word boundary before C — preceded by S). The negative lookbehind
+    // also rejects "not connected" / "NOT CONNECTED" — reachable from
+    // TaskWraithTui.ts L966: this.setNotice('TaskWraith Host is not connected.').
+    // hostVersion is stored in state but is NOT painted to the terminal by
+    // any render.ts code path — it was a dead branch and is intentionally removed.
     await waitFor(
-      () => output.lastFrame.includes('Connected') || output.lastFrame.includes(HOST_VERSION),
+      () => /(?<!not\s+)\bCONNECTED\b/i.test(output.lastFrame),
       'TUI renders Host connection evidence',
       3_000
     )
@@ -229,12 +241,13 @@ describe('Wave 4.6 — TUI against a real Host', () => {
     await tui.start()
 
     // Prove we were connected before the kill — the TUI rendered the Host
-    // connection chrome, not an error.
+    // connection chrome, not an error. Same anchored match as test 1
+    // (Wave 4.6a): catches both the transient "Connected to TaskWraith Host"
+    // notice and the durable "CONNECTED" in the HUD footer bar, and REJECTS
+    // "DISCONNECTED" / "disconnected" (no word boundary before C) and
+    // "not connected" (negative lookbehind).
     await waitFor(
-      () =>
-        output.lastFrame.includes('Connected') ||
-        output.lastFrame.includes(HOST_VERSION) ||
-        output.lastFrame.includes('Host'),
+      () => /(?<!not\s+)\bCONNECTED\b/i.test(output.lastFrame),
       'TUI was connected to real Host before kill',
       5_000
     )
@@ -264,4 +277,40 @@ describe('Wave 4.6 — TUI against a real Host', () => {
     const afterKill = output.lastFrame
     expect(afterKill).toMatch(/disconnected|reconnecting|offline|retrying|unreachable/i)
   }, 25_000)
+
+  // Wave 4.6a NEGATIVE PIN — the connection predicate MUST reject frames
+  // that contain a connection-like word but are semantically negative.
+  // Without this, the next person "simplifies" the regex and the kill RED-proof
+  // silently stops testing anything. Verified by execution (pass 23):
+  //   /(?<!not\s+)\bCONNECTED\b/i.test('DISCONNECTED') => false  (S→C = no word boundary)
+  //   /(?<!not\s+)\bCONNECTED\b/i.test('TaskWraith Host is not connected.') => false  (negative lookbehind)
+  //   /(?<!not\s+)\bCONNECTED\b/i.test('Connected to TaskWraith Host') => true
+  //   /(?<!not\s+)\bCONNECTED\b/i.test('CONNECTED') => true
+  it('the connection-evidence predicate rejects DISCONNECTED and not-connected frames', () => {
+    const predicate = /(?<!not\s+)\bCONNECTED\b/i
+
+    // renderHud L887: tone(ansi, state.connection.toUpperCase(), 'neutral')
+    // When state.connection === 'disconnected', the HUD literally paints
+    // the text "DISCONNECTED". The success predicate must NOT accept it.
+    const disconnectedFrame = stripAnsi('DISCONNECTED — Electron Host offline')
+    expect(predicate.test(disconnectedFrame)).toBe(false)
+
+    // TaskWraithTui.ts L966:
+    //   this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+    // The TUI's own "Host is not connected" warning contains "connected" with
+    // word boundaries on BOTH sides (space before, period after). Without the
+    // negative lookbehind, this would satisfy a predicate whose entire job is
+    // to prove the Host IS connected. That is the same vacuity class as the
+    // original /CONNECTED/i matching DISCONNECTED — a frame stating the literal
+    // opposite of the claim satisfies the claim. Reachable from SHIPPING CODE.
+    const notConnectedFrame = stripAnsi('TaskWraith Host is not connected.')
+    expect(predicate.test(notConnectedFrame)).toBe(false)
+
+    // Also reject uppercase variant.
+    expect(predicate.test('NOT CONNECTED')).toBe(false)
+
+    // Sanity: it still accepts the transient notice and the durable token.
+    expect(predicate.test('Connected to TaskWraith Host')).toBe(true)
+    expect(predicate.test('CONNECTED')).toBe(true)
+  })
 })
