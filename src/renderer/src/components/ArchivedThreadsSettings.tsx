@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ChatListItem } from '../../../main/store/types'
 import {
   ARCHIVED_CHAT_EXPORT_FORMATS,
   type ArchivedChatExportFormat
 } from '../../../shared/archivedChatExport'
 import './ArchivedThreadsSettings.css'
+
+interface ArchivedThreadSummary {
+  appChatId: string
+  title: string
+  scope?: string
+  chatKind?: string
+  parentChatRelation?: string
+  archived: boolean
+  updatedAt: number
+  messageCount: number
+}
 
 function displayDate(timestamp: number): string {
   if (!Number.isFinite(timestamp)) return 'Unknown date'
@@ -14,7 +24,7 @@ function displayDate(timestamp: number): string {
   }).format(new Date(timestamp))
 }
 
-function chatKindLabel(chat: ChatListItem): string {
+function chatKindLabel(chat: ArchivedThreadSummary): string {
   if (chat.parentChatRelation === 'sideChat') return 'Side chat'
   if (chat.parentChatRelation === 'subThread') return 'Sub-thread'
   if (chat.chatKind === 'ensemble') return 'Ensemble'
@@ -22,7 +32,7 @@ function chatKindLabel(chat: ChatListItem): string {
 }
 
 export function ArchivedThreadsSettings(): React.JSX.Element {
-  const [archivedChats, setArchivedChats] = useState<ChatListItem[]>([])
+  const [archivedChats, setArchivedChats] = useState<ArchivedThreadSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [busyChatId, setBusyChatId] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -49,7 +59,7 @@ export function ArchivedThreadsSettings(): React.JSX.Element {
     void loadArchivedChats()
   }, [loadArchivedChats])
 
-  const handleUnarchive = async (chat: ChatListItem): Promise<void> => {
+  const handleUnarchive = async (chat: ArchivedThreadSummary): Promise<void> => {
     setBusyChatId(chat.appChatId)
     setError('')
     setNotice('')
@@ -75,7 +85,7 @@ export function ArchivedThreadsSettings(): React.JSX.Element {
     }
   }
 
-  const handleDelete = async (chat: ChatListItem): Promise<void> => {
+  const handleDelete = async (chat: ArchivedThreadSummary): Promise<void> => {
     if (
       !window.confirm(
         `Delete “${chat.title || 'Untitled thread'}” permanently? This can't be undone.`
@@ -100,7 +110,7 @@ export function ArchivedThreadsSettings(): React.JSX.Element {
   }
 
   const handleExport = async (
-    chat: ChatListItem,
+    chat: ArchivedThreadSummary,
     format: ArchivedChatExportFormat
   ): Promise<void> => {
     setBusyChatId(chat.appChatId)
