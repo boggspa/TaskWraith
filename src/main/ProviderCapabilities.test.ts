@@ -37,18 +37,34 @@ describe('ProviderCapabilities', () => {
       status: { provider: 'antigravity', available: true, binaryPath: '/usr/local/bin/agy' }
     })
 
-    expect(contract.approvals.providerMode).toContain('--sandbox --mode plan')
-    expect(contract.approvals.inAppApprovals).toBe(false)
+    // A write-capable request now reports accept-edits: the per-edit approval
+    // bridge is an ordinary loopback listener rather than a user choice, so
+    // plan is no longer the shared-checkout floor. Launch still refuses on its
+    // own when neither the bridge nor an isolated worktree is available.
+    expect(contract.approvals.providerMode).toContain('--sandbox --mode accept-edits')
     const notes = contract.approvals.notes.join(' ')
     expect(notes).toContain('No credential is ever read')
-    expect(notes).toContain('PreToolUse hook routes agy shell commands')
+    expect(notes).toContain('subscribes to every native tool call')
+    expect(notes).toContain('shell commands and file changes')
     // The skip flag exists only as the signed Full Access posture behaviour —
     // the copy must keep saying so rather than reading as a general bypass.
     expect(notes).toContain('only under a signed non-read-only Full Access posture')
-    expect(notes).toContain('isolated worktrees')
+    expect(notes).toContain('isolated worktree')
     expect(contract.mcp.state).toBe('unavailable')
     expect(contract.tools.mcpTools.state).toBe('unavailable')
     expect(contract.tools.delegate.state).toBe('unavailable')
+  })
+
+  it('still reports plan mode for AntiGravity when a write service is denied', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'antigravity',
+      settings: settings({ ...defaultServices, shellCommands: 'deny', fileChanges: 'deny' }),
+      approvalMode: 'default',
+      status: { provider: 'antigravity', available: true, binaryPath: '/usr/local/bin/agy' }
+    })
+
+    expect(contract.approvals.effectiveMode).toBe('plan')
+    expect(contract.approvals.providerMode).toContain('--sandbox --mode plan')
   })
 
   // Pi had no branch at all, so it inherited the default whose note describes

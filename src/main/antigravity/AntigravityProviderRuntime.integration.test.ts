@@ -65,10 +65,19 @@ describe('AntiGravity S3 runtime integration', () => {
     // instead of pinning the mechanism.
     const agy = probe.fn('runAntigravityAgyProvider')
     const settle = probe.callsTo(agy, 'settleVisibleProviderSetupFailure')
-    expect(settle).toHaveLength(1)
-    expect(probe.propText(settle[0], 0, 'provider')).toBe("'antigravity'")
+    // Two settle sites, and EVERY one must settle the run — an unsettled path
+    // is a run Stop can never finish, which is the guarantee this pins:
+    //   1. launch preparation threw (setup required: binary/consent/argv);
+    //   2. the approval bridge could not be installed for a run whose write
+    //      capability depended on it, so proceeding would mean an unarbitrated
+    //      writer in a shared checkout. Not a setup problem — retryable.
+    expect(settle).toHaveLength(2)
+    for (const call of settle) {
+      expect(probe.propText(call, 0, 'provider')).toBe("'antigravity'")
+      expect(probe.propText(call, 0, 'fallback')).toBe('false')
+    }
     expect(probe.propText(settle[0], 0, 'setupRequired')).toBe('true')
-    expect(probe.propText(settle[0], 0, 'fallback')).toBe('false')
+    expect(probe.propText(settle[1], 0, 'setupRequired')).toBe('false')
 
     // And the helper it delegates to still does both halves: project the
     // failure to the renderer, and finish the run as failed. Without the

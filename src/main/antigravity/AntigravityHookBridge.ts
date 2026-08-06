@@ -8,10 +8,25 @@
 // each hook invocation into a real TaskWraith approval-gate decision — the
 // same fast paths, tier holds, and approval cards every other provider gets.
 //
-// Fail-safe shape: every error path (bad token, malformed body, gate throw,
-// curl/network failure, stale overlay after a crash) resolves to `{}` — "no
-// decision" — which returns agy to its native confirmation flow (headless
-// soft-deny). The bridge can therefore never widen permissions by failing.
+// MEASURED 2026-08-06 against the shipped agy binary — agy has TWO independent
+// layers and the hook is only one of them:
+//
+//   1. `permissions.allow` in settings.json decides what is POSSIBLE. In
+//      headless print mode anything outside it is auto-denied with no prompt,
+//      which kills the whole turn ("no output produced").
+//   2. The PreToolUse hook can only VETO. Returning `{"decision":"allow"}` does
+//      NOT satisfy layer 1 — a probe run with an allow-returning hook still
+//      died on `write_file`. Do not "simplify" by dropping the settings lease.
+//
+// So the lease grants broadly for the run and this bridge is the real per-call
+// gate. That inverts the failure posture: because the settings layer is open,
+// a bridge that cannot answer must DENY, not defer. Hence the curl fallback
+// emits a deny decision rather than `{}` — `{}` would hand the call back to an
+// agy permission layer TaskWraith has deliberately opened.
+//
+// Fail-safe shape: bad token, malformed body, and gate throws still resolve to
+// `{}`; those are answered by a live bridge that has simply chosen not to
+// arbitrate, and agy's own permission layer remains in force for them.
 
 import { createServer, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
@@ -33,7 +48,53 @@ export interface AgyHookBridgeDecision {
 export interface AgyHookToolCall {
   name: string
   command: string | null
+  /** Mutation target, when the tool's args carry a recognisable path. */
+  targetPath: string | null
 }
+
+/**
+ * Which approval gate a tool call belongs to.
+ *
+ * `other` defers to agy's native flow, which is also its own default — so an
+ * unrecognised READ costs nothing. An unrecognised MUTATION is the expensive
+ * mistake: it reaches agy's headless confirmation, gets soft-denied, and kills
+ * the run with no assistant output. That is why the write test is a shape
+ * heuristic over the name rather than a fixed list — agy is an auto-updating
+ * external binary and its tool namespace is not ours to enumerate. Shipping a
+ * matcher of exactly `run_command` is what let `Edit` through to that fate.
+ */
+export type AgyHookToolKind = 'shell' | 'write' | 'other'
+
+const SHELL_TOOL_RE = /(?:^|_)(?:run_?)?(?:command|terminal|shell|bash)(?:$|_)/i
+const WRITE_TOOL_RE = /(?:write|edit|create|replace|delete|remove|rename|move|patch|insert)/i
+/** Read-side names that would otherwise trip the write heuristic. */
+const READ_TOOL_RE = /^(?:read|view_file|list_dir|list_directory|.*search.*|grep.*)$/i
+
+export function classifyAgyHookTool(name: string): AgyHookToolKind {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) return 'other'
+  if (SHELL_TOOL_RE.test(trimmed)) return 'shell'
+  if (READ_TOOL_RE.test(trimmed)) return 'other'
+  return WRITE_TOOL_RE.test(trimmed) ? 'write' : 'other'
+}
+
+/**
+ * agy spells the mutation target differently per tool (`TargetFile` on Edit,
+ * `file_path` on write_file, plain `path` elsewhere), so every observed
+ * spelling is accepted. A missing path never blocks arbitration — the gate
+ * still runs, it just names the tool instead of the file.
+ */
+const TARGET_PATH_KEYS = [
+  'TargetFile',
+  'target_file',
+  'AbsolutePath',
+  'absolute_path',
+  'FilePath',
+  'file_path',
+  'filePath',
+  'Path',
+  'path'
+]
 
 export function createAgyHookBridgeToken(): string {
   return randomBytes(24).toString('hex')
@@ -56,13 +117,22 @@ export function buildAgyHookBridgeNamedHook(input: { port: number; token: string
   if (!TOKEN_HEX_RE.test(input.token)) {
     throw new Error('The agy hook bridge requires a lowercase-hex session token.')
   }
-  const command = `/usr/bin/curl -sS --max-time ${CURL_MAX_TIME_SECONDS} -X POST -H 'Content-Type: application/json' -H 'X-TaskWraith-Hook-Token: ${input.token}' --data-binary @- http://127.0.0.1:${port}/agy/pretooluse || printf {}`
+  // Single-quoted JSON with no interpolation: the only variable parts are a
+  // validated integer port and a hex token, so nothing caller-controlled
+  // reaches the shell line.
+  const unreachableDecision = `{"decision":"deny","reason":"The TaskWraith approval bridge did not answer, so this call cannot be arbitrated. It was denied rather than run unreviewed; retry, or continue with read-only inspection."}`
+  const command = `/usr/bin/curl -sS --max-time ${CURL_MAX_TIME_SECONDS} -X POST -H 'Content-Type: application/json' -H 'X-TaskWraith-Hook-Token: ${input.token}' --data-binary @- http://127.0.0.1:${port}/agy/pretooluse || printf '${unreachableDecision}'`
   return {
     hookName: HOOK_NAME,
     namedHook: {
       PreToolUse: [
         {
-          matcher: 'run_command',
+          // agy treats `matcher` as a REGEX (its loader reports "Invalid
+          // matcher regex" on a bad one), so `.*` subscribes to every tool and
+          // the handler decides. Deliberately not an allowlist of names: agy
+          // auto-updates, and a name this build has never heard of would
+          // bypass the bridge and hit the fatal headless soft-deny instead.
+          matcher: '.*',
           hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_SECONDS }]
         }
       ]
@@ -77,11 +147,24 @@ function extractToolCall(body: unknown): AgyHookToolCall | null {
   const name = (toolCall as { name?: unknown }).name
   if (typeof name !== 'string' || !name) return null
   const args = (toolCall as { args?: unknown }).args
-  const commandLine =
+  const argRecord =
     args && typeof args === 'object' && !Array.isArray(args)
-      ? (args as { CommandLine?: unknown }).CommandLine
-      : undefined
-  return { name, command: typeof commandLine === 'string' ? commandLine : null }
+      ? (args as Record<string, unknown>)
+      : null
+  const commandLine = argRecord?.CommandLine
+  let targetPath: string | null = null
+  for (const key of TARGET_PATH_KEYS) {
+    const value = argRecord?.[key]
+    if (typeof value === 'string' && value.trim()) {
+      targetPath = value
+      break
+    }
+  }
+  return {
+    name,
+    command: typeof commandLine === 'string' ? commandLine : null,
+    targetPath
+  }
 }
 
 export interface AgyHookBridgeServer {

@@ -41,11 +41,24 @@ export interface PrepareAntigravityProviderLaunchInput {
    */
   agenticServices?: Pick<AgenticServicesSettings, 'shellCommands' | 'fileChanges'> | null
   /**
-   * Main-owned proof that agy is writing in a separate selected worktree.
-   * The official CLI has no exact mutation bridge, so shared checkouts remain
-   * plan-only while structurally isolated candidates may retain accept-edits.
+   * Main-owned proof that agy is writing in a separate selected worktree,
+   * where its writes cannot race the base checkout.
    */
   isolatedMutationWorkspace?: boolean
+  /**
+   * Main-owned proof that the PreToolUse approval bridge is live for this run,
+   * so every native tool call — including each mutation — is arbitrated by the
+   * ordinary TaskWraith approval gate before agy performs it.
+   *
+   * This is the OTHER way to earn write capability. Shared checkouts were
+   * plan-only for one stated reason: agy had no per-tool approval seam, so a
+   * denied file change could only be honoured by refusing write capability
+   * before the child started. The documented lifecycle hook is that seam, and
+   * it is verified loading in agy's own log, so the premise no longer holds.
+   * Callers that cannot stand up the bridge must leave this false: the run
+   * then stays plan-only exactly as before.
+   */
+  perToolApprovalBridge?: boolean
   inheritedEnv?: Readonly<Record<string, string | undefined>>
   /** Exact opaque owner issued for this seat by workspace-lock admission. */
   workspaceLockOwnerId?: string | null
@@ -91,13 +104,16 @@ export interface AntigravityProviderStatusDependencies {
 
 function writeCapableAgyMode(input: PrepareAntigravityProviderLaunchInput): boolean {
   if (input.effectivePermissions?.readOnly === true) return false
-  // The official agy CLI exposes no per-tool approval bridge, so a denied
-  // shell/file service can only be honoured here, by refusing write capability
-  // before the child starts. Same predicate ProviderCapabilities reports with,
-  // so the contract cannot claim plan while the argv says accept-edits.
+  // A service the user set to `deny` is honoured here, before the child
+  // starts. Same predicate ProviderCapabilities reports with, so the contract
+  // cannot claim plan while the argv says accept-edits.
   if (agenticServicesDenyWrites(input.agenticServices)) return false
   const mode = typeof input.approvalMode === 'string' ? input.approvalMode.trim() : ''
-  return input.isolatedMutationWorkspace === true && Boolean(mode && mode !== 'plan')
+  if (!mode || mode === 'plan') return false
+  // Either containment is sufficient: writes are isolated from the base
+  // checkout, or every individual write is arbitrated by the approval gate.
+  // With neither, a shared checkout stays plan-only.
+  return input.isolatedMutationWorkspace === true || input.perToolApprovalBridge === true
 }
 
 function selectedAgyModel(value: string | null | undefined): string | null {

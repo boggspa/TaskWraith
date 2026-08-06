@@ -349,23 +349,27 @@ export function AntigravityOptInCard({
         <code>~/.gemini/antigravity-cli/settings.json</code>, restoring your original settings when
         the run ends (or at the next TaskWraith launch after a crash); and each run temporarily adds
         one TaskWraith-named entry to the workspace&apos;s <code>.agents/hooks.json</code> —{' '}
-        <code>agy</code>&apos;s official lifecycle-hook file — so the CLI&apos;s shell-command
-        confirmations route to TaskWraith&apos;s own approval system on this machine, removed again
-        with the run. No credentials and no transcripts are read, and nothing calls out beyond your
+        <code>agy</code>&apos;s official lifecycle-hook file — so the CLI&apos;s own tool
+        confirmations route to TaskWraith&apos;s approval system on this machine, removed again with
+        the run. No credentials and no transcripts are read, and nothing calls out beyond your
         machine.
       </p>
       <p className="settings-provider-auth-hint">
-        With that hook in place, TaskWraith&apos;s per-command permission gate applies inside{' '}
-        <code>agy</code>: read-only inspection commands (<code>git status</code> /{' '}
-        <code>git log</code> / <code>git diff</code>, <code>ls</code>, <code>cat</code>,{' '}
-        <code>grep</code>, …) are pre-authorized inside <code>agy</code>&apos;s sandbox at every
-        permission tier, the Ask tier genuinely asks with an approval card, and a declined command
-        is reported back to the model instead of ending the turn. On the Full Access tier — and only
-        there — <code>agy</code>&apos;s own duplicate confirmation layer is skipped (its terminal
-        sandbox stays on, and TaskWraith&apos;s always-ask holds for network egress and recursive
-        deletion still apply). TaskWraith still owns run admission, cancellation and the audit
-        trail, and if you set Shell commands or File changes to <strong>Deny</strong> under Agentic
-        services, this lane launches read-only rather than ignoring you.
+        With that hook in place, TaskWraith&apos;s permission gate applies to every native{' '}
+        <code>agy</code> tool call — shell commands and file changes alike: read-only inspection
+        commands (<code>git status</code> / <code>git log</code> / <code>git diff</code>,{' '}
+        <code>ls</code>, <code>cat</code>, <code>grep</code>, …) are pre-authorized inside{' '}
+        <code>agy</code>&apos;s sandbox at every permission tier, the Ask tier genuinely asks with
+        an approval card naming the command or the file, and a declined call is reported back to the
+        model instead of ending the turn. That per-edit gate is also what lets a write-capable turn
+        run in your normal checkout: without it — or without a separately selected worktree — the
+        lane stays read-only, and a run that loses the bridge is refused rather than left to write
+        unsupervised. On the Full Access tier — and only there — <code>agy</code>&apos;s own
+        duplicate confirmation layer is skipped (its terminal sandbox stays on, and
+        TaskWraith&apos;s always-ask holds for network egress and recursive deletion still apply).
+        TaskWraith still owns run admission, cancellation and the audit trail, and if you set Shell
+        commands or File changes to <strong>Deny</strong> under Agentic services, this lane launches
+        read-only rather than ignoring you.
       </p>
 
       {!consentRecorded ? (

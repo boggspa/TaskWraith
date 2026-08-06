@@ -1569,6 +1569,7 @@ import {
 } from './antigravity/AntigravityPermissionLease'
 import {
   buildAgyHookBridgeNamedHook,
+  classifyAgyHookTool,
   createAgyHookBridgeToken,
   startAgyHookBridgeServer,
   type AgyHookBridgeServer
@@ -32554,6 +32555,25 @@ async function runAntigravityAgyProvider(
   payload: AgentRunPayload
 ) {
   const route = routeWithRunId('antigravity', payload)
+  const isolatedMutationWorkspace = Boolean(
+    payload.runtimeWorktree?.status === 'selected' &&
+    payload.runtimeWorktree.effectiveWorkspacePath &&
+    payload.runtimeWorktree.baseWorkspacePath &&
+    resolve(payload.runtimeWorktree.effectiveWorkspacePath) !==
+      resolve(payload.runtimeWorktree.baseWorkspacePath)
+  )
+  // The bridge must be up BEFORE the launch plan, because whether agy has a
+  // per-tool approval seam is what decides plan vs accept-edits in a shared
+  // checkout. The server is a lazy app-lifetime singleton and holds no run
+  // state until `registerRun`, so starting it early is inert.
+  let agyHookBridge: AgyHookBridgeServer | null = null
+  if (payload.workspace) {
+    try {
+      agyHookBridge = await agyHookBridgeServer()
+    } catch {
+      agyHookBridge = null
+    }
+  }
   let launch: Awaited<ReturnType<typeof prepareAntigravityProviderLaunch>>
   try {
     launch = await prepareAntigravityProviderLaunch({
@@ -32563,17 +32583,12 @@ async function runAntigravityAgyProvider(
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
       effectivePermissions: payload.effectivePermissions,
-      // agy has no per-tool approval bridge. Shared checkouts therefore stay
-      // plan-only; accept-edits is retained only for a separately selected,
-      // main-verified worktree where its writes cannot race the base checkout.
       agenticServices: AppStore.getSettings().agenticServices,
-      isolatedMutationWorkspace: Boolean(
-        payload.runtimeWorktree?.status === 'selected' &&
-        payload.runtimeWorktree.effectiveWorkspacePath &&
-        payload.runtimeWorktree.baseWorkspacePath &&
-        resolve(payload.runtimeWorktree.effectiveWorkspacePath) !==
-          resolve(payload.runtimeWorktree.baseWorkspacePath)
-      ),
+      // Two independent routes to write capability: an isolated worktree, or a
+      // live per-tool approval bridge that gates every mutation. Neither ⇒
+      // plan-only.
+      isolatedMutationWorkspace,
+      perToolApprovalBridge: agyHookBridge !== null,
       conversationId: payload.providerSessionId
     })
   } catch (error) {
@@ -32600,39 +32615,71 @@ async function runAntigravityAgyProvider(
   let releaseHookBridgeRun: (() => void) | undefined
   if (payload.workspace && providerTransportLaunchAuthorized('antigravity', payload, route)) {
     const permissions = payload.effectivePermissions
-    const allowShell =
-      permissions?.readOnly !== true &&
-      antigravityPolicyIsPregranted(permissions?.agenticServices?.shellCommands)
-    const allowWrite =
-      launch.mode === 'accept-edits' &&
-      permissions?.readOnly !== true &&
-      antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges)
-    // PreToolUse hook bridge: agy's only per-tool seam. Every native shell
-    // command routes through the SAME approval orchestration as every other
-    // provider — universal read-only fast path, tier holds, real Ask cards —
-    // and a gate deny is a recoverable tool decision instead of the fatal
-    // headless soft-deny. Bridge failure never widens anything: the hook
-    // falls back to `{}` and agy's native confirmation flow resumes.
+    // PreToolUse hook bridge: agy's only per-tool seam. Every native tool call
+    // routes through the SAME approval orchestration as every other provider —
+    // universal read-only fast path, tier holds, real Ask cards — and a gate
+    // deny is a recoverable tool decision instead of the fatal headless
+    // soft-deny.
     const workspacePath = payload.workspace
     let hookOverlay: Parameters<typeof antigravityPermissionLeases.acquire>[0]['hookOverlay']
     try {
-      const bridge = await agyHookBridgeServer()
+      if (!agyHookBridge) throw new Error('The agy approval bridge is unavailable.')
+      const bridge = agyHookBridge
       const token = createAgyHookBridgeToken()
       releaseHookBridgeRun = bridge.registerRun(token, async (toolCall) => {
-        if (toolCall.name !== 'run_command' || !toolCall.command) return { decision: 'none' }
+        const kind = classifyAgyHookTool(toolCall.name)
+        if (kind === 'shell') {
+          if (!toolCall.command) return { decision: 'none' }
+          const allowed = await requestAgenticServiceApproval(
+            event.sender,
+            'antigravity',
+            'shellCommands',
+            workspacePath,
+            {
+              method: 'agy_native_command',
+              title: 'AntiGravity shell command',
+              body: toolCall.command,
+              preview: {
+                toolName: 'run_command',
+                command: toolCall.command,
+                params: { command: toolCall.command }
+              },
+              runId: route.appRunId
+            }
+          )
+          return allowed
+            ? { decision: 'allow' }
+            : {
+                decision: 'deny',
+                reason:
+                  'TaskWraith declined this command under the current permission tier. Continue with permitted read-only inspection or adjust the approach.'
+              }
+        }
+        if (kind !== 'write') return { decision: 'none' }
+        // A plan-mode run must not gain write capability through the bridge —
+        // but it must say so. agy's headless soft-deny is silent, which is how
+        // a refused edit became "produced no assistant output"; an explicit
+        // reason lets the model finish the turn as a plan instead.
+        if (launch.mode !== 'accept-edits') {
+          return {
+            decision: 'deny',
+            reason:
+              'This run is read-only (plan mode), so file changes cannot be applied. Describe the intended edits in your response instead of writing them.'
+          }
+        }
+        const target = toolCall.targetPath
         const allowed = await requestAgenticServiceApproval(
           event.sender,
           'antigravity',
-          'shellCommands',
+          'fileChanges',
           workspacePath,
           {
-            method: 'agy_native_command',
-            title: 'AntiGravity shell command',
-            body: toolCall.command,
+            method: 'agy_native_file_change',
+            title: 'AntiGravity file change',
+            body: target ? `${toolCall.name}\n${target}` : toolCall.name,
             preview: {
-              toolName: 'run_command',
-              command: toolCall.command,
-              params: { command: toolCall.command }
+              toolName: toolCall.name,
+              ...(target ? { path: target, params: { path: target } } : {})
             },
             runId: route.appRunId
           }
@@ -32642,7 +32689,7 @@ async function runAntigravityAgyProvider(
           : {
               decision: 'deny',
               reason:
-                'TaskWraith declined this command under the current permission tier. Continue with permitted read-only inspection or adjust the approach.'
+                'TaskWraith declined this file change under the current permission tier. Continue without editing this path or adjust the approach.'
             }
       })
       hookOverlay = {
@@ -32650,12 +32697,43 @@ async function runAntigravityAgyProvider(
         ...buildAgyHookBridgeNamedHook({ port: bridge.port, token })
       }
     } catch {
-      // No bridge, no overlay: the run proceeds exactly as before the bridge
-      // existed (projection rules only).
       releaseHookBridgeRun?.()
       releaseHookBridgeRun = undefined
       hookOverlay = undefined
+      // Write capability that was earned by the bridge cannot outlive it. With
+      // an isolated worktree the run is still contained, so it proceeds on
+      // projection rules alone (exactly as before the bridge existed); in a
+      // shared checkout it would be an unarbitrated writer, so refuse instead.
+      if (launch.mode === 'accept-edits' && !isolatedMutationWorkspace) {
+        settleVisibleProviderSetupFailure({
+          sender: event.sender,
+          provider: 'antigravity',
+          route,
+          message:
+            'AntiGravity could not start its approval bridge, which is what allows write-capable runs in a shared checkout. Retry, or select an isolated worktree for this seat.',
+          setupRequired: false,
+          fallback: false
+        })
+        return
+      }
     }
+    // agy's settings layer decides what is POSSIBLE; the hook can only veto
+    // (measured — an allow-returning hook still hit `write_file` auto-denial).
+    // So when the bridge is arbitrating, the lease must open the services it
+    // arbitrates, or every Ask-tier call dies in agy's headless auto-deny
+    // before TaskWraith is ever consulted. The tier still decides each call —
+    // at the hook, where a denial is recoverable — and a bridge that cannot
+    // answer denies rather than defers, so opening these is not a bypass.
+    const arbitratedByHook = Boolean(hookOverlay)
+    const allowShell =
+      permissions?.readOnly !== true &&
+      (arbitratedByHook ||
+        antigravityPolicyIsPregranted(permissions?.agenticServices?.shellCommands))
+    const allowWrite =
+      launch.mode === 'accept-edits' &&
+      permissions?.readOnly !== true &&
+      (arbitratedByHook ||
+        antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges))
     try {
       permissionLease = await antigravityPermissionLeases.acquire({
         settingsPath: antigravityCliSettingsPath(),

@@ -654,7 +654,7 @@ function approvalContract(
       inAppApprovals: false,
       supportsWorkspaceGrants: true,
       notes: [
-        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. Signed in-workspace read grants, the universal read-only inspection shell fast path, and posture-granted shell/write access are projected through a temporary, merge-safe official-agy settings lease, and a temporary official PreToolUse hook routes agy shell commands through the TaskWraith approval gate (tier holds, Ask cards, non-fatal denials). Shared checkouts still use plan mode because agy has no exact per-edit bridge, while sandboxed accept-edits is retained for main-verified isolated worktrees. No credential is ever read; agy-native confirmations are auto-approved only under a signed non-read-only Full Access posture, with the terminal sandbox and TaskWraith holds still in force.'
+        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. Signed in-workspace read grants, the universal read-only inspection shell fast path, and posture-granted shell/write access are projected through a temporary, merge-safe official-agy settings lease, and a temporary official PreToolUse hook subscribes to every native tool call, routing agy shell commands and file changes through the TaskWraith approval gate (tier holds, Ask cards, non-fatal denials). Sandboxed accept-edits requires either a main-verified isolated worktree or that live per-edit bridge; without both, a shared checkout stays in plan mode. No credential is ever read; agy-native confirmations are auto-approved only under a signed non-read-only Full Access posture, with the terminal sandbox and TaskWraith holds still in force.'
       ]
     }
   }
@@ -707,13 +707,15 @@ export function buildProviderCapabilityContract({
       } satisfies PiNativeToolEffectivePermissions)
   })
   const effectiveMode =
-    // The capability snapshot has no selected-worktree context. Report the
-    // shared-checkout floor for official agy (plan); launch may raise only a
-    // main-verified isolated worktree to sandboxed accept-edits.
+    // Official agy earns accept-edits from an isolated worktree OR the live
+    // per-edit approval bridge. The snapshot has neither context, but the
+    // bridge is the ordinary case (a loopback listener, not a user choice), so
+    // the honest report is the requested mode clamped by a denied service —
+    // launch still refuses independently when neither containment holds.
     provider === 'pi'
       ? piNativeToolPosture.effectiveMode
       : provider === 'antigravity'
-        ? 'plan'
+        ? (agenticServicesDenyWrites(services) ? 'plan' : requestedMode)
         : provider === 'gemini'
         ? effectiveNoBridgeMode(requestedMode, services)
         : requestedMode
@@ -1104,13 +1106,13 @@ export function buildProviderCapabilityContract({
       'shellCommands',
       services.shellCommands,
       ['official_agy_sandbox'],
-      'AntiGravity sandboxed native command behavior is provider-managed; TaskWraith does not claim per-tool interception for this CLI transport.'
+      'AntiGravity native commands run inside the official sandbox, with each call arbitrated by the TaskWraith approval gate through the temporary PreToolUse hook while that bridge is live.'
     )
     fileChanges = delegatedCapability(
       'fileChanges',
       services.fileChanges,
       ['official_agy_accept_edits'],
-      'Official agy file changes are available only in a main-verified isolated worktree; shared checkouts stay plan-only because TaskWraith cannot intercept exact edits on this transport.'
+      'Official agy file changes require either a main-verified isolated worktree or the live PreToolUse approval bridge, which arbitrates each edit before agy performs it; with neither, the run stays plan-only.'
     )
     externalPublish = delegatedCapability(
       'externalPublish',
@@ -1121,7 +1123,7 @@ export function buildProviderCapabilityContract({
     mcpTools = unavailableCapability(
       'mcpTools',
       'provider',
-      'No TaskWraith MCP bridge, plugin, or hook is attached to the AntiGravity print-mode transport.'
+      'No TaskWraith MCP tools are exposed to the AntiGravity print-mode transport. The temporary PreToolUse approval hook is an approval seam only — it arbitrates agy native tool calls and adds no callable tool.'
     )
     elicit = unavailableCapability(
       'elicit',

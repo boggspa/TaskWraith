@@ -136,6 +136,72 @@ describe('prepareAntigravityProviderLaunch', () => {
 
       expect(launch.mode).toBe('accept-edits')
     })
+
+    /* Shared checkouts were plan-only because "agy has no per-tool approval
+     * bridge". The PreToolUse hook bridge IS that seam (verified loading in
+     * agy's own log), so a live bridge is now an accepted alternative to
+     * worktree isolation — every mutation still passes the approval gate. */
+    it('allows a write-capable turn in a shared checkout when the per-tool bridge is live', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          isolatedMutationWorkspace: false,
+          perToolApprovalBridge: true,
+          agenticServices: { shellCommands: 'ask', fileChanges: 'allow' }
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('accept-edits')
+    })
+
+    it('stays plan-only in a shared checkout when no bridge is available', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          isolatedMutationWorkspace: false,
+          perToolApprovalBridge: false,
+          agenticServices: { shellCommands: 'ask', fileChanges: 'allow' }
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('plan')
+    })
+
+    it('keeps a denied file-change policy plan-only even with a live bridge', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          perToolApprovalBridge: true,
+          agenticServices: { shellCommands: 'deny', fileChanges: 'deny' }
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('plan')
+    })
+
+    it('keeps a read-only posture plan-only even with a live bridge', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          perToolApprovalBridge: true,
+          effectivePermissions: { readOnly: true }
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('plan')
+    })
   })
 
   describe('conversation resumption', () => {
