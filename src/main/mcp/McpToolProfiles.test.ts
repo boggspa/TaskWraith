@@ -400,10 +400,17 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // assertion meant to protect it, and a permanently-red suite teaches
     // everyone to stop reading the result. The ceiling is NOT relaxed; it moved
     // into the inventory below, where a breach still has to be declared in code.
-    expect(fullChars).toBe(139_553)
-    expect(gatewayChars).toBe(41_387)
-    expect(freshGatewayChars).toBe(38_499)
-    expect(freshMeshGatewayChars).toBe(41_303)
+    // Re-measured 2026-08-06 after the concurrent fan-out cap documented itself
+    // in `ensemble_fanout` (a tool that can refuse for a reason absent from its
+    // own description is a worse tool than one that costs 193 characters).
+    // Every transport moved by exactly +193 — the sentence lands once, on the
+    // one fan-out tool that is in these profiles. No transport crossed the
+    // ceiling: fresh v10 went 38,499 -> 38,692, still inside, and the inventory
+    // below is unchanged.
+    expect(fullChars).toBe(139_746)
+    expect(gatewayChars).toBe(41_580)
+    expect(freshGatewayChars).toBe(38_692)
+    expect(freshMeshGatewayChars).toBe(41_496)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
 
     // Transports currently over the hard 40,000-char transport ceiling. This
