@@ -62,7 +62,13 @@ export default defineConfig(({ mode }) => {
             workspaceActivityWorker: resolve('src/main/workers/workspaceActivityWorker.ts'),
             // Work-provenance sampling brackets Git state and fingerprints
             // dirty paths. Keep that synchronous audited core out of main.
-            workProvenanceWorker: resolve('src/main/workers/workProvenanceWorker.ts')
+            workProvenanceWorker: resolve('src/main/workers/workProvenanceWorker.ts'),
+            // saveChat's durable write (write + fsync + rename + dir fsync) is
+            // blocked-on-syscall wall time a V8 CPU profile cannot see, and a
+            // hot chat record can be ~16 MB. Unlike the scan workers above this
+            // one is LONG-LIVED: a fork per chat save would cost more than the
+            // fsync it avoids. Off unless TASKWRAITH_UTILITY_WRITE=1.
+            persistenceWriteWorker: resolve('src/main/workers/persistenceWriteWorker.ts')
           },
           output: {
             // bootstrap.ts deliberately defers the full main graph behind a

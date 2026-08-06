@@ -687,6 +687,106 @@ function deriveSaveFlushReason(chat: ChatRecord): FlushReason {
  * and `deletedChatIds` blocks re-saves. The journal keeps its in-process
  * tombstoned state either way.
  */
+/**
+ * Item 6 seam — move the durable chat write off the main thread.
+ *
+ * `writeJson` is a synchronous open/write/fsync/rename/dir-fsync sequence on
+ * the Electron main process. Items 1-5 cut how OFTEN it runs; they did not
+ * change WHERE it runs, and a V8 CPU profile cannot see fsync wait at all.
+ *
+ * Deliberately dark: the worker is only used when `TASKWRAITH_UTILITY_WRITE=1`
+ * AND a writer has been registered. Nothing imports the worker from here — the
+ * composition root registers it — so this file gains no worker dependency and
+ * an absent/failed worker simply leaves the synchronous path in place.
+ *
+ * WHAT MAY GO ASYNC, AND WHY ONLY THAT:
+ * Only `normal` saves — the deferred streaming/fan-out writes that are the
+ * whole cost. Every barrier reason (`terminal`, `approval`, `history-deletion`,
+ * `shutdown`) keeps writing synchronously on main, because `saveChat` returns a
+ * record rather than a promise: there is no way to make callers wait for a
+ * worker ACK without changing every call site. A barrier that resolved before
+ * its fsync would be a durability lie, and slow-and-correct beats fast-and-lossy.
+ *
+ * ORDERING (the invariant that makes this safe or silently corrupts chats):
+ * The queue drains strictly one job at a time and never reorders, so anything
+ * routed through it is safe. The hazard is MIXING paths: a synchronous write on
+ * main can overtake a job already sitting in the queue for the same chat, and an
+ * out-of-order whole-file write is silent history loss. So:
+ *  - Barrier with nothing outstanding for that chat -> write synchronously on
+ *    main. Durable before return, and no queued job exists to overtake.
+ *  - Barrier WITH something outstanding -> hand it to the queue instead, so it
+ *    lands after the job already there. Durability slips by the ACK round-trip;
+ *    that is a bounded crash window, whereas reordering is permanent loss. When
+ *    the two invariants genuinely conflict, ordering wins.
+ *    (A synchronous flush-by-chat on the queue would let this case keep both.
+ *    That API belongs to PersistenceWriteWorker, not here.)
+ *  - After such a barrier the chat is pinned to main, so the mixed state cannot
+ *    recur for it.
+ *
+ * FAILURE IS NOT HANDLED HERE, DELIBERATELY. The queue performs leftover writes
+ * itself, synchronously and in FIFO order, on crash / ACK timeout / saturation.
+ * A local `catch -> writeJson` here would be exactly the N-independent-fallbacks
+ * race its header warns about, so a rejection is logged and nothing more.
+ */
+export interface PersistenceWriteRequest {
+  chatId: string
+  /** Destination of the atomic write. */
+  filePath: string
+  /** The record. PersistenceWriteWorker serializes it exactly once, inside
+   *  enqueueWrite, and the worker and its own sync fallback share one
+   *  `writeSerializedDurably` so the bytes cannot drift. */
+  data: unknown
+  /** Diagnostics only — deliberately NOT a coalescing key. See the queue's
+   *  header: dropping a superseded write is only safe if the survivor is
+   *  provably newer, and revision is not monotonic across every caller. */
+  revision?: number
+}
+
+/** Resolves only once the bytes are durable (fsync + rename completed). */
+export type PersistenceWriteEnqueue = (request: PersistenceWriteRequest) => Promise<void>
+
+let persistenceWriteEnqueue: PersistenceWriteEnqueue | null = null
+
+/** Composition-root wiring for the item-6 utility writer. Passing null restores
+ *  the synchronous path (used when the worker dies and cannot be restarted). */
+export function registerPersistenceWriteEnqueue(enqueue: PersistenceWriteEnqueue | null): void {
+  persistenceWriteEnqueue = enqueue
+}
+
+/** Bound on outstanding async writes. An unbounded queue in front of fsync is
+ *  precisely how this layer previously produced a 44 GB artifact; saturation
+ *  falls back to writing on main rather than buffering. */
+const MAX_OUTSTANDING_UTILITY_WRITES = 32
+const outstandingUtilityWriteChatIds = new Set<string>()
+/** Chats forced back to the synchronous path — see ORDERING above. */
+const utilityWritePinnedToMainChatIds = new Set<string>()
+
+function utilityWriteEnabled(): boolean {
+  return process.env.TASKWRAITH_UTILITY_WRITE === '1'
+}
+
+/** The writer for this save, or null when it must run synchronously on main. */
+function utilityWriteEnqueueFor(chatId: string, reason: FlushReason): PersistenceWriteEnqueue | null {
+  if (!utilityWriteEnabled() || !persistenceWriteEnqueue) return null
+  if (reason !== 'normal') {
+    // Barrier. Writing on main is only safe while nothing is queued for this
+    // chat; otherwise the queued job would land afterwards and revert it.
+    if (!outstandingUtilityWriteChatIds.has(chatId)) return null
+    utilityWritePinnedToMainChatIds.add(chatId)
+    return persistenceWriteEnqueue
+  }
+  if (utilityWritePinnedToMainChatIds.has(chatId)) return null
+  if (outstandingUtilityWriteChatIds.size >= MAX_OUTSTANDING_UTILITY_WRITES) return null
+  return persistenceWriteEnqueue
+}
+
+/** Test-only reset for the item-6 seam. */
+export function resetPersistenceWriteSeamForTests(): void {
+  persistenceWriteEnqueue = null
+  outstandingUtilityWriteChatIds.clear()
+  utilityWritePinnedToMainChatIds.clear()
+}
+
 function purgeChatJournalArtifacts(chatId: string): void {
   try {
     chatJournal.delete(chatId)
@@ -6512,50 +6612,82 @@ export class AppStore {
         chatId,
         () => {
           const preStatActual = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
-          writeJson(chatPath, normalizedChat)
-          // T4a INTEGRATION CONTRACT step 2: legacy write -> journal append.
-          // Ordering matters only between these two. A crash in between leaves
-          // the legacy file AHEAD of the journal, which is the safe direction
-          // because the legacy file is read-authoritative and the journal
-          // replays forward. The chat-list index write that follows is
-          // deliberately NOT ordered against these: it self-heals, because
-          // getChatList validates every entry against the chat file's
-          // mtime+size and rebuilds from the file on mismatch.
-          appendChatJournalEntry(chatId, normalizedChat)
-          try {
-            const postStatActual = fs.statSync(chatPath)
-            const wrote =
-              !preStatActual ||
-              postStatActual.mtimeMs !== preStatActual.mtimeMs ||
-              postStatActual.size !== preStatActual.size
-            if (wrote) {
-              this.chatRecordCache.set(chatId, {
-                mtimeMs: postStatActual.mtimeMs,
-                size: postStatActual.size,
-                record: normalizedChat
-              })
+          // Everything that must happen AFTER the bytes land. Kept in one place
+          // because the utility-write path runs it in the ACK continuation
+          // rather than inline — running any of it early would publish a stat
+          // for a file that has not been written yet.
+          const settleAfterDurableWrite = (): void => {
+            // T4a INTEGRATION CONTRACT step 2: legacy write -> journal append.
+            // Ordering matters only between these two. A crash in between
+            // leaves the legacy file AHEAD of the journal, which is the safe
+            // direction because the legacy file is read-authoritative and the
+            // journal replays forward. The chat-list index write that follows
+            // is deliberately NOT ordered against these: it self-heals, because
+            // getChatList validates every entry against the chat file's
+            // mtime+size and rebuilds from the file on mismatch.
+            appendChatJournalEntry(chatId, normalizedChat)
+            try {
+              const postStatActual = fs.statSync(chatPath)
+              const wrote =
+                !preStatActual ||
+                postStatActual.mtimeMs !== preStatActual.mtimeMs ||
+                postStatActual.size !== preStatActual.size
+              if (wrote) {
+                this.chatRecordCache.set(chatId, {
+                  mtimeMs: postStatActual.mtimeMs,
+                  size: postStatActual.size,
+                  record: normalizedChat
+                })
+              }
+              // When the write ran inline (coalescing disabled, or a barrier
+              // flush) this callback executes BEFORE the index entry is built
+              // below, so hand the stat forward and the entry is born correct.
+              indexSourceStat = { mtimeMs: postStatActual.mtimeMs, size: postStatActual.size }
+              // When the write was genuinely deferred, the entry already exists
+              // and carries the pre-write stat — refresh it now that bytes land.
+              const settled = chatListIndexStore.readEntry(chatId)
+              if (
+                settled &&
+                (settled.sourceChatMtimeMs !== postStatActual.mtimeMs ||
+                  settled.sourceChatSize !== postStatActual.size)
+              ) {
+                chatListIndexStore.writeEntry(chatId, {
+                  ...settled,
+                  sourceChatMtimeMs: postStatActual.mtimeMs,
+                  sourceChatSize: postStatActual.size
+                })
+              }
+            } catch {
+              // Cache was already set optimistically; a stale mtimeMs is harmless.
             }
-            // When the write ran inline (coalescing disabled, or a barrier
-            // flush) this callback executes BEFORE the index entry is built
-            // below, so hand the stat forward and the entry is born correct.
-            indexSourceStat = { mtimeMs: postStatActual.mtimeMs, size: postStatActual.size }
-            // When the write was genuinely deferred, the entry already exists
-            // and carries the pre-write stat — refresh it now that bytes land.
-            const settled = chatListIndexStore.readEntry(chatId)
-            if (
-              settled &&
-              (settled.sourceChatMtimeMs !== postStatActual.mtimeMs ||
-                settled.sourceChatSize !== postStatActual.size)
-            ) {
-              chatListIndexStore.writeEntry(chatId, {
-                ...settled,
-                sourceChatMtimeMs: postStatActual.mtimeMs,
-                sourceChatSize: postStatActual.size
-              })
-            }
-          } catch {
-            // Cache was already set optimistically; a stale mtimeMs is harmless.
           }
+
+          const enqueueUtilityWrite = utilityWriteEnqueueFor(chatId, flushReason)
+          if (!enqueueUtilityWrite) {
+            writeJson(chatPath, normalizedChat)
+            settleAfterDurableWrite()
+            return
+          }
+
+          outstandingUtilityWriteChatIds.add(chatId)
+          void enqueueUtilityWrite({
+            chatId,
+            filePath: chatPath,
+            data: normalizedChat,
+            revision: chatPersistenceRevision(normalizedChat)
+          })
+            .then(() => {
+              settleAfterDurableWrite()
+            })
+            .catch((error) => {
+              // No fallback write here on purpose — the queue has already
+              // performed it synchronously in FIFO order. Writing again from
+              // this callback is the racing-fallback failure its header names.
+              console.error('Durable chat write reported a failure', error)
+            })
+            .finally(() => {
+              outstandingUtilityWriteChatIds.delete(chatId)
+            })
         },
         flushReason
       )
