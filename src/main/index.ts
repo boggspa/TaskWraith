@@ -868,6 +868,8 @@ import {
   type RunEventChannel
 } from './RunEventBus'
 import { AppStore } from './store'
+import { resolveHostInstallId } from './host/HostInstallIdentity'
+import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -47341,7 +47343,36 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     reconcileBridgeDaemonFromSettings()
+
+    // Host Arc R4' — production Host ON. WIRING ONLY: every port is assembled
+    // inside createHostProductionBootstrap (Wave 3.6c), so this composition
+    // root constructs no Host type and holds no domain logic.
+    //
+    // PLACEMENT IS LOAD-BEARING. This sits inside app.whenReady() and only on
+    // the branch where requestSingleInstanceLock() returned true. A second
+    // launch of the same install shares userData, so at module top level it
+    // would bind the same host data dir and local socket before quitting —
+    // and the bootstrap supervisor registry is process-global, not a
+    // cross-process fence.
+    const hostSupervisor = createHostProductionBootstrap({
+      userDataPath: app.getPath('userData'),
+      host: {
+        hostId: resolveHostInstallId({ userDataPath: app.getPath('userData') }),
+        hostVersion: app.getVersion()
+      },
+      chatList: AppStore,
+      bridge: createBridgeActionExecutor()
+    })
+    hostSupervisor.start().catch((error) => {
+      // Never `void` this. A discarded rejection would leave the app looking
+      // healthy while Host is silently dead — unavailable telemetry is not zero.
+      console.error('[host] production Host failed to start', error)
+    })
+
     app.on('will-quit', () => {
+      // Guarded: if bootstrap construction ever throws, an unguarded call here
+      // would raise a TypeError that masks the original startup failure.
+      hostSupervisor?.stopSync()
       teardownCanvasSurfacesForWindowClose()
       if (nativeWindowExpirySweepTimer) {
         clearInterval(nativeWindowExpirySweepTimer)
