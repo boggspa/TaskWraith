@@ -1,16 +1,16 @@
 /**
- * Host Arc Wave 4.3a-wire — Desktop Host projection IPC bridge.
+ * Host Arc Wave 4.3a-wire + 4.3b — Desktop Host projection IPC bridge.
  *
  * WHAT THIS IS. The main-process broker that lets the sandboxed Desktop
- * renderer obtain a `HostSnapshot`. It owns one `HostProjectionClient` and
- * exposes exactly one read channel.
+ * renderer talk to Host. It owns one `HostProjectionClient` and exposes a
+ * read channel plus the Wave 4.3b command/receipt channels.
  *
  * WHY IT MUST EXIST IN MAIN. Every BrowserWindow runs `sandbox: true` with
  * `contextIsolation: true`, so preload has no Node access and the renderer can
  * never open the Host unix socket itself. `HostProjectionClient` imports
  * `node:net` and `node:fs`, so it is main-only. That leaves exactly one legal
  * shape: main holds the client, preload is a thin conduit, the renderer
- * consumes a plain object.
+ * consumes plain objects.
  *
  * WHY IT GOES THROUGH THE PROTOCOL, NOT THE STORES. This module connects over
  * the authenticated local Host socket like any other client, rather than
@@ -19,11 +19,10 @@
  * and Desktop is a client. Brokering the real protocol keeps that true; a
  * shortcut into the authority object would have been faster and wrong.
  *
- * READ-ONLY. One channel, `snapshot.get` only. Capabilities requested are
- * bootstrap/snapshot/health. There is deliberately no command surface here:
- * Desktop command cutover is Wave 4.3b and is hard-gated on 4.2c approval
- * correlation. A command channel added "while we're here" would silently
- * un-gate that.
+ * WAVE 4.3b COMMAND SURFACE. `command.submit` and `receipt.lookup` ride the
+ * same client (no parallel mutation socket). Capabilities request includes
+ * `commands` + `receipts`. `approval.decide` is a Host command name submitted
+ * through `command.submit`, matching TUI 4.2b — not a separate IPC verb.
  *
  * FAILURE IS REPORTED, NEVER FABRICATED. A failed fetch returns
  * `{ ok: false, error }`. It never returns an empty snapshot: an empty
@@ -36,29 +35,52 @@
 
 import { ipcMain } from 'electron'
 
-import type { HostSnapshot } from '../../shared/hostProtocol'
+import type { HostCommand, HostCommandReceipt, HostSnapshot } from '../../shared/hostProtocol'
 import { HostProjectionClient } from '../host/HostProjectionClient'
 
-/** The single read channel this bridge exposes. */
+/** Read channel — HostSnapshot. */
 export const HOST_PROJECTION_SNAPSHOT_CHANNEL = 'host-projection:snapshot'
 
+/** Wave 4.3b — submit a HostCommand; returns the initial receipt. */
+export const HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL = 'host-projection:command-submit'
+
+/** Wave 4.3b — lookup a durable receipt by commandId. */
+export const HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL = 'host-projection:receipt-lookup'
+
 /**
- * Read-only capability request.
+ * Capability request for Desktop after Wave 4.3b.
  *
  * Host intersects this with its own offer, so asking for less than Host offers
- * is a real narrowing. `commands` and `receipts` are deliberately absent.
+ * is a real narrowing. `commands` and `receipts` are required for mutation
+ * cutover; without them Host withholds the request kinds.
  */
-const READ_ONLY_CAPABILITIES = ['bootstrap', 'snapshot', 'health'] as const
+const DESKTOP_HOST_CAPABILITIES = [
+  'bootstrap',
+  'snapshot',
+  'health',
+  'commands',
+  'receipts'
+] as const
 
 /** Typed IPC result. Never a thrown Error, never a fabricated snapshot. */
 export type HostProjectionSnapshotResult =
   | { readonly ok: true; readonly snapshot: HostSnapshot }
   | { readonly ok: false; readonly error: string }
 
+export type HostProjectionCommandResult =
+  | { readonly ok: true; readonly receipt: HostCommandReceipt }
+  | { readonly ok: false; readonly error: string }
+
+export type HostProjectionReceiptLookupResult =
+  | { readonly ok: true; readonly receipt: HostCommandReceipt }
+  | { readonly ok: false; readonly error: string }
+
 /** The narrow slice of HostProjectionClient this bridge uses. */
 export interface HostProjectionClientPort {
   connect(): Promise<unknown>
   getSnapshot(): Promise<{ snapshot: HostSnapshot }>
+  submitCommand(command: HostCommand): Promise<HostCommandReceipt>
+  lookupReceipt(params: { commandId: string }): Promise<HostCommandReceipt>
   close(): void
 }
 
@@ -79,10 +101,24 @@ function errorText(error: unknown): string {
   return text.length > 0 ? text : 'unknown host projection failure'
 }
 
+function isHostCommandShape(value: unknown): value is HostCommand {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<HostCommand>
+  return (
+    candidate.type === 'host.command' &&
+    typeof candidate.commandId === 'string' &&
+    candidate.commandId.length > 0 &&
+    typeof candidate.idempotencyKey === 'string' &&
+    candidate.idempotencyKey.length > 0 &&
+    typeof candidate.name === 'string' &&
+    candidate.name.length > 0
+  )
+}
+
 /**
  * Register the Desktop Host projection bridge.
  *
- * Registration is idempotent: the channel is removed before it is added, so a
+ * Registration is idempotent: each channel is removed before it is added, so a
  * dev-mode re-initialisation cannot throw "Attempted to register a second
  * handler". Electron throws on duplicate `handle`, and that throw would abort
  * whatever startup step is registering us.
@@ -106,7 +142,7 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
           clientClass: 'desktop',
           clientVersion: deps.appVersion
         },
-        capabilities: [...READ_ONLY_CAPABILITIES],
+        capabilities: [...DESKTOP_HOST_CAPABILITIES],
         userDataPath: deps.userDataPath
       }) as unknown as HostProjectionClientPort)
 
@@ -135,17 +171,53 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
     return next
   }
 
-  ipc.removeHandler?.(HOST_PROJECTION_SNAPSHOT_CHANNEL)
-  ipc.handle(HOST_PROJECTION_SNAPSHOT_CHANNEL, async (): Promise<HostProjectionSnapshotResult> => {
+  const withClient = async <T>(
+    run: (active: HostProjectionClientPort) => Promise<T>
+  ): Promise<{ ok: true; value: T } | { ok: false; error: string }> => {
     try {
       const active = await ensureClient()
-      const frame = await active.getSnapshot()
-      return { ok: true, snapshot: frame.snapshot }
+      const value = await run(active)
+      return { ok: true, value }
     } catch (error) {
-      // Drop the client so the next call reconnects rather than reusing a
-      // socket that has already failed once.
       discardClient()
       return { ok: false, error: errorText(error) }
     }
+  }
+
+  ipc.removeHandler?.(HOST_PROJECTION_SNAPSHOT_CHANNEL)
+  ipc.handle(HOST_PROJECTION_SNAPSHOT_CHANNEL, async (): Promise<HostProjectionSnapshotResult> => {
+    const outcome = await withClient((active) => active.getSnapshot())
+    if (!outcome.ok) return { ok: false, error: outcome.error }
+    return { ok: true, snapshot: outcome.value.snapshot }
   })
+
+  ipc.removeHandler?.(HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL)
+  ipc.handle(
+    HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL,
+    async (_event, command: unknown): Promise<HostProjectionCommandResult> => {
+      if (!isHostCommandShape(command)) {
+        return { ok: false, error: 'host projection command payload is invalid' }
+      }
+      const outcome = await withClient((active) => active.submitCommand(command))
+      if (!outcome.ok) return { ok: false, error: outcome.error }
+      return { ok: true, receipt: outcome.value }
+    }
+  )
+
+  ipc.removeHandler?.(HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL)
+  ipc.handle(
+    HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL,
+    async (_event, params: unknown): Promise<HostProjectionReceiptLookupResult> => {
+      const commandId =
+        params && typeof params === 'object'
+          ? (params as { commandId?: unknown }).commandId
+          : undefined
+      if (typeof commandId !== 'string' || commandId.length === 0) {
+        return { ok: false, error: 'host projection receipt lookup requires commandId' }
+      }
+      const outcome = await withClient((active) => active.lookupReceipt({ commandId }))
+      if (!outcome.ok) return { ok: false, error: outcome.error }
+      return { ok: true, receipt: outcome.value }
+    }
+  )
 }

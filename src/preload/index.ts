@@ -1065,13 +1065,18 @@ const api = {
     ipcRenderer.invoke('run-approved-host-command', requestId),
   listGeminiSessions: () => ipcRenderer.invoke('list-gemini-sessions'),
   getHostWeather: () => ipcRenderer.invoke('get-host-weather'),
-  // Host Arc 4.3a-wire — Desktop read-only Host projection.
+  // Host Arc 4.3a-wire + 4.3b — Desktop Host projection (snapshot + commands).
   // Thin conduit ONLY: the renderer is sandboxed and cannot open the Host
   // socket, so main brokers it. No domain logic here by design — the result is
   // returned verbatim, including its `{ ok: false, error }` failure shape, so
   // the renderer can report an unreachable Host honestly instead of receiving
-  // a fabricated empty snapshot.
+  // a fabricated empty snapshot. approval.decide is a Host command name sent
+  // through command-submit (same as TUI 4.2b), not a separate IPC verb.
   hostProjectionSnapshot: () => ipcRenderer.invoke('host-projection:snapshot'),
+  hostProjectionCommandSubmit: (command: unknown) =>
+    ipcRenderer.invoke('host-projection:command-submit', command),
+  hostProjectionReceiptLookup: (params: { commandId: string }) =>
+    ipcRenderer.invoke('host-projection:receipt-lookup', params),
   setAppearanceMode: (payload: { mode?: string; reduceTransparency?: boolean } | string) =>
     ipcRenderer.invoke('set-appearance-mode', payload),
   getNativeCapabilities: () =>
@@ -1491,8 +1496,7 @@ const api = {
     ipcRenderer.invoke('discover-gemini-memory', workspace),
   getFileIconDataUrl: (path: string) => ipcRenderer.invoke('get-file-icon', path),
   onPtyData: (callback: (data: string, sessionId?: string) => void) => {
-    const handler = (_event: unknown, data: string, sessionId?: string) =>
-      callback(data, sessionId)
+    const handler = (_event: unknown, data: string, sessionId?: string) => callback(data, sessionId)
     ipcRenderer.on('pty-data', handler)
     return () => ipcRenderer.removeListener('pty-data', handler)
   },
@@ -2666,8 +2670,7 @@ const api = {
       }
     ): void => callback(payload)
     ipcRenderer.on('human-collaboration-collaborator-older-page', wrapped)
-    return () =>
-      ipcRenderer.removeListener('human-collaboration-collaborator-older-page', wrapped)
+    return () => ipcRenderer.removeListener('human-collaboration-collaborator-older-page', wrapped)
   },
   // Trusted audio/video media refs for a foreground solo run. Main constructs
   // these refs itself and pushes them on this dedicated main-only channel, so

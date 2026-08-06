@@ -6,6 +6,10 @@
  * preload conduit `window.api.hostProjectionSnapshot()`, which main answers
  * from a real `HostProjectionClient` over the authenticated local socket.
  *
+ * WAVE 4.3b COMMANDS live in `HostCommandClient` (same preload surface:
+ * `hostProjectionCommandSubmit` / `hostProjectionReceiptLookup`). This module
+ * stays snapshot-only so the read path remains independently testable.
+ *
  * WHY IT IS A SEPARATE MODULE. The store and mapper are pure and provable
  * without Electron; this is the only place that knows a bridge exists. Keeping
  * the impurity in one small adapter is what let the rest of the layer be

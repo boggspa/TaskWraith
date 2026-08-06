@@ -85,7 +85,7 @@ import {
   MemoryProposalPack
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
-import type { HostSnapshot } from '../shared/hostProtocol'
+import type { HostCommand, HostCommandReceipt, HostSnapshot } from '../shared/hostProtocol'
 import type {
   LicenseNoticeKind,
   LicenseNoticeStatus,
@@ -1087,7 +1087,7 @@ declare global {
       listGeminiSessions: () => Promise<GeminiSessionListResult>
       getHostWeather: () => Promise<HostWeatherState>
       /**
-       * Host Arc 4.3a — read-only Desktop Host projection.
+       * Host Arc 4.3a — Desktop Host snapshot projection.
        * Authoritative declaration of the `host-projection:snapshot` channel.
        * Failure is a VALUE (`ok: false`), never a thrown Error: an Error loses
        * its type crossing IPC. The renderer adapter converts it to a rejection
@@ -1096,6 +1096,20 @@ declare global {
       hostProjectionSnapshot: () => Promise<
         { ok: true; snapshot: HostSnapshot } | { ok: false; error: string }
       >
+      /**
+       * Host Arc 4.3b — submit a HostCommand over the same main-owned client.
+       * Returns the initial receipt; pending must not be treated as success.
+       * `approval.decide` is submitted here as a command name (TUI 4.2b parity).
+       */
+      hostProjectionCommandSubmit: (
+        command: HostCommand
+      ) => Promise<{ ok: true; receipt: HostCommandReceipt } | { ok: false; error: string }>
+      /**
+       * Host Arc 4.3b — durable receipt lookup by commandId.
+       */
+      hostProjectionReceiptLookup: (params: {
+        commandId: string
+      }) => Promise<{ ok: true; receipt: HostCommandReceipt } | { ok: false; error: string }>
       setAppearanceMode: (
         payload: { mode?: string; reduceTransparency?: boolean } | string
       ) => Promise<boolean>
