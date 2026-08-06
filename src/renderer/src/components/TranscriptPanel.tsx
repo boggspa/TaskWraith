@@ -131,7 +131,7 @@ import {
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
-import { classifyFanoutLaneSlots } from '../lib/fanoutLanePairing'
+import { classifyFanoutLaneSlots, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
 import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
 import {
   isEnsembleFanoutLaneWorking,
@@ -525,8 +525,10 @@ export type TranscriptPanelProps = {
    * streams inside the masked auto-following region. */
   liveActivityViewport?: boolean
   /** `settings.fanoutLaneLayout`. `paired` lays adjacent fan-out lane result
-   * cards two-across; anything else (including undefined, for a settings file
-   * written before this existed) keeps the historical one-per-line stack. */
+   * cards two-across, `'stacked'` keeps them one per line. Optional, and
+   * undefined resolves to `DEFAULT_FANOUT_LANE_LAYOUT` — a caller that forgets
+   * to thread it must land on the same layout the rest of the app is using,
+   * not silently on the other one. */
   fanoutLaneLayout?: FanoutLaneLayout
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
@@ -2883,7 +2885,7 @@ export const TranscriptPanel = memo(
     // One derived boolean, read by the projection estimate, the slot map and
     // the measurement pass — so all three can never disagree about whether the
     // transcript is currently pairing lanes.
-    const pairFanoutLanes = fanoutLaneLayout === 'paired'
+    const pairFanoutLanes = resolveFanoutLaneLayout(fanoutLaneLayout) === 'paired'
     const fanoutLaneSlots = useMemo(
       () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes),
       [displayMessages, pairFanoutLanes]

@@ -2424,8 +2424,10 @@ export interface AppSettings {
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   /** Fan-out lane cards: one per line (`stacked`) or two-across (`paired`).
-   * Optional so a settings file written by an older build reads as the
-   * historical `stacked` layout rather than silently re-laying a transcript. */
+   * Optional, and ABSENT is the common case — the setting shipped after the
+   * layout did, so absence means "user has not chosen" and resolves to
+   * `DEFAULT_FANOUT_LANE_LAYOUT` (renderer `lib/fanoutLanePairing`), not to the
+   * historical stack. Only a value written here overrides the default. */
   fanoutLaneLayout?: FanoutLaneLayout
   composerStyle: ComposerStyle
   transcriptFontFamily?: string

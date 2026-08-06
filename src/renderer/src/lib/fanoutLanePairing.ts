@@ -30,13 +30,42 @@
  * honest: a pair is always two lanes that were genuinely adjacent, never two
  * that a scrolled-past row happened to bring together.
  */
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, FanoutLaneLayout } from '../../../main/store/types'
 import { isEnsembleFanoutResultMessage } from '../../../shared/fanoutLaneGrouping'
 
 export type FanoutLaneSlot = 'lead' | 'trail' | 'solo'
 
 /** DOM attribute the CSS grid rules and the measurement pass both read. */
 export const FANOUT_LANE_SLOT_ATTRIBUTE = 'data-fanout-slot'
+
+/**
+ * The layout a transcript uses when the user has not chosen one.
+ *
+ * Two-across, because a fan-out that the reader can only scroll through one
+ * lane at a time has thrown away the thing it was run for. It shipped opt-in
+ * (15aa51e37) and the control sits far enough down Appearance that in practice
+ * nobody found it, so the honest default is the one that shows the work.
+ *
+ * Read it through `resolveFanoutLaneLayout` rather than comparing against
+ * `'paired'` directly: every seam that hard-codes the other value keeps
+ * serving the old layout without failing to compile or to render.
+ */
+export const DEFAULT_FANOUT_LANE_LAYOUT: FanoutLaneLayout = 'paired'
+
+/**
+ * Narrow a persisted (or absent) setting to a layout the DOM can carry.
+ *
+ * Absence is the COMMON case, not an edge one: the setting shipped optional, so
+ * every upgraded install and every fresh one reaches here with `undefined`, and
+ * that has to mean the default rather than the historical layout. An explicit
+ * `'stacked'` is a choice and is honoured; anything else — a hand-edited file,
+ * or a value from a build that grew a third layout — falls to the default,
+ * because `:root[data-fanout-lane-layout]` is stamped unconditionally and a
+ * value outside the set matches no rule at all.
+ */
+export function resolveFanoutLaneLayout(value: unknown): FanoutLaneLayout {
+  return value === 'stacked' || value === 'paired' ? value : DEFAULT_FANOUT_LANE_LAYOUT
+}
 
 /**
  * Classify every fan-out lane row in `messages` into its two-across slot,

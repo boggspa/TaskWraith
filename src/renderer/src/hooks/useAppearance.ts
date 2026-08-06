@@ -31,6 +31,7 @@ import {
   resolveComposerFontFamily
 } from '../lib/typefaceOptions'
 import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funFxSettings'
+import { DEFAULT_FANOUT_LANE_LAYOUT, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
 import { MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../lib/panelWidths'
 
 const DEFAULT_ADVANCED_FX: AppSettings['advancedFx'] = {
@@ -153,7 +154,7 @@ function getInitialState(): AppearanceState {
     agentThemeTokens: {},
     appIconVariant: DEFAULT_APP_ICON_VARIANT,
     promptSurfaceStyle: 'liquid_glass',
-    fanoutLaneLayout: 'stacked',
+    fanoutLaneLayout: DEFAULT_FANOUT_LANE_LAYOUT,
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
     composerFontFamily: COMPOSER_FONT_MATCH_TRANSCRIPT,
@@ -242,11 +243,10 @@ export function useAppearance() {
           diffStatColors: normalizeDiffStatColors(settings.diffStatColors),
           agentThemeTokens: normalizeAgentThemeTokenOverrides(settings.agentThemeTokens),
           promptSurfaceStyle: settings.promptSurfaceStyle || 'liquid_glass',
-          // Anything other than the one opt-in value reads as the historical
-          // stacked layout, so a settings file from an older build (or a
-          // hand-edited one) can never land the transcript in a layout the
-          // user did not choose.
-          fanoutLaneLayout: settings.fanoutLaneLayout === 'paired' ? 'paired' : 'stacked',
+          // Absent (every settings file written before the setting existed, and
+          // every fresh install) reads as the DEFAULT layout; only an explicit
+          // choice overrides it. See resolveFanoutLaneLayout.
+          fanoutLaneLayout: resolveFanoutLaneLayout(settings.fanoutLaneLayout),
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
             settings.transcriptFontFamily,

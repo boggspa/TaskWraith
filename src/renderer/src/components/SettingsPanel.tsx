@@ -77,6 +77,7 @@ import {
   rgbStringFromHexColor
 } from '../lib/ensembleAgentPool'
 import { setFxRatesPerUsd } from '../lib/formatCost'
+import { DEFAULT_FANOUT_LANE_LAYOUT } from '../lib/fanoutLanePairing'
 import { formatResetShort } from '../lib/UsageFormat'
 import {
   KEY_COMMAND_DEFINITIONS,
@@ -6115,7 +6116,7 @@ export function SettingsPanel({
                       <span className="settings-field-label">Fan-out lanes</span>
                       <select
                         className="settings-select"
-                        value={fanoutLaneLayout ?? 'stacked'}
+                        value={fanoutLaneLayout ?? DEFAULT_FANOUT_LANE_LAYOUT}
                         onChange={(e) =>
                           onChange({ fanoutLaneLayout: e.target.value as FanoutLaneLayout })
                         }
