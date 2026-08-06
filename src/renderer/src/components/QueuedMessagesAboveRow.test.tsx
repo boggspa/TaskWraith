@@ -28,7 +28,7 @@ describe('QueuedMessagesAboveRow labels', () => {
 describe('QueuedMessagesAboveRow steer actions', () => {
   const noop = (): void => {}
 
-  it('renders the steer menu trigger for blackboard-capable ensemble rows and the plain button for solo rows', () => {
+  it('renders a plain immediate Steer button for ensemble and solo queue rows', () => {
     const html = renderToStaticMarkup(
       <QueuedMessagesAboveRow
         chat={null}
@@ -37,8 +37,7 @@ describe('QueuedMessagesAboveRow steer actions', () => {
             id: 'ensemble-queued-round-1-0',
             provider: 'codex',
             providerDisplayLabel: 'Ensemble',
-            prompt: 'Check the auth flow.',
-            canAddToBlackboard: true
+            prompt: 'Check the auth flow.'
           },
           {
             id: 'solo-run-1',
@@ -49,16 +48,13 @@ describe('QueuedMessagesAboveRow steer actions', () => {
         onEdit={noop}
         onDelete={noop}
         onSteer={noop}
-        onAddToBlackboard={noop}
         onReorder={noop}
       />
     )
-    // Ensemble row: menu trigger (closed by default — no portal content in
-    // static markup, so the menu items themselves must NOT appear).
-    expect(html).toContain('aria-haspopup="menu"')
-    expect(html).toContain('Open steer menu for Ensemble queued message 1')
+    expect(html).not.toContain('aria-haspopup="menu"')
+    expect(html).not.toContain('Open steer menu')
     expect(html).not.toContain('Add to Blackboard')
-    // Solo row: the plain immediate-steer button.
+    expect(html).toContain('Steer Ensemble queued message 1 from the queue now')
     expect(html).toContain('Steer Codex queued message 2 from the queue now')
     expect(html).toContain('data-provider-logo="codex"')
     expect(html).toContain('<img class="provider-brand-logo-image')

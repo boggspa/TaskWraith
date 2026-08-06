@@ -47,18 +47,16 @@ describe('Multiview pane Composer context parity', () => {
     for (const context of contexts) {
       expect(context).toHaveLength(new Set(context).size)
     }
-    expect([...new Set(contexts[0])].sort()).toEqual(
-      [...new Set(contexts[1])].sort()
-    )
+    expect([...new Set(contexts[0])].sort()).toEqual([...new Set(contexts[1])].sort())
   })
 
   it('derives linked-child state from each pane chat instead of forcing it on', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
     expect(source).not.toContain('isCurrentChatLinkedChild: true')
-    expect(source.match(/isCurrentChatLinkedChild: Boolean\(viewerChat\.parentChatId\)/g)).toHaveLength(
-      2
-    )
+    expect(
+      source.match(/isCurrentChatLinkedChild: Boolean\(viewerChat\.parentChatId\)/g)
+    ).toHaveLength(2)
   })
 
   it('keeps the focused goal-popover anchor out of resting panes (discard ref in both builders)', () => {
@@ -92,7 +90,6 @@ describe('Multiview pane Composer context parity', () => {
       'ensembleBlendStyle',
       'ensembleEnabledParticipantsForCurrent',
       'ensembleOllamaContextWarning',
-      'handleBlackboardQueuedMessage',
       'handleAttachWindow',
       'handleClearDiscordContext',
       'handleCollapseEnsembleToSolo',
@@ -144,18 +141,9 @@ describe('Multiview pane Composer context parity', () => {
     const editQueueEnd = source.indexOf('const handleDeleteQueuedMessage =', editQueueStart)
     const editQueue = source.slice(editQueueStart, editQueueEnd)
     const deleteQueueStart = editQueueEnd
-    const deleteQueueEnd = source.indexOf(
-      'const handleBlackboardQueuedMessage =',
-      deleteQueueStart
-    )
+    const deleteQueueEnd = source.indexOf('const handleSteerToQueuedMessage =', deleteQueueStart)
     const deleteQueue = source.slice(deleteQueueStart, deleteQueueEnd)
-    const blackboardQueueStart = deleteQueueEnd
-    const blackboardQueueEnd = source.indexOf(
-      'const handleSteerToQueuedMessage =',
-      blackboardQueueStart
-    )
-    const blackboardQueue = source.slice(blackboardQueueStart, blackboardQueueEnd)
-    const steerQueueStart = source.indexOf('const handleSteerToQueuedMessage =')
+    const steerQueueStart = deleteQueueEnd
     const steerQueueEnd = source.indexOf('const handleReorderQueuedMessages =', steerQueueStart)
     const steerQueue = source.slice(steerQueueStart, steerQueueEnd)
     const paneSlashStart = source.indexOf('const buildPaneComposerSlashCommands =')
@@ -163,13 +151,12 @@ describe('Multiview pane Composer context parity', () => {
     const paneSlash = source.slice(paneSlashStart, paneSlashEnd)
 
     expect(builder).toContain('paneCtxHelpers.patchEnsembleParticipantForChat(')
-    expect(builder).not.toContain(
-      'participants: source.ensemble.participants.map((participant) =>'
-    )
+    expect(builder).not.toContain('participants: source.ensemble.participants.map((participant) =>')
     expect(builder).toContain('paneCtxHelpers.handleEditQueuedMessage(entryId, viewerChat)')
     expect(builder).toContain('paneCtxHelpers.handleDeleteQueuedMessage(entryId, viewerChat)')
-    expect(builder).toContain('paneCtxHelpers.handleBlackboardQueuedMessage(entryId, viewerChat)')
     expect(builder).toContain('paneCtxHelpers.handleSteerToQueuedMessage(entryId, viewerChat)')
+    expect(builder).not.toContain('handleBlackboardQueuedMessage')
+    expect(source).not.toContain('const handleBlackboardQueuedMessage =')
     // Edit must restore attachments from the queue snapshot into the composer;
     // hoisting only the prompt text is the regression that drops attached files.
     expect(editQueue).toContain('mapQueuedAttachmentsForComposer')
@@ -193,10 +180,7 @@ describe('Multiview pane Composer context parity', () => {
       'setDiscordContextSelectionByChatId((prev) => ({ ...prev, [chatId]: null }))'
     )
     const buildRunRequestStart = source.indexOf('const buildRunRequest =')
-    const buildRunRequestEnd = source.indexOf(
-      'const buildRunRequestRef =',
-      buildRunRequestStart
-    )
+    const buildRunRequestEnd = source.indexOf('const buildRunRequestRef =', buildRunRequestStart)
     const buildRunRequest = source.slice(buildRunRequestStart, buildRunRequestEnd)
     expect(buildRunRequest).toContain(
       "Object.prototype.hasOwnProperty.call(target, 'discordContextSelection')"
@@ -204,16 +188,12 @@ describe('Multiview pane Composer context parity', () => {
     expect(buildRunRequest).toContain('resolveRunDiscordContextSelection({')
     expect(buildRunRequest).toContain('targetSelection: targetDiscordContextSelection')
     expect(source).toContain('selectedParticipantIdByChatId[currentChat.appChatId]')
-    expect(
-      source.match(/resolveMultiviewEnsembleParticipantSelection\(/g)
-    ).toHaveLength(3)
+    expect(source.match(/resolveMultiviewEnsembleParticipantSelection\(/g)).toHaveLength(3)
     expect(source.match(/paneSlashParticipant\?\.provider \?\? viewerProvider/g)).toHaveLength(2)
     expect(paneSlash).toContain('selectedParticipant: EnsembleParticipant | null')
     expect(paneSlash).toContain('const slashParticipant = selectedParticipant')
     expect(paneSlash).toContain('paneSlashCommandHelpers.resolveSlashPaletteItems')
-    expect(paneSlash).toContain(
-      'paneSlashCommandHelpers.buildScopedComposerSlashExtraCommands'
-    )
+    expect(paneSlash).toContain('paneSlashCommandHelpers.buildScopedComposerSlashExtraCommands')
     expect(editQueue).toContain('targetChat?.appChatId')
     expect(editQueue).toContain('setScheduleRunAtForChat(')
     expect(editQueue).toContain('updateEnsembleQueuedPromptsForRound(')
@@ -221,8 +201,6 @@ describe('Multiview pane Composer context parity', () => {
     expect(deleteQueue).toContain('recordedOwnerChatId !== targetChat.appChatId')
     expect(deleteQueue).toContain('updateEnsembleQueuedPromptsForRound(')
     expect(deleteQueue).toContain('round.roundId !== queuedRoundId')
-    expect(blackboardQueue).toContain('updateEnsembleQueuedPromptsForRound(')
-    expect(blackboardQueue).toContain('round.roundId !== queuedRoundId')
     expect(steerQueue).toContain('targetChat?.appChatId')
     expect(steerQueue).toContain('recordedOwnerChatId !== targetChat.appChatId')
     expect(steerQueue).toContain('round.roundId !== queuedRoundId')
@@ -263,9 +241,7 @@ describe('Multiview pane Composer context parity', () => {
     const liveRoundIndex = applyPermissions.indexOf(
       'isEnsembleActiveRoundDispatchLive(canonical.ensemble?.activeRound)'
     )
-    const requestIndex = applyPermissions.indexOf(
-      'requestAuthoritativeParticipantSeatChange('
-    )
+    const requestIndex = applyPermissions.indexOf('requestAuthoritativeParticipantSeatChange(')
     const updateIndex = applyPermissions.indexOf('updateChatById(chatId, (source) =>')
     expect(liveRoundIndex).toBeGreaterThan(-1)
     expect(requestIndex).toBeGreaterThan(liveRoundIndex)
@@ -297,7 +273,9 @@ describe('Multiview pane Composer context parity', () => {
       "data-pending-next-turn={isCurrentComposerLocked ? 'true' : 'false'}"
     )
     expect(runtimeProfileControl).toContain('disabled={!currentChat}')
-    expect(runtimeProfileControl).not.toContain('disabled={!currentChat || isCurrentComposerLocked}')
+    expect(runtimeProfileControl).not.toContain(
+      'disabled={!currentChat || isCurrentComposerLocked}'
+    )
     expect(layoutSource).toContain(
       'applyEnsemblePermissionsToAllParticipantsForChat(\n      sideChat.appChatId,'
     )

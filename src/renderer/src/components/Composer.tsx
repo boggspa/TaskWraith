@@ -375,7 +375,6 @@ export interface ComposerProps {
   handleSelectParticipant: any
   handleSelectWorkspace: any
   handleSetAgenticWorkspaceGrant: any
-  handleBlackboardQueuedMessage: any
   handleSteer: any
   handleSteerToQueuedMessage: any
   handleToggleWelcomeEnsemble: any
@@ -722,7 +721,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleSelectParticipant,
     handleSelectWorkspace,
     handleSetAgenticWorkspaceGrant,
-    handleBlackboardQueuedMessage,
     handleSteerToQueuedMessage,
     handleToggleWelcomeEnsemble,
     handleTrustWorkspaceClick,
@@ -2809,7 +2807,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   onEdit={handleEditQueuedMessage}
                   onDelete={handleDeleteQueuedMessage}
                   onSteer={handleSteerToQueuedMessage}
-                  onAddToBlackboard={handleBlackboardQueuedMessage}
                   onReorder={handleReorderQueuedMessages}
                 />
                     </div>

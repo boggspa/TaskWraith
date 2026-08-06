@@ -333,7 +333,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleStartProjectHome,
   handleSelectedProjectChange,
   handleStartSharedChat,
-  handleBlackboardQueuedMessage,
   handleSteerToQueuedMessage,
   handleStopHumanCollaborationSharing,
   handleStoreClaudeApiKey,
@@ -1090,8 +1089,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           handleDeleteQueuedMessage(entryId, sideChat),
         handleSteerToQueuedMessage: (entryId: string) =>
           handleSteerToQueuedMessage(entryId, sideChat),
-        handleBlackboardQueuedMessage: (entryId: string) =>
-          handleBlackboardQueuedMessage(entryId, sideChat),
         handleReorderQueuedMessages,
         handleSelectExistingWorkspace: rebindSideChatWorkspace,
         handleSelectWorkspace: selectNewSideChatWorkspace,

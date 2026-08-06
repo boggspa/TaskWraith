@@ -36,7 +36,6 @@ describe('sidebar footer picker opacity CSS', () => {
       ['08-theme-picker-overrides.css', '.agent-mention-menu {'],
       ['08-theme-picker-overrides.css', '.composer-slash-menu {'],
       ['08-theme-picker-overrides.css', '.composer-combined-picker-popover {'],
-      ['09-ensemble-work-session.css', '.queued-steer-menu {'],
       ['09-ensemble-work-session.css', '.ensemble-above-overflow {']
     ]
 
