@@ -139,9 +139,18 @@ export class ChatTranscriptStore {
   /** Capture transcript arrays from a full ChatRecord into the store. */
   ingest(chat: ChatRecord): ChatTranscriptPayload | null {
     if (!chat?.appChatId || isChatSummaryRecord(chat)) return null
+    const messages = chat.messages.length === 0 ? EMPTY_MESSAGES : chat.messages
+    const runs = chat.runs.length === 0 ? EMPTY_RUNS : chat.runs
+    const previous = this.byId.get(chat.appChatId)
+    if (previous && previous.messages === messages && previous.runs === runs) {
+      // Main-side metadata broadcasts can arrive without transcript changes.
+      // Keep the external-store snapshot stable so the transcript component
+      // does not render merely because ChatRecord.updatedAt changed.
+      return previous
+    }
     return this.set(chat.appChatId, {
-      messages: chat.messages,
-      runs: chat.runs,
+      messages,
+      runs,
       updatedAt: chat.updatedAt ?? Date.now()
     })
   }

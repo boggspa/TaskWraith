@@ -292,6 +292,11 @@ export function applyChatTranscriptOps(
   messages: readonly ChatMessage[],
   ops: readonly ChatTranscriptOp[]
 ): ChatMessage[] | null {
+  // A v2 patch can carry an empty ops list when only record metadata changed.
+  // Preserve the baseline array so metadata-only deliveries do not turn into
+  // an O(messages) allocation in the renderer.
+  if (ops.length === 0) return messages as ChatMessage[]
+
   const next = messages.slice()
   const indexById = new Map<string, number>()
   for (let index = 0; index < next.length; index += 1) {
@@ -401,6 +406,11 @@ function applyMessageSplice(
     !Array.isArray(items)
   ) {
     return null
+  }
+  if (deleteCount === 0 && items.length === 0) {
+    // Metadata-only patches use an empty splice. Keep the existing array
+    // identity so downstream transcript/store consumers can bail out too.
+    return baselineMessages as ChatMessage[]
   }
   return [
     ...baselineMessages.slice(0, start),

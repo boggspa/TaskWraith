@@ -4,6 +4,7 @@ import {
   CHAT_UPDATE_PROTOCOL_V1,
   CHAT_UPDATE_PROTOCOL_V2,
   applyChatUpdateDelivery,
+  applyChatTranscriptOps,
   buildChatRecordDelta,
   buildChatTranscriptOps,
   buildChatUpdateDelivery,
@@ -227,6 +228,36 @@ describe('chat update transport', () => {
       ok: true,
       baseline: { revision: 2, chat: next }
     })
+  })
+
+  it('preserves transcript identity for metadata-only v2 patches', () => {
+    const messages = Array.from({ length: 700 }, (_, index) => message(`m-${index}`, `${index}`))
+    const first = chat(1, messages)
+    const next = chat(2, messages, { title: 'Metadata changed' })
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'metadata-only',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(delivery.transcriptOps).toEqual([])
+    expect(delivery.messages).toEqual({ start: messages.length, deleteCount: 0, items: [] })
+
+    const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error('apply failed')
+    expect(applied.baseline.chat.messages).toBe(messages)
+  })
+
+  it('returns the same transcript array for an empty ops list', () => {
+    const messages = [message('a', 'A')]
+    expect(applyChatTranscriptOps(messages, [])).toBe(messages)
   })
 
   it('falls back to splice on v2 when transcript ops cannot express a reorder', () => {

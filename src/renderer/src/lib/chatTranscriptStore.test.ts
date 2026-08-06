@@ -123,6 +123,22 @@ describe('ChatTranscriptStore', () => {
     expect(store.getSnapshot('chat-f')).toBe(snap3)
   })
 
+  it('does not notify for metadata-only ingest with the same transcript arrays', () => {
+    const store = new ChatTranscriptStore()
+    const listener = vi.fn()
+    store.subscribe('chat-metadata', listener)
+
+    const first = chat('chat-metadata')
+    const firstPayload = store.ingest(first)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    const metadataOnly = { ...first, title: 'Renamed', updatedAt: 99 }
+    const secondPayload = store.ingest(metadataOnly)
+    expect(secondPayload).toBe(firstPayload)
+    expect(store.getSnapshot('chat-metadata')).toBe(firstPayload)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
   it('subscribe notifies only the matching chat; subscribeAll sees every mutation', () => {
     const store = new ChatTranscriptStore()
     const onA = vi.fn()
