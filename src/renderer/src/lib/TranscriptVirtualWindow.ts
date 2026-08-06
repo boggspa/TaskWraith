@@ -426,12 +426,7 @@ export function projectRow(
     index,
     rowType,
     contentVersion: contentVersion(message),
-    estimatedHeight: estimatedHeightFor(
-      rowType,
-      hasRunBoundary,
-      contentLength,
-      pairFanoutLanes
-    ),
+    estimatedHeight: estimatedHeightFor(rowType, hasRunBoundary, contentLength, pairFanoutLanes),
     hasRunBoundary
   }
 }
@@ -455,22 +450,48 @@ export function measurementKey(
 }
 
 /**
- * The actively streaming reveal row keeps one measurement slot while it grows.
- * Its message content length can change every provider frame, but giving every
- * token a fresh measurement key makes the virtualizer repeatedly fall back to
+ * Identity of the virtual row *set* (ordered rowKeys + count), ignoring
+ * contentVersion / estimatedHeight churn. Streaming rewrites rebuild the
+ * `rows` array (and the live-tail VirtualRow object) on every token while
+ * keeping the same keys — this token stays equal across that churn so the
+ * renderer can hold `windowHeights` / `selectWindow` instead of re-picking
+ * the mounted band every frame.
+ */
+export function structuralRowSetKey(rows: readonly VirtualRow[] | null | undefined): string {
+  if (!rows || rows.length === 0) return '0:'
+  let key = `${rows.length}:`
+  for (let i = 0; i < rows.length; i += 1) {
+    if (i > 0) key += '\0'
+    key += rows[i]?.rowKey || ''
+  }
+  return key
+}
+
+export type ActiveLiveRowKeys = string | ReadonlySet<string> | null | undefined
+
+function rowKeyIsLive(rowKey: string, activeLiveRowKeys: ActiveLiveRowKeys): boolean {
+  if (!activeLiveRowKeys) return false
+  if (typeof activeLiveRowKeys === 'string') return activeLiveRowKeys === rowKey
+  return activeLiveRowKeys.has(rowKey)
+}
+
+/**
+ * Actively streaming rows keep one measurement slot while they grow.
+ * Message content can change every provider frame, but giving every token a
+ * fresh measurement key makes the virtualizer repeatedly fall back to
  * estimates right where the user is watching. Tool/progress rows get the same
- * treatment while they are the live tail: Kimi-style `_thinking` / progress
- * events can arrive as success-status tool rows whose output keeps changing.
- * Once the row leaves live mode, normal content-version keys resume and the
- * final settled height is measured.
+ * treatment while live: Kimi-style `_thinking` / progress events can arrive as
+ * success-status tool rows whose output keeps changing. Fan-out lanes and
+ * concurrent tool stacks may be live *together* — pass a Set of rowKeys, not
+ * only the list-tail key. Once a row leaves live mode, normal content-version
+ * keys resume and the final settled height is measured.
  */
 export function measurementContentVersion(
   row: VirtualRow,
-  activeLiveRowKey?: string | null
+  activeLiveRowKeys?: ActiveLiveRowKeys
 ): string {
   if (
-    activeLiveRowKey &&
-    row.rowKey === activeLiveRowKey &&
+    rowKeyIsLive(row.rowKey, activeLiveRowKeys) &&
     (row.rowType === 'assistant' ||
       row.rowType === 'guestReply' ||
       row.rowType === 'fanoutResult' ||
@@ -479,6 +500,11 @@ export function measurementContentVersion(
     return `${row.rowType}:live`
   }
   return row.contentVersion
+}
+
+/** True when `rowKey` is in the active live set (string or Set). */
+export function isActiveLiveRowKey(rowKey: string, activeLiveRowKeys?: ActiveLiveRowKeys): boolean {
+  return rowKeyIsLive(rowKey, activeLiveRowKeys)
 }
 
 /**

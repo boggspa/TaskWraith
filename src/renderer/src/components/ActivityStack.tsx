@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -156,6 +157,172 @@ export interface ThinkingTraceActionsConfig {
   onOpenSideChat?: (messageId: string, content: string) => void
 }
 
+/**
+ * Paint-relevant dependency key for {@link ThinkingTraceActionsConfig}.
+ *
+ * TranscriptPanel follow-up (virtualizer owner — keep edits minimal there):
+ * replace the per-row object literal with either
+ * `useStableThinkingTraceActions(input)` or
+ * `useMemo(() => buildThinkingTraceActions(input), [thinkingTraceActionsDependencyKey(input), …callback presence])`
+ * so ActivityRow memoization is not defeated by a fresh actions object every
+ * parent render.
+ */
+export function thinkingTraceActionsDependencyKey(
+  input:
+    | (Pick<
+        ThinkingTraceActionsConfig,
+        'messageId' | 'label' | 'copiedId' | 'pinned' | 'thumbsVote'
+      > & {
+        /** Extra paint bits (e.g. per-message pin/vote roster) from the panel. */
+        actionStateKey?: string
+        hasAddToPrompt?: boolean
+        hasTogglePin?: boolean
+        hasThumbsUp?: boolean
+        hasThumbsDown?: boolean
+        hasDelete?: boolean
+        hasOpenSideChat?: boolean
+      })
+    | null
+    | undefined
+): string {
+  if (!input) return ''
+  return [
+    input.messageId,
+    input.label || '',
+    input.copiedId || '',
+    input.pinned ? '1' : '0',
+    input.thumbsVote || '',
+    input.actionStateKey || '',
+    input.hasAddToPrompt ? '1' : '0',
+    input.hasTogglePin ? '1' : '0',
+    input.hasThumbsUp ? '1' : '0',
+    input.hasThumbsDown ? '1' : '0',
+    input.hasDelete ? '1' : '0',
+    input.hasOpenSideChat ? '1' : '0'
+  ].join('|')
+}
+
+/** Identity helper — prefer {@link useStableThinkingTraceActions} at call sites. */
+export function buildThinkingTraceActions(
+  input: ThinkingTraceActionsConfig
+): ThinkingTraceActionsConfig {
+  return input
+}
+
+type ThinkingTraceActionsInputRef = { current: ThinkingTraceActionsConfig | null | undefined }
+
+function thinkingTraceActionsKeyFromInput(
+  input: ThinkingTraceActionsConfig | null | undefined,
+  actionStateKey?: string
+): string {
+  if (!input) return ''
+  return thinkingTraceActionsDependencyKey({
+    messageId: input.messageId,
+    label: input.label,
+    copiedId: input.copiedId,
+    pinned: input.pinned,
+    thumbsVote: input.thumbsVote,
+    actionStateKey,
+    hasAddToPrompt: Boolean(input.onAddToPrompt),
+    hasTogglePin: Boolean(input.onTogglePin),
+    hasThumbsUp: Boolean(input.onThumbsUp),
+    hasThumbsDown: Boolean(input.onThumbsDown),
+    hasDelete: Boolean(input.onDelete),
+    hasOpenSideChat: Boolean(input.onOpenSideChat)
+  })
+}
+
+function wrapThinkingTraceActions(
+  inputRef: ThinkingTraceActionsInputRef
+): ThinkingTraceActionsConfig {
+  const current = inputRef.current
+  if (!current) {
+    throw new Error('wrapThinkingTraceActions requires a current input')
+  }
+  return {
+    messageId: current.messageId,
+    label: current.label,
+    copiedId: current.copiedId,
+    pinned: current.pinned,
+    thumbsVote: current.thumbsVote,
+    messageIdForActivity: (activity) =>
+      inputRef.current?.messageIdForActivity?.(activity) ?? inputRef.current?.messageId,
+    stateForMessage: (messageId) =>
+      inputRef.current?.stateForMessage?.(messageId) ?? {
+        pinned: false,
+        thumbsVote: null
+      },
+    copy: (copyId, content) => {
+      inputRef.current?.copy(copyId, content)
+    },
+    onAddToPrompt: current.onAddToPrompt
+      ? (messageId, content) => inputRef.current?.onAddToPrompt?.(messageId, content)
+      : undefined,
+    onTogglePin: current.onTogglePin
+      ? (messageId) => inputRef.current?.onTogglePin?.(messageId)
+      : undefined,
+    onThumbsUp: current.onThumbsUp
+      ? (messageId) => inputRef.current?.onThumbsUp?.(messageId)
+      : undefined,
+    onThumbsDown: current.onThumbsDown
+      ? (messageId) => inputRef.current?.onThumbsDown?.(messageId)
+      : undefined,
+    onDelete: current.onDelete
+      ? (messageId) => inputRef.current?.onDelete?.(messageId)
+      : undefined,
+    onOpenSideChat: current.onOpenSideChat
+      ? (messageId, content) => inputRef.current?.onOpenSideChat?.(messageId, content)
+      : undefined
+  }
+}
+
+export type ThinkingTraceActionsStabilizeCache = Map<
+  string,
+  { inputRef: ThinkingTraceActionsInputRef; value: ThinkingTraceActionsConfig }
+>
+
+/**
+ * Non-hook stabilizer for row loops (e.g. TranscriptPanel element cache).
+ * Keeps config identity stable while paint key is unchanged; callbacks always
+ * read the latest input through a ref.
+ */
+export function stabilizeThinkingTraceActions(
+  cache: ThinkingTraceActionsStabilizeCache,
+  input: ThinkingTraceActionsConfig | null | undefined,
+  actionStateKey?: string
+): ThinkingTraceActionsConfig | undefined {
+  if (!input) return undefined
+  const key = thinkingTraceActionsKeyFromInput(input, actionStateKey)
+  const existing = cache.get(key)
+  if (existing) {
+    existing.inputRef.current = input
+    return existing.value
+  }
+  const inputRef: ThinkingTraceActionsInputRef = { current: input }
+  const value = wrapThinkingTraceActions(inputRef)
+  cache.set(key, { inputRef, value })
+  return value
+}
+
+/**
+ * Stabilize ThinkingTraceActionsConfig identity across parent re-renders.
+ * Callbacks are read through a ref so only paint-relevant fields (see
+ * {@link thinkingTraceActionsDependencyKey}) recreate the object.
+ */
+export function useStableThinkingTraceActions(
+  input: ThinkingTraceActionsConfig | null | undefined
+): ThinkingTraceActionsConfig | undefined {
+  const inputRef = useRef(input)
+  inputRef.current = input
+  const key = thinkingTraceActionsKeyFromInput(input)
+  return useMemo(() => {
+    if (!inputRef.current) return undefined
+    return wrapThinkingTraceActions(inputRef)
+    // key encodes paint fields + callback presence; inputRef holds latest closures.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional key-driven memo
+  }, [key])
+}
+
 function providerFromPlanLane(lane: string): ProviderId | undefined {
   switch (lane) {
     case 'codex':
@@ -299,11 +466,36 @@ function truncateText(value: string, optionsOrMaxLength: number | TruncateOption
   return `${prefix}${footerFn(droppedChars, Math.max(0, droppedLines))}`
 }
 
+const CLEAN_PROGRESS_TEXT_CACHE_MAX = 96
+const cleanProgressTextCache = new Map<string, string | undefined>()
+
+function hashProgressBody(value: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+/** Cache key for cleanProgressText — length + FNV + ends, not the full body. */
+export function cleanProgressTextSignature(
+  value: string,
+  truncate: boolean
+): string {
+  return `${truncate ? 't' : 'f'}|${value.length}|${hashProgressBody(value)}|${value.slice(0, 48)}|${value.slice(-48)}`
+}
+
 function cleanProgressText(
   value: unknown,
   options: { truncate?: boolean } = {}
 ): string | undefined {
   if (typeof value !== 'string') return undefined
+  const truncate = options.truncate !== false
+  const signature = cleanProgressTextSignature(value, truncate)
+  if (cleanProgressTextCache.has(signature)) {
+    return cleanProgressTextCache.get(signature)
+  }
   const cleaned = value
     .replace(/^[\s#>*![\]A-Z:_-]*(Topic|Summary|Intent|Strategic intent)\s*:\s*/gim, '')
     .replace(/\*\*(Topic|Summary|Intent|Strategic intent)\s*:\*\*/gim, '')
@@ -314,9 +506,18 @@ function cleanProgressText(
     .replace(/^>\s?/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-  if (!cleaned || cleaned === '...' || cleaned === '…') return undefined
-  if (options.truncate === false) return cleaned
-  return truncateText(cleaned, 360)
+  const result =
+    !cleaned || cleaned === '...' || cleaned === '…'
+      ? undefined
+      : truncate
+        ? truncateText(cleaned, 360)
+        : cleaned
+  if (cleanProgressTextCache.size >= CLEAN_PROGRESS_TEXT_CACHE_MAX) {
+    const oldest = cleanProgressTextCache.keys().next().value
+    if (oldest !== undefined) cleanProgressTextCache.delete(oldest)
+  }
+  cleanProgressTextCache.set(signature, result)
+  return result
 }
 
 function countLines(value: string): number {
@@ -959,7 +1160,45 @@ function CallMcpToolEasterEgg() {
   )
 }
 
-function getProgressNote(activity: ToolActivity): { title: string; body?: string } | null {
+const PROGRESS_NOTE_CACHE_MAX = 64
+const progressNoteCache = new Map<string, { title: string; body?: string } | null>()
+
+/** Body signature for getProgressNote caching across streaming re-renders. */
+export function progressNoteBodySignature(activity: ToolActivity): string {
+  const parameters = activity.parameters || {}
+  const fields = [
+    parameters.title,
+    parameters.topic,
+    activity.displayName,
+    parameters.strategic_intent,
+    parameters.intent,
+    parameters.summary,
+    parameters.message,
+    activity.resultSummary,
+    activity.outputPreview
+  ]
+  let totalLen = 0
+  let hash = 2166136261
+  for (const field of fields) {
+    if (typeof field !== 'string') continue
+    totalLen += field.length
+    for (let i = 0; i < field.length; i += 1) {
+      hash ^= field.charCodeAt(i)
+      hash = Math.imul(hash, 16777619)
+    }
+  }
+  return [
+    activity.id,
+    activity.category || '',
+    activity.toolName || '',
+    activity.status || '',
+    isThinkingTraceActivity(activity) ? 't' : 'n',
+    totalLen,
+    (hash >>> 0).toString(36)
+  ].join('|')
+}
+
+function computeProgressNote(activity: ToolActivity): { title: string; body?: string } | null {
   const isThinkingTrace = isThinkingTraceActivity(activity)
   if (activity.category !== 'task' && !isThinkingTrace) return null
   // 1.4.2 — todo_write / update_todo_list render as checklist cards.
@@ -991,6 +1230,28 @@ function getProgressNote(activity: ToolActivity): { title: string; body?: string
     title: title || 'Progress update',
     ...(body && body !== title ? { body } : {})
   }
+}
+
+function getProgressNote(activity: ToolActivity): { title: string; body?: string } | null {
+  const signature = progressNoteBodySignature(activity)
+  if (progressNoteCache.has(signature)) {
+    return progressNoteCache.get(signature) ?? null
+  }
+  const note = computeProgressNote(activity)
+  if (progressNoteCache.size >= PROGRESS_NOTE_CACHE_MAX) {
+    const oldest = progressNoteCache.keys().next().value
+    if (oldest !== undefined) progressNoteCache.delete(oldest)
+  }
+  progressNoteCache.set(signature, note)
+  return note
+}
+
+/** Test/helper: same object reference on cache hit for an unchanged body. */
+export function getProgressNoteCached(activity: ToolActivity): {
+  title: string
+  body?: string
+} | null {
+  return getProgressNote(activity)
 }
 
 function ToolCategoryIcon({ category }: { category?: string }) {
@@ -1987,7 +2248,7 @@ function ActivityCompactGroup({
               forceCompact
               provider={provider}
               participants={participants}
-              shimmerNow={shimmerNow}
+              isShimmerStale={isActivityShimmerStale(activity, shimmerNow)}
               onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
             />
           ))}
@@ -2497,6 +2758,60 @@ export function liveActivityRevision(activities: readonly ToolActivity[]): strin
   return `${activities.length}|${outputLen}|${(hash >>> 0).toString(36)}|${tail}`
 }
 
+/**
+ * Reuse key for a live viewport segment's children. When revision + disclosure
+ * bits are unchanged, ActivityStack keeps the previous ReactNode tree instead of
+ * remapping timeline items (thinking growth must not rebuild idle tool rows).
+ */
+export function liveSegmentChildrenReuseKey(args: {
+  revision: string
+  liveViewportExpanded: boolean
+  hiddenTimelineItemCount: number
+  /** Expanded ids, shimmer-stale bits, thinking-actions paint key, trim flag, etc. */
+  disclosure: string
+}): string {
+  return [
+    args.revision,
+    args.liveViewportExpanded ? '1' : '0',
+    String(args.hiddenTimelineItemCount),
+    args.disclosure
+  ].join('|')
+}
+
+/** Paint signature for memo(ActivityRow) — content that affects tool-row chrome. */
+export function activityRowPaintSignature(activity: ToolActivity): string {
+  const parameters = activity.parameters || {}
+  const output = activity.resultSummary || activity.outputPreview || ''
+  const paramHint = [
+    parameters.title,
+    parameters.topic,
+    parameters.command,
+    parameters.path,
+    parameters.file_path,
+    parameters.target,
+    parameters.query,
+    parameters.pattern
+  ]
+    .map((value) => (typeof value === 'string' ? `${value.length}:${hashProgressBody(value)}` : ''))
+    .join(',')
+  return [
+    activity.id,
+    activity.toolName || '',
+    activity.displayName || '',
+    activity.category || '',
+    activity.status || '',
+    activity.durationMs ?? '',
+    activity.endedAt || '',
+    activity.startedAt || '',
+    output.length,
+    hashProgressBody(output),
+    paramHint,
+    activity.diffSummary?.additions ?? '',
+    activity.diffSummary?.deletions ?? '',
+    activity.diffSummary?.files?.length ?? 0
+  ].join('|')
+}
+
 const COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT = 80
 
 export function ActivityStack({
@@ -2524,12 +2839,41 @@ export function ActivityStack({
   showDiffStats,
   thinkingTraceActions
 }: ActivityStackProps) {
-  // 1.0.4-AS1 — drive the shimmer/pulse staleness check. The
-  // returned `now` is consumed by InlineActivityRow via `Date.now()`
-  // at render time — the tick's role is purely to keep the parent
-  // re-rendering at a steady 15s cadence while any activity could
-  // still be in flight.
+  // 1.0.4-AS1 — drive the shimmer/pulse staleness check. The tick keeps
+  // the parent re-rendering at a steady 15s cadence while any activity
+  // could still be in flight; rows receive a boolean `isShimmerStale`
+  // so memo(ActivityRow) is not busted by a changing `now` number.
   const shimmerNow = useShimmerStaleTick(activities)
+  const segmentChildrenCacheRef = useRef(
+    new Map<string, { key: string; children: ReactNode }>()
+  )
+  const toggleExpandImplRef = useRef<(id: string, modKey: boolean) => void>(() => {})
+  const onToggleExpandByIdRef = useRef(new Map<string, (modKey: boolean) => void>())
+  const getOnToggleExpand = useCallback((id: string) => {
+    let handler = onToggleExpandByIdRef.current.get(id)
+    if (!handler) {
+      handler = (modKey: boolean) => toggleExpandImplRef.current(id, modKey)
+      onToggleExpandByIdRef.current.set(id, handler)
+    }
+    return handler
+  }, [])
+  const thinkingActionsPaintKey = thinkingTraceActionsDependencyKey(
+    thinkingTraceActions
+      ? {
+          messageId: thinkingTraceActions.messageId,
+          label: thinkingTraceActions.label,
+          copiedId: thinkingTraceActions.copiedId,
+          pinned: thinkingTraceActions.pinned,
+          thumbsVote: thinkingTraceActions.thumbsVote,
+          hasAddToPrompt: Boolean(thinkingTraceActions.onAddToPrompt),
+          hasTogglePin: Boolean(thinkingTraceActions.onTogglePin),
+          hasThumbsUp: Boolean(thinkingTraceActions.onThumbsUp),
+          hasThumbsDown: Boolean(thinkingTraceActions.onThumbsDown),
+          hasDelete: Boolean(thinkingTraceActions.onDelete),
+          hasOpenSideChat: Boolean(thinkingTraceActions.onOpenSideChat)
+        }
+      : null
+  )
   // 1.0.4 — ensemble participants are forwarded down to ActivityRow
   // so an `ensemble_yield(target: ...)` activity can render the target
   // as a provider-tinted `@<role>` chip. Memoised against the
@@ -2669,6 +3013,10 @@ export function ActivityStack({
   const hiddenTimelineItemCount = collapseCapActive
     ? timelineItems.length - COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
     : 0
+  const expandedIdsKey = useMemo(() => {
+    if (!expandedIds || expandedIds.size === 0) return ''
+    return Array.from(expandedIds).sort().join(',')
+  }, [expandedIds])
 
   if (!activities || activities.length === 0) return null
 
@@ -2678,7 +3026,7 @@ export function ActivityStack({
       .filter((activity): activity is ToolActivity => Boolean(activity))
   }
 
-  const toggleExpand = (id: string, modKey: boolean): void => {
+  toggleExpandImplRef.current = (id: string, modKey: boolean): void => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
       if (modKey && allowMultiOpen) {
@@ -2789,8 +3137,8 @@ export function ActivityStack({
         todoItems={mergedTodosByActivityId.get(item.activity.id)}
         forceCompact={compactDensity && !isThinkingTrace}
         isExpanded={expandedIds.has(item.activity.id)}
-        onToggleExpand={(modKey) => toggleExpand(item.activity.id, modKey)}
-        shimmerNow={shimmerNow}
+        onToggleExpand={getOnToggleExpand(item.activity.id)}
+        isShimmerStale={isActivityShimmerStale(item.activity, shimmerNow)}
         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
         thinkingTraceActions={thinkingTraceActions}
         liveThinkingTrim={liveViewportEnabled && liveActivityViewportActive}
@@ -2825,6 +3173,10 @@ export function ActivityStack({
   // tool result cannot swallow the model's reasoning trace. The child-agent
   // spawn header stays above because it is navigational chrome, not stream detail.
   if (liveViewportEnabled) {
+    const liveSegmentIds = new Set(timelineSegments.map((segment) => segment.id))
+    for (const cachedId of segmentChildrenCacheRef.current.keys()) {
+      if (!liveSegmentIds.has(cachedId)) segmentChildrenCacheRef.current.delete(cachedId)
+    }
     return (
       <div className="activity-timeline">
         {header}
@@ -2845,6 +3197,55 @@ export function ActivityStack({
           ]
             .filter(Boolean)
             .join(' ')
+          const revision = liveActivityRevision(segment.activities)
+          const shimmerDisclosure = segment.activities
+            .map((activity) =>
+              isActivityShimmerStale(activity, shimmerNow) ? `${activity.id}:1` : `${activity.id}:0`
+            )
+            .join(',')
+          const pinnedDisclosure =
+            index === 0
+              ? planLanes.length > 1
+                ? planLanes.map((lane) => `${lane.lane}:${lane.todos.length}`).join(',')
+                : `solo:${latestMergedTodos.length}`
+              : ''
+          const reuseKey = liveSegmentChildrenReuseKey({
+            revision,
+            liveViewportExpanded,
+            hiddenTimelineItemCount: index === 0 ? hiddenTimelineItemCount : 0,
+            disclosure: [
+              expandedIdsKey,
+              shimmerDisclosure,
+              thinkingActionsPaintKey,
+              liveActivityViewportActive ? '1' : '0',
+              compactDensity ? '1' : '0',
+              showDiffStats ? '1' : '0',
+              pinnedDisclosure
+            ].join('|')
+          })
+          const cached = segmentChildrenCacheRef.current.get(segment.id)
+          let segmentBody: ReactNode
+          if (cached && cached.key === reuseKey) {
+            segmentBody = cached.children
+          } else {
+            segmentBody = (
+              <>
+                {index === 0 && pinnedLiveContent}
+                <div className="activity-timeline-live-inner">
+                  {index === 0 && hiddenTimelineItemCount > 0 && (
+                    <div className="activity-timeline-live-truncated">
+                      {hiddenTimelineItemCount} earlier events hidden while collapsed.
+                    </div>
+                  )}
+                  {segment.items.map(renderTimelineItem)}
+                </div>
+              </>
+            )
+            segmentChildrenCacheRef.current.set(segment.id, {
+              key: reuseKey,
+              children: segmentBody
+            })
+          }
           return (
             <LiveActivityViewport
               key={segment.id}
@@ -2853,7 +3254,7 @@ export function ActivityStack({
                 activitiesHaveLiveWork(segment.activities) ||
                 (liveActivityViewportActive && activitiesHaveThinkingTrace(segment.activities))
               }
-              revision={liveActivityRevision(segment.activities)}
+              revision={revision}
               collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
               expanded={liveViewportExpanded}
               onExpandedChange={setLiveViewportExpanded}
@@ -2886,15 +3287,7 @@ export function ActivityStack({
                     : liveActivityViewportJumpLabel
               }
             >
-              {index === 0 && pinnedLiveContent}
-              <div className="activity-timeline-live-inner">
-                {index === 0 && hiddenTimelineItemCount > 0 && (
-                  <div className="activity-timeline-live-truncated">
-                    {hiddenTimelineItemCount} earlier events hidden while collapsed.
-                  </div>
-                )}
-                {segment.items.map(renderTimelineItem)}
-              </div>
+              {segmentBody}
             </LiveActivityViewport>
           )
         })}
@@ -3117,7 +3510,7 @@ function ChildAgentThreadCard({
                      * context provider would point at the OUTER chat,
                      * which is misleading for these inner rows. */
                     provider={thread.provider}
-                    shimmerNow={shimmerNow}
+                    isShimmerStale={isActivityShimmerStale(childActivity, shimmerNow ?? 0)}
                   />
                 ))}
               </div>
@@ -3138,22 +3531,7 @@ function ChildAgentThreadCard({
   )
 }
 
-function ActivityRow({
-  activity,
-  workspacePath,
-  forceCompact = false,
-  childThread,
-  childActivities,
-  provider,
-  participants,
-  todoItems,
-  isExpanded,
-  onToggleExpand,
-  shimmerNow,
-  onOpenFileChangeInWorkbench,
-  thinkingTraceActions,
-  liveThinkingTrim = false
-}: {
+type ActivityRowProps = {
   activity: ToolActivity
   workspacePath?: string
   forceCompact?: boolean
@@ -3184,10 +3562,131 @@ function ActivityRow({
    * these (e.g. ChildAgentThreadCard internal rows). */
   isExpanded?: boolean
   onToggleExpand?: (modKey: boolean) => void
-  shimmerNow?: number
+  /** Precomputed shimmer staleness — boolean so memo skips tick-only renders. */
+  isShimmerStale?: boolean
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
   thinkingTraceActions?: ThinkingTraceActionsConfig
+}
+
+function activityRowPropsAreEqual(prev: ActivityRowProps, next: ActivityRowProps): boolean {
+  if (prev.isExpanded !== next.isExpanded) return false
+  if (prev.isShimmerStale !== next.isShimmerStale) return false
+  if (prev.forceCompact !== next.forceCompact) return false
+  if (prev.liveThinkingTrim !== next.liveThinkingTrim) return false
+  if (prev.onToggleExpand !== next.onToggleExpand) return false
+  if (prev.thinkingTraceActions !== next.thinkingTraceActions) return false
+  if (prev.workspacePath !== next.workspacePath) return false
+  if (prev.provider !== next.provider) return false
+  if (prev.participants !== next.participants) return false
+  if (prev.todoItems !== next.todoItems) return false
+  if (prev.childThread !== next.childThread) return false
+  if (prev.childActivities !== next.childActivities) return false
+  if (prev.onOpenFileChangeInWorkbench !== next.onOpenFileChangeInWorkbench) return false
+  if (prev.activity === next.activity) return true
+  return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
+}
+
+/**
+ * Thinking / progress-note path — no diff-hover hooks. Keeps shimmer CSS and
+ * LiveActivityViewport chrome intact while skipping tool-row rebuild cost.
+ */
+const ThinkingTraceActivityRow = memo(function ThinkingTraceActivityRow({
+  activity,
+  provider,
+  thinkingTraceActions,
+  liveThinkingTrim = false,
+  progressNote,
+  childThread,
+  childActivities,
+  workspacePath,
+  shimmerNow
+}: {
+  activity: ToolActivity
+  provider?: ProviderId
+  thinkingTraceActions?: ThinkingTraceActionsConfig
+  liveThinkingTrim?: boolean
+  progressNote: { title: string; body?: string }
+  childThread?: ChildAgentThread
+  childActivities?: ToolActivity[]
+  workspacePath?: string
+  shimmerNow?: number
 }) {
+  return (
+    <>
+      <ActivityProgressNote
+        activity={activity}
+        provider={provider}
+        thinkingTraceActions={thinkingTraceActions}
+        liveThinkingTrim={liveThinkingTrim}
+        note={progressNote}
+      />
+      {childThread && (
+        <ChildAgentThreadCard
+          thread={childThread}
+          activities={childActivities || []}
+          workspacePath={workspacePath}
+          shimmerNow={shimmerNow}
+        />
+      )}
+    </>
+  )
+}, (prev, next) => {
+  if (prev.liveThinkingTrim !== next.liveThinkingTrim) return false
+  if (prev.thinkingTraceActions !== next.thinkingTraceActions) return false
+  if (prev.provider !== next.provider) return false
+  if (prev.progressNote !== next.progressNote) return false
+  if (prev.childThread !== next.childThread) return false
+  if (prev.childActivities !== next.childActivities) return false
+  if (prev.workspacePath !== next.workspacePath) return false
+  if (prev.activity === next.activity) return true
+  return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
+})
+
+function ActivityRow(props: ActivityRowProps) {
+  const {
+    activity,
+    forceCompact = false,
+    childThread,
+    childActivities,
+    provider,
+    thinkingTraceActions,
+    liveThinkingTrim = false,
+    workspacePath
+  } = props
+  const isThinkingTrace = isThinkingTraceActivity(activity)
+  const progressNote = getProgressNote(activity)
+  // Thinking traces (and other progress-note rows) skip tool-row hooks —
+  // no diff hover state, workbench memo, or sanitized-detail work.
+  if (progressNote && (!forceCompact || isThinkingTrace)) {
+    return (
+      <ThinkingTraceActivityRow
+        activity={activity}
+        provider={provider}
+        thinkingTraceActions={thinkingTraceActions}
+        liveThinkingTrim={liveThinkingTrim}
+        progressNote={progressNote}
+        childThread={childThread}
+        childActivities={childActivities}
+        workspacePath={workspacePath}
+      />
+    )
+  }
+  return <ToolActivityRow {...props} />
+}
+
+const ToolActivityRow = memo(function ToolActivityRow({
+  activity,
+  workspacePath,
+  childThread,
+  childActivities,
+  provider,
+  participants,
+  todoItems,
+  isExpanded,
+  onToggleExpand,
+  isShimmerStale = false,
+  onOpenFileChangeInWorkbench
+}: ActivityRowProps) {
   // Phase L5 slice 3 — when the parent passes `isExpanded` +
   // `onToggleExpand`, use them (the parent coordinates single-open
   // mode + the master toggle). Otherwise fall back to local state
@@ -3365,14 +3864,10 @@ function ActivityRow({
   // transcript reads as a uniform vertical list at one text scale.
   const isInlineActivity = true
   const canExpand = hasExpandableDetail(activity, renderInputs)
-  // 1.0.4-AS1 — derive shimmer/pulse staleness from the parent tick
-  // while any activity might still be in flight (`useShimmerStaleTick`).
-  // Stale activities keep their original
-  // `data-status` so the icon / category UX doesn't suddenly assert
-  // success or error we can't confirm; the CSS rules for the
-  // shimmer + pulse animations are the only thing that changes,
-  // gated by `data-stale="true"`.
-  const isShimmerStale = isActivityShimmerStale(activity, shimmerNow ?? 0)
+  // 1.0.4-AS1 — shimmer/pulse staleness is precomputed by the parent
+  // (`useShimmerStaleTick` → boolean prop) so memo skips tick-only
+  // re-renders. Stale activities keep their original `data-status`;
+  // CSS shimmer + pulse are gated by `data-stale="true"`.
   const showInlinePulse =
     (activity.status === 'running' || activity.status === 'pending') && !isShimmerStale
   // Phase L3 slice 4 — stamp animation on status transition. When a
@@ -3383,28 +3878,6 @@ function ActivityRow({
   // `activity-icon-pulse` keyframe in main.css for the running
   // state). If a future surface wants the celebration animation,
   // hang it on `.activity-category-icon` instead.
-  const progressNote = getProgressNote(activity)
-  if (progressNote && (!forceCompact || isThinkingTraceActivity(activity))) {
-    return (
-      <>
-        <ActivityProgressNote
-          activity={activity}
-          provider={provider}
-          thinkingTraceActions={thinkingTraceActions}
-          liveThinkingTrim={liveThinkingTrim}
-          note={progressNote}
-        />
-        {childThread && (
-          <ChildAgentThreadCard
-            thread={childThread}
-            activities={childActivities || []}
-            workspacePath={workspacePath}
-            shimmerNow={shimmerNow}
-          />
-        )}
-      </>
-    )
-  }
 
   // Phase L5 slice 3 — toggle path forwards the click's mod-key
   // state so the parent's single-open coordinator can distinguish
@@ -3680,7 +4153,6 @@ function ActivityRow({
           thread={childThread}
           activities={childActivities || []}
           workspacePath={workspacePath}
-          shimmerNow={shimmerNow}
         />
       )}
       <DiffHoverPreviewOverlay
@@ -3692,4 +4164,4 @@ function ActivityRow({
       />
     </>
   )
-}
+}, activityRowPropsAreEqual)

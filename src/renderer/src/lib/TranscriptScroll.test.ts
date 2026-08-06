@@ -34,6 +34,7 @@ import {
   shouldShowJumpToLatestPill,
   shouldTreatUnclassifiedNativeScrollAsUserScrollAway,
   buildCodeBlockResizeEventInit,
+  createFollowPinScheduler,
   CODE_BLOCK_RESIZE_EVENT
 } from './TranscriptScroll'
 
@@ -1600,12 +1601,76 @@ describe('TranscriptScroll', () => {
     })
   })
 
+  describe('createFollowPinScheduler', () => {
+    it('coalesces multiple schedule() calls into one apply per frame', () => {
+      const apply = vi.fn()
+      const callbacks: FrameRequestCallback[] = []
+      const scheduler = createFollowPinScheduler({
+        apply,
+        requestAnimationFrame: (cb) => {
+          callbacks.push(cb)
+          return callbacks.length
+        },
+        cancelAnimationFrame: vi.fn()
+      })
+
+      scheduler.schedule()
+      scheduler.schedule()
+      scheduler.schedule()
+      expect(callbacks).toHaveLength(1)
+      expect(apply).not.toHaveBeenCalled()
+
+      callbacks[0]?.(16)
+      expect(apply).toHaveBeenCalledTimes(1)
+      expect(scheduler.isPending()).toBe(false)
+    })
+
+    it('pinNowAndScheduleTrailing applies sync then schedules one trailing frame', () => {
+      const apply = vi.fn()
+      const callbacks: FrameRequestCallback[] = []
+      const scheduler = createFollowPinScheduler({
+        apply,
+        requestAnimationFrame: (cb) => {
+          callbacks.push(cb)
+          return callbacks.length
+        },
+        cancelAnimationFrame: vi.fn()
+      })
+
+      scheduler.pinNowAndScheduleTrailing()
+      expect(apply).toHaveBeenCalledTimes(1)
+      expect(callbacks).toHaveLength(1)
+
+      // Further schedule requests share the trailing slot.
+      scheduler.schedule()
+      expect(callbacks).toHaveLength(1)
+
+      callbacks[0]?.(32)
+      expect(apply).toHaveBeenCalledTimes(2)
+    })
+
+    it('cancel drops a pending coalesced frame', () => {
+      const apply = vi.fn()
+      const cancelAnimationFrame = vi.fn()
+      const scheduler = createFollowPinScheduler({
+        apply,
+        requestAnimationFrame: () => 99,
+        cancelAnimationFrame
+      })
+
+      scheduler.schedule()
+      expect(scheduler.isPending()).toBe(true)
+      scheduler.cancel()
+      expect(scheduler.isPending()).toBe(false)
+      expect(cancelAnimationFrame).toHaveBeenCalledWith(99)
+      expect(apply).not.toHaveBeenCalled()
+    })
+  })
+
   describe('buildCodeBlockResizeEventInit', () => {
     it('exposes a stable event name constant', () => {
-      // The renderer code path and the App.tsx listener look up this
-      // name independently; locking the literal here means a typo on
-      // either side trips a test rather than silently breaking
-      // re-pin.
+      // Historical event name — Phase E retired the outer scroller listener,
+      // but residual emitters / tests still lock the literal.
       expect(CODE_BLOCK_RESIZE_EVENT).toBe('taskwraith:code-block-resized')
     })
 

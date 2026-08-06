@@ -2,12 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { MutableRefObject, RefObject } from 'react'
 
 import {
-  CODE_BLOCK_RESIZE_EVENT,
   LIVE_EDGE_PROXIMITY_PX,
   STICK_ENGAGE_PX,
   advanceExternalRestoreLifecycle,
   captureChatScrollState,
   countJumpToLatestCountableMessages,
+  createFollowPinScheduler,
   expectedBottomScrollTop,
   hasExplicitTranscriptScrollAwayIntent,
   hasRecentTranscriptDownwardIntent,
@@ -18,10 +18,8 @@ import {
   resolveTranscriptChatSwitchPlan,
   shouldAbortAutoFollowSnap,
   shouldReengageAutoFollowAfterScroll,
-  shouldRepinAfterCodeBlockResize,
   shouldRepinAfterFrame,
   shouldRepinAfterScrollEvaluation,
-  shouldRepinAfterTranscriptResize,
   shouldRecordScrollbarDownwardIntent,
   shouldClearScrollbarDownwardIntent,
   shouldShowJumpToLatestPill,
@@ -129,7 +127,16 @@ export function useTranscriptScrollState({
   // scrollTop actually moves downward. The normal 400ms timestamp window gives
   // the final scroll event a short grace after pointerup.
   const scrollbarPointerActiveRef = useRef(false)
-  const repinRafIdRef = useRef<number | null>(null)
+  // Phase E — single outer follow-pin owner. Messages-layout trailing re-pin,
+  // content ResizeObserver, and scroll-evaluate gap-close share one rAF slot.
+  const followPinApplyRef = useRef<() => void>(() => {})
+  const followPinSchedulerRef = useRef<ReturnType<typeof createFollowPinScheduler> | null>(null)
+  if (followPinSchedulerRef.current === null) {
+    followPinSchedulerRef.current = createFollowPinScheduler({
+      apply: () => followPinApplyRef.current()
+    })
+  }
+  const followPinScheduler = followPinSchedulerRef.current
   const lastTranscriptScrollTopRef = useRef(0)
   // Updated for every native `scroll` event (not just the coalesced rAF) so a
   // scrollbar drag that reverses within one frame clears its downward voucher.
@@ -455,6 +462,27 @@ export function useTranscriptScrollState({
     [clearProgrammaticScrollTarget, setAutoFollow]
   )
 
+  // Sole gated writer for coalesced follow pins. Callers request via
+  // `followPinScheduler` rather than snapping from each geometry seam.
+  // Proximity sync runs even when follow is off so content growth below a
+  // stationary reader still flips the jump-pill away-gate.
+  followPinApplyRef.current = () => {
+    const node = transcriptScrollRef.current
+    if (!node) return
+    syncLiveEdgeProximity(node)
+    if (disengageIfLiveScrollShowsUserAway(node)) return
+    if (
+      !shouldRepinAfterFrame({
+        autoFollow: autoFollowRef.current,
+        userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current
+      })
+    ) {
+      return
+    }
+    snapScrollToBottom(node)
+    syncLiveEdgeProximity(node)
+  }
+
   const beginManualTranscriptJump = useCallback(() => {
     cancelPendingExternalRestore()
     setAutoFollow(false)
@@ -462,11 +490,8 @@ export function useTranscriptScrollState({
     jumpInFlightRef.current = false
     clearProgrammaticScrollTarget()
     pendingTranscriptJumpChatIdRef.current = null
-    if (repinRafIdRef.current !== null) {
-      cancelAnimationFrame(repinRafIdRef.current)
-      repinRafIdRef.current = null
-    }
-  }, [cancelPendingExternalRestore, clearProgrammaticScrollTarget, setAutoFollow])
+    followPinScheduler.cancel()
+  }, [cancelPendingExternalRestore, clearProgrammaticScrollTarget, followPinScheduler, setAutoFollow])
 
   const prepareMessageJump = useCallback((targetChatId: string) => {
     cancelPendingExternalRestore()
@@ -565,9 +590,12 @@ export function useTranscriptScrollState({
         })
       ) {
         // Layout clamps and subsequent tail growth can leave a pinned viewport
-        // behind without any user gesture. Preserve app ownership and close
-        // that gap; explicit input handlers have already disabled follow.
-        snapScrollToBottom(scroller)
+        // behind without any user gesture. Prefer a pending coalesced pin
+        // (layout trailing / content RO); otherwise flush now — evaluate
+        // already runs inside its own rAF, so deferring would add a frame.
+        if (!followPinScheduler.isPending()) {
+          followPinApplyRef.current()
+        }
       }
       lastTranscriptScrollTopRef.current = nextScrollTop
     }
@@ -649,6 +677,7 @@ export function useTranscriptScrollState({
   }, [
     chatId,
     clearProgrammaticScrollTarget,
+    followPinScheduler,
     setAutoFollow,
     snapScrollToBottom,
     syncLiveEdgeProximity,
@@ -786,86 +815,22 @@ export function useTranscriptScrollState({
   useEffect(() => {
     if (!transcriptMounted) return
     const scroller = transcriptScrollRef.current
-    if (!scroller) return
-
-    let rafId: number | null = null
-    const onCodeBlockResize = () => {
-      if (rafId !== null) return
-      rafId = requestAnimationFrame(() => {
-        rafId = null
-        const node = transcriptScrollRef.current
-        if (!node) return
-        syncLiveEdgeProximity(node)
-        if (disengageIfLiveScrollShowsUserAway(node)) return
-        if (
-          !shouldRepinAfterCodeBlockResize({
-            autoFollow: autoFollowRef.current,
-            userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current
-          })
-        ) {
-          return
-        }
-        snapScrollToBottom(node)
-      })
-    }
-
-    scroller.addEventListener(CODE_BLOCK_RESIZE_EVENT, onCodeBlockResize)
-    return () => {
-      scroller.removeEventListener(CODE_BLOCK_RESIZE_EVENT, onCodeBlockResize)
-      if (rafId !== null) cancelAnimationFrame(rafId)
-    }
-  }, [
-    chatId,
-    disengageIfLiveScrollShowsUserAway,
-    snapScrollToBottom,
-    syncLiveEdgeProximity,
-    transcriptMounted
-  ])
-
-  useEffect(() => {
-    if (!transcriptMounted) return
-    const scroller = transcriptScrollRef.current
     const content = transcriptContentRef.current
     if (!scroller || !content) return
     if (typeof ResizeObserver === 'undefined') return
 
-    let rafId: number | null = null
+    // Phase E — content RO is the sole geometry growth observer for the outer
+    // transcript (code-block resize events retired). Pins and proximity sync
+    // share the coalesced follow-pin slot with layout trailing / evaluate.
     const observer = new ResizeObserver(() => {
-      if (rafId !== null) return
-      rafId = requestAnimationFrame(() => {
-        rafId = null
-        const node = transcriptScrollRef.current
-        if (!node) return
-        // Streamed growth below a stationary reader arrives here (no scroll
-        // event fires for them) — this sync is what flips the pill's
-        // proximity gate on when real content extends past the band, and off
-        // again when a shrink clamp lands them back at the tail.
-        syncLiveEdgeProximity(node)
-        if (disengageIfLiveScrollShowsUserAway(node)) return
-        if (
-          !shouldRepinAfterTranscriptResize({
-            autoFollow: autoFollowRef.current,
-            userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current
-          })
-        ) {
-          return
-        }
-        snapScrollToBottom(node)
-      })
+      followPinScheduler.schedule()
     })
 
     observer.observe(content)
     return () => {
       observer.disconnect()
-      if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [
-    chatId,
-    disengageIfLiveScrollShowsUserAway,
-    snapScrollToBottom,
-    syncLiveEdgeProximity,
-    transcriptMounted
-  ])
+  }, [chatId, followPinScheduler, transcriptMounted])
 
   useLayoutEffect(() => {
     // Both the baseline and the delta count only conversational messages
@@ -916,36 +881,19 @@ export function useTranscriptScrollState({
       return
     }
     userScrolledAwayInFrameRef.current = false
-    snapScrollToBottom(scroller)
-    syncLiveEdgeProximity(scroller)
-    repinRafIdRef.current = requestAnimationFrame(() => {
-      repinRafIdRef.current = null
-      const node = transcriptScrollRef.current
-      if (!node) return
-      if (disengageIfLiveScrollShowsUserAway(node)) return
-      if (
-        !shouldRepinAfterFrame({
-          autoFollow: autoFollowRef.current,
-          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current
-        })
-      ) {
-        return
-      }
-      snapScrollToBottom(node)
-      syncLiveEdgeProximity(node)
-    })
+    // Pre-paint pin + one coalesced trailing rAF (shared with content RO /
+    // evaluate gap-close). `snapScrollToBottom` remains the only scrollTop
+    // write API; the scheduler owns when follow-mode seams may call it.
+    followPinScheduler.pinNowAndScheduleTrailing()
     return () => {
-      if (repinRafIdRef.current !== null) {
-        cancelAnimationFrame(repinRafIdRef.current)
-        repinRafIdRef.current = null
-      }
+      followPinScheduler.cancel()
     }
   }, [
     chatId,
     disengageIfLiveScrollShowsUserAway,
+    followPinScheduler,
     messages,
     runCompleteNotice,
-    snapScrollToBottom,
     syncLiveEdgeProximity
   ])
 

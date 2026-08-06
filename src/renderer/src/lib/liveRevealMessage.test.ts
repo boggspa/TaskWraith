@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
 import {
+  isLiveFanoutMessageCandidate,
   isLiveRevealMessageCandidate,
   isLiveToolMessageCandidate,
+  resolveLiveFanoutMessageIds,
+  resolveLiveMeasurementMessageIds,
   resolveLiveRevealMessageId,
-  resolveLiveToolMessageId
+  resolveLiveToolMessageId,
+  resolveLiveToolMessageIds
 } from './liveRevealMessage'
 
 function msg(overrides: Partial<ChatMessage> & { id: string }): ChatMessage {
@@ -120,5 +124,82 @@ describe('liveRevealMessage', () => {
         'new'
       )
     ).toBe(false)
+  })
+
+  it('includes non-tail running tool stacks in the multi-live tool set', () => {
+    const messages = [
+      msg({
+        id: 'tool-running',
+        role: 'tool',
+        runId: 'run-1',
+        toolActivities: [{ id: 't1', status: 'running' } as any]
+      }),
+      msg({ id: 'status', role: 'system', runId: 'run-1', content: 'note' })
+    ]
+
+    expect(
+      resolveLiveToolMessageId(messages, { revealChatIsRunning: true, revealRunId: 'run-1' })
+    ).toBeNull()
+    expect(
+      resolveLiveToolMessageIds(messages, { revealChatIsRunning: true, revealRunId: 'run-1' })
+    ).toEqual(['tool-running'])
+  })
+
+  it('marks working fan-out lanes as live even when a later message sits below them', () => {
+    const messages = [
+      msg({
+        id: 'fan-a',
+        role: 'assistant',
+        runId: 'run-1',
+        content: 'lane a',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleLaneId: 'lane-a',
+          ensembleParticipantId: 'p-a'
+        }
+      }),
+      msg({
+        id: 'fan-b',
+        role: 'assistant',
+        runId: 'run-1',
+        content: 'lane b',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleLaneId: 'lane-b',
+          ensembleParticipantId: 'p-b'
+        }
+      }),
+      msg({ id: 'boss', role: 'assistant', runId: 'run-1', content: 'synthesizing' })
+    ]
+
+    expect(isLiveFanoutMessageCandidate(messages[0], 'run-1')).toBe(true)
+    expect(isLiveFanoutMessageCandidate(messages[2], 'run-1')).toBe(false)
+    expect(
+      resolveLiveFanoutMessageIds(messages, {
+        revealChatIsRunning: true,
+        revealRunId: 'run-1',
+        workingFanoutParticipantIds: new Set(['p-a', 'p-b'])
+      })
+    ).toEqual(['fan-a', 'fan-b'])
+
+    expect(
+      resolveLiveMeasurementMessageIds(messages, {
+        revealEnabled: true,
+        revealChatIsRunning: true,
+        revealRunId: 'run-1',
+        workingFanoutParticipantIds: new Set(['p-a'])
+      })
+    ).toEqual(['boss', 'fan-a'])
+  })
+
+  it('returns no measurement live ids when the chat is not running', () => {
+    expect(
+      resolveLiveMeasurementMessageIds([msg({ id: 'a', role: 'assistant', runId: 'run-1' })], {
+        revealEnabled: true,
+        revealChatIsRunning: false,
+        revealRunId: 'run-1',
+        workingFanoutParticipantIds: new Set(['p-a'])
+      })
+    ).toEqual([])
   })
 })

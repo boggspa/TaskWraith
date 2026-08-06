@@ -15,7 +15,9 @@ import {
   estimatedHeightFor,
   projectRows,
   measurementKey,
+  isActiveLiveRowKey,
   measurementContentVersion,
+  structuralRowSetKey,
   getRowHeight,
   geometryKey,
   ACTIVITY_OUTPUT_ESTIMATE_CHAR_CAP,
@@ -157,9 +159,7 @@ describe('TranscriptVirtualWindow', () => {
 
   describe('contentVersion', () => {
     it('encodes role initial + content length for text rows', () => {
-      expect(contentVersion(msg({ id: 'a', role: 'assistant', content: 'hello' }))).toMatch(
-        /^a:5:/
-      )
+      expect(contentVersion(msg({ id: 'a', role: 'assistant', content: 'hello' }))).toMatch(/^a:5:/)
       expect(contentVersion(msg({ id: 'u', role: 'user', content: 'hi' }))).toMatch(/^u:2:/)
     })
 
@@ -434,6 +434,36 @@ describe('TranscriptVirtualWindow', () => {
     })
   })
 
+  describe('structuralRowSetKey', () => {
+    it('stays equal across content-only rewrites of the same rowKeys', () => {
+      const before = projectRows([
+        msg({ id: 'u', role: 'user', content: 'hi' }),
+        msg({ id: 'a', role: 'assistant', content: 'hel' })
+      ])
+      const after = projectRows([
+        msg({ id: 'u', role: 'user', content: 'hi' }),
+        msg({ id: 'a', role: 'assistant', content: 'hello world' })
+      ])
+      expect(structuralRowSetKey(before)).toBe(structuralRowSetKey(after))
+      expect(before[1].contentVersion).not.toBe(after[1].contentVersion)
+    })
+
+    it('changes when a row is appended or a rowKey changes', () => {
+      const two = projectRows([
+        msg({ id: 'u', role: 'user', content: 'hi' }),
+        msg({ id: 'a', role: 'assistant', content: 'ok' })
+      ])
+      const three = projectRows([
+        msg({ id: 'u', role: 'user', content: 'hi' }),
+        msg({ id: 'a', role: 'assistant', content: 'ok' }),
+        msg({ id: 'sys', role: 'system', content: 'note' })
+      ])
+      expect(structuralRowSetKey(two)).not.toBe(structuralRowSetKey(three))
+      expect(structuralRowSetKey([])).toBe('0:')
+      expect(structuralRowSetKey(null)).toBe('0:')
+    })
+  })
+
   describe('measurementContentVersion', () => {
     it('uses a stable live key for the active assistant row', () => {
       const row = projectRows([msg({ id: 'a', role: 'assistant', content: 'hello' })])[0]
@@ -458,9 +488,51 @@ describe('TranscriptVirtualWindow', () => {
       expect(measurementContentVersion(row, row.rowKey)).toBe('tool:live')
     })
 
+    it('freezes multiple concurrent live rows via a Set', () => {
+      const rows = projectRows([
+        msg({
+          id: 'tool',
+          role: 'tool',
+          toolActivities: [
+            activity({
+              id: 't1',
+              toolName: 'shell',
+              status: 'running',
+              resultSummary: 'partial'
+            })
+          ]
+        }),
+        msg({ id: 'a', role: 'assistant', content: 'streaming' })
+      ])
+      const live = new Set([rows[0].rowKey, rows[1].rowKey])
+      expect(measurementContentVersion(rows[0], live)).toBe('tool:live')
+      expect(measurementContentVersion(rows[1], live)).toBe('assistant:live')
+      expect(isActiveLiveRowKey(rows[0].rowKey, live)).toBe(true)
+      expect(isActiveLiveRowKey('missing#9', live)).toBe(false)
+    })
+
+    it('uses a stable live key for an active fanoutResult row', () => {
+      const row = projectRows([
+        msg({
+          id: 'fan',
+          role: 'assistant',
+          content: 'lane output',
+          metadata: {
+            kind: 'ensembleParticipant',
+            ensembleLaneId: 'lane-1',
+            ensembleParticipantId: 'p1'
+          }
+        })
+      ])[0]
+      expect(row.rowType).toBe('fanoutResult')
+      expect(measurementContentVersion(row, row.rowKey)).toBe('fanoutResult:live')
+      expect(measurementContentVersion(row, new Set([row.rowKey]))).toBe('fanoutResult:live')
+    })
+
     it('leaves non-active rows on their content version', () => {
       const row = projectRows([msg({ id: 'a', role: 'assistant', content: 'hello' })])[0]
       expect(measurementContentVersion(row, 'other#0')).toBe(row.contentVersion)
+      expect(measurementContentVersion(row, new Set(['other#0']))).toBe(row.contentVersion)
     })
 
     it('does not live-key non-assistant rows', () => {
@@ -854,9 +926,7 @@ describe('activity output estimate cap (long-thinking phantom height)', () => {
     const one = projectRows([
       msg({ id: 'm1', role: 'tool', content: '', toolActivities: many.slice(0, 1) })
     ])[0]
-    const ten = projectRows([
-      msg({ id: 'm2', role: 'tool', content: '', toolActivities: many })
-    ])[0]
+    const ten = projectRows([msg({ id: 'm2', role: 'tool', content: '', toolActivities: many })])[0]
     expect(ten.estimatedHeight).toBeGreaterThan(one.estimatedHeight)
   })
 })

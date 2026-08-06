@@ -25,12 +25,19 @@
  *      content only while it was already at the live edge. Once the
  *      user scrolls away, no new message should pull them down until
  *      they return to the bottom.
- *   2. After every snap-to-bottom write, schedule one extra rAF re-pin
- *      so late-mount layout growth/shrink (CodeMirror, ActivityStack
- *      collapse) can settle and we re-anchor the visible bottom. The
- *      re-pin is gated on `autoFollow` _and_ a flag that goes false the
- *      moment we observe a real user-initiated upward scroll, so the
- *      compensation pass never fights a deliberate scroll-up.
+ *   2. After a layout snap-to-bottom write, schedule one extra rAF re-pin
+ *      so late-mount layout growth/shrink (ActivityStack collapse, etc.)
+ *      can settle and we re-anchor the visible bottom. The re-pin is
+ *      gated on `autoFollow` _and_ a flag that goes false the moment we
+ *      observe a real user-initiated upward scroll, so the compensation
+ *      pass never fights a deliberate scroll-up.
+ *
+ * Phase E — outer transcript pin ownership is a single coalesced path
+ * (`createFollowPinScheduler`): messages-layout trailing re-pin, content
+ * ResizeObserver, and scroll-evaluate gap-close share one rAF slot so
+ * follow mode writes `scrollTop` at most once per frame after the
+ * pre-paint layout snap. Nested LiveActivityViewport pinning stays
+ * independent.
  */
 
 /**
@@ -759,17 +766,18 @@ export function shouldSnapAfterChatSwitch(input: {
  * Historical DOM event name for per-code-block late resize (CodeMirror
  * async measure). Phase C replaced transcript code blocks with a static
  * Lezer `<pre>`, which has correct height on first layout, so
- * `HighlightedCodeBlock` no longer dispatches this. The constant and
- * scroller listener remain as a no-op-safe path for older builds / any
- * residual emitter; wrap-toggle height is covered by the content-level
- * transcript ResizeObserver instead.
+ * `HighlightedCodeBlock` no longer dispatches this. Phase E retired the
+ * outer scroller listener — wrap-toggle / late growth is covered by the
+ * content-level transcript ResizeObserver feeding the coalesced follow
+ * pin scheduler. The constant and helpers remain for tests and any
+ * residual emitter that must not crash.
  */
 export const CODE_BLOCK_RESIZE_EVENT = 'taskwraith:code-block-resized'
 
 /**
- * Payload shape carried on a `CODE_BLOCK_RESIZE_EVENT`. The receiver
- * uses the `width`/`height` fields only for diagnostics; the actual
- * re-pin decision is driven by `shouldRepinAfterCodeBlockResize`.
+ * Payload shape carried on a `CODE_BLOCK_RESIZE_EVENT`. Retained for
+ * event-shape lockstep with historical emitters; Phase E does not pin
+ * from this event on the outer transcript scroller.
  */
 export interface CodeBlockResizeDetail {
   /** Pixel width of the resized block at the time the entry fired. */
@@ -780,8 +788,8 @@ export interface CodeBlockResizeDetail {
 
 /**
  * Build the `CustomEventInit` for a code-block resize dispatch. Retained
- * for the no-op-safe `CODE_BLOCK_RESIZE_EVENT` path and asserted by
- * tests so the event shape stays in lockstep with the scroller listener.
+ * for tests / residual emitters so the event shape stays stable even
+ * though the outer transcript listener was retired in Phase E.
  *
  * Defensive against malformed `ResizeObserverEntry` inputs (jsdom and
  * some embedded browsers don't expose `contentRect`).
@@ -803,16 +811,69 @@ export function buildCodeBlockResizeEventInit(
 
 /**
  * Decide whether a code-block-resize event should trigger a re-pin.
- * Same guarding rules as `shouldRepinAfterFrame` — never fight a
- * deliberate scroll-up, never re-pin when auto-follow is already
- * disengaged. Kept as its own helper so the test surface stays
- * symmetrical with the frame-based re-pin.
+ * Same guarding rules as `shouldRepinAfterFrame`. Kept for API/test
+ * symmetry; the outer transcript no longer listens for the event.
  */
 export function shouldRepinAfterCodeBlockResize(input: {
   autoFollow: boolean
   userScrolledAwayInThisFrame: boolean
 }): boolean {
   return shouldRepinAfterFrame(input)
+}
+
+/**
+ * Coalesce follow-mode pin requests onto a single rAF write.
+ *
+ * Phase E — the outer transcript has several seams that want to pin
+ * while following (messages-layout trailing re-pin, content ResizeObserver,
+ * scroll-evaluate gap-close). Without a shared slot each schedules its
+ * own frame and streaming growth can write `scrollTop` multiple times
+ * per paint. Nested LiveActivityViewport scrollers keep their own owner.
+ */
+export function createFollowPinScheduler(input: {
+  apply: () => void
+  requestAnimationFrame?: (callback: FrameRequestCallback) => number
+  cancelAnimationFrame?: (handle: number) => void
+}): {
+  /** Schedule `apply` on the next animation frame; duplicate calls coalesce. */
+  schedule: () => void
+  /**
+   * Apply once now (pre-paint layout path), then ensure exactly one
+   * trailing coalesced rAF re-pin is pending for late measure.
+   */
+  pinNowAndScheduleTrailing: () => void
+  /** Drop any pending coalesced frame (manual jump / unmount). */
+  cancel: () => void
+  /** Test seam: whether a coalesced frame is waiting. */
+  isPending: () => boolean
+} {
+  let rafId: number | null = null
+
+  const schedule = (): void => {
+    if (rafId !== null) return
+    // Resolve rAF lazily so constructing the scheduler in non-DOM test
+    // harnesses does not require a global animation-frame polyfill.
+    const raf = input.requestAnimationFrame ?? requestAnimationFrame
+    rafId = raf(() => {
+      rafId = null
+      input.apply()
+    })
+  }
+
+  return {
+    schedule,
+    pinNowAndScheduleTrailing: () => {
+      input.apply()
+      schedule()
+    },
+    cancel: () => {
+      if (rafId === null) return
+      const caf = input.cancelAnimationFrame ?? cancelAnimationFrame
+      caf(rafId)
+      rafId = null
+    },
+    isPending: () => rafId !== null
+  }
 }
 
 /**
@@ -857,10 +918,10 @@ export function shouldRepinAfterCodeBlockResize(input: {
  *     keeps us idempotent: when at the bottom and auto-follow is
  *     engaged, `scrollTop = scrollHeight` is a no-op.
  *
- * Same delegation pattern as `shouldRepinAfterCodeBlockResize` so the
- * three re-pin paths (messages-update frame, code-block resize,
- * transcript-content resize) all share one truth source for the
- * scroll-away / auto-follow guards.
+ * Same delegation pattern as `shouldRepinAfterCodeBlockResize` so gate
+ * helpers share one truth source for scroll-away / auto-follow. Phase E
+ * routes content-resize pins through `createFollowPinScheduler` +
+ * `shouldRepinAfterFrame` rather than a separate listener path.
  */
 export function shouldRepinAfterTranscriptResize(input: {
   autoFollow: boolean

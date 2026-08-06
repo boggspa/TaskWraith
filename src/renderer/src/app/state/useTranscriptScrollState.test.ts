@@ -101,7 +101,9 @@ describe('useTranscriptScrollState', () => {
     })
 
     // A stale ref must not bind while the welcome transcript is absent.
-    for (const effectIndex of [0, 2, 3, 4, 5]) {
+    // Effect indices after Phase E: 0 scroll, 1 programmatic-clear, 2 intent,
+    // 3 content ResizeObserver, 4 chat-switch (code-block resize listener retired).
+    for (const effectIndex of [0, 2, 3, 4]) {
       hookHarness.effectFactories[effectIndex]?.()
       expect(hookHarness.effectDependencies[effectIndex]).toContain(false)
     }
@@ -119,7 +121,7 @@ describe('useTranscriptScrollState', () => {
       transcriptContentRef: { current: hookHarness.scroller as HTMLDivElement }
     })
 
-    for (const effectIndex of [0, 2, 3, 4, 5]) {
+    for (const effectIndex of [0, 2, 3, 4]) {
       expect(hookHarness.effectDependencies[effectIndex]).toContain(true)
     }
     hookHarness.effectFactories[0]?.()
@@ -127,6 +129,10 @@ describe('useTranscriptScrollState', () => {
     expect(hookHarness.listeners.has('scroll')).toBe(true)
     expect(hookHarness.listeners.has('wheel')).toBe(true)
     expect(hookHarness.windowListeners.has('keydown')).toBe(true)
+    // Phase E: outer CODE_BLOCK_RESIZE_EVENT listener is retired.
+    expect(
+      [...hookHarness.listeners.keys()].some((name) => name.includes('code-block'))
+    ).toBe(false)
   })
 
   it('publishes document-root PageUp intent when transcript prose owns the visible scroll', () => {

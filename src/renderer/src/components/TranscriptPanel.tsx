@@ -71,7 +71,9 @@ import {
   geometryKey,
   getRowHeight,
   measurementKey,
+  isActiveLiveRowKey,
   measurementContentVersion,
+  structuralRowSetKey,
   widthBucket,
   type VirtualRow,
   type VirtualWindow
@@ -91,7 +93,10 @@ import {
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
 } from '../lib/transcriptRowRenderCache'
-import { resolveLiveRevealMessageId, resolveLiveToolMessageId } from '../lib/liveRevealMessage'
+import {
+  resolveLiveMeasurementMessageIds,
+  resolveLiveRevealMessageId
+} from '../lib/liveRevealMessage'
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
@@ -126,7 +131,12 @@ import {
   transcriptPanelPropsEqual,
   transcriptRunningChatIdsSignature
 } from '../lib/transcriptPanelMemoProps'
-import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
+import {
+  ActivityStack,
+  stabilizeThinkingTraceActions,
+  type ThinkingTraceActionsConfig,
+  type ThinkingTraceActionsStabilizeCache
+} from './ActivityStack'
 import {
   CollapsedActivityStackRow,
   CollapsedStackIconStrip,
@@ -774,6 +784,7 @@ function prefersReducedMotionNow(): boolean {
 const EMPTY_ACTIVITY_EXPANSION: Set<string> = new Set()
 /** Stable empty set so the no-one-working case never remounts a card's rim. */
 const EMPTY_WORKING_LANE_IDS: ReadonlySet<string> = new Set<string>()
+const EMPTY_LIVE_ROW_KEYS: ReadonlySet<string> = new Set<string>()
 
 function escapeDomSelectorValue(value: string): string {
   return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
@@ -1379,7 +1390,11 @@ function useTranscriptVirtualization(params: {
   onProgrammaticScrollWrite?: (landedScrollTop: number) => void
   compactDensity: boolean
   forcedRowIndex?: number | null
-  activeLiveRowKey?: string | null
+  /**
+   * RowKeys currently streaming (assistant / tool / fan-out). Measurement
+   * keys freeze to `*:live` for every member — not only the list-tail row.
+   */
+  activeLiveRowKeys?: ReadonlySet<string> | null
   /**
    * 1.0.6-TV2 — row ids whose tool stack currently has something
    * expanded. Folded into the measurement-cache key (the geometry bit)
@@ -1428,7 +1443,7 @@ function useTranscriptVirtualization(params: {
     onProgrammaticScrollWrite,
     compactDensity,
     forcedRowIndex,
-    activeLiveRowKey,
+    activeLiveRowKeys,
     expandedRowIds,
     hiddenRowKeys
   } = params
@@ -1545,12 +1560,12 @@ function useTranscriptVirtualization(params: {
             m,
             bucket,
             expandedRowIds?.has(row.rowKey) ?? false,
-            measurementContentVersion(row, activeLiveRowKey),
+            measurementContentVersion(row, activeLiveRowKeys),
             geometryHeightsRef.current
           )
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKey, hiddenRowKeys])
+  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKeys, hiddenRowKeys])
   heightsRef.current = heights
   const heightOffsets = useMemo(
     () => (enabled ? buildHeightOffsets(heights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -1584,19 +1599,22 @@ function useTranscriptVirtualization(params: {
   // cycled (the ~50ms flicker that settled on the short System rows). The
   // mounted set must NOT be an input to the computation that re-picks it.
   //
-  // `windowHeights` is refreshed on scroll/resize (`scrollTick`) and on row-set
-  // / expansion changes, but is HELD across a pure measurement bump. Within a
-  // frame the window is fixed; Phase-2 measures exactly that window's rows and
-  // writes the cache; live `heights` still feed the spacers + anchor so total
-  // height and the bottom-pin invariant stay exact. The next genuine scroll
-  // then re-selects ONCE from now-measured heights and lands correctly. The
-  // 900px overscan absorbs the estimate error during the single settle frame.
+  // `windowHeights` is refreshed on scroll/resize (`scrollTick`) and on
+  // *structural* row-set / expansion changes, but is HELD across pure
+  // measurement bumps AND across live-tail projection churn (a new `rows`
+  // array whose rowKeys are unchanged — streaming content rewrites). Live
+  // height values still flow through `heights` into spacers; only the
+  // mounted-window snapshot is held. Within a frame the window is fixed;
+  // Phase-2 measures exactly that window's rows and writes the cache. The
+  // next genuine scroll then re-selects ONCE from now-measured heights.
   // Standard virtualiser hysteresis: select on scroll, measure within the
-  // selection, never let measurement re-trigger selection.
+  // selection, never let measurement or content-only rewrites re-trigger
+  // selection.
+  const rowsStructuralKey = structuralRowSetKey(rows)
   const windowHeights = useMemo(
     () => heights,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabled, rows, expandedRowIds, activeLiveRowKey, scrollTick] // deliberately NOT measureTick
+    [enabled, rowsStructuralKey, expandedRowIds, scrollTick] // deliberately NOT measureTick / rows / activeLiveRowKeys
   )
   const windowHeightOffsets = useMemo(
     () => (enabled ? buildHeightOffsets(windowHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -1860,10 +1878,10 @@ function useTranscriptVirtualization(params: {
       // one-and-a-half times and inflating the bottom spacer.
       const isPairLead = el.dataset.fanoutSlot === 'lead'
       if (!(slot > 0) && !(isPairLead && slot === 0)) continue
-      const isActiveLiveRow = activeLiveRowKey === row.rowKey
+      const isActiveLiveRow = isActiveLiveRowKey(row.rowKey, activeLiveRowKeys)
       const key = measurementKey(
         row.rowKey,
-        measurementContentVersion(row, activeLiveRowKey),
+        measurementContentVersion(row, activeLiveRowKeys),
         bucket,
         expandedRowIds?.has(row.rowKey) ?? false
       )
@@ -2214,6 +2232,7 @@ export const TranscriptPanel = memo(
     const rowElementCacheRef = useRef<
       Map<string, { signature: TranscriptRowRenderSignature; element: ReactElement }>
     >(new Map())
+    const thinkingTraceActionsCacheRef = useRef<ThinkingTraceActionsStabilizeCache>(new Map())
     const closeMessageContextMenu = useCallback(() => {
       setMessageContextMenu(null)
     }, [])
@@ -2876,17 +2895,22 @@ export const TranscriptPanel = memo(
         }),
       [displayMessages, revealEnabled, revealChatIsRunning, revealRunId]
     )
-    const liveToolMessageId = useMemo(
+    const liveMeasurementMessageIds = useMemo(
       () =>
-        liveRevealMessageId
-          ? null
-          : resolveLiveToolMessageId(displayMessages, {
-              revealChatIsRunning,
-              revealRunId
-            }),
-      [displayMessages, liveRevealMessageId, revealChatIsRunning, revealRunId]
+        resolveLiveMeasurementMessageIds(displayMessages, {
+          revealEnabled,
+          revealChatIsRunning,
+          revealRunId,
+          workingFanoutParticipantIds: workingLaneParticipantIds
+        }),
+      [
+        displayMessages,
+        revealEnabled,
+        revealChatIsRunning,
+        revealRunId,
+        workingLaneParticipantIds
+      ]
     )
-    const liveMeasurementMessageId = liveRevealMessageId || liveToolMessageId
     const displayRunBoundaryByMessageId = useMemo(() => {
       const map = new Map(runBoundaryByMessageId)
       for (const message of displayMessages) {
@@ -2939,16 +2963,23 @@ export const TranscriptPanel = memo(
       }
       return { byRowKey, byMessageId, byConstituentId, indexByRowKey }
     }, [displayMessages, projectedRows])
-    const liveMeasurementRowKey = useMemo(() => {
-      if (!liveMeasurementMessageId) return null
+    const activeLiveRowKeys = useMemo(() => {
+      if (liveMeasurementMessageIds.length === 0) return EMPTY_LIVE_ROW_KEYS
+      const idSet = new Set(liveMeasurementMessageIds)
+      const keys = new Set<string>()
+      for (const row of projectedRows) {
+        if (idSet.has(row.id)) keys.add(row.rowKey)
+      }
+      return keys.size > 0 ? keys : EMPTY_LIVE_ROW_KEYS
+    }, [liveMeasurementMessageIds, projectedRows])
+    const liveRevealRowKey = useMemo(() => {
+      if (!liveRevealMessageId) return null
       return (
         projectedRows.find(
-          (row) =>
-            row.id === liveMeasurementMessageId && row.index === displayMessages.length - 1
+          (row) => row.id === liveRevealMessageId && row.index === displayMessages.length - 1
         )?.rowKey ?? null
       )
-    }, [displayMessages.length, liveMeasurementMessageId, projectedRows])
-    const liveRevealRowKey = liveRevealMessageId ? liveMeasurementRowKey : null
+    }, [displayMessages.length, liveRevealMessageId, projectedRows])
     const liveRevealLifecycleKey = liveRevealRowKey
       ? `${revealChatId || 'chat'}:${liveRevealRowKey}`
       : null
@@ -3377,7 +3408,7 @@ export const TranscriptPanel = memo(
       onProgrammaticScrollWrite,
       compactDensity,
       forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
-      activeLiveRowKey: liveMeasurementRowKey,
+      activeLiveRowKeys,
       expandedRowIds: expandedRowIdsWithLiveViewports,
       hiddenRowKeys
     })
@@ -3446,6 +3477,7 @@ export const TranscriptPanel = memo(
       setExpandedSubThreadResults(new Set())
       setActiveParticipantFilterKeys(new Set())
       rowElementCacheRef.current.clear()
+      thinkingTraceActionsCacheRef.current.clear()
       stackCollapseStateRef.current.lastCollapsed.clear()
       stackCollapseStateRef.current.entering.clear()
       setHighlightedMessageTarget(null)
@@ -3806,42 +3838,47 @@ export const TranscriptPanel = memo(
                   })
                   .join('\u0000')}|copy:${copiedId?.includes(':thinking') ? copiedId : ''}`
               : ''
-            const thinkingTraceActions: ThinkingTraceActionsConfig | undefined = hasToolActivitiesForActions
-              ? {
-                  messageId: toolActivityActionMessageIds[0] || msg.id,
-                  label: 'thinking trace',
-                  copiedId,
-                  pinned: isPinned,
-                  thumbsVote: readMessageFeedbackVote(msg),
-                  messageIdForActivity: (activity) =>
-                    toolActivityMessageIdByActivityId.get(activity.id) ||
-                    toolActivityActionMessageIds[0] ||
-                    msg.id,
-                  stateForMessage: (messageId) => {
-                    const sourceMessage = messageById.get(messageId) || msg
-                    return {
-                      pinned: typeof sourceMessage.metadata?.pinnedAt === 'number',
-                      thumbsVote: readMessageFeedbackVote(sourceMessage)
-                    }
-                  },
-                  copy,
-                  onAddToPrompt: onAddMessageToPrompt,
-                  onTogglePin: onTogglePinMessage,
-                  onThumbsUp: onMessageFeedback
-                    ? (messageId) => onMessageFeedback(messageId, 'up')
-                    : undefined,
-                  onThumbsDown: onMessageFeedback
-                    ? (messageId) => onMessageFeedback(messageId, 'down')
-                    : undefined,
-                  onDelete: onDeleteMessage,
-                  onOpenSideChat: onOpenSideChatFromMessage
-                    ? (messageId, content) => {
+            const thinkingTraceActions: ThinkingTraceActionsConfig | undefined =
+              hasToolActivitiesForActions
+                ? stabilizeThinkingTraceActions(
+                    thinkingTraceActionsCacheRef.current,
+                    {
+                      messageId: toolActivityActionMessageIds[0] || msg.id,
+                      label: 'thinking trace',
+                      copiedId,
+                      pinned: isPinned,
+                      thumbsVote: readMessageFeedbackVote(msg),
+                      messageIdForActivity: (activity) =>
+                        toolActivityMessageIdByActivityId.get(activity.id) ||
+                        toolActivityActionMessageIds[0] ||
+                        msg.id,
+                      stateForMessage: (messageId) => {
                         const sourceMessage = messageById.get(messageId) || msg
-                        onOpenSideChatFromMessage({ ...sourceMessage, content })
-                      }
-                    : undefined
-                }
-              : undefined
+                        return {
+                          pinned: typeof sourceMessage.metadata?.pinnedAt === 'number',
+                          thumbsVote: readMessageFeedbackVote(sourceMessage)
+                        }
+                      },
+                      copy,
+                      onAddToPrompt: onAddMessageToPrompt,
+                      onTogglePin: onTogglePinMessage,
+                      onThumbsUp: onMessageFeedback
+                        ? (messageId) => onMessageFeedback(messageId, 'up')
+                        : undefined,
+                      onThumbsDown: onMessageFeedback
+                        ? (messageId) => onMessageFeedback(messageId, 'down')
+                        : undefined,
+                      onDelete: onDeleteMessage,
+                      onOpenSideChat: onOpenSideChatFromMessage
+                        ? (messageId, content) => {
+                            const sourceMessage = messageById.get(messageId) || msg
+                            onOpenSideChatFromMessage({ ...sourceMessage, content })
+                          }
+                        : undefined
+                    },
+                    toolActivityActionStateKey
+                  )
+                : undefined
             const roundHeaderData = isRoundHeader ? readEnsembleRoundHeader(msg) : null
             const footerCopyContent = isRoundHeader
               ? buildRoundTranscriptCopyText(
@@ -3888,7 +3925,7 @@ export const TranscriptPanel = memo(
             const liveViewportExpanded = liveViewportStackKey
               ? expandedLiveViewportStacks.has(liveViewportStackKey)
               : false
-            const liveViewportActive = isToolActivityStack && rowKey === liveMeasurementRowKey
+            const liveViewportActive = isToolActivityStack && activeLiveRowKeys.has(rowKey)
             // Settled-stack auto-collapse: fold the whole stack into a
             // one-line summary once the conversation has moved past it.
             const stackAutoCollapsible =
