@@ -837,3 +837,128 @@ describe('compaction collapses history instead of accumulating it', () => {
     expect((latest.record as Record<string, unknown>).updatedAt).toBe(39)
   })
 })
+
+/**
+ * Regression: 2026-08-06. A single `chat-journal/{id}.jsonl` reached 2.75 GB on
+ * a live install. `parseJournalLines` read it with
+ * `fs.readFileSync(filePath, 'utf-8')` — the WHOLE file into one JS string —
+ * and V8 caps strings at ~512 MB. `initDirectory()` runs synchronously inside
+ * `createChatJournal()`, which `store/index.ts` calls at MODULE SCOPE, so the
+ * failure landed before any try/catch, log line, or handler the app owns: the
+ * app died with exit 133 / SIGTRAP and ZERO output, and so did every MCP bridge
+ * child (each is a re-entry of the same binary), which surfaced to Mistral/Vibe
+ * as `taskwraith-mistral: unhandled errors in a TaskGroup (1 sub-exception)`.
+ *
+ * The invariant these tests pin: **no journal file, at any size, may take the
+ * process down.** The journal is a side-band — `chats/{id}.json` is
+ * read-authoritative — so quarantining an unreadable journal is always
+ * preferable to failing construction.
+ */
+describe('ChatJournal — oversized journal cannot brick startup', () => {
+  let baseDir: string
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-chat-journal-oversize-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  /** Names of quarantined journals left in `baseDir`. */
+  function quarantined(): string[] {
+    return fs.readdirSync(baseDir).filter((name) => name.includes('.oversized-'))
+  }
+
+  /**
+   * Write a journal of PERFECTLY VALID JSONL that exceeds `bytes`.
+   *
+   * Valid content is load-bearing. An earlier draft padded with `'x'.repeat()`,
+   * which is unparseable — so the pre-existing torn-line recovery unlinked the
+   * file and every assertion below passed VACUOUSLY against the unfixed code.
+   * With valid lines, size is the ONLY reason to skip the file, so these tests
+   * actually discriminate.
+   */
+  function writeValidOversizedJournal(filePath: string, bytes: number): number {
+    const lines: string[] = []
+    let total = 0
+    let seq = 0
+    while (total < bytes) {
+      const line = JSON.stringify({
+        savedAt: '2026-08-06T00:00:00.000Z',
+        record: { id: path.basename(filePath, '.jsonl'), seq: seq++, pad: 'p'.repeat(200) }
+      })
+      lines.push(line)
+      total += Buffer.byteLength(line, 'utf-8') + 1
+    }
+    fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8')
+    return fs.statSync(filePath).size
+  }
+
+  it('quarantines a journal above the parse ceiling instead of reading it', () => {
+    const jPath = path.join(baseDir, 'huge-chat.jsonl')
+    const written = writeValidOversizedJournal(jPath, 4096)
+
+    const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
+
+    expect(quarantined()).toHaveLength(1)
+    expect(fs.existsSync(jPath)).toBe(false)
+    // Quarantine must PRESERVE the bytes — the journal is the only copy of
+    // any save the authoritative chat file has not caught up with yet.
+    const parked = path.join(baseDir, quarantined()[0])
+    expect(fs.statSync(parked).size).toBe(written)
+    expect(journal.stats().appends).toBe(0)
+  })
+
+  it('leaves a journal at or below the ceiling completely untouched', () => {
+    const jPath = path.join(baseDir, 'small-chat.jsonl')
+    const line = JSON.stringify({ savedAt: '2026-08-06T00:00:00.000Z', record: { id: 'small' } })
+    fs.writeFileSync(jPath, `${line}\n`, 'utf-8')
+
+    const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
+
+    expect(quarantined()).toHaveLength(0)
+    expect(fs.existsSync(jPath)).toBe(true)
+    expect(journal.read('small-chat').tail).toHaveLength(1)
+  })
+
+  it('still serves other chats after one journal is quarantined', () => {
+    writeValidOversizedJournal(path.join(baseDir, 'huge-chat.jsonl'), 4096)
+    const goodLine = JSON.stringify({
+      savedAt: '2026-08-06T00:00:00.000Z',
+      record: { id: 'good-chat' }
+    })
+    fs.writeFileSync(path.join(baseDir, 'good-chat.jsonl'), `${goodLine}\n`, 'utf-8')
+
+    const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
+
+    // The whole point: one poisoned file must not cost the user every OTHER
+    // chat's journal, and must not stop new appends from working.
+    expect(quarantined()).toHaveLength(1)
+    expect(journal.read('good-chat').tail).toHaveLength(1)
+    expect(fs.existsSync(path.join(baseDir, 'good-chat.jsonl'))).toBe(true)
+    journal.append('another-chat', { id: 'another-chat', messages: [] })
+    expect(journal.read('another-chat').tail).toHaveLength(1)
+  })
+
+  it('reads a quarantined chat as empty rather than throwing', () => {
+    writeValidOversizedJournal(path.join(baseDir, 'huge-chat.jsonl'), 4096)
+
+    const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
+
+    expect(() => journal.read('huge-chat')).not.toThrow()
+    expect(journal.read('huge-chat')).toEqual({ snapshot: null, tail: [] })
+  })
+
+  it('defends read() too, when a journal crosses the ceiling after init', () => {
+    const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
+    journal.append('grower', { id: 'grower', messages: [] })
+
+    // Simulate the live shape: the file balloons while the process is running,
+    // so the ceiling was not crossed at init time.
+    writeValidOversizedJournal(path.join(baseDir, 'grower.jsonl'), 4096)
+
+    expect(() => journal.read('grower')).not.toThrow()
+    expect(journal.read('grower').tail).toEqual([])
+  })
+})

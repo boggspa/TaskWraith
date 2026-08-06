@@ -141,6 +141,32 @@ const SNAPSHOT_BYTE_THRESHOLD = 16 * 1024 * 1024
 /** Trigger snapshot compaction after this many ms since the last snapshot. */
 const SNAPSHOT_AGE_THRESHOLD_MS = 10 * 60 * 1000
 
+/**
+ * Refuse to read a journal larger than this into memory.
+ *
+ * `parseJournalLines` reads a whole journal with `readFileSync(path, 'utf-8')`,
+ * i.e. into ONE JS string, and V8 caps strings at ~512 MB. On 2026-08-06 a live
+ * `chat-journal/{id}.jsonl` reached 2.75 GB, and because `initDirectory()` runs
+ * inside `createChatJournal()` — which `store/index.ts` calls at MODULE SCOPE —
+ * the failure arrived before any try/catch, log line, or handler this app owns.
+ * The app died with exit 133 / SIGTRAP and ZERO output. So did every TaskWraith
+ * MCP bridge child, each being a re-entry of the same binary, which surfaced to
+ * Mistral/Vibe as `unhandled errors in a TaskGroup (1 sub-exception)`.
+ *
+ * 256 MB sits well under V8's limit and far above any healthy journal
+ * (SNAPSHOT_BYTE_THRESHOLD compacts at 16 MB), so crossing it always means the
+ * compaction path has already failed. Quarantine rather than delete: the
+ * journal may hold saves the authoritative `chats/{id}.json` has not caught up
+ * with, and it is the evidence for why compaction stopped working.
+ */
+const MAX_JOURNAL_PARSE_BYTES = 256 * 1024 * 1024
+
+/** Options for {@link createChatJournal}. */
+export interface ChatJournalOptions {
+  /** Override the oversized-journal ceiling. Tests only — production uses the constant. */
+  maxJournalParseBytes?: number
+}
+
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
@@ -170,7 +196,48 @@ interface ChatState {
   tombstoned: boolean
 }
 
-export function createChatJournal(baseDir: string): ChatJournal {
+export function createChatJournal(
+  baseDir: string,
+  options: ChatJournalOptions = {}
+): ChatJournal {
+  const maxJournalParseBytes = options.maxJournalParseBytes ?? MAX_JOURNAL_PARSE_BYTES
+
+  /**
+   * Size of `filePath` when it is too large to read into one string, else null.
+   * A missing/unstattable file is never "oversized" — the existing ENOENT paths
+   * own that case.
+   */
+  const oversizedJournalBytes = (filePath: string): number | null => {
+    try {
+      const { size } = fs.statSync(filePath)
+      return size > maxJournalParseBytes ? size : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Rename an unreadable journal out of the `.jsonl` suffix so the directory
+   * scan stops finding it, keeping every byte. Returns the parked path, or
+   * null when the rename failed — a failed rename must NOT throw, or the
+   * unlaunchable-app bug simply moves from the read to the rename.
+   */
+  const quarantineOversizedJournal = (filePath: string): string | null => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const suffix = attempt === 0 ? '' : `.${attempt}`
+      const parked = `${filePath}.oversized-${stamp}${suffix}.bak`
+      if (fs.existsSync(parked)) continue
+      try {
+        fs.renameSync(filePath, parked)
+        return parked
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+
   // ---- counters ----
   let appends = 0
   let linesWritten = 0
@@ -259,6 +326,17 @@ export function createChatJournal(baseDir: string): ChatJournal {
   const parseJournalLines = (filePath: string): { entries: ChatJournalEntry[]; torn: boolean } => {
     const entries: ChatJournalEntry[] = []
     let torn = false
+
+    // Size gate BEFORE the read. Above the ceiling `readFileSync(…, 'utf-8')`
+    // is not a recoverable error — it can abort the process outright — so this
+    // must never be reached by a try/catch further down. Reported as an empty,
+    // NON-torn journal so no caller truncates or rewrites a file it could not
+    // read: init quarantines it instead, and read() degrades to the
+    // authoritative chat record.
+    const oversized = oversizedJournalBytes(filePath)
+    if (oversized !== null) {
+      return { entries, torn: false }
+    }
 
     try {
       const raw = fs.readFileSync(filePath, 'utf-8')
@@ -351,6 +429,24 @@ export function createChatJournal(baseDir: string): ChatJournal {
       if (name.endsWith('.jsonl')) {
         const chatId = name.slice(0, -'.jsonl'.length)
         const jPath = path.join(baseDir, name)
+
+        // Oversized journal: park it and move on. Renaming out of the `.jsonl`
+        // suffix is what takes it out of this scan, so the next launch is
+        // clean; the bytes are kept because this file is the only record of
+        // both the unmerged saves and the compaction failure that grew it.
+        // `continue` (rather than seeding state) deliberately leaves the chat
+        // looking journal-less, so a fresh journal starts from zero.
+        const oversized = oversizedJournalBytes(jPath)
+        if (oversized !== null) {
+          const parked = quarantineOversizedJournal(jPath)
+          console.warn(
+            `[chat-journal] ${name} is ${oversized} bytes, above the ${maxJournalParseBytes}-byte read ceiling; ` +
+              `parked as ${parked ? path.basename(parked) : '(rename failed)'} and skipped. ` +
+              'The authoritative chat record is unaffected; snapshot compaction for this chat needs investigating.'
+          )
+          continue
+        }
+
         const { entries: lines, torn } = parseJournalLines(jPath)
 
         if (torn && lines.length > 0) {
