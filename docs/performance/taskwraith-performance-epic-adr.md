@@ -27,7 +27,7 @@ TaskWraith must remain genuinely responsive under sustained **30–50-seat** ens
 | Checkpoints | `session-checkpoints.json` ~20.3 MB; ~493/508 records superseded |
 | Rewrite cadence (10 s window) | hot chat 8–14×; index/checkpoint 13–14× |
 
-Scouts confirm the suspects are **still present on HEAD**. Partial mitigations exist (message-splice IPC, per-run 250 ms flush, historical tool compaction, chat-record cache, virtualization prefix reuse). None breaks the **whole-document rewrite amplification DAG**.
+Scouts confirm the suspects are **still present on HEAD**. Partial mitigations exist (message-splice IPC, per-chat 250 ms flush, historical tool compaction, chat-record cache, chat-list-index mtime+size read cache + readEntry(chatId), flag-discriminated lean ensemble in index entries, virtualization prefix reuse). None breaks the **whole-document rewrite amplification DAG**.
 
 ### Non-negotiable safety (epic invariants)
 
@@ -91,7 +91,7 @@ Ensemble participant / tool tick / fan-out seed
 
 | Layer | Cadence today | Coalescing |
 | --- | --- | --- |
-| Stream → transcript | 250 ms **per seat** `scheduleFlush` | No chat-wide merge |
+| Stream → transcript | 250 ms **per chat** `scheduleFlush` (was per seat; N lanes → one batched `saveChat`) | Per-chat coalescing; N× save multiplier removed |
 | Working telemetry | 450 ms / run | Ephemeral IPC only (good — keep) |
 | IPC delivery | ≥100 ms / chat + ACK | Latest-wins pending; still fed by full saves |
 | Fan-out seed | 1 save per lane | None → N+1 full writes at dispatch |
@@ -158,7 +158,7 @@ Dual-read is mandatory until Boss declares cutover complete (see §6).
 - Maximum latency: **500 ms**
 - Single in-flight write; merge pending mutations
 - **D2/D3 bypass** the D1 trailing window and **fsync before durable ACK**
-- In-memory timeline flush (250 ms per seat) **decouples** from durability: materialize transcript in RAM for UI; durability class decides disk
+- In-memory timeline flush (250 ms per chat; was per seat) **decouples** from durability: materialize transcript in RAM for UI; durability class decides disk
 - `history-deletion-intent.json` remains **independent** of chat coalesce (D3)
 
 **Hard merge condition for T3a:** crash-injection tests (UsageJournal-style) must prove ≤D1 budget loss only; approvals/user/terminal/checkpoint barriers never batch behind the soft window.
@@ -199,7 +199,7 @@ scheduled-orchestration → workflow-run-history → run-queue → run-recovery
 | `chat-store-manifests` | Manifests + hot snapshots |
 | `session-checkpoint-hot` | Hot per-chat/round checkpoint files |
 | `session-checkpoint-archive` | Archived superseded checkpoint shards |
-| `chat-list-index-shards` | Per-chat list shards (see §5.5) |
+| `chat-list-index-shards` | Per-chat list shards (see §5.5) — lean ensemble landed (flag-discriminated, ~5.3 KB); full per-chat shards remain T3c |
 
 Contract unchanged: fsynced prepare → acquire holds → quiesce → commit steps → release; incomplete is resumable; startup fail-closed blocks recovery until erasure resumes cleanly.
 
@@ -211,7 +211,7 @@ Checkpoint fence (`isHistoryMutationBlocked`) and usage-journal holds remain loa
 
 **Chat list is one minimal JSON shard per chat; no full global-index rewrite on hot updates.**
 
-Today: `ChatListItem extends ChatRecord` with `messages: []`, `runs: []`, `summaryOnly: true`, plus `runsSummary` — still spreads ensemble / goal / fat metadata into one multi-MB `chat-list-index.json`.
+Today: `ChatListItem extends ChatRecord` with `messages: []`, `runs: []`, `summaryOnly: true`, plus `runsSummary` — and a **lean** `ensemble` projection (~5.3 KB: participant identities + `activeRound`; instructions, `roundSummaries`, and `blackboard` omitted; discriminated by an explicit `__chatListProjection` flag on write). Legacy fat lines heal to lean on first compaction; flagged lean rows never re-trigger. Interim step toward the frozen `ensembleLite?` DTO below; full per-chat index shards remain T3c. — still spreads ensemble / goal / fat metadata into one multi-MB `chat-list-index.json`.
 
 **Target minimal DTO (logical fields; exact TypeScript names freeze at implement):**
 
@@ -527,7 +527,7 @@ T2  HEAD baseline capture (30/50/dual/soak) under isolated userData   │
      │  authoritative only from clean worktree + fingerprint          │
      │                                                                │
      ├─► T3a Chat-level save coalescer + batched fan-out seed         │
-     │     + durability class hooks (still v1 files)   [@GrokWork1]   │
+     │     + durability class hooks (still v1 files)   [@GrokWork1]   │ — per-chat flush landed; full coalescer + fan-out seed batch remain
      │                                                                │
      ├─► T3b Checkpoint hot/archive + upsert throttle  [@GrokWork1]   │
      │                                                                │
@@ -656,7 +656,7 @@ Former open items are **closed** as follows:
 These are **not** architecture freezes; they are calibration/measurement items:
 
 1. **Whether 100 ms / 500 ms D1 budgets** need retune after T2 save-rate histograms under baseline-class 6.8k-message load (policy may adjust numbers without reopening JSON vs SQLite).
-2. **Per-seat 250 ms flush vs chat-level 100 ms coalescer interaction** under 30–50 concurrent streams — measure double-scheduling waste.
+2. **Per-chat 250 ms flush vs chat-level 100 ms coalescer interaction** under 30–50 concurrent streams — measure double-scheduling waste.
 3. **Compact snapshot cadence** (how often atomic snapshots run under dual_run) for crash recovery time vs write-byte budgets.
 4. **Blob segment packing size / content-hash chunking** for multi-MB tool payloads (throughput vs random expand latency).
 5. **IPC field-mask vs full-record break-even** on tiny metadata-only ticks (keep mask always for simplicity unless measurement shows pathological overhead).

@@ -8,6 +8,12 @@ to answer.
 
 ## Unreleased
 
+### Ensemble save-path performance
+
+- **Per-chat flush scheduler.** The 250 ms flush timer moved from per-run to per-chat (`EnsembleChatFlushScheduler`). All lanes' deltas for the same chat batch into one `saveChat`, removing the N× multiplier on fan-out.
+- **`readAll()` off the save path.** `saveChat` now uses `readEntry(chatId)` (O(1) on warm cache). The whole-index `readAll()` is cached on mtime+size and only re-parsed when the file actually changes.
+- **Lean ensemble in index entries.** Ensemble rows in `chat-list-index.jsonl` now carry a lean roster (~5.3 KB: participant identities + `activeRound`, no instructions/roundSummaries/blackboard) instead of the full ~89 KB blob. The store uses an explicit `__chatListProjection` flag to discriminate lean from legacy fat lines; fat lines compact once, then the trigger is silent. Post-compaction: ~5.3 KB per index entry (94% smaller than the ~89 KB legacy blob). A 200-entry index shrinks from ~17.4 MB to ~1.15 MB in one compaction pass.
+
 ### The Canvas is now a first-class browser
 
 The Canvas web preview grew real browser chrome. Web canvases in the right dock
