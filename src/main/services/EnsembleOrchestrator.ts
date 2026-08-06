@@ -5,11 +5,7 @@ import {
   clearEnsembleRoundFailureForSeatChange,
   ensembleSeatExecutionConfigChanged
 } from '../../shared/ensembleSeatFailureClear'
-import type {
-  AgentRunPayload,
-  AgentRunRoute,
-  RunDispatchObserver
-} from '../run/AgentRunTypes'
+import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   unattendedElevationPresetId,
@@ -127,6 +123,7 @@ import {
   PARTICIPANT_HEALTH_TAG,
   type DispatchFailureReason
 } from '../EnsembleErrors'
+import { resolveImagePathsForProvider } from '../ProviderImageAttachmentSupport'
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
 import {
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
@@ -161,6 +158,7 @@ import {
   planEnsembleMidRunSteeringBoundary,
   type EnsembleMidRunSteeringBoundaryState
 } from './EnsembleMidRunSteering'
+import { buildCursorPathBCompactionSummary } from './CursorContextPressureRecovery'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
@@ -203,10 +201,7 @@ import {
 // + provider totals). Ensemble runs complete here, not via handleProviderExit.
 import { buildEnsembleUsageRecord } from '../ensembleUsageRecord'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
-import {
-  foldBridgeRunText,
-  isTaggedCumulativeRestatement
-} from '../bridge/BridgeTextFold'
+import { foldBridgeRunText, isTaggedCumulativeRestatement } from '../bridge/BridgeTextFold'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -235,7 +230,6 @@ import {
   EnsembleCursorCompletionWatchdog,
   type CursorTransportLiveness
 } from './EnsembleCursorCompletionWatchdog'
-import { buildCursorPathBCompactionSummary } from './CursorContextPressureRecovery'
 import {
   resolveEffectiveRoster,
   isExternalSeat,
@@ -299,12 +293,7 @@ interface MidRunSteeringAppendReceipt {
 }
 
 const ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
-const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>([
-  'scout',
-  'worker',
-  'reviewer',
-  'background'
-])
+const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer', 'background'])
 const SESSION_ACTIVITY_LEDGER_LIMIT = 40
 const MAX_BOSSMAN_BRIEF_CHARS = 4000
 const BRIEF_SEAT_VALUE_PREVIEW_CHARS = 160
@@ -399,7 +388,8 @@ const MAX_BOSSMAN_POLL_OPTIONS = 6
 const BINDING_GOAL_COMPLETE_OPTIONS = ['complete', 'keep-working'] as const
 const BINDING_POLL_DEFAULT_TIMEOUT_SECONDS = 300
 const BINDING_POLL_COOLDOWN_MS = 10 * 60 * 1000
-const ENSEMBLE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
+const ENSEMBLE_IMAGE_ATTACHMENT_EXT =
+  /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
 // The visual Odometer roll takes 430ms. Coalescing provider usage snapshots to
 // roughly two per second lets each roll finish, while keeping the event lane
 // ephemeral and far below the transcript's streaming cadence.
@@ -639,13 +629,15 @@ export interface EnsembleOrchestratorDeps {
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
   ) => void
   /**
-   * Main-owned transcript append + delivery-registry seam for a text-only
-   * interjection absorbed into this still-live round.
+   * Main-owned transcript append + delivery-registry seam for an interjection
+   * absorbed into this still-live round (text and optional attachment metadata).
    */
   appendMidRunSteering?: (input: {
     chatId: string
     roundId: string
     text: string
+    imageAttachments?: EnsembleImageAttachment[]
+    imageThumbnails?: EnsembleImageThumbnail[]
   }) => MidRunSteeringAppendReceipt
   /**
    * Registry ids that no participant prompt has carried yet. The orchestrator
@@ -710,11 +702,7 @@ type ParticipantTimelineEntry = { kind: 'content'; text: string } | { kind: 'too
  * default ACP transport opens a fresh session every turn and Ollama is
  * stateless, so neither is eligible.
  */
-const SLIM_RESUME_PROVIDERS: ReadonlySet<ProviderId> = new Set([
-  'claude',
-  'codex',
-  'kimi'
-])
+const SLIM_RESUME_PROVIDERS: ReadonlySet<ProviderId> = new Set(['claude', 'codex', 'kimi'])
 
 type EnsemblePromptUsageTelemetry = Required<
   Pick<
@@ -986,12 +974,7 @@ export interface CancelWakeupInput {
 }
 
 export type EnsembleFanoutMode = 'read_only' | 'locked_writers'
-export type EnsembleFanoutTargetStage =
-  | 'all'
-  | 'scouts'
-  | 'workers'
-  | 'reviewers'
-  | 'backgrounds'
+export type EnsembleFanoutTargetStage = 'all' | 'scouts' | 'workers' | 'reviewers' | 'backgrounds'
 
 export interface EnsembleFanoutInput {
   targets?: unknown
@@ -1211,7 +1194,13 @@ export interface EnsemblePollResponseResult {
   tool: 'ensemble_poll_response'
   pollId?: string
   message: string
-  error?: 'no_active_run' | 'not_ensemble' | 'no_active_round' | 'poll_not_found' | 'poll_closed' | 'invalid_choice'
+  error?:
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'no_active_round'
+    | 'poll_not_found'
+    | 'poll_closed'
+    | 'invalid_choice'
 }
 
 export interface EnsembleBossmanControlResult {
@@ -1307,11 +1296,19 @@ export interface EnsembleAgentPoolRegistrationCandidateResult {
   roundId?: string
   participantId?: string
   participant?: EnsembleParticipant
-  error?: 'no_active_run' | 'not_ensemble' | 'no_active_round' | 'stale_round' | 'role_required' | 'role_too_long'
+  error?:
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'no_active_round'
+    | 'stale_round'
+    | 'role_required'
+    | 'role_too_long'
 }
 
-export interface EnsembleAgentPoolRegistrationResult
-  extends Omit<EnsembleAgentPoolRegistrationCandidateResult, 'participant' | 'error'> {
+export interface EnsembleAgentPoolRegistrationResult extends Omit<
+  EnsembleAgentPoolRegistrationCandidateResult,
+  'participant' | 'error'
+> {
   pooledAgentId?: string
   mode?: 'created' | 'coalesced' | 'updated'
   error?:
@@ -1434,9 +1431,7 @@ function timelineMessageId(runId: string, index: number, kind: 'content' | 'tool
   return `ensemble-${kind}-${runId}-${index}`
 }
 
-function laneTranscriptMetadata(
-  run: ActiveParticipantRun
-): {
+function laneTranscriptMetadata(run: ActiveParticipantRun): {
   ensembleLaneId?: string
   ensembleLaneIntent?: ConcurrentLane['intent']
   ensembleFanoutWaveId?: string
@@ -1477,7 +1472,10 @@ function compareRunLaneToMessage(run: ActiveParticipantRun, message: ChatMessage
   return (run.laneId || '').localeCompare(messageLaneId(message))
 }
 
-function isComparableFanoutTimelineMessage(message: ChatMessage, run: ActiveParticipantRun): boolean {
+function isComparableFanoutTimelineMessage(
+  message: ChatMessage,
+  run: ActiveParticipantRun
+): boolean {
   if (message.metadata?.ensembleRoundId !== run.roundId) return false
   const laneId = messageLaneId(message)
   if (!laneId || laneId === run.laneId) return false
@@ -1726,7 +1724,10 @@ function delayMs(ms: number): Promise<void> {
 
 function normalizeFanoutTargetStage(value: unknown): EnsembleFanoutTargetStage | null | undefined {
   if (value === undefined || value === null || value === '') return undefined
-  const normalized = String(value).trim().toLowerCase().replace(/[\s_-]+/g, '')
+  const normalized = String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '')
   if (normalized === 'all' || normalized === 'anytyped' || normalized === 'typed') return 'all'
   if (
     normalized === 'scout' ||
@@ -1748,11 +1749,7 @@ function normalizeFanoutTargetStage(value: unknown): EnsembleFanoutTargetStage |
   if (normalized === 'review' || normalized === 'reviewer' || normalized === 'reviewers') {
     return 'reviewers'
   }
-  if (
-    normalized === 'bg' ||
-    normalized === 'background' ||
-    normalized === 'backgrounds'
-  ) {
+  if (normalized === 'bg' || normalized === 'background' || normalized === 'backgrounds') {
     return 'backgrounds'
   }
   return null
@@ -1825,14 +1822,14 @@ function fanoutPolicyAllowsWriters(policy: EnsembleFanoutPolicy): boolean {
 
 function isRosterEditAction(value: string): value is RosterEditAction {
   return (
-    value === 'add_participant' ||
-    value === 'remove_participant' ||
-    value === 'edit_participant'
+    value === 'add_participant' || value === 'remove_participant' || value === 'edit_participant'
   )
 }
 
 function isEnsembleFanoutPolicy(value: unknown): value is EnsembleFanoutPolicy {
-  return typeof value === 'string' && ENSEMBLE_FANOUT_POLICIES.includes(value as EnsembleFanoutPolicy)
+  return (
+    typeof value === 'string' && ENSEMBLE_FANOUT_POLICIES.includes(value as EnsembleFanoutPolicy)
+  )
 }
 
 function fanoutPolicyEnablesConcurrent(policy: EnsembleFanoutPolicy): boolean {
@@ -1970,7 +1967,9 @@ function normalizeConcurrentWriteScope(
     }
   }
   if (!isPlainRecord(raw)) return null
-  const kindRaw = String(raw.kind || raw.type || '').trim().toLowerCase()
+  const kindRaw = String(raw.kind || raw.type || '')
+    .trim()
+    .toLowerCase()
   const path = typeof raw.path === 'string' ? raw.path.trim() : ''
   const reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : undefined
   if (kindRaw === 'workspace') {
@@ -2081,10 +2080,7 @@ function isVagueUserPreflightScope(scope: ConcurrentLaneWriteScope): boolean {
   )
 }
 
-function scopeStaticRoot(
-  workspacePath: string,
-  scope: ConcurrentLaneWriteScope
-): string | null {
+function scopeStaticRoot(workspacePath: string, scope: ConcurrentLaneWriteScope): string | null {
   if (scope.kind === 'workspace') return resolve(workspacePath)
   if (!scope.path) return null
   if (scope.kind === 'path') return resolveScopePath(workspacePath, scope.path)
@@ -2122,9 +2118,7 @@ function formatWriteScope(scope: ConcurrentLaneWriteScope): string {
 function parseConcurrentWriteScopeClaim(
   run: ActiveParticipantRun,
   approvedAt: string
-):
-  | { ok: true; claim: ConcurrentWriteScopeClaim }
-  | { ok: false; reason: string } {
+): { ok: true; claim: ConcurrentWriteScopeClaim } | { ok: false; reason: string } {
   const rawJson = extractJsonFromContent(run.content || '', 'taskwraith_write_claim')
   if (!isPlainRecord(rawJson)) {
     return {
@@ -2264,11 +2258,7 @@ function capBossmanItems<T>(items: T[]): T[] {
   return items.slice(-MAX_BOSSMAN_CONTROL_ITEMS)
 }
 
-function clampOptionalInteger(
-  value: unknown,
-  min: number,
-  max: number
-): number | undefined {
+function clampOptionalInteger(value: unknown, min: number, max: number): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
   return Math.max(min, Math.min(max, Math.floor(value)))
 }
@@ -2580,7 +2570,10 @@ function applySeatChangePatch(
   target: EnsembleParticipant,
   patch: RosterEditParticipantInput
 ): EnsembleParticipant {
-  const next: EnsembleParticipant = { ...target, linkedProviderSessionId: target.linkedProviderSessionId }
+  const next: EnsembleParticipant = {
+    ...target,
+    linkedProviderSessionId: target.linkedProviderSessionId
+  }
   let promptReceiptsInvalidated = false
   let mcpProfileReceiptInvalidated = false
   if (
@@ -2672,7 +2665,10 @@ function applySeatChangePatch(
     }
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'linkedProviderSessionId')) {
-    if (typeof patch.linkedProviderSessionId === 'string' || patch.linkedProviderSessionId === null) {
+    if (
+      typeof patch.linkedProviderSessionId === 'string' ||
+      patch.linkedProviderSessionId === null
+    ) {
       next.linkedProviderSessionId = patch.linkedProviderSessionId
     } else {
       delete next.linkedProviderSessionId
@@ -2753,8 +2749,7 @@ function shouldStampEnsembleProposedPlan(
 ): boolean {
   if (chat.workflowMode !== 'plan' || !chat.ensemble) return false
   return (
-    cleanParticipantId(participantId) ===
-    resolveEnsembleProposedPlanOwnerId(chat.ensemble, roundId)
+    cleanParticipantId(participantId) === resolveEnsembleProposedPlanOwnerId(chat.ensemble, roundId)
   )
 }
 
@@ -2965,8 +2960,7 @@ function mergeToolDiffSummaries(
     typeof normalizedExisting.additions === 'number' ||
     typeof normalizedExisting.deletions === 'number'
   const resultHasCounts =
-    typeof normalizedResult.additions === 'number' ||
-    typeof normalizedResult.deletions === 'number'
+    typeof normalizedResult.additions === 'number' || typeof normalizedResult.deletions === 'number'
   if (resultHasCounts && !existingHasCounts) {
     return normalizedResult
   }
@@ -3094,7 +3088,9 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
   // Reasoning / thinking traces render in full in the transcript (parity with
   // the renderer's pairToolResult + the bridge-ingest carve-out), so they
   // bypass the 500-char preview cap that bounds ordinary ensemble tool output.
-  const reasoningTool = /(?:^|_)(?:thinking|reasoning)$/i.test(stripToolNamespace(activity.toolName))
+  const reasoningTool = /(?:^|_)(?:thinking|reasoning)$/i.test(
+    stripToolNamespace(activity.toolName)
+  )
   const cap = reasoningTool ? 100_000 : 500
   const truncated = output.length > cap ? `${output.substring(0, cap)}...` : output
   const displayName =
@@ -3545,10 +3541,7 @@ export class EnsembleOrchestrator {
     const maxContinuationHops =
       input.maxContinuationHops === undefined
         ? resolveMaxContinuationHops(chat.ensemble)
-        : Math.max(
-            1,
-            Math.min(MAX_CONTINUATION_HOP_LIMIT, Math.floor(input.maxContinuationHops))
-          )
+        : Math.max(1, Math.min(MAX_CONTINUATION_HOP_LIMIT, Math.floor(input.maxContinuationHops)))
     const activeRound = chat.ensemble.activeRound
     const activeRoundUpdated = activeRound?.status === 'running'
     const runtime = this.roundsByChatId.get(input.chatId)
@@ -3592,7 +3585,10 @@ export class EnsembleOrchestrator {
       },
       updatedAt: this.deps.now()
     }
-    this.saveChatWithCheckpoint(updated, activeRoundUpdated ? 'round-updated' : 'participant-updated')
+    this.saveChatWithCheckpoint(
+      updated,
+      activeRoundUpdated ? 'round-updated' : 'participant-updated'
+    )
 
     return {
       ok: true,
@@ -3646,12 +3642,11 @@ export class EnsembleOrchestrator {
       hasActiveToolOrApproval: () =>
         Boolean(
           this.deps.hasPendingProviderRunApprovals?.(run.runId) ||
-            run.toolActivities?.some(
-              (activity) => activity.status === 'pending' || activity.status === 'running'
-            )
+          run.toolActivities?.some(
+            (activity) => activity.status === 'pending' || activity.status === 'running'
+          )
         ),
-      transportLiveness: () =>
-        this.deps.getProviderRunTransportLiveness?.(run.runId) || 'unknown',
+      transportLiveness: () => this.deps.getProviderRunTransportLiveness?.(run.runId) || 'unknown',
       contextPressurePercent: () => this.cursorContextPressurePercentForRun(run),
       isActive: () => {
         const current = this.runsByRunId.get(run.runId)
@@ -3817,9 +3812,7 @@ export class EnsembleOrchestrator {
     return cancelled
   }
 
-  private requestExactHistoryTransportTermination(
-    run: ActiveParticipantRun
-  ): Promise<boolean> {
+  private requestExactHistoryTransportTermination(run: ActiveParticipantRun): Promise<boolean> {
     const terminate = this.deps.terminateRunForHistory ?? this.deps.cancelRun
     return terminate(run.participant.provider, run.runId)
   }
@@ -3879,9 +3872,7 @@ export class EnsembleOrchestrator {
     run.terminalSideEffectsApplied = true
     run.terminalTokenTotalsApplied = true
     this.participantWorkingTelemetryByRunId.delete(run.runId)
-    this.pendingSeatOverflowEvidence.delete(
-      seatOverflowEvidenceKey(run.chatId, run.participant.id)
-    )
+    this.pendingSeatOverflowEvidence.delete(seatOverflowEvidenceKey(run.chatId, run.participant.id))
     try {
       this.deps.onParticipantWorkingTelemetry?.({
         type: 'clear',
@@ -3985,10 +3976,8 @@ export class EnsembleOrchestrator {
     for (const entry of this.roundsByChatId.get(chatId)?.queuedPrompts || []) {
       usedIds.add(entry.id)
     }
-    for (
-      const entry of
-        this.deps.getChat(chatId)?.ensemble?.activeRound?.queuedPromptEntries || []
-    ) {
+    for (const entry of this.deps.getChat(chatId)?.ensemble?.activeRound?.queuedPromptEntries ||
+      []) {
       usedIds.add(entry.id)
     }
     let candidate = ''
@@ -4063,8 +4052,7 @@ export class EnsembleOrchestrator {
           (typeof entry.dmTargetParticipantId !== 'string' ||
             !entry.dmTargetParticipantId.trim())) ||
         (entry.fanoutPolicy !== undefined && !isEnsembleFanoutPolicy(entry.fanoutPolicy)) ||
-        (entry.hadDiscordContext !== undefined &&
-          typeof entry.hadDiscordContext !== 'boolean') ||
+        (entry.hadDiscordContext !== undefined && typeof entry.hadDiscordContext !== 'boolean') ||
         !Array.isArray(entry.imageAttachments) ||
         (entry.imageThumbnails !== undefined && !Array.isArray(entry.imageThumbnails)) ||
         (entry.externalPathGrants !== undefined &&
@@ -4085,14 +4073,10 @@ export class EnsembleOrchestrator {
       }
       const restartRecoveryBlockedReasons: string[] = []
       if (imageAttachments.length > 0 || imageThumbnails.length > 0) {
-        restartRecoveryBlockedReasons.push(
-          'attachment paths must be re-selected'
-        )
+        restartRecoveryBlockedReasons.push('attachment paths must be re-selected')
       }
       if (entry.hadDiscordContext) {
-        restartRecoveryBlockedReasons.push(
-          'Discord context was run-only and must be re-selected'
-        )
+        restartRecoveryBlockedReasons.push('Discord context was run-only and must be re-selected')
       }
       restored.push({
         id: entry.id,
@@ -4141,12 +4125,12 @@ export class EnsembleOrchestrator {
   private resolveQueuedPrompt(
     runtime: ActiveRoundRuntime,
     input: { index: number; textPrefix?: string; queuedPromptId?: string }
-  ):
-    | { selectedIndex: number; selected: QueuedRoundEntry }
-    | { error: string } {
+  ): { selectedIndex: number; selected: QueuedRoundEntry } | { error: string } {
     const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
     if (input.queuedPromptId) {
-      const selectedIndex = runtime.queuedPrompts.findIndex((entry) => entry.id === input.queuedPromptId)
+      const selectedIndex = runtime.queuedPrompts.findIndex(
+        (entry) => entry.id === input.queuedPromptId
+      )
       if (selectedIndex < 0) {
         return { error: 'Queued item no longer exists' }
       }
@@ -4218,22 +4202,28 @@ export class EnsembleOrchestrator {
     const activeRound = this.deps.getChat(chatId)?.ensemble?.activeRound
     return Boolean(
       activeRound &&
-        activeRound.roundId === runtime.roundId &&
-        activeRound.status === 'running' &&
-        this.deps.appendMidRunSteering
+      activeRound.roundId === runtime.roundId &&
+      activeRound.status === 'running' &&
+      this.deps.appendMidRunSteering
     )
   }
 
   /**
-   * Append a text interjection without cancelling the active provider, round,
+   * Append a user interjection without cancelling the active provider, round,
    * or hop sequence. Subsequent participant prompts pick it up from the live
-   * transcript delta; the serial drain has a same-round boundary fallback for
-   * an interjection that arrived during the final participant.
+   * transcript delta; optional attachments/grants/DM/discord context merge onto
+   * the live runtime so later seats see them without a fresh round.
    */
   absorbMidRunSteering(input: {
     chatId: string
     roundId: string
     text: string
+    imageAttachments?: EnsembleImageAttachment[]
+    imageThumbnails?: EnsembleImageThumbnail[]
+    dmTargetParticipantId?: string
+    fanoutPolicy?: EnsembleFanoutPolicy
+    externalPathGrants?: ExternalPathGrant[]
+    discordContextSnapshots?: DiscordContextSnapshot[]
   }): EnsembleQueuedSteerResult {
     return this.absorbMidRunSteeringWithReceipt(input).result
   }
@@ -4242,6 +4232,12 @@ export class EnsembleOrchestrator {
     chatId: string
     roundId: string
     text: string
+    imageAttachments?: EnsembleImageAttachment[]
+    imageThumbnails?: EnsembleImageThumbnail[]
+    dmTargetParticipantId?: string
+    fanoutPolicy?: EnsembleFanoutPolicy
+    externalPathGrants?: ExternalPathGrant[]
+    discordContextSnapshots?: DiscordContextSnapshot[]
   }): { result: EnsembleQueuedSteerResult; receipt?: MidRunSteeringAppendReceipt } {
     const text = input.text.trim()
     if (!text || !this.canAbsorbMidRunSteering(input.chatId, input.roundId)) {
@@ -4249,15 +4245,142 @@ export class EnsembleOrchestrator {
     }
     const runtime = this.roundsByChatId.get(input.chatId)!
     this.cancelWakeupsOnUserInput(runtime)
+    const imageAttachments = normalizeEnsembleImageAttachments(input.imageAttachments)
+    const imageThumbnails = normalizeEnsembleImageThumbnails(input.imageThumbnails)
+    const externalPathGrants = Array.isArray(input.externalPathGrants)
+      ? input.externalPathGrants
+      : []
+    const discordContextSnapshots = normalizeDiscordContextSnapshots(input.discordContextSnapshots)
+    this.mergeLiveRoundInterjectionOntoRuntime(runtime, {
+      imageAttachments,
+      imageThumbnails,
+      dmTargetParticipantId: input.dmTargetParticipantId,
+      fanoutPolicy: input.fanoutPolicy,
+      externalPathGrants,
+      discordContextSnapshots
+    })
     const receipt = this.deps.appendMidRunSteering!({
       chatId: input.chatId,
       roundId: input.roundId,
-      text
+      text,
+      ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
+      ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
     })
     return {
       result: { status: 'steered', roundId: input.roundId },
       receipt
     }
+  }
+
+  private mergeLiveRoundInterjectionOntoRuntime(
+    runtime: ActiveRoundRuntime,
+    input: {
+      imageAttachments: EnsembleImageAttachment[]
+      imageThumbnails: EnsembleImageThumbnail[]
+      dmTargetParticipantId?: string
+      fanoutPolicy?: EnsembleFanoutPolicy
+      externalPathGrants: ExternalPathGrant[]
+      discordContextSnapshots: DiscordContextSnapshot[]
+    }
+  ): void {
+    if (input.imageAttachments.length > 0) {
+      const seen = new Set(runtime.imageAttachments.map((attachment) => attachment.path))
+      for (const attachment of input.imageAttachments) {
+        if (seen.has(attachment.path)) continue
+        seen.add(attachment.path)
+        runtime.imageAttachments.push(attachment)
+      }
+    }
+    if (input.imageThumbnails.length > 0) {
+      runtime.imageThumbnails = [...runtime.imageThumbnails, ...input.imageThumbnails]
+    }
+    if (input.dmTargetParticipantId) {
+      runtime.dmTargetParticipantId = input.dmTargetParticipantId
+      // Directed absorb is a hard routing boundary: clamp fan-out and narrow the
+      // persisted participant list so later seats / UI match beginRound DM scope.
+      runtime.fanoutPolicy = 'off'
+      runtime.concurrentMode = undefined
+      const chat = this.deps.getChat(runtime.chatId)
+      const dmTarget = chat?.ensemble?.participants.find(
+        (participant) => participant.id === input.dmTargetParticipantId
+      )
+      this.updateChatRound(runtime.chatId, (round) => {
+        if (!round || round.roundId !== runtime.roundId) return round
+        return {
+          ...round,
+          dmTargetParticipantId: input.dmTargetParticipantId,
+          fanoutPolicy: 'off',
+          concurrentMode: undefined,
+          ...(dmTarget
+            ? {
+                participants: [
+                  roundParticipantStateFromParticipant(
+                    dmTarget,
+                    round.participants.find((entry) => entry.participantId === dmTarget.id)
+                      ?.status || 'idle'
+                  )
+                ]
+              }
+            : {})
+        }
+      })
+    } else if (input.fanoutPolicy && isEnsembleFanoutPolicy(input.fanoutPolicy)) {
+      runtime.fanoutPolicy = input.fanoutPolicy
+      runtime.concurrentMode = fanoutPolicyEnablesConcurrent(input.fanoutPolicy) || undefined
+      this.updateChatRound(runtime.chatId, (round) =>
+        round?.roundId === runtime.roundId
+          ? {
+              ...round,
+              fanoutPolicy: input.fanoutPolicy,
+              concurrentMode: fanoutPolicyEnablesConcurrent(input.fanoutPolicy!) || undefined
+            }
+          : round
+      )
+    }
+    if (input.externalPathGrants.length > 0) {
+      runtime.externalPathGrants = [
+        ...(runtime.externalPathGrants || []),
+        ...input.externalPathGrants
+      ]
+    }
+    if (input.discordContextSnapshots.length > 0) {
+      runtime.discordContextSnapshots = [
+        ...(runtime.discordContextSnapshots || []),
+        ...input.discordContextSnapshots
+      ]
+    }
+  }
+
+  /** Absorb the next FIFO queued prompt into the live round. Returns true when absorbed. */
+  private absorbNextQueuedPromptIntoLiveRound(runtime: ActiveRoundRuntime): boolean {
+    if (runtime.cancelled || runtime.queuedPrompts.length === 0) return false
+    const [nextEntry, ...remainingQueue] = runtime.queuedPrompts
+    if (!nextEntry) return false
+    if (nextEntry.restartRecoveryBlockedReason) return false
+    const targetError = this.queuedTargetUnavailableReason(runtime.chatId, nextEntry)
+    if (targetError) {
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, targetError)
+      return false
+    }
+    const absorbed = this.absorbMidRunSteering({
+      chatId: runtime.chatId,
+      roundId: runtime.roundId,
+      text: nextEntry.prompt,
+      imageAttachments: nextEntry.imageAttachments,
+      imageThumbnails: nextEntry.imageThumbnails,
+      dmTargetParticipantId: nextEntry.dmTargetParticipantId,
+      fanoutPolicy: nextEntry.fanoutPolicy,
+      externalPathGrants: nextEntry.externalPathGrants,
+      discordContextSnapshots: nextEntry.discordContextSnapshots
+    })
+    if (absorbed.status !== 'steered') return false
+    runtime.queuedPrompts = remainingQueue
+    this.updateChatRound(runtime.chatId, (round) =>
+      round?.roundId === runtime.roundId
+        ? { ...round, ...this.queuedPromptFields(remainingQueue) }
+        : round
+    )
+    return true
   }
 
   startRound(input: {
@@ -4362,8 +4485,7 @@ export class EnsembleOrchestrator {
     if (existing) {
       const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
       const persistedRoundLive =
-        persistedRound?.roundId === existing.roundId &&
-        isEnsembleRoundDispatchLive(persistedRound)
+        persistedRound?.roundId === existing.roundId && isEnsembleRoundDispatchLive(persistedRound)
       if (!persistedRoundLive) {
         if (persistedRound?.roundId === existing.roundId) {
           this.finalizeInactiveRunningRoundSnapshot(
@@ -4381,21 +4503,18 @@ export class EnsembleOrchestrator {
     }
     if (!existing) {
       const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
-      const persistedQueue =
-        persistedRound?.queuedPrompts?.length
-          ? persistedRound.queuedPrompts
-          : persistedRound?.queuedPrompt
-            ? [persistedRound.queuedPrompt]
-            : []
+      const persistedQueue = persistedRound?.queuedPrompts?.length
+        ? persistedRound.queuedPrompts
+        : persistedRound?.queuedPrompt
+          ? [persistedRound.queuedPrompt]
+          : []
       if (
         input.requireFreshRound &&
         (isEnsembleRoundDispatchLive(persistedRound) || persistedQueue.length > 0)
       ) {
         return { status: 'busy' }
       }
-      if (
-        persistedRound && persistedQueue.length > 0
-      ) {
+      if (persistedRound && persistedQueue.length > 0) {
         this.appendRoundStatus(
           input.chatId,
           persistedRound.roundId,
@@ -4407,32 +4526,43 @@ export class EnsembleOrchestrator {
     if (existing && !existing.cancelled) {
       this.cancelWakeupsOnUserInput(existing)
       if (input.mode === 'steer') {
-        const startAfterCancellation = this.cancelRound(input.chatId, 'steered')
-        const roundId = this.beginRound(
-          input.chatId,
-          prompt,
-          input.event.sender,
-          input.dmTargetParticipantId,
+        // Never cancel + beginRound for a live round. Absorb every shape into
+        // the current round; fresh rounds are only for idle chats.
+        const absorbed = this.absorbMidRunSteering({
+          chatId: input.chatId,
+          roundId: existing.roundId,
+          text: prompt,
           imageAttachments,
           imageThumbnails,
-          [],
-          parsed.selfReflective,
-          input.externalPathGrants,
-          input.concurrentMode,
-          input.fanoutPolicy,
-          input.discordContextSnapshots,
-          input.unattended,
-          input.unattendedElevationLevel,
-          startAfterCancellation,
-          input.onRoundReserved,
-          input.prepareFreshChat
+          dmTargetParticipantId: input.dmTargetParticipantId,
+          externalPathGrants: input.externalPathGrants,
+          discordContextSnapshots: input.discordContextSnapshots
+        })
+        if (absorbed.status === 'steered') {
+          return { status: 'steered', roundId: existing.roundId }
+        }
+        // Absorb unavailable — queue instead of interrupting the live round.
+        existing.queuedPrompts.push({
+          id: this.nextQueuedPromptId(input.chatId),
+          prompt: promptWithAttachmentReferences(prompt, imageAttachments),
+          ...(input.dmTargetParticipantId
+            ? { dmTargetParticipantId: input.dmTargetParticipantId }
+            : {}),
+          imageAttachments,
+          ...(imageThumbnails.length ? { imageThumbnails } : {}),
+          ...(input.externalPathGrants?.length
+            ? { externalPathGrants: [...input.externalPathGrants] }
+            : {}),
+          fanoutPolicy: resolveRequestedEnsembleFanoutPolicy(
+            this.deps.getChat(input.chatId)?.ensemble,
+            input
+          ),
+          discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
+        })
+        this.updateChatRound(input.chatId, (round) =>
+          round ? { ...round, ...this.queuedPromptFields(existing.queuedPrompts) } : round
         )
-        this.appendRoundStatus(
-          input.chatId,
-          roundId,
-          'Ensemble steered: interrupted the active speaker and started a fresh round.'
-        )
-        return { status: 'steered', roundId }
+        return { status: 'queued', roundId: existing.roundId }
       }
       // Multi-entry queue: append rather than overwrite. The
       // chat-round state mirrors the runtime's `queuedPrompts` so the
@@ -4679,34 +4809,34 @@ export class EnsembleOrchestrator {
     const remainingQueue = runtime.queuedPrompts.filter(
       (_, queuedIndex) => queuedIndex !== selectedIndex
     )
-    const textOnlySteer =
-      selected.imageAttachments.length === 0 &&
-      (selected.imageThumbnails?.length || 0) === 0 &&
-      (selected.externalPathGrants?.length || 0) === 0 &&
-      (selected.discordContextSnapshots?.length || 0) === 0
     const activeChat = this.deps.getChat(input.chatId)
-    const userFanout =
-      textOnlySteer && activeChat?.ensemble
-        ? resolveEnsembleUserFanoutTargets({
-            text: selected.prompt,
-            participants: activeChat.ensemble.participants,
-            exactTargetParticipantId: selected.dmTargetParticipantId
-          })
-        : null
-    if (userFanout?.hasParticipantMention) {
-      const absorption = this.absorbMidRunSteeringWithReceipt({
-        chatId: input.chatId,
-        roundId: runtime.roundId,
-        text: selected.prompt
-      })
-      const absorbed = absorption.result
-      if (absorbed.status === 'steered') {
-        runtime.queuedPrompts = remainingQueue
-        this.updateChatRound(input.chatId, (round) =>
-          round?.roundId === runtime.roundId
-            ? { ...round, ...this.queuedPromptFields(remainingQueue) }
-            : round
-        )
+    const userFanout = activeChat?.ensemble
+      ? resolveEnsembleUserFanoutTargets({
+          text: selected.prompt,
+          participants: activeChat.ensemble.participants,
+          exactTargetParticipantId: selected.dmTargetParticipantId
+        })
+      : null
+    const absorption = this.absorbMidRunSteeringWithReceipt({
+      chatId: input.chatId,
+      roundId: runtime.roundId,
+      text: selected.prompt,
+      imageAttachments: selected.imageAttachments,
+      imageThumbnails: selected.imageThumbnails,
+      dmTargetParticipantId: selected.dmTargetParticipantId,
+      fanoutPolicy: selected.fanoutPolicy ?? input.fanoutPolicy,
+      externalPathGrants: selected.externalPathGrants,
+      discordContextSnapshots: selected.discordContextSnapshots
+    })
+    const absorbed = absorption.result
+    if (absorbed.status === 'steered') {
+      runtime.queuedPrompts = remainingQueue
+      this.updateChatRound(input.chatId, (round) =>
+        round?.roundId === runtime.roundId
+          ? { ...round, ...this.queuedPromptFields(remainingQueue) }
+          : round
+      )
+      if (userFanout?.hasParticipantMention) {
         for (const ambiguity of userFanout.ambiguities) {
           this.appendRoundStatus(
             runtime.chatId,
@@ -4716,62 +4846,18 @@ export class EnsembleOrchestrator {
               .join(', ')}); no lane was started for that tag. Use a unique @role, @model, or @id.`
           )
         }
-        this.launchUserFanout(
-          runtime,
-          userFanout.targets,
-          selected.prompt,
-          absorption.receipt!.messageId
-        )
-        return absorbed
+        if (absorption.receipt?.messageId) {
+          this.launchUserFanout(
+            runtime,
+            userFanout.targets,
+            selected.prompt,
+            absorption.receipt.messageId
+          )
+        }
       }
+      return absorbed
     }
-
-    const boundaryAbsorbEligible = !selected.dmTargetParticipantId && textOnlySteer
-    if (boundaryAbsorbEligible) {
-      const absorbed = this.absorbMidRunSteering({
-        chatId: input.chatId,
-        roundId: runtime.roundId,
-        text: selected.prompt
-      })
-      if (absorbed.status === 'steered') {
-        runtime.queuedPrompts = remainingQueue
-        this.updateChatRound(input.chatId, (round) =>
-          round?.roundId === runtime.roundId
-            ? { ...round, ...this.queuedPromptFields(remainingQueue) }
-            : round
-        )
-        return absorbed
-      }
-    }
-
-    const startAfterCancellation = this.cancelRound(input.chatId, 'steered')
-    const roundId = this.beginRound(
-      input.chatId,
-      selected.prompt,
-      input.event.sender,
-      selected.dmTargetParticipantId,
-      selected.imageAttachments,
-      selected.imageThumbnails ?? [],
-      remainingQueue,
-      false,
-      selected.externalPathGrants ?? [],
-      input.concurrentMode,
-      // The queued entry captured the authority boundary at enqueue time.
-      // Preserve it ahead of the live composer's roster policy: a directed
-      // queued row stores `off`, and clicking Steer must not widen that row
-      // merely because the roster currently displays Read/All fan-out.
-      selected.fanoutPolicy ?? input.fanoutPolicy,
-      selected.discordContextSnapshots,
-      undefined,
-      undefined,
-      startAfterCancellation
-    )
-    this.appendRoundStatus(
-      input.chatId,
-      roundId,
-      'Ensemble steered: interrupted the active speaker and started a queued prompt.'
-    )
-    return { status: 'steered', roundId }
+    return { status: 'ignored', error: absorbed.error || 'No active Ensemble round' }
   }
 
   removeQueuedPrompt(input: {
@@ -4831,7 +4917,9 @@ export class EnsembleOrchestrator {
     }
     const { selected, selectedIndex } = resolved
 
-    runtime.queuedPrompts = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== selectedIndex)
+    runtime.queuedPrompts = runtime.queuedPrompts.filter(
+      (_, queuedIndex) => queuedIndex !== selectedIndex
+    )
     this.updateChatRound(input.chatId, (round) =>
       round?.roundId === runtime.roundId
         ? {
@@ -5070,10 +5158,7 @@ export class EnsembleOrchestrator {
       if (run.transportDispatchState === 'pending') {
         throw new Error(`Ensemble run ${run.runId} did not settle provider admission.`)
       }
-      if (
-        run.transportDispatchState === 'accepted' ||
-        run.transportDispatchState === 'unknown'
-      ) {
+      if (run.transportDispatchState === 'accepted' || run.transportDispatchState === 'unknown') {
         let confirmed = false
         try {
           confirmed = (await this.requestExactHistoryTransportTermination(run)) === true
@@ -5243,9 +5328,7 @@ export class EnsembleOrchestrator {
     if (
       requiresExplicitAuthorityRoutingDecision &&
       !run.authorityRoutingDecision &&
-      (!target ||
-        isUserYieldTarget(target) ||
-        explicitCheckpointTarget?.kind !== 'resolved')
+      (!target || isUserYieldTarget(target) || explicitCheckpointTarget?.kind !== 'resolved')
     ) {
       this.appendRoundStatus(
         run.chatId,
@@ -5558,11 +5641,7 @@ export class EnsembleOrchestrator {
     }
 
     const participants = chat.ensemble?.participants || []
-    const detail = resolveYieldTargetDetail(
-      target,
-      participants,
-      new Set([run.participant.id])
-    )
+    const detail = resolveYieldTargetDetail(target, participants, new Set([run.participant.id]))
     if (detail.kind === 'self') return reject('unresolved')
     if (detail.kind === 'ambiguous') {
       return reject('ambiguous', {
@@ -5971,7 +6050,11 @@ export class EnsembleOrchestrator {
 
     if (
       input.targetParticipantId &&
-      !this.roundHasParticipant(chat.ensemble.activeRound, runtime.roundId, input.targetParticipantId)
+      !this.roundHasParticipant(
+        chat.ensemble.activeRound,
+        runtime.roundId,
+        input.targetParticipantId
+      )
     ) {
       return {
         ok: false,
@@ -5982,9 +6065,7 @@ export class EnsembleOrchestrator {
         error: 'stale_target'
       }
     }
-    const targetRun = input.targetRunId
-      ? this.actionableRunForTool(input.targetRunId)
-      : undefined
+    const targetRun = input.targetRunId ? this.actionableRunForTool(input.targetRunId) : undefined
     if (
       input.targetRunId &&
       (!targetRun ||
@@ -6151,7 +6232,8 @@ export class EnsembleOrchestrator {
         action,
         roundId: runtime.roundId,
         participantId: caller.participant.id,
-        message: 'Agent Pool registration rejected: the calling participant is no longer in the roster.',
+        message:
+          'Agent Pool registration rejected: the calling participant is no longer in the roster.',
         error: 'no_active_run'
       }
     }
@@ -6174,7 +6256,8 @@ export class EnsembleOrchestrator {
         action,
         roundId: runtime.roundId,
         participantId: participant.id,
-        message: 'Agent Pool registration requires a role of at most 50 characters; shorten the assigned role first.',
+        message:
+          'Agent Pool registration requires a role of at most 50 characters; shorten the assigned role first.',
         error: 'role_too_long'
       }
     }
@@ -6185,7 +6268,8 @@ export class EnsembleOrchestrator {
       roundId: runtime.roundId,
       participantId: participant.id,
       participant,
-      message: 'The calling participant is eligible to register its assigned role in the Agent Pool.'
+      message:
+        'The calling participant is eligible to register its assigned role in the Agent Pool.'
     }
   }
 
@@ -6211,7 +6295,8 @@ export class EnsembleOrchestrator {
         action,
         roundId: candidate.roundId,
         participantId: candidate.participantId,
-        message: 'Agent Pool registration rejected because the participant role changed while the pool was updating.',
+        message:
+          'Agent Pool registration rejected because the participant role changed while the pool was updating.',
         error: 'stale_participant'
       }
     }
@@ -6248,7 +6333,12 @@ export class EnsembleOrchestrator {
     const nextParticipants = chat.ensemble.participants.map((participant) =>
       participant.id === candidate.participantId ? nextParticipant : participant
     )
-    this.applyRosterEditToRuntime(runtime, 'edit_participant', candidate.participantId, nextParticipants)
+    this.applyRosterEditToRuntime(
+      runtime,
+      'edit_participant',
+      candidate.participantId,
+      nextParticipants
+    )
     const activeRound = this.applyRosterEditToActiveRound(
       chat.ensemble.activeRound,
       runtime.roundId,
@@ -6291,7 +6381,8 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_roster_edit',
         action,
-        message: 'ensemble_roster_edit: action must be add_participant, remove_participant, or edit_participant.',
+        message:
+          'ensemble_roster_edit: action must be add_participant, remove_participant, or edit_participant.',
         error: 'invalid_action'
       }
     }
@@ -6384,7 +6475,11 @@ export class EnsembleOrchestrator {
 
     if (
       input.targetParticipantId &&
-      !this.roundHasParticipant(chat.ensemble.activeRound, runtime.roundId, input.targetParticipantId)
+      !this.roundHasParticipant(
+        chat.ensemble.activeRound,
+        runtime.roundId,
+        input.targetParticipantId
+      )
     ) {
       return {
         ok: false,
@@ -6407,7 +6502,8 @@ export class EnsembleOrchestrator {
         action,
         roundId: runtime.roundId,
         participantId: caller.participant.id,
-        message: 'Roster edit rejected: Boss/Captain participants cannot update their own Brief / Goal through MCP.',
+        message:
+          'Roster edit rejected: Boss/Captain participants cannot update their own Brief / Goal through MCP.',
         error: 'self_update_forbidden'
       }
     }
@@ -6541,8 +6637,9 @@ export class EnsembleOrchestrator {
       }
     }
     const latestCaller =
-      latestChat.ensemble.participants.find((participant) => participant.id === caller.participant.id) ||
-      caller.participant
+      latestChat.ensemble.participants.find(
+        (participant) => participant.id === caller.participant.id
+      ) || caller.participant
     const callerPermissions = this.resolveParticipantPermissions(
       latestChat,
       latestCaller,
@@ -6604,7 +6701,12 @@ export class EnsembleOrchestrator {
         deferred: true
       }
     }
-    this.applyRosterEditToRuntime(runtime, action, resolution.affectedParticipantId, resolution.nextParticipants)
+    this.applyRosterEditToRuntime(
+      runtime,
+      action,
+      resolution.affectedParticipantId,
+      resolution.nextParticipants
+    )
     const activeRound = this.applyRosterEditToActiveRound(
       latestChat.ensemble.activeRound,
       runtime.roundId,
@@ -6656,7 +6758,11 @@ export class EnsembleOrchestrator {
       input.targetParticipantId ||
       resolution.affectedParticipantId
     const verb =
-      action === 'add_participant' ? 'added' : action === 'remove_participant' ? 'removed' : 'edited'
+      action === 'add_participant'
+        ? 'added'
+        : action === 'remove_participant'
+          ? 'removed'
+          : 'edited'
     const message =
       action === 'edit_participant' && affectedBefore && affectedAfter
         ? `Authoritative seat change applied for ${label}: ${participantSeatValue(affectedBefore)} -> ${participantSeatValue(affectedAfter)}.`
@@ -6781,8 +6887,7 @@ export class EnsembleOrchestrator {
             attemptingParticipantRole: caller.participant.role,
             attemptingProvider: caller.participant.provider,
             assignedBossmanParticipantId: chat.ensemble.bossmanParticipantId,
-            assignedSecondInCommandParticipantId:
-              chat.ensemble.secondInCommandParticipantId
+            assignedSecondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId
           }
         })
       }
@@ -6805,8 +6910,7 @@ export class EnsembleOrchestrator {
         'round-updated'
       )
     }
-    const authorityLabel =
-      resolution.plan.authority === 'ensemble_captain' ? 'Captain' : 'Boss'
+    const authorityLabel = resolution.plan.authority === 'ensemble_captain' ? 'Captain' : 'Boss'
     const message = activate
       ? `${authorityLabel} imported roster preset "${resolution.plan.presetName}"; it will activate after this round finishes.`
       : `${authorityLabel} validated roster preset "${resolution.plan.presetName}" for import without activating it.`
@@ -6942,11 +7046,14 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_brief_update',
         roundId: runtime.roundId,
         participantId: caller.participant.id,
-        message: 'Brief update rejected: Boss/Captain participants cannot update their own Brief / Goal through MCP.',
+        message:
+          'Brief update rejected: Boss/Captain participants cannot update their own Brief / Goal through MCP.',
         error: 'self_update_forbidden'
       }
     }
-    if (!this.roundHasParticipant(chat.ensemble.activeRound, runtime.roundId, targetParticipantId)) {
+    if (
+      !this.roundHasParticipant(chat.ensemble.activeRound, runtime.roundId, targetParticipantId)
+    ) {
       return {
         ok: false,
         tool: 'ensemble_brief_update',
@@ -7046,7 +7153,13 @@ export class EnsembleOrchestrator {
         error: latestAuthority.error
       }
     }
-    if (!this.roundHasParticipant(latestChat.ensemble.activeRound, runtime.roundId, targetParticipantId)) {
+    if (
+      !this.roundHasParticipant(
+        latestChat.ensemble.activeRound,
+        runtime.roundId,
+        targetParticipantId
+      )
+    ) {
       return {
         ok: false,
         tool: 'ensemble_brief_update',
@@ -7056,8 +7169,9 @@ export class EnsembleOrchestrator {
       }
     }
     const latestCaller =
-      latestChat.ensemble.participants.find((participant) => participant.id === caller.participant.id) ||
-      caller.participant
+      latestChat.ensemble.participants.find(
+        (participant) => participant.id === caller.participant.id
+      ) || caller.participant
     const callerPermissions = this.resolveParticipantPermissions(
       latestChat,
       latestCaller,
@@ -7312,12 +7426,7 @@ export class EnsembleOrchestrator {
       }
     }
 
-    const applied = this.applyUserRosterMutationToChat(
-      chat,
-      runtime,
-      resolution.value,
-      false
-    )
+    const applied = this.applyUserRosterMutationToChat(chat, runtime, resolution.value, false)
     return {
       ok: true,
       status: 'applied',
@@ -7333,9 +7442,7 @@ export class EnsembleOrchestrator {
     boundary: boolean
   ): string {
     const participant = mutation.affectedParticipantId
-      ? mutation.participants.find(
-          (candidate) => candidate.id === mutation.affectedParticipantId
-        )
+      ? mutation.participants.find((candidate) => candidate.id === mutation.affectedParticipantId)
       : undefined
     const label = participantLabel(participant)
     const suffix = boundary ? ' at the execution boundary.' : '.'
@@ -7647,7 +7754,16 @@ export class EnsembleOrchestrator {
     boundary: boolean
     updateActiveRound?: boolean
   }): ChatRecord {
-    const { chat, runtime, before, after, changedBy, reason, boundary, updateActiveRound = true } = input
+    const {
+      chat,
+      runtime,
+      before,
+      after,
+      changedBy,
+      reason,
+      boundary,
+      updateActiveRound = true
+    } = input
     // Rebase onto the latest snapshot. Callers often hand in the chat they
     // read at request start; scout/review lane flushes can land in the store
     // (or the shared flush overlay) before this save runs.
@@ -7657,9 +7773,14 @@ export class EnsembleOrchestrator {
     const nextParticipants = latest.ensemble.participants.map((participant) =>
       participant.id === before.id ? { ...after, order: participant.order } : participant
     )
-    const editedActiveRound = runtime && updateActiveRound
-      ? this.applyRosterEditToActiveRound(latest.ensemble.activeRound, runtime.roundId, nextParticipants)
-      : latest.ensemble.activeRound
+    const editedActiveRound =
+      runtime && updateActiveRound
+        ? this.applyRosterEditToActiveRound(
+            latest.ensemble.activeRound,
+            runtime.roundId,
+            nextParticipants
+          )
+        : latest.ensemble.activeRound
     // An execution-config change makes a standing failed/unreachable marker a
     // false alarm for the seat's NEW config: clear the round-state warning (and
     // stamp superseded failed lanes) whether the round is live or long over.
@@ -7764,7 +7885,10 @@ export class EnsembleOrchestrator {
           order: participants.length + 1,
           ...(patch?.model ? { model: patch.model } : {}),
           ...(patch?.permissionPresetId
-            ? { permissionPresetId: patch.permissionPresetId as EnsembleParticipant['permissionPresetId'] }
+            ? {
+                permissionPresetId:
+                  patch.permissionPresetId as EnsembleParticipant['permissionPresetId']
+              }
             : {}),
           ...(patch?.reasoningEffort ? { reasoningEffort: patch.reasoningEffort } : {}),
           ...(typeof patch?.fastModeEnabled === 'boolean'
@@ -7811,7 +7935,10 @@ export class EnsembleOrchestrator {
       ...(patch.role !== undefined ? { role: patch.role } : {}),
       ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
       ...(patch.permissionPresetId
-        ? { permissionPresetId: patch.permissionPresetId as EnsembleParticipant['permissionPresetId'] }
+        ? {
+            permissionPresetId:
+              patch.permissionPresetId as EnsembleParticipant['permissionPresetId']
+          }
         : {}),
       ...(patch.reasoningEffort ? { reasoningEffort: patch.reasoningEffort } : {}),
       ...(typeof patch.fastModeEnabled === 'boolean'
@@ -7857,8 +7984,7 @@ export class EnsembleOrchestrator {
       const edited = remaining
         .map((participant) => nextById.get(participant.id) || participant)
         .filter(
-          (participant) =>
-            participant.enabled !== false && !isBackgroundParticipant(participant)
+          (participant) => participant.enabled !== false && !isBackgroundParticipant(participant)
         )
       const activeRound = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
       const affectedState = activeRound?.participants.find(
@@ -7896,8 +8022,7 @@ export class EnsembleOrchestrator {
       .map((state) => {
         const participant = nextById.get(state.participantId)!
         const disabledWhileIdle = participant.enabled === false && state.status === 'idle'
-        const backgroundWhileIdle =
-          isBackgroundParticipant(participant) && state.status === 'idle'
+        const backgroundWhileIdle = isBackgroundParticipant(participant) && state.status === 'idle'
         const restoredToSerial =
           participant.enabled !== false &&
           !isBackgroundParticipant(participant) &&
@@ -7918,11 +8043,11 @@ export class EnsembleOrchestrator {
                   reason: 'Moved to BG during the active round.'
                 }
               : restoredToSerial
-              ? {
-                  status: 'idle' as const,
-                  reason: undefined
-                }
-              : {})
+                ? {
+                    status: 'idle' as const,
+                    reason: undefined
+                  }
+                : {})
         }
       })
     const removed = round.participants
@@ -8404,16 +8529,15 @@ export class EnsembleOrchestrator {
           ...(snapshot ? {} : { error: 'quota_unavailable' as const })
         }
       }
-      const providers = selectableProviderIds().reduce<Partial<Record<ProviderId, ProviderUsageSummary>>>(
-        (acc, candidate) => {
-          acc[candidate] = summarizeProviderUsage(
-            candidate,
-            this.deps.getProviderUsageSnapshot?.(candidate) || null
-          )
-          return acc
-        },
-        {}
-      )
+      const providers = selectableProviderIds().reduce<
+        Partial<Record<ProviderId, ProviderUsageSummary>>
+      >((acc, candidate) => {
+        acc[candidate] = summarizeProviderUsage(
+          candidate,
+          this.deps.getProviderUsageSnapshot?.(candidate) || null
+        )
+        return acc
+      }, {})
       const configuredCount = Object.values(providers).filter((entry) => entry?.configured).length
       const message = `${authorityLabel} checked provider quota/reset status for ${configuredCount} configured provider(s).`
       this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
@@ -8699,8 +8823,7 @@ export class EnsembleOrchestrator {
           error: 'missing_required_field'
         }
       }
-      const reason =
-        normalizeBossmanText(input.reason, 500) || 'Whole ensemble scheduled wake-up.'
+      const reason = normalizeBossmanText(input.reason, 500) || 'Whole ensemble scheduled wake-up.'
       const result = this.scheduleWakeupForRun(runtime.activeRunId, {
         delaySeconds,
         reason,
@@ -8734,7 +8857,11 @@ export class EnsembleOrchestrator {
     if (action === 'assign_work') {
       const objective = normalizeBossmanText(input.objective || input.prompt, 1000)
       if (!input.targetParticipantId || !objective) {
-        return this.missingBossmanField(action, runtime.roundId, 'assign_work requires targetParticipantId and objective.')
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'assign_work requires targetParticipantId and objective.'
+        )
       }
       const participant = this.findRuntimeParticipant(runtime, input.targetParticipantId)
       if (!participant) return this.invalidBossmanTarget(action, runtime.roundId)
@@ -8784,13 +8911,15 @@ export class EnsembleOrchestrator {
 
     if (action === 'set_round_plan') {
       const goal = normalizeBossmanText(input.goal || input.objective || input.prompt, 1200)
-      if (!goal) return this.missingBossmanField(action, runtime.roundId, 'set_round_plan requires goal.')
+      if (!goal)
+        return this.missingBossmanField(action, runtime.roundId, 'set_round_plan requires goal.')
       const plan = {
         goal,
         phase: normalizeBossmanText(input.phase, 240) || undefined,
         ownerParticipantIds: participantIds.length ? participantIds : undefined,
         blockers: normalizeBossmanTextArray(input.blockers, 8, 240),
-        doneCriteria: normalizeBossmanText(input.doneCriteria || input.acceptanceCriteria, 1000) || undefined,
+        doneCriteria:
+          normalizeBossmanText(input.doneCriteria || input.acceptanceCriteria, 1000) || undefined,
         updatedAt: nowIso,
         updatedByParticipantId: callerId
       }
@@ -8800,12 +8929,23 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} set the round plan: ${goal}`
       )
-      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} set the round plan.` }
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: `${authorityLabel} set the round plan.`
+      }
     }
 
     if (action === 'request_status') {
       const prompt = normalizeBossmanText(input.question || input.prompt || input.reason, 800)
-      if (!prompt) return this.missingBossmanField(action, runtime.roundId, 'request_status requires prompt or question.')
+      if (!prompt)
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'request_status requires prompt or question.'
+        )
       const request = {
         id: this.nextBossmanControlId('status'),
         targetParticipantIds: participantIds.length ? participantIds : undefined,
@@ -8832,12 +8972,23 @@ export class EnsembleOrchestrator {
           { allowAnsweredParticipant: true }
         )
       }
-      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} requested status.` }
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: `${authorityLabel} requested status.`
+      }
     }
 
     if (action === 'declare_decision') {
       const decision = normalizeBossmanText(input.decision || input.prompt, 1000)
-      if (!decision) return this.missingBossmanField(action, runtime.roundId, 'declare_decision requires decision.')
+      if (!decision)
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'declare_decision requires decision.'
+        )
       const record = {
         id: this.nextBossmanControlId('decision'),
         decision,
@@ -8850,15 +9001,30 @@ export class EnsembleOrchestrator {
         ...state,
         decisions: capBossmanItems([...(state.decisions || []), record])
       }))
-      this.appendRoundStatus(runtime.chatId, runtime.roundId, `${authorityLabel} declared decision: ${decision}`)
-      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} recorded a decision.` }
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} declared decision: ${decision}`
+      )
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: `${authorityLabel} recorded a decision.`
+      }
     }
 
     if (action === 'set_review_gate') {
       const reviewerId = input.targetParticipantId || participantIds[0]
       const reviewer = reviewerId ? this.findRuntimeParticipant(runtime, reviewerId) : null
       const scope = normalizeBossmanText(input.scope || input.prompt, 800)
-      if (!reviewer || !scope) return this.missingBossmanField(action, runtime.roundId, 'set_review_gate requires targetParticipantId and scope.')
+      if (!reviewer || !scope)
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'set_review_gate requires targetParticipantId and scope.'
+        )
       const gateChat = this.deps.getChat(runtime.chatId)
       const gate = {
         id: input.gateId || this.nextBossmanControlId('gate'),
@@ -8885,15 +9051,32 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} set review gate for ${participantDisplayName(reviewer)}: ${scope}`
       )
-      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, participantId: reviewer.id, message: `${authorityLabel} set a review gate.` }
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        participantId: reviewer.id,
+        message: `${authorityLabel} set a review gate.`
+      }
     }
 
     if (action === 'quarantine_participant') {
       const participantId = input.targetParticipantId
       const participant = participantId ? this.findRuntimeParticipant(runtime, participantId) : null
-      if (!participant) return this.missingBossmanField(action, runtime.roundId, 'quarantine_participant requires targetParticipantId.')
+      if (!participant)
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'quarantine_participant requires targetParticipantId.'
+        )
       const reason = normalizeBossmanText(input.reason, 500)
-      if (!input.clear && !reason) return this.missingBossmanField(action, runtime.roundId, 'quarantine_participant requires reason unless clear=true.')
+      if (!input.clear && !reason)
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'quarantine_participant requires reason unless clear=true.'
+        )
       const quarantine = {
         participantId: participant.id,
         roundId: runtime.roundId,
@@ -8916,7 +9099,13 @@ export class EnsembleOrchestrator {
         const remaining = runtime.remainingParticipants || []
         const index = remaining.findIndex((entry) => entry.id === participant.id)
         if (index >= 0) remaining.splice(index, 1)
-        this.updateParticipantState(runtime.chatId, runtime.roundId, participant.id, 'skipped', `Quarantined: ${quarantine.reason}`)
+        this.updateParticipantState(
+          runtime.chatId,
+          runtime.roundId,
+          participant.id,
+          'skipped',
+          `Quarantined: ${quarantine.reason}`
+        )
       }
       this.appendRoundStatus(
         runtime.chatId,
@@ -8925,11 +9114,23 @@ export class EnsembleOrchestrator {
           ? `${authorityLabel} quarantined ${participantDisplayName(participant)} (${quarantine.category}): ${quarantine.reason}`
           : `${authorityLabel} cleared quarantine for ${participantDisplayName(participant)}.`
       )
-      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, participantId: participant.id, message: quarantine.active ? `${authorityLabel} quarantined ${participantDisplayName(participant)}.` : `${authorityLabel} cleared quarantine.` }
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        participantId: participant.id,
+        message: quarantine.active
+          ? `${authorityLabel} quarantined ${participantDisplayName(participant)}.`
+          : `${authorityLabel} cleared quarantine.`
+      }
     }
 
     if (action === 'allocate_budget') {
-      if (input.targetParticipantId && !this.findRuntimeParticipant(runtime, input.targetParticipantId)) {
+      if (
+        input.targetParticipantId &&
+        !this.findRuntimeParticipant(runtime, input.targetParticipantId)
+      ) {
         return this.invalidBossmanTarget(action, runtime.roundId)
       }
       const budget = {
@@ -8951,7 +9152,11 @@ export class EnsembleOrchestrator {
         budget.maxDurationSeconds === undefined &&
         budget.maxTokens === undefined
       ) {
-        return this.missingBossmanField(action, runtime.roundId, 'allocate_budget requires at least one max* budget field.')
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'allocate_budget requires at least one max* budget field.'
+        )
       }
       this.updateBossmanControlState(runtime, (state) => ({
         ...state,
@@ -8965,7 +9170,14 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} allocated budget${targetLabel ? ` for ${targetLabel}` : ''}.`
       )
-      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, participantId: budget.participantId, message: `${authorityLabel} allocated a bounded budget.` }
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        participantId: budget.participantId,
+        message: `${authorityLabel} allocated a bounded budget.`
+      }
     }
 
     if (action === 'create_poll') {
@@ -9014,7 +9226,12 @@ export class EnsembleOrchestrator {
       }
       const question = normalizeBossmanText(input.question || input.prompt, 800)
       const options = normalizeBossmanTextArray(input.options, MAX_BOSSMAN_POLL_OPTIONS, 160)
-      if (!question || options.length < 2) return this.missingBossmanField(action, runtime.roundId, 'create_poll requires question and at least two options.')
+      if (!question || options.length < 2)
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'create_poll requires question and at least two options.'
+        )
       const timeoutSeconds = clampOptionalInteger(input.timeoutSeconds, 30, 24 * 60 * 60)
       const pollTargetIds = participantIds.length
         ? participantIds
@@ -9042,7 +9259,10 @@ export class EnsembleOrchestrator {
       }
       this.updateBossmanControlState(runtime, (state) => ({
         ...state,
-        polls: capBossmanItems([...(state.polls || []).filter((entry) => entry.id !== poll.id), poll])
+        polls: capBossmanItems([
+          ...(state.polls || []).filter((entry) => entry.id !== poll.id),
+          poll
+        ])
       }))
       this.appendRoundStatus(
         runtime.chatId,
@@ -9059,7 +9279,13 @@ export class EnsembleOrchestrator {
           { allowAnsweredParticipant: true }
         )
       }
-      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} opened poll ${poll.id}.` }
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: `${authorityLabel} opened poll ${poll.id}.`
+      }
     }
 
     return {
@@ -9204,7 +9430,10 @@ export class EnsembleOrchestrator {
       }
       const nextPoll = {
         ...poll,
-        votes: [...poll.votes.filter((entry) => entry.voterParticipantId !== run.participant.id), vote]
+        votes: [
+          ...poll.votes.filter((entry) => entry.voterParticipantId !== run.participant.id),
+          vote
+        ]
       }
       const expectedVoters = poll.targetParticipantIds || []
       const hasAllTargetVotes =
@@ -9478,7 +9707,11 @@ export class EnsembleOrchestrator {
       'round-updated'
     )
     if (chat.ensemble.activeRound?.status === 'running') {
-      this.appendRoundStatus(chatId, chat.ensemble.activeRound.roundId, `User voted "${choice}" in poll ${pollId}.`)
+      this.appendRoundStatus(
+        chatId,
+        chat.ensemble.activeRound.roundId,
+        `User voted "${choice}" in poll ${pollId}.`
+      )
     }
     return {
       ok: true,
@@ -9787,10 +10020,7 @@ export class EnsembleOrchestrator {
     }
     this.updateBossmanControlState(runtime, (state) => ({
       ...state,
-      polls: capBossmanItems([
-        ...(state.polls || []).filter((entry) => entry.id !== poll.id),
-        poll
-      ])
+      polls: capBossmanItems([...(state.polls || []).filter((entry) => entry.id !== poll.id), poll])
     }))
     this.appendRoundStatus(
       runtime.chatId,
@@ -9834,9 +10064,12 @@ export class EnsembleOrchestrator {
 
     const authorityIds = new Set(poll.authorityVoterIds || [])
     const participantVotes = poll.votes.filter((vote) => Boolean(vote.voterParticipantId))
-    const userVote = poll.votes.find((vote) => !vote.voterParticipantId && vote.voterLabel === 'User')
+    const userVote = poll.votes.find(
+      (vote) => !vote.voterParticipantId && vote.voterLabel === 'User'
+    )
     const vetoVote = participantVotes.find(
-      (vote) => authorityIds.has(vote.voterParticipantId as string) && vote.choice === 'keep-working'
+      (vote) =>
+        authorityIds.has(vote.voterParticipantId as string) && vote.choice === 'keep-working'
     )
     const expectedVoters = poll.targetParticipantIds || []
     const hasAllTargetVotes =
@@ -9984,7 +10217,9 @@ export class EnsembleOrchestrator {
     participantId: string
   ): EnsembleParticipant | null {
     const chat = this.deps.getChat(runtime.chatId)
-    return chat?.ensemble?.participants.find((participant) => participant.id === participantId) || null
+    return (
+      chat?.ensemble?.participants.find((participant) => participant.id === participantId) || null
+    )
   }
 
   private formatBossmanTargetLabels(runtime: ActiveRoundRuntime, participantIds: string[]): string {
@@ -10064,12 +10299,7 @@ export class EnsembleOrchestrator {
     participantIds: string[],
     usage: { extraTurns?: number; fanoutCalls?: number; durationSeconds?: number; tokens?: number }
   ): void {
-    if (
-      !usage.extraTurns &&
-      !usage.fanoutCalls &&
-      !usage.durationSeconds &&
-      !usage.tokens
-    ) {
+    if (!usage.extraTurns && !usage.fanoutCalls && !usage.durationSeconds && !usage.tokens) {
       return
     }
     if (participantIds.length === 0) return
@@ -10289,7 +10519,8 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'reorder_remaining',
         roundId: runtime.roundId,
-        message: 'Boss reorder rejected: turn order can change once every two completed Ensemble rounds.',
+        message:
+          'Boss reorder rejected: turn order can change once every two completed Ensemble rounds.',
         error: 'reorder_cooldown'
       }
     }
@@ -10349,7 +10580,11 @@ export class EnsembleOrchestrator {
       },
       'participant-updated'
     )
-    this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Boss changed the remaining turn order.')
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      'Boss changed the remaining turn order.'
+    )
     return {
       ok: true,
       tool: 'ensemble_bossman_control',
@@ -10387,7 +10622,9 @@ export class EnsembleOrchestrator {
         error: 'not_ensemble'
       }
     }
-    const target = chat.ensemble.participants.find((participant) => participant.id === targetParticipantId)
+    const target = chat.ensemble.participants.find(
+      (participant) => participant.id === targetParticipantId
+    )
     if (!target) {
       return {
         ok: false,
@@ -10487,9 +10724,7 @@ export class EnsembleOrchestrator {
       // for the same reason: a target carrying a NARROWING override that the
       // replacement dropped would be widened by omission just as surely as by a
       // wider preset.
-      ...(inheritedPermissionPresetId
-        ? { permissionPresetId: inheritedPermissionPresetId }
-        : {}),
+      ...(inheritedPermissionPresetId ? { permissionPresetId: inheritedPermissionPresetId } : {}),
       ...(target.permissionOverrides ? { permissionOverrides: target.permissionOverrides } : {}),
       ...(input.replacement?.reasoningEffort
         ? { reasoningEffort: input.replacement.reasoningEffort }
@@ -10522,8 +10757,7 @@ export class EnsembleOrchestrator {
     // baseline. Adding a participant beyond the baseline is gated behind
     // explicit user approval, not something the Boss tool may grant, so we
     // refuse rather than grow the round.
-    const postProbeParticipants =
-      this.deps.getChat(runtime.chatId)?.ensemble?.participants || []
+    const postProbeParticipants = this.deps.getChat(runtime.chatId)?.ensemble?.participants || []
     const baselineCount =
       runtime.bossmanBaselineParticipantCount ??
       runtime.bossmanBaselineParticipantIds?.length ??
@@ -10547,7 +10781,9 @@ export class EnsembleOrchestrator {
     }
 
     const remaining = runtime.remainingParticipants || []
-    const pendingIndex = remaining.findIndex((participant) => participant.id === targetParticipantId)
+    const pendingIndex = remaining.findIndex(
+      (participant) => participant.id === targetParticipantId
+    )
     const isActive =
       targetRun ||
       (runtime.activeRunId &&
@@ -10567,14 +10803,15 @@ export class EnsembleOrchestrator {
       remaining.splice(pendingIndex, 1, replacement)
     } else {
       const activeRun =
-        targetRun ||
-        (runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined)
+        targetRun || (runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined)
       if (activeRun) {
         activeRun.fanoutDispatchCancelled = true
         this.finalizeRun(activeRun, 'skipped', input.reason || 'Replaced by Boss.')
         if (runtime.activeRunId === activeRun.runId) runtime.activeRunId = undefined
         runtime.activeScoutRunIds?.delete(activeRun.runId)
-        void this.deps.cancelRun(activeRun.participant.provider, activeRun.runId).catch(() => undefined)
+        void this.deps
+          .cancelRun(activeRun.participant.provider, activeRun.runId)
+          .catch(() => undefined)
       }
       remaining.unshift(replacement)
     }
@@ -10604,7 +10841,9 @@ export class EnsembleOrchestrator {
         participantId === targetParticipantId ? replacement.id : participantId
       )
     })
-    const replacementOrder = nextParticipants.find((participant) => participant.id === replacement.id)?.order || replacement.order
+    const replacementOrder =
+      nextParticipants.find((participant) => participant.id === replacement.id)?.order ||
+      replacement.order
     const activeRound =
       latestEnsemble.activeRound?.roundId === runtime.roundId
         ? {
@@ -10937,9 +11176,7 @@ export class EnsembleOrchestrator {
     const truncated = fullContent.length > maxChars
     const content = truncated ? fullContent.slice(fullContent.length - maxChars) : fullContent
     const settled = lane ? isTerminalLaneStatus(lane.status) : true
-    const laneRun = (chat.runs || []).find(
-      (candidate) => candidate.ensembleLaneId === laneId
-    )
+    const laneRun = (chat.runs || []).find((candidate) => candidate.ensembleLaneId === laneId)
     return {
       ok: true,
       tool: 'ensemble_lane_result',
@@ -11110,8 +11347,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout',
         mode,
         ...(targetStage ? { targetStage } : {}),
-        message:
-          'ensemble_fanout: locked writer lanes require the Write or All fan-out policy.',
+        message: 'ensemble_fanout: locked writer lanes require the Write or All fan-out policy.',
         error: 'not_authorized'
       }
     }
@@ -11121,17 +11357,12 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout',
         mode,
         ...(targetStage ? { targetStage } : {}),
-        message:
-          'ensemble_fanout: locked writer lanes require TASKWRAITH_CONCURRENT_WRITE_LANES.',
+        message: 'ensemble_fanout: locked writer lanes require TASKWRAITH_CONCURRENT_WRITE_LANES.',
         error: 'write_lanes_disabled'
       }
     }
 
-    const fanoutAuthorityRole = this.fanoutAuthorityRoleForCaller(
-      chat,
-      runtime,
-      run.participant.id
-    )
+    const fanoutAuthorityRole = this.fanoutAuthorityRoleForCaller(chat, runtime, run.participant.id)
     if (mode === 'locked_writers' && !fanoutAuthorityRole) {
       const message = this.lockedWriterFanoutAuthorizationMessage(chat, runtime, run)
       this.appendRoundStatus(run.chatId, run.roundId, message)
@@ -11332,8 +11563,7 @@ export class EnsembleOrchestrator {
         message: `${label} dispatched: ${laneIds.length} lane(s) entered provider setup.${rejectedCount > 0 ? ` ${rejectedCount} target(s) were rejected before adapter invocation and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results and any asynchronous setup failures will appear in the transcript; this tool returns after adapter invocation so the caller does not time out while lanes are working.`
       }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'ensemble_fanout: dispatch failed.'
+      const message = error instanceof Error ? error.message : 'ensemble_fanout: dispatch failed.'
       if (!runtime.cancelled) {
         try {
           this.appendRoundStatus(run.chatId, run.roundId, `${label} failed: ${message}`)
@@ -11473,11 +11703,7 @@ export class EnsembleOrchestrator {
         error: 'not_authorized'
       }
     }
-    const authorityRole = this.fanoutAuthorityRoleForCaller(
-      chat,
-      runtime,
-      run.participant.id
-    )
+    const authorityRole = this.fanoutAuthorityRoleForCaller(chat, runtime, run.participant.id)
     if (!authorityRole) {
       return {
         ok: false,
@@ -11788,7 +12014,11 @@ export class EnsembleOrchestrator {
         : dedupeParticipants(
             targets
               .map((target) =>
-                resolvePhraseToParticipant(stripLeadingAt(target), participants, new Set([run.participant.id]))
+                resolvePhraseToParticipant(
+                  stripLeadingAt(target),
+                  participants,
+                  new Set([run.participant.id])
+                )
               )
               .filter((participant): participant is EnsembleParticipant =>
                 Boolean(participant?.enabled)
@@ -11805,7 +12035,9 @@ export class EnsembleOrchestrator {
     }
     const timestamp = this.deps.nowIso()
     const senderLabel = run.participant.role || providerLabel(run.participant.provider)
-    const recipientLabels = recipients.map((participant) => participant.role || providerLabel(participant.provider))
+    const recipientLabels = recipients.map(
+      (participant) => participant.role || providerLabel(participant.provider)
+    )
     const content = `↪ ${senderLabel} to ${recipientLabels.join(', ')}: ${message}${
       input.reason ? `\nReason: ${input.reason}` : ''
     }`
@@ -11891,7 +12123,8 @@ export class EnsembleOrchestrator {
     if (retainedRun?.terminalFinalized) {
       return {
         ok: false,
-        reason: 'This Ensemble participant run is no longer active and cannot mutate workspace state.'
+        reason:
+          'This Ensemble participant run is no longer active and cannot mutate workspace state.'
       }
     }
     const run = this.actionableRunForTool(runId)
@@ -11974,10 +12207,7 @@ export class EnsembleOrchestrator {
     return participant && isBackgroundParticipant(participant) ? undefined : participantId
   }
 
-  private activeCaptainParticipantIds(
-    chat: ChatRecord,
-    runtime: ActiveRoundRuntime
-  ): string[] {
+  private activeCaptainParticipantIds(chat: ChatRecord, runtime: ActiveRoundRuntime): string[] {
     return configuredEnsembleCaptainParticipantIds({
       participants: chat.ensemble?.participants || [],
       bossmanParticipantId: this.activeBossmanParticipantId(chat, runtime),
@@ -12162,8 +12392,7 @@ export class EnsembleOrchestrator {
           bossmanParticipantId,
           captainParticipantIds,
           secondInCommandParticipantId,
-          rosterGuardParticipantId:
-            primary.liveBossmanParticipantId || actingCaptainParticipantId,
+          rosterGuardParticipantId: primary.liveBossmanParticipantId || actingCaptainParticipantId,
           primaryUnavailableReason: primary.reason
         }
       }
@@ -12303,10 +12532,9 @@ export class EnsembleOrchestrator {
   ): boolean {
     const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
     const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
-    const authorityId =
-      primary.unavailable
-        ? this.activeActingCaptainParticipantId(chat, runtime)
-        : bossmanParticipantId
+    const authorityId = primary.unavailable
+      ? this.activeActingCaptainParticipantId(chat, runtime)
+      : bossmanParticipantId
     if (!authorityId) return false
     const authorityMatch = matches.find(
       (match) =>
@@ -12466,9 +12694,7 @@ export class EnsembleOrchestrator {
     chat: ChatRecord,
     writers: EnsembleParticipant[],
     runs: ActiveParticipantRun[]
-  ):
-    | { ok: true; preflight: ConcurrentWriteScopePreflight }
-    | { ok: false; reason: string } {
+  ): { ok: true; preflight: ConcurrentWriteScopePreflight } | { ok: false; reason: string } {
     const workspacePath = chat.scope === 'global' ? '' : chat.workspacePath || ''
     if (!workspacePath) {
       return {
@@ -12526,10 +12752,7 @@ export class EnsembleOrchestrator {
       claims.map((claim) => [claim.participantId, claim.scopes])
     )
     const matrixSummary = claims
-      .map(
-        (claim) =>
-          `${claim.participantRole}: ${claim.scopes.map(formatWriteScope).join(', ')}`
-      )
+      .map((claim) => `${claim.participantRole}: ${claim.scopes.map(formatWriteScope).join(', ')}`)
       .join('\n')
     return {
       ok: true,
@@ -12665,9 +12888,7 @@ export class EnsembleOrchestrator {
     if (!chat?.ensemble) return
     const briefValue = [
       brief.findings,
-      ...(brief.recommendations?.length
-        ? [`Recommends: ${brief.recommendations.join('; ')}`]
-        : []),
+      ...(brief.recommendations?.length ? [`Recommends: ${brief.recommendations.join('; ')}`] : []),
       ...(brief.blockers?.length ? [`Blockers: ${brief.blockers.join('; ')}`] : [])
     ].join(' — ')
     const entry = makeBlackboardEntry({
@@ -13017,9 +13238,7 @@ export class EnsembleOrchestrator {
     const recoveredQueuedEntries = this.restorePersistedQueuedEntries(round)
     const legacyQueuedPrompts =
       recoveredQueuedEntries === null
-        ? [
-            ...(round.queuedPrompts || (round.queuedPrompt ? [round.queuedPrompt] : []))
-          ]
+        ? [...(round.queuedPrompts || (round.queuedPrompt ? [round.queuedPrompt] : []))]
         : []
     const runtime: ActiveRoundRuntime = {
       chatId: wakeup.chatId,
@@ -13191,11 +13410,7 @@ export class EnsembleOrchestrator {
       approvalMode: permissions.approvalMode,
       workflowMode,
       effectivePermissions: permissions,
-      signature: this.deps.signRunPermissionPosture(
-        permissions.approvalMode,
-        permissions,
-        context
-      ),
+      signature: this.deps.signRunPermissionPosture(permissions.approvalMode, permissions, context),
       context
     })
   }
@@ -13205,18 +13420,21 @@ export class EnsembleOrchestrator {
     wakeup: EnsembleWakeupRecord
   ): void {
     if (!chat?.ensemble) return
-    this.saveChatWithCheckpoint({
-      ...chat,
-      ensemble: {
-        ...chat.ensemble,
-        wakeups: {
-          ...(chat.ensemble.wakeups || {}),
-          [wakeup.wakeupId]: wakeup
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          wakeups: {
+            ...(chat.ensemble.wakeups || {}),
+            [wakeup.wakeupId]: wakeup
+          },
+          updatedAt: wakeup.firedAt || wakeup.cancelledAt || wakeup.expiredAt || wakeup.scheduledAt
         },
-        updatedAt: wakeup.firedAt || wakeup.cancelledAt || wakeup.expiredAt || wakeup.scheduledAt
+        updatedAt: this.deps.now()
       },
-      updatedAt: this.deps.now()
-    }, 'round-updated')
+      'round-updated'
+    )
   }
 
   private markWakeupCancelled(wakeup: EnsembleWakeupRecord, message: string): EnsembleWakeupRecord {
@@ -13307,15 +13525,18 @@ export class EnsembleOrchestrator {
         return participant
       })
     }
-    this.saveChatWithCheckpoint({
-      ...chat,
-      ensemble: {
-        ...chat.ensemble,
-        activeRound: nextRound,
-        updatedAt: this.deps.nowIso()
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          activeRound: nextRound,
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
       },
-      updatedAt: this.deps.now()
-    }, 'round-updated')
+      'round-updated'
+    )
   }
 
   private findRuntimeByWakeupId(
@@ -13482,7 +13703,8 @@ export class EnsembleOrchestrator {
     this.finalizeRun(
       run,
       status,
-      run.providerDiagnostic || (exitCode === 0 ? 'Exited without result.' : `Exited with code ${exitCode}.`)
+      run.providerDiagnostic ||
+        (exitCode === 0 ? 'Exited without result.' : `Exited with code ${exitCode}.`)
     )
     return true
   }
@@ -13706,11 +13928,7 @@ export class EnsembleOrchestrator {
       const idx = run.toolActivities.findIndex((a) => a.id === id)
       if (idx >= 0) {
         const activity = run.toolActivities[idx]
-        run.toolActivities[idx] = pairEnsembleToolResult(
-          activity,
-          payload,
-          this.deps.nowIso()
-        )
+        run.toolActivities[idx] = pairEnsembleToolResult(activity, payload, this.deps.nowIso())
         // Managed Cursor Path-B streams the visible MCP-shaped yield call and
         // its tool result through provider output, rather than invoking the
         // TaskWraith MCP dispatcher. Pairing the result alone leaves the
@@ -13914,7 +14132,10 @@ export class EnsembleOrchestrator {
     let effectiveFanoutPolicy = requestedFanoutPolicy
     let concurrentFallbackReason: string | undefined
     if (!concurrentCheck.ok) {
-      if (requestedConcurrentMode && concurrentCheck.reason?.includes('TASKWRAITH_CONCURRENT_LANES')) {
+      if (
+        requestedConcurrentMode &&
+        concurrentCheck.reason?.includes('TASKWRAITH_CONCURRENT_LANES')
+      ) {
         effectiveConcurrentMode = false
         effectiveFanoutPolicy = 'off'
         concurrentFallbackReason = concurrentCheck.reason
@@ -14051,18 +14272,17 @@ export class EnsembleOrchestrator {
             .join(', ')}). No background lane launched. Use a unique @role, @model, or @id.`
         )
       }
-      const configuredCaptainParticipantIds = Array.isArray(
-        chat.ensemble.captainParticipantIds
-      )
+      const configuredCaptainParticipantIds = Array.isArray(chat.ensemble.captainParticipantIds)
         ? chat.ensemble.captainParticipantIds
         : chat.ensemble.secondInCommandParticipantId
           ? [chat.ensemble.secondInCommandParticipantId]
           : []
       const backgroundAuthorityAssignments = [
         ['Boss', chat.ensemble.bossmanParticipantId],
-        ...configuredCaptainParticipantIds.map(
-          (participantId): [string, string] => ['Captain', participantId]
-        ),
+        ...configuredCaptainParticipantIds.map((participantId): [string, string] => [
+          'Captain',
+          participantId
+        ]),
         ['synthesizer', chat.ensemble.synthesizerParticipantId]
       ]
         .filter((entry): entry is [string, string] => Boolean(entry[1]))
@@ -14229,7 +14449,10 @@ export class EnsembleOrchestrator {
   ): Promise<void> {
     if (runtime.startAfterCancellation) {
       await runtime.startAfterCancellation.catch(() => undefined)
-      if (runtime.cancelled || this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId) {
+      if (
+        runtime.cancelled ||
+        this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId
+      ) {
         return
       }
       // The interrupted round's cancellation has settled and this replacement
@@ -14256,7 +14479,10 @@ export class EnsembleOrchestrator {
       !runtime.cancelled
     ) {
       const health = await this.probeParticipantsForRound(runtime, remaining)
-      if (runtime.cancelled || this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId) {
+      if (
+        runtime.cancelled ||
+        this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId
+      ) {
         return
       }
       dispatchAttempts += health.unreachable.length
@@ -14278,11 +14504,7 @@ export class EnsembleOrchestrator {
       }
     }
 
-    if (
-      !options.skipPreamble &&
-      options.backgroundParticipants?.length &&
-      !runtime.cancelled
-    ) {
+    if (!options.skipPreamble && options.backgroundParticipants?.length && !runtime.cancelled) {
       const chatForBackground = this.deps.getChat(runtime.chatId)
       if (chatForBackground?.ensemble) {
         await this.dispatchBackgroundParticipants(
@@ -14386,11 +14608,7 @@ export class EnsembleOrchestrator {
           forceReadOnlyDispatch: true,
           label: 'Automatic read stage'
         })
-      } else if (
-        shouldRunOpeningScoutFanout &&
-        readFanoutRequested &&
-        readers.length > 0
-      ) {
+      } else if (shouldRunOpeningScoutFanout && readFanoutRequested && readers.length > 0) {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
@@ -14553,7 +14771,8 @@ export class EnsembleOrchestrator {
           // spliced into the wave as a duplicate concurrent dispatch (the
           // serial shift-guard below cannot see wave members).
           (entry) =>
-            entry.stageRole === 'reviewer' && !this.participantFanoutDispatchState(runtime, entry.id)
+            entry.stageRole === 'reviewer' &&
+            !this.participantFanoutDispatchState(runtime, entry.id)
         )
         if (pendingReviewers.length >= 2) {
           const waveIds = new Set(pendingReviewers.map((entry) => entry.id))
@@ -14572,9 +14791,7 @@ export class EnsembleOrchestrator {
       if (runtime.userFanoutSerialParticipantIds?.size === 0) {
         runtime.userFanoutSerialParticipantIds = undefined
       }
-      const pendingUserFanoutDispatch = runtime.userFanoutDispatchSettlements?.get(
-        participant.id
-      )
+      const pendingUserFanoutDispatch = runtime.userFanoutDispatchSettlements?.get(participant.id)
       if (pendingUserFanoutDispatch) {
         // The user wave was launched from a synchronous Steer handler while
         // this serial loop was already live. Wait only for the provider-entry
@@ -14664,10 +14881,7 @@ export class EnsembleOrchestrator {
       ) {
         break
       }
-      const postCompactionFanoutState = this.participantFanoutDispatchState(
-        runtime,
-        participant.id
-      )
+      const postCompactionFanoutState = this.participantFanoutDispatchState(runtime, participant.id)
       if (postCompactionFanoutState) {
         if (postCompactionFanoutState === 'active') {
           this.appendRoundStatus(
@@ -14704,7 +14918,9 @@ export class EnsembleOrchestrator {
           ? 'Resumed from TaskWraith transcript context; no native provider session id was available.'
           : undefined
 
-      const run = this.seedParticipantRun(dispatchChat, runtime, participant, { sleepResumeWarning })
+      const run = this.seedParticipantRun(dispatchChat, runtime, participant, {
+        sleepResumeWarning
+      })
       runtime.activeRunId = run.runId
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
         run.completion = resolve
@@ -14757,9 +14973,7 @@ export class EnsembleOrchestrator {
         SLIM_RESUME_PROVIDERS.has(participant.provider) &&
         Boolean(run.providerSessionId || participant.linkedProviderSessionId) &&
         (participant.provider !== 'codex' ||
-          isCodexAppServerThreadId(
-            run.providerSessionId || participant.linkedProviderSessionId
-          )) &&
+          isCodexAppServerThreadId(run.providerSessionId || participant.linkedProviderSessionId)) &&
         (participant.provider !== 'kimi' ||
           (isProductionKimiAcpSeat(participant) &&
             String(run.providerSessionId || participant.linkedProviderSessionId).startsWith(
@@ -14847,8 +15061,8 @@ export class EnsembleOrchestrator {
           : undefined
       const resumeFallbackPrompt = resumeFallbackProjection
         ? `${shellRoutingPrompt}${resumeFallbackProjection.prompt}${formatDiscordContextPromptAppendix(
-              runtime.discordContextSnapshots
-            )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
+            runtime.discordContextSnapshots
+          )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
         : undefined
       // The adapter may use either the slim prompt or its cold-session
       // fallback. Receipt only rows present in BOTH possible prompts; that is
@@ -14894,12 +15108,10 @@ export class EnsembleOrchestrator {
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: dispatchChat.scope === 'global' ? 'global' : 'workspace',
-        ...(dispatchChat.scope === 'global'
-          ? {}
-          : { workspace: dispatchChat.workspacePath || '' }),
+        ...(dispatchChat.scope === 'global' ? {} : { workspace: dispatchChat.workspacePath || '' }),
         prompt: promptWithDiscordContext,
         ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
-        imagePaths: imagePathsForEnsembleAttachments(runtime.imageAttachments),
+        imagePaths: this.imagePathsForParticipantDispatch(runtime, participant),
         appRunId: run.runId,
         appChatId: dispatchChat.appChatId,
         model: participant.model || 'cli-default',
@@ -14958,7 +15170,11 @@ export class EnsembleOrchestrator {
       // note shape is `formatDispatchFailureNote(participant, reason)`.
       // Origin: Claude/Explorer's introspective feedback in
       // production when ensemble_yield hit ECONNREFUSED on Gemini.
-      let dispatchedResult: { dispatched: boolean; appRunId: string; failureMessage?: string } | null = null
+      let dispatchedResult: {
+        dispatched: boolean
+        appRunId: string
+        failureMessage?: string
+      } | null = null
       let dispatchFailure: DispatchFailureReason | null = null
       run.transportDispatchState = 'pending'
       try {
@@ -15085,11 +15301,7 @@ export class EnsembleOrchestrator {
       // serial writers. Re-summon the authority so it can keep working /
       // synthesize (ensemble_await / ensemble_lane_result) — the only other
       // allowed exit is an explicit yield to another available Boss/Captain.
-      const authorityFanoutRole = this.fanoutAuthorityRoleForCaller(
-        chat,
-        runtime,
-        participant.id
-      )
+      const authorityFanoutRole = this.fanoutAuthorityRoleForCaller(chat, runtime, participant.id)
       const managerFanoutHandoffPending =
         Boolean(authorityFanoutRole) &&
         this.pendingYieldTargetsActiveFanoutManager(chat, runtime, run)
@@ -15135,8 +15347,7 @@ export class EnsembleOrchestrator {
         // explicit yield/mention may route normally — only a silent end with a
         // still-pending synthesis obligation re-summons the authority seat.
         const retainAuthorityRing =
-          !synthesizedThisTurn &&
-          (waveActive || (synthesisPendingForSeat && !runtime.yieldRouting))
+          !synthesizedThisTurn && (waveActive || (synthesisPendingForSeat && !runtime.yieldRouting))
         if (retainAuthorityRing) {
           noteMissingOnce()
           if (waveActive) {
@@ -15169,8 +15380,7 @@ export class EnsembleOrchestrator {
           const stillSynthesisPending =
             this.runMissingOwnedFanoutSynthesis(run) ||
             runtime.pendingAuthorityFanoutSynthesisParticipantId === participant.id
-          const stillRetain =
-            stillWaveActive || (stillSynthesisPending && !runtime.yieldRouting)
+          const stillRetain = stillWaveActive || (stillSynthesisPending && !runtime.yieldRouting)
           if (stillRetain) {
             noteMissingOnce()
             if (stillWaveActive) {
@@ -15230,17 +15440,24 @@ export class EnsembleOrchestrator {
       }
       this.noteUnresolvedAuthorityRoutingCheckpoint(run)
       const bossYieldedToUser =
-        runtime.returnedControlToUser &&
-        this.isBossParticipant(chat, runtime, participant.id)
+        runtime.returnedControlToUser && this.isBossParticipant(chat, runtime, participant.id)
       if (bossYieldedToUser) {
         this.prepareBossYieldToUserClose(runtime)
       }
-      // Short-circuit the for-loop once anything is queued — the
-      // round-end handler below picks the next prompt off the array
-      // and starts a fresh round. The remaining unspoken participants
-      // of this round are dropped intentionally: queued sends imply
-      // the user wants a new turn, not the leftover of this one.
-      if (runtime.queuedPrompts.length > 0) break
+      // Absorb at most one queued prompt per participant boundary — FIFO,
+      // same cadence as the old finishRound+beginRound chain — then let the
+      // next seat see that single interjection. Never finishRound+beginRound.
+      // When the serial roster is empty but detached lanes are still live,
+      // leave the queue for the deferred drain tail so BG/fan-out output
+      // lands before the interjection is delivered.
+      if (runtime.queuedPrompts.length > 0) {
+        const activeRound = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+        const holdForLanes =
+          remaining.length === 0 && Boolean(activeRound && roundHasActiveLanes(activeRound))
+        if (!holdForLanes) {
+          this.absorbNextQueuedPromptIntoLiveRound(runtime)
+        }
+      }
       let routedByYieldTarget = false
       const pendingYieldRouting = runtime.yieldRouting
       if (pendingYieldRouting) {
@@ -15253,8 +15470,7 @@ export class EnsembleOrchestrator {
             break
           case 'background': {
             const backgroundTarget = chat.ensemble.participants.find(
-              (entry) =>
-                entry.id === pendingYieldRouting.targetParticipantId && entry.enabled
+              (entry) => entry.id === pendingYieldRouting.targetParticipantId && entry.enabled
             )
             if (!backgroundTarget) {
               this.appendRoundStatus(
@@ -15316,9 +15532,7 @@ export class EnsembleOrchestrator {
           detectedParticipantTagMatches
         )
       }
-      const pendingParticipantTagMatches = routedByYieldTarget
-        ? []
-        : detectedParticipantTagMatches
+      const pendingParticipantTagMatches = routedByYieldTarget ? [] : detectedParticipantTagMatches
       const hasRoutableForegroundMention = pendingParticipantTagMatches.some(
         (match) =>
           (!runtime.dmTargetParticipantId ||
@@ -15368,18 +15582,14 @@ export class EnsembleOrchestrator {
       //
       // `chat` is already in scope from the top of the while loop —
       // no need to re-fetch.
-      const participantTagMatches = routedByYieldTarget
-        ? []
-        : pendingParticipantTagMatches
+      const participantTagMatches = routedByYieldTarget ? [] : pendingParticipantTagMatches
       const outOfScopeTagMatches = runtime.dmTargetParticipantId
         ? participantTagMatches.filter(
             (match) => match.participant.id !== runtime.dmTargetParticipantId
           )
         : []
       if (outOfScopeTagMatches.length > 0) {
-        const ignoredMentions = [
-          ...new Set(outOfScopeTagMatches.map((match) => `@${match.text}`))
-        ]
+        const ignoredMentions = [...new Set(outOfScopeTagMatches.map((match) => `@${match.text}`))]
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
@@ -15395,16 +15605,17 @@ export class EnsembleOrchestrator {
       if (tagMatches.length > 0) {
         const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
         const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
-        const priorityAuthorityId =
-          primary.unavailable
-            ? this.activeActingCaptainParticipantId(chat, runtime)
-            : bossmanParticipantId
+        const priorityAuthorityId = primary.unavailable
+          ? this.activeActingCaptainParticipantId(chat, runtime)
+          : bossmanParticipantId
         const priorityAuthorityMatch = priorityAuthorityId
           ? tagMatches.find((tagMatch) => tagMatch.participant.id === priorityAuthorityId)
           : undefined
         const routeableTagMatches =
           priorityAuthorityMatch &&
-          tagMatches.some((tagMatch) => tagMatch.participant.id !== priorityAuthorityMatch.participant.id)
+          tagMatches.some(
+            (tagMatch) => tagMatch.participant.id !== priorityAuthorityMatch.participant.id
+          )
             ? [priorityAuthorityMatch]
             : tagMatches
         if (priorityAuthorityMatch && routeableTagMatches.length !== tagMatches.length) {
@@ -15501,7 +15712,10 @@ export class EnsembleOrchestrator {
               remaining,
               tagged,
               `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`,
-              { allowAnsweredParticipant: isPriorityAuthority, allowYieldedParticipant: isPriorityAuthority }
+              {
+                allowAnsweredParticipant: isPriorityAuthority,
+                allowYieldedParticipant: isPriorityAuthority
+              }
             )
             if (continuation.appended) {
               if (isPriorityAuthority) {
@@ -15519,8 +15733,7 @@ export class EnsembleOrchestrator {
               // reason (hop budget vs. the Boss run failed/skipped/cancelled)
               // so the earlier "takes routing priority" note isn't left as an
               // unfulfilled promise — and isn't misattributed to the hop budget.
-              const authorityLabel =
-                tagged.id === bossmanParticipantId ? 'Boss' : 'active Captain'
+              const authorityLabel = tagged.id === bossmanParticipantId ? 'Boss' : 'active Captain'
               this.appendRoundStatus(
                 runtime.chatId,
                 runtime.roundId,
@@ -15580,6 +15793,19 @@ export class EnsembleOrchestrator {
       unreachableFailures === dispatchAttempts
     ) {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, formatAllUnreachableNote())
+    }
+
+    // Detached lanes must settle before queue absorb / steering boundary /
+    // continuous auto-continue, so BG and fan-out output stay ahead of the
+    // next same-round interjection delivery.
+    if (!runtime.cancelled) this.deliverExternalSeatTurns(runtime, undefined)
+    if (!runtime.cancelled && this.deferDrainForActiveLanes(runtime)) return
+
+    // Absorb one queued prompt at the drain boundary, then grant a same-round
+    // seat turn for it. Remaining FIFO entries wait for later boundaries —
+    // never finishRound+beginRound from the queue.
+    if (!runtime.cancelled && remaining.length === 0 && runtime.queuedPrompts.length > 0) {
+      this.absorbNextQueuedPromptIntoLiveRound(runtime)
     }
 
     const steeringBoundaryParticipant = this.takeMidRunSteeringBoundaryParticipant(runtime)
@@ -15653,20 +15879,6 @@ export class EnsembleOrchestrator {
       }
     }
 
-    // Detached `ensemble_fanout` lanes outlive their caller by design (the
-    // tool returns after dispatch so the caller does not time out while its
-    // lanes work). If any lane is still active — or reserved but not yet
-    // seeded (the seat-compaction window inside `runParallelFanoutPass`) —
-    // when the serial queue drains, closing the round now would stamp
-    // `endedAt` and derive the blackboard while lane output is still
-    // landing. Defer the drain tail; the last lane terminal in `finalizeRun`
-    // (or the reservation release in `fanoutForRun`) replays it. Cancelled
-    // rounds never defer: Stop must close the round immediately.
-    // Backstop: externals ordered after the last model seat, plus anything the
-    // round ended too early to reach. Skipped on cancel — a stopped round
-    // should not keep appending.
-    if (!runtime.cancelled) this.deliverExternalSeatTurns(runtime, undefined)
-    if (!runtime.cancelled && this.deferDrainForActiveLanes(runtime)) return
     this.finalizeDrainedRound(runtime)
   }
 
@@ -15701,8 +15913,7 @@ export class EnsembleOrchestrator {
   ): Promise<void> {
     let noted = false
     const timeoutMs =
-      this.deps.ownedFanoutSettlementTimeoutMs ??
-      DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS
+      this.deps.ownedFanoutSettlementTimeoutMs ?? DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS
     const deadline = Date.now() + timeoutMs
     while (!runtime.cancelled) {
       const settlements = [
@@ -15756,6 +15967,29 @@ export class EnsembleOrchestrator {
 
   private hasOwnedFanoutWork(run: ActiveParticipantRun): boolean {
     return Boolean(run.pendingFanoutDispatches?.size || run.ownedFanoutSettlements?.size)
+  }
+
+  /**
+   * Warn-and-continue for seats without image transport: strip paths, emit a
+   * participant-health notice, and let the text turn dispatch.
+   */
+  private imagePathsForParticipantDispatch(
+    runtime: ActiveRoundRuntime,
+    participant: EnsembleParticipant
+  ): string[] {
+    const resolved = resolveImagePathsForProvider(
+      participant.provider,
+      imagePathsForEnsembleAttachments(runtime.imageAttachments),
+      providerLabel(participant.provider)
+    )
+    if (resolved.warning) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${PARTICIPANT_HEALTH_TAG} △ ${participantDisplayName(participant)}: ${resolved.warning}`
+      )
+    }
+    return resolved.imagePaths
   }
 
   private ownedFanoutHadWriteIntent(run: ActiveParticipantRun): boolean {
@@ -15838,21 +16072,14 @@ export class EnsembleOrchestrator {
         sourceRun.ownedFanoutTranscriptBoundary = undefined
         sourceRun.forceNextTimelineContentEntry = !hasPostFanoutTimeline
         sourceRun.releaseOwnedFanoutTranscriptAtTail = true
-        this.flushRun(
-          sourceRun,
-          sourceRun.terminalFinalized === true,
-          sourceRun.terminalReason
-        )
+        this.flushRun(sourceRun, sourceRun.terminalFinalized === true, sourceRun.terminalReason)
       }
       if (sourceRun.terminalFinalized) {
         this.applyTerminalRunSideEffects(sourceRun)
       }
     } finally {
       sourceRun.releasingOwnedFanoutHold = false
-      if (
-        sourceRun.terminalFinalized &&
-        this.runsByRunId.get(sourceRun.runId) === sourceRun
-      ) {
+      if (sourceRun.terminalFinalized && this.runsByRunId.get(sourceRun.runId) === sourceRun) {
         this.runsByRunId.delete(sourceRun.runId)
       }
     }
@@ -15882,6 +16109,9 @@ export class EnsembleOrchestrator {
         this.runRound(runtime, [...pendingSerialParticipants], { skipPreamble: true })
       )
       return
+    }
+    if (!runtime.cancelled && runtime.queuedPrompts.length > 0) {
+      this.absorbNextQueuedPromptIntoLiveRound(runtime)
     }
     const steeringBoundaryParticipant = this.takeMidRunSteeringBoundaryParticipant(runtime)
     if (steeringBoundaryParticipant && !runtime.cancelled) {
@@ -15957,10 +16187,11 @@ export class EnsembleOrchestrator {
   }
 
   /**
-   * The serial drain tail: dequeue the next queued prompt (FIFO), finish the
-   * round, release the runtime, and chain into the follow-up round.
-   * Extracted from `runRound` so a drain deferred behind active fan-out
-   * lanes replays the exact same tail when the last lane goes terminal.
+   * The serial drain tail: finish the round and release the runtime.
+   * Queued prompts are absorbed into the live round earlier in `runRound`;
+   * this path must never `beginRound` from the queue (steer/queue never
+   * start a fresh round). Any leftover queue is preserved on the finished
+   * round for restart/orphan recovery only.
    */
   private finalizeDrainedRound(runtime: ActiveRoundRuntime): void {
     const chat = this.deps.getChat(runtime.chatId)
@@ -15974,55 +16205,21 @@ export class EnsembleOrchestrator {
     if (continuationLimitStillOwnsClose) {
       this.notifyContinuationLimitReached(runtime)
     }
-    // Dequeue the next prompt (FIFO) for the follow-up round. Anything
-    // remaining stays in `runtime.queuedPrompts` and gets transferred
-    // to the new runtime in `beginRound` so the chain continues
-    // through every queued message until the queue drains.
-    //
-    // 1.0.5-EW43a — `runtime.queuedPrompts` is now structured
-    // `QueuedRoundEntry[]` so the per-entry image attachments
-    // carry through to the follow-up round's dispatch. Pre-EW43a
-    // this site dequeued bare strings and called `beginRound`
-    // with `imageAttachments: []` — meaning a user who sent a
-    // message with attachments DURING a running round saw the
-    // attachments dropped silently when the queue drained.
-    const [nextEntry, ...remainingQueue] = runtime.queuedPrompts
     const quarantinedLegacyPrompts = !runtime.cancelled
       ? runtime.quarantinedLegacyQueuedPrompts || []
       : []
-    const targetError =
-      nextEntry && quarantinedLegacyPrompts.length === 0
-        ? nextEntry.restartRecoveryBlockedReason ||
-          this.queuedTargetUnavailableReason(runtime.chatId, nextEntry)
-        : null
-    const queuedEntriesForFinishedRound =
-      nextEntry && !runtime.cancelled ? runtime.queuedPrompts : []
-    this.finishRound(runtime.chatId, runtime.roundId, runtime.cancelled ? 'cancelled' : 'completed', {
-      queuedPromptEntries: queuedEntriesForFinishedRound,
-      quarantinedLegacyPrompts
-    })
+    const leftoverQueue =
+      !runtime.cancelled && runtime.queuedPrompts.length > 0 ? runtime.queuedPrompts : []
+    this.finishRound(
+      runtime.chatId,
+      runtime.roundId,
+      runtime.cancelled ? 'cancelled' : 'completed',
+      {
+        queuedPromptEntries: leftoverQueue,
+        quarantinedLegacyPrompts
+      }
+    )
     this.clearRuntimeIfCurrent(runtime)
-    if (targetError) {
-      this.appendRoundStatus(runtime.chatId, runtime.roundId, targetError)
-      return
-    }
-    if (quarantinedLegacyPrompts.length > 0) return
-    if (nextEntry && !runtime.cancelled) {
-      this.beginRound(
-        runtime.chatId,
-        nextEntry.prompt,
-        runtime.sender,
-        nextEntry.dmTargetParticipantId,
-        nextEntry.imageAttachments,
-        nextEntry.imageThumbnails ?? [],
-        remainingQueue,
-        false,
-        nextEntry.externalPathGrants ?? [],
-        undefined,
-        nextEntry.fanoutPolicy,
-        nextEntry.discordContextSnapshots
-      )
-    }
   }
 
   private resolveFanoutTargets(
@@ -16101,7 +16298,11 @@ export class EnsembleOrchestrator {
     const targets: EnsembleParticipant[] = []
     for (const rawTarget of explicitTargets) {
       const target = stripLeadingAt(rawTarget)
-      const participant = resolvePhraseToParticipant(target, participants, new Set([run.participant.id]))
+      const participant = resolvePhraseToParticipant(
+        target,
+        participants,
+        new Set([run.participant.id])
+      )
       if (!participant || !participant.enabled) {
         return {
           ok: false,
@@ -16385,15 +16586,11 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
-        backgroundDispatchFailureStatusLine(
-          { ok: false, reason: 'already_active' },
-          displayNames
-        )
+        backgroundDispatchFailureStatusLine({ ok: false, reason: 'already_active' }, displayNames)
       )
     }
     const candidates = requestedBackgrounds.filter(
-      (participant) =>
-        this.participantFanoutDispatchState(runtime, participant.id) !== 'active'
+      (participant) => this.participantFanoutDispatchState(runtime, participant.id) !== 'active'
     )
     const blocked = candidates
       .map((participant) => ({
@@ -16497,8 +16694,7 @@ export class EnsembleOrchestrator {
       }
       return { ok: true, laneIds }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'background dispatch failed.'
+      const message = error instanceof Error ? error.message : 'background dispatch failed.'
       const result = { ok: false as const, reason: 'launch_failed' as const, detail: message }
       this.appendRoundStatus(
         runtime.chatId,
@@ -16624,7 +16820,8 @@ export class EnsembleOrchestrator {
         return this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
       }
       const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
-      return this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode).readOnly
+      return this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode)
+        .readOnly
     }).length
     const writeCount = participants.length - readOnlyCount
     // Worktree isolation applies to WRITE-intent lanes only: read lanes need
@@ -16646,10 +16843,7 @@ export class EnsembleOrchestrator {
     const isolateWriteLanes =
       fanoutIsolation === 'worktree' && writeCount > 0 && chat.scope !== 'global'
     const label =
-      options.label ||
-      (mode === 'locked_writers'
-        ? 'Locked writer fan-out'
-        : 'Parallel fan-out')
+      options.label || (mode === 'locked_writers' ? 'Locked writer fan-out' : 'Parallel fan-out')
     const ollamaLaneCount = participants.filter((p) => p.provider === 'ollama').length
     const ollamaRamNote =
       ollamaLaneCount >= 2
@@ -16701,12 +16895,7 @@ export class EnsembleOrchestrator {
       const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
       const permissions = options.dispatchOwnPermissions
         ? this.resolveFanoutOwnDispatchPermissions(freshChat, runtime, freshParticipant)
-        : this.resolveFanoutDispatchPermissions(
-            freshChat,
-            runtime,
-            freshParticipant,
-            dispatchMode
-          )
+        : this.resolveFanoutDispatchPermissions(freshChat, runtime, freshParticipant, dispatchMode)
       return this.seedParticipantRun(freshChat, runtime, freshParticipant, {
         laneId: this.nextLaneId(runtime, freshParticipant),
         laneIntent: permissions.readOnly ? 'read' : 'write',
@@ -16825,9 +17014,7 @@ export class EnsembleOrchestrator {
         config: dispatchChat.ensemble!,
         participant,
         currentPrompt: promptForLane,
-        ...(userPromptSourceMessage
-          ? { currentPromptMessageId: userPromptSourceMessage.id }
-          : {}),
+        ...(userPromptSourceMessage ? { currentPromptMessageId: userPromptSourceMessage.id } : {}),
         currentPromptLabel: explicitLanePrompt
           ? promptAuthority === 'user'
             ? 'Current user-directed fan-out request:'
@@ -16883,11 +17070,9 @@ export class EnsembleOrchestrator {
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: dispatchChat.scope === 'global' ? 'global' : 'workspace',
-        ...(dispatchChat.scope === 'global'
-          ? {}
-          : { workspace: dispatchChat.workspacePath || '' }),
+        ...(dispatchChat.scope === 'global' ? {} : { workspace: dispatchChat.workspacePath || '' }),
         prompt: promptWithDiscordContext,
-        imagePaths: imagePathsForEnsembleAttachments(runtime.imageAttachments),
+        imagePaths: this.imagePathsForParticipantDispatch(runtime, participant),
         appRunId: run.runId,
         appChatId: dispatchChat.appChatId,
         model: participant.model || 'cli-default',
@@ -17214,17 +17399,19 @@ export class EnsembleOrchestrator {
         sourceOwner.ownedFanoutSettlements.add(settlement)
         sourceOwner.ownedFanoutRunIds ??= new Set()
         for (const runId of ownedRunIds) sourceOwner.ownedFanoutRunIds.add(runId)
-        void settlement.finally(() => {
-          sourceOwner.ownedFanoutSettlements?.delete(settlement)
-          for (const runId of ownedRunIds) sourceOwner.ownedFanoutRunIds?.delete(runId)
-          if (sourceOwner.ownedFanoutRunIds?.size === 0) {
-            sourceOwner.ownedFanoutRunIds = undefined
-          }
-          if (sourceOwner.ownedFanoutSettlements?.size === 0) {
-            sourceOwner.ownedFanoutSettlements = undefined
-          }
-          this.releaseOwnedFanoutHold(sourceOwner)
-        }).catch(() => undefined)
+        void settlement
+          .finally(() => {
+            sourceOwner.ownedFanoutSettlements?.delete(settlement)
+            for (const runId of ownedRunIds) sourceOwner.ownedFanoutRunIds?.delete(runId)
+            if (sourceOwner.ownedFanoutRunIds?.size === 0) {
+              sourceOwner.ownedFanoutRunIds = undefined
+            }
+            if (sourceOwner.ownedFanoutSettlements?.size === 0) {
+              sourceOwner.ownedFanoutSettlements = undefined
+            }
+            this.releaseOwnedFanoutHold(sourceOwner)
+          })
+          .catch(() => undefined)
       }
       return laneIds
     }
@@ -17317,42 +17504,45 @@ export class EnsembleOrchestrator {
     }
     this.runsByRunId.set(runId, activeRun)
     const updatedRuns = [...chat.runs, run]
-    this.saveChatWithCheckpoint({
-      ...chat,
-      runs: updatedRuns,
-      ensemble: {
-        ...chat.ensemble!,
-        activeRound: addLaneToRound(
-          updateRoundParticipant(
-            chat.ensemble!.activeRound,
-            participant.id,
-            {
-              status: 'running',
-              runId,
-              startedAt
-            },
-            { setActive: !options.laneId }
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        runs: updatedRuns,
+        ensemble: {
+          ...chat.ensemble!,
+          activeRound: addLaneToRound(
+            updateRoundParticipant(
+              chat.ensemble!.activeRound,
+              participant.id,
+              {
+                status: 'running',
+                runId,
+                startedAt
+              },
+              { setActive: !options.laneId }
+            ),
+            options.laneId
+              ? transitionLane(
+                  createLane({
+                    laneId: options.laneId,
+                    participantId: participant.id,
+                    provider: participant.provider,
+                    intent: options.laneIntent || 'read',
+                    approvedWriteScopes: options.approvedWriteScopes,
+                    runId,
+                    providerSessionId: participant.linkedProviderSessionId || null,
+                    nowIso: startedAt
+                  }),
+                  { status: 'running', nowIso: startedAt }
+                )
+              : undefined
           ),
-          options.laneId
-            ? transitionLane(
-                createLane({
-                  laneId: options.laneId,
-                  participantId: participant.id,
-                  provider: participant.provider,
-                  intent: options.laneIntent || 'read',
-                  approvedWriteScopes: options.approvedWriteScopes,
-                  runId,
-                  providerSessionId: participant.linkedProviderSessionId || null,
-                  nowIso: startedAt
-                }),
-                { status: 'running', nowIso: startedAt }
-              )
-            : undefined
-        ),
-        updatedAt: startedAt
+          updatedAt: startedAt
+        },
+        updatedAt: this.deps.now()
       },
-      updatedAt: this.deps.now()
-    }, 'participant-updated')
+      'participant-updated'
+    )
     return activeRun
   }
 
@@ -17362,7 +17552,8 @@ export class EnsembleOrchestrator {
   ): EnsembleParticipantStatus | undefined {
     const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
     if (!round || round.roundId !== runtime.roundId) return undefined
-    return round.participants.find((participant) => participant.participantId === participantId)?.status
+    return round.participants.find((participant) => participant.participantId === participantId)
+      ?.status
   }
 
   private activeFanoutRunForParticipant(
@@ -17426,7 +17617,8 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant,
     options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
   ): ContinuationTurnResult {
-    if (runtime.orchestrationMode !== 'continuous') return { appended: false, reason: 'not_continuous' }
+    if (runtime.orchestrationMode !== 'continuous')
+      return { appended: false, reason: 'not_continuous' }
     if (runtime.dmTargetParticipantId && participant.id !== runtime.dmTargetParticipantId) {
       return { appended: false, reason: 'outside_round_scope' }
     }
@@ -18199,8 +18391,7 @@ export class EnsembleOrchestrator {
       run.ownedFanoutTranscriptBoundary !== undefined &&
       !this.hasOwnedFanoutWork(run)
     ) {
-      const hasPostFanoutTimeline =
-        (run.timeline?.length || 0) > run.ownedFanoutTranscriptBoundary
+      const hasPostFanoutTimeline = (run.timeline?.length || 0) > run.ownedFanoutTranscriptBoundary
       if (hasPostFanoutTimeline || final) {
         run.fanoutSynthesisRequired = false
         this.releaseOwnedFanoutHold(run)
@@ -18224,8 +18415,7 @@ export class EnsembleOrchestrator {
     })
     const timestamp = this.deps.nowIso()
     const holdingOwnedFanoutTranscript =
-      run.ownedFanoutTranscriptBoundary !== undefined &&
-      this.hasOwnedFanoutWork(run)
+      run.ownedFanoutTranscriptBoundary !== undefined && this.hasOwnedFanoutWork(run)
     const suppressingOwnedFanoutTranscript =
       run.ownedFanoutTranscriptBoundary !== undefined &&
       run.suppressOwnedFanoutTranscriptRelease === true
@@ -18272,14 +18462,9 @@ export class EnsembleOrchestrator {
         const previous = existingMessageById.get(id)
         const parsedPlan = parseExplicitProposedPlan(rawContent)
         const shouldStampPlan = Boolean(
-          parsedPlan &&
-            shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
+          parsedPlan && shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
         )
-        const previousPlan = shouldStampEnsembleProposedPlan(
-          chat,
-          run.roundId,
-          run.participant.id
-        )
+        const previousPlan = shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
           ? previous?.metadata?.proposedPlan
           : undefined
         const proposedPlan =
@@ -18468,13 +18653,13 @@ export class EnsembleOrchestrator {
       ? [...messages, ...newTimelineMessages]
       : run.releaseOwnedFanoutTranscriptAtTail
         ? [...messages, ...newTimelineMessages]
-      : insertRunTimelineMessages(
-          messages,
-          newTimelineMessages,
-          run,
-          preferredInsertionIndex,
-          runDispatchOrder
-        )
+        : insertRunTimelineMessages(
+            messages,
+            newTimelineMessages,
+            run,
+            preferredInsertionIndex,
+            runDispatchOrder
+          )
 
     // Status card for yielded / failed / skipped, appended after
     // the timeline messages so it reads as a coda. Unchanged from
@@ -18847,8 +19032,7 @@ export class EnsembleOrchestrator {
       status === 'completed'
         ? {
             ...(chat.ensemble.bossmanControlState || {}),
-            completedRoundCount:
-              (chat.ensemble.bossmanControlState?.completedRoundCount || 0) + 1
+            completedRoundCount: (chat.ensemble.bossmanControlState?.completedRoundCount || 0) + 1
           }
         : chat.ensemble.bossmanControlState
     this.saveChatWithCheckpoint(
@@ -18939,9 +19123,7 @@ export class EnsembleOrchestrator {
       externals: resolveSeats(runtime.chatId)
     })
     const seatByCollaborator = new Map(
-      roster.seats
-        .filter(isExternalSeat)
-        .map((seat) => [seat.collaboratorId, seat] as const)
+      roster.seats.filter(isExternalSeat).map((seat) => [seat.collaboratorId, seat] as const)
     )
 
     // Oldest approval first within a seat, so a person's own messages keep the
@@ -19207,30 +19389,33 @@ export class EnsembleOrchestrator {
     // for tool rows / wakeups / round ids elsewhere in this file). The
     // `ensembleRoundId` metadata still carries the round association.
     const id = `ensemble-round-status-${roundId}-${this.deps.now()}-${this.nextStatusSeq()}`
-    this.saveChatWithCheckpoint({
-      ...chat,
-      messages: [
-        ...chat.messages,
-        {
-          id,
-          role: 'system',
-          content,
-          timestamp,
-          metadata: {
-            kind: 'ensembleRoundStatus',
-            ensembleRoundId: roundId,
-            ...(options.fanoutCategory
-              ? {
-                  ensembleFanoutWaveId: id,
-                  ensembleFanoutCategory: options.fanoutCategory,
-                  ensembleFanoutLabel: options.fanoutLabel || content.split(' · ', 1)[0]
-                }
-              : {})
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [
+          ...chat.messages,
+          {
+            id,
+            role: 'system',
+            content,
+            timestamp,
+            metadata: {
+              kind: 'ensembleRoundStatus',
+              ensembleRoundId: roundId,
+              ...(options.fanoutCategory
+                ? {
+                    ensembleFanoutWaveId: id,
+                    ensembleFanoutCategory: options.fanoutCategory,
+                    ensembleFanoutLabel: options.fanoutLabel || content.split(' · ', 1)[0]
+                  }
+                : {})
+            }
           }
-        }
-      ],
-      updatedAt: this.deps.now()
-    }, 'round-updated')
+        ],
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
     return id
   }
 
@@ -19292,30 +19477,33 @@ export class EnsembleOrchestrator {
     })
     const okCount = entries.filter((e) => e.status === 'ok').length
     const totalCount = entries.length
-    this.saveChatWithCheckpoint({
-      ...chat,
-      messages: [
-        ...chat.messages,
-        {
-          id: `ensemble-participant-health-${roundId}`,
-          role: 'system',
-          // Keep the human-readable text on `content` as the
-          // fallback / debug surface — same string the pre-EW29
-          // path emitted, so existing logs / exports don't lose
-          // information.
-          content: formatParticipantHealthHeader(results),
-          timestamp,
-          metadata: {
-            kind: 'ensembleParticipantHealth',
-            ensembleRoundId: roundId,
-            entries,
-            okCount,
-            totalCount
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [
+          ...chat.messages,
+          {
+            id: `ensemble-participant-health-${roundId}`,
+            role: 'system',
+            // Keep the human-readable text on `content` as the
+            // fallback / debug surface — same string the pre-EW29
+            // path emitted, so existing logs / exports don't lose
+            // information.
+            content: formatParticipantHealthHeader(results),
+            timestamp,
+            metadata: {
+              kind: 'ensembleParticipantHealth',
+              ensembleRoundId: roundId,
+              entries,
+              okCount,
+              totalCount
+            }
           }
-        }
-      ],
-      updatedAt: this.deps.now()
-    }, 'round-updated')
+        ],
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
   }
 
   /**
@@ -19483,14 +19671,12 @@ export class EnsembleOrchestrator {
   private buildAutoCompactSeatRequest(
     chatId: string,
     participant: EnsembleParticipant
-  ):
-    | {
-        chatId: string
-        participantId: string
-        provider: HostSeatCompactionProvider
-        trigger: 'auto'
-      }
-    | null {
+  ): {
+    chatId: string
+    participantId: string
+    provider: HostSeatCompactionProvider
+    trigger: 'auto'
+  } | null {
     if (this.deps.getSettings().hostAutoCompactEnabled === false) return null
     if (!isHostSeatCompactionProvider(participant.provider)) return null
     if (participant.enabled === false) return null
@@ -19819,9 +20005,10 @@ export class EnsembleOrchestrator {
       // before reaching the runtime, so it's a trusted capability here; the preset
       // still flows through resolveEffectiveRunPermissions (approval gates intact).
       const previewRiskModel = isPreviewRiskModel(participant.provider, participant.model)
-      const elevatedPreset = round?.unattendedElevationLevel && !previewRiskModel
-        ? unattendedElevationPresetId(round.unattendedElevationLevel)
-        : undefined
+      const elevatedPreset =
+        round?.unattendedElevationLevel && !previewRiskModel
+          ? unattendedElevationPresetId(round.unattendedElevationLevel)
+          : undefined
       return resolveEffectiveRunPermissions({
         provider: participant.provider,
         workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
@@ -19946,9 +20133,7 @@ function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record
   }
   const agentId =
     fallbackAgentId ||
-    (typeof snapshot.agentId === 'string' && snapshot.agentId.trim()
-      ? snapshot.agentId.trim()
-      : '')
+    (typeof snapshot.agentId === 'string' && snapshot.agentId.trim() ? snapshot.agentId.trim() : '')
   const nickname =
     typeof snapshot.nickname === 'string' && snapshot.nickname.trim()
       ? snapshot.nickname.trim()
@@ -19979,9 +20164,7 @@ function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record
           brightness: Math.max(0, Math.min(100, Math.round(Number(snapshot.brightness))))
         }
       : {}),
-    ...(typeof snapshot.accent === 'string' && snapshot.accent
-      ? { accent: snapshot.accent }
-      : {}),
+    ...(typeof snapshot.accent === 'string' && snapshot.accent ? { accent: snapshot.accent } : {}),
     ...(typeof snapshot.slug === 'string' && snapshot.slug ? { slug: snapshot.slug } : {}),
     ...(typeof snapshot.assetKey === 'string' && snapshot.assetKey
       ? { assetKey: snapshot.assetKey }
@@ -20006,7 +20189,9 @@ function isPooledAgentRegistrationReceipt(input: {
     identity.agentId === input.pooledAgentId &&
     typeof identity.nickname === 'string' &&
     Boolean(identity.nickname.trim()) &&
-    (identity.iconKind === 'named' || identity.iconKind === 'seed' || identity.iconKind === 'asset') &&
+    (identity.iconKind === 'named' ||
+      identity.iconKind === 'seed' ||
+      identity.iconKind === 'asset') &&
     typeof identity.hue === 'number' &&
     Number.isFinite(identity.hue)
   )
@@ -20312,7 +20497,10 @@ function externalPathGrantPromptAppendix(grants: ExternalPathGrant[] | undefined
   return `\n\nUser-approved additional workspace access for this participant turn:\n${lines.join('\n')}\nUse only these paths outside the primary workspace.`
 }
 
-function numericRunStat(stats: Record<string, unknown>, ...paths: Array<string | string[]>): number {
+function numericRunStat(
+  stats: Record<string, unknown>,
+  ...paths: Array<string | string[]>
+): number {
   for (const path of paths) {
     const keys = Array.isArray(path) ? path : [path]
     let cursor: unknown = stats

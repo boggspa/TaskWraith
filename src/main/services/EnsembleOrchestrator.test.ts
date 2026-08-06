@@ -40,10 +40,7 @@ import {
   type ContextCompactionProgressEvent
 } from '../../shared/contextCompaction'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
-import {
-  TASKWRAITH_CONTEXT_USAGE_KEY,
-  withContextUsageSnapshot
-} from '../../shared/contextUsage'
+import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../../shared/contextUsage'
 import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
@@ -200,7 +197,7 @@ function makeSettings(): AppSettings {
         ollama: 120000,
         antigravity: 120000,
         pi: 120000,
-        mistral: 120000,
+        mistral: 120000
       },
       mainAuthorityMs: 120000
     }
@@ -323,23 +320,35 @@ function makeHarness(
     }) => void
     shouldPersistProviderSessionForRun?: (runId: string) => boolean
     releaseProviderSessionPersistenceDecision?: (runId: string) => void
+    appendMidRunSteering?: EnsembleOrchestratorDeps['appendMidRunSteering']
+    getPendingMidRunSteeringEntryIds?: EnsembleOrchestratorDeps['getPendingMidRunSteeringEntryIds']
   } = {}
 ) {
   let chat = options.initialChat
     ? (JSON.parse(JSON.stringify(options.initialChat)) as ChatRecord)
     : makeChat()
   let counter = 0
+  let steeringCounter = 0
+  let pendingMidRunSteeringEntryIds: string[] = []
   const dispatched: AgentRunPayload[] = []
-  const dispatch = vi.fn(async (
-    payload: AgentRunPayload,
-    event: Parameters<EnsembleOrchestratorDeps['dispatch']>[1],
-    observer?: Parameters<EnsembleOrchestratorDeps['dispatch']>[2]
-  ) => {
-    dispatched.push(payload)
-    return options.dispatch
-      ? options.dispatch(payload, event, observer)
-      : { dispatched: true, appRunId: payload.appRunId || '' }
-  })
+  const dispatch = vi.fn(
+    async (
+      payload: AgentRunPayload,
+      event: Parameters<EnsembleOrchestratorDeps['dispatch']>[1],
+      observer?: Parameters<EnsembleOrchestratorDeps['dispatch']>[2]
+    ) => {
+      dispatched.push(payload)
+      const result = options.dispatch
+        ? await options.dispatch(payload, event, observer)
+        : { dispatched: true, appRunId: payload.appRunId || '' }
+      // Mirror production: a successful seat dispatch delivers pending mid-run
+      // steering entries (clears the drain-boundary pending set).
+      if (result.dispatched !== false && pendingMidRunSteeringEntryIds.length > 0) {
+        pendingMidRunSteeringEntryIds = []
+      }
+      return result
+    }
+  )
   const cancelRun = vi.fn(options.cancelRun ?? (async () => true))
   const terminateRunForHistory = options.terminateRunForHistory
     ? vi.fn(options.terminateRunForHistory)
@@ -350,12 +359,56 @@ function makeHarness(
     options.beforeSaveChat?.(next)
     chat = next
   })
+  const appendMidRunSteering =
+    options.appendMidRunSteering ??
+    ((input: {
+      chatId: string
+      roundId: string
+      text: string
+      imageAttachments?: Array<{ id?: string; path: string; name?: string }>
+      imageThumbnails?: Array<{
+        dataBase64: string
+        mimeType: string
+        width?: number
+        height?: number
+      }>
+    }) => {
+      steeringCounter += 1
+      const messageId = `steer-message-${steeringCounter}`
+      const entryId = `steer-entry-${steeringCounter}`
+      pendingMidRunSteeringEntryIds = [...pendingMidRunSteeringEntryIds, entryId]
+      const imageAttachments = input.imageAttachments || []
+      const imageThumbnails = input.imageThumbnails || []
+      chat = {
+        ...chat,
+        messages: [
+          ...chat.messages,
+          {
+            id: messageId,
+            role: 'user',
+            content: input.text,
+            timestamp: `2026-05-24T00:00:0${steeringCounter}.000Z`,
+            metadata: {
+              kind: 'midRunSteering',
+              ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
+              ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
+            }
+          }
+        ],
+        updatedAt: Date.now()
+      }
+      return { messageId, entryId }
+    })
+  const getPendingMidRunSteeringEntryIds =
+    options.getPendingMidRunSteeringEntryIds ?? (() => [...pendingMidRunSteeringEntryIds])
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
     saveChat,
     getSettings: options.getSettings ?? makeSettings,
     dispatch,
     cancelRun,
+    appendMidRunSteering,
+    getPendingMidRunSteeringEntryIds,
     ...(options.getProviderRunTransportLiveness
       ? { getProviderRunTransportLiveness: options.getProviderRunTransportLiveness }
       : {}),
@@ -363,9 +416,7 @@ function makeHarness(
       ? { hasPendingProviderRunApprovals: options.hasPendingProviderRunApprovals }
       : {}),
     ...(terminateRunForHistory ? { terminateRunForHistory } : {}),
-    ...(options.resolveExternalSeats
-      ? { resolveExternalSeats: options.resolveExternalSeats }
-      : {}),
+    ...(options.resolveExternalSeats ? { resolveExternalSeats: options.resolveExternalSeats } : {}),
     ...(options.externalContributionQueue
       ? { externalContributionQueue: options.externalContributionQueue }
       : {}),
@@ -581,9 +632,11 @@ describe('EnsembleOrchestrator', () => {
       for (let i = 0; i < 20; i += 1) await Promise.resolve()
       expect(harness.dispatched).toHaveLength(1)
       expect(
-        (harness.orchestrator as unknown as {
-          cursorCompletionWatchdog: { has(runId: string): boolean }
-        }).cursorCompletionWatchdog.has(harness.dispatched[0].appRunId || '')
+        (
+          harness.orchestrator as unknown as {
+            cursorCompletionWatchdog: { has(runId: string): boolean }
+          }
+        ).cursorCompletionWatchdog.has(harness.dispatched[0].appRunId || '')
       ).toBe(true)
       expect(vi.getTimerCount()).toBeGreaterThan(0)
 
@@ -640,9 +693,11 @@ describe('EnsembleOrchestrator', () => {
       expect(harness.dispatched[2].provider).toBe('codex')
       completeDispatchedRun(harness, 2)
       for (let i = 0; i < 20; i += 1) await Promise.resolve()
-      expect(harness.chat.messages.some((message) =>
-        (message.content || '').includes('missing terminal result')
-      )).toBe(true)
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('missing terminal result')
+        )
+      ).toBe(true)
     } finally {
       vi.useRealTimers()
     }
@@ -817,9 +872,11 @@ describe('EnsembleOrchestrator', () => {
       expect(harness.dispatched).toHaveLength(2)
       expect(harness.dispatched[1].provider).toBe('codex')
       expect(
-        (harness.orchestrator as unknown as {
-          cursorCompletionWatchdog: { has(runId: string): boolean }
-        }).cursorCompletionWatchdog.has(harness.dispatched[0].appRunId || '')
+        (
+          harness.orchestrator as unknown as {
+            cursorCompletionWatchdog: { has(runId: string): boolean }
+          }
+        ).cursorCompletionWatchdog.has(harness.dispatched[0].appRunId || '')
       ).toBe(false)
 
       completeDispatchedRun(harness, 1)
@@ -903,9 +960,9 @@ describe('EnsembleOrchestrator', () => {
     expect(prepareFreshChat).not.toHaveBeenCalled()
     expect(harness.chat).toEqual(before)
     expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')).toEqual([])
-    expect(harness.chat.messages.some((message) => message.content === 'Scheduled contender.')).toBe(
-      false
-    )
+    expect(
+      harness.chat.messages.some((message) => message.content === 'Scheduled contender.')
+    ).toBe(false)
   })
 
   it('reserves a fresh round before a re-entrant fresh contender can start', () => {
@@ -930,9 +987,7 @@ describe('EnsembleOrchestrator', () => {
     expect(owner.status).toBe('started')
     expect(contender).toEqual({ status: 'busy' })
     expect(
-      harness.chat.messages.filter(
-        (message) => message.metadata?.kind === 'ensembleRoundPrompt'
-      )
+      harness.chat.messages.filter((message) => message.metadata?.kind === 'ensembleRoundPrompt')
     ).toHaveLength(1)
     expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')).toEqual([])
   })
@@ -1170,7 +1225,6 @@ describe('EnsembleOrchestrator', () => {
         prepareFreshChat: (chat) => ({ ...chat, scope: 'global' })
       })
     ).toThrow('changed immutable round authority')
-
   })
 
   it('rejects a directed target absent from the prepared scheduled roster', () => {
@@ -1751,9 +1805,7 @@ describe('EnsembleOrchestrator', () => {
         pooledAgentIdentity
       )
     )
-    expect(participantContentMessage(harness)?.metadata?.pooledAgentId).toBe(
-      'pooled-agent-cactus'
-    )
+    expect(participantContentMessage(harness)?.metadata?.pooledAgentId).toBe('pooled-agent-cactus')
   })
 
   it('threads shared-history budget metadata into Ollama participant runs', async () => {
@@ -1965,7 +2017,9 @@ describe('EnsembleOrchestrator', () => {
       { type: 'media_refs', mediaRefs: [imageRef(runId)] }
     )
 
-    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy()
+    )
     const refs = participantContentMessage(harness)?.metadata?.mediaRefs as Array<{ id: string }>
     expect(refs).toHaveLength(1)
     expect(refs[0].id).toBe(`${runId}:tool-image:abc123`)
@@ -1995,7 +2049,9 @@ describe('EnsembleOrchestrator', () => {
       { appRunId: runId, appChatId: 'ensemble-chat' },
       { type: 'media_refs', mediaRefs: [imageRef(runId)] }
     )
-    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy()
+    )
     expect(participantContentMessage(harness)?.metadata?.mediaRefs).toHaveLength(1)
   })
 
@@ -2016,7 +2072,9 @@ describe('EnsembleOrchestrator', () => {
       { appRunId: runId, appChatId: 'ensemble-chat' },
       { type: 'media_refs', mediaRefs: [imageRef(runId)] }
     )
-    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy()
+    )
     expect(participantContentMessage(harness)?.content).toBe('')
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -2079,7 +2137,9 @@ describe('EnsembleOrchestrator', () => {
     // which merges onto run.mediaRefs and flushes.
     harness.orchestrator.appendTrustedMediaRefs(runId, [videoRef(runId)])
 
-    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy()
+    )
     const carrier = participantContentMessage(harness)!
     expect(carrier.content).toBe('')
     expect(carrier.metadata?.kind).toBe('ensembleParticipant')
@@ -2115,7 +2175,9 @@ describe('EnsembleOrchestrator', () => {
     )
     harness.orchestrator.appendTrustedMediaRefs(runId, [videoRef(runId)])
 
-    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy()
+    )
     const assistantMsgs = harness.chat.messages.filter(
       (m) => m.role === 'assistant' && m.metadata?.kind === 'ensembleParticipant'
     )
@@ -2544,9 +2606,9 @@ describe('EnsembleOrchestrator', () => {
     const runId = harness.dispatched[0].appRunId!
     expect(harness.orchestrator.appendStatusForRun(runId, 'Handoff 1/12.')).toBe(true)
     expect(harness.orchestrator.appendStatusForRun(runId, 'Handoff 2/12.')).toBe(true)
-    expect(
-      harness.orchestrator.appendStatusForRun(runId, 'Yielded back to gemini (gemini).')
-    ).toBe(true)
+    expect(harness.orchestrator.appendStatusForRun(runId, 'Yielded back to gemini (gemini).')).toBe(
+      true
+    )
 
     const statusIds = harness.chat.messages
       .filter((m) => m.metadata?.kind === 'ensembleRoundStatus')
@@ -2841,10 +2903,9 @@ describe('EnsembleOrchestrator', () => {
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const imported = harness.orchestrator.rosterPresetImportForRun(
-      harness.dispatched[0].appRunId,
-      { preset: agentRosterPreset() }
-    )
+    const imported = harness.orchestrator.rosterPresetImportForRun(harness.dispatched[0].appRunId, {
+      preset: agentRosterPreset()
+    })
     expect(imported).toMatchObject({
       ok: true,
       action: 'import_preset',
@@ -2859,9 +2920,7 @@ describe('EnsembleOrchestrator', () => {
     completeDispatchedRun(harness, 0)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     completeDispatchedRun(harness, 1)
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
 
     expect(harness.chat.ensemble).toMatchObject({
       orchestrationMode: 'continuous',
@@ -2895,10 +2954,9 @@ describe('EnsembleOrchestrator', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
 
-    const imported = harness.orchestrator.rosterPresetImportForRun(
-      harness.dispatched[0].appRunId,
-      { preset: agentRosterPreset() }
-    )
+    const imported = harness.orchestrator.rosterPresetImportForRun(harness.dispatched[0].appRunId, {
+      preset: agentRosterPreset()
+    })
 
     expect(imported.ok).toBe(true)
     expect(imported.message).toContain('Captain imported')
@@ -2932,11 +2990,16 @@ describe('EnsembleOrchestrator', () => {
     })
 
     expect(result).toMatchObject({ ok: true, participantId: 'claude', mode: 'created' })
-    expect(harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')).toMatchObject({
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+    ).toMatchObject({
       pooledAgentId: 'pooled-agent-reviewer',
       pooledAgentIdentity: { nickname: 'Reviewer' }
     })
-    expect(harness.chat.ensemble?.participants.find((participant) => participant.id === 'codex')?.pooledAgentId).toBeUndefined()
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'codex')
+        ?.pooledAgentId
+    ).toBeUndefined()
   })
 
   it('rejects Agent Pool registration when the assigned role exceeds 50 characters', async () => {
@@ -2950,7 +3013,9 @@ describe('EnsembleOrchestrator', () => {
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expect(harness.orchestrator.agentPoolRegistrationCandidateForRun(harness.dispatched[0].appRunId)).toMatchObject({
+    expect(
+      harness.orchestrator.agentPoolRegistrationCandidateForRun(harness.dispatched[0].appRunId)
+    ).toMatchObject({
       ok: false,
       error: 'role_too_long'
     })
@@ -3009,14 +3074,11 @@ describe('EnsembleOrchestrator', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
 
-    const result = await harness.orchestrator.rosterEditForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'edit_participant',
-        targetParticipantId: 'claude',
-        participant: { role: 'Primary' }
-      }
-    )
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'claude',
+      participant: { role: 'Primary' }
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('second_in_command_standby')
@@ -3102,15 +3164,24 @@ describe('EnsembleOrchestrator', () => {
 
   it('C1 G1: Boss prose mentioning "quota"/"resets" does NOT flip authority', async () => {
     const { harness, roundId, captainRunId } = await startC1Harness()
-    pushParticipantTerminal(harness, roundId, 'claude', 'Let me check when the quota resets before we continue.')
-    expect(harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole).toBeUndefined()
+    pushParticipantTerminal(
+      harness,
+      roundId,
+      'claude',
+      'Let me check when the quota resets before we continue.'
+    )
+    expect(
+      harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole
+    ).toBeUndefined()
   })
 
   it('C1 G1c: a PEER quoting the wall does not flip Boss authority', async () => {
     const { harness, roundId, captainRunId } = await startC1Harness()
     pushParticipantTerminal(harness, roundId, 'codex', "You've hit your limit · resets Jul 14") // peer quotes it
     pushParticipantTerminal(harness, roundId, 'claude', 'Proceeding — Captain, review C1.') // Boss healthy
-    expect(harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole).toBeUndefined()
+    expect(
+      harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole
+    ).toBeUndefined()
   })
 
   it('C1 soft-scope: a quota-walled Boss does NOT reorder the worker roster', async () => {
@@ -3159,19 +3230,16 @@ describe('EnsembleOrchestrator', () => {
 
     const listed = harness.orchestrator.listParticipantsForRun(harness.dispatched[0].appRunId)
     expect(listed.bossmanAuthorityRole).toBe('second_in_command')
-    const result = await harness.orchestrator.rosterEditForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'edit_participant',
-        targetParticipantId: 'kimi',
-        participant: { role: 'Quota Relief' }
-      }
-    )
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'kimi',
+      participant: { role: 'Quota Relief' }
+    })
 
     expect(result.ok).toBe(true)
-    expect(harness.chat.ensemble?.participants.find((participant) => participant.id === 'kimi')?.role).toBe(
-      'Quota Relief'
-    )
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'kimi')?.role
+    ).toBe('Quota Relief')
   })
 
   it('selects one later available Captain when earlier configured Captains are unavailable', async () => {
@@ -3227,14 +3295,8 @@ describe('EnsembleOrchestrator', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('captain-two')
 
-    const listed = harness.orchestrator.listParticipantsForRun(
-      harness.dispatched[0].appRunId
-    )
-    expect(listed.captainParticipantIds).toEqual([
-      'captain-one',
-      'captain-two',
-      'captain-three'
-    ])
+    const listed = harness.orchestrator.listParticipantsForRun(harness.dispatched[0].appRunId)
+    expect(listed.captainParticipantIds).toEqual(['captain-one', 'captain-two', 'captain-three'])
     expect(listed.secondInCommandParticipantId).toBe('captain-one')
     expect(listed.bossmanAuthorityRole).toBe('second_in_command')
   })
@@ -3380,9 +3442,7 @@ describe('EnsembleOrchestrator', () => {
     expect(scheduledResult.wakeup?.stageRole).toBe('reviewer')
     expect(scheduledResult.wakeup?.dispatchReceipt?.ensembleStageRole).toBe('reviewer')
     await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([
-        scheduled[0].wakeupId
-      ])
+      expect(harness.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([scheduled[0].wakeupId])
     )
 
     harness.chat.ensemble!.participants[0].role = 'Live Worker'
@@ -3677,10 +3737,10 @@ describe('EnsembleOrchestrator', () => {
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(original.dispatched).toHaveLength(1))
-    const scheduled = original.orchestrator.scheduleWakeupForRun(
-      original.dispatched[0].appRunId!,
-      { delayMs: 60_000, reason: 'Resume me.' }
-    )
+    const scheduled = original.orchestrator.scheduleWakeupForRun(original.dispatched[0].appRunId!, {
+      delayMs: 60_000,
+      reason: 'Resume me.'
+    })
     expect(scheduled.ok).toBe(true)
 
     const completed: Array<{ roundId: string; status: string }> = []
@@ -3695,9 +3755,9 @@ describe('EnsembleOrchestrator', () => {
     })
     const pending = restarted.chat.ensemble!.wakeups![scheduled.wakeup!.wakeupId]
 
-    expect(
-      restarted.orchestrator.resumePersistedWakeup(pending, {} as Electron.WebContents)
-    ).toBe(true)
+    expect(restarted.orchestrator.resumePersistedWakeup(pending, {} as Electron.WebContents)).toBe(
+      true
+    )
     await vi.waitFor(() => expect(restarted.chat.ensemble?.activeRound?.status).toBe('failed'))
 
     expect(restarted.cancelRun).toHaveBeenCalledTimes(1)
@@ -3816,9 +3876,7 @@ describe('EnsembleOrchestrator', () => {
       imageAttachments: [
         { id: 'img-1', path: '/tmp/ensemble-screenshot.png', name: 'ensemble-screenshot.png' }
       ],
-      imageThumbnails: [
-        { dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }
-      ],
+      imageThumbnails: [{ dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }],
       event: { sender: {} as Electron.WebContents }
     })
 
@@ -3831,14 +3889,77 @@ describe('EnsembleOrchestrator', () => {
           { id: 'img-1', path: '/tmp/ensemble-screenshot.png', name: 'ensemble-screenshot.png' }
         ],
         imagePaths: ['/tmp/ensemble-screenshot.png'],
-        imageThumbnails: [
-          { dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }
-        ]
+        imageThumbnails: [{ dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }]
       }
     })
     expect(harness.dispatched[0].imagePaths).toEqual(['/tmp/ensemble-screenshot.png'])
     expect(harness.dispatched[0].prompt).toContain('Attachment references for this request:')
     expect(harness.dispatched[0].prompt).toContain('/tmp/ensemble-screenshot.png')
+  })
+
+  it('warns and continues when a seat cannot receive image attachments', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'pi',
+        provider: 'pi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Inspect this screenshot.',
+      imageAttachments: [
+        { id: 'img-1', path: '/tmp/unsupported-lane.png', name: 'unsupported-lane.png' }
+      ],
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('pi')
+    expect(harness.dispatched[0].imagePaths).toEqual([])
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('[participant-health]') &&
+          message.content.includes('cannot receive image attachments') &&
+          message.content.includes('Continuing without')
+      )
+    ).toBe(true)
+
+    harness.orchestrator.handleProviderOutput(
+      'pi',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Text-only review.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'pi',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].imagePaths).toEqual(['/tmp/unsupported-lane.png'])
+    const piRound = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'pi'
+    )
+    expect(piRound?.status).not.toBe('failed')
   })
 
   it('starts an ensemble round when attachments are the only prompt content', async () => {
@@ -3918,9 +4039,11 @@ describe('EnsembleOrchestrator', () => {
 
   it('mints non-image attachment grants against each exact serial participant run', async () => {
     const issueRunScopedExternalGrants = vi.fn(
-      ({ participant, appRunId, attachments }: Parameters<
-        NonNullable<EnsembleOrchestratorDeps['issueRunScopedExternalGrants']>
-      >[0]) => [
+      ({
+        participant,
+        appRunId,
+        attachments
+      }: Parameters<NonNullable<EnsembleOrchestratorDeps['issueRunScopedExternalGrants']>>[0]) => [
         externalGrant(participant.provider, attachments[0].path, {
           appRunId,
           chatId: 'ensemble-chat',
@@ -4010,9 +4133,7 @@ describe('EnsembleOrchestrator', () => {
       expect(harness.dispatched[index]).toMatchObject({
         provider: entry.provider,
         approvalMode: readOnly ? 'plan' : 'auto_edit',
-        externalPathGrants: [
-          { provider: entry.provider, path: secondaryPath, access: 'write' }
-        ],
+        externalPathGrants: [{ provider: entry.provider, path: secondaryPath, access: 'write' }],
         effectivePermissions: {
           presetId: entry.permissionPresetId,
           readOnly,
@@ -4204,14 +4325,15 @@ describe('EnsembleOrchestrator', () => {
     ).toBe(true)
   })
 
-  it('queues a fresh round after the current speaker finishes', async () => {
+  it('absorbs a queued prompt into the same round after the current speaker finishes', async () => {
     const harness = makeHarness()
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'First prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRoundId = started.roundId
     const queued = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Second prompt',
@@ -4219,6 +4341,7 @@ describe('EnsembleOrchestrator', () => {
       mode: 'queue'
     })
     expect(queued.status).toBe('queued')
+    expect(queued.roundId).toBe(firstRoundId)
     harness.orchestrator.handleProviderOutput(
       'claude',
       {
@@ -4231,7 +4354,14 @@ describe('EnsembleOrchestrator', () => {
       }
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
     expect(harness.chat.messages.map((message) => message.content)).toContain('Second prompt')
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.content === 'Second prompt' && message.metadata?.kind === 'midRunSteering'
+      )
+    ).toBe(true)
   })
 
   it('captures a terminal synthesizer summary when the round completes', async () => {
@@ -4343,25 +4473,22 @@ Next action:
     expect(harness.dispatched[2].prompt).toContain('Carry this forward')
   })
 
-  it('steers by cancelling the active run without deleting the replacement round', async () => {
-    let resolveCancel!: () => void
+  it('steers into the live round without cancelling the active speaker', async () => {
     const cancelStarted = vi.fn()
     const harness = makeHarness({
       cancelRun: async () => {
         cancelStarted()
-        await new Promise<void>((resolve) => {
-          resolveCancel = resolve
-        })
         return true
       }
     })
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const oldRun = harness.dispatched[0]
+    const firstRoundId = started.roundId
 
     const steered = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -4371,16 +4498,18 @@ Next action:
     })
 
     expect(steered.status).toBe('steered')
-    expect(cancelStarted).toHaveBeenCalledTimes(1)
+    expect(steered.roundId).toBe(firstRoundId)
+    expect(cancelStarted).not.toHaveBeenCalled()
     expect(harness.dispatched).toHaveLength(1)
-    resolveCancel()
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.cancelRun).toHaveBeenCalledWith('claude', oldRun.appRunId)
-    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)
-    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Steered prompt')
-    expect(harness.chat.messages.map((message) => message.content)).toContain(
-      'Ensemble steered: interrupted the active speaker and started a fresh round.'
-    )
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
+    expect(harness.chat.messages.map((message) => message.content)).toContain('Steered prompt')
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.content === 'Steered prompt' && message.metadata?.kind === 'midRunSteering'
+      )
+    ).toBe(true)
 
     const handled = harness.orchestrator.handleProviderOutput(
       'claude',
@@ -4390,34 +4519,27 @@ Next action:
       },
       {
         type: 'content',
-        text: 'late old content'
+        text: 'live speaker continues'
       }
     )
-    expect(handled).toBe(false)
-    expect(harness.chat.messages.map((message) => message.content)).not.toContain(
-      'late old content'
-    )
+    expect(handled).toBe(true)
   })
 
-  it('steers a queued prompt by index while preserving the remaining FIFO queue', async () => {
-    let resolveCancel!: () => void
+  it('steers a queued prompt by index into the live round while preserving the remaining FIFO queue', async () => {
     const cancelStarted = vi.fn()
     const harness = makeHarness({
       cancelRun: async () => {
         cancelStarted()
-        await new Promise<void>((resolve) => {
-          resolveCancel = resolve
-        })
         return true
       }
     })
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const oldRun = harness.dispatched[0]
+    const firstRoundId = started.roundId
 
     for (const prompt of ['Queued A', 'Queued B', 'Queued C']) {
       const queued = harness.orchestrator.startRound({
@@ -4442,29 +4564,26 @@ Next action:
     })
 
     expect(steered.status).toBe('steered')
-    expect(cancelStarted).toHaveBeenCalledTimes(1)
+    expect(steered.roundId).toBe(firstRoundId)
+    expect(cancelStarted).not.toHaveBeenCalled()
     expect(harness.dispatched).toHaveLength(1)
-    resolveCancel()
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.cancelRun).toHaveBeenCalledWith('claude', oldRun.appRunId)
-    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)
-    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
     expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A', 'Queued C'])
     expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBe('Queued A')
-    expect(harness.chat.messages.map((message) => message.content)).toContain(
-      'Ensemble steered: interrupted the active speaker and started a queued prompt.'
-    )
+    expect(harness.chat.messages.map((message) => message.content)).toContain('Queued B')
   })
 
   it('preserves a directed participant scope when steering a queued prompt', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRoundId = started.roundId
 
     const queued = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -4491,23 +4610,35 @@ Next action:
     })
 
     expect(steered.status).toBe('steered')
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(steered.roundId).toBe(firstRoundId)
+    expect(harness.dispatched).toHaveLength(1)
     expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
     expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('off')
-    expect(harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.participantId)).toEqual([
-      'codex'
-    ])
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.map(
+        (participant) => participant.participantId
+      )
+    ).toEqual(['codex'])
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
   })
 
-  it('preserves a directed participant scope when a queued prompt drains normally', async () => {
+  it('preserves a directed participant scope when a queued prompt drains into the live round', async () => {
     const harness = makeHarness()
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRoundId = started.roundId
 
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -4525,38 +4656,32 @@ Next action:
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
-    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('@Worker directed follow-up')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
     expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
-    expect(harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.participantId)).toEqual([
-      'codex'
-    ])
+    expect(harness.chat.messages.map((message) => message.content)).toContain(
+      '@Worker directed follow-up'
+    )
   })
 
-  it('honors a genuine steer during a parked round instead of swallowing it (no double-click)', async () => {
-    // Regression for the residual "click Steer twice" bug. When a prior steer's
-    // replacement round is still PARKED (its interrupted provider's cancel is a
-    // slow Claude/Codex round-trip, resolveCancel pending), a genuine steer of a
-    // newly-queued message must DISPATCH on the first click — not be swallowed by
-    // a coalesce no-op that left the message stuck in the FIFO until round-end.
-    // Cancelling the parked round is safe: it never dispatched (empty activeRuns)
-    // and the truly-interrupted run was already finalised 'cancelled' by the
-    // FIRST steer, so nothing is orphaned into a red "Failed exit 130".
-    let resolveCancel: (() => void) | undefined
+  it('absorbs successive queued steers into the same live round without cancelling', async () => {
+    // Steer-from-queue no longer parks a replacement round. Each steer absorbs
+    // into the live round immediately; the active speaker keeps running.
+    const cancelStarted = vi.fn()
     const harness = makeHarness({
       cancelRun: async () => {
-        await new Promise<void>((resolve) => {
-          resolveCancel = resolve
-        })
+        cancelStarted()
         return true
       }
     })
 
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRoundId = started.roundId
     const oldRun = harness.dispatched[0]
 
     for (const prompt of ['Queued A', 'Queued B']) {
@@ -4568,7 +4693,6 @@ Next action:
       })
     }
 
-    // First steer — parks awaiting the (still-pending) interrupted cancellation.
     const steer1 = harness.orchestrator.steerQueuedPrompt({
       chatId: 'ensemble-chat',
       index: 0,
@@ -4576,14 +4700,11 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     expect(steer1.status).toBe('steered')
-    expect(harness.dispatched).toHaveLength(1) // parked — not dispatched yet
-    // The parked round carried the remaining queue ['Queued B'] forward.
+    expect(steer1.roundId).toBe(firstRoundId)
+    expect(harness.dispatched).toHaveLength(1)
     expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued B'])
+    expect(harness.chat.messages.map((message) => message.content)).toContain('Queued A')
 
-    // A genuine steer of 'Queued B' lands during the parked window. It must NOT
-    // be swallowed — it dispatches on THIS click, without waiting for the prior
-    // interrupted run's slow cancel (that parked round never dispatched, so
-    // cancelling it resolves immediately).
     const steer2 = harness.orchestrator.steerQueuedPrompt({
       chatId: 'ensemble-chat',
       index: 0,
@@ -4591,16 +4712,22 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     expect(steer2.status).toBe('steered')
-    expect(steer2.roundId).not.toBe(steer1.roundId) // a fresh round, not a coalesce
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1].prompt).toContain('Queued B')
-    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steer2.roundId)
-    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
+    expect(steer2.roundId).toBe(firstRoundId)
+    expect(cancelStarted).not.toHaveBeenCalled()
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts || []).toEqual([])
+    expect(harness.chat.messages.map((message) => message.content)).toContain('Queued B')
 
-    // The originally-interrupted run stays 'cancelled' even after its slow SIGINT
-    // finally lands — never orphaned into 'failed'/130.
-    resolveCancel?.()
-    expect(harness.orchestrator.markRunExited(oldRun.appRunId, 130)).toBe(false)
+    // Live speaker output still belongs to this round.
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: oldRun.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'still speaking' }
+      )
+    ).toBe(true)
   })
 
   it('recovers a restart-orphaned queued steer (no in-memory runtime) by starting a fresh round', async () => {
@@ -4718,12 +4845,8 @@ Next action:
       event: { sender: {} as Electron.WebContents },
       mode: 'queue',
       dmTargetParticipantId: 'codex',
-      imageAttachments: [
-        { id: 'restart-image', path: '/tmp/restart.png', name: 'restart.png' }
-      ],
-      imageThumbnails: [
-        { dataBase64: 'cmVzdGFydA==', mimeType: 'image/png', width: 12, height: 8 }
-      ]
+      imageAttachments: [{ id: 'restart-image', path: '/tmp/restart.png', name: 'restart.png' }],
+      imageThumbnails: [{ dataBase64: 'cmVzdGFydA==', mimeType: 'image/png', width: 12, height: 8 }]
     })
 
     const restarted = makeHarness({ initialChat: seed.chat })
@@ -4809,9 +4932,7 @@ Next action:
     })
     expect(attemptedReplacement.status).toBe('ignored')
     expect(restarted.dispatched).toHaveLength(0)
-    expect(restarted.chat.ensemble?.activeRound?.queuedPrompts).toEqual([
-      'Durable queued prompt'
-    ])
+    expect(restarted.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Durable queued prompt'])
 
     const recovered = restarted.orchestrator.steerQueuedPrompt({
       chatId: 'ensemble-chat',
@@ -4857,7 +4978,11 @@ Next action:
     expect(restarted.chat.ensemble?.activeRound?.queuedPromptEntries?.[0]).toMatchObject({
       dmTargetParticipantId: 'codex'
     })
-    expect(restarted.chat.messages.some((message) => message.content.includes('preserved but not dispatched'))).toBe(true)
+    expect(
+      restarted.chat.messages.some((message) =>
+        message.content.includes('preserved but not dispatched')
+      )
+    ).toBe(true)
   })
 
   it('does not recover a queued steer when there is neither a runtime nor a live persisted round', () => {
@@ -5096,9 +5221,7 @@ Next action:
     expect(harness.saveChat).toHaveBeenCalledTimes(saveCountAtPrepare)
     expect(persistSessionCheckpoint).toHaveBeenCalledTimes(checkpointCountAtPrepare)
     expect(completeSessionCheckpoint).not.toHaveBeenCalled()
-    expect(harness.transitionRunQueueJob).toHaveBeenCalledTimes(
-      queueTransitionCountAtPrepare
-    )
+    expect(harness.transitionRunQueueJob).toHaveBeenCalledTimes(queueTransitionCountAtPrepare)
     expect(
       harness.orchestrator.handleProviderOutput(
         'claude',
@@ -5183,9 +5306,7 @@ Next action:
     })
 
     try {
-      await expect(
-        harness.orchestrator.cancelRoundForHistory('ensemble-chat')
-      ).resolves.toBe(true)
+      await expect(harness.orchestrator.cancelRoundForHistory('ensemble-chat')).resolves.toBe(true)
       expect(cancelWakeupTimer.mock.calls.map(([id]) => id).sort()).toEqual([
         'orphan-wakeup',
         'sleeping-wakeup'
@@ -5352,14 +5473,17 @@ Next action:
 
   it('preserves queued prompt external grants when the queued ensemble round dispatches', async () => {
     const harness = makeHarness()
+    // Single seat so the same-round boundary re-dispatches the grant's provider
+    // after absorb (multi-seat would advance to the next peer first).
+    harness.chat.ensemble!.participants = [harness.chat.ensemble!.participants[0]]
     const queuedGrant = externalGrant('claude', '/tmp/queued-spec.pdf')
-
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRoundId = started.roundId
 
     const queued = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -5383,6 +5507,7 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
     expect(harness.dispatched[1].imagePaths).toEqual([])
     expect(harness.dispatched[1].prompt).toContain('/tmp/queued-spec.pdf')
     expect(harness.dispatched[1].prompt).toContain('User-approved additional workspace access')
@@ -5469,18 +5594,18 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].prompt).toContain('Queued B')
     expect(harness.dispatched[1].prompt).not.toContain('Queued A')
-    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
   })
 
   it('targets queued items by stable id when duplicate prompts exist', async () => {
     const harness = makeHarness()
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const oldRun = harness.dispatched[0]
+    const firstRoundId = started.roundId
 
     for (const prompt of ['Queued A', 'Queued A', 'Queued C']) {
       const queued = harness.orchestrator.startRound({
@@ -5506,19 +5631,17 @@ Next action:
     })
 
     expect(steered.status).toBe('steered')
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.cancelRun).toHaveBeenCalledWith('claude', oldRun.appRunId)
-    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)
-    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued A')
+    expect(steered.roundId).toBe(firstRoundId)
+    expect(harness.cancelRun).not.toHaveBeenCalled()
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
     expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A', 'Queued C'])
     expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBe('Queued A')
-    expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat').map((entry) => entry.id)).toEqual([
-      firstQueuedId,
-      runtimeQueue[2]!.id
-    ])
-    expect(harness.chat.messages.map((message) => message.content)).toContain(
-      'Ensemble steered: interrupted the active speaker and started a queued prompt.'
-    )
+    expect(
+      getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat').map((entry) => entry.id)
+    ).toEqual([firstQueuedId, runtimeQueue[2]!.id])
+    expect(harness.chat.messages.map((message) => message.content)).toContain('Queued A')
   })
 
   it('removes a duplicate queued prompt by stable id and preserves FIFO order', async () => {
@@ -5554,10 +5677,9 @@ Next action:
       queuedPrompts: ['Queued A', 'Queued C']
     })
     expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A', 'Queued C'])
-    expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat').map((entry) => entry.id)).toEqual([
-      runtimeQueue[0]!.id,
-      runtimeQueue[2]!.id
-    ])
+    expect(
+      getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat').map((entry) => entry.id)
+    ).toEqual([runtimeQueue[0]!.id, runtimeQueue[2]!.id])
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -5573,10 +5695,11 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].prompt).toContain('Queued A')
     expect(harness.dispatched[1].prompt).not.toContain('Queued C')
-    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued A')
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued C'])
 
     harness.orchestrator.handleProviderOutput(
-      'claude',
+      harness.dispatched[1].provider,
       {
         appRunId: harness.dispatched[1].appRunId,
         appChatId: 'ensemble-chat'
@@ -5588,6 +5711,7 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].prompt).toContain('Queued C')
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
   })
 
   it('rejects queued prompt operations when id mismatches the index', async () => {
@@ -5693,7 +5817,9 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Passing to worker.'))
+    expectYielded(
+      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Passing to worker.')
+    )
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
@@ -6299,15 +6425,12 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'skip_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Codex lacks context for this turn.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'skip_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Codex lacks context for this turn.'
+    })
     expect(result.ok).toBe(false)
     expect(result.error).toBe('initial_pass_preserves_roster')
     const codexState = harness.chat.ensemble?.activeRound?.participants.find(
@@ -6500,10 +6623,9 @@ Next action:
       pass: 1,
       requirement: 'tagged_intervention'
     })
-    const optOut = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[2].appRunId,
-      { action: 'skip_intervention' }
-    )
+    const optOut = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+      action: 'skip_intervention'
+    })
     expect(optOut).toMatchObject({ ok: true, action: 'skip_intervention' })
     expectYielded(
       harness.orchestrator.markYielded(
@@ -6529,9 +6651,13 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Worker should take the implementation first.',
-        'Worker'))
+        'Worker'
+      )
+    )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
 
     harness.orchestrator.handleProviderOutput(
@@ -6547,15 +6673,12 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].provider).toBe('claude')
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[2].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Finish the implementation handoff.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Finish the implementation handoff.'
+    })
 
     expect(result).toMatchObject({
       ok: true,
@@ -6637,15 +6760,12 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Needs another turn.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Needs another turn.'
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('summon_not_continuous')
@@ -6663,15 +6783,12 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Move worker now.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Move worker now.'
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('summon_target_pending')
@@ -6692,15 +6809,12 @@ Next action:
     harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')!.enabled =
       false
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Try a disabled target.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Try a disabled target.'
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('summon_target_disabled')
@@ -6738,23 +6852,17 @@ Next action:
 
     const runtime = (
       harness.orchestrator as unknown as {
-        roundsByChatId: Map<
-          string,
-          { bossmanSummonCountsByParticipantId?: Map<string, number> }
-        >
+        roundsByChatId: Map<string, { bossmanSummonCountsByParticipantId?: Map<string, number> }>
       }
     ).roundsByChatId.get('ensemble-chat')!
     runtime.bossmanSummonCountsByParticipantId = new Map([['codex', 3]])
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[2].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Try again.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Try again.'
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('summon_limit')
@@ -6792,22 +6900,19 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[2].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Need one more pass.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Need one more pass.'
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('summon_hop_limit')
     expect(harness.dispatched).toHaveLength(3)
-    expect(
-      harness.chat.messages.map((message) => message.content)
-    ).not.toContain('Continuous handoff limit reached (1/1); returning control to the user.')
+    expect(harness.chat.messages.map((message) => message.content)).not.toContain(
+      'Continuous handoff limit reached (1/1); returning control to the user.'
+    )
   })
 
   it('C2: set_review_gate stamps the active goal id onto the gate', async () => {
@@ -7092,15 +7197,12 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'set_goal',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        goal: 'Ship the next corrected slice',
-        reason: 'Previous goal was closed too early.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_goal',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      goal: 'Ship the next corrected slice',
+      reason: 'Previous goal was closed too early.'
+    })
 
     expect(result.ok).toBe(true)
     // C2 P2 — set_goal after a COMPLETED prior goal mints a FRESH identity: a new
@@ -7141,15 +7243,12 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'update_goal',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        goalStatus: 'active',
-        reason: 'Credentials are now visible to the release shell.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'update_goal',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      goalStatus: 'active',
+      reason: 'Credentials are now visible to the release shell.'
+    })
 
     expect(result.ok).toBe(true)
     expect(result.goal).toMatchObject({
@@ -7174,16 +7273,13 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'quarantine_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        category: 'looping',
-        reason: 'Worker is repeating the same handoff.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'quarantine_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      category: 'looping',
+      reason: 'Worker is repeating the same handoff.'
+    })
 
     expect(result.ok).toBe(true)
     expect(harness.chat.ensemble?.bossmanControlState?.quarantines?.[0]).toMatchObject({
@@ -7229,15 +7325,12 @@ Next action:
     runtime.continuationLimitNotified = true
     runtime.continuationLimitPending = true
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'adjust_hops',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        hopDelta: 3,
-        reason: 'Longer horizon task.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'adjust_hops',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      hopDelta: 3,
+      reason: 'Longer horizon task.'
+    })
 
     expect(result.ok).toBe(true)
     expect(harness.chat.ensemble?.maxContinuationHops).toBe(5)
@@ -7276,14 +7369,11 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const codex = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'check_quota_resets',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        provider: 'codex'
-      }
-    )
+    const codex = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'check_quota_resets',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      provider: 'codex'
+    })
     const all = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
       action: 'check_quota_resets',
       roundId: harness.chat.ensemble?.activeRound?.roundId
@@ -7379,15 +7469,12 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[2].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Need one more pass.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Need one more pass.'
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('budget_exhausted')
@@ -7440,15 +7527,12 @@ Next action:
       tokensUsed: 120
     })
 
-    const result = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[2].appRunId,
-      {
-        action: 'summon_participant',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        targetParticipantId: 'codex',
-        reason: 'Need another pass.'
-      }
-    )
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+      action: 'summon_participant',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      reason: 'Need another pass.'
+    })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('budget_exhausted')
@@ -7534,13 +7618,11 @@ Next action:
     )
 
     await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe(
-        'closed'
-      )
+      expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe('closed')
     )
   })
 
-  it('closes a targeted Boss status request only after the target\'s owned lane returns', async () => {
+  it("closes a targeted Boss status request only after the target's owned lane returns", async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.fanoutPolicy = 'read_only'
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -7605,9 +7687,7 @@ Next action:
 
     completeDispatchedRun(harness, 2)
     await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe(
-        'closed'
-      )
+      expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe('closed')
     )
     expect(harness.transitionRunQueueJob).toHaveBeenCalledWith(ownerRunId, 'completed', {})
   })
@@ -7801,17 +7881,14 @@ Next action:
 
     vi.useFakeTimers()
     try {
-      const poll = await harness.orchestrator.bossmanControlForRun(
-        harness.dispatched[0].appRunId,
-        {
-          action: 'create_poll',
-          roundId: harness.chat.ensemble?.activeRound?.roundId,
-          pollId: 'poll-timeout',
-          question: 'Which path should we take?',
-          options: ['A', 'B'],
-          timeoutSeconds: 30
-        }
-      )
+      const poll = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'create_poll',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        pollId: 'poll-timeout',
+        question: 'Which path should we take?',
+        options: ['A', 'B'],
+        timeoutSeconds: 30
+      })
 
       expect(poll.ok).toBe(true)
       expect(harness.chat.ensemble?.bossmanControlState?.polls?.[0]?.status).toBe('open')
@@ -8045,7 +8122,10 @@ Next action:
 
   it('rejects proposeGoalCompleteForRun when there is no active goal (M3)', async () => {
     const { harness } = await startBindingHarness(false)
-    const result = harness.orchestrator.proposeGoalCompleteForRun(harness.dispatched[0].appRunId, {})
+    const result = harness.orchestrator.proposeGoalCompleteForRun(
+      harness.dispatched[0].appRunId,
+      {}
+    )
     expect(result.ok).toBe(false)
     expect(result.error).toBe('no_active_goal')
     expect(result.tool).toBe('ensemble_propose_goal_complete') // C0-A
@@ -8063,7 +8143,10 @@ Next action:
     expect(noRun.error).toBe('no_active_run')
     expect(noRun.tool).toBe('ensemble_propose_goal_complete')
     // error path: a second open while one is already open ⇒ binding_poll_unavailable
-    const blocked = harness.orchestrator.proposeGoalCompleteForRun(harness.dispatched[0].appRunId, {})
+    const blocked = harness.orchestrator.proposeGoalCompleteForRun(
+      harness.dispatched[0].appRunId,
+      {}
+    )
     expect(blocked.ok).toBe(false)
     expect(blocked.error).toBe('binding_poll_unavailable')
     expect(blocked.tool).toBe('ensemble_propose_goal_complete')
@@ -8148,7 +8231,10 @@ Next action:
     await openBinding(harness, 'binding-stale-round')
     const poll = findPoll(harness, 'binding-stale-round')!
     ;(poll as { roundId?: string }).roundId = 'a-prior-round'
-    ;(poll as { votes: unknown[] }).votes = [pvote('claude', 'complete'), pvote('codex', 'complete')]
+    ;(poll as { votes: unknown[] }).votes = [
+      pvote('claude', 'complete'),
+      pvote('codex', 'complete')
+    ]
     resolveDirect(harness, 'binding-stale-round')
     expect(findPoll(harness, 'binding-stale-round')?.bindingResolution).toBe('stale')
     expect(harness.chat.activeGoal?.status).toBe('active')
@@ -8225,7 +8311,10 @@ Next action:
     await openBinding(harness, 'binding-cap-veto')
     const poll = findPoll(harness, 'binding-cap-veto')!
     expect(poll.authorityVoterIds).toContain('codex') // Captain captured as authority
-    ;(poll as { votes: unknown[] }).votes = [pvote('claude', 'complete'), pvote('codex', 'keep-working')]
+    ;(poll as { votes: unknown[] }).votes = [
+      pvote('claude', 'complete'),
+      pvote('codex', 'keep-working')
+    ]
     resolveDirect(harness, 'binding-cap-veto')
     expect(findPoll(harness, 'binding-cap-veto')?.bindingResolution).toBe('vetoed')
     expect(harness.chat.activeGoal?.status).toBe('active')
@@ -8342,9 +8431,12 @@ Next action:
       { type: 'result', status: 'success' }
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    const rejected = await harness.orchestrator.bossmanControlForRun(harness.dispatched[1].appRunId, {
-      action: 'stop_round'
-    })
+    const rejected = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[1].appRunId,
+      {
+        action: 'stop_round'
+      }
+    )
     expect(rejected.error).toBe('not_bossman')
     expect(rejections).toHaveLength(1)
     expect(rejections[0].metadata).toMatchObject({
@@ -8418,14 +8510,11 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const rewritten = await harness.orchestrator.briefUpdateForRun(
-      harness.dispatched[0].appRunId,
-      {
-        targetParticipantId: 'codex',
-        brief: 'Coordinate reviewer handoff and keep implementation notes current.',
-        reason: 'Worker needs a narrower long-horizon role.'
-      }
-    )
+    const rewritten = await harness.orchestrator.briefUpdateForRun(harness.dispatched[0].appRunId, {
+      targetParticipantId: 'codex',
+      brief: 'Coordinate reviewer handoff and keep implementation notes current.',
+      reason: 'Worker needs a narrower long-horizon role.'
+    })
 
     expect(rewritten).toMatchObject({
       ok: true,
@@ -8442,13 +8531,10 @@ Next action:
       newValue: 'Brief / Goal: Coordinate reviewer handoff and keep implementation notes current.'
     })
 
-    const cleared = await harness.orchestrator.briefUpdateForRun(
-      harness.dispatched[0].appRunId,
-      {
-        targetParticipantId: 'codex',
-        clear: true
-      }
-    )
+    const cleared = await harness.orchestrator.briefUpdateForRun(harness.dispatched[0].appRunId, {
+      targetParticipantId: 'codex',
+      clear: true
+    })
 
     expect(cleared).toMatchObject({
       ok: true,
@@ -8529,13 +8615,10 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
 
-    const rejected = await harness.orchestrator.briefUpdateForRun(
-      harness.dispatched[1].appRunId,
-      {
-        targetParticipantId: 'claude',
-        brief: 'Please change the Boss brief.'
-      }
-    )
+    const rejected = await harness.orchestrator.briefUpdateForRun(harness.dispatched[1].appRunId, {
+      targetParticipantId: 'claude',
+      brief: 'Please change the Boss brief.'
+    })
 
     expect(rejected.ok).toBe(false)
     expect(rejected.error).toBe('not_bossman')
@@ -8580,13 +8663,10 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
 
-    const result = await harness.orchestrator.briefUpdateForRun(
-      harness.dispatched[0].appRunId,
-      {
-        targetParticipantId: 'kimi',
-        brief: 'Track evidence gaps and brief the writer before commit.'
-      }
-    )
+    const result = await harness.orchestrator.briefUpdateForRun(harness.dispatched[0].appRunId, {
+      targetParticipantId: 'kimi',
+      brief: 'Track evidence gaps and brief the writer before commit.'
+    })
 
     expect(result.ok).toBe(true)
     expect(
@@ -8729,8 +8809,7 @@ Next action:
     }
     initialChat.ensemble!.participants[0].role = 'Boss'
     initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
-    initialChat.ensemble!.participants[1].promptShellVersion =
-      'ensemble-shell-v1:old-codex-receipt'
+    initialChat.ensemble!.participants[1].promptShellVersion = 'ensemble-shell-v1:old-codex-receipt'
     initialChat.ensemble!.participants[1].promptDynamicStateVersion =
       'ensemble-dynamic-v1:old-codex-receipt'
     initialChat.ensemble!.participants[1].taskWraithMcpProfileReceipt = {
@@ -8804,11 +8883,11 @@ Next action:
       type: 'content',
       text: 'Seat change applied before the pending turn.'
     })
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      activeRoute,
-      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
-    )
+    harness.orchestrator.handleProviderOutput('claude', activeRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 5 }
+    })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1]).toMatchObject({
       provider: 'kimi',
@@ -8902,11 +8981,11 @@ Next action:
       type: 'content',
       text: 'User-requested change will apply after this turn.'
     })
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      activeRoute,
-      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
-    )
+    harness.orchestrator.handleProviderOutput('claude', activeRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 5 }
+    })
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1]).toMatchObject({
@@ -9036,7 +9115,12 @@ Next action:
 
     const added = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
       action: 'add_participant',
-      participant: { provider: 'codex', role: 'Scout', model: 'gpt-5.5', permissionPresetId: 'plan' }
+      participant: {
+        provider: 'codex',
+        role: 'Scout',
+        model: 'gpt-5.5',
+        permissionPresetId: 'plan'
+      }
     })
     expect(added.ok).toBe(true)
 
@@ -9564,9 +9648,7 @@ Next action:
       })
     ).toMatchObject({ ok: true, status: 'applied' })
 
-    const listed = harness.orchestrator.listParticipantsForRun(
-      harness.dispatched[0].appRunId
-    )
+    const listed = harness.orchestrator.listParticipantsForRun(harness.dispatched[0].appRunId)
     expect(listed.captainParticipantIds).toEqual(['worker', 'captain-added'])
     expect(harness.chat.ensemble!.activeRound).toMatchObject({
       bossmanParticipantId: 'boss',
@@ -9748,12 +9830,8 @@ Next action:
         harness.dispatched[0].appRunId
       )
     )
-    expect(shouldPersistProviderSessionForRun).toHaveBeenCalledWith(
-      harness.dispatched[0].appRunId
-    )
-    expect(harness.chat.ensemble?.participants[0].linkedProviderSessionId).toBe(
-      'claude-session-a'
-    )
+    expect(shouldPersistProviderSessionForRun).toHaveBeenCalledWith(harness.dispatched[0].appRunId)
+    expect(harness.chat.ensemble?.participants[0].linkedProviderSessionId).toBe('claude-session-a')
   })
 
   it('clears a pinned MCP profile when an explicit provider patch resets the seat session', async () => {
@@ -10072,7 +10150,8 @@ Next action:
       const materialised: string[] = []
       return {
         materialised,
-        listAwaitingMaterialisation: () => entries.filter((e) => !materialised.includes(e.entryId as string)),
+        listAwaitingMaterialisation: () =>
+          entries.filter((e) => !materialised.includes(e.entryId as string)),
         markMaterialised: (entryId: string) => {
           materialised.push(entryId)
           return null
@@ -10120,9 +10199,9 @@ Next action:
       })
       await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(0))
       await vi.waitFor(() =>
-        expect(
-          harness.chat.messages.some((m) => m.metadata?.kind === 'externalSeatTurn')
-        ).toBe(true)
+        expect(harness.chat.messages.some((m) => m.metadata?.kind === 'externalSeatTurn')).toBe(
+          true
+        )
       )
 
       const row = harness.chat.messages.find((m) => m.metadata?.kind === 'externalSeatTurn')!
@@ -10437,19 +10516,22 @@ Next action:
         event: { sender: {} as Electron.WebContents }
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-      const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-        action: 'replace_participant',
-        targetParticipantId: 'codex',
-        replacement: { provider: 'kimi', permissionPresetId }
-      })
+      const result = await harness.orchestrator.bossmanControlForRun(
+        harness.dispatched[0].appRunId,
+        {
+          action: 'replace_participant',
+          targetParticipantId: 'codex',
+          replacement: { provider: 'kimi', permissionPresetId }
+        }
+      )
       expect(result.ok).toBe(false)
       expect(result.error).toBe('permission_ceiling')
-      expect(harness.chat.ensemble!.participants.some((participant) => participant.id === 'codex')).toBe(
-        true
-      )
       expect(
-        harness.chat.ensemble!.participants.some(
-          (participant) => participant.id.startsWith('bossman-replacement')
+        harness.chat.ensemble!.participants.some((participant) => participant.id === 'codex')
+      ).toBe(true)
+      expect(
+        harness.chat.ensemble!.participants.some((participant) =>
+          participant.id.startsWith('bossman-replacement')
         )
       ).toBe(false)
     })
@@ -11083,9 +11165,13 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('claude')
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Need the user to choose.',
-        'user'))
+        'user'
+      )
+    )
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -11112,17 +11198,19 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Return control to the user.',
-        'user'))
+        'user'
+      )
+    )
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
     expect(
-      harness.chat.messages.some((message) =>
-        message.content.includes('auto-continuing for pass')
-      )
+      harness.chat.messages.some((message) => message.content.includes('auto-continuing for pass'))
     ).toBe(false)
   })
 
@@ -11179,7 +11267,10 @@ Next action:
       })
       const runtime = (
         harness.orchestrator as unknown as {
-          roundsByChatId: Map<string, { yieldRouting?: { kind: string }; returnedControlToUser?: boolean }>
+          roundsByChatId: Map<
+            string,
+            { yieldRouting?: { kind: string }; returnedControlToUser?: boolean }
+          >
         }
       ).roundsByChatId.get('ensemble-chat')
       expect(runtime?.yieldRouting?.kind).toBe('rejected')
@@ -11290,7 +11381,10 @@ Next action:
         harness.orchestrator as unknown as {
           roundsByChatId: Map<
             string,
-            { continuationHops: number; yieldRouting?: { kind: string; continuationReserved?: boolean } }
+            {
+              continuationHops: number
+              yieldRouting?: { kind: string; continuationReserved?: boolean }
+            }
           >
         }
       ).roundsByChatId.get('ensemble-chat')
@@ -11644,9 +11738,13 @@ Next action:
       'Fresh user prompt that should be dropped.'
     ])
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Need to return control to the user.',
-        'user'))
+        'user'
+      )
+    )
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -12127,9 +12225,7 @@ Next action:
     }
     completeDispatchedRun(harness, 1)
 
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(2)
     expect(
       harness.chat.ensemble?.participants.find((participant) => participant.id === 'codex')
@@ -12424,9 +12520,13 @@ Next action:
       parameters: { target: 'Worker' }
     })
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Passing to worker.',
-        'Worker'))
+        'Worker'
+      )
+    )
 
     harness.orchestrator.handleProviderOutput('claude', route, {
       type: 'tool_result',
@@ -12451,10 +12551,12 @@ Next action:
       status: 'success'
     })
     expect(
-      toolMessages.flatMap((message) => message.toolActivities || []).some(
-        (activity) =>
-          String(activity.toolName).includes('ensemble_yield') && activity.status === 'running'
-      )
+      toolMessages
+        .flatMap((message) => message.toolActivities || [])
+        .some(
+          (activity) =>
+            String(activity.toolName).includes('ensemble_yield') && activity.status === 'running'
+        )
     ).toBe(false)
   })
 
@@ -12510,11 +12612,7 @@ Next action:
 
     expect(cancelledProjectionCount).toBe(1)
     expect(completeSessionCheckpoint).toHaveBeenCalledTimes(1)
-    expect(completeSessionCheckpoint).toHaveBeenCalledWith(
-      'ensemble-chat',
-      roundId,
-      'cancelled'
-    )
+    expect(completeSessionCheckpoint).toHaveBeenCalledWith('ensemble-chat', roundId, 'cancelled')
     expect(
       harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.status)
     ).toEqual(['cancelled', 'cancelled'])
@@ -13045,9 +13143,8 @@ Next action:
     stageRole: 'background'
   }
 
-  const continuousForegroundRuns = (
-    harness: ReturnType<typeof makeHarness>
-  ): AgentRunPayload[] => harness.dispatched.filter((run) => !run.ensembleRun?.laneId)
+  const continuousForegroundRuns = (harness: ReturnType<typeof makeHarness>): AgentRunPayload[] =>
+    harness.dispatched.filter((run) => !run.ensembleRun?.laneId)
 
   const continuousLimitStatuses = (
     harness: ReturnType<typeof makeHarness>,
@@ -13059,9 +13156,7 @@ Next action:
       )
     )
 
-  function completeLatestContinuousForeground(
-    harness: ReturnType<typeof makeHarness>
-  ): void {
+  function completeLatestContinuousForeground(harness: ReturnType<typeof makeHarness>): void {
     const runs = continuousForegroundRuns(harness)
     const run = runs[runs.length - 1]
     harness.orchestrator.handleProviderOutput(
@@ -13083,9 +13178,7 @@ Next action:
     while (continuousForegroundRuns(harness).length < targetCount) {
       const expectedCount = continuousForegroundRuns(harness).length + 1
       completeLatestContinuousForeground(harness)
-      await vi.waitFor(() =>
-        expect(continuousForegroundRuns(harness)).toHaveLength(expectedCount)
-      )
+      await vi.waitFor(() => expect(continuousForegroundRuns(harness)).toHaveLength(expectedCount))
     }
   }
 
@@ -13171,9 +13264,9 @@ Next action:
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(4)
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
-    expect(
-      harness.chat.messages.some((m) => /limit reached \(2\/2\)/.test(m.content || ''))
-    ).toBe(true)
+    expect(harness.chat.messages.some((m) => /limit reached \(2\/2\)/.test(m.content || ''))).toBe(
+      true
+    )
   })
 
   it('repeats only the automatic Scout fan-out on a continuous continuation pass', async () => {
@@ -13268,7 +13361,9 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(3)
     expect(
       harness.chat.messages.filter((message) =>
-        message.content?.startsWith('Automatic read stage · 2 participant(s) dispatched concurrently')
+        message.content?.startsWith(
+          'Automatic read stage · 2 participant(s) dispatched concurrently'
+        )
       )
     ).toHaveLength(2)
   })
@@ -13283,13 +13378,17 @@ Next action:
     // Only two of the four seats fit in the remaining hop budget. The partial
     // pass must start before TaskWraith claims control is returning to the user.
     expect(
-      continuousForegroundRuns(harness).slice(8).map((run) => run.ensembleRun?.participantId)
+      continuousForegroundRuns(harness)
+        .slice(8)
+        .map((run) => run.ensembleRun?.participantId)
     ).toEqual(['ensemble-codex'])
     expect(continuousLimitStatuses(harness)).toHaveLength(0)
 
     await advanceContinuousForegroundTo(harness, 10)
     expect(
-      continuousForegroundRuns(harness).slice(8).map((run) => run.ensembleRun?.participantId)
+      continuousForegroundRuns(harness)
+        .slice(8)
+        .map((run) => run.ensembleRun?.participantId)
     ).toEqual(['ensemble-codex', 'ensemble-claude'])
     expect(continuousLimitStatuses(harness)).toHaveLength(0)
 
@@ -13317,21 +13416,21 @@ Next action:
 
     const finalPartialCodex = continuousForegroundRuns(harness)[8]
     expect(finalPartialCodex.ensembleRun?.participantId).toBe('ensemble-codex')
-    expectYielded(harness.orchestrator.markYielded(finalPartialCodex.appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        finalPartialCodex.appRunId!,
         'Scout should take another look.',
-        'Scout'))
+        'Scout'
+      )
+    )
 
     // Grok already answered and the hop budget is exhausted, so the directed
     // extra turn is correctly rejected. Claude was already admitted to the
     // partial pass and must still settle before the terminal notice appears.
     await vi.waitFor(() => expect(continuousForegroundRuns(harness)).toHaveLength(10))
-    expect(continuousForegroundRuns(harness)[9].ensembleRun?.participantId).toBe(
-      'ensemble-claude'
-    )
+    expect(continuousForegroundRuns(harness)[9].ensembleRun?.participantId).toBe('ensemble-claude')
     expect(
-      harness.dispatched.filter(
-        (run) => run.ensembleRun?.participantId === 'ensemble-grok'
-      )
+      harness.dispatched.filter((run) => run.ensembleRun?.participantId === 'ensemble-grok')
     ).toHaveLength(2)
     expect(
       harness.chat.messages.some((message) =>
@@ -13461,7 +13560,8 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    // User queues a follow-up mid-round.
+    // User queues a follow-up mid-round — absorbed into the same round at the
+    // next speaker boundary (never a fresh beginRound).
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'User follow-up.',
@@ -13469,11 +13569,16 @@ Next action:
       mode: 'queue'
     })
     await answerLatest(2)
-    await answerLatest(3) // drain → queued prompt drains into a FRESH round, not an auto-continue pass
+    expect(harness.chat.messages.map((message) => message.content)).toContain('User follow-up.')
+    expect(harness.dispatched[1].prompt).toContain('User follow-up.')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRound.roundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('First round.')
+    // Remaining seat finishes; follow-up already absorbed, so continuous must
+    // not open a replacement round identity.
+    await answerLatest()
     await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.prompt).toBe('User follow-up.')
+      expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRound.roundId)
     )
-    expect(harness.chat.ensemble?.activeRound?.roundId).not.toBe(firstRound.roundId)
   })
 
   it('a user cancel wins over continuous auto-continuation at drain', async () => {
@@ -13597,7 +13702,11 @@ Next action:
     orchestrator as unknown as {
       roundsByChatId: Map<
         string,
-        { continuationHops: number; administrativeIdleEscalated?: boolean; queuedPrompts: unknown[] }
+        {
+          continuationHops: number
+          administrativeIdleEscalated?: boolean
+          queuedPrompts: unknown[]
+        }
       >
       tryAutoContinueRound: (runtime: object, chat: ChatRecord) => EnsembleParticipant[] | null
     }
@@ -13630,12 +13739,15 @@ Next action:
       }
     }
     const deadlockAnnounced = (): boolean =>
-      harness.chat.messages.some((message) => /administrative deadlock/i.test(message.content || ''))
+      harness.chat.messages.some((message) =>
+        /administrative deadlock/i.test(message.content || '')
+      )
     return { harness, runtime: runtime!, tryAutoContinue, setStatuses, deadlockAnnounced }
   }
 
   it('C4: escalates and STOPS on an idle-consensus pass with an unreachable (yielded) Boss', async () => {
-    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } =
+      await makeC4Round()
     // Whole panel yielded — the lived deadlock: Boss (codex) yielded control so it
     // won't self-complete, yet is still classified available ⇒ Captain standby.
     setStatuses({ codex: 'yielded', claude: 'yielded' })
@@ -13647,7 +13759,8 @@ Next action:
   })
 
   it('C4: does NOT escalate on the same idle pass while a pending assignment has real work', async () => {
-    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } =
+      await makeC4Round()
     // A still-actionable assignment is concrete pending work — status alone is not
     // enough to call it idle; the round must keep rotating so its owner can act.
     harness.chat.ensemble!.bossmanControlState = {
@@ -13671,7 +13784,8 @@ Next action:
   })
 
   it('C4: does NOT escalate when a user steer is queued (an active user steer is never a deadlock)', async () => {
-    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } =
+      await makeC4Round()
     runtime.queuedPrompts = [{ id: 'q1', prompt: 'do this next' }]
     setStatuses({ codex: 'yielded', claude: 'yielded' })
     const result = tryAutoContinue(runtime, harness.chat)
@@ -13681,7 +13795,8 @@ Next action:
   })
 
   it('C4: does NOT escalate when a seat produced real work this pass (incomplete goal, real progress)', async () => {
-    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } =
+      await makeC4Round()
     // Claude answered — a productive turn. A single ordinary Boss yield amid real
     // work must not read as unavailability, so the round keeps going.
     setStatuses({ codex: 'yielded', claude: 'answered' })
@@ -13692,7 +13807,8 @@ Next action:
   })
 
   it('C4: does NOT escalate when the Boss is genuinely unavailable (Captain can then take authority)', async () => {
-    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } =
+      await makeC4Round()
     // Boss 'skipped' ⇒ primaryBossUnavailable ⇒ the Captain CAN take authority, so
     // completion is reachable: continue and let promotion happen, don't dead-stop.
     setStatuses({ codex: 'skipped', claude: 'yielded' })
@@ -14041,10 +14157,7 @@ Next action:
 
     const runtime = (
       harness.orchestrator as unknown as {
-        roundsByChatId: Map<
-          string,
-          { continuationHops: number; maxContinuationHops: number }
-        >
+        roundsByChatId: Map<string, { continuationHops: number; maxContinuationHops: number }>
       }
     ).roundsByChatId.get('ensemble-chat')
     const appendContinuation = (
@@ -14110,7 +14223,11 @@ Next action:
       harness.orchestrator as unknown as {
         roundsByChatId: Map<
           string,
-          { continuationHops: number; maxContinuationHops: number; continuationLimitNotified?: boolean }
+          {
+            continuationHops: number
+            maxContinuationHops: number
+            continuationLimitNotified?: boolean
+          }
         >
       }
     ).roundsByChatId.get('ensemble-chat')
@@ -14317,9 +14434,13 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('boss')
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[1].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
         'Please check this again.',
-        'GrokTagA'))
+        'GrokTagA'
+      )
+    )
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('grok-tag-a')
@@ -14437,9 +14558,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('typecheckz')
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
-        'Needs repair.',
-        'Fixman'))
+    expectYielded(
+      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Needs repair.', 'Fixman')
+    )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('fixman')
 
@@ -14460,9 +14581,11 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('typecheckz')
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
-    expect(harness.chat.messages.some((message) =>
-      message.content.includes('Yield-return: returning to TypeCheckz')
-    )).toBe(true)
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('Yield-return: returning to TypeCheckz')
+      )
+    ).toBe(true)
 
     const typecheckzReturnRoute = {
       appRunId: harness.dispatched[2].appRunId,
@@ -14521,9 +14644,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('gate')
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
-        'Fix this first.',
-        'Fixman'))
+    expectYielded(
+      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Fix this first.', 'Fixman')
+    )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('fixman')
 
@@ -14689,11 +14812,7 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    harness.orchestrator.markYielded(
-      harness.dispatched[0].appRunId!,
-      'Needs repair.',
-      'Fixman'
-    )
+    harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Needs repair.', 'Fixman')
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
 
     harness.orchestrator.markYielded(
@@ -14939,9 +15058,13 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Reviewer should continue.',
-        'Reviewer'))
+        'Reviewer'
+      )
+    )
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -15143,8 +15266,7 @@ Next action:
     }
     harness.orchestrator.handleProviderOutput('grok', grokRoute, {
       type: 'content',
-      text:
-        'The main IPC worker is ready. @Codex Main Work can implement once @Codex Lead assigns it.'
+      text: 'The main IPC worker is ready. @Codex Main Work can implement once @Codex Lead assigns it.'
     })
     harness.orchestrator.handleProviderOutput('grok', grokRoute, {
       type: 'result',
@@ -15211,7 +15333,10 @@ Next action:
       type: 'content',
       text: 'Kicking off. Worker, take the implementation.'
     })
-    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'result', status: 'success' })
+    harness.orchestrator.handleProviderOutput('codex', bossRun, {
+      type: 'result',
+      status: 'success'
+    })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
 
@@ -15342,7 +15467,10 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
-    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'result', status: 'success' })
+    harness.orchestrator.handleProviderOutput('codex', bossRun, {
+      type: 'result',
+      status: 'success'
+    })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     // Exhaust the hop budget so the priority re-summon is blocked.
     const runtime = (
@@ -15411,7 +15539,10 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
-    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'result', status: 'success' })
+    harness.orchestrator.handleProviderOutput('codex', bossRun, {
+      type: 'result',
+      status: 'success'
+    })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     // Force the Boss's round-participant status to 'failed' (hops untouched, so a
     // hop-budget attribution would be flatly wrong). The re-summon must decline
@@ -15547,31 +15678,33 @@ Next action:
   })
 
   it('honours a queued programmatic follow-up prompt at round end', async () => {
-    // Verify the queue-drain → fresh-round path for follow-ups queued
+    // Verify the queue-drain → same-round boundary path for follow-ups queued
     // via enqueueFollowUpPrompt (Boss queue_followup / iOS remote).
     // Single-participant ensemble keeps the test focused.
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [harness.chat.ensemble!.participants[0]]
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Round 1.',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRoundId = started.roundId
     // Queue a follow-up while Claude is mid-turn.
     harness.orchestrator.enqueueFollowUpPrompt('ensemble-chat', 'continue-please')
-    // Close Claude's turn — round-end check fires + queued prompt
-    // dispatches as a fresh round.
+    // Close Claude's turn — absorb into the live round, then grant a same-round
+    // boundary seat (no fresh beginRound).
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
       { type: 'result', status: 'success' }
     )
-    // Round 2 fires with the queued prompt.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), {
       timeout: 1000
     })
     expect(harness.dispatched[1].prompt).toContain('continue-please')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Round 1.')
   })
 
   // 1.0.4-AK5 — Parallel fan-out.
@@ -16042,13 +16175,10 @@ Next action:
     expect(runtime).toBeTruthy()
     runtime!.fanoutPolicy = 'all'
 
-    const result = await harness.orchestrator.fanoutForRun(
-      harness.dispatched[0].appRunId,
-      {
-        prompt: 'Run the background checks.',
-        targetStage: 'backgrounds'
-      }
-    )
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      prompt: 'Run the background checks.',
+      targetStage: 'backgrounds'
+    })
     expect(result).toMatchObject({
       ok: true,
       targetStage: 'backgrounds',
@@ -16098,15 +16228,12 @@ Next action:
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-      const fanout = harness.orchestrator.fanoutForRun(
-        harness.dispatched[0].appRunId,
-        {
-          prompt: 'Edit only generated reports.',
-          mode: 'locked_writers',
-          targetStage: 'backgrounds',
-          writeScopes: { 'background-shell': ['reports/generated/**'] }
-        }
-      )
+      const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        prompt: 'Edit only generated reports.',
+        mode: 'locked_writers',
+        targetStage: 'backgrounds',
+        writeScopes: { 'background-shell': ['reports/generated/**'] }
+      })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
       const backgroundRun = harness.dispatched[1]
       expect(backgroundRun.ensembleRun?.participantId).toBe('background-shell')
@@ -16395,9 +16522,11 @@ Next action:
 
   it('binds fan-out attachment grants to the lane run instead of the parent run', async () => {
     const issueRunScopedExternalGrants = vi.fn(
-      ({ participant, appRunId, attachments }: Parameters<
-        NonNullable<EnsembleOrchestratorDeps['issueRunScopedExternalGrants']>
-      >[0]) => [
+      ({
+        participant,
+        appRunId,
+        attachments
+      }: Parameters<NonNullable<EnsembleOrchestratorDeps['issueRunScopedExternalGrants']>>[0]) => [
         externalGrant(participant.provider, attachments[0].path, {
           appRunId,
           chatId: 'ensemble-chat',
@@ -16499,9 +16628,7 @@ Next action:
     expect(result.message).toContain('dispatched')
     expect(harness.dispatched).toHaveLength(2)
     expect(
-      harness.chat.messages.some((message) =>
-        message.content.includes('Parallel fan-out complete')
-      )
+      harness.chat.messages.some((message) => message.content.includes('Parallel fan-out complete'))
     ).toBe(false)
 
     harness.orchestrator.handleProviderOutput(
@@ -16757,7 +16884,7 @@ Next action:
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
   })
 
-  it('holds foreground rotation until the caller\'s fan-out lane returns', async () => {
+  it("holds foreground rotation until the caller's fan-out lane returns", async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
@@ -17017,9 +17144,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     const provisionalLane = harness.dispatched[1]
 
-    await expect(harness.orchestrator.cancelRound('ensemble-chat', 'Stopped by user.')).resolves.toBe(
-      true
-    )
+    await expect(
+      harness.orchestrator.cancelRound('ensemble-chat', 'Stopped by user.')
+    ).resolves.toBe(true)
     expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
     expect(harness.cancelRun).toHaveBeenCalledWith('codex', ownerRunId)
     expect(harness.cancelRun).toHaveBeenCalledWith('claude', provisionalLane.appRunId)
@@ -17218,13 +17345,17 @@ Next action:
     completeDispatchedRun(harness, 2)
   })
 
-  it('defers an ensemble_yield handoff until the caller\'s fan-out lane returns', async () => {
+  it("defers an ensemble_yield handoff until the caller's fan-out lane returns", async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
-    expect(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Researcher should take it after the review returns.',
-        'Researcher'))
+        'Researcher'
+      )
+    )
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(harness.dispatched).toHaveLength(2)
@@ -17438,9 +17569,10 @@ Next action:
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('boss')
     expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
     expect(
-      harness.chat.messages.some((message) =>
-        typeof message.content === 'string' &&
-        message.content.includes('retains the authority turn')
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('retains the authority turn')
       )
     ).toBe(true)
 
@@ -17469,7 +17601,7 @@ Next action:
     await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
   })
 
-  it('defers an @mention handoff until the caller\'s fan-out lane returns', async () => {
+  it("defers an @mention handoff until the caller's fan-out lane returns", async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
@@ -17837,16 +17969,13 @@ Next action:
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
 
-      const result = await harness.orchestrator.fanoutForRun(
-        harness.dispatched[0].appRunId,
-        {
-          targets: ['Worker'],
-          prompt: 'Implement the scoped change.',
-          mode: 'locked_writers',
-          targetStage: 'workers',
-          writeScopes: { Worker: ['src/worker/**'] }
-        }
-      )
+      const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Worker'],
+        prompt: 'Implement the scoped change.',
+        mode: 'locked_writers',
+        targetStage: 'workers',
+        writeScopes: { Worker: ['src/worker/**'] }
+      })
       expect(result).toMatchObject({
         ok: true,
         participantIds: ['claude'],
@@ -17910,16 +18039,13 @@ Next action:
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
 
-      const result = await harness.orchestrator.fanoutForRun(
-        harness.dispatched[0].appRunId,
-        {
-          targets: ['Worker'],
-          prompt: 'Implement the scoped change.',
-          mode: 'locked_writers',
-          targetStage: 'workers',
-          writeScopes: { Worker: ['src/worker/**'] }
-        }
-      )
+      const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Worker'],
+        prompt: 'Implement the scoped change.',
+        mode: 'locked_writers',
+        targetStage: 'workers',
+        writeScopes: { Worker: ['src/worker/**'] }
+      })
 
       expect(result).toMatchObject({ ok: false, error: 'dispatch_failed' })
       completeDispatchedRun(harness, 0)
@@ -17951,7 +18077,10 @@ Next action:
       harness.orchestrator as unknown as {
         roundsByChatId: Map<
           string,
-          { yieldRouting?: { kind: string }; yieldReturnStack?: Array<{ targetParticipantId: string }> }
+          {
+            yieldRouting?: { kind: string }
+            yieldReturnStack?: Array<{ targetParticipantId: string }>
+          }
         >
       }
     ).roundsByChatId.get('ensemble-chat')
@@ -18461,7 +18590,9 @@ Next action:
           (message) =>
             message.role === 'system' &&
             typeof message.content === 'string' &&
-            message.content.includes('Locked writer fan-out needs at least two writer-capable participants')
+            message.content.includes(
+              'Locked writer fan-out needs at least two writer-capable participants'
+            )
         )
       ).toBe(false)
 
@@ -18572,8 +18703,7 @@ Next action:
         { appRunId: claimA.appRunId, appChatId: 'ensemble-chat' },
         {
           type: 'content',
-          text:
-            '```taskwraith_write_claim\n{"writeScopes":["src/a/**"],"operations":["edit"],"rationale":"Own A","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
+          text: '```taskwraith_write_claim\n{"writeScopes":["src/a/**"],"operations":["edit"],"rationale":"Own A","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
         }
       )
       harness.orchestrator.handleProviderOutput(
@@ -18586,8 +18716,7 @@ Next action:
         { appRunId: claimB.appRunId, appChatId: 'ensemble-chat' },
         {
           type: 'content',
-          text:
-            '```taskwraith_write_claim\n{"writeScopes":["src/b/**"],"operations":["edit"],"rationale":"Own B","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
+          text: '```taskwraith_write_claim\n{"writeScopes":["src/b/**"],"operations":["edit"],"rationale":"Own B","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
         }
       )
       harness.orchestrator.handleProviderOutput(
@@ -18613,7 +18742,9 @@ Next action:
 
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(6), { timeout: 1000 })
       const writerRuns = harness.dispatched.slice(4, 6)
-      expect(writerRuns.every((payload) => payload.effectivePermissions?.readOnly === false)).toBe(true)
+      expect(writerRuns.every((payload) => payload.effectivePermissions?.readOnly === false)).toBe(
+        true
+      )
       const writeLanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {}).filter(
         (lane) => lane.intent === 'write'
       )
@@ -18695,8 +18826,7 @@ Next action:
           { appRunId: claimRun.appRunId, appChatId: 'ensemble-chat' },
           {
             type: 'content',
-            text:
-              '```taskwraith_write_claim\n{"writeScopes":["src/shared/**"],"operations":["edit"],"rationale":"Need shared files","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
+            text: '```taskwraith_write_claim\n{"writeScopes":["src/shared/**"],"operations":["edit"],"rationale":"Need shared files","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
           }
         )
         harness.orchestrator.handleProviderOutput(
@@ -18924,10 +19054,7 @@ Next action:
         harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
           toolName: 'apply_patch',
           workspacePath: '/repo',
-          resourcePaths: [
-            '/repo/src/worker/a.ts',
-            '/repo/src/worker/nested/b.ts'
-          ]
+          resourcePaths: ['/repo/src/worker/a.ts', '/repo/src/worker/nested/b.ts']
         })
       ).toEqual({ ok: true })
       expect(
@@ -19494,9 +19621,13 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[0].provider).toBe('codex')
     // Builder explicitly yields to the Auditor: the reviewer speaks next
     // even though the Helper (a non-reviewer) still awaits its turn.
-    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
         'Need a review now.',
-        'Auditor'))
+        'Auditor'
+      )
+    )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
   })
@@ -19742,9 +19873,7 @@ describe('background stage routing', () => {
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('lead')
 
     completeDispatchedRun(harness, 0)
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
     expect(
       harness.chat.ensemble?.activeRound?.participants.map((entry) => entry.participantId)
@@ -19797,9 +19926,7 @@ describe('background stage routing', () => {
       prompt: 'Investigate this.',
       event: { sender: {} as Electron.WebContents }
     })
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(0)
     expect(
       harness.chat.messages.some(
@@ -19847,9 +19974,7 @@ describe('background stage routing', () => {
     expect(harness.dispatched[backgroundIndex].prompt).toContain('Stage role: background')
 
     completeDispatchedRun(harness, leadIndex)
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('running'))
     harness.orchestrator.handleProviderOutput(
       harness.dispatched[backgroundIndex].provider,
       {
@@ -19859,9 +19984,7 @@ describe('background stage routing', () => {
       { type: 'message', role: 'assistant', delta: true, content: 'BG checks passed.' }
     )
     completeDispatchedRun(harness, backgroundIndex)
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     const result = harness.chat.messages.find((message) =>
       message.content?.includes('BG checks passed.')
     )
@@ -19887,12 +20010,13 @@ describe('background stage routing', () => {
       backgroundParticipant()
     ]
 
-    harness.orchestrator.startRound({
+    const started = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: '@BG run checks while Lead handles the first round.',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const firstRoundId = started.roundId
     const backgroundIndex = harness.dispatched.findIndex(
       (payload) => payload.ensembleRun?.participantId === 'background-shell'
     )
@@ -19924,8 +20048,10 @@ describe('background stage routing', () => {
     )
     completeDispatchedRun(harness, backgroundIndex)
 
+    // Same-round absorb after BG settles — not a fresh beginRound.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('lead')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
     const bgResultIndex = harness.chat.messages.findIndex(
       (message) => message.content === 'BG-BEFORE-QUEUED-ROUND'
     )
@@ -20056,9 +20182,7 @@ describe('background stage routing', () => {
     )
     expect(backgroundRun).toBeTruthy()
 
-    const participantView = harness.orchestrator.listParticipantsForRun(
-      backgroundRun?.appRunId
-    )
+    const participantView = harness.orchestrator.listParticipantsForRun(backgroundRun?.appRunId)
     expect(participantView.ok).toBe(true)
     expect(participantView.bossmanAuthorityRole).toBeUndefined()
     expect(participantView.rosterEditAllowed).toBe(false)
@@ -20126,13 +20250,9 @@ describe('background stage routing', () => {
     expect(harness.dispatched[workerIndex].ensembleRun?.laneId).toBeUndefined()
 
     completeDispatchedRun(harness, workerIndex)
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('running'))
     completeDispatchedRun(harness, backgroundIndex)
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
   })
 
   it('can dispatch the same BG seat twice without duplicating either result', async () => {
@@ -20173,8 +20293,7 @@ describe('background stage routing', () => {
     completeDispatchedRun(harness, 0)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     const firstBackgroundIndex = harness.dispatched.findIndex(
-      (payload, index) =>
-        index > 0 && payload.ensembleRun?.participantId === 'background-shell'
+      (payload, index) => index > 0 && payload.ensembleRun?.participantId === 'background-shell'
     )
     const workerIndex = harness.dispatched.findIndex(
       (payload) => payload.ensembleRun?.participantId === 'worker'
@@ -20192,8 +20311,7 @@ describe('background stage routing', () => {
       expect(
         harness.chat.messages.some(
           (message) =>
-            typeof message.content === 'string' &&
-            message.content.includes('Background complete')
+            typeof message.content === 'string' && message.content.includes('Background complete')
         )
       ).toBe(true)
     )
@@ -20207,8 +20325,7 @@ describe('background stage routing', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
     const secondBackgroundIndex = harness.dispatched.findIndex(
       (payload, index) =>
-        index !== firstBackgroundIndex &&
-        payload.ensembleRun?.participantId === 'background-shell'
+        index !== firstBackgroundIndex && payload.ensembleRun?.participantId === 'background-shell'
     )
     harness.orchestrator.handleProviderOutput(
       harness.dispatched[secondBackgroundIndex].provider,
@@ -20219,9 +20336,7 @@ describe('background stage routing', () => {
       { type: 'message', role: 'assistant', delta: true, content: 'SECOND-BG-RESULT' }
     )
     completeDispatchedRun(harness, secondBackgroundIndex)
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
 
     expect(
       harness.chat.messages.filter((message) => message.content === 'FIRST-BG-RESULT')
@@ -20448,8 +20563,9 @@ describe('slim resumed-turn prompts', () => {
           kimiAcpPostureVersion: KIMI_ACP_PRODUCTION_POSTURE_VERSION
         }
       ]
-      chat.ensemble!.participants[0].promptShellVersion =
-        computeEnsemblePromptShellStamp(chat.ensemble!)
+      chat.ensemble!.participants[0].promptShellVersion = computeEnsemblePromptShellStamp(
+        chat.ensemble!
+      )
       const signRunPermissionPosture = vi.fn(() => 'a'.repeat(64))
       const harness = makeHarness({ initialChat: chat, signRunPermissionPosture })
 
@@ -20467,9 +20583,7 @@ describe('slim resumed-turn prompts', () => {
       expect(payload.prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
       expect(payload.prompt).not.toContain('Participant roster:')
       expect(payload.resumeFallbackPrompt).toContain('Participant roster:')
-      expect(payload.resumeFallbackPrompt).not.toContain(
-        'TaskWraith Ensemble Mode — resumed turn'
-      )
+      expect(payload.resumeFallbackPrompt).not.toContain('TaskWraith Ensemble Mode — resumed turn')
       expect(signRunPermissionPosture).toHaveBeenCalledWith(
         'plan',
         expect.objectContaining({ presetId: 'read_only', readOnly: true }),
@@ -20493,8 +20607,8 @@ describe('slim resumed-turn prompts', () => {
       process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
       try {
         const chat = makeChat()
-        chat.ensemble!.participants = chat.ensemble!.participants
-          .filter((participant) => participant.id === 'codex')
+        chat.ensemble!.participants = chat
+          .ensemble!.participants.filter((participant) => participant.id === 'codex')
           .map((participant) => ({
             ...participant,
             order: 1,
@@ -20505,8 +20619,9 @@ describe('slim resumed-turn prompts', () => {
             })
           }))
         // The stamp must reflect the final one-seat roster.
-        chat.ensemble!.participants[0].promptShellVersion =
-          computeEnsemblePromptShellStamp(chat.ensemble!)
+        chat.ensemble!.participants[0].promptShellVersion = computeEnsemblePromptShellStamp(
+          chat.ensemble!
+        )
         const harness = makeHarness({ initialChat: chat })
         harness.orchestrator.startRound({
           chatId: 'ensemble-chat',
@@ -20532,15 +20647,16 @@ describe('slim resumed-turn prompts', () => {
     process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
     try {
       const chat = makeChat()
-      chat.ensemble!.participants = chat.ensemble!.participants
-        .filter((participant) => participant.id === 'codex')
+      chat.ensemble!.participants = chat
+        .ensemble!.participants.filter((participant) => participant.id === 'codex')
         .map((participant) => ({
           ...participant,
           order: 1,
           linkedProviderSessionId: '7b057c8b-33fa-4eca-9efe-3313a83669f4'
         }))
-      chat.ensemble!.participants[0].promptShellVersion =
-        computeEnsemblePromptShellStamp(chat.ensemble!)
+      chat.ensemble!.participants[0].promptShellVersion = computeEnsemblePromptShellStamp(
+        chat.ensemble!
+      )
       const harness = makeHarness({ initialChat: chat })
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
@@ -20655,16 +20771,14 @@ describe('shell stamp persistence requires a successful dispatch', () => {
       prompt: 'Try to run.',
       event: { sender: {} as Electron.WebContents }
     })
-    await vi.waitFor(() =>
-      expect(harness.chat.ensemble?.activeRound?.status).not.toBe('running')
-    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).not.toBe('running'))
     for (const participant of harness.chat.ensemble?.participants || []) {
       expect(participant.promptShellVersion).toBeUndefined()
       expect(participant.promptDynamicStateVersion).toBeUndefined()
     }
-    expect(
-      harness.chat.runs.some((run) => typeof run.promptDynamicStateVersion === 'string')
-    ).toBe(false)
+    expect(harness.chat.runs.some((run) => typeof run.promptDynamicStateVersion === 'string')).toBe(
+      false
+    )
   })
 })
 
@@ -20684,9 +20798,7 @@ describe('dynamic-state receipt invalidation', () => {
       { type: 'result', status: 'failed', stats: { total_tokens: 5 } }
     )
     await vi.waitFor(() => {
-      const participant = harness.chat.ensemble?.participants.find(
-        (entry) => entry.id === 'claude'
-      )
+      const participant = harness.chat.ensemble?.participants.find((entry) => entry.id === 'claude')
       expect(participant?.promptShellVersion).toBeUndefined()
       expect(participant?.promptDynamicStateVersion).toBeUndefined()
     })
@@ -20803,10 +20915,7 @@ describe('dynamic-state receipt invalidation', () => {
 describe('classified context-overflow seat relief', () => {
   const overflowText = "This model's maximum context length is 128000 tokens"
 
-  function hostSeatChat(
-    provider: 'kimi' | 'grok',
-    id = provider
-  ): ChatRecord {
+  function hostSeatChat(provider: 'kimi' | 'grok', id = provider): ChatRecord {
     const chat = makeChat()
     chat.ensemble!.participants = [
       {
@@ -20841,7 +20950,11 @@ describe('classified context-overflow seat relief', () => {
     }
 
     expect(
-      harness.orchestrator.noteProviderFailureText('grok', { ...route, appChatId: 'wrong' }, overflowText)
+      harness.orchestrator.noteProviderFailureText(
+        'grok',
+        { ...route, appChatId: 'wrong' },
+        overflowText
+      )
     ).toBe(false)
     expect(harness.orchestrator.noteProviderFailureText('kimi', route, overflowText)).toBe(false)
     expect(
@@ -20882,7 +20995,9 @@ describe('classified context-overflow seat relief', () => {
       appRunId: success.dispatched[0].appRunId,
       appChatId: 'ensemble-chat'
     }
-    expect(success.orchestrator.noteProviderFailureText('kimi', successRoute, overflowText)).toBe(true)
+    expect(success.orchestrator.noteProviderFailureText('kimi', successRoute, overflowText)).toBe(
+      true
+    )
     success.orchestrator.handleProviderOutput('kimi', successRoute, {
       type: 'result',
       status: 'success'
@@ -21096,9 +21211,7 @@ describe('classified context-overflow seat relief', () => {
       appRunId: kimiPayload.appRunId,
       appChatId: 'ensemble-chat'
     }
-    expect(
-      harness.orchestrator.noteProviderFailureText('kimi', kimiRoute, overflowText)
-    ).toBe(true)
+    expect(harness.orchestrator.noteProviderFailureText('kimi', kimiRoute, overflowText)).toBe(true)
     harness.orchestrator.handleProviderOutput('kimi', kimiRoute, {
       type: 'result',
       status: 'failed'
@@ -21193,7 +21306,10 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       runs: opts.runs,
       ensemble: { ...ensemble, participants: opts.participants }
     }
-    const settings: AppSettings = { ...makeSettings(), hostAutoCompactEnabled: opts.hostAutoCompactEnabled }
+    const settings: AppSettings = {
+      ...makeSettings(),
+      hostAutoCompactEnabled: opts.hostAutoCompactEnabled
+    }
     const orchestrator = new EnsembleOrchestrator({
       getChat: () => chat,
       saveChat: () => undefined,
@@ -21248,7 +21364,11 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
   afterEach(() => vi.useRealTimers())
 
   it('does not treat cache-inclusive cursor run usage as live occupancy', () => {
-    const seat = participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 'sess-1' })
+    const seat = participant({
+      id: 'cursor',
+      provider: 'cursor',
+      linkedProviderSessionId: 'sess-1'
+    })
     const h = harness({
       participants: [seat],
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)] // 97.5%
@@ -21421,7 +21541,9 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
 
   it('does nothing for a non-completed round', () => {
     const h = harness({
-      participants: [participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })],
+      participants: [
+        participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })
+      ],
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)]
     })
     h.fire('cancelled')
@@ -21431,7 +21553,9 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
 
   it('does nothing when every seat is below the threshold', () => {
     const h = harness({
-      participants: [participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })],
+      participants: [
+        participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })
+      ],
       runs: [seatRun('cursor', 'cursor', 120_000, 200_000)] // 60%
     })
     h.fire('completed')
@@ -21440,7 +21564,9 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
 
   it('respects the hostAutoCompactEnabled=false kill switch', () => {
     const h = harness({
-      participants: [participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })],
+      participants: [
+        participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })
+      ],
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)],
       hostAutoCompactEnabled: false
     })
@@ -21450,7 +21576,9 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
 
   it('does not become eligible after a cooldown when evidence is still generic usage', () => {
     const h = harness({
-      participants: [participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })],
+      participants: [
+        participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })
+      ],
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)],
       startClock: 1_000
     })
@@ -21550,7 +21678,19 @@ describe('I-drop regression — leading assistant content delta preservation', (
   const CASES: Array<{ name: string; deltas: string[]; mustContain: string; brokenIf: string }> = [
     {
       name: 'Codex — dropped leading "I" in `IpcValidation`',
-      deltas: ['The', ' focused', ' tests', ' pass', ',', ' and', ' `', 'I', 'pc', 'Validation', '` passes.'],
+      deltas: [
+        'The',
+        ' focused',
+        ' tests',
+        ' pass',
+        ',',
+        ' and',
+        ' `',
+        'I',
+        'pc',
+        'Validation',
+        '` passes.'
+      ],
       mustContain: '`IpcValidation`',
       brokenIf: '`pcValidation'
     },
@@ -21925,7 +22065,13 @@ describe('assignment-aware continuation roster narrowing', () => {
       permissionPresetId: 'workspace_write'
     }) as EnsembleParticipant
 
-  const fullRoster = [seat('boss', 1), seat('captain', 2), seat('worker1', 3), seat('reviewer1', 4), seat('scout1', 5)]
+  const fullRoster = [
+    seat('boss', 1),
+    seat('captain', 2),
+    seat('worker1', 3),
+    seat('reviewer1', 4),
+    seat('scout1', 5)
+  ]
 
   const makeNarrowingChat = (): ChatRecord => {
     const chat = makeChat()
@@ -22001,7 +22147,7 @@ describe('assignment-aware continuation roster narrowing', () => {
     expect(narrow()(chat, fullRoster).map((entry) => entry.id)).toEqual(['boss'])
   })
 
-  it('an open poll pins the full roster (voting is everyone\'s job)', () => {
+  it("an open poll pins the full roster (voting is everyone's job)", () => {
     const chat = makeNarrowingChat()
     chat.ensemble!.bossmanControlState = {
       assignments: [
@@ -22083,10 +22229,7 @@ describe('assignment-aware continuation roster narrowing', () => {
       roster,
       runtime
     )
-    expect(narrowed.map((participant) => participant.id)).toEqual([
-      'captain-two',
-      'worker1'
-    ])
+    expect(narrowed.map((participant) => participant.id)).toEqual(['captain-two', 'worker1'])
   })
 
   it('targeted open status requests admit their targets; untargeted ones never pin the roster', () => {
@@ -22227,9 +22370,7 @@ describe('fan-out worktree isolation', () => {
   }
 
   it('gives WRITE-intent lanes isolated worktrees and leaves read lanes on the shared checkout', async () => {
-    const allocate = vi.fn(
-      async (input: { laneId: string }) => allocationFor(input.laneId)
-    )
+    const allocate = vi.fn(async (input: { laneId: string }) => allocationFor(input.laneId))
     const settle = vi.fn()
     const harness = makeHarness({
       allocateFanoutLaneWorktree: allocate as never,
@@ -22622,9 +22763,10 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
     const harness = makeHarness()
     const { ownerRunId } = await startGraphRound(harness)
 
-    await expect(
-      harness.orchestrator.awaitLanesForRun(ownerRunId, {})
-    ).resolves.toMatchObject({ ok: false, error: 'no_lanes' })
+    await expect(harness.orchestrator.awaitLanesForRun(ownerRunId, {})).resolves.toMatchObject({
+      ok: false,
+      error: 'no_lanes'
+    })
     await expect(
       harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds: 'lane-1' })
     ).resolves.toMatchObject({ ok: false, error: 'invalid_lane' })
@@ -22682,9 +22824,10 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
       ok: false,
       error: 'missing_lane_id'
     })
-    expect(
-      harness.orchestrator.laneResultForRun(undefined, { laneId: 'lane-1' })
-    ).toMatchObject({ ok: false, error: 'no_active_run' })
+    expect(harness.orchestrator.laneResultForRun(undefined, { laneId: 'lane-1' })).toMatchObject({
+      ok: false,
+      error: 'no_active_run'
+    })
   })
 })
 
