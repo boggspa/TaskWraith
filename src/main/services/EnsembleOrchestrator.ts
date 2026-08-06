@@ -235,6 +235,7 @@ import {
   EnsembleCursorCompletionWatchdog,
   type CursorTransportLiveness
 } from './EnsembleCursorCompletionWatchdog'
+import { buildCursorPathBCompactionSummary } from './CursorContextPressureRecovery'
 import {
   resolveEffectiveRoster,
   isExternalSeat,
@@ -834,6 +835,12 @@ interface ActiveParticipantRun {
    * only when the buffered transcript is released. */
   terminalFinalized?: boolean
   terminalReason?: string
+  /**
+   * Cursor Path-B context-pressure recovery: the hung child is cancelled and
+   * the same seat will be re-dispatched after a host prune. Keep the roster
+   * chip in `running` and skip failed/skipped coda copy.
+   */
+  cursorContextPressureRecovery?: boolean
   /** Terminal bookkeeping is deferred with a held transcript and applied once. */
   terminalSideEffectsApplied?: boolean
   /** Participant token totals merge once, on the effective terminal flush. */
@@ -3263,6 +3270,10 @@ interface ActiveRoundRuntime {
   /** Most recent foreground seat admitted by the serial loop. */
   lastForegroundParticipantId?: string
   midRunSteeringBoundaryState?: EnsembleMidRunSteeringBoundaryState
+  /** Same-seat Path-B retry after discreet Cursor context-pressure recovery. */
+  pendingCursorContextRecoveryParticipantId?: string
+  /** At most one host recovery attempt per seat per round. */
+  cursorContextRecoveryAttemptedParticipantIds?: Set<string>
   bossmanParticipantId?: string
   captainParticipantIds?: string[]
   secondInCommandParticipantId?: string
@@ -3641,9 +3652,13 @@ export class EnsembleOrchestrator {
         ),
       transportLiveness: () =>
         this.deps.getProviderRunTransportLiveness?.(run.runId) || 'unknown',
+      contextPressurePercent: () => this.cursorContextPressurePercentForRun(run),
       isActive: () => {
         const current = this.runsByRunId.get(run.runId)
         return current === run && !run.terminalFinalized
+      },
+      onContextPressureRecovery: (reason) => {
+        this.recoverCursorSeatFromContextPressure(run, reason)
       },
       onMissingTerminal: (reason) => {
         // Release the serial completion promise first. The exact provider
@@ -3664,6 +3679,125 @@ export class EnsembleOrchestrator {
 
   private stopCursorCompletionWatchdog(run: ActiveParticipantRun): void {
     if (run.participant.provider === 'cursor') this.cursorCompletionWatchdog.stop(run.runId)
+  }
+
+  private cursorContextPressurePercentForRun(run: ActiveParticipantRun): number | null {
+    const telemetry = this.participantWorkingTelemetryByRunId.get(run.runId)
+    if (!telemetry) return null
+    const tokens = Math.max(
+      telemetry.totalTokens || 0,
+      (telemetry.inputTokens || 0) + (telemetry.outputTokens || 0),
+      telemetry.contextUsage?.contextTokens || 0
+    )
+    if (tokens <= 0) return null
+    const windowTokens = resolveContextWindow(
+      run.participant.provider,
+      run.participant.model,
+      undefined
+    )
+    if (!(windowTokens > 0)) return null
+    return contextPercent(tokens, windowTokens)
+  }
+
+  /**
+   * Discreet Cursor Path-B recovery at critical context pressure: cancel the
+   * hung child, persist a host prune summary, show the ordinary compaction
+   * card, and re-dispatch the same seat. Never appends a failed/skipped coda.
+   */
+  private recoverCursorSeatFromContextPressure(run: ActiveParticipantRun, reason: string): void {
+    if (this.runsByRunId.get(run.runId) !== run || run.terminalFinalized) return
+    if (run.participant.provider !== 'cursor') return
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (!runtime || runtime.roundId !== run.roundId || runtime.cancelled) return
+    runtime.cursorContextRecoveryAttemptedParticipantIds ??= new Set()
+    if (runtime.cursorContextRecoveryAttemptedParticipantIds.has(run.participant.id)) {
+      // Already recovered once this round — fall back to the visible fail path
+      // so a looping seat cannot pin the roster forever.
+      const message = `Cursor turn recovered after missing terminal result: ${reason}`
+      this.appendRoundStatus(run.chatId, run.roundId, message)
+      this.finalizeRun(run, 'failed', message)
+      void this.requestExactRunCancellation(run).catch(() => undefined)
+      return
+    }
+    runtime.cursorContextRecoveryAttemptedParticipantIds.add(run.participant.id)
+    run.cursorContextPressureRecovery = true
+    run.invalidatePromptShellReceipt = true
+    run.invalidatePromptDynamicStateReceipt = true
+
+    const chat = this.deps.getChat(run.chatId)
+    const preTokens =
+      this.participantWorkingTelemetryByRunId.get(run.runId)?.totalTokens ||
+      this.participantWorkingTelemetryByRunId.get(run.runId)?.contextUsage?.contextTokens
+    const summary = chat
+      ? buildCursorPathBCompactionSummary({
+          messages: chat.messages || [],
+          roundPrompt: runtime.prompt,
+          nowIso: this.deps.nowIso(),
+          ...(typeof preTokens === 'number' ? { preTokens } : {})
+        })
+      : null
+
+    this.emitSeatCompactionProgress(run.chatId, run.participant, 'started', 'auto')
+    if (summary && chat?.ensemble) {
+      const participants = (chat.ensemble.participants || []).map((participant) =>
+        participant.id === run.participant.id
+          ? {
+              ...participant,
+              contextCompactionSummary: {
+                text: summary.text,
+                createdAt: summary.createdAt,
+                provider: summary.provider,
+                ...(summary.preTokens !== undefined ? { preTokens: summary.preTokens } : {}),
+                provenance: summary.provenance
+              },
+              linkedProviderSessionId: null,
+              promptShellVersion: undefined,
+              promptDynamicStateVersion: undefined
+            }
+          : participant
+      )
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          ensemble: { ...chat.ensemble, participants },
+          updatedAt: this.deps.now()
+        },
+        'participant-updated'
+      )
+      Object.assign(run.participant, {
+        contextCompactionSummary: {
+          text: summary.text,
+          createdAt: summary.createdAt,
+          provider: summary.provider,
+          ...(summary.preTokens !== undefined ? { preTokens: summary.preTokens } : {}),
+          provenance: summary.provenance
+        },
+        linkedProviderSessionId: null
+      })
+      delete (run.participant as { promptShellVersion?: string }).promptShellVersion
+      delete (run.participant as { promptDynamicStateVersion?: string }).promptDynamicStateVersion
+    }
+
+    const completedSignal: ContextCompactionSignal = {
+      kind: 'completed',
+      telemetry: {
+        provider: 'cursor',
+        trigger: 'auto',
+        ...(typeof preTokens === 'number' ? { preTokens } : {}),
+        eventUuid: `cursor-pathb-recovery-${run.runId}`
+      }
+    }
+    this.appendContextCompactionCard(run, run.runId, completedSignal)
+    this.emitSeatCompactionProgress(run.chatId, run.participant, 'completed', 'auto')
+
+    // Same-seat retry only for the serial foreground seat. Detached fan-out
+    // Cursor lanes get the prune + compaction card, then settle quietly.
+    if (!run.laneId && runtime.activeRunId === run.runId) {
+      runtime.pendingCursorContextRecoveryParticipantId = run.participant.id
+    }
+    // Finalize first so a racing cancel/exit cannot stamp failed/skipped coda.
+    this.finalizeRun(run, 'cancelled', reason)
+    void this.requestExactRunCancellation(run).catch(() => undefined)
   }
 
   private trackRoundActivity(runtime: ActiveRoundRuntime, activity: Promise<void>): Promise<void> {
@@ -13254,9 +13388,11 @@ export class EnsembleOrchestrator {
     // Estimated only while EVERY report so far was an estimate — the first
     // authoritative provider snapshot flips the seat to authoritative for good.
     const estimated = statsAreEstimated(stats) && (previous ? previous.estimated : true)
+    const pressureTokens = Math.max(totalTokens, contextUsage?.contextTokens || 0)
+    if (run.participant.provider === 'cursor' && pressureTokens > 0) {
+      this.cursorCompletionWatchdog.noteTokenSample(runId, pressureTokens)
+    }
 
-    const telemetry = this.deps.onParticipantWorkingTelemetry
-    if (!telemetry) return true
     const now = this.deps.now()
     const changed =
       !previous ||
@@ -13265,19 +13401,25 @@ export class EnsembleOrchestrator {
       totalTokens !== previous.totalTokens ||
       estimated !== previous.estimated ||
       !contextUsageSnapshotsEqual(contextUsage, previous.contextUsage)
+    // Always retain the latest sample for Cursor pressure recovery even when no
+    // working-telemetry listener is wired (tests / headless embedders).
+    if (changed || !previous) {
+      this.participantWorkingTelemetryByRunId.set(runId, {
+        sentAt: now,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        estimated,
+        contextUsage
+      })
+    }
+
+    const telemetry = this.deps.onParticipantWorkingTelemetry
+    if (!telemetry) return true
     if (!changed) return true
     if (previous && now - previous.sentAt < PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS) {
       return true
     }
-
-    this.participantWorkingTelemetryByRunId.set(runId, {
-      sentAt: now,
-      inputTokens,
-      outputTokens,
-      totalTokens,
-      estimated,
-      contextUsage
-    })
     telemetry({
       type: 'snapshot',
       chatId: run.chatId,
@@ -14909,6 +15051,23 @@ export class EnsembleOrchestrator {
         // durable AppStore write gate, so no post-turn maintenance or routing
         // projection may run after that resolution.
         if (runtime.cancelled) break
+        if (
+          runtime.pendingCursorContextRecoveryParticipantId === participant.id &&
+          !runtime.cancelled
+        ) {
+          // Same-seat Path-B retry after discreet context recovery. Do not
+          // charge Continuous hops — this is maintenance, not a new answer.
+          runtime.pendingCursorContextRecoveryParticipantId = undefined
+          const refreshed = this.deps
+            .getChat(runtime.chatId)
+            ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
+          if (refreshed) {
+            Object.assign(participant, persistedSeatRuntimeState(refreshed))
+          }
+          remaining.unshift(participant)
+          runtime.activeRunId = undefined
+          continue
+        }
         this.maybeAutoCompactSeatAfterTurn(runtime.chatId, participant.id)
       }
       runtime.activeRunId = undefined
@@ -18074,11 +18233,13 @@ export class EnsembleOrchestrator {
       holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript
     const effectiveFinal =
       final && (!holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript)
-    const visibleStatus: EnsembleParticipantStatus = suppressingOwnedFanoutTranscript
-      ? run.status
-      : holdingOwnedFanoutTranscript
-        ? 'running'
-        : run.status
+    const visibleStatus: EnsembleParticipantStatus = run.cursorContextPressureRecovery
+      ? 'running'
+      : suppressingOwnedFanoutTranscript
+        ? run.status
+        : holdingOwnedFanoutTranscript
+          ? 'running'
+          : run.status
     let messages = [...chat.messages]
     const existingMessageById = new Map(messages.map((message) => [message.id, message]))
 
@@ -18445,16 +18606,16 @@ export class EnsembleOrchestrator {
         run.participant.id,
         {
           status: visibleStatus,
-          runId: run.runId,
-          ...(effectiveFinal && reason ? { reason } : {}),
-          ...(effectiveFinal ? { endedAt: timestamp } : {})
+          runId: run.cursorContextPressureRecovery ? undefined : run.runId,
+          ...(effectiveFinal && reason && !run.cursorContextPressureRecovery ? { reason } : {}),
+          ...(effectiveFinal && !run.cursorContextPressureRecovery ? { endedAt: timestamp } : {})
         },
         { setActive: !run.laneId }
       ),
       run.laneId,
       visibleStatus,
       timestamp,
-      reason
+      run.cursorContextPressureRecovery ? undefined : reason
     )
     // Blackboard delta bookkeeping — the entries injected into this run's
     // prompt are now part of the seat's session memory. Idempotent + same-ref

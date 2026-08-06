@@ -648,6 +648,104 @@ describe('EnsembleOrchestrator', () => {
     }
   })
 
+  it('recovers a critically full Cursor seat with a discreet compaction card and same-seat Path-B retry', async () => {
+    vi.useFakeTimers()
+    try {
+      const progress: Array<{ status: string; provider?: string }> = []
+      const harness = makeHarness({
+        now: () => Date.now(),
+        getProviderRunTransportLiveness: () => 'alive',
+        onContextCompactionProgress: (event) => {
+          progress.push({ status: event.status, provider: event.provider })
+        }
+      })
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'cursor',
+          provider: 'cursor',
+          enabled: true,
+          role: 'GrokCapt',
+          instructions: 'Work.',
+          order: 1,
+          permissionPresetId: 'workspace_write',
+          model: 'grok-4.5'
+        },
+        {
+          id: 'codex',
+          provider: 'codex',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Continue.',
+          order: 2,
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+      // Seed a long prefix so host recovery can prune a contiguous range.
+      harness.chat.messages = Array.from({ length: 20 }, (_, index) => ({
+        id: `hist-${index}`,
+        role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+        content: `history ${index}`,
+        timestamp: `2026-08-06T20:00:${String(index).padStart(2, '0')}.000Z`
+      }))
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Keep working through the stuck Cursor seat.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      for (let i = 0; i < 20; i += 1) await Promise.resolve()
+      expect(harness.dispatched).toHaveLength(1)
+      expect(harness.dispatched[0].provider).toBe('cursor')
+      const firstRunId = harness.dispatched[0].appRunId
+
+      // grok-4.5 window is 500k — fill it to critical occupancy.
+      expect(
+        harness.orchestrator.reportParticipantTokenUsage(firstRunId, {
+          total_tokens: 500_000,
+          input_tokens: 499_000,
+          output_tokens: 1_000
+        })
+      ).toBe(true)
+
+      // Quiet window is 45s; drain chained 1s poll timers past that mark.
+      for (let step = 0; step < 50; step += 1) {
+        vi.advanceTimersByTime(1_000)
+        for (let i = 0; i < 20; i += 1) await Promise.resolve()
+        if (harness.dispatched.length >= 2) break
+      }
+      expect(harness.dispatched).toHaveLength(2)
+      expect(harness.dispatched[1].provider).toBe('cursor')
+      expect(harness.dispatched[1].appRunId).not.toBe(firstRunId)
+      expect(harness.cancelRun).toHaveBeenCalledWith('cursor', firstRunId)
+      expect(progress.some((event) => event.status === 'started')).toBe(true)
+      expect(progress.some((event) => event.status === 'completed')).toBe(true)
+      expect(
+        harness.chat.messages.some((message) => message.metadata?.kind === 'contextCompaction')
+      ).toBe(true)
+      expect(
+        harness.chat.messages.some((message) =>
+          /Cursor (failed|skipped)\./i.test(message.content || '')
+        )
+      ).toBe(false)
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('missing terminal result')
+        )
+      ).toBe(false)
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (participant) => participant.participantId === 'cursor'
+        )?.status
+      ).toBe('running')
+      expect(
+        harness.chat.ensemble?.participants.find((participant) => participant.id === 'cursor')
+          ?.contextCompactionSummary?.text
+      ).toContain('Host recovered a Cursor Path-B seat')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('finalizes a streamed Cursor yield and cancels its exact child after an explicit handoff', async () => {
     vi.useFakeTimers()
     try {

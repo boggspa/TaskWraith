@@ -104,6 +104,23 @@ describe('decideCursorCompletionWatchdog', () => {
     })
   })
 
+  it('recovers a critically full live seat before the long quiescence deadline', () => {
+    expect(
+      decideCursorCompletionWatchdog({
+        ...base,
+        nowMs: 45_000,
+        lastActivityAt: 40_000,
+        transportLiveness: 'alive',
+        contextPressurePercent: 100,
+        lastTokenGrowthAt: 0,
+        contextPressureQuietMs: 45_000
+      })
+    ).toMatchObject({
+      kind: 'recover_context',
+      reason: expect.stringContaining('Path-B')
+    })
+  })
+
   it('keeps an active approval alive beyond the quiescence deadline', () => {
     expect(
       decideCursorCompletionWatchdog({
@@ -213,6 +230,37 @@ describe('EnsembleCursorCompletionWatchdog', () => {
       watchdog.stop('cursor-run')
       vi.advanceTimersByTime(60_000)
       expect(onMissingTerminal).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('invokes context-pressure recovery without the missing-terminal fail path', () => {
+    vi.useFakeTimers()
+    try {
+      let now = 0
+      const onMissingTerminal = vi.fn()
+      const onContextPressureRecovery = vi.fn()
+      const watchdog = new EnsembleCursorCompletionWatchdog()
+      watchdog.start({
+        runId: 'cursor-run',
+        now: () => now,
+        timeoutMs: 30_000,
+        pollMs: 1_000,
+        contextPressureQuietMs: 45_000,
+        hasActiveToolOrApproval: () => false,
+        transportLiveness: () => 'alive',
+        contextPressurePercent: () => 100,
+        isActive: () => true,
+        onMissingTerminal,
+        onContextPressureRecovery
+      })
+      watchdog.noteTokenSample('cursor-run', 1_000)
+      now = 45_000
+      vi.advanceTimersByTime(45_000)
+      expect(onContextPressureRecovery).toHaveBeenCalledTimes(1)
+      expect(onMissingTerminal).not.toHaveBeenCalled()
+      expect(watchdog.has('cursor-run')).toBe(false)
     } finally {
       vi.useRealTimers()
     }
