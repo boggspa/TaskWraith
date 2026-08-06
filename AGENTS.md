@@ -163,16 +163,16 @@ the opaque IDs disambiguate similarly titled tasks and multi-participant runs.
 They are attribution metadata only: none grants authority, extends liveness, or
 changes claim scope. Older markers without them remain valid.
 
-A reader treats a marker as **blocking** only if the pid is alive *and* the
-clock is inside `expires`; otherwise it is advisory. That way a crashed or
-forgotten claim decays on its own instead of blocking the tree forever. This
-is the same liveness model the credential authority already uses (owner pid
-plus process birth identity) — copy it rather than inventing another.
+A reader treats a marker as **blocking** only if it is still held *and* the
+clock is inside `expires`; otherwise it is advisory. "Held" means a live pid,
+or a matching `lockOwnerId` (below) when the claim carries no pid. That way a
+crashed or forgotten claim decays on its own instead of blocking the tree
+forever. The pid half is the same liveness model the credential authority uses
+(owner pid plus process birth identity) — copy it rather than inventing another.
 
-#### If you cannot read your own pid — sandboxed TaskWraith seats
+#### When a pid will not hold your claim — TaskWraith seats
 
-A sandboxed provider seat cannot inspect its own pid, so it can satisfy neither
-half of the pid rule. **Use `lockOwnerId:` instead of `pid:`** — the value of
+**Use `lockOwnerId:` instead of `pid:`** — the value of
 `TASKWRAITH_LOCK_OWNER_ID`, which every seat already carries in its environment:
 
 ```yaml
@@ -186,11 +186,25 @@ paths:
 ---
 ```
 
+**Why, precisely** — because the reason matters for choosing between them. It is
+*not* that a seat cannot see pids: TaskWraith imposes no OS sandbox on any seat,
+and the hook's own ancestry walk runs inside seat-invoked commits. The problem
+is that a seat has no *stable, long-lived* pid to record. Each shell invocation
+is a fresh transient process, and a provider host pid can rotate underneath a
+running session — observed 2026-08-06, a session's marker decayed twice in one
+evening when its Claude host pid rotated, silently un-claiming its files while
+it was still working. A pid you cannot keep alive is worse than no pid, because
+it decays without telling you.
+
 That id is issued at the narrowest execution boundary available — it is scoped
 to `runId + laneId + participantId` (`src/main/WorkspaceLockExecutionIdentity.ts`),
 so it identifies **your seat alone**, not your thread. A thread-wide marker is
 the wrong shape: it claims far more than you are editing and collides with work
 done outside TaskWraith in the same checkout.
+
+If no owner id was admitted for your seat, `TASKWRAITH_LOCK_OWNER_ID` is absent
+rather than empty. You then have neither identity — say so and coordinate in
+the open rather than raising a marker that claims nothing.
 
 Ownership is exact string equality against the env var, so an absent or empty
 `TASKWRAITH_LOCK_OWNER_ID` never matches anything. Either field alone is enough;
