@@ -4,11 +4,18 @@ import { StrictMode } from 'react'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { HostProjectionProvider } from './components/HostProjectionProvider'
+import { installWindowIdlePause } from './hooks/installWindowIdlePause'
 import {
   loadWithoutReactPerformanceTracks,
   shouldDisableReactPerformanceTracks
 } from './lib/reactPerformanceTracks'
 import { PopoutApp } from './PopoutApp'
+
+// Electron disables macOS occlusion tracking — pause ambient animations while
+// the window is unfocused/hidden so a covered window does not composite at
+// full display rate. Class sync is documentElement-side; CSS pauses play-state
+// only (no transition:none — see useRailFrameRemeasure).
+installWindowIdlePause()
 
 const params = new URLSearchParams(window.location.search)
 const popoutKind = params.get('popout')

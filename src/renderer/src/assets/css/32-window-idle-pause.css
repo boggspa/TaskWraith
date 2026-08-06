@@ -1,0 +1,18 @@
+/*
+ * Window-idle ambient pause — Electron disables macOS occlusion tracking, so a
+ * covered/unfocused window still composites ambient animation at full display
+ * rate. Pause animations while idle; do NOT set transition: none here.
+ *
+ * useRailFrameRemeasure listens for transitionend to pin the rail's resting
+ * frame. A blanket transition kill (as Observatory scoped to one sky element)
+ * would hang that remeasure when the window is unfocused.
+ *
+ * Glow/shimmer/blur stay present — only their play-state freezes. Resume is
+ * from the paused frame, not a restart.
+ */
+.is-window-idle,
+.is-window-idle *,
+.is-window-idle *::before,
+.is-window-idle *::after {
+  animation-play-state: paused !important;
+}
