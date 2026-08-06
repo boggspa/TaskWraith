@@ -132,6 +132,7 @@ import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import { classifyFanoutLaneSlots } from '../lib/fanoutLanePairing'
+import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
 import {
   isEnsembleFanoutLaneWorking,
   isEnsembleFanoutResultMessage
@@ -2887,6 +2888,16 @@ export const TranscriptPanel = memo(
       () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes),
       [displayMessages, pairFanoutLanes]
     )
+    // The same seat↔lane correspondence as `workingLaneParticipantIds`, read the
+    // other way: from a working seat back to the lane card it is filling, so its
+    // "working…" row can carry the reader there. Derived from the message list
+    // rather than from the presentations, because the target has to exist as a
+    // ROW — a seat that is busy but has not written a card yet simply has no
+    // entry, and offers no affordance.
+    const fanoutLaneJumpTargets = useMemo(
+      () => buildFanoutLaneJumpTargets(displayMessages),
+      [displayMessages]
+    )
     const projectedRows = useProjectedTranscriptRows(
       displayMessages,
       null,
@@ -5050,6 +5061,12 @@ export const TranscriptPanel = memo(
               {workingPresentations.map((presentation, index) => {
                 const providerClass = presentation.providerClass || presentation.provider
                 const tokenTarget = workingTokenTargets.get(presentation.runId)
+                // Only a seat that owns a lane card gets the jump. A solo turn,
+                // or a lane still before its first byte, has no destination and
+                // stays an ordinary status bubble.
+                const laneJump = presentation.participantId
+                  ? fanoutLaneJumpTargets.get(presentation.participantId)
+                  : undefined
                 return (
                   <div
                     key={workingIndicatorKey(presentation, index)}
@@ -5086,6 +5103,16 @@ export const TranscriptPanel = memo(
                     <ThinkingIndicator
                       label={workingIndicatorLabel(presentation)}
                       ariaLabel={workingStatusLabel(presentation)}
+                      onJump={
+                        laneJump
+                          ? () => scrollToMessage(laneJump.messageId, laneJump.rowKey)
+                          : undefined
+                      }
+                      jumpTitle={
+                        laneJump
+                          ? `Go to ${presentation.roleLabel || presentation.providerLabel}'s fan-out lane`
+                          : undefined
+                      }
                       telemetry={
                         <MemoizedParticipantWorkingTelemetry
                           key={

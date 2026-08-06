@@ -5636,6 +5636,63 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   padding-block: calc(var(--space-sm) + 1px);
 }
 
+/* ============================================================
+ * Working row as a jump target
+ * ------------------------------------------------------------
+ * A fan-out lane that started early in a round can still be working after the
+ * round has moved on and scrolled its card far out of view. Its "working…" row
+ * stays pinned at the bottom with every other live seat, so that row is the one
+ * place the reader can still see it — and therefore the natural place to click
+ * to get back to what it is producing.
+ *
+ * The element is a real <button> (see ThinkingIndicator) carrying the SAME
+ * class list as the static bubble, so every ghost/glow/shimmer rule above still
+ * applies untouched. All this adds is the UA-button reset those rules assume
+ * away, plus the affordance. `text-align: left` matters: a button centres its
+ * content by default and the bubble's row of ghost + label + telemetry would
+ * shift the moment a seat became jumpable.
+ *
+ * Only the accent-tinted rim moves on hover. The label already runs a provider
+ * shimmer and the ghost already glows; adding a transform or a background wash
+ * would read as a second animation competing with the "this seat is alive"
+ * signal the row exists to carry.
+ * ============================================================ */
+.message-working-jump {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: calc(var(--radius-md) * 3);
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow 140ms ease;
+}
+
+.message-working-jump:hover {
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--message-working-accent) 42%, transparent);
+}
+
+.message-working-jump:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--message-working-accent) 72%, transparent);
+  outline-offset: 1px;
+}
+
+/* The rim is the whole affordance, so it must survive both reduce-motion
+   signals — only the transition is decorative. */
+@media (prefers-reduced-motion: reduce) {
+  .message-working-jump {
+    transition: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .message-working-jump {
+  transition: none;
+}
+
 .message-working-stack {
   gap: calc(var(--space-sm) + 2px);
 }

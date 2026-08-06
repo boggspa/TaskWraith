@@ -751,18 +751,60 @@ export function SteerSymbolIcon() {
 export function ThinkingIndicator({
   label = 'Working',
   ariaLabel = label,
-  telemetry
+  telemetry,
+  onJump,
+  jumpTitle
 }: {
   label?: string
   ariaLabel?: string
   /** Visual-only live telemetry. The parent supplies the stable status text
    * for assistive tech, so ticking digits are never announced repeatedly. */
   telemetry?: ReactNode
+  /**
+   * When supplied, the whole bubble becomes a button that takes the reader to
+   * whatever this seat is currently producing — for a fan-out lane, its own
+   * viewport card. Omitted for a seat with nowhere to go (a solo turn, or a
+   * lane that has not written a card yet), so the affordance never appears
+   * without a live destination behind it.
+   */
+  onJump?: () => void
+  jumpTitle?: string
 } = {}) {
   // Participant name + model badge live in TranscriptPanel's `.message-meta`.
   // This bubble mirrors iOS LiveActivityAnchor: ghost + glow + "Working" + dots.
-  return (
+  //
+  // Rendered as a real <button> rather than a div with a click handler: this
+  // sits inside the transcript's `role="status"` live region, and a button is
+  // the only thing there that keyboard and assistive tech will find and
+  // operate. The class list is unchanged so every existing ghost/glow/shimmer
+  // rule still applies; `.message-working-jump` only carries the UA-button
+  // reset and the hover/focus affordance.
+  return onJump ? (
+    <button
+      type="button"
+      className="message-bubble assistant message-working message-working-jump"
+      aria-label={jumpTitle ? `${ariaLabel}. ${jumpTitle}` : ariaLabel}
+      title={jumpTitle}
+      onClick={onJump}
+    >
+      <ThinkingIndicatorBody label={label} telemetry={telemetry} />
+    </button>
+  ) : (
     <div className="message-bubble assistant message-working" aria-label={ariaLabel}>
+      <ThinkingIndicatorBody label={label} telemetry={telemetry} />
+    </div>
+  )
+}
+
+function ThinkingIndicatorBody({
+  label,
+  telemetry
+}: {
+  label: string
+  telemetry?: ReactNode
+}) {
+  return (
+    <>
       <span className="message-working-ghost" aria-hidden>
         <span className="message-working-ghost-glow" />
         <span className="message-working-ghost-mark">
@@ -800,7 +842,7 @@ export function ThinkingIndicator({
         </span>
         {telemetry}
       </span>
-    </div>
+    </>
   )
 }
 
