@@ -36,12 +36,20 @@ agent: claude-opus-5
 task: <short human label>
 pid: <your LONG-LIVED session host pid, not $$ — ownership is by ancestry>
 started: <ISO-8601 UTC>
-expires: <ISO-8601 UTC — short lease, renew it>
+expires: <ISO-8601 UTC — at most 15 minutes after started>
 paths:
   - src/main/Thing.ts
 ---
 one line on what you are doing and what you are NOT touching
 ```
+
+**A lease caps at 15 minutes and is renewed by hand.** A longer one is honoured
+only for its first 15 minutes from `started`, so it is clamped rather than
+voided. Renew by re-stamping **both** `started` and `expires` — bumping
+`expires` alone does nothing, since the ceiling anchors to the start. Expect it
+to lapse during long thinking, test runs or reviews, and remember a lapsed claim
+is **adoptable**: re-stamp *before* a long operation, and again before your
+final commit if the work ran long.
 
 **Without the opening and closing `---`, every field parses empty** — pid,
 expires, and the whole `paths` list — so the marker claims *nothing*. Two live

@@ -163,8 +163,22 @@ the opaque IDs disambiguate similarly titled tasks and multi-participant runs.
 They are attribution metadata only: none grants authority, extends liveness, or
 changes claim scope. Older markers without them remain valid.
 
+**A lease may not exceed 15 minutes, and it is renewed by hand.** Anything
+longer is honoured only for its first 15 minutes, measured from `started` — a
+claim is clamped, not voided, so a typo costs you the tail of a lease rather
+than all your protection. Renewing means re-stamping **both** `started` and
+`expires`; bumping `expires` alone changes nothing, because the ceiling is
+anchored to the start. A lease over the ceiling with **no readable `started`**
+cannot be bounded at all and is treated as decayed.
+
+Consequences to plan around rather than be surprised by: your claim will lapse
+during any long stretch of thinking, testing or reviewing, and a lapsed claim is
+**adoptable** — another agent is entitled to harvest its paths. Re-stamp before
+a long operation, not after it, and re-stamp before your final commit if the
+work ran long.
+
 A reader treats a marker as **blocking** only if it is still held *and* the
-clock is inside `expires`; otherwise it is advisory. "Held" means a live pid,
+clock is inside its effective (capped) `expires`; otherwise it is advisory. "Held" means a live pid,
 or a matching `lockOwnerId` (below) when the claim carries no pid. That way a
 crashed or forgotten claim decays on its own instead of blocking the tree
 forever. The pid half is the same liveness model the credential authority uses

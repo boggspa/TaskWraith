@@ -74,6 +74,43 @@ marker_scalar() {
   ' "$marker"
 }
 
+# ── lease ceiling ───────────────────────────────────────────────────────────
+# A lease may not exceed 15 minutes and must be renewed by hand (Chris,
+# 2026-08-06). Nothing bounded it before: `expires: 2099-…` held a path for 73
+# years, and an owner-id claim from a seat has no pid to decay it, so the lease
+# was its ONLY decay signal and that signal was unbounded.
+#
+# CLAMPED, never voided — an over-long lease still protects for its first 15
+# minutes. Punishing a typo with total loss of protection is the opposite of
+# what a ceiling is for. Anchored to `started`, because anchoring to "now" would
+# push the expiry forward on every evaluation and never expire at all.
+MAX_LEASE_SECONDS=900
+
+# Fires only when the CEILING is what decayed a claim — i.e. it would still be
+# live on its own stated expiry. That is the one moment the owner needs to hear
+# it, and gating on it keeps a long-lease marker from nagging every commit by
+# everyone for the rest of its life.
+report_lease_capped() {
+  printf '  note: %s expired at its 15m ceiling, not its stated expires:.\n' "$1"
+  printf '        Leases cap at 15m and are renewed by hand — re-stamp started:\n'
+  printf '        and expires: if that work is still live.\n'
+  warn=1
+}
+
+# Echoes the effective expiry epoch, or "" when a lease exceeds the ceiling and
+# no readable `started` exists to bound it against.
+capped_expiry() {
+  local exp_epoch="$1" started_epoch="$2"
+  local cap
+  if [ -z "$started_epoch" ]; then
+    [ "$((exp_epoch - now))" -gt "$MAX_LEASE_SECONDS" ] && return 0
+    printf '%s' "$exp_epoch"
+    return 0
+  fi
+  cap=$((started_epoch + MAX_LEASE_SECONDS))
+  if [ "$exp_epoch" -gt "$cap" ]; then printf '%s' "$cap"; else printf '%s' "$exp_epoch"; fi
+}
+
 # ── ownership helper: this hook is a transient child of git, so $$ never
 # equals the long-lived session pid recorded in a marker. "Our own claim"
 # means the marker's pid is an ANCESTOR of this process — the session host
@@ -385,10 +422,16 @@ for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-I
       warn=1
       continue
     fi
-    if [ -n "$exp_epoch" ]; then
-      if [ "$now" -gt "$exp_epoch" ]; then
-        continue
-      fi
+    eff_epoch="$(capped_expiry "$exp_epoch" "$(to_epoch "$(marker_scalar "$marker" started)")")"
+    if [ -z "$eff_epoch" ]; then
+      printf '  note: %s claims more than 15m with no readable started:,\n' "$marker"
+      printf '        so its lease cannot be bounded — treating as decayed.\n'
+      warn=1
+      continue
+    fi
+    if [ "$now" -gt "$eff_epoch" ]; then
+      [ "$now" -le "$exp_epoch" ] && report_lease_capped "$marker"
+      continue
     fi
   elif ! kill -0 "$m_pid" 2>/dev/null; then
     # Durable authority—not the projected leader PID—owns derived cleanup.
@@ -533,7 +576,17 @@ for marker in .WORK-IN-PROGRESS-*.md; do
     warn=1
     continue
   fi
-  [ "$now" -gt "$exp_epoch" ] && continue
+  eff_epoch="$(capped_expiry "$exp_epoch" "$(to_epoch "$(marker_scalar "$marker" started)")")"
+  if [ -z "$eff_epoch" ]; then
+    printf '  note: %s claims more than 15m with no readable started:,\n' "$marker"
+    printf '        so its lease cannot be bounded — treating as decayed.\n'
+    warn=1
+    continue
+  fi
+  if [ "$now" -gt "$eff_epoch" ]; then
+    [ "$now" -le "$exp_epoch" ] && report_lease_capped "$marker"
+    continue
+  fi
   claimed="$(marker_list "$marker" paths)"
   [ -z "$claimed" ] && continue
   while IFS= read -r path; do

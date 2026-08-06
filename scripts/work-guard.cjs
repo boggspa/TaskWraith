@@ -59,6 +59,13 @@ const {
 const HEARTBEAT_STALE_MS = 20 * 60 * 1000
 /** Unclaimed dirty work older than this is what we are actually hunting. */
 const ORPHAN_WARN_MS = 45 * 60 * 1000
+/**
+ * A manual claim's lease ceiling, renewed by hand. Must stay identical to
+ * MAX_LEASE_SECONDS in `.githooks/pre-commit`: if these two drift, the hook
+ * blocks on a claim this tool reports decayed, and a decayed claim is the one
+ * AGENTS.md tells the next agent to harvest and delete.
+ */
+const MAX_LEASE_MS = 15 * 60 * 1000
 const SNAPSHOT_KEEP_MS = 7 * 24 * 60 * 60 * 1000
 const SNAPSHOT_KEEP_MAX = 300
 const SIDECAR_DIR = '.work-guard'
@@ -504,7 +511,24 @@ function liveness(marker, side, now) {
   const lastSeen = Number(entry?.lastSeen) || null
   const heartbeatFresh = lastSeen !== null && now - lastSeen < HEARTBEAT_STALE_MS
   const alive = pidAlive(marker.pid)
-  const expired = marker.expiresMs !== null && now > marker.expiresMs
+  // A manual lease may not exceed MAX_LEASE_MS and must be renewed by hand
+  // (2026-08-06). Nothing bounded it before — `expires: 2099-…` held a path for
+  // 73 years, and a seat's owner-id claim has no pid to decay it, so the lease
+  // was its only decay signal and that signal was unbounded. Clamped rather than
+  // voided, and anchored to `started`: anchoring to "now" would push the expiry
+  // forward on every evaluation and never expire. A lease over the ceiling with
+  // no readable `started` cannot be bounded at all, so it does not hold.
+  // `.githooks/pre-commit` applies the identical rule; the two must not drift.
+  const startedMs = parseIsoMs(marker.started)
+  const cappedExpiry =
+    marker.expiresMs === null
+      ? null
+      : startedMs === null
+        ? now + MAX_LEASE_MS < marker.expiresMs
+          ? null
+          : marker.expiresMs
+        : Math.min(marker.expiresMs, startedMs + MAX_LEASE_MS)
+  const expired = cappedExpiry === null || now > cappedExpiry
   // A sandboxed seat's claim carries `lockOwnerId` and no pid, so there is no
   // process to probe and `expires` is its ONLY decay signal — exactly how
   // `.githooks/pre-commit` treats it. An absent or unreadable lease therefore
@@ -975,6 +999,7 @@ if (require.main === module) {
 module.exports = {
   HEARTBEAT_STALE_MS,
   ORPHAN_WARN_MS,
+  MAX_LEASE_MS,
   claimToMatcher,
   normaliseClaim,
   parseMarker,

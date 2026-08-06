@@ -54,7 +54,8 @@ const {
   writeTickRecord,
   stableNodePath,
   dirtyEntries,
-  advanceHeartbeats
+  advanceHeartbeats,
+  MAX_LEASE_MS
 } = require('./work-guard.cjs') as {
   HEARTBEAT_STALE_MS: number
   ORPHAN_WARN_MS: number
@@ -126,14 +127,20 @@ function writeMarker(
     paths: string[]
     /** A sandboxed seat's identity, used when it has no pid to record. */
     lockOwnerId?: string
+    /**
+     * Defaults to NOW. A lease is capped at MAX_LEASE_MS from this, so a
+     * fixture without one cannot hold a lease longer than the ceiling.
+     */
+    started?: string
   }
 ): string {
   const file = `.WORK-IN-PROGRESS-${slug}.md`
   const pidLine = options.pid === null ? '' : `pid: ${options.pid}\n`
   const ownerLine = options.lockOwnerId ? `lockOwnerId: ${options.lockOwnerId}\n` : ''
+  const startedLine = `started: ${options.started ?? iso(NOW)}\n`
   writeFileSync(
     join(root, file),
-    `---\nsession: test-${slug}\nagent: test agent\n${pidLine}${ownerLine}expires: ${options.expires}\npaths:\n${options.paths
+    `---\nsession: test-${slug}\nagent: test agent\n${pidLine}${ownerLine}${startedLine}expires: ${options.expires}\npaths:\n${options.paths
       .map((p) => `  - ${p}\n`)
       .join('')}---\nbody\n`
   )
@@ -280,6 +287,57 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
       })
     )
     expect(liveness(seat, {}, NOW).live).toBe(false)
+  })
+
+  it('caps a lease at 15 minutes from started, however far off expires is', () => {
+    const root = makeRepo()
+    const stale = markerFor(
+      root,
+      writeMarker(root, 'seat-2099', {
+        pid: null,
+        lockOwnerId: 'seat-owner-5',
+        started: iso(NOW - 20 * 60_000),
+        expires: '2099-01-01T00:00:00Z',
+        paths: ['src/']
+      })
+    )
+    expect(liveness(stale, {}, NOW).live).toBe(false)
+  })
+
+  it('holds a claim still inside the ceiling', () => {
+    const root = makeRepo()
+    const fresh = markerFor(
+      root,
+      writeMarker(root, 'seat-fresh', {
+        pid: null,
+        lockOwnerId: 'seat-owner-6',
+        started: iso(NOW - 5 * 60_000),
+        expires: '2099-01-01T00:00:00Z',
+        paths: ['src/']
+      })
+    )
+    expect(liveness(fresh, {}, NOW).live).toBe(true)
+  })
+
+  it('cannot bound an over-long lease with no readable started, so it does not hold', () => {
+    const root = makeRepo()
+    const file = '.WORK-IN-PROGRESS-unbounded.md'
+    writeFileSync(
+      join(root, file),
+      `---\nlockOwnerId: seat-owner-7\nexpires: 2099-01-01T00:00:00Z\npaths:\n  - src/\n---\nbody\n`
+    )
+    expect(liveness(markerFor(root, file), {}, NOW).live).toBe(false)
+  })
+
+  it('keeps the ceiling identical to the git hook, which is the blocking authority', () => {
+    // These two tools reason about the same marker from different sides. When
+    // they drifted on 2026-08-06 the hook BLOCKED on a claim this tool called
+    // decayed — and AGENTS.md tells the next agent a decayed claim is theirs to
+    // harvest and delete. A silent constant drift would reopen exactly that.
+    const hook = readFileSync(join(__dirname, '..', '.githooks', 'pre-commit'), 'utf8')
+    const declared = hook.match(/^MAX_LEASE_SECONDS=(\d+)$/m)
+    expect(declared, 'MAX_LEASE_SECONDS not found in .githooks/pre-commit').not.toBeNull()
+    expect(Number(declared?.[1]) * 1000).toBe(MAX_LEASE_MS)
   })
 
   it('never reads a claim field out of the prose body', () => {

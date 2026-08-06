@@ -72,6 +72,11 @@ sha256_string() {
     "process.stdout.write(require('node:crypto').createHash('sha256').update(process.env.MARKER_TEST_VALUE, 'utf8').digest('hex'))"
 }
 
+# Fixtures must stamp a FRESH `started`: a lease is now capped at 15 minutes from
+# it, so the old hard-coded 2026-07-29 start made every `expires: 2099-…` marker
+# decay instantly and stop blocking anything.
+now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
 write_manual_marker() {
   local repo="$1" marker_pid="$2" path="$3"
   printf '%s\n' \
@@ -79,7 +84,7 @@ write_manual_marker() {
     'session: manual-test' \
     'agent: test-agent' \
     "pid: $marker_pid" \
-    'started: 2026-07-29T00:00:00Z' \
+    "started: $(now_iso)" \
     'expires: 2099-07-29T00:00:00Z' \
     "worktree: $repo" \
     'paths:' \
@@ -98,7 +103,7 @@ write_owner_id_marker() {
     'session: seat-test' \
     'agent: test-seat' \
     "lockOwnerId: $owner_id" \
-    'started: 2026-08-06T00:00:00Z' \
+    "started: $(now_iso)" \
     'expires: 2099-07-29T00:00:00Z' \
     'paths:' \
     "  - $path" \
@@ -432,7 +437,7 @@ stage_file "$repo" src/manual.ts
 printf '%s\n' \
   '---' 'session: manual-test' 'agent: test-agent' \
   "pid: $foreign_pid" 'lockOwnerId: seat-owner-1' \
-  'started: 2026-07-29T00:00:00Z' 'expires: 2099-07-29T00:00:00Z' \
+  "started: $(now_iso)" 'expires: 2099-07-29T00:00:00Z' \
   'paths:' '  - src/manual.ts' '---' 'both identities' \
   > "$repo/.WORK-IN-PROGRESS-manual-test.md"
 expect_allow 'a matching owner id owns a claim whose pid is foreign' "$repo" seat-owner-1
@@ -449,6 +454,7 @@ write_named_marker() {
     printf 'session: named-test\nagent: test-agent\n'
     [ -n "$marker_pid" ] && printf 'pid: %s\n' "$marker_pid"
     [ -n "$owner" ] && printf 'lockOwnerId: %s\n' "$owner"
+    printf 'started: %s\n' "$(now_iso)"
     [ -n "$expires" ] && printf 'expires: %s\n' "$expires"
     printf 'paths:\n  - %s\n---\nnamed marker\n' "$path"
   } > "$repo/$file"
@@ -490,6 +496,79 @@ if [[ "$hook_output" == *'no live claim of yours'* ]]; then
   exit 1
 fi
 assertions=$((assertions + 1))
+
+# THE 15-MINUTE LEASE CEILING. Nothing bounded a lease before: `expires: 2099-…`
+# held a path for 73 years, and an owner-id claim has no pid to decay it, so the
+# lease was its only decay signal and that signal was unbounded. The cap is
+# anchored to `started` — anchoring to "now" would push the expiry forward on
+# every evaluation and never expire at all.
+set_marker_started() {
+  sed -E "s|^started:.*|started: $2|" "$1" > "$1.next" && mv "$1.next" "$1"
+}
+iso_ago() { date -u -v-"$1"M +%Y-%m-%dT%H:%M:%SZ; }
+
+repo="$(new_repo lease-within-ceiling)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 5)"
+expect_block 'a claim inside its 15m ceiling still blocks' "$repo"
+
+repo="$(new_repo lease-past-ceiling)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 20)"
+expect_allow 'a 2099 lease decays at 15m from started' "$repo"
+if [[ "$hook_output" != *'15m ceiling'* ]]; then
+  printf 'FAIL: ceiling decay was not explained to its owner\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+# The explanation must NOT fire when the claim died on its own stated expiry —
+# otherwise every long-dead marker nags every commit by everyone forever.
+repo="$(new_repo lease-own-expiry)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 20)"
+expire_marker "$repo/.WORK-IN-PROGRESS-manual-test.md"
+expect_allow 'a claim past its own expires decays quietly' "$repo"
+if [[ "$hook_output" == *'15m ceiling'* ]]; then
+  printf 'FAIL: ceiling note fired for a claim that died on its own expiry\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+
+# An unbounded lease with no readable start cannot be capped at all.
+repo="$(new_repo lease-unbounded-no-start)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+sed '/^started:/d' "$repo/.WORK-IN-PROGRESS-manual-test.md" > "$repo/m.next"
+mv "$repo/m.next" "$repo/.WORK-IN-PROGRESS-manual-test.md"
+expect_allow 'a 2099 lease with no started cannot be bounded, so it decays' "$repo"
+
+# ...but a SHORT lease needs no start to be inside the ceiling.
+repo="$(new_repo lease-short-no-start)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+sed '/^started:/d' "$repo/.WORK-IN-PROGRESS-manual-test.md" > "$repo/m.next"
+mv "$repo/m.next" "$repo/.WORK-IN-PROGRESS-manual-test.md"
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(date -u -v+5M +%Y-%m-%dT%H:%M:%SZ)"
+expect_block 'a short lease needs no started to hold' "$repo"
+
+# A seat claim is capped too — it is the case with no pid to decay it.
+repo="$(new_repo lease-seat-capped)"
+stage_file "$repo" src/manual.ts
+write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 20)"
+expect_allow 'a seat claim decays at the ceiling like any other' "$repo" seat-owner-2
+
+# A RUNTIME lease is NOT capped: durable lock authority owns its lifetime, and
+# clamping a projection would decay a lock its owner still holds.
+repo="$(new_repo lease-derived-uncapped)"
+stage_file "$repo" src/hunk.ts
+write_derived_marker "$repo" owner-run false '' src/hunk.ts
+expect_block 'a runtime projection is not subject to the manual ceiling' "$repo"
 
 # Section 4's mirror: the hook must say something to a session that is committing
 # with no claim of its own. Path COVERAGE is deliberately not checked here —
