@@ -13,12 +13,20 @@
  * ============================ READ THIS FIRST ============================
  * THE PRECONDITION GATE IS THE POINT, NOT A FORMALITY.
  *
- * Measured 2026-08-06: `out/main/index.js` (mtime 12:51) and the packaged
- * bundle (11:38) BOTH predate the R4' Host wiring commit (14:01) and contain
- * ZERO Host symbols. Run against those artifacts, an unguarded version of this
- * script would go RED — and that RED would be read as "Host is broken under
- * Electron", a P0 that does not exist. It would in fact be the same stale
- * binary already diagnosed for the running app.
+ * Measured 2026-08-06: the packaged bundle (mtime 11:38) predated the R4' Host
+ * wiring commit (14:01). Run against that artifact, an unguarded version of
+ * this script would go RED — and that RED would be read as "Host is broken
+ * under Electron", a P0 that does not exist. It would in fact be the same
+ * stale binary already diagnosed for the running app.
+ *
+ * ONE CORRECTION TO THE ORIGINAL REASONING, so nobody inherits it:
+ * this header used to cite `out/main/index.js` having ZERO Host symbols as
+ * evidence of staleness alongside its mtime. Only the MTIME was ever valid.
+ * That file is a code-split entry stub and reads zero Host symbols on a fresh
+ * CORRECT bundle too, so the symbol count proved nothing about freshness.
+ * Two independent claims were fused into one; the conclusion happened to be
+ * right and half the reasoning was not. See `bundleHostWiringReport` for how
+ * to choose a bundle path that can actually fail honestly.
  *
  * So this script REFUSES TO DRAW ANY HOST CONCLUSION from a bundle that does
  * not contain the wiring. A stale bundle exits with its own distinct message
@@ -60,10 +68,32 @@ const PACKAGE_SMOKE_USER_DATA_BASENAME_PREFIX = 'taskwraith-tui-package-smoke-'
 
 const DISCOVERY_FILE = 'taskwraith-host-v2.json'
 
-/** Distinct exit codes so a caller can tell the two failures apart. */
+/** Distinct exit codes so a caller can tell the failures apart. */
 const EXIT_STALE_BUNDLE = 20
 const EXIT_UNSAFE_TO_LAUNCH = 21
 const EXIT_HOST_DID_NOT_BOOT = 1
+
+/**
+ * A discovery record that never appeared is NOT proof that Host failed.
+ *
+ * This is the goal's own invariant — unavailable telemetry is not zero. A cold
+ * profile, a first-run migration, or a loaded machine all produce a silence
+ * that is byte-identical to a real defect. Reporting that silence as
+ * EXIT_HOST_DID_NOT_BOOT manufactures a P0 that may not exist, and this arc
+ * has already lost passes to exactly that class of misattribution.
+ */
+const EXIT_INCONCLUSIVE = 22
+
+/**
+ * Discovery-poll ceiling. MEASURED 2026-08-06 against a real dev launch:
+ *   WARM profile: discovery appeared in ~5s.
+ *   COLD profile: ~70s — and that cost was the app's first-run userData
+ *                 migration, NOT Host. Do not record it as a Host property.
+ * CI is always cold, so the ceiling is sized for the cold case with headroom.
+ * The previous default was 30s, which would have timed out on every cold run
+ * and reported it as a Host failure.
+ */
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 120_000
 
 /* ------------------------------------------------------------------ */
 /*  1. PRECONDITION — does this bundle even contain Host?              */
@@ -72,9 +102,23 @@ const EXIT_HOST_DID_NOT_BOOT = 1
 /**
  * Search a bundle for the Host wiring symbols.
  *
- * Read as latin1 rather than utf8 so the same code path works for a plain
- * `out/main/index.js` and for a packaged `app.asar`, which is a binary
- * container with embedded JS text.
+ * Read as latin1 rather than utf8 so the same code path works for a packaged
+ * `app.asar` — a binary container with embedded JS text — as for a plain .js
+ * file.
+ *
+ * CHOOSING `bundlePath` — READ BEFORE POINTING THIS AT ANYTHING:
+ * The unpackaged main build is CODE-SPLIT. `out/main/index.js` is a ~69KB
+ * CommonJS ENTRY STUB that dynamically requires the real graph, and it
+ * contains ZERO Host symbols even when the build is completely correct.
+ * Pointing this function at that stub therefore reports `stale` on a perfectly
+ * fresh bundle — a false negative, MEASURED 2026-08-06.
+ *
+ * The real chunk is `out/main/index-<hash>.js`. That hash is CONTENT-ADDRESSED
+ * and rotates on every main-process source change (observed across four
+ * consecutive builds), so it can never be hardcoded here or anywhere else.
+ * For an unpackaged run, resolve the chunk the stub actually requires, or scan
+ * the whole `out/main/` directory. For a packaged run, use the `app.asar`,
+ * which embeds every chunk and needs no resolution.
  */
 function bundleHostWiringReport(bundlePath) {
   if (!fs.existsSync(bundlePath)) {
@@ -332,7 +376,9 @@ async function main() {
   }
 
   fs.mkdirSync(smokeUserDataPath, { recursive: true })
-  const timeoutMs = Number(process.env.TASKWRAITH_HOST_SMOKE_TIMEOUT_MS || 30_000)
+  const timeoutMs = Number(
+    process.env.TASKWRAITH_HOST_SMOKE_TIMEOUT_MS || DEFAULT_DISCOVERY_TIMEOUT_MS
+  )
   let launched = null
   try {
     launched = spawn('/usr/bin/open', ['-n', '-W', appRoot, '--args', ...launchArgs], {
@@ -341,15 +387,24 @@ async function main() {
 
     const record = await waitForDiscoveryRecord(smokeUserDataPath, timeoutMs)
 
-    // GATE 3/4 — after a clean precondition this is a HARD failure. The
-    // existing smoke soft-skips here; a Host that never started would then
-    // present as a pass, which is exactly "unavailable telemetry is not zero".
+    // GATE 3/4 — silence is NOT a Host verdict.
+    //
+    // This still exits NON-ZERO, deliberately: the existing smoke soft-skips
+    // here, and a soft skip would let a genuinely dead Host present as a pass.
+    // What changed is the CLAIM. An absent record proves only that we did not
+    // observe one within the window — it does not prove Host failed to boot.
+    // Timing is the reason: discovery was measured at ~5s warm and ~70s cold,
+    // where the cold cost was first-run migration rather than Host. A caller
+    // that needs a verdict must re-run against a WARM profile before treating
+    // this as a defect.
     if (!record) {
       fail(
-        EXIT_HOST_DID_NOT_BOOT,
-        `HOST DID NOT BOOT UNDER ELECTRON. The bundle carries the Host wiring, isolation was verified,\n` +
-          `and no ${DISCOVERY_FILE} appeared in ${smokeUserDataPath} within ${timeoutMs}ms.\n` +
-          'This is a real finding, not an environment skip.'
+        EXIT_INCONCLUSIVE,
+        `INCONCLUSIVE — NOT A PROVEN HOST DEFECT. The bundle carries the Host wiring and isolation\n` +
+          `was verified, but no ${DISCOVERY_FILE} appeared in ${smokeUserDataPath} within ${timeoutMs}ms.\n` +
+          'A cold profile, a first-run migration or a loaded machine produce this same silence.\n' +
+          'Do NOT report this as "Host failed to boot". Re-run against a warm profile, or raise\n' +
+          'TASKWRAITH_HOST_SMOKE_TIMEOUT_MS, before drawing any conclusion about Host.'
       )
       return
     }
@@ -381,6 +436,8 @@ module.exports = {
   EXIT_STALE_BUNDLE,
   EXIT_UNSAFE_TO_LAUNCH,
   EXIT_HOST_DID_NOT_BOOT,
+  EXIT_INCONCLUSIVE,
+  DEFAULT_DISCOVERY_TIMEOUT_MS,
   bundleHostWiringReport,
   staleBundleMessage,
   isStrictDescendant,
