@@ -16,14 +16,16 @@ import {
 import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
-import { anchorPendingAgentQuestionMarkers } from './lib/agentQuestionMarkerAnchor'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
 import { mergeMultiAgentTelemetryIntoMessages } from './lib/multiAgentTelemetryMessages'
 import { rawLogPayloadForStringify } from './lib/rawLogPayload'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
-import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
+import {
+  mergeChatUpdatedForRender,
+  type PendingChatUpdateRender
+} from './lib/chatUpdateRenderMerge'
 import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
@@ -4044,6 +4046,7 @@ function App(): React.JSX.Element {
   // token-drop reconcile preserves the ref for active runs, so a lagging commit
   // never clobbers in-flight content (see lib/reconcileChatRefMap + its tests).
   const pendingChatFlushRef = useRef<Set<string>>(new Set())
+  const pendingMainChatUpdatesRef = useRef<Map<string, PendingChatUpdateRender>>(new Map())
   const chatFlushRafRef = useRef<number | null>(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
   const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
@@ -5829,10 +5832,28 @@ function App(): React.JSX.Element {
     const dirty = pendingChatFlushRef.current
     if (dirty.size === 0) return
     pendingChatFlushRef.current = new Set()
+    const pendingMainUpdates = pendingMainChatUpdatesRef.current
+    pendingMainChatUpdatesRef.current = new Map()
     const byId = chatByIdRef.current
     const transcriptStore = chatHydrationRuntimeRef.current.transcriptStore
     for (const chatId of dirty) {
-      const updated = byId.get(chatId)
+      let updated = byId.get(chatId)
+      const pendingMainUpdate = pendingMainUpdates.get(chatId)
+      if (pendingMainUpdate) {
+        const pendingQuestions = pendingAgentQuestionsByChatIdRef.current[chatId]
+        const pendingMarkerIds =
+          pendingQuestions && pendingQuestions.length > 0
+            ? new Set(pendingQuestions.map((question) => question.messageId))
+            : undefined
+        updated = mergeChatUpdatedForRender(pendingMainUpdate.chat, {
+          liveChat: updated,
+          messagesChanged: pendingMainUpdate.messagesChanged,
+          hasActiveRun: pendingMainUpdate.hasActiveRun,
+          hadRecentRun: pendingMainUpdate.hadRecentRun,
+          pendingMarkerIds
+        })
+        byId.set(chatId, updated)
+      }
       if (updated) transcriptStore.ingest(updated)
     }
     setChats((prev) => {
@@ -5865,8 +5886,22 @@ function App(): React.JSX.Element {
       const updated = byId.get(prev.appChatId)
       if (!updated || updated === prev) return prev
       if (shouldRetainReactChatOnFlush(prev, updated)) return prev
-      return updated
+      if (messagesRenderEqual(prev.messages, updated.messages)) {
+        return { ...updated, messages: prev.messages }
+      }
+      const sharedMessages = shareUnchangedMessageObjects(prev.messages, updated.messages)
+      return sharedMessages === updated.messages ? updated : { ...updated, messages: sharedMessages }
     })
+    const focusedChat = currentChatIdRef.current
+      ? byId.get(currentChatIdRef.current)
+      : undefined
+    if (
+      focusedChat &&
+      focusedChat.chatKind === 'ensemble' &&
+      isEnsembleActiveRoundDispatchLive(focusedChat.ensemble?.activeRound)
+    ) {
+      setIsThinking(true)
+    }
     const pendingFlushChars = pendingStreamFlushCharsByRunIdRef.current
     const pendingItemFlushChars = pendingStreamFlushCharsByRunItemRef.current
     if (pendingFlushChars.size > 0) {
@@ -5905,11 +5940,24 @@ function App(): React.JSX.Element {
     flushCoalescedChats()
   }, [flushCoalescedChats])
 
+  const scheduleCoalescedChatFlush = useCallback(
+    (chatId: string): void => {
+      pendingChatFlushRef.current.add(chatId)
+      if (chatFlushRafRef.current !== null) return
+      chatFlushRafRef.current = requestAnimationFrame(() => {
+        chatFlushRafRef.current = null
+        flushCoalescedChats()
+      })
+    },
+    [flushCoalescedChats]
+  )
+
   // On unmount, drop any scheduled flush so it can't fire into a torn-down tree.
   // The 200ms saveChat debounce already persists the latest ref content.
   useEffect(() => {
     return () => {
       summaryChatUpdateQueueRef.current.clear()
+      pendingMainChatUpdatesRef.current.clear()
       if (chatFlushRafRef.current !== null) {
         cancelAnimationFrame(chatFlushRafRef.current)
         chatFlushRafRef.current = null
@@ -5924,6 +5972,11 @@ function App(): React.JSX.Element {
       options?: { coalesce?: boolean }
     ): ChatRecord | null => {
       if (!chatId) return null
+      if (!options?.coalesce && pendingMainChatUpdatesRef.current.has(chatId)) {
+        // A user action that mutates this chat must see an ACKed main update
+        // before deriving its next record, even if the frame flush is pending.
+        flushCoalescedChatsNow()
+      }
       const base =
         chatByIdRef.current.get(chatId) ||
         (activeRunChatSnapshotRef.current?.appChatId === chatId
@@ -5974,15 +6027,10 @@ function App(): React.JSX.Element {
       // immediately. The flush always reads back from chatByIdRef, so a
       // deferred commit can never write stale content, and an immediate caller
       // also drains any pending coalesced deltas first (ordering preserved).
-      pendingChatFlushRef.current.add(chatId)
       if (options?.coalesce) {
-        if (chatFlushRafRef.current === null) {
-          chatFlushRafRef.current = requestAnimationFrame(() => {
-            chatFlushRafRef.current = null
-            flushCoalescedChats()
-          })
-        }
+        scheduleCoalescedChatFlush(chatId)
       } else {
+        pendingChatFlushRef.current.add(chatId)
         flushCoalescedChatsNow()
       }
       const existingTimer = saveChatTimersRef.current.get(chatId)
@@ -5995,7 +6043,7 @@ function App(): React.JSX.Element {
       saveChatTimersRef.current.set(chatId, timer)
       return updated
     },
-    [flushCoalescedChats, flushCoalescedChatsNow]
+    [flushCoalescedChats, flushCoalescedChatsNow, scheduleCoalescedChatFlush]
   )
 
   const handlePromoteCollaboratorComment = useCallback(
@@ -12534,7 +12582,8 @@ function App(): React.JSX.Element {
               )
             }
           }
-          const applied = applyChatUpdateDelivery(delivery, baselines.get(delivery.chatId))
+          const previousBaseline = baselines.get(delivery.chatId)
+          const applied = applyChatUpdateDelivery(delivery, previousBaseline)
           if (!applied.ok) {
             acknowledge(false)
             return
@@ -12554,197 +12603,46 @@ function App(): React.JSX.Element {
             clearedChatIdsRef.current.has(chat.appChatId) &&
             !chatByIdRef.current.has(chat.appChatId)
           ) {
+            pendingMainChatUpdatesRef.current.delete(chat.appChatId)
+            pendingChatFlushRef.current.delete(chat.appChatId)
             acknowledge(true, applied.baseline)
             return
           }
-        // Stream-safe merge: main may broadcast a disk-stale `ChatRecord`
-        // mid-stream (saveChat debounces by 200ms; sub-thread delegation
-        // card injection, F2 back-prop, surfaceSubThreadDispatchFailure
-        // etc. all read-from-disk → splice → broadcast). Unconditionally
-        // replacing `chatByIdRef.current` with that snapshot wipes out
-        // every token streamed since the last persisted write. Net
-        // effect: the rendered assistant transcript shows keep/drop/
-        // drop/keep — the source of the "Codex transcript is garbled"
-        // reports (raw event stream contains all tokens; we were
-        // dropping them at the merge layer).
-        //
-        // Heuristic when a run is active for this chat: prefer the
-        // live ref's content for any assistant message whose live copy
-        // is longer than the incoming copy (streaming-only path —
-        // disk can never be ahead of memory mid-run), and append any
-        // assistant messages the live ref has that the broadcast
-        // doesn't (newly-spawned assistant message, snapshot pre-
-        // dating the first delta). System cards added by main
-        // (delegation cards, sub-thread return cards) flow through
-        // unchanged because they only exist in the broadcast.
-        let merged = chat
-        const liveChat = chatByIdRef.current.get(chat.appChatId)
-        const hasActiveRun = (() => {
-          for (const ctx of activeRunsRef.current.values()) {
-            if (ctx.chatId === chat.appChatId) return true
-          }
-          return false
-        })()
-        // Phase K1 — extend the merge guard for ~2s past run completion
-        // to catch the post-exit-race straggler broadcasts (delegation
-        // card writes, debounced save-chat round-trips). After the
-        // window expires we let the regular replace branch resume; if
-        // there's no active run AND no recent completion, the broadcast
-        // really IS authoritative.
-        let hadRecentRun = false
-        const completedAt = recentlyCompletedChatIdsRef.current.get(chat.appChatId)
-        if (completedAt !== undefined) {
-          if (Date.now() - completedAt < RECENTLY_COMPLETED_WINDOW_MS) {
-            hadRecentRun = true
-          } else {
-            recentlyCompletedChatIdsRef.current.delete(chat.appChatId)
-          }
-        }
-        if ((hasActiveRun || hadRecentRun) && liveChat && liveChat.messages.length > 0) {
-          const liveById = new Map(liveChat.messages.map((m) => [m.id, m]))
-          const mergedMessages = chat.messages.map((m) => {
-            const live = liveById.get(m.id)
-            if (live && shouldPreferLiveAssistantContent(m, live)) {
-              return { ...m, content: live.content }
+          const hasActiveRun = (() => {
+            for (const ctx of activeRunsRef.current.values()) {
+              if (ctx.chatId === chat.appChatId) return true
             }
-            return m
+            return false
+          })()
+          let hadRecentRun = false
+          const completedAt = recentlyCompletedChatIdsRef.current.get(chat.appChatId)
+          if (completedAt !== undefined) {
+            if (Date.now() - completedAt < RECENTLY_COMPLETED_WINDOW_MS) {
+              hadRecentRun = true
+            } else {
+              recentlyCompletedChatIdsRef.current.delete(chat.appChatId)
+            }
+          }
+          // Keep this callback bounded: applying the transport patch and
+          // queueing the exact accepted snapshot is enough for ACK. The live
+          // transcript merge and React state writes run in the existing rAF
+          // coalescer, so prompt input is not serialized behind them.
+          pendingMainChatUpdatesRef.current.set(chat.appChatId, {
+            chat,
+            messagesChanged: previousBaseline?.chat.messages !== chat.messages,
+            hasActiveRun,
+            hadRecentRun
           })
-          const incomingIds = new Set(chat.messages.map((m) => m.id))
-          const orphanedLiveAssistants = liveChat.messages.filter(
-            (m) => m.role === 'assistant' && !incomingIds.has(m.id)
-          )
-          /*
-           * 1.0.5-EW36 — Also preserve orphaned synthetic `agentQuestion`
-           * system markers added by the `onAgentQuestionRequested` IPC
-           * listener (around line 10929). Without this, when an agent
-           * calls `ask_user_question`:
-           *
-           *  1. Renderer creates a synthetic `role: 'system'` marker
-           *     in `chat.messages` with `metadata.kind: 'agentQuestion'`
-           *     and enqueues it in `pendingAgentQuestionsByChatId[chatId]`.
-           *  2. Main broadcasts `chat-updated` (e.g. because the tool-
-           *     call event from the participant was just flushed, or
-           *     because another participant in the same ensemble round
-           *     emitted output). That broadcast doesn't include the
-           *     synthetic marker — main doesn't know about it.
-           *  3. The merge above ONLY preserved orphaned `assistant`
-           *     messages, so the synthetic system marker silently
-           *     vanished from `chat.messages`.
-           *  4. The transcript-side `AgentQuestionCard` renders inline
-           *     next to the marker via
-           *     `pendingAgentQuestions[].messageId === msg.id`. With the
-           *     marker gone, the card never appears — the modal never
-           *     pops, the user has no way to answer, the question
-           *     times out after 10 minutes, and the agent reports
-           *     "interactive question card timed out" in chat.
-           *
-           * Fix: filter the same orphaned-from-incoming list but also
-           * include synthetic `agentQuestion` system markers.
-           * Conservative — only matches the specific metadata kind so
-           * other system messages (delegation cards, status notes,
-           * etc.) keep flowing through unchanged.
-           */
-          const orphanedAgentQuestionMarkers = liveChat.messages.filter(
-            (m) =>
-              m.role === 'system' && m.metadata?.kind === 'agentQuestion' && !incomingIds.has(m.id)
-          )
-          /*
-           * Context-compaction cards share the agentQuestion hazard exactly:
-           * the renderer appends them to the LIVE record when a solo run's
-           * compact_boundary streams in, but the 200ms debounced saveChat may
-           * not have flushed them when a main-side `chat-updated` broadcast
-           * (built from the pre-card disk snapshot) arrives — the merge would
-           * silently drop the card. Same conservative kind-scoped preserve.
-           */
-          const orphanedContextCompactionCards = liveChat.messages.filter(
-            (m) =>
-              m.role === 'system' &&
-              m.metadata?.kind === 'contextCompaction' &&
-              !incomingIds.has(m.id)
-          )
-          const orphanedTaskWraithCloseouts = liveChat.messages.filter(
-            (m) =>
-              m.role === 'system' &&
-              m.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
-              !incomingIds.has(m.id)
-          )
-          // Preserve orphans in their ORIGINAL relative order (a single
-          // ordered pass over liveChat.messages, not category concatenation).
-          // Grouping by category re-sorted the tail — an orphaned system card
-          // (compaction/closeout) landed BELOW assistant text that actually
-          // streamed after it, and the inversion persisted via chatByIdRef +
-          // the next saveChat.
-          const orphanIds = new Set(
-            [
-              ...orphanedLiveAssistants,
-              ...orphanedAgentQuestionMarkers,
-              ...orphanedContextCompactionCards,
-              ...orphanedTaskWraithCloseouts
-            ].map((m) => m.id)
-          )
-          const orphans = liveChat.messages.filter((m) => orphanIds.has(m.id))
+          scheduleCoalescedChatFlush(chat.appChatId)
           if (
-            mergedMessages.length !== chat.messages.length ||
-            orphans.length > 0 ||
-            mergedMessages.some((m, i) => m !== chat.messages[i])
-          ) {
-            merged = {
-              ...chat,
-              messages: orphans.length > 0 ? [...mergedMessages, ...orphans] : mergedMessages
-            }
-          }
-        }
-        merged = preserveOptimisticEnsembleQueue(merged, liveChat)
-        // Pin every PENDING ask_user_question marker to the live tail. Its
-        // renderer-only synthetic marker is otherwise frozen at a stale array
-        // index while main's flushRun keeps re-tailing the live participant's own
-        // content past it — stranding the question card above the current speaker.
-        // Runs on EVERY broadcast (both merge branches) so the pending card can't
-        // lag or be dropped; answered/historical markers stay put.
-        const pendingQuestionsForChat = pendingAgentQuestionsByChatIdRef.current[merged.appChatId]
-        if (pendingQuestionsForChat && pendingQuestionsForChat.length > 0) {
-          const pendingMarkerIds = new Set(pendingQuestionsForChat.map((q) => q.messageId))
-          const anchoredMessages = anchorPendingAgentQuestionMarkers(
-            merged.messages,
-            liveChat?.messages || [],
-            pendingMarkerIds
-          )
-          if (anchoredMessages !== merged.messages) {
-            merged = { ...merged, messages: anchoredMessages }
-          }
-        }
-        setChats((prev) => mergeChatRecord(prev, merged))
-        chatByIdRef.current.set(merged.appChatId, merged)
-        if (currentChatIdRef.current === merged.appChatId) {
-          // Ensemble runs broadcast a fresh whole-chat snapshot 10–100×/sec;
-          // most change only chat-level metadata (round flips, per-participant
-          // tallies), not the rendered message list — yet each arrives as a new
-          // `messages` array that would re-fire the messages-update snap effect
-          // (keyed on `currentChat?.messages` identity) and re-render the
-          // transcript. When the rendered list is unchanged, preserve the
-          // PREVIOUS `messages` reference so the snap/re-render is skipped while
-          // the chat-level metadata still updates. STRICT by construction
-          // (messagesRenderEqual): a false negative only costs a redundant
-          // render, never a frozen transcript. Routed through the functional
-          // setter so it compares against the actual committed state.
-          setCurrentChat((prev) => {
-            if (!prev || prev.appChatId !== merged.appChatId || prev.messages === merged.messages) {
-              return merged
-            }
-            if (messagesRenderEqual(prev.messages, merged.messages)) {
-              return { ...merged, messages: prev.messages }
-            }
-            const sharedMessages = shareUnchangedMessageObjects(prev.messages, merged.messages)
-            return sharedMessages === merged.messages ? merged : { ...merged, messages: sharedMessages }
-          })
-          if (
-            merged.chatKind === 'ensemble' &&
-            isEnsembleActiveRoundDispatchLive(merged.ensemble?.activeRound)
+            currentChatIdRef.current === chat.appChatId &&
+            chat.chatKind === 'ensemble' &&
+            isEnsembleActiveRoundDispatchLive(chat.ensemble?.activeRound)
           ) {
             setIsThinking(true)
           }
-        }
-        acknowledge(true, applied.baseline)
+          acknowledge(true, applied.baseline)
+          return
         })
       )
     }
