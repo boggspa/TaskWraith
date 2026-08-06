@@ -339,6 +339,7 @@ for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-I
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   m_exp="$(marker_scalar "$marker" expires)"
   m_agent="$(marker_scalar "$marker" agent)"
+  m_owner="$(marker_scalar "$marker" lockOwnerId)"
 
   if [ "$derived_marker" -eq 1 ]; then
     m_lock_owner_id="$(derived_lock_owner_id "$marker")"
@@ -355,20 +356,37 @@ for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-I
   # Manual claims use the historical pid-ancestry rule. Runtime-derived claims
   # use only their opaque owner id; their shared Electron pid is never proof
   # that the committing process owns the lock.
-  is_own_marker_claim "$marker" "$m_pid" && continue
-  # A manual marker with no pid predates the format; advise, never block.
-  # Derived markers were validated above and never take this advisory path.
-  if [ -z "$m_pid" ]; then
-    printf '  note: %s has no pid — treating as advisory (see AGENTS.md).\n' "$marker"
+  if [ "$derived_marker" -eq 1 ]; then
+    is_own_marker_claim "$marker" "$m_pid" && continue
+  else
+    is_own_manual_claim "$m_pid" "$m_owner" && continue
+  fi
+  # A manual marker with neither identity predates the format; advise, never
+  # block. Derived markers were validated above and never take this path.
+  if [ -z "$m_pid" ] && [ -z "$m_owner" ]; then
+    printf '  note: %s has no pid or lockOwnerId — treating as advisory.\n' "$marker"
     warn=1
     continue
   fi
   if [ "$derived_marker" -eq 0 ]; then
-    # A dead manual owner is stale, and an expired manual promise is decayed.
-    kill -0 "$m_pid" 2>/dev/null || continue
-    if [ -n "$m_exp" ]; then
-      exp_epoch="$(to_epoch "$m_exp")"
-      if [ -n "$exp_epoch" ] && [ "$now" -gt "$exp_epoch" ]; then
+    # SHIP-HOLD and SESSION-IN-PROGRESS are evaluated here rather than in the
+    # .WORK-IN-PROGRESS loop below, and they were left on the OLD rule when the
+    # unreadable-lease decay landed — so for two of the three marker types
+    # AGENTS.md calls equivalent, a garbled `expires` still blocked forever.
+    # A dead manual owner is stale; an elapsed OR unreadable promise is decayed.
+    if [ -n "$m_pid" ]; then
+      kill -0 "$m_pid" 2>/dev/null || continue
+    fi
+    exp_epoch=""
+    [ -n "$m_exp" ] && exp_epoch="$(to_epoch "$m_exp")"
+    if [ -z "$exp_epoch" ]; then
+      printf '  note: %s has no readable expires — treating as decayed.\n' "$marker"
+      printf '        Give it a lease or delete it (AGENTS.md: Marker format).\n'
+      warn=1
+      continue
+    fi
+    if [ -n "$exp_epoch" ]; then
+      if [ "$now" -gt "$exp_epoch" ]; then
         continue
       fi
     fi
@@ -581,10 +599,20 @@ own_live_claim=0
 shopt -s nullglob
 for marker in SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md .WORK-IN-PROGRESS-*.md; do
   [ -f "$marker" ] || continue
-  is_runtime_marker_filename "$marker" && continue
   m_pid="$(marker_scalar "$marker" pid)"
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   m_owner="$(marker_scalar "$marker" lockOwnerId)"
+  if is_runtime_marker_filename "$marker"; then
+    # A durable runtime lock IS a live claim of yours — section 1 treats it as
+    # authoritative against everyone else. It simply is not yours to drop by
+    # hand (section 5 routes that through TaskWraith), so it counts here
+    # without earning the personal nag. Skipping it outright meant every commit
+    # made under a runtime lock and no separate manual marker was told it had
+    # no claim: the cry-wolf case this hook's preamble exists to avoid.
+    is_own_marker_claim "$marker" "$m_pid" || continue
+    own_live_claim=1
+    continue
+  fi
   is_own_manual_claim "$m_pid" "$m_owner" || continue
   printf '  note: your claim %s is still up — drop it when this work is done.\n' "$marker"
   m_exp="$(marker_scalar "$marker" expires)"

@@ -161,10 +161,6 @@ set_marker_expires() {
   mv "$marker.next" "$marker"
 }
 
-drop_marker() {
-  rm -f "$1"
-}
-
 hook_output=""
 hook_status=0
 run_hook() {
@@ -441,6 +437,59 @@ printf '%s\n' \
   > "$repo/.WORK-IN-PROGRESS-manual-test.md"
 expect_allow 'a matching owner id owns a claim whose pid is foreign' "$repo" seat-owner-1
 expect_block 'that same claim still blocks a different seat' "$repo" seat-owner-2
+
+# SHIP-HOLD and SESSION-IN-PROGRESS are evaluated in a DIFFERENT loop from
+# .WORK-IN-PROGRESS, and the suite had no coverage of either — which is how the
+# decay and identity fixes reached only one of the three marker types AGENTS.md
+# presents as equivalent. An unreadable lease left them immortal.
+write_named_marker() {
+  local repo="$1" file="$2" marker_pid="$3" expires="$4" owner="$5" path="$6"
+  {
+    printf -- '---\n'
+    printf 'session: named-test\nagent: test-agent\n'
+    [ -n "$marker_pid" ] && printf 'pid: %s\n' "$marker_pid"
+    [ -n "$owner" ] && printf 'lockOwnerId: %s\n' "$owner"
+    [ -n "$expires" ] && printf 'expires: %s\n' "$expires"
+    printf 'paths:\n  - %s\n---\nnamed marker\n' "$path"
+  } > "$repo/$file"
+}
+
+for named in SHIP-HOLD-test.md SESSION-IN-PROGRESS-test.md; do
+  repo="$(new_repo "named-live-${named%%-test.md}")"
+  stage_file "$repo" src/manual.ts
+  write_named_marker "$repo" "$named" "$foreign_pid" '2099-07-29T00:00:00Z' '' src/manual.ts
+  expect_block "$named still blocks on a live foreign claim" "$repo"
+
+  repo="$(new_repo "named-unreadable-${named%%-test.md}")"
+  stage_file "$repo" src/manual.ts
+  write_named_marker "$repo" "$named" "$foreign_pid" 'tomorrow-ish' '' src/manual.ts
+  expect_allow "$named decays on an unreadable lease, like every other claim" "$repo"
+
+  repo="$(new_repo "named-noexp-${named%%-test.md}")"
+  stage_file "$repo" src/manual.ts
+  write_named_marker "$repo" "$named" "$foreign_pid" '' '' src/manual.ts
+  expect_allow "$named decays with no lease at all" "$repo"
+
+  repo="$(new_repo "named-owner-${named%%-test.md}")"
+  stage_file "$repo" src/manual.ts
+  write_named_marker "$repo" "$named" '' '2099-07-29T00:00:00Z' seat-owner-1 src/manual.ts
+  expect_block "$named accepts a seat's lock-owner-id claim" "$repo" seat-owner-2
+  expect_allow "$named recognises the seat that owns it" "$repo" seat-owner-1
+done
+
+# A session whose ONLY claim is a legitimately-owned runtime lock still holds a
+# live claim. Nagging it to "raise a marker" is the cry-wolf case the hook's own
+# preamble warns about, and it would fire on every commit under a durable lock.
+repo="$(new_repo own-derived-not-nagged)"
+stage_file "$repo" src/hunk.ts
+write_derived_marker "$repo" owner-run-1 false '' src/hunk.ts
+expect_allow 'a session owning only a runtime lock is not nagged' "$repo" owner-run-1
+if [[ "$hook_output" == *'no live claim of yours'* ]]; then
+  printf 'FAIL: session holding its own runtime lock was nagged as markerless\n%s\n' \
+    "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
 
 # Section 4's mirror: the hook must say something to a session that is committing
 # with no claim of its own. Path COVERAGE is deliberately not checked here —
