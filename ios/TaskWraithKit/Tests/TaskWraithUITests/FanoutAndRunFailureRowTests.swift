@@ -167,6 +167,17 @@ struct FanoutAndRunFailureRowTests {
         let notice = try row(#"{"id":"s","role":"system","preview":"Round closed."}"#)
         #expect(twIsPlainSystemNoticeRow(notice))
     }
+
+    /// Per-lane result viewport clamps match Electron
+    /// `COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT` and LiveActivityViewport labels
+    /// on EnsembleFanoutResultCard. Wave-level FanoutViewportSummaryRow collapse
+    /// is a separate surface and is not covered here.
+    @Test func fanoutResultViewportMatchesElectronClamp() {
+        #expect(TWFanoutResultViewport.collapsedMaxHeight == 331)
+        #expect(TWFanoutResultViewport.edgeFadeHeight == 60)
+        #expect(TWFanoutResultViewport.expandLabel == "Expand result")
+        #expect(TWFanoutResultViewport.collapseLabel == "Collapse result")
+    }
 }
 
 /// The working-lane rim shimmer: a fan-out puts several lane cards on screen at
