@@ -107,4 +107,16 @@ describe('planEnsembleMidRunSteeringBoundary', () => {
 
     expect(result.participant?.id).toBe('claude')
   })
+
+  it('allows skipped seats so an empty-result round can still receive a user interjection', () => {
+    const result = planEnsembleMidRunSteeringBoundary({
+      pendingEntryIds: ['entry-1'],
+      participants: [participant('claude', 1)],
+      participantStatusById: statuses([['claude', 'skipped']]),
+      preferredParticipantIds: ['claude']
+    })
+
+    expect(result.participant?.id).toBe('claude')
+    expect(result.exhausted).toBe(false)
+  })
 })

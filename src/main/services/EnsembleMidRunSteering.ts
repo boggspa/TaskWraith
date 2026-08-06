@@ -1,10 +1,12 @@
 import type { EnsembleParticipant, EnsembleParticipantStatus } from '../store/types'
 
 const BOUNDARY_VERSION_SEPARATOR = '\u001f'
+// `skipped` is eligible: a seat that produced no content still owns the
+// user-interjection delivery lane. Blocking it left single-seat / empty-result
+// rounds unable to absorb a queued follow-up without opening a fresh round.
 const UNAVAILABLE_STATUSES = new Set<EnsembleParticipantStatus>([
   'failed',
   'cancelled',
-  'skipped',
   'unreachable'
 ])
 

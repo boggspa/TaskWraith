@@ -286,8 +286,25 @@ export function buildMidRunSteeringMessage(input: {
   content: string
   timestampIso: string
   author: MidRunSteeringAuthor
+  imageAttachments?: Array<{ id?: string; path: string; name?: string }>
+  imagePaths?: string[]
+  imageThumbnails?: Array<{
+    dataBase64: string
+    mimeType: string
+    width?: number
+    height?: number
+  }>
 }): ChatMessage {
   const external = input.author.kind === 'externalCollaborator' ? input.author : null
+  const imageAttachments = Array.isArray(input.imageAttachments)
+    ? input.imageAttachments.filter(
+        (attachment) => attachment && typeof attachment.path === 'string' && attachment.path.trim()
+      )
+    : []
+  const imagePaths = Array.isArray(input.imagePaths)
+    ? input.imagePaths.map((path) => path.trim()).filter(Boolean)
+    : imageAttachments.map((attachment) => attachment.path)
+  const imageThumbnails = Array.isArray(input.imageThumbnails) ? input.imageThumbnails : []
   return {
     id: input.id,
     // `role` is the impersonation surface, so it follows authorship. External
@@ -312,38 +329,38 @@ export function buildMidRunSteeringMessage(input: {
             collaboratorId: external.collaboratorId,
             collaboratorDisplayName: external.collaboratorDisplayName
           }
-        : {})
+        : {}),
+      ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
+      ...(imagePaths.length > 0 ? { imagePaths } : {}),
+      ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
     }
   }
 }
 
 /**
- * Absorb eligibility for an ensemble steer. Absorption (append + deliver at
- * the next hop boundary) replaces the historical cancel-round-and-restart
- * ONLY for the plain case; anything that changes the round's SHAPE keeps the
- * legacy interrupt semantics:
- *  - attachments: hop payloads can't grow image lanes mid-round,
- *  - DM target / exact picker: a targeted steer scopes the round to one
- *    seat — that is a routing change, not an interjection,
- *  - discord context / external grants: round-scoped capabilities are
- *    resolved at round start and must not silently widen mid-flight.
+ * Absorb eligibility for an ensemble steer into a LIVE round.
+ *
+ * Absorption (append + deliver at the next hop boundary) replaces
+ * cancel-round-and-restart for every payload shape — text, attachments, DM
+ * targets, discord context, and external grants. Fresh `beginRound` is only
+ * for idle chats / finished rounds / natural cycle restarts, never for
+ * steer or queue delivery into an already-running round.
+ *
+ * The has* flags remain on the input for call-site compatibility; they no
+ * longer gate absorption.
  */
 export function midRunSteeringAbsorbEligible(input: {
   mode: string | undefined
   roundLive: boolean
   text: string
-  hasImageAttachments: boolean
-  hasDmTarget: boolean
-  hasDiscordContext: boolean
-  hasExternalPathGrants: boolean
+  hasImageAttachments?: boolean
+  hasDmTarget?: boolean
+  hasDiscordContext?: boolean
+  hasExternalPathGrants?: boolean
 }): boolean {
   if (input.mode !== 'steer') return false
   if (!input.roundLive) return false
   if (!input.text.trim()) return false
-  if (input.hasImageAttachments) return false
-  if (input.hasDmTarget) return false
-  if (input.hasDiscordContext) return false
-  if (input.hasExternalPathGrants) return false
   return true
 }
 

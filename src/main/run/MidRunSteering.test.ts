@@ -248,14 +248,16 @@ describe('buildMidRunSteeringMessage', () => {
       // Cross-checked against the real predicate rather than the string, so
       // this cannot drift apart from the code that does the framing.
       expect(isExternalUntrustedMessage(externalSteer())).toBe(true)
-      expect(isExternalUntrustedMessage(
-        buildMidRunSteeringMessage({
-          id: 'msg-h',
-          content: 'hello',
-          timestampIso: NOW,
-          author: HOST_MIDRUN_STEERING_AUTHOR
-        })
-      )).toBe(false)
+      expect(
+        isExternalUntrustedMessage(
+          buildMidRunSteeringMessage({
+            id: 'msg-h',
+            content: 'hello',
+            timestampIso: NOW,
+            author: HOST_MIDRUN_STEERING_AUTHOR
+          })
+        )
+      ).toBe(false)
     })
 
     it('carries the collaborator identity the frame needs to attribute it', () => {
@@ -302,11 +304,11 @@ describe('midRunSteeringAbsorbEligible', () => {
     expect(midRunSteeringAbsorbEligible({ ...base, text: '   ' })).toBe(false)
   })
 
-  it('keeps legacy interrupt semantics for shape-changing steers', () => {
-    expect(midRunSteeringAbsorbEligible({ ...base, hasImageAttachments: true })).toBe(false)
-    expect(midRunSteeringAbsorbEligible({ ...base, hasDmTarget: true })).toBe(false)
-    expect(midRunSteeringAbsorbEligible({ ...base, hasDiscordContext: true })).toBe(false)
-    expect(midRunSteeringAbsorbEligible({ ...base, hasExternalPathGrants: true })).toBe(false)
+  it('absorbs shape-changing steers into the live round (no fresh-round interrupt)', () => {
+    expect(midRunSteeringAbsorbEligible({ ...base, hasImageAttachments: true })).toBe(true)
+    expect(midRunSteeringAbsorbEligible({ ...base, hasDmTarget: true })).toBe(true)
+    expect(midRunSteeringAbsorbEligible({ ...base, hasDiscordContext: true })).toBe(true)
+    expect(midRunSteeringAbsorbEligible({ ...base, hasExternalPathGrants: true })).toBe(true)
   })
 })
 
