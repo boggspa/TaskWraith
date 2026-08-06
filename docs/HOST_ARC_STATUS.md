@@ -312,9 +312,11 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 - ✅ **4.2b — TUI commands + deferred receipts** @ `9b48bec48` — same client; pending ≠ succeeded; y/n → `approval.decide`
 - ✅ **Docs catch-up (4.2a / Host-never-run)** @ `4cb932c31`
 - ✅ **Docs catch-up (4.2b / active 4.2c·4.3a)** @ `afc48289a`
+- ✅ **4.2c — approval correlation (one-field)** @ `b74b33e33`
+- ✅ **4.3a — Desktop pure projection layer** @ `78b3845ed`
+- ✅ **Docs catch-up (4.2c / 4.3a Cap lands)** @ `e888d3c87`
 
-### What remains (post–4.2b / post–docs `afc48289a`)
-
+### What remains (post–4.2c / post–4.3a pure)
 | Item | Owner | Status |
 |---|---|---|
 | **Wave 4.2c — approval correlation (protocol)** | `@GrokWork` / `@GrokCapt` | ✅ **LANDED** `b74b33e33` — one-field `commandId` on approval; Cap live evidence named. |
@@ -408,13 +410,13 @@ Exact-path staging only — never `git add -A` / `git add .` / `commit -a`.
 
 ## Next actions (paperwork view)
 
-1. `@GrokWork` — finish Boss-cleared 4.2c fixture one-liners + K3 pins if still open; re-stamp marker; hand Cap with named `typecheck:node` **and** `typecheck:tui`; **no commit**.
-2. `@SolWork` — Cap will adopt **4.3a pure** as its own SHA when ready; meanwhile execute **4.3a-wire** under the granted carve-out (handler first, `index.ts` last, R4' discipline); **no commit**.
-3. `@GrokCapt` — adopt **4.2c** and **4.3a pure** as **SEPARATE SHAs** on handoff + Cap live re-run; exact-path; disclose socket vs non-socket; drop worker markers with each land. Docs one-field refresh may land alone or with those adopts.
-4. `@K3Review` / `@GrokReview` / `@MistralReview` — delta-only on Cap lands of 4.2c / 4.3a / 4.3a-wire; no Wave 3 / 4.2a / 4.2b reopen.
+1. `@SolWork` — finish **4.3a-wire** under the granted carve-out (handler first, `index.ts` last, R4' discipline); hand Cap with **both** `typecheck:node` **and** `typecheck:web`; **no commit**.
+2. `@GrokCapt` — adopt **4.3a-wire** only on handoff + Cap live re-run; exact-path; drop wire marker with land. **HOLD** while wire is live.
+3. `@K3Review` / `@GrokReview` / `@MistralReview` — delta-only on Cap lands `b74b33e33` / `78b3845ed` / future wire; no Wave 3 / 4.2a / 4.2b reopen.
+4. `@SolBoss` — sequence 4.3b after wire; keep AC1–6 PARTIAL until live Desktop + Host observed + socket suite.
 5. Ops / user — restart a **post-R4'** TaskWraith binary before treating live Host discovery as expected. **Production Host STILL never observed running.**
-6. Wave 6 / goal closeout — HostLocalServer socket suite in an environment that permits unix-socket listen; Fake Host / future happy-path live evidence is additive, not a substitute.
-7. `@SparkDocs` — refresh again after Cap SHAs for 4.2c / 4.3a / 4.3a-wire land.
+6. Wave 6 / goal closeout — HostLocalServer socket suite where unix-socket listen is permitted; Fake Host ≠ substitute.
+7. `@SparkDocs` — optional polish; keep one-field ruling + Cap SHAs aligned (4.2c/4.3a pure already Cap-landed).
 
 ---
 
