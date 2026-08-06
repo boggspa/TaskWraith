@@ -1065,6 +1065,13 @@ const api = {
     ipcRenderer.invoke('run-approved-host-command', requestId),
   listGeminiSessions: () => ipcRenderer.invoke('list-gemini-sessions'),
   getHostWeather: () => ipcRenderer.invoke('get-host-weather'),
+  // Host Arc 4.3a-wire — Desktop read-only Host projection.
+  // Thin conduit ONLY: the renderer is sandboxed and cannot open the Host
+  // socket, so main brokers it. No domain logic here by design — the result is
+  // returned verbatim, including its `{ ok: false, error }` failure shape, so
+  // the renderer can report an unreachable Host honestly instead of receiving
+  // a fabricated empty snapshot.
+  hostProjectionSnapshot: () => ipcRenderer.invoke('host-projection:snapshot'),
   setAppearanceMode: (payload: { mode?: string; reduceTransparency?: boolean } | string) =>
     ipcRenderer.invoke('set-appearance-mode', payload),
   getNativeCapabilities: () =>

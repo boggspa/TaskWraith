@@ -1638,6 +1638,7 @@ import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { discoverLaunchTargets } from './launchTargets/discovery'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
+import { registerHostProjectionHandlers } from './ipc/hostProjectionHandlers'
 import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { ScopedHistoryDeletionCoordinator } from './ScopedHistoryDeletionCoordinator'
@@ -47956,6 +47957,15 @@ if (isGeminiMcpBridgeProcess) {
     // but the service may boot while the window is hidden/minimized.
     localServersService.setWindowActive(isMainWindowStatsActive())
     registerLocalServersHandlers({ localServersService: mainRuntimeContext.requireLocalServers() })
+
+    // Host Arc 4.3a-wire — read-only Desktop Host projection bridge.
+    // WIRING ONLY: the handler module owns the Host client, the connection
+    // lifecycle and every failure decision. The renderer is sandboxed and
+    // cannot open the Host socket, so main brokers one snapshot channel.
+    registerHostProjectionHandlers({
+      userDataPath: app.getPath('userData'),
+      appVersion: app.getVersion()
+    })
     const pluginHost = new PluginHost({
       userDataPath: app.getPath('userData'),
       log: (line) => console.log(line)
