@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppearanceMode,
   ComposerStyle,
+  FanoutLaneLayout,
   PromptSurfaceStyle,
   ThemeAccentStyle,
   ThemeAppearance,
@@ -52,6 +53,7 @@ export interface AppearanceState {
   agentThemeTokens: AgentThemeTokenOverrides
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
+  fanoutLaneLayout: FanoutLaneLayout
   composerStyle: ComposerStyle
   transcriptFontFamily: string
   composerFontFamily: string
@@ -151,6 +153,7 @@ function getInitialState(): AppearanceState {
     agentThemeTokens: {},
     appIconVariant: DEFAULT_APP_ICON_VARIANT,
     promptSurfaceStyle: 'liquid_glass',
+    fanoutLaneLayout: 'stacked',
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
     composerFontFamily: COMPOSER_FONT_MATCH_TRANSCRIPT,
@@ -239,6 +242,11 @@ export function useAppearance() {
           diffStatColors: normalizeDiffStatColors(settings.diffStatColors),
           agentThemeTokens: normalizeAgentThemeTokenOverrides(settings.agentThemeTokens),
           promptSurfaceStyle: settings.promptSurfaceStyle || 'liquid_glass',
+          // Anything other than the one opt-in value reads as the historical
+          // stacked layout, so a settings file from an older build (or a
+          // hand-edited one) can never land the transcript in a layout the
+          // user did not choose.
+          fanoutLaneLayout: settings.fanoutLaneLayout === 'paired' ? 'paired' : 'stacked',
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
             settings.transcriptFontFamily,
@@ -320,6 +328,10 @@ export function useAppearance() {
     root.style.setProperty('--diff-stat-add-color', next.diffStatColors.additions)
     root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
     root.setAttribute('data-prompt-surface', next.promptSurfaceStyle)
+    // Drives the transcript's two-column grid entirely from CSS — the pairing
+    // needs no prop threaded through the transcript tree, only the per-lane
+    // slot attribute the panel stamps on its own rows.
+    root.setAttribute('data-fanout-lane-layout', next.fanoutLaneLayout)
     root.setAttribute('data-composer-style', next.composerStyle)
     // NOTE: `data-interface-style` used to mirror the composer shell onto the
     // whole app (transcript/sidebar/message-bubbles). That app-wide repaint was
@@ -481,6 +493,7 @@ export function useAppearance() {
             diffStatColors: next.diffStatColors,
             appIconVariant: next.appIconVariant,
             promptSurfaceStyle: next.promptSurfaceStyle,
+            fanoutLaneLayout: next.fanoutLaneLayout,
             composerStyle: next.composerStyle,
             transcriptFontFamily: next.transcriptFontFamily,
             composerFontFamily: next.composerFontFamily,

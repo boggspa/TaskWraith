@@ -312,6 +312,36 @@ describe('TranscriptVirtualWindow', () => {
       expect(estimatedHeightFor('tool', false, 100000)).toBe(CONTENT_SCALE_CAP_PX)
     })
 
+    it('halves a fan-out lane estimate while the paired layout shares a grid row', () => {
+      // Two paired lanes occupy ONE row, so two half estimates must sum to the
+      // band they really cost. Anything larger inflates the bottom spacer and
+      // brings back the auto-follow lurch the cap above exists to prevent.
+      const stacked = estimatedHeightFor('fanoutResult', false, 100000)
+      const paired = estimatedHeightFor('fanoutResult', false, 100000, true)
+      expect(paired).toBe(Math.round(stacked / 2))
+      expect(paired * 2).toBe(stacked)
+    })
+
+    it('leaves every other row type alone under the paired layout', () => {
+      // Only lane cards pair. A user or assistant row still spans the column,
+      // so halving it would under-size the spacer for the whole transcript.
+      for (const rowType of ['assistant', 'user', 'tool', 'threadMessage'] as const) {
+        expect(estimatedHeightFor(rowType, false, 4000, true)).toBe(
+          estimatedHeightFor(rowType, false, 4000)
+        )
+      }
+    })
+
+    it('keeps the run-boundary card at full height on a halved lane row', () => {
+      // The RunCard above the row is full-width chrome, not part of the lane —
+      // halving it would make the spacer short by the card's height per run.
+      const paired = estimatedHeightFor('fanoutResult', true, 100000, true)
+      expect(paired - estimatedHeightFor('fanoutResult', false, 100000, true)).toBe(
+        estimatedHeightFor('fanoutResult', true, 100000) -
+          estimatedHeightFor('fanoutResult', false, 100000)
+      )
+    })
+
     it('1.0.7 — adds the run-boundary band on top of a scaled estimate', () => {
       expect(estimatedHeightFor('assistant', true, 2000)).toBe(
         Math.round(2000 * CONTENT_PX_PER_CHAR) + RUN_BOUNDARY_HEIGHT_PX

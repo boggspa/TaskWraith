@@ -74,6 +74,7 @@ export interface BuildChatViewPropsInput {
   thinkingProviderClass?: TranscriptPanelProps['thinkingProviderClass']
   thinkingModelBadge?: TranscriptPanelProps['thinkingModelBadge']
   liveActivityViewport?: boolean
+  fanoutLaneLayout?: TranscriptPanelProps['fanoutLaneLayout']
   onInspectRun?: TranscriptPanelProps['onInspectRun']
   currency?: TranscriptPanelProps['currency']
   currencyOverestimatePercent?: number
@@ -242,6 +243,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onInspectRun: input.onInspectRun,
     compactDensity: input.compactDensity,
     liveActivityViewport: input.liveActivityViewport,
+    fanoutLaneLayout: input.fanoutLaneLayout,
     onCopyMessage: input.onCopyMessage,
     onAddMessageToPrompt: input.onAddMessageToPrompt,
     onDeleteMessage: input.onDeleteMessage ?? NOOP,

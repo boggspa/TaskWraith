@@ -7309,6 +7309,10 @@ function App(): React.JSX.Element {
       settingsPatch.promptSurfaceStyle = next.promptSurfaceStyle
       appearance.update({ promptSurfaceStyle: next.promptSurfaceStyle })
     }
+    if (next.fanoutLaneLayout !== undefined) {
+      settingsPatch.fanoutLaneLayout = next.fanoutLaneLayout
+      appearance.update({ fanoutLaneLayout: next.fanoutLaneLayout })
+    }
     if (next.composerStyle !== undefined) {
       settingsPatch.composerStyle = next.composerStyle
       appearance.update({ composerStyle: next.composerStyle })
@@ -28860,6 +28864,7 @@ function App(): React.JSX.Element {
         runningChatIds={runningChatIdsArray}
         compactDensity={appearance.compactDensity}
         liveActivityViewport={appearance.liveActivityViewport}
+        fanoutLaneLayout={appearance.fanoutLaneLayout}
         copiedId={copiedId}
         copy={copy}
         onOpenSubThread={handleOpenCockpitThread}

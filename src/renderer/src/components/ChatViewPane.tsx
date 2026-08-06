@@ -211,6 +211,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.copiedId === b.copiedId &&
     a.compactDensity === b.compactDensity &&
     a.liveActivityViewport === b.liveActivityViewport &&
+    a.fanoutLaneLayout === b.fanoutLaneLayout &&
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&

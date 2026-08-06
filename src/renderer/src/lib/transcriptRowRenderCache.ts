@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRecord, ChatRun, ProviderId } from '../../../main/store/types'
+import type { FanoutLaneSlot } from './fanoutLanePairing'
 
 export interface TranscriptRowRenderSignature {
   rowKey: string
@@ -13,6 +14,11 @@ export interface TranscriptRowRenderSignature {
   liveActivityViewport?: boolean
   liveActivityViewportActive?: boolean
   virtualized: boolean
+  /** Which cell of a paired fan-out row this is, or undefined while the lanes
+   * are stacked. Part of the signature because it is stamped onto the cached
+   * ELEMENT as `data-fanout-slot`, and both the grid placement and the
+   * virtualiser's zero-delta measurement read it off the DOM. */
+  fanoutLaneSlot?: FanoutLaneSlot
   isGlobal?: boolean
   sideChatSeed: boolean
   highlighted: boolean
@@ -241,6 +247,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.liveActivityViewport !== next.liveActivityViewport) return false
   if (prev.liveActivityViewportActive !== next.liveActivityViewportActive) return false
   if (prev.virtualized !== next.virtualized) return false
+  if (prev.fanoutLaneSlot !== next.fanoutLaneSlot) return false
   if (prev.isGlobal !== next.isGlobal) return false
   if (prev.sideChatSeed !== next.sideChatSeed) return false
   if (prev.highlighted !== next.highlighted) return false

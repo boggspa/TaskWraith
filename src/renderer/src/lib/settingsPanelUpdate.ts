@@ -17,6 +17,7 @@ export type SettingsPanelUpdate = {
   diffStatColors?: AppSettings['diffStatColors']
   appIconVariant?: AppSettings['appIconVariant']
   promptSurfaceStyle?: AppSettings['promptSurfaceStyle']
+  fanoutLaneLayout?: AppSettings['fanoutLaneLayout']
   composerStyle?: AppSettings['composerStyle']
   transcriptFontFamily?: AppSettings['transcriptFontFamily']
   composerFontFamily?: AppSettings['composerFontFamily']

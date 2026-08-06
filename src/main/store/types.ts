@@ -119,6 +119,15 @@ export type UserBubbleColor =
   | 'yellow'
   | 'graphite'
 export type PromptSurfaceStyle = 'theme' | 'solid' | 'liquid_glass' | 'classic'
+/**
+ * How a fan-out's per-seat lane result cards are laid out in the transcript.
+ *
+ * `stacked` is the historical behaviour — one lane per line, full column width.
+ * `paired` lays adjacent lanes two-across so a fan-out can be compared at a
+ * glance instead of scrolled through; an unpaired lane still spans the column.
+ * Only lane cards pair, never ordinary transcript rows.
+ */
+export type FanoutLaneLayout = 'stacked' | 'paired'
 export type ComposerStyle =
   | 'default'
   | 'codex'
@@ -2414,6 +2423,10 @@ export interface AppSettings {
   /** Selected app-icon variant; Dock/taskbar swap on desktop. See src/shared/iconVariants.ts. */
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
+  /** Fan-out lane cards: one per line (`stacked`) or two-across (`paired`).
+   * Optional so a settings file written by an older build reads as the
+   * historical `stacked` layout rather than silently re-laying a transcript. */
+  fanoutLaneLayout?: FanoutLaneLayout
   composerStyle: ComposerStyle
   transcriptFontFamily?: string
   composerFontFamily?: string

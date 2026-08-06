@@ -1477,6 +1477,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               appIconVariant={appearance.appIconVariant}
               userBubbleColor={appearance.userBubbleColor}
               promptSurfaceStyle={appearance.promptSurfaceStyle}
+              fanoutLaneLayout={appearance.fanoutLaneLayout}
               composerStyle={appearance.composerStyle}
               configuredProviderSnapshot={configuredProviderSnapshot}
               transcriptFontFamily={appearance.transcriptFontFamily}
@@ -2234,6 +2235,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 }
                 compactDensity={appearance.compactDensity}
                 liveActivityViewport={appearance.liveActivityViewport}
+                fanoutLaneLayout={appearance.fanoutLaneLayout}
                 onCopyMessage={handleCopyMessage}
                 onAddMessageToPrompt={
                   currentChatAppChatId ? handleTranscriptAddMessageToPrompt : undefined
@@ -2579,6 +2581,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onInspectRun={handleSideTranscriptInspectRun}
               compactDensity={appearance.compactDensity}
               liveActivityViewport={appearance.liveActivityViewport}
+              fanoutLaneLayout={appearance.fanoutLaneLayout}
               onCopyMessage={handleCopyMessage}
               onAddMessageToPrompt={handleSideTranscriptAddMessageToPrompt}
               onDeleteMessage={handleSideTranscriptDeleteMessage}

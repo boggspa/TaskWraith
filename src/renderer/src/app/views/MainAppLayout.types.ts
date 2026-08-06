@@ -32,6 +32,7 @@ type MainAppLayoutSettingsTakeoverAppearanceProps = Pick<
   | 'appIconVariant'
   | 'userBubbleColor'
   | 'promptSurfaceStyle'
+  | 'fanoutLaneLayout'
   | 'composerStyle'
   | 'transcriptFontFamily'
   | 'composerFontFamily'

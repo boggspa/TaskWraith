@@ -323,7 +323,10 @@ export const ACTIVITY_OUTPUT_ESTIMATE_CHAR_CAP = 480
 export function estimatedHeightFor(
   rowType: VirtualRowType,
   hasRunBoundary: boolean,
-  contentLength = 0
+  contentLength = 0,
+  /** True while the `paired` fan-out lane layout is active — see the halving
+   * note below. */
+  pairFanoutLanes = false
 ): number {
   const base = ESTIMATED_ROW_HEIGHT_PX[rowType]
   const scaleCap = VIEWPORT_CLAMPED_TYPES.has(rowType)
@@ -332,7 +335,24 @@ export function estimatedHeightFor(
   const scaled = CONTENT_SCALED_TYPES.has(rowType)
     ? Math.min(scaleCap, Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR)))
     : base
-  return scaled + (hasRunBoundary ? RUN_BOUNDARY_HEIGHT_PX : 0)
+  /*
+   * Paired lanes share a grid row, so two of them cost ONE row's height. The
+   * estimate is halved for EVERY fan-out lane row rather than only for the
+   * paired ones, and that is deliberate: pairing depends on a row's NEIGHBOURS,
+   * and `useProjectedRows` reuses row objects for an unchanged prefix — so a
+   * neighbour-sensitive estimate would go stale the moment an appended lane
+   * turned the previous `solo` into a `lead`. Halving unconditionally keeps the
+   * estimate a pure function of the row itself, at the cost of under-estimating
+   * an unpaired lane by half a row.
+   *
+   * Under-estimating is the safe direction here. An OVER-estimate inflates the
+   * bottom spacer, `scrollHeight` balloons, and auto-follow's snap lurches into
+   * empty overscan — the exact defect VIEWPORT_CLAMPED_ESTIMATE_CAP_PX exists to
+   * prevent. An under-estimate is absorbed by the anchor-correction pass on the
+   * first measurement.
+   */
+  const laid = pairFanoutLanes && rowType === 'fanoutResult' ? Math.round(scaled / 2) : scaled
+  return laid + (hasRunBoundary ? RUN_BOUNDARY_HEIGHT_PX : 0)
 }
 
 /**
@@ -348,13 +368,14 @@ export function estimatedHeightFor(
 export function projectRows(
   messages: ChatMessage[],
   runBoundaryIds?: ReadonlySet<string> | null,
-  unboundedActivityBodies = false
+  unboundedActivityBodies = false,
+  pairFanoutLanes = false
 ): VirtualRow[] {
   if (!Array.isArray(messages)) return []
   const rows: VirtualRow[] = []
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]
-    const row = projectRow(message, index, runBoundaryIds, unboundedActivityBodies)
+    const row = projectRow(message, index, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes)
     if (row) rows.push(row)
   }
   return rows
@@ -368,7 +389,9 @@ export function projectRow(
    * bodies (thinking traces) then render UNBOUNDED in the transcript flow, so
    * the per-activity char cap would badly undershoot — keep the raw lengths
    * (the generic CONTENT_SCALE_CAP_PX still bounds the estimate). */
-  unboundedActivityBodies = false
+  unboundedActivityBodies = false,
+  /** True while the `paired` fan-out lane layout is active. */
+  pairFanoutLanes = false
 ): VirtualRow | null {
   if (!message || typeof message.id !== 'string') return null
   const rowType = classifyRowType(message)
@@ -403,7 +426,12 @@ export function projectRow(
     index,
     rowType,
     contentVersion: contentVersion(message),
-    estimatedHeight: estimatedHeightFor(rowType, hasRunBoundary, contentLength),
+    estimatedHeight: estimatedHeightFor(
+      rowType,
+      hasRunBoundary,
+      contentLength,
+      pairFanoutLanes
+    ),
     hasRunBoundary
   }
 }

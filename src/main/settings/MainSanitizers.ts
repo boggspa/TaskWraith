@@ -159,6 +159,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'diffStatColors',
   'agentThemeTokens',
   'promptSurfaceStyle',
+  'fanoutLaneLayout',
   'composerStyle',
   'transcriptFontFamily',
   'composerFontFamily',

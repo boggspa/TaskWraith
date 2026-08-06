@@ -16,6 +16,7 @@ import type {
   ChatRun,
   DiffFileSummary,
   DiffFileSummaryOwner,
+  FanoutLaneLayout,
   ProviderId,
   ToolActivity
 } from '../../../main/store/types'
@@ -130,6 +131,7 @@ import {
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
+import { classifyFanoutLaneSlots } from '../lib/fanoutLanePairing'
 import {
   isEnsembleFanoutLaneWorking,
   isEnsembleFanoutResultMessage
@@ -521,6 +523,10 @@ export type TranscriptPanelProps = {
    * forwarded to every `ActivityStack` so in-flight thinking + tool activity
    * streams inside the masked auto-following region. */
   liveActivityViewport?: boolean
+  /** `settings.fanoutLaneLayout`. `paired` lays adjacent fan-out lane result
+   * cards two-across; anything else (including undefined, for a settings file
+   * written before this existed) keeps the historical one-per-line stack. */
+  fanoutLaneLayout?: FanoutLaneLayout
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
    *
@@ -850,18 +856,25 @@ interface CollapsedSuperGroupInfo {
 function useProjectedTranscriptRows(
   messages: ChatMessage[],
   runBoundaryIds: ReadonlySet<string> | null | undefined,
-  unboundedActivityBodies = false
+  unboundedActivityBodies = false,
+  pairFanoutLanes = false
 ): VirtualRow[] {
   const cacheRef = useRef<{
     messages: ChatMessage[]
     rows: VirtualRow[]
     rowByMessageIndex: Map<number, VirtualRow>
     unboundedActivityBodies: boolean
+    pairFanoutLanes: boolean
   } | null>(null)
 
   return useMemo(() => {
+    // Both flags change every fan-out lane row's estimate, so a cache built
+    // under the other value must be discarded whole rather than reused as a
+    // prefix — otherwise flipping the setting leaves the transcript's existing
+    // lanes sized for the layout the user just left.
     const cached =
-      cacheRef.current?.unboundedActivityBodies === unboundedActivityBodies
+      cacheRef.current?.unboundedActivityBodies === unboundedActivityBodies &&
+      cacheRef.current?.pairFanoutLanes === pairFanoutLanes
         ? cacheRef.current
         : null
     if (cached && Array.isArray(messages)) {
@@ -883,22 +896,40 @@ function useProjectedTranscriptRows(
       if (sharedPrefix > 0 && sharedPrefix >= minLength - 1) {
         const rows = cached.rows.filter((row) => row.index < sharedPrefix)
         for (let index = sharedPrefix; index < messages.length; index += 1) {
-          const row = projectRow(messages[index], index, runBoundaryIds, unboundedActivityBodies)
+          const row = projectRow(
+            messages[index],
+            index,
+            runBoundaryIds,
+            unboundedActivityBodies,
+            pairFanoutLanes
+          )
           if (row) rows.push(row)
         }
         const rowByMessageIndex = new Map<number, VirtualRow>()
         for (const row of rows) rowByMessageIndex.set(row.index, row)
-        cacheRef.current = { messages, rows, rowByMessageIndex, unboundedActivityBodies }
+        cacheRef.current = {
+          messages,
+          rows,
+          rowByMessageIndex,
+          unboundedActivityBodies,
+          pairFanoutLanes
+        }
         return rows
       }
     }
 
-    const rows = projectRows(messages, runBoundaryIds, unboundedActivityBodies)
+    const rows = projectRows(messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes)
     const rowByMessageIndex = new Map<number, VirtualRow>()
     for (const row of rows) rowByMessageIndex.set(row.index, row)
-    cacheRef.current = { messages, rows, rowByMessageIndex, unboundedActivityBodies }
+    cacheRef.current = {
+      messages,
+      rows,
+      rowByMessageIndex,
+      unboundedActivityBodies,
+      pairFanoutLanes
+    }
     return rows
-  }, [messages, runBoundaryIds])
+  }, [messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes])
 }
 
 function offsetGroupedRanges(
@@ -1807,7 +1838,18 @@ function useTranscriptVirtualization(params: {
           ? blockElsRef.current.get(mountedRows[i + 1].rowKey)
           : spacerBottom
       const slot = nextEl && nextEl.isConnected ? nextEl.offsetTop - el.offsetTop : el.offsetHeight
-      if (!(slot > 0)) continue
+      // A paired fan-out lane's LEAD cell sits BESIDE its trail cell, so the two
+      // share an offsetTop and the delta is legitimately 0 — the pair's whole
+      // height lands on the trail row, and lead + trail still sum to exactly the
+      // space the pair occupies. For every other row type a non-positive slot
+      // means "this row has no layout box to measure" (a display:none block, an
+      // element mid-unmount) and must be skipped, so the zero is admitted only
+      // where the layout genuinely produces one. Admitting it everywhere would
+      // silently zero real rows; rejecting it here would leave the lead on its
+      // ESTIMATE while the trail already carries the pair — counting the band
+      // one-and-a-half times and inflating the bottom spacer.
+      const isPairLead = el.dataset.fanoutSlot === 'lead'
+      if (!(slot > 0) && !(isPairLead && slot === 0)) continue
       const isActiveLiveRow = activeLiveRowKey === row.rowKey
       const key = measurementKey(
         row.rowKey,
@@ -1982,6 +2024,7 @@ export const TranscriptPanel = memo(
     onOpenSideChatFromRun,
     compactDensity,
     liveActivityViewport,
+    fanoutLaneLayout,
     onCopyMessage,
     onAddMessageToPrompt,
     onDeleteMessage,
@@ -2836,10 +2879,19 @@ export const TranscriptPanel = memo(
       return map
     }, [displayMessages, runBoundaryByMessageId])
 
+    // One derived boolean, read by the projection estimate, the slot map and
+    // the measurement pass — so all three can never disagree about whether the
+    // transcript is currently pairing lanes.
+    const pairFanoutLanes = fanoutLaneLayout === 'paired'
+    const fanoutLaneSlots = useMemo(
+      () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes),
+      [displayMessages, pairFanoutLanes]
+    )
     const projectedRows = useProjectedTranscriptRows(
       displayMessages,
       null,
-      liveActivityViewport === false
+      liveActivityViewport === false,
+      pairFanoutLanes
     )
     const projectedRowLookup = useMemo(() => {
       const byRowKey = new Map<string, VirtualRow>()
@@ -3652,6 +3704,10 @@ export const TranscriptPanel = memo(
             const isReturnCard = isSubThreadReturnMessage(msg)
             const isThreadMessageCard = isThreadMessageTranscriptMessage(msg)
             const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
+            // Undefined unless the paired layout is on AND this row is a lane —
+            // React omits the attribute entirely, so the stacked layout renders
+            // byte-identical markup to before this existed.
+            const fanoutLaneSlot = fanoutLaneSlots.get(rowKey)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
             // Deliberately a SEPARATE const rather than widening the one above:
@@ -3999,6 +4055,7 @@ export const TranscriptPanel = memo(
               liveActivityViewport,
               liveActivityViewportActive: liveViewportActive,
               virtualized: virtualizeEnabled,
+              ...(fanoutLaneSlot ? { fanoutLaneSlot } : {}),
               isGlobal,
               sideChatSeed: isSideChatSeedMessage,
               highlighted: isPinnedMessageTarget,
@@ -4091,6 +4148,10 @@ export const TranscriptPanel = memo(
                 }
                 data-vrow-id={rowKey}
                 data-message-id={msg.id}
+                // Placement (which grid column) AND measurement (whether a zero
+                // offsetTop delta is real) both key off this one attribute, so
+                // the two can never disagree about where a lane sits.
+                data-fanout-slot={fanoutLaneSlot}
                 // Selecting the side-chat seed on pointer hover made this full-row
                 // highlight chase the cursor through the transcript. Keep the
                 // keyboard path, while pointer users choose a seed explicitly.

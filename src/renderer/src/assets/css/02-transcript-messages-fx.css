@@ -4292,6 +4292,83 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   gap: var(--space-lg);
 }
 
+/* ============================================================
+ * Fan-out lanes, two-across  (settings.fanoutLaneLayout: 'paired')
+ * ------------------------------------------------------------
+ * A fan-out puts one result card per seat in the transcript, and at four or
+ * more seats the reader can never see two lanes at once — which is the whole
+ * point of having run them in parallel. `paired` sits adjacent lanes side by
+ * side; everything else in the transcript still spans the column.
+ *
+ * Done as a GRID rather than by wrapping pairs in a container element, because
+ * a wrapper would have to be built at render time and would then have to
+ * survive virtualisation: the transcript mounts a sliding window of rows, so a
+ * pair straddling the window edge would need its wrapper half-populated. As a
+ * grid, each lane stays its own top-level row — one row per message, exactly
+ * the model `TranscriptVirtualWindow` already projects — and the browser does
+ * the placing. Auto-flow puts two consecutive `grid-column: auto` items in one
+ * row, and the next full-width item starts a fresh one.
+ *
+ * `align-items: start` is load-bearing: grid's default `stretch` would make the
+ * shorter card of a pair as tall as the taller one, which for these cards means
+ * a block of empty tinted panel below the content rather than a card that ends
+ * where its lane ended.
+ *
+ * The two `column-gap` values differ on purpose. Between paired cards the gap
+ * is horizontal spacing INSIDE one logical band, so it is tighter than the
+ * transcript's between-row rhythm; `row-gap` keeps whatever the mode already
+ * used (the flex `gap` here, or 0 + per-child margin under virtualisation).
+ *
+ * A wrapped lane header is accepted at the main pane's width (two cards land at
+ * ~410px there, and the header takes a second line) — but a Multiview pane or a
+ * narrow window would push cards to a width where nothing is readable, so the
+ * track floor collapses the grid back to one column on its own. `auto-fit` with
+ * a floor is what does this, NOT a media query: the transcript's width comes
+ * from its PANE, and a viewport query cannot see that a wide window has been
+ * split into four narrow panes.
+ *
+ * `min(100%, var(--fanout-lane-min))` rather than the bare floor so a container
+ * narrower than the floor itself still yields one usable track instead of
+ * overflowing. Three tracks would need ~1240px; `.transcript-inner` is capped at
+ * `--composer-content-max-width` (850px), so two is the real ceiling — if that
+ * cap is ever raised, revisit this before the grid quietly goes three-across.
+ * ============================================================ */
+:root[data-fanout-lane-layout='paired'] .transcript-inner {
+  /* Track floor, and therefore the width at which pairing switches itself off.
+     Two tracks need `2 * floor + column-gap` of column. At 360px that is 732px,
+     which the main pane clears at every ordinary window size (its column runs
+     760–850px, giving cards of 374–419px) while a split Multiview pane or a
+     narrow window falls back to one column instead of rendering two cards too
+     thin to read. Raising this much above 360 stops the main pane pairing at
+     all; lowering it pairs inside panes where a lane card cannot be read. */
+  --fanout-lane-min: 360px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--fanout-lane-min)), 1fr));
+  align-items: start;
+  column-gap: var(--space-md);
+}
+
+/* Every row spans the column by default — only a lane opts out below. The
+ * virtualiser's spacers are matched by this too, which they must be: a spacer
+ * confined to one column would let a collapsed run of rows sit beside live
+ * content. */
+:root[data-fanout-lane-layout='paired'] .transcript-inner > * {
+  grid-column: 1 / -1;
+}
+
+/* A paired lane takes one cell. `solo` is deliberately absent: an unpaired lane
+ * keeps the span above, so an odd lane count (three scouts, five workers — the
+ * common shape, not an edge case) ends in a full-width card rather than a
+ * half-width one with a hole beside it. */
+:root[data-fanout-lane-layout='paired']
+  .transcript-inner
+  > .transcript-message-block[data-fanout-slot='lead'],
+:root[data-fanout-lane-layout='paired']
+  .transcript-inner
+  > .transcript-message-block[data-fanout-slot='trail'] {
+  grid-column: auto;
+}
+
 .transcript-message-block {
   display: flex;
   flex-direction: column;

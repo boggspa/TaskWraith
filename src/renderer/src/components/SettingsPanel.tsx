@@ -23,6 +23,7 @@ import type {
   ProductUpdateChannel,
   AuditRetentionSurface,
   PromptSurfaceStyle,
+  FanoutLaneLayout,
   ComposerStyle,
   ThemeAccentStyle,
   ThemeAppearance,
@@ -276,6 +277,7 @@ interface SettingsPanelProps {
   reduceTransparency: boolean
   reduceMotion: boolean
   compactDensity: boolean
+  fanoutLaneLayout?: FanoutLaneLayout
   liveActivityViewport: boolean
   sidebarOpacity: number
   mainPaneOpacity: number
@@ -417,6 +419,7 @@ interface SettingsPanelProps {
     reduceTransparency?: boolean
     reduceMotion?: boolean
     compactDensity?: boolean
+    fanoutLaneLayout?: FanoutLaneLayout
     liveActivityViewport?: boolean
     sidebarOpacity?: number
     mainPaneOpacity?: number
@@ -628,6 +631,11 @@ const PROMPT_SURFACE_OPTIONS: Array<{ value: PromptSurfaceStyle; label: string }
   { value: 'liquid_glass', label: 'Liquid glass' },
   { value: 'classic', label: 'Poor man glass' },
   { value: 'solid', label: 'Solid' }
+]
+
+const FANOUT_LANE_LAYOUT_OPTIONS: Array<{ value: FanoutLaneLayout; label: string }> = [
+  { value: 'stacked', label: 'One per line' },
+  { value: 'paired', label: 'Two side by side' }
 ]
 const COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string; helper: string }> = [
   {
@@ -3824,6 +3832,7 @@ export function SettingsPanel({
   reduceTransparency,
   reduceMotion,
   compactDensity,
+  fanoutLaneLayout,
   liveActivityViewport,
   sidebarOpacity,
   mainPaneOpacity,
@@ -6101,6 +6110,27 @@ export function SettingsPanel({
                           </option>
                         ))}
                       </select>
+                    </label>
+                    <label className="settings-effects-field">
+                      <span className="settings-field-label">Fan-out lanes</span>
+                      <select
+                        className="settings-select"
+                        value={fanoutLaneLayout ?? 'stacked'}
+                        onChange={(e) =>
+                          onChange({ fanoutLaneLayout: e.target.value as FanoutLaneLayout })
+                        }
+                      >
+                        {FANOUT_LANE_LAYOUT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        How each seat&rsquo;s result card sits in the transcript when a fan-out
+                        runs. Side by side fits twice as many lanes on screen; a lane with no
+                        neighbour still spans the full width.
+                      </small>
                     </label>
                   </section>
 
