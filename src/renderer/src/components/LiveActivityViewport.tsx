@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from 'react'
 import {
   distanceFromBottom,
   edgeFadeState,
@@ -141,7 +149,27 @@ export function LiveActivityViewport({
       <div
         ref={scrollRef}
         className="live-activity-viewport-scroll"
-        style={expanded ? undefined : { maxHeight: collapsedMaxHeight }}
+        /*
+         * `--live-activity-collapsed-height` publishes the SAME number the
+         * `max-height` cap uses, so a surface that wants to RESERVE its band
+         * rather than grow into it can do so from CSS without re-declaring the
+         * height. Callers own the value (fan-out lanes pass
+         * COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT); duplicating it in a
+         * stylesheet would let the two drift silently, and a stylesheet that
+         * guessed low would clip the very content the cap exists to bound.
+         *
+         * Published unconditionally while collapsed, and consumed by nobody
+         * unless a surface opts in — a custom property that nothing reads costs
+         * one string on the style attribute and changes no layout.
+         */
+        style={
+          expanded
+            ? undefined
+            : ({
+                maxHeight: collapsedMaxHeight,
+                '--live-activity-collapsed-height': `${collapsedMaxHeight}px`
+              } as CSSProperties)
+        }
         onScroll={handleScroll}
         role="log"
         aria-label={label}

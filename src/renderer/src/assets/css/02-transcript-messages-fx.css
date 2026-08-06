@@ -6898,6 +6898,68 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   --live-activity-edge-fade-size: 60px;
 }
 
+/* ============================================================
+ * Working lane: reserve the band, reveal into it once
+ * ------------------------------------------------------------
+ * A collapsed viewport is bounded by `max-height`, so its RENDERED height is
+ * whatever the content currently is. While a lane streams, that steps larger on
+ * every delta until it finally reaches the cap — each step a reflow, and each
+ * reflow another pass of the viewport's own ResizeObserver edge-fade recompute.
+ * The card visibly ratchets open while you are trying to read it.
+ *
+ * A working lane now takes its designated height up front and reveals into it
+ * once, so the box is still from the first frame and the content fills a band
+ * that never moves. `--live-activity-collapsed-height` is published by
+ * `LiveActivityViewport` from the SAME prop that sets the cap, so this reserves
+ * exactly the band the cap allows and cannot drift from it.
+ *
+ * Gated on the CARD's `.is-working`, not the viewport's `.is-active`: the
+ * fan-out card passes no `active` prop, and `.is-working` is already the class
+ * that drives the rim chase — so the reserved band and the shimmer appear and
+ * disappear together rather than tracking two ideas of "live".
+ *
+ * SETTLED LANES ARE DELIBERATELY UNCHANGED. Releasing the reservation when the
+ * lane finishes means a short lane still ends at its content height instead of
+ * a mostly-empty 331px box — the reservation exists to stop the ratchet WHILE
+ * streaming, not to standardise every finished card. The cost is one reflow at
+ * settle, in place of one per delta, at the same moment the rim stops.
+ * ============================================================ */
+.ensemble-fanout-result-card.is-working
+  .ensemble-fanout-result-viewport.is-collapsed
+  .live-activity-viewport-scroll {
+  height: var(--live-activity-collapsed-height);
+  /* The reveal replaces the growth, so it must not ALSO inherit the shared
+     `transition: max-height` — the cap never changes here. */
+  animation: fanout-lane-viewport-reveal 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@keyframes fanout-lane-viewport-reveal {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--live-activity-collapsed-height);
+  }
+}
+
+/* Both reduce-motion signals. The RESERVATION survives — it is the fix, not the
+ * decoration; only the reveal is dropped, so the band simply exists at full
+ * height from the first frame. */
+@media (prefers-reduced-motion: reduce) {
+  .ensemble-fanout-result-card.is-working
+    .ensemble-fanout-result-viewport.is-collapsed
+    .live-activity-viewport-scroll {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true']
+  .ensemble-fanout-result-card.is-working
+  .ensemble-fanout-result-viewport.is-collapsed
+  .live-activity-viewport-scroll {
+  animation: none;
+}
+
 .ensemble-fanout-result-viewport .live-activity-viewport-rail {
   background: color-mix(in srgb, var(--accent) 48%, transparent);
 }
