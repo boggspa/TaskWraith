@@ -191,6 +191,8 @@ import {
   roundHasActiveLanes,
   transitionLane
 } from '../EnsembleLanes'
+import { openFanoutWaves, refuseForConcurrentFanouts } from '../EnsembleFanoutConcurrency'
+import type { OpenFanoutWave } from '../EnsembleFanoutConcurrency'
 import {
   concurrentLanesEnabled,
   concurrentWriteLanesEnabled,
@@ -1028,6 +1030,7 @@ export interface EnsembleFanoutAllResult {
     | 'not_authorized'
     | 'explicit_targets_required'
     | 'budget_exhausted'
+    | 'too_many_concurrent_fanouts'
     | 'dispatch_failed'
 }
 
@@ -1055,6 +1058,7 @@ export interface EnsembleFanoutResult {
     | 'invalid_write_scope'
     | 'write_lanes_disabled'
     | 'budget_exhausted'
+    | 'too_many_concurrent_fanouts'
     | 'dispatch_failed'
 }
 
@@ -10403,6 +10407,36 @@ export class EnsembleOrchestrator {
     return `bossman-replacement-${Math.random().toString(36).slice(2, 10)}`
   }
 
+  /**
+   * Dispatch waves in this chat's round that still have a lane in flight.
+   *
+   * Joins the DURABLE lane statuses (the same `activeRound.lanes` record
+   * `ensemble_await` polls) to the wave identity carried on the live runs.
+   * Runs leave `runsByRunId` at finalization, but a run that is gone had a lane
+   * that went terminal, and terminal lanes do not count — so the join only ever
+   * has to cover lanes that are still open, which is exactly the set whose runs
+   * are still registered.
+   */
+  private openFanoutWavesForChat(chatId: string): OpenFanoutWave[] {
+    const lanes = this.deps.getChat(chatId)?.ensemble?.activeRound?.lanes
+    if (!lanes) return []
+    const waveByLaneId = new Map<string, { waveId?: string; label?: string }>()
+    for (const candidate of this.runsByRunId.values()) {
+      if (candidate.chatId !== chatId || !candidate.laneId) continue
+      waveByLaneId.set(candidate.laneId, {
+        waveId: candidate.fanoutWaveId,
+        label: candidate.fanoutLabel
+      })
+    }
+    return openFanoutWaves(
+      Object.values(lanes).map((lane) => ({
+        laneId: lane.laneId,
+        status: lane.status,
+        ...waveByLaneId.get(lane.laneId)
+      }))
+    )
+  }
+
   async fanoutForRun(
     runId: string | undefined,
     input: EnsembleFanoutInput
@@ -10869,6 +10903,26 @@ export class EnsembleOrchestrator {
       }
     }
 
+    // Last gate before dispatch, so a malformed call still hears what is wrong
+    // with it rather than being told to wait. Safe from races: fanoutForRun
+    // serializes every explicit dispatch behind the owner's fanoutDispatchQueue,
+    // so two calls cannot both read "one wave open" and both dispatch.
+    const concurrencyRefusal = refuseForConcurrentFanouts(
+      this.openFanoutWavesForChat(run.chatId),
+      'ensemble_fanout'
+    )
+    if (concurrencyRefusal) {
+      this.appendRoundStatus(run.chatId, run.roundId, concurrencyRefusal.message)
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        ...(targetStage ? { targetStage } : {}),
+        message: concurrencyRefusal.message,
+        error: concurrencyRefusal.error
+      }
+    }
+
     const blockedByBudget = resolvedTargets.targets
       .map((participant) => ({
         participant,
@@ -11171,6 +11225,23 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout_all',
         message: resolvedTargets.message,
         error: resolvedTargets.error
+      }
+    }
+
+    // Same gate as ensemble_fanout, and deliberately the same cap: the two
+    // tools dispatch into one round, so counting them separately would let a
+    // caller alternate between them and keep four waves alive.
+    const concurrencyRefusal = refuseForConcurrentFanouts(
+      this.openFanoutWavesForChat(run.chatId),
+      'ensemble_fanout_all'
+    )
+    if (concurrencyRefusal) {
+      this.appendRoundStatus(run.chatId, run.roundId, concurrencyRefusal.message)
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: concurrencyRefusal.message,
+        error: concurrencyRefusal.error
       }
     }
 
