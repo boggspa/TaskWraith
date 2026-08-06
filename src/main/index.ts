@@ -870,6 +870,7 @@ import {
 import { AppStore } from './store'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
+import { createHostProductionProviderAdmission } from './host/HostProductionProviderAdmission'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -47364,7 +47365,20 @@ if (isGeminiMcpBridgeProcess) {
           hostVersion: app.getVersion()
         },
         chatList: AppStore,
-        bridge: createBridgeActionExecutor()
+        bridge: createBridgeActionExecutor(),
+        // Step 5b-wire. THE ARROW IS LOAD-BEARING — DO NOT "SIMPLIFY" IT AWAY.
+        // `getConfiguredProviderSnapshot` is a `const` arrow declared ~3,900
+        // lines BELOW this call, inside this same whenReady block. Passing the
+        // identifier directly would evaluate it here and throw a TDZ
+        // ReferenceError before Host could start. Wrapping it defers the lookup
+        // to call time — snapshot build, after a client has connected, long
+        // past the declaration.
+        //
+        // All mapping, allowlisting and note vocabulary live in the admission
+        // module; this root stays wiring-only.
+        providers: createHostProductionProviderAdmission({
+          getConfiguredSnapshot: () => getConfiguredProviderSnapshot()
+        })
       })
     } catch (error) {
       // Construction runs BEFORE `.start()` exists, so the start catch below can
