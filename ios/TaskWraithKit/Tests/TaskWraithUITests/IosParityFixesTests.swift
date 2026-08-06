@@ -13,7 +13,11 @@ struct IosParityFixesTests {
         #expect(twModelUsesFastToggle("claude-opus-4-8-1m"))
     }
 
-    @Test func transcriptTouchTrackerDoesNotInstallZeroDistanceDragOnIPad() {
+    @Test func transcriptTouchTrackerUsesLargerMinimumDistanceOnIPad() {
+        #expect(
+            TranscriptTouchTrackingPolicy.dragMinimumDistance(isPadInterface: false) == 0)
+        #expect(
+            TranscriptTouchTrackingPolicy.dragMinimumDistance(isPadInterface: true) == 12)
         #expect(
             TranscriptTouchTrackingPolicy.usesZeroDistanceDragTracker(isPadInterface: false))
         #expect(
