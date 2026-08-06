@@ -42629,7 +42629,7 @@ if (isGeminiMcpBridgeProcess) {
                   : 'turn_bound'
           const shouldUpdateHops = typeof action.maxContinuationHops === 'number'
           const nextMaxContinuationHops = shouldUpdateHops
-            ? Math.max(1, Math.min(500, Math.floor(action.maxContinuationHops as number)))
+            ? Math.max(1, Math.min(1200, Math.floor(action.maxContinuationHops as number)))
             : chat.ensemble.maxContinuationHops
           const shouldUpdateFanoutPolicy = action.fanoutPolicy !== undefined
           const nextFanoutPolicy = shouldUpdateFanoutPolicy

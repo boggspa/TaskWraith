@@ -21078,7 +21078,7 @@ function App(): React.JSX.Element {
   )
   const updateEnsembleMaxContinuationHopsForChat = useCallback(
     (chatId: string, nextMax: number): void => {
-      const safeMax = Math.max(1, Math.min(500, Math.round(Number(nextMax) || 0)))
+      const safeMax = Math.max(1, Math.min(1200, Math.round(Number(nextMax) || 0)))
       if (!Number.isFinite(safeMax) || safeMax <= 0) return
       updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
@@ -26261,9 +26261,9 @@ function App(): React.JSX.Element {
               const arg = slashActionRemainder(ctx, /^\/ensemble-hops\b/i)
               const next = parseScopedPositiveIntSlashArg(ctx, arg, {
                 min: 1,
-                max: 500,
+                max: 1200,
                 fallback: chat.ensemble.maxContinuationHops || 6,
-                usage: 'Usage: /ensemble-hops 12. Valid range: 1-500.'
+                usage: 'Usage: /ensemble-hops 12. Valid range: 1-1200.'
               })
               if (next === null) return
               patchScopedEnsembleConfig(chat, (ensemble) => ({

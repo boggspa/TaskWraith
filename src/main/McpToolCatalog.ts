@@ -2756,7 +2756,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           hopDelta: { type: 'number', description: 'For adjust_hops: relative change.' },
           maxContinuationHops: {
             type: 'number',
-            description: 'For adjust_hops: absolute max continuation hops, clamped 1..500.'
+            description: 'For adjust_hops: absolute max continuation hops, clamped 1..1200.'
           },
           delaySeconds: {
             type: 'number',

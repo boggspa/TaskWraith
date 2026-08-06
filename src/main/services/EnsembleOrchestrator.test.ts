@@ -14044,10 +14044,10 @@ Next action:
     )
   })
 
-  it('allows configured continuous handoff limits up to 500', async () => {
+  it('allows configured continuous handoff limits up to 1200', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
-    harness.chat.ensemble!.maxContinuationHops = 500
+    harness.chat.ensemble!.maxContinuationHops = 1200
 
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -14056,7 +14056,7 @@ Next action:
     })
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.chat.ensemble?.activeRound?.maxContinuationHops).toBe(500)
+    expect(harness.chat.ensemble?.activeRound?.maxContinuationHops).toBe(1200)
   })
 
   it('does not promote on self-mention (speaker referencing their own role)', async () => {
@@ -15214,7 +15214,7 @@ Next action:
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex'
-    harness.chat.ensemble!.maxContinuationHops = 1 // clamps to [1,500]
+    harness.chat.ensemble!.maxContinuationHops = 1 // clamps to [1,1200]
     harness.chat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {

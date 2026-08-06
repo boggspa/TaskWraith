@@ -390,7 +390,7 @@ export type EnsembleUserRosterPresetApplyResult =
 const ENSEMBLE_GLOBAL_USAGE_WORKSPACE_ID = '__taskwraith_global_chats__'
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
 const MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND = 3
-const MAX_CONTINUATION_HOP_LIMIT = 500
+const MAX_CONTINUATION_HOP_LIMIT = 1200
 const MAX_BOSSMAN_CONTROL_ITEMS = 40
 const MAX_BOSSMAN_POLL_OPTIONS = 6
 // 1.0.4-AN — binding goal-complete poll. Options are FIXED so resolution is

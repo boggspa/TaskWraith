@@ -7,7 +7,7 @@ export const PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY = 'pendingEnsembleRosterPr
 
 export const AGENT_ROSTER_CONTEXT_MIN_CHARS = 5_000
 export const AGENT_ROSTER_CONTEXT_MAX_CHARS = 256_000
-export const AGENT_ROSTER_MAX_CONTINUATION_HOPS = 500
+export const AGENT_ROSTER_MAX_CONTINUATION_HOPS = 1200
 
 export interface PendingEnsembleRosterPresetApply {
   schemaVersion: 1

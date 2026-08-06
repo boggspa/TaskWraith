@@ -1149,7 +1149,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           }),
         updateCurrentEnsembleMaxContinuationHops: (value: number) =>
           patchSideEnsemble({
-            maxContinuationHops: Math.max(1, Math.min(500, Math.round(Number(value) || 0)))
+            maxContinuationHops: Math.max(1, Math.min(1200, Math.round(Number(value) || 0)))
           }),
         setCurrentChat: (next: any) => {
           const updated = typeof next === 'function' ? next(sideChat) : next
