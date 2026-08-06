@@ -62,6 +62,26 @@ export interface ChatUpdateDeliveryStats {
   retainedBaselineBytes: number
 }
 
+/**
+ * Cumulative, coordinator-wide delivery mix. Deliberately separate from
+ * `ChatUpdateDeliveryStats`, which is a point-in-time retention view.
+ *
+ * Patching only applies while an acknowledged baseline is held; a failed apply
+ * or an ACK timeout drops that baseline and forces a full snapshot next
+ * delivery. Under fan-out that degradation is plausible exactly when it is
+ * most expensive, and nothing counted it — so a frame-cadence triage window
+ * could see main-thread cost from full-record sends with no way to attribute
+ * it. Three integers make the ratio observable instead of assumed.
+ */
+export interface ChatUpdateProtocolCounters {
+  /** Deliveries sent as a whole-record snapshot. */
+  snapshots: number
+  /** Deliveries sent as a compact field-mask patch. */
+  patches: number
+  /** Times an acknowledged baseline was dropped (nack or ACK timeout). */
+  baselineDrops: number
+}
+
 export interface ChatUpdateDeliveryCoordinatorOptions {
   /** Caps deliveries per target/chat even when producers and ACKs are faster. */
   minDeliveryIntervalMs?: number
@@ -153,6 +173,11 @@ export class ChatUpdateDeliveryCoordinator {
   ) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (timer: ReturnType<typeof setTimeout>) => void
   private deliverySequence = 0
+  private readonly counters: ChatUpdateProtocolCounters = {
+    snapshots: 0,
+    patches: 0,
+    baselineDrops: 0
+  }
 
   constructor(options: ChatUpdateDeliveryCoordinatorOptions = {}) {
     this.minDeliveryIntervalMs = Math.max(0, options.minDeliveryIntervalMs ?? 100)
@@ -218,6 +243,10 @@ export class ChatUpdateDeliveryCoordinator {
       state.baselineChat = inFlight.chat
       state.consecutiveRejects = 0
     } else {
+      // Degradation: the renderer could not apply the patch (or the revision /
+      // hash did not match), so the baseline is gone and the next delivery must
+      // be a full snapshot. This is the transition worth counting.
+      if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
       state.acknowledged = undefined
       state.baselineChat = undefined
       state.consecutiveRejects += 1
@@ -238,6 +267,12 @@ export class ChatUpdateDeliveryCoordinator {
     if (!states) return
     for (const state of states.values()) this.disposeState(state)
     this.statesByTarget.delete(targetId)
+  }
+
+  /** Cumulative delivery mix for the whole coordinator. Cheap enough to read
+   *  on every sample; a triage window diffs two reads. */
+  protocolCounters(): ChatUpdateProtocolCounters {
+    return { ...this.counters }
   }
 
   statsForTarget(targetId: number): ChatUpdateDeliveryStats {
@@ -322,6 +357,8 @@ export class ChatUpdateDeliveryCoordinator {
         : delivery.protocolVersion === CHAT_UPDATE_PROTOCOL_V2
           ? (delivery.recordHash ?? computeChatSubRevisions(next.chat).recordHash)
           : computeChatSubRevisions(next.chat).recordHash
+    if (delivery.kind === 'snapshot') this.counters.snapshots += 1
+    else this.counters.patches += 1
     state.inFlight = { ...next, deliveryId, recordHash }
     // Drop the patch-base chat once the next full payload is in flight so we
     // never retain acknowledged+baselineChat+inFlight+pending as three+ fulls.
@@ -339,6 +376,7 @@ export class ChatUpdateDeliveryCoordinator {
           state.inFlight = undefined
           // A renderer that cannot ACK cannot share a revision baseline. The
           // newest pending update will therefore repair itself as a snapshot.
+          if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
           state.acknowledged = undefined
           state.baselineChat = undefined
           state.lastTouchedAt = this.now()
