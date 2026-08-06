@@ -89,6 +89,52 @@ export function describeHostConnection(state: HostProjectionState): HostConnecti
   return { connected: false, status: 'Not checked' }
 }
 
+/** Providers as Host reports them, or an honest absence. */
+export interface HostProvidersView {
+  /** False whenever the numbers are not a LIVE measured fact. */
+  readonly known: boolean
+  readonly available?: number
+  readonly total?: number
+  /** What a human reads. Never a fabricated count. */
+  readonly label: string
+}
+
+/**
+ * Wave 5a — the goal invariant, applied to a real family.
+ *
+ * "Unavailable telemetry is not zero. Cached state is not live state."
+ *
+ * There are TWO independent ways a provider count can fail to be current, and
+ * both must land on "Unknown":
+ *
+ *  1. the client could not reach Host at all (`status !== 'live'`);
+ *  2. Host answered, but said the projection it served was ITSELF cached —
+ *     `projectHostSnapshot` forces `freshness: 'cached'` in that case, so
+ *     `status` can be 'live' while the data underneath is stale.
+ *
+ * Checking only (1) is the easy mistake, and it would paint Host's own stale
+ * answer as a fresh measurement. Rendering either as "0 providers" would be
+ * worse still: a confident zero reads as "there are none", which is a
+ * different and false claim from "we do not know".
+ */
+export function describeHostProviders(state: HostProjectionState): HostProvidersView {
+  const projection = state.projection
+  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+    return { known: false, label: 'Unknown' }
+  }
+
+  const total = projection.providers.length
+  const available = projection.providers.filter((provider) => provider.available).length
+  return {
+    known: true,
+    available,
+    total,
+    // A live empty list is a real answer and says so in words, so it can never
+    // be confused with the unknown case above.
+    label: total === 0 ? 'None reported' : `${available} of ${total} available`
+  }
+}
+
 /**
  * Host connection row for the Devices popover.
  *
@@ -100,12 +146,23 @@ export function HostStatusRow() {
   const store = useHostProjectionStore()
   const state = useHostProjection(store)
   const view = describeHostConnection(state)
+  const providers = describeHostProviders(state)
 
   return (
-    <div className="sidebar-footer-device-row" {...(view.detail ? { title: view.detail } : {})}>
-      <span className={`sidebar-footer-led${view.connected ? ' is-on' : ''}`} aria-hidden />
-      <span className="sidebar-footer-device-name">TaskWraith Host</span>
-      <span className="sidebar-footer-device-status">{view.status}</span>
-    </div>
+    <>
+      <div className="sidebar-footer-device-row" {...(view.detail ? { title: view.detail } : {})}>
+        <span className={`sidebar-footer-led${view.connected ? ' is-on' : ''}`} aria-hidden />
+        <span className="sidebar-footer-device-name">TaskWraith Host</span>
+        <span className="sidebar-footer-device-status">{view.status}</span>
+      </div>
+      {/* Wave 5a. Reuses the same row markup, so still ZERO new CSS. The LED
+          stays unlit here: it means "this client reached Host", which is the
+          row above's claim, not this one's. */}
+      <div className="sidebar-footer-device-row">
+        <span className="sidebar-footer-led" aria-hidden />
+        <span className="sidebar-footer-device-name">Host providers</span>
+        <span className="sidebar-footer-device-status">{providers.label}</span>
+      </div>
+    </>
   )
 }

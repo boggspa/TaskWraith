@@ -27,12 +27,12 @@ vi.mock('../lib/featureFlags', () => ({
 
 import { ApprovalsFooterPopover, DevicesFooterPopover } from './Sidebar'
 import { HostProjectionProvider } from './HostProjectionProvider'
-import { HostStatusRow, describeHostConnection } from './HostStatusRow'
+import { HostStatusRow, describeHostConnection, describeHostProviders } from './HostStatusRow'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import type { HostSnapshot } from '../../../shared/hostProtocol'
 
-function snapshot(): HostSnapshot {
+function snapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
   return {
     protocolVersion: 2,
     projectionVersion: 1,
@@ -59,7 +59,8 @@ function snapshot(): HostSnapshot {
     usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
     artifacts: [],
     warnings: [],
-    recovery: {}
+    recovery: {},
+    ...overrides
   } as unknown as HostSnapshot
 }
 
@@ -214,5 +215,112 @@ describe('HostStatusRow · placement is not gated by the iOS remote flag', () =>
       <DevicesFooterPopover devices={[]} onOpenSettings={() => {}} />
     )
     expect(markup).not.toContain('TaskWraith Host')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5a — "unavailable is not zero" for the providers family      */
+/* ------------------------------------------------------------------ */
+
+const projectionWith = (
+  freshness: 'live' | 'cached',
+  providers: Array<{ available: boolean }>
+): never => ({ freshness, providers }) as never
+
+describe('describeHostProviders · unavailable is not zero, cached is not live', () => {
+  it('reports a LIVE empty list as a real measured zero', () => {
+    const view = describeHostProviders(
+      state({ status: 'live', projection: projectionWith('live', []) })
+    )
+    // Host genuinely answered "none". That is knowledge, not the absence of it.
+    expect(view.known).toBe(true)
+    expect(view.total).toBe(0)
+  })
+
+  it('never reports zero providers when Host is UNREACHABLE', () => {
+    const view = describeHostProviders(state({ status: 'unavailable' }))
+    expect(view.known).toBe(false)
+    expect(view.total).toBeUndefined()
+    // A zero here would be fabricated telemetry: it reads as "there are no
+    // providers", a different and false claim from "we do not know".
+    expect(view.label).not.toContain('0')
+  })
+
+  it('never reports counts from a CACHED projection as if they were live', () => {
+    const view = describeHostProviders(
+      state({
+        status: 'unavailable',
+        projection: projectionWith('cached', [{ available: true }, { available: true }])
+      })
+    )
+    expect(view.known).toBe(false)
+    expect(view.available).toBeUndefined()
+    expect(view.label).not.toContain('2')
+  })
+
+  it('treats a STALE projection as unknown even when the client is connected', () => {
+    // The subtle one, and the reason a status check alone is not enough.
+    // `projectHostSnapshot` forces `cached` when HOST itself says the
+    // projection it served was cached, so status can be 'live' while the data
+    // is stale. Counting it would present Host's own stale answer as current.
+    const view = describeHostProviders(
+      state({ status: 'live', projection: projectionWith('cached', [{ available: true }]) })
+    )
+    expect(view.known).toBe(false)
+    expect(view.label).not.toContain('1')
+  })
+
+  it('counts available providers separately from total when live', () => {
+    const view = describeHostProviders(
+      state({
+        status: 'live',
+        projection: projectionWith('live', [
+          { available: true },
+          { available: false },
+          { available: true }
+        ])
+      })
+    )
+    expect(view.known).toBe(true)
+    expect(view.available).toBe(2)
+    expect(view.total).toBe(3)
+  })
+
+  it('reports pre-fetch states as unknown rather than zero', () => {
+    expect(describeHostProviders(state({ status: 'idle' })).known).toBe(false)
+    expect(describeHostProviders(state({ status: 'loading' })).known).toBe(false)
+  })
+})
+
+describe('HostStatusRow · Desktop actually reads providers from Host', () => {
+  it('shows a live provider count in the row', async () => {
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () =>
+        snapshot({
+          providers: [
+            { providerId: 'claude', displayProvider: 'Claude', shortCode: 'CL', available: true },
+            { providerId: 'codex', displayProvider: 'Codex', shortCode: 'CX', available: false }
+          ]
+        } as Partial<HostSnapshot>)
+    })
+    await store.refresh()
+
+    const markup = renderRow(store)
+    expect(markup).toContain('Host providers')
+    expect(markup).toContain('1 of 2 available')
+  })
+
+  it('renders providers as Unknown — never 0 — when Host is unreachable', async () => {
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () => {
+        throw new Error('host socket refused')
+      }
+    })
+    await store.refresh()
+
+    const markup = renderRow(store)
+    expect(markup).toContain('Host providers')
+    expect(markup).toContain('Unknown')
+    expect(markup).not.toContain('0 of 0')
   })
 })

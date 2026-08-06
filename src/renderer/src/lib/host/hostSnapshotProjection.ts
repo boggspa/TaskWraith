@@ -35,6 +35,7 @@
 import type {
   HostHealthProjection,
   HostSnapshot,
+  HostProviderModelProjection,
   HostThreadProjection,
   HostUsageObservation,
   HostWorkspaceProjection
@@ -68,6 +69,26 @@ export interface HostProjectedThread {
   /** True when Host itself truncated the preview. */
   readonly previewTruncated: boolean
   readonly providerId?: string
+}
+
+/**
+ * A provider/model row exactly as Host reports it.
+ *
+ * Wave 5a. This family ALREADY arrives decoded on the wire — Desktop was
+ * simply discarding it. `note` is admission/availability text only; the wire
+ * type says "never credentials", and `projectProvider` keeps that promise
+ * enforceable here with an explicit allowlist rather than trusting upstream.
+ */
+export interface HostProjectedProvider {
+  readonly providerId: string
+  readonly displayProvider: string
+  readonly shortCode: string
+  readonly available: boolean
+  readonly modelId?: string
+  readonly modelLabel?: string
+  readonly hueKey?: string
+  /** Admission/availability note only — never credentials. */
+  readonly note?: string
 }
 
 export interface HostProjectedWorkspace {
@@ -112,6 +133,7 @@ export interface HostProjectedSnapshot {
   readonly health: HostProjectedHealth
   readonly workspaces: readonly HostProjectedWorkspace[]
   readonly threads: readonly HostProjectedThread[]
+  readonly providers: readonly HostProjectedProvider[]
   readonly usage: HostProjectedUsage
   /** Counts only — never the underlying rows. */
   readonly counts: {
@@ -184,6 +206,23 @@ function projectThread(thread: HostThreadProjection): HostProjectedThread {
   }
 }
 
+function projectProvider(provider: HostProviderModelProjection): HostProjectedProvider {
+  // Field-by-field on purpose. A spread would forward whatever Host adds to
+  // this record later, and the wire type explicitly promises it never carries
+  // credentials. An allowlist makes that promise something this layer ENFORCES
+  // rather than something it assumes.
+  return {
+    providerId: provider.providerId,
+    displayProvider: provider.displayProvider,
+    shortCode: provider.shortCode,
+    available: provider.available === true,
+    ...(provider.modelId ? { modelId: provider.modelId } : {}),
+    ...(provider.modelLabel ? { modelLabel: provider.modelLabel } : {}),
+    ...(provider.hueKey ? { hueKey: provider.hueKey } : {}),
+    ...(provider.note ? { note: provider.note } : {})
+  }
+}
+
 function projectWorkspace(workspace: HostWorkspaceProjection): HostProjectedWorkspace {
   return {
     id: workspace.id,
@@ -225,6 +264,7 @@ export function projectHostSnapshot(
     health: projectHealth(snapshot.health),
     workspaces: snapshot.workspaces.map(projectWorkspace),
     threads: snapshot.threads.map(projectThread),
+    providers: snapshot.providers.map(projectProvider),
     usage: projectUsage(snapshot.usage),
     counts: {
       runs: snapshot.runs.length,

@@ -223,3 +223,80 @@ describe('projectHostSnapshot · bounded content', () => {
     expect(result.cursor).toBe(42)
   })
 })
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5a — the providers family Host already sends                 */
+/* ------------------------------------------------------------------ */
+
+describe('projectHostSnapshot · providers', () => {
+  it('projects the provider family that already arrives on the wire', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        providers: [
+          {
+            providerId: 'claude',
+            displayProvider: 'Claude',
+            shortCode: 'CL',
+            available: true,
+            modelId: 'opus-5',
+            modelLabel: 'Opus 5'
+          },
+          {
+            providerId: 'codex',
+            displayProvider: 'Codex',
+            shortCode: 'CX',
+            available: false,
+            note: 'not admitted'
+          }
+        ]
+      }),
+      'live'
+    )
+
+    expect(projected.providers).toHaveLength(2)
+    expect(projected.providers[0]).toMatchObject({
+      providerId: 'claude',
+      displayProvider: 'Claude',
+      shortCode: 'CL',
+      available: true,
+      modelId: 'opus-5',
+      modelLabel: 'Opus 5'
+    })
+    expect(projected.providers[1]).toMatchObject({
+      providerId: 'codex',
+      available: false,
+      note: 'not admitted'
+    })
+  })
+
+  it('carries the availability note but never a credential-shaped field', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        providers: [
+          {
+            providerId: 'claude',
+            displayProvider: 'Claude',
+            shortCode: 'CL',
+            available: false,
+            note: 'no API key configured',
+            apiKey: 'sk-must-never-cross',
+            token: 'must-never-cross'
+          }
+        ]
+      } as never),
+      'live'
+    )
+    const row = projected.providers[0] as unknown as Record<string, unknown>
+    expect(row.note).toBe('no API key configured')
+    // The wire type says "never credentials"; the projection must not become
+    // the place a secret leaks by structural spread.
+    for (const key of ['apiKey', 'token', 'secret', 'credential']) {
+      expect(row[key]).toBeUndefined()
+    }
+  })
+
+  it('projects an empty provider list as a real empty answer', () => {
+    const projected = projectHostSnapshot(snapshot({ providers: [] }), 'live')
+    expect(projected.providers).toEqual([])
+  })
+})
