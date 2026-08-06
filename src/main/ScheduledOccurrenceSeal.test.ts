@@ -2307,6 +2307,23 @@ describe('runtime launch and loop verifier authority', () => {
       approvalMode: 'auto_edit',
       readOnly: false
     })
+    // Full Access with shell allowed — the one posture this reconciliation
+    // never covered, and the one the verifier got wrong. `codexSandboxForMode`
+    // cannot return 'danger-full-access' (b34286c3e deliberately re-enforced
+    // the workspace sandbox: a signed grant changes which TOOLS may be called,
+    // not how wide the native filesystem sandbox is), so the launch plan the
+    // app actually produces here is 'workspace-write'.
+    const fullAccessPermissions = effectivePermissions({
+      presetId: 'full_access',
+      approvalMode: 'auto_edit',
+      agenticServices: {
+        ...effectivePermissions().agenticServices,
+        shellCommands: 'allow',
+        fileChanges: 'allow',
+        mcpTools: 'allow'
+      },
+      readOnly: false
+    })
 
     const accepted: Array<
       [EffectiveRunPermissions, ProviderLaunchAuthorityInputByProvider['codex']]
@@ -2323,6 +2340,10 @@ describe('runtime launch and loop verifier authority', () => {
       [
         autoEditGatedPermissions,
         codexLaunchPlan({ approvalPolicy: 'on-request', sandboxMode: 'workspace-write' })
+      ],
+      [
+        fullAccessPermissions,
+        codexLaunchPlan({ approvalPolicy: 'never', sandboxMode: 'workspace-write' })
       ]
     ]
     for (const [permissions, launch] of accepted) {
@@ -2375,6 +2396,37 @@ describe('runtime launch and loop verifier authority', () => {
         )
       ).toThrow(/approval policy does not match/i)
     }
+
+    // Its own assertion, not a member of the loop above: this one must be
+    // refused for a DIFFERENT reason, and folding it in would have meant
+    // loosening that loop's regex and weakening every case in it. Aligning the
+    // verifier down to the producer must not stop it checking — a launch plan
+    // claiming the wide sandbox is still refused.
+    expect(() =>
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(
+          task({
+            runtimeProfileId: undefined,
+            approvalMode: fullAccessPermissions.approvalMode,
+            permissionPresetId: fullAccessPermissions.presetId
+          }),
+          {
+            runtimeSeats: [
+              defaultSeatForPermissions(
+                'codex',
+                fullAccessPermissions,
+                codexLaunchPlan({
+                  approvalPolicy: 'never',
+                  sandboxMode: 'danger-full-access'
+                })
+              )
+            ]
+          }
+        ),
+        now
+      )
+    ).toThrow(/sandbox does not match the signed posture/i)
 
     const interactiveExec = codexLaunchPlan(
       {

@@ -28,6 +28,8 @@ import {
   type ScheduledOccurrencePostureResolver
 } from './ScheduledOccurrencePostureAuthority'
 import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
+import { codexSandboxForMode } from './codex/CodexRunPolicy'
+import { isFullShellAccessGranted } from './EffectiveRunPermissions'
 import {
   buildProviderLaunchAuthority,
   providerLaunchAuthorityDigest,
@@ -1086,13 +1088,20 @@ function assertProviderPostureControls(
           'Codex exec transport cannot satisfy an interactive approval posture.'
         )
       }
-      const expectedSandbox =
-        approvalMode === 'plan'
-          ? 'read-only'
-          : permissions.presetId === 'full_access' &&
-              permissions.agenticServices.shellCommands === 'allow'
-            ? 'danger-full-access'
-            : 'workspace-write'
+      // ONE derivation, shared with the launcher. This used to re-derive the
+      // sandbox from the raw preset and expect `danger-full-access` for a
+      // full_access shell-allow run — the contract as of `40d3c2e2f`. But
+      // `b34286c3e` deliberately re-enforced the workspace sandbox: a signed
+      // full-access grant changes which TOOLS may be called, not how wide the
+      // native filesystem sandbox is. `codexSandboxForMode` can no longer
+      // return `danger-full-access` at all, so the verifier was demanding a
+      // sandbox the app will never launch with, and EVERY scheduled Codex
+      // occurrence at Full Access failed to seal. Calling the same function the
+      // producer calls is what stops the two drifting again.
+      const expectedSandbox = codexSandboxForMode(
+        approvalMode,
+        isFullShellAccessGranted(permissions)
+      )
       if (controls.sandboxMode !== expectedSandbox) {
         throw new TypeError('Codex sandbox does not match the signed posture.')
       }
