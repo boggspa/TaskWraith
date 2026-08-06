@@ -71,8 +71,7 @@ import trayGhostMonoline from '../../resources/tray-ghost-monoline.png?asset'
 import { isPlaceholderThreadTitle, normalizeThreadTitle } from '../shared/threadTitles'
 import {
   appendAttachedImageFilesNote,
-  describeImageAttachmentRefusal,
-  providerDeliversImageAttachments
+  resolveImagePathsForProvider
 } from './ProviderImageAttachmentSupport'
 import {
   ClaudeImageAttachmentError,
@@ -6739,14 +6738,22 @@ async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<
   const imagePaths = Array.isArray(payload.imagePaths) ? payload.imagePaths : []
   // No-silent-omission gate for every dispatch lane (desktop, bridge, queue,
   // graph all pass through here before their adapter): a lane with no image
-  // transport refuses the run instead of letting the model truthfully claim
-  // nothing was attached while the UI shows a thumbnail.
-  if (imagePaths.length > 0 && !providerDeliversImageAttachments(payload.provider)) {
-    throw new Error(
-      describeImageAttachmentRefusal(providerLabel(payload.provider), imagePaths.length)
-    )
+  // transport strips the paths, stamps an explicit warning, and continues the
+  // text turn instead of failing the whole run.
+  const resolvedImages = resolveImagePathsForProvider(
+    payload.provider,
+    imagePaths,
+    providerLabel(payload.provider)
+  )
+  if (resolvedImages.warning) {
+    payload.imagePaths = []
+    payload.imageAttachmentWarning = resolvedImages.warning
+    noteSoloImageAttachmentOmission(payload, resolvedImages.warning)
+    return
   }
-  const pdfPaths = imagePaths.filter((imagePath) => isPdfAttachmentPath(imagePath))
+  const deliveredPaths = resolvedImages.imagePaths
+  payload.imagePaths = deliveredPaths
+  const pdfPaths = deliveredPaths.filter((imagePath) => isPdfAttachmentPath(imagePath))
   if (pdfPaths.length === 0) return
   const appChatId = requireNonEmptyString(payload.appChatId, 'PDF dispatch chat id')
   const rendered = await renderPdfPagesForAttachments(
@@ -6759,7 +6766,7 @@ async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<
   )
   if (rendered.length === 0) throw pdfAttachmentNoPagesError()
   const nextPaths = [
-    ...imagePaths.filter((imagePath) => !isPdfAttachmentPath(imagePath)),
+    ...deliveredPaths.filter((imagePath) => !isPdfAttachmentPath(imagePath)),
     ...rendered.map((page) => page.path)
   ]
   const seen = new Set<string>()
@@ -6769,6 +6776,39 @@ async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<
     seen.add(key)
     return true
   })
+}
+
+/** Solo transcript notice when images are stripped; Ensemble notes via orchestrator. */
+function noteSoloImageAttachmentOmission(payload: AgentRunPayload, warning: string): void {
+  if (payload.ensembleRun) return
+  const chatId = typeof payload.appChatId === 'string' ? payload.appChatId.trim() : ''
+  if (!chatId) {
+    console.warn(`[image-attachments] ${warning}`)
+    return
+  }
+  const chat = AppStore.getChat(chatId)
+  if (!chat) {
+    console.warn(`[image-attachments] ${warning}`)
+    return
+  }
+  const noticeId = `image-omit-${payload.appRunId || randomUUID()}`
+  if ((chat.messages || []).some((message) => message.id === noticeId)) return
+  const updated: ChatRecord = {
+    ...chat,
+    messages: [
+      ...(chat.messages || []),
+      {
+        id: noticeId,
+        role: 'assistant',
+        content: `△ ${warning}`,
+        timestamp: new Date().toISOString(),
+        metadata: { kind: 'imageAttachmentOmission' }
+      }
+    ],
+    updatedAt: Date.now()
+  }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
 }
 
 function isPathInsideRoot(rootPath: string | undefined, candidatePath: string): boolean {
@@ -15049,17 +15089,28 @@ function ensembleRoundLiveForSteerAbsorb(
 }
 
 /**
- * Absorb a text-only ensemble steer into the LIVE round instead of the
- * historical cancel-round-and-restart. The message is appended (and
- * broadcast) immediately; every subsequent hop's prompt is rebuilt from the
- * live chat record and its "new since your previous turn" delta transcript
- * carries the interjection natively — full and slim turns alike — so no
- * round, hop, or provider session is disturbed. Callers gate on
+ * Absorb an ensemble steer/queue interjection into the LIVE round instead of
+ * cancel-round-and-restart. The message is appended (and broadcast)
+ * immediately; every subsequent hop's prompt is rebuilt from the live chat
+ * record and its "new since your previous turn" delta transcript carries the
+ * interjection natively — full and slim turns alike — so no round, hop, or
+ * provider session is disturbed. Optional attachment metadata rides on the
+ * message for transcript previews; runtime merge (images/grants/DM) is owned
+ * by the orchestrator absorb path. Callers gate on
  * `midRunSteeringAbsorbEligible`.
  */
 function appendEnsembleSteerIntoLiveRound(
   chatId: string,
-  text: string
+  text: string,
+  extras?: {
+    imageAttachments?: Array<{ id?: string; path: string; name?: string }>
+    imageThumbnails?: Array<{
+      dataBase64: string
+      mimeType: string
+      width?: number
+      height?: number
+    }>
+  }
 ): { messageId: string; entryId: string } {
   const chat = AppStore.getChat(chatId)
   if (!chat) {
@@ -15067,13 +15118,17 @@ function appendEnsembleSteerIntoLiveRound(
   }
   const nowIso = new Date().toISOString()
   const messageId = `midrun-steer-${randomUUID()}`
+  const imageAttachments = Array.isArray(extras?.imageAttachments) ? extras.imageAttachments : []
+  const imageThumbnails = Array.isArray(extras?.imageThumbnails) ? extras.imageThumbnails : []
   appendMidRunSteeringMessage(
     chat,
     buildMidRunSteeringMessage({
       id: messageId,
       content: text,
       timestampIso: nowIso,
-      author: HOST_MIDRUN_STEERING_AUTHOR
+      author: HOST_MIDRUN_STEERING_AUTHOR,
+      ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
+      ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
     })
   )
   const entry = midRunSteeringRegistry.register({
@@ -32746,8 +32801,7 @@ async function runAntigravityAgyProvider(
     const allowWrite =
       launch.mode === 'accept-edits' &&
       permissions?.readOnly !== true &&
-      (arbitratedByHook ||
-        antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges))
+      (arbitratedByHook || antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges))
     try {
       permissionLease = await antigravityPermissionLeases.acquire({
         settingsPath: antigravityCliSettingsPath(),
@@ -34209,7 +34263,9 @@ const pendingRendererAgentPoolRegistrations = new Map<
   PendingRendererAgentPoolRegistration
 >()
 
-function rendererAgentPoolRegistrationReceipt(rawPayload: unknown): ConfirmedRendererAgentPoolRegistration | null {
+function rendererAgentPoolRegistrationReceipt(
+  rawPayload: unknown
+): ConfirmedRendererAgentPoolRegistration | null {
   if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return null
   const payload = rawPayload as Record<string, unknown>
   const pooledAgentId = optionalString(payload.pooledAgentId)
@@ -34231,7 +34287,9 @@ function rendererAgentPoolRegistrationReceipt(rawPayload: unknown): ConfirmedRen
     snapshot.agentId !== pooledAgentId ||
     typeof snapshot.nickname !== 'string' ||
     !snapshot.nickname.trim() ||
-    (snapshot.iconKind !== 'named' && snapshot.iconKind !== 'seed' && snapshot.iconKind !== 'asset') ||
+    (snapshot.iconKind !== 'named' &&
+      snapshot.iconKind !== 'seed' &&
+      snapshot.iconKind !== 'asset') ||
     typeof snapshot.hue !== 'number' ||
     !Number.isFinite(snapshot.hue)
   ) {
@@ -34253,7 +34311,11 @@ function acknowledgeRendererAgentPoolRegistration(
   pendingRendererAgentPoolRegistrations.delete(requestId)
   clearTimeout(pending.timer)
   if (payload.ok !== true) {
-    pending.reject(new Error(optionalString(payload.error) || 'The renderer could not register the Agent Pool entry.'))
+    pending.reject(
+      new Error(
+        optionalString(payload.error) || 'The renderer could not register the Agent Pool entry.'
+      )
+    )
     return
   }
   const receipt = rendererAgentPoolRegistrationReceipt(payload)
@@ -34269,7 +34331,9 @@ function requestRendererAgentPoolRegistration(
 ): Promise<ConfirmedRendererAgentPoolRegistration> {
   const target = mainWindow
   if (!target || target.isDestroyed() || target.webContents.isDestroyed()) {
-    return Promise.reject(new Error('No active TaskWraith window can register the Agent Pool entry.'))
+    return Promise.reject(
+      new Error('No active TaskWraith window can register the Agent Pool entry.')
+    )
   }
   const requestId = randomUUID()
   const webContentsId = target.webContents.id
@@ -34284,14 +34348,20 @@ function requestRendererAgentPoolRegistration(
       resolve: resolveRegistration,
       reject: rejectRegistration
     })
-    const sent = safeSendToSender(target.webContents, 'ensemble-agent-pool:registration-requested', {
-      requestId,
-      participant
-    })
+    const sent = safeSendToSender(
+      target.webContents,
+      'ensemble-agent-pool:registration-requested',
+      {
+        requestId,
+        participant
+      }
+    )
     if (sent) return
     pendingRendererAgentPoolRegistrations.delete(requestId)
     clearTimeout(timer)
-    rejectRegistration(new Error('The TaskWraith window closed before Agent Pool registration completed.'))
+    rejectRegistration(
+      new Error('The TaskWraith window closed before Agent Pool registration completed.')
+    )
   })
 }
 
@@ -34602,21 +34672,22 @@ async function executeAgentPoolSelfRegistration(
       participantId: candidate.participantId,
       error: 'pool_registration_failed',
       message:
-        error instanceof Error ? error.message : 'The Agent Pool registration could not be completed.'
+        error instanceof Error
+          ? error.message
+          : 'The Agent Pool registration could not be completed.'
     }
   }
-  const result =
-    ensembleOrchestratorRef?.registerParticipantInAgentPoolForRun(context.appRunId, {
-      roundId,
-      expectedRole,
-      ...receipt
-    }) || {
-      ok: false,
-      tool: 'ensemble_roster_edit' as const,
-      action: 'register_in_agent_pool' as const,
-      message: 'Ensemble orchestrator is not available.',
-      error: 'no_active_run' as const
-    }
+  const result = ensembleOrchestratorRef?.registerParticipantInAgentPoolForRun(context.appRunId, {
+    roundId,
+    expectedRole,
+    ...receipt
+  }) || {
+    ok: false,
+    tool: 'ensemble_roster_edit' as const,
+    action: 'register_in_agent_pool' as const,
+    message: 'Ensemble orchestrator is not available.',
+    error: 'no_active_run' as const
+  }
   return { ...result }
 }
 
@@ -36725,30 +36796,30 @@ async function executeGeminiMcpTool(
           ? await executeAgentRosterPresetImport(args, context, parentProvider)
           : args.action === 'register_in_agent_pool'
             ? await executeAgentPoolSelfRegistration(args, context)
-          : await (ensembleOrchestratorRef?.rosterEditForRun(context.appRunId, {
-              action:
-                args.action === 'add_participant' ||
-                args.action === 'remove_participant' ||
-                args.action === 'edit_participant'
-                  ? args.action
-                  : undefined,
-              roundId: optionalString(args.roundId || args.round_id),
-              targetParticipantId: optionalString(
-                args.targetParticipantId || args.target_participant_id
-              ),
-              participant:
-                args.participant &&
-                typeof args.participant === 'object' &&
-                !Array.isArray(args.participant)
-                  ? (args.participant as Record<string, any>)
-                  : undefined
-            }) ??
-              Promise.resolve({
-                ok: false,
-                tool: 'ensemble_roster_edit' as const,
-                message: 'Ensemble orchestrator is not available.',
-                error: 'no_active_run' as const
-              }))
+            : await (ensembleOrchestratorRef?.rosterEditForRun(context.appRunId, {
+                action:
+                  args.action === 'add_participant' ||
+                  args.action === 'remove_participant' ||
+                  args.action === 'edit_participant'
+                    ? args.action
+                    : undefined,
+                roundId: optionalString(args.roundId || args.round_id),
+                targetParticipantId: optionalString(
+                  args.targetParticipantId || args.target_participant_id
+                ),
+                participant:
+                  args.participant &&
+                  typeof args.participant === 'object' &&
+                  !Array.isArray(args.participant)
+                    ? (args.participant as Record<string, any>)
+                    : undefined
+              }) ??
+                Promise.resolve({
+                  ok: false,
+                  tool: 'ensemble_roster_edit' as const,
+                  message: 'Ensemble orchestrator is not available.',
+                  error: 'no_active_run' as const
+                }))
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_brief_update') {
@@ -42797,12 +42868,8 @@ if (isGeminiMcpBridgeProcess) {
             dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
           const lateScheduledBlock = scheduledEnsembleInteractiveBlock(action.threadId)
           if (lateScheduledBlock) return { ok: false, error: lateScheduledBlock }
-          // Mid-run steering (parity with run-ensemble-round): a plain text
-          // phone steer into a LIVE round is absorbed — appended immediately,
-          // delivered at the next hop boundary — instead of interrupting the
-          // active speaker. Attachment-bearing or DM-targeted steers keep the
-          // legacy interrupt semantics; the gate reads the REQUESTED
-          // attachments so a failed materialization can't silently absorb.
+          // Mid-run steering (parity with run-ensemble-round): any phone steer
+          // into a LIVE round is absorbed — never interrupt + fresh round.
           const absorbRound = AppStore.getChat(action.threadId)?.ensemble?.activeRound
           if (
             absorbRound &&
@@ -42819,7 +42886,17 @@ if (isGeminiMcpBridgeProcess) {
             const absorbed = ensembleOrchestratorRef?.absorbMidRunSteering({
               chatId: action.threadId,
               text,
-              roundId: absorbRound.roundId
+              roundId: absorbRound.roundId,
+              ...(steerImagePaths.length
+                ? {
+                    imageAttachments: steerImagePaths.map((imagePath) => ({
+                      path: imagePath,
+                      name: basename(imagePath)
+                    }))
+                  }
+                : {}),
+              ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {}),
+              ...(dmTargetParticipantId ? { dmTargetParticipantId } : {})
             })
             if (absorbed?.status === 'steered') {
               broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
@@ -43927,21 +44004,10 @@ if (isGeminiMcpBridgeProcess) {
             }
             iosImageThumbnails = internalQueueDispatch.imageThumbnails ?? []
           } else if (action.imageAttachments?.length) {
-            // Truth check BEFORE materializing anything: a live phone send
-            // with attachments to a lane that has no image transport gets an
-            // immediate honest refusal toast instead of a run whose model
-            // denies seeing the image. (Queued sends settle the same way via
-            // the central dispatch gate + the catch below.)
-            if (!providerDeliversImageAttachments(provider)) {
-              return {
-                dispatched: false,
-                appRunId: null,
-                reason: describeImageAttachmentRefusal(
-                  providerLabel(provider),
-                  action.imageAttachments.length
-                )
-              }
-            }
+            // Materialize for transcript thumbnails even when the lane has no
+            // image transport. The shared dispatch gate strips provider
+            // imagePaths and surfaces an explicit omission warning so the text
+            // turn still runs (warn-and-continue, never silent omit).
             try {
               const persisted = persistRemoteImageAttachments({
                 appChatId: action.threadId,
@@ -52696,7 +52762,8 @@ if (isGeminiMcpBridgeProcess) {
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),
       persistSessionCheckpoint: (chat, reason) =>
         sessionCheckpointStoreRef?.upsertFromChat(chat, reason),
-      appendMidRunSteering: ({ chatId, text }) => appendEnsembleSteerIntoLiveRound(chatId, text),
+      appendMidRunSteering: ({ chatId, text, imageAttachments, imageThumbnails }) =>
+        appendEnsembleSteerIntoLiveRound(chatId, text, { imageAttachments, imageThumbnails }),
       getPendingMidRunSteeringEntryIds: (chatId) =>
         midRunSteeringRegistry.undeliveredToAnyParticipant(chatId).map((entry) => entry.id),
       completeSessionCheckpoint: (chatId, roundId, status) => {
@@ -53177,13 +53244,11 @@ if (isGeminiMcpBridgeProcess) {
         if (dmTargetError) throw new Error(dmTargetError)
         const dmTargetParticipantId =
           dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
-        // Mid-run steering: a plain text steer into a LIVE round is absorbed —
-        // appended to the transcript immediately and delivered to every
-        // subsequent seat via its hop prompt's delta transcript — instead of
-        // cancelling the active speaker and restarting the round. Shape-
-        // changing steers (attachments, DM target, discord context, grants)
-        // keep the legacy interrupt semantics, as does a steer with no live
-        // dispatch (the orchestrator then simply starts a fresh round).
+        // Mid-run steering: any steer into a LIVE round is absorbed — appended
+        // immediately and delivered at the next hop — instead of cancelling
+        // the active speaker and restarting. Attachments / DM / grants /
+        // discord context merge onto the live runtime. Idle chats still
+        // beginRound via startRound below.
         const steerAbsorbRound = AppStore.getChat(chatId)?.ensemble?.activeRound
         if (
           steerAbsorbRound &&
@@ -53200,7 +53265,14 @@ if (isGeminiMcpBridgeProcess) {
           const absorbed = ensembleOrchestratorRef?.absorbMidRunSteering({
             chatId,
             text: prompt,
-            roundId: steerAbsorbRound.roundId
+            roundId: steerAbsorbRound.roundId,
+            imageAttachments: dispatchImageAttachments,
+            ...(payload?.imageThumbnails?.length
+              ? { imageThumbnails: payload.imageThumbnails }
+              : {}),
+            ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+            ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
+            ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {})
           })
           if (absorbed?.status === 'steered') return absorbed
         }
