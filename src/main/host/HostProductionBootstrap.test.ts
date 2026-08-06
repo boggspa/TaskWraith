@@ -163,6 +163,36 @@ describe('HostProductionBootstrap options validation', () => {
     ).toThrow('HostProductionBootstrap requires an injected chatList')
   })
 
+  it('accepts a class-like chatList whose static getChatList satisfies the port', () => {
+    // Production passes `AppStore` — a class whose static `getChatList`
+    // structurally satisfies HostProductionChatListPort. The guard now
+    // checks the METHOD (typeof getChatList === 'function'), not the
+    // container, so a class-with-statics is a valid port. This was seen
+    // FAILING (throwing) before the fix and MUST stay green — it pins the
+    // exact shape that shipped broken in Wave 4.8.
+    class ChatStoreStub {
+      static getChatList(_workspaceId?: string): [] {
+        return []
+      }
+    }
+    const result = createHostProductionBootstrap(
+      validOptions({ chatList: ChatStoreStub as unknown as HostProductionChatListPort })
+    )
+    expect(result).toBeDefined()
+  })
+
+  it('rejects an empty object chatList — a hole that is open today', () => {
+    // Today `typeof {} === 'object'` passes the guard, so an empty object
+    // sails through construction and explodes at first snapshot call.
+    // After the fix (checking `typeof options.chatList.getChatList !== 'function'`),
+    // this MUST throw and this test name stays correct.
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({ chatList: {} as unknown as HostProductionChatListPort })
+      )
+    ).toThrow('HostProductionBootstrap requires an injected chatList')
+  })
+
   it('rejects missing bridge', () => {
     expect(() =>
       createHostProductionBootstrap(

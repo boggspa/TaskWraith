@@ -187,9 +187,11 @@ export interface HostProductionBootstrapOptions {
   /** Host identity for session binding and discovery. */
   readonly host: HostSessionHostIdentity
   /**
-   * Chat-list accessor. `ChatStore` satisfies this structurally via its
-   * static `getChatList`, so the root passes the singleton directly rather
-   * than authoring an adapter.
+   * Chat-list accessor. `AppStore` satisfies this structurally via its
+   * static `getChatList`, so the root passes the class directly — the
+   * guard checks the METHOD (`typeof getChatList === 'function'`), not
+   * the container, precisely so a class-with-statics is a valid port
+   * without an adapter.
    */
   readonly chatList: HostProductionChatListPort
   /**
@@ -284,7 +286,7 @@ export function createHostProductionBootstrap(
   if (typeof options.userDataPath !== 'string' || options.userDataPath.length === 0) {
     throw new Error('HostProductionBootstrap requires an injected userDataPath')
   }
-  if (!options.chatList || typeof options.chatList !== 'object') {
+  if (!options.chatList || typeof options.chatList.getChatList !== 'function') {
     throw new Error('HostProductionBootstrap requires an injected chatList')
   }
   if (!options.bridge || typeof options.bridge !== 'object') {
