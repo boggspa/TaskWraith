@@ -2645,6 +2645,16 @@ export function ApprovalsFooterPopover({
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {pendingLiveSummary}
       </div>
+      {/* Host Arc 4.3e — Host connection state lives here, NOT in the Devices
+          popover, because that chrome is gated behind IOS_REMOTE_ENABLED and
+          Host is not an iOS feature: with the flag off, Desktop's only Host
+          surface would disappear entirely.
+
+          Approvals is the honest home for it. Host reachability is exactly
+          what decides whether the list below can be trusted — an unreachable
+          Host means these approvals may be stale, and saying so beside them is
+          more useful than saying it somewhere else. */}
+      <HostStatusRow />
       {!hasAnyPending ? (
         <div className="sidebar-footer-popover-empty">No pending approvals or questions</div>
       ) : null}
@@ -2965,11 +2975,6 @@ export function DevicesFooterPopover({
       navLabel="Manage devices"
       onNav={onOpenSettings}
     >
-      {/* Host Arc 4.3d — TaskWraith Host is a connection, so it belongs on the
-          connections surface. Always shown, above the paired-device list: it
-          is not a paired device, and its absence would be as meaningful as
-          its presence. */}
-      <HostStatusRow />
       {devices.length === 0 ? (
         <div className="sidebar-footer-popover-empty">No paired devices</div>
       ) : (

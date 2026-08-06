@@ -12,8 +12,20 @@
  */
 
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
+// Wave 4.3e — the iOS remote flag is forced OFF for this whole file.
+//
+// That is the condition the placement pin exists to survive: Host is not an
+// iOS feature, so Desktop's Host surface must not vanish when iOS remote
+// chrome is switched off. Both flags are mocked because the module exports
+// two, and a partial mock would leave the other undefined at import time.
+vi.mock('../lib/featureFlags', () => ({
+  IOS_REMOTE_ENABLED: false,
+  ACTIVITY_REPORTING_CONFIGURED: false
+}))
+
+import { ApprovalsFooterPopover, DevicesFooterPopover } from './Sidebar'
 import { HostProjectionProvider } from './HostProjectionProvider'
 import { HostStatusRow, describeHostConnection } from './HostStatusRow'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
@@ -173,5 +185,34 @@ describe('HostStatusRow · rendered output', () => {
   it('reports Not checked when no provider is mounted', () => {
     const markup = renderToStaticMarkup(<HostStatusRow />)
     expect(markup).toContain('Not checked')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Wave 4.3e — placement: Host must not live behind the iOS flag     */
+/* ------------------------------------------------------------------ */
+
+describe('HostStatusRow · placement is not gated by the iOS remote flag', () => {
+  // These two are a PAIR and only mean something together. The first proves a
+  // Host surface exists with iOS remote off; the second proves it is not ALSO
+  // (or instead) hiding in the gated Devices chrome. Either alone could be
+  // satisfied by a mistake.
+  //
+  // 4.3d's tests rendered HostStatusRow directly, so they could not fail when
+  // the row became unreachable — that test gap was the real defect, not the
+  // placement. These render the CONTAINING popovers instead.
+
+  it('surfaces Host from an UNGATED popover while iOS remote is off', () => {
+    const markup = renderToStaticMarkup(
+      <ApprovalsFooterPopover pendingApprovals={[]} onOpenSettings={() => {}} />
+    )
+    expect(markup).toContain('TaskWraith Host')
+  })
+
+  it('does NOT hide Host inside the iOS-gated Devices popover', () => {
+    const markup = renderToStaticMarkup(
+      <DevicesFooterPopover devices={[]} onOpenSettings={() => {}} />
+    )
+    expect(markup).not.toContain('TaskWraith Host')
   })
 })
