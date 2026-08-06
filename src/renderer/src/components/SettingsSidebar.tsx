@@ -162,6 +162,12 @@ function SettingsTabSymbolIcon({ tab }: { tab: SettingsTab }) {
       <svg {...common}>
         <path d="m9.8 2.4 3.8 3.8-2.1 1.2-.8 3-1.5-1.5-3.8 3.8-2.1-2.1 3.8-3.8-1.5-1.5 3-.8Z" />
       </svg>
+    ) : tab === 'archived' ? (
+      <svg {...common}>
+        <path d="M3 5.1h10v8H3z" />
+        <path d="M2.4 3h11.2l.5 2.1H1.9Z" />
+        <path d="M6 8.5h4" />
+      </svg>
     ) : tab === 'model-usage' ? (
       <svg {...common}>
         <path d="M3 12.8V7.2M6.3 12.8V4.8M9.7 12.8V6.5M13 12.8V3.2" />

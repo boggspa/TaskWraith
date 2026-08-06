@@ -111,6 +111,7 @@ import { LocalServersSettingsPanel } from './LocalServersSettingsPanel'
 import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { AgentPoolContainer } from './AgentPoolContainer'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
+import { ArchivedThreadsSettings } from './ArchivedThreadsSettings'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ThirdPartyNoticesSettings } from './ThirdPartyNoticesSettings'
 import { ActivityReportingSettings } from './ActivityReportingSettings'
@@ -2776,6 +2777,7 @@ export type SettingsTab =
   | 'shares'
   | 'workspaces'
   | 'pinned-messages'
+  | 'archived'
   | 'model-usage'
   | 'local-servers'
   | 'notification-banners'
@@ -3076,6 +3078,14 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     group: 'data',
     description: 'Pinned transcript snippets and saved context across chats.',
     aliases: ['pins', 'messages', 'saved context', 'notes'],
+    scope: 'global'
+  },
+  {
+    id: 'archived',
+    label: 'Archived',
+    group: 'data',
+    description: 'Restore, permanently delete, or export archived conversation threads.',
+    aliases: ['archive', 'archived', 'history', 'restore', 'unarchive', 'export threads'],
     scope: 'global'
   },
   {
@@ -11180,6 +11190,9 @@ export function SettingsPanel({
             onOpenPinnedMessage={onOpenPinnedMessage}
           />
         )}
+
+        {/* ── Archived Threads ────────────────────────────────────────── */}
+        {activeTab === 'archived' && <ArchivedThreadsSettings />}
 
         {/* ── Roster (ensemble roster presets + per-participant editor) ──── */}
         {activeTab === 'roster' && (

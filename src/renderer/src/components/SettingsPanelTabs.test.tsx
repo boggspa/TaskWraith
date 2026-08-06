@@ -61,6 +61,7 @@ describe('Settings tabs', () => {
     expect(tabsById['mcp-servers']?.label).toBe('MCP Servers')
     expect(tabsById['approval-ledger']?.label).toBe('Approvals & Grants')
     expect(tabsById['safety-privacy']?.label).toBe('Safety & Privacy')
+    expect(tabsById.archived?.label).toBe('Archived')
 
     expect(settingsTabMatchesQuery(tabsById['key-commands'], 'hotkeys')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.mcp, 'tool audit')).toBe(true)
@@ -89,6 +90,7 @@ describe('Settings tabs', () => {
     expect(settingsTabMatchesQuery(tabsById['model-usage'], 'rates')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['model-usage'], 'pricing')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['model-usage'], 'api cost')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById.archived, 'unarchive')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.appearance, 'billing')).toBe(false)
   })
 
