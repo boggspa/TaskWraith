@@ -135,6 +135,15 @@ export interface HostProjectedSnapshot {
   readonly threads: readonly HostProjectedThread[]
   readonly providers: readonly HostProjectedProvider[]
   readonly usage: HostProjectedUsage
+  /**
+   * Wave 5d — the typed `code` of every Host warning, in wire order.
+   *
+   * Views match on CODE, never on `message`. Prose matching is the bug class
+   * this repo already hit, where a predicate whose entire job was proving
+   * connection was satisfied by the string "Host is not connected". Messages
+   * are for humans; codes are for logic.
+   */
+  readonly warningCodes: readonly string[]
   /** Counts only — never the underlying rows. */
   readonly counts: {
     readonly runs: number
@@ -266,6 +275,7 @@ export function projectHostSnapshot(
     threads: snapshot.threads.map(projectThread),
     providers: snapshot.providers.map(projectProvider),
     usage: projectUsage(snapshot.usage),
+    warningCodes: snapshot.warnings.map((warning) => warning.code),
     counts: {
       runs: snapshot.runs.length,
       missions: snapshot.missions.length,

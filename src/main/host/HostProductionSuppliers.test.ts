@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { projectHostSnapshot } from './HostSnapshotProjector'
 import type { HostProviderModelProjection } from '../../shared/hostProtocol'
+import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
 import {
   createHostProductionSuppliers,
   type HostProductionChatListEntry,
@@ -642,5 +643,76 @@ describe('HostProductionSuppliers provider mapping', () => {
     await donor()
     await donor()
     expect(getProviders).toHaveBeenCalledTimes(2)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5d — RED PIN 1 (SOURCE): not-ready must reach the wire        */
+/* ------------------------------------------------------------------ */
+
+describe('HostProductionSuppliers · Wave 5d provider readiness warning', () => {
+  it('emits the provider-source-not-ready warning when the port reports NOT READY', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: {
+        getProviders: () => [],
+        readProviders: () => ({ providers: [], sourceReady: false })
+      }
+    })
+    const families = await donor()
+
+    // The rows are empty AND the reason is on the wire. Without the code a
+    // client cannot tell this from a genuine measured zero.
+    expect(families.providers).toEqual([])
+    expect(families.warnings.map((w) => w.code)).toContain(HOST_WARNING_PROVIDER_SOURCE_NOT_READY)
+  })
+
+  it('emits NO warning when the source is READY and genuinely empty', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: {
+        getProviders: () => [],
+        readProviders: () => ({ providers: [], sourceReady: true })
+      }
+    })
+    const families = await donor()
+
+    // A real measured zero must NOT be dressed up as unknown — that would
+    // simply invert the lie.
+    expect(families.providers).toEqual([])
+    expect(families.warnings.map((w) => w.code)).not.toContain(
+      HOST_WARNING_PROVIDER_SOURCE_NOT_READY
+    )
+  })
+
+  it('treats a THROWING provider port as unknown, not as a measured zero', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: {
+        getProviders: () => {
+          throw new Error('provider registry unavailable')
+        }
+      }
+    })
+    const families = await donor()
+
+    expect(families.providers).toEqual([])
+    expect(families.warnings.map((w) => w.code)).toContain(HOST_WARNING_PROVIDER_SOURCE_NOT_READY)
+  })
+
+  it('carries a bounded snake_case code and never leaks source prose', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      providers: {
+        getProviders: () => [],
+        readProviders: () => ({ providers: [], sourceReady: false })
+      }
+    })
+    const families = await donor()
+    const warning = families.warnings.find((w) => w.code === HOST_WARNING_PROVIDER_SOURCE_NOT_READY)
+
+    expect(warning?.code).toMatch(/^[a-z][a-z0-9_]*$/)
+    expect(warning?.severity).toBe('info')
+    expect(typeof warning?.warningId).toBe('string')
   })
 })

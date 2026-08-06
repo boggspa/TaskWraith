@@ -148,3 +148,43 @@ describe('createHostProductionProviderAdmission', () => {
     expect(getConfiguredSnapshot).toHaveBeenCalledTimes(2)
   })
 })
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5d — readiness is a fact the port must carry                 */
+/* ------------------------------------------------------------------ */
+
+describe('createHostProductionProviderAdmission · Wave 5d source readiness', () => {
+  it('reports sourceReady FALSE when the configured snapshot is not ready', () => {
+    const port = createHostProductionProviderAdmission({
+      getConfiguredSnapshot: () => ({ ready: false, providerIds: ['claude'] })
+    })
+    // Not-ready is UNKNOWN, not zero. The rows are empty either way; the
+    // difference has to travel on the flag, because [] cannot express it.
+    expect(port.readProviders?.()).toEqual({ providers: [], sourceReady: false })
+  })
+
+  it('reports sourceReady TRUE when the snapshot is ready and genuinely empty', () => {
+    const port = createHostProductionProviderAdmission({
+      getConfiguredSnapshot: () => ({ ready: true, providerIds: [] })
+    })
+    const read = port.readProviders?.()
+    expect(read?.sourceReady).toBe(true)
+    expect(read?.providers).toEqual([])
+  })
+
+  it('reports sourceReady FALSE when the deps throw — a broken source is unknown, not zero', () => {
+    const port = createHostProductionProviderAdmission({
+      getConfiguredSnapshot: () => {
+        throw new Error('discovery exploded')
+      }
+    })
+    expect(port.readProviders?.()).toEqual({ providers: [], sourceReady: false })
+  })
+
+  it('keeps getProviders() and readProviders() on ONE mapping path', () => {
+    const port = createHostProductionProviderAdmission({
+      getConfiguredSnapshot: () => ({ ready: true, providerIds: ['claude'] })
+    })
+    expect(port.getProviders()).toEqual(port.readProviders?.().providers)
+  })
+})

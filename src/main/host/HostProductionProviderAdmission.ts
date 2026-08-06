@@ -26,7 +26,10 @@ import {
   taskWraithProviderLabel,
   taskWraithProviderShortCode
 } from '../../shared/taskWraithProviderPresentation'
-import type { HostProductionProviderListPort } from './HostProductionSuppliers'
+import type {
+  HostProductionProviderListPort,
+  HostProviderListRead
+} from './HostProductionSuppliers'
 
 /** Fixed admission notes only — never credentials or free-form source text. */
 export const HOST_PROVIDER_ADMISSION_NOTES = {
@@ -139,14 +142,32 @@ export function mapConfiguredProviderSnapshotToHostProviders(
 export function createHostProductionProviderAdmission(
   deps: HostProductionProviderAdmissionDeps
 ): HostProductionProviderListPort {
+  // Wave 5d. ONE snapshot read produces BOTH the rows and the readiness flag.
+  // Two separate reads would be a TOCTOU: the source can settle between them,
+  // and we would publish rows from one observation with readiness from another.
+  const read = (): HostProviderListRead => {
+    try {
+      if (!deps || typeof deps.getConfiguredSnapshot !== 'function') {
+        return { providers: [], sourceReady: false }
+      }
+      const snapshot = deps.getConfiguredSnapshot()
+      return {
+        providers: mapConfiguredProviderSnapshotToHostProviders(snapshot),
+        // `ready` is the source's own word for "the background pass finished".
+        // Until then its empty set means NOT-YET-KNOWN, not "there are none"
+        // — see ProviderConfiguration.ts, which documents that contract.
+        sourceReady: snapshot?.ready === true
+      }
+    } catch {
+      // A source that throws has told us nothing. Unknown is not zero.
+      return { providers: [], sourceReady: false }
+    }
+  }
+
   return {
     getProviders(): HostProviderModelProjection[] {
-      try {
-        if (!deps || typeof deps.getConfiguredSnapshot !== 'function') return []
-        return mapConfiguredProviderSnapshotToHostProviders(deps.getConfiguredSnapshot())
-      } catch {
-        return []
-      }
-    }
+      return read().providers
+    },
+    readProviders: read
   }
 }

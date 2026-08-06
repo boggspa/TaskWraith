@@ -30,6 +30,7 @@
 import { useHostProjection } from '../hooks/useHostProjection'
 import { useHostProjectionStore } from './HostProjectionProvider'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
+import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
 
 /** What the row should show. Pure data so it can be tested without React. */
 export interface HostConnectionView {
@@ -120,6 +121,20 @@ export interface HostProvidersView {
 export function describeHostProviders(state: HostProjectionState): HostProvidersView {
   const projection = state.projection
   if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+    return { known: false, label: 'Unknown' }
+  }
+
+  // Wave 5d — THE DISTINCTION AN EMPTY ARRAY CANNOT MAKE.
+  //
+  // `providers` is required on the wire, so [] means BOTH "Host measured
+  // none" AND "the source has not finished discovering". Host tells us which
+  // by publishing a typed warning code. Counting without consulting it
+  // renders a confident zero for an unknown — fabricated telemetry, which the
+  // arc goal forbids by name.
+  //
+  // `?? []` because a projection may predate this field; a missing code list
+  // means "no warnings", which correctly falls through to the real count.
+  if ((projection.warningCodes ?? []).includes(HOST_WARNING_PROVIDER_SOURCE_NOT_READY)) {
     return { known: false, label: 'Unknown' }
   }
 

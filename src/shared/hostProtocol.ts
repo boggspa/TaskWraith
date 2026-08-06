@@ -308,6 +308,24 @@ export interface HostArtifactProjection {
   sha256?: string
 }
 
+/**
+ * Wave 5d — stable warning codes.
+ *
+ * Clients MUST match on `code`, never on `message`. Prose matching is the
+ * bug class this repo already hit once, where a predicate whose whole job was
+ * proving connection was satisfied by the string "Host is not connected".
+ * Codes are snake_case, conforming to the existing vocabulary
+ * (`projection_truncated`, `invalid_command_id`, `receipt_failed`).
+ *
+ * PROVIDER_SOURCE_NOT_READY carries a distinction the `providers` family
+ * cannot express by itself: that array is REQUIRED, so an empty one means
+ * BOTH "measured none" AND "source has not finished discovering". Without
+ * this code a client renders a confident zero for an unknown — fabricated
+ * telemetry, which the arc goal forbids by name ("Unavailable telemetry is
+ * not zero").
+ */
+export const HOST_WARNING_PROVIDER_SOURCE_NOT_READY = 'provider_source_not_ready'
+
 export interface HostWarningProjection {
   warningId: string
   severity: 'info' | 'warning' | 'error'

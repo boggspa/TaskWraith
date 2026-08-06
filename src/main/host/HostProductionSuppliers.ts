@@ -40,6 +40,8 @@ import type {
   AppStoreHostAuthoritySnapshotDonor,
   AppStoreHostAuthoritySnapshotDonorFamilies
 } from './AppStoreHostAuthority'
+import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
+import type { HostWarningProjection } from '../../shared/hostProtocol'
 
 /* ------------------------------------------------------------------ */
 /*  Store ports — thin interfaces the composition root adapts         */
@@ -89,8 +91,27 @@ export interface HostProductionChatListEntry {
  *   inside a pass-through string reaches the wire and the client
  *   projection faithfully renders it.
  */
+/**
+ * Wave 5d — one atomic read of rows AND source readiness.
+ *
+ * `providers` is a REQUIRED array on the wire, so an empty one cannot by
+ * itself distinguish "measured none" from "source has not answered yet".
+ * This carries that distinction out of the port so the donor can publish it.
+ */
+export interface HostProviderListRead {
+  readonly providers: HostProviderModelProjection[]
+  /** FALSE when the source has not finished discovering. Empty ≠ zero. */
+  readonly sourceReady: boolean
+}
+
 export interface HostProductionProviderListPort {
   getProviders(): HostProviderModelProjection[]
+  /**
+   * Optional. When present the donor PREFERS it, because it reports readiness.
+   * A port implementing only `getProviders` is treated as ready — it has no
+   * readiness concept to report, and inventing one would be fabrication.
+   */
+  readProviders?(): HostProviderListRead
 }
 
 /* ------------------------------------------------------------------ */
@@ -216,13 +237,41 @@ export function createHostProductionSuppliers(
     }
 
     /* ---- providers (from admission port) ---- */
-    let providers: HostProviderModelProjection[]
+    let providers: HostProviderModelProjection[] = []
+    /* Wave 5d. Defaults TRUE for the NO-PORT case: a donor with no provider
+     * source has nothing to be "not ready" about, and an existing pin asserts
+     * an empty warnings list there. Whether an absent port should itself be
+     * reported as unknown is a separate question, named in the handoff. */
+    let providerSourceReady = true
     try {
-      providers = options.providers ? options.providers.getProviders() : []
+      const port = options.providers
+      if (port?.readProviders) {
+        const read = port.readProviders()
+        providers = read.providers
+        providerSourceReady = read.sourceReady === true
+      } else if (port) {
+        providers = port.getProviders()
+      }
     } catch {
       /* Provider read failed — honest empty, never fabricate a row.
-       * "Unavailable telemetry is not zero." */
+       * "Unavailable telemetry is not zero." A throwing source has told us
+       * NOTHING, so the emptiness is unknown and must say so. */
       providers = []
+      providerSourceReady = false
+    }
+
+    /* Readiness travels as a typed warning CODE, not as prose. `providers`
+     * is required on the wire, so this is the only carrier that does not
+     * need a protocol version bump. */
+    const warnings: HostWarningProjection[] = []
+    if (!providerSourceReady) {
+      warnings.push({
+        warningId: `${HOST_WARNING_PROVIDER_SOURCE_NOT_READY}:providers`,
+        severity: 'info',
+        code: HOST_WARNING_PROVIDER_SOURCE_NOT_READY,
+        message: 'provider source has not finished discovering; empty is unknown, not measured',
+        at: Date.now()
+      })
     }
 
     return {
@@ -239,7 +288,7 @@ export function createHostProductionSuppliers(
       schedules: [],
       usage: HONEST_USAGE,
       artifacts: [],
-      warnings: []
+      warnings
     }
   }
 }

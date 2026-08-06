@@ -28,6 +28,7 @@ vi.mock('../lib/featureFlags', () => ({
 import { ApprovalsFooterPopover, DevicesFooterPopover } from './Sidebar'
 import { HostProjectionProvider } from './HostProjectionProvider'
 import { HostStatusRow, describeHostConnection, describeHostProviders } from './HostStatusRow'
+import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import type { HostSnapshot } from '../../../shared/hostProtocol'
@@ -322,5 +323,81 @@ describe('HostStatusRow · Desktop actually reads providers from Host', () => {
     expect(markup).toContain('Host providers')
     expect(markup).toContain('Unknown')
     expect(markup).not.toContain('0 of 0')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5d — an empty family is TWO different facts                  */
+/* ------------------------------------------------------------------ */
+
+const projectionWithCodes = (
+  providers: Array<{ available: boolean }>,
+  warningCodes: string[]
+): never => ({ freshness: 'live', providers, warningCodes }) as never
+
+describe('describeHostProviders · not-ready is not a measured zero', () => {
+  /* ---- RED PIN 2: the code turns a confident zero into an honest unknown ---- */
+  it('renders Unknown — NOT "None reported" — when Host says the source is not ready', () => {
+    const view = describeHostProviders(
+      state({
+        status: 'live',
+        projection: projectionWithCodes([], [HOST_WARNING_PROVIDER_SOURCE_NOT_READY])
+      })
+    )
+    // The snapshot is honestly live and honestly empty. The ONLY thing that
+    // distinguishes "we measured none" from "the source has not answered yet"
+    // is this code, so the leaf must consult it.
+    expect(view.known).toBe(false)
+    expect(view.label).toBe('Unknown')
+    expect(view.total).toBeUndefined()
+  })
+
+  /* ---- RED PIN 3: THE REGRESSION GUARD ---- */
+  it('still renders "None reported" for a genuine measured zero with NO code', () => {
+    const view = describeHostProviders(
+      state({ status: 'live', projection: projectionWithCodes([], []) })
+    )
+    // Without this the repair simply inverts the lie: every real empty answer
+    // would start claiming to be unknown.
+    expect(view.known).toBe(true)
+    expect(view.total).toBe(0)
+    expect(view.label).toBe('None reported')
+  })
+
+  it('ignores UNRELATED warning codes — only the provider code suppresses the count', () => {
+    const view = describeHostProviders(
+      state({ status: 'live', projection: projectionWithCodes([], ['projection_truncated']) })
+    )
+    expect(view.known).toBe(true)
+    expect(view.label).toBe('None reported')
+  })
+
+  it('matches on code, never on message prose', () => {
+    // A message mentioning readiness must NOT be enough. Only the typed code
+    // counts — this is the `\bCONNECTED\b` bug class, pinned.
+    const view = describeHostProviders(
+      state({
+        status: 'live',
+        projection: {
+          freshness: 'live',
+          providers: [],
+          warningCodes: [],
+          warnings: [{ message: 'provider source is not ready' }]
+        } as never
+      })
+    )
+    expect(view.label).toBe('None reported')
+  })
+
+  it('reports rows normally when the source is ready and has admitted providers', () => {
+    const view = describeHostProviders(
+      state({
+        status: 'live',
+        projection: projectionWithCodes([{ available: true }, { available: false }], [])
+      })
+    )
+    expect(view.known).toBe(true)
+    expect(view.available).toBe(1)
+    expect(view.total).toBe(2)
   })
 })

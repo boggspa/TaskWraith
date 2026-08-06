@@ -300,3 +300,46 @@ describe('projectHostSnapshot · providers', () => {
     expect(projected.providers).toEqual([])
   })
 })
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5d — warning CODES reach the view model                      */
+/* ------------------------------------------------------------------ */
+
+describe('projectHostSnapshot · warning codes', () => {
+  it('projects warning codes so a view can match on code, never on prose', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        warnings: [
+          {
+            warningId: 'provider_source_not_ready:providers',
+            severity: 'info',
+            code: 'provider_source_not_ready',
+            message: 'provider discovery has not completed',
+            at: 1
+          }
+        ]
+      } as never),
+      'live'
+    )
+    expect(projected.warningCodes).toContain('provider_source_not_ready')
+  })
+
+  it('projects an empty code list when Host reports no warnings', () => {
+    const projected = projectHostSnapshot(snapshot({ warnings: [] }), 'live')
+    expect(projected.warningCodes).toEqual([])
+  })
+
+  it('still counts warnings as well as naming them', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        warnings: [
+          { warningId: 'a', severity: 'info', code: 'a', message: 'm', at: 1 },
+          { warningId: 'b', severity: 'warning', code: 'b', message: 'm', at: 1 }
+        ]
+      } as never),
+      'live'
+    )
+    expect(projected.counts.warnings).toBe(2)
+    expect(projected.warningCodes).toEqual(['a', 'b'])
+  })
+})
