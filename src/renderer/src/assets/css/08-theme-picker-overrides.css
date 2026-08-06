@@ -12296,3 +12296,89 @@
   align-items: center;
   gap: 12px;
 }
+
+/* ── Roster-created stack ─────────────────────────────────────────────
+ * The agent switched Ensemble on mid-round and built a roster, so the row
+ * shows the roster as it now stands: a head line, then one static seat
+ * element per seat. No before side, so nothing here rolls.
+ *
+ * Layout ONLY, like `.seat-state-chips` above and for the same reason: the
+ * chips carry their own chrome strip, and a `color` declared anywhere on this
+ * chain kills the permission/hue tints that flow into the reused composer
+ * classes. */
+.seat-roster-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 3px 0;
+}
+
+/* The head names the row; the seats below carry the detail, so it takes the
+ * transcript's muted secondary weight rather than competing with them. */
+.seat-roster-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+}
+
+/* A GRID, not a stack of flex rows, and the difference is load-bearing: the
+ * role leads each seat, so unless every role shares ONE column the chips below
+ * start at ragged offsets set by whichever role happens to be longest. A fixed
+ * `min-width` cannot do it — "#2 MistralScout" overflows any width "#1 Boss"
+ * makes look right, which measured as a 19px step mid-stack. `max-content`
+ * columns size to the widest seat and every row then agrees. */
+.seat-roster-stack {
+  display: grid;
+  grid-template-columns: max-content max-content max-content;
+  justify-content: start;
+  align-items: center;
+  gap: 6px 12px;
+  /* Indented to clear the chair glyph's column, so the stack reads as the
+   * head's contents rather than as sibling rows. */
+  margin: 2px 0 0;
+  padding: 0 0 0 31px;
+  list-style: none;
+}
+
+/* Subgrid rather than `display: contents`: the seats are real list items, and
+ * `display: contents` drops the element from the box tree — which has a history
+ * of taking the list semantics with it. This keeps each `<li>` a box AND lets
+ * its three parts sit in the parent's shared columns. */
+.seat-roster-seat {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+/* Without subgrid each seat falls back to its own row, which is ragged but
+ * never broken — every part is still in reading order at full size. */
+@supports not (grid-template-columns: subgrid) {
+  .seat-roster-seat {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+}
+
+/* At narrow transcript widths the seat stops competing for one line: the
+ * permission tier is the field a squeeze would clip first, and a half-shown
+ * tier claims something about a seat's authority that it cannot finish
+ * saying. */
+@media (max-width: 720px) {
+  .seat-roster-stack {
+    grid-template-columns: minmax(0, 1fr);
+    padding-left: 12px;
+  }
+
+  .seat-roster-seat {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+}

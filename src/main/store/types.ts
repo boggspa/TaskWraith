@@ -6,8 +6,14 @@ import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
-import type { SeatChangePayload } from '../../shared/seatChange'
-export type { SeatChangePayload, SeatChangeSeatState } from '../../shared/seatChange'
+import type { SeatChangeRowPayload } from '../../shared/seatChange'
+export type {
+  SeatChangePayload,
+  SeatChangeRowPayload,
+  SeatChangeSeatState,
+  SeatRosterPayload,
+  SeatRosterSeat
+} from '../../shared/seatChange'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowSnapshot } from '../../shared/chatGitWorkflow'
 import type { ActivityArchetype, BannerTemplate } from '../../shared/bannerTemplate'
@@ -3434,8 +3440,16 @@ export interface ChatMessage {
      * Coalescing (120 s sliding window, same participant) and tombstoning
      * semantics live in shared/seatChange.ts. `content` keeps the plain
      * sentence as a fallback for surfaces that don't render the card
-     * (TUI / iOS / legacy transcripts). */
-    seatChange?: SeatChangePayload
+     * (TUI / iOS / legacy transcripts).
+     *
+     * Also carries the ROSTER-CREATED variant (`SeatRosterPayload`), where the
+     * agent switched Ensemble on mid-round and built a roster: no before side
+     * to roll from, so the row renders the new roster as a stack of static seat
+     * elements. Same carrier on purpose — the transcript dispatch and the
+     * plain-notice exclusion both key on this field's presence, and a second
+     * metadata kind would have to be taught to every one of them. Narrow with
+     * `isSeatRosterPayload`. */
+    seatChange?: SeatChangeRowPayload
     /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
      *  Persisted on the message so the card survives reload + the decision,
      *  and the raw <proposed_plan> block is stripped from `content`. */

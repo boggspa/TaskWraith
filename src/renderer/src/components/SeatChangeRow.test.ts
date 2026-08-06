@@ -35,7 +35,14 @@ describe('SeatChangeRow composer-parity contract', () => {
 
   it('renders the role right-aligned in the provider accent, with the #N seat number', () => {
     expect(rowSource).toContain('className="seat-change-role"')
-    expect(rowSource).toContain('`var(--provider-${current.hue}-color, var(--accent))`')
+    // The tint lives in `seatRoleLabel`, the one function every seat surface
+    // names a seat through — scoped to that region so this stays an assertion
+    // about the ROLE and not an accidental match on the chips' own accent.
+    const roleStart = rowSource.indexOf('function seatRoleLabel(')
+    const roleRegion = rowSource.slice(roleStart, rowSource.indexOf('function SeatStrip('))
+    expect(roleStart).toBeGreaterThanOrEqual(0)
+    expect(roleRegion).toContain('`var(--provider-${view.hue}-color, var(--accent))`')
+    expect(roleRegion).toContain('<ParticipantRoleIcon')
     // Approval-modal vocabulary: "#N Role" (1-based roster order).
     expect(rowSource).toContain('`#${state.seatNumber} ${state.role}`')
   })
@@ -43,9 +50,18 @@ describe('SeatChangeRow composer-parity contract', () => {
   it('gates freshness on the SHARED coalescing window, captured once at mount', () => {
     // Same constant main coalesces with — a magic number here would let the
     // renderer keep rolling rows main already tombstoned (or vice versa).
-    expect(rowSource).toContain(
-      "import { SEAT_CHANGE_COALESCE_WINDOW_MS } from '../../../shared/seatChange'"
-    )
+    // The value import must come from SHARED and name the constant. Matched on
+    // the line rather than the exact member list, which now also carries the
+    // roster narrowing — pinning the list makes this fail on unrelated adds.
+    const constantImport = rowSource
+      .split('\n')
+      .find(
+        (line) =>
+          line.includes('SEAT_CHANGE_COALESCE_WINDOW_MS') &&
+          line.startsWith('import {') &&
+          line.includes("'../../../shared/seatChange'")
+      )
+    expect(constantImport).toBeTruthy()
     expect(rowSource).toContain('useState(() =>')
     expect(rowSource).toContain('< SEAT_CHANGE_COALESCE_WINDOW_MS')
     // guard:architecture — the renderer must not value-import from main.
@@ -332,6 +348,77 @@ describe('SeatStateChips — a seat as a state, for third-party hosts', () => {
     const block = cssSource.slice(start, cssSource.indexOf('}', start))
     expect(block).toContain('inline-flex')
     // No composer ancestor required, and no colour: both would fight the chips.
+    expect(block).not.toContain('color:')
+  })
+})
+
+describe('SeatRosterStack — the agent built a roster mid-round', () => {
+  const start = rowSource.indexOf('function SeatRosterStack(')
+  const region = start >= 0 ? rowSource.slice(start) : ''
+
+  it('exists and is reached by narrowing the SHARED carrier, not a new metadata kind', () => {
+    // Riding `metadata.seatChange` is what lets the transcript dispatch and the
+    // plain-notice exclusion carry this row untouched. A second kind would have
+    // to be taught to both, in a file another session owns.
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(rowSource).toContain('isSeatRosterPayload')
+    expect(panelSource).toContain('msg.metadata?.seatChange ? (')
+  })
+
+  it('renders one seat per roster entry, keyed by participant', () => {
+    expect(region).toContain('roster.seats.map(')
+    // Roster ORDER is not a stable key: a seat inserted mid-flurry would re-key
+    // every seat below it and remount their chips.
+    expect(region).toContain('key={key}')
+    expect(region).toContain('<SeatClusterChip')
+    expect(region).toContain('<SeatPermissionChip')
+  })
+
+  it('does NOT roll and does NOT offer the before side', () => {
+    // A moment ago these seats did not exist, so there is nothing to roll FROM
+    // and the "was" line would be empty. The odometer's measured per-character
+    // slots would be pure cost.
+    expect(region).toContain('animate={false}')
+    expect(region).not.toContain('animate />')
+    expect(region).not.toContain('<button')
+    expect(region).not.toContain('onClick')
+    expect(region).not.toContain('seat-change-was')
+  })
+
+  it('leads each seat with the role, as the close-out table does', () => {
+    // A stack is read down its first column, so the seat's name is what the eye
+    // must land on. The single-change transcript row trails it instead, because
+    // there the question is "who moved".
+    const seatRow = region.indexOf('<li')
+    const roleAt = region.indexOf('seatRoleLabel(view, false)', seatRow)
+    const clusterAt = region.indexOf('<SeatClusterChip', seatRow)
+    expect(roleAt).toBeGreaterThan(seatRow)
+    expect(clusterAt).toBeGreaterThan(roleAt)
+  })
+
+  it('carries the chair glyph ONCE on the head, never per seat', () => {
+    // The glyph is the row's type marker. Repeating it down the stack would
+    // claim each seat was separately reconfigured.
+    expect(region.split('<SeatChairIcon />').length - 1).toBe(1)
+    const head = region.indexOf('seat-roster-head')
+    expect(head).toBeGreaterThanOrEqual(0)
+    expect(region.indexOf('<SeatChairIcon />')).toBeGreaterThan(head)
+  })
+
+  it('names the seat through the SAME helper every other seat surface uses', () => {
+    // Third copy of the role markup is how the surfaces drift; the strip, the
+    // expanded "was" line and the stack all render it through one function.
+    expect(rowSource).toContain('function seatRoleLabel(')
+    expect(rowSource).toContain('`var(--provider-${view.hue}-color, var(--accent))`')
+    expect(rowSource.split('seatRoleLabel(').length - 1).toBeGreaterThanOrEqual(4)
+  })
+
+  it('gives the stack layout only — the chips keep their own chrome and tints', () => {
+    const cssStart = cssSource.indexOf('.seat-roster-stack {')
+    expect(cssStart).toBeGreaterThanOrEqual(0)
+    const block = cssSource.slice(cssStart, cssSource.indexOf('}', cssStart))
+    // The strip must never set `color`: permission/hue tints flow into the
+    // reused composer classes and a colour here kills them.
     expect(block).not.toContain('color:')
   })
 })

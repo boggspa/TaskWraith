@@ -84,7 +84,12 @@ import type {
 } from '../store/types'
 import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
 import type { SeatChangeSeatState } from '../store/types'
-import { coalesceSeatChangeMessages, resolveSeatAuthority } from '../../shared/seatChange'
+import {
+  coalesceSeatChangeMessages,
+  coalesceSeatRosterMessages,
+  resolveSeatAuthority
+} from '../../shared/seatChange'
+import type { SeatRosterSeat } from '../../shared/seatChange'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import {
   findAllMentions,
@@ -6391,9 +6396,34 @@ export class EnsembleOrchestrator {
       action === 'edit_participant' && affectedBefore && affectedAfter
         ? `Authoritative seat change applied for ${label}: ${participantSeatValue(affectedBefore)} -> ${participantSeatValue(affectedAfter)}.`
         : `Boss ${verb} ${label}.`
+    // A roster CREATED mid-round is the solo→Ensemble case the stack is for:
+    // before this add the thread held at most its one seed seat, so there is no
+    // before side and the row should show the whole new roster. Adds onto an
+    // ALREADY established roster keep their plain status line — except while a
+    // stack from a creation flurry is still open, which 'refresh-only' folds
+    // them into rather than stranding the reader between two vocabularies.
+    const rosterStackMode =
+      action === 'add_participant' && latestChat.ensemble.participants.length <= 1
+        ? 'create-or-refresh'
+        : 'refresh-only'
     if (action === 'edit_participant' && affectedBefore && affectedAfter) {
       this.appendSeatChange(runtime.chatId, runtime.roundId, affectedBefore, affectedAfter, message)
-    } else {
+      // The edit has its own animated row; this only stops an open stack from
+      // going on displaying the seat's superseded configuration.
+      this.appendSeatRoster(
+        runtime.chatId,
+        runtime.roundId,
+        resolution.nextParticipants,
+        'refresh-only'
+      )
+    } else if (
+      !this.appendSeatRoster(
+        runtime.chatId,
+        runtime.roundId,
+        resolution.nextParticipants,
+        rosterStackMode
+      )
+    ) {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
     }
     return {
@@ -18566,6 +18596,92 @@ export class EnsembleOrchestrator {
       this.deps.now()
     )
     const id = `ensemble-seat-change-${roundId}-${this.deps.now()}-${this.nextStatusSeq()}`
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [
+          ...messages,
+          {
+            id,
+            role: 'system',
+            content,
+            timestamp,
+            metadata: {
+              kind: 'ensembleSeatChange',
+              ensembleRoundId: roundId,
+              seatChange: payload
+            }
+          }
+        ],
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
+    return id
+  }
+
+  /**
+   * The agent built a roster mid-round → ONE transcript row showing the roster
+   * as it now stands, as a stack of seat elements with no before side (owner
+   * spec 2026-08-06).
+   *
+   * This is the solo→Ensemble case: a single-provider thread where the agent
+   * switches Ensemble on and adds seats. There is no "before" to roll from —
+   * a moment ago the round had no such seat at all — so the row is a portrait
+   * of the new roster rather than a transition. A run of adds folds into the
+   * one row (see `coalesceSeatRosterMessages`), which is why the plain "Boss
+   * added X." status line is REPLACED here rather than written alongside.
+   *
+   * `mode: 'refresh-only'` is the caller that is not itself a roster mutation:
+   * a seat EDIT already writes its own animated row, but leaving the open
+   * roster row showing that seat's superseded config would make it a lie.
+   *
+   * Returns the row id, or null when nothing was written — the caller falls
+   * back to its plain status line on null, so a mutation is never silent.
+   */
+  private appendSeatRoster(
+    chatId: string,
+    roundId: string,
+    participants: readonly EnsembleParticipant[],
+    mode: 'create-or-refresh' | 'refresh-only'
+  ): string | null {
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) return null
+    const seats = participants.filter((participant) => participant.enabled !== false)
+    if (seats.length === 0) return null
+    const grantsCount = chat.workspacePath
+      ? (this.deps.getSettings().agenticWorkspaceGrants || []).filter(
+          (grant) => grant.workspacePath === chat.workspacePath
+        ).length
+      : undefined
+    const rosterSeats: SeatRosterSeat[] = seats.map((participant) => ({
+      participantId: participant.id,
+      ...seatChangeSeatState(
+        participant,
+        grantsCount,
+        resolveSeatAuthority({
+          participantId: participant.id,
+          stageRole: participant.stageRole,
+          bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+          captainParticipantIds: chat.ensemble?.captainParticipantIds
+        })
+      )
+    }))
+    const timestamp = this.deps.nowIso()
+    const label = `Ensemble roster applied — ${rosterSeats.length} seat${
+      rosterSeats.length === 1 ? '' : 's'
+    }`
+    const { messages, payload } = coalesceSeatRosterMessages(
+      chat.messages,
+      { seats: rosterSeats, label, appliedAt: timestamp },
+      this.deps.now(),
+      mode
+    )
+    if (!payload) return null
+    // The plain sentence is what TUI / iOS / copy-paste read — the stack is a
+    // renderer promotion, so the roster has to survive in prose too.
+    const content = `${label}: ${seats.map((participant) => participantSeatValue(participant)).join('; ')}.`
+    const id = `ensemble-seat-roster-${roundId}-${this.deps.now()}-${this.nextStatusSeq()}`
     this.saveChatWithCheckpoint(
       {
         ...chat,

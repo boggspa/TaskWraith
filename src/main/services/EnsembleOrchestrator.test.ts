@@ -30,6 +30,7 @@ import type {
 } from '../store/types'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
+import { isSeatRosterPayload } from '../../shared/seatChange'
 import {
   buildEnsembleDynamicStateSnapshot,
   computeEnsemblePromptShellStamp
@@ -8855,6 +8856,110 @@ Next action:
     ).toBe(true)
   })
 
+  it('shows a roster the agent built mid-round as ONE stacked row with no before side', async () => {
+    const initialChat = makeChat()
+    // The solo→Ensemble case: the thread holds its single seed seat and nothing
+    // else, then the agent switches Ensemble on and builds the roster around it.
+    initialChat.ensemble!.participants = [initialChat.ensemble!.participants[0]]
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    for (const participant of [
+      { provider: 'kimi' as const, role: 'Verifier', model: 'kimi-k2', permissionPresetId: 'plan' },
+      { provider: 'codex' as const, role: 'Scout', model: 'gpt-5.5', permissionPresetId: 'plan' }
+    ]) {
+      const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+        action: 'add_participant',
+        participant
+      })
+      expect(result.ok).toBe(true)
+    }
+
+    const rosterRows = harness.chat.messages.filter((message) =>
+      isSeatRosterPayload(message.metadata?.seatChange)
+    )
+    // Building a roster is a RUN of adds; one row per add would bury the round
+    // in lines that each state a fraction of the truth.
+    expect(rosterRows).toHaveLength(1)
+    const payload = rosterRows[0].metadata?.seatChange
+    if (!isSeatRosterPayload(payload)) throw new Error('expected the roster variant')
+    // The whole roster as it now stands — the seed seat included, in order.
+    expect(payload.seats.map((seat) => seat.role)).toEqual(['Boss', 'Verifier', 'Scout'])
+    // No before side at all: a moment ago these seats did not exist.
+    expect(payload).not.toHaveProperty('before')
+    expect(payload).not.toHaveProperty('after')
+    expect(rosterRows[0].metadata?.kind).toBe('ensembleSeatChange')
+    // The plain status line is REPLACED, not written beside the stack.
+    expect(harness.chat.messages.some((message) => message.content.includes('Boss added'))).toBe(
+      false
+    )
+    // ...but prose surfaces (TUI / iOS / copy-paste) still get the whole roster.
+    expect(rosterRows[0].content).toContain('Verifier')
+    expect(rosterRows[0].content).toContain('Scout')
+  })
+
+  it('keeps an open roster stack truthful when the agent edits a seat it just added', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants = [initialChat.ensemble!.participants[0]]
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const added = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'add_participant',
+      participant: { provider: 'codex', role: 'Scout', model: 'gpt-5.5', permissionPresetId: 'plan' }
+    })
+    expect(added.ok).toBe(true)
+
+    await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: added.participantId,
+      participant: { model: 'gpt-5.6' }
+    })
+
+    const rosterRows = harness.chat.messages.filter((message) =>
+      isSeatRosterPayload(message.metadata?.seatChange)
+    )
+    // Still one stack — the edit refreshes it rather than opening a second.
+    expect(rosterRows).toHaveLength(1)
+    const payload = rosterRows[0].metadata?.seatChange
+    if (!isSeatRosterPayload(payload)) throw new Error('expected the roster variant')
+    // The stack must not go on displaying the seat's superseded model.
+    expect(payload.seats.map((seat) => seat.model)).toContain('gpt-5.6')
+    expect(payload.seats.map((seat) => seat.model)).not.toContain('gpt-5.5')
+  })
+
   it('emits a structured seatChange transcript row and coalesces rapid edits to one row', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -8937,10 +9042,15 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const seatChangeRow = () =>
-      harness.chat.messages.filter(
-        (message) => message.metadata?.seatChange?.participantId === 'codex'
-      ).at(-1)?.metadata?.seatChange
+    // `metadata.seatChange` also carries the roster-created STACK, which has no
+    // before/after to compare. Narrowing through the shared guard rather than
+    // casting keeps this a real assertion that a roster row never lands here.
+    const seatChangeRow = () => {
+      const payload = harness.chat.messages
+        .filter((message) => message.metadata?.seatChange?.participantId === 'codex')
+        .at(-1)?.metadata?.seatChange
+      return isSeatRosterPayload(payload) ? undefined : payload
+    }
 
     // Brief only: provider, model, role, tier, grants and stage all hold, so
     // every chip on the row is identical on both sides. Without the flag the

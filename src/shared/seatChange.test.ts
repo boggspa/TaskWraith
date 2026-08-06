@@ -5,9 +5,12 @@ import {
   coalesceSeatChangeMessages,
   decodeSeatChangeLink,
   encodeSeatChangeLink,
+  coalesceSeatRosterMessages,
+  isSeatRosterPayload,
   resolveSeatAuthority,
   type SeatChangeCarrierMessage,
-  type SeatChangePayload
+  type SeatChangePayload,
+  type SeatRosterPayload
 } from './seatChange'
 
 const T0 = Date.parse('2026-08-05T12:00:00.000Z')
@@ -256,5 +259,95 @@ describe('seat link carries the glyph fields', () => {
     const decoded = decodeSeatChangeLink(bad)
     expect(decoded?.after).not.toHaveProperty('stageRole')
     expect(decoded?.after).not.toHaveProperty('authority')
+  })
+})
+
+/* ── Roster-created stack ───────────────────────────────────────── */
+
+function rosterSeat(participantId: string, provider: string, model: string, role: string) {
+  return { participantId, provider, model, role, permissionPresetId: 'default' }
+}
+
+function rosterMessage(id: string, appliedAtMs: number, seats = [rosterSeat('a', 'claude', 'claude-opus-5', 'Boss')]) {
+  return {
+    id,
+    role: 'system',
+    content: 'Ensemble roster created.',
+    timestamp: new Date(appliedAtMs).toISOString(),
+    metadata: {
+      seatChange: { seats, label: 'Ensemble roster created', appliedAt: new Date(appliedAtMs).toISOString() }
+    }
+  } as unknown as SeatChangeCarrierMessage
+}
+
+const nextRoster: SeatRosterPayload = {
+  seats: [
+    rosterSeat('a', 'claude', 'claude-opus-5', 'Boss'),
+    rosterSeat('b', 'codex', 'gpt-5.6', 'Scout')
+  ],
+  label: 'Ensemble roster created',
+  appliedAt: new Date(T0).toISOString()
+}
+
+describe('isSeatRosterPayload', () => {
+  it('separates the roster variant from a seat change on the same carrier', () => {
+    expect(isSeatRosterPayload(nextRoster)).toBe(true)
+    expect(isSeatRosterPayload(nextPayload)).toBe(false)
+  })
+
+  it('refuses a roster payload whose seats are not an array', () => {
+    expect(isSeatRosterPayload({ seats: 'two' } as unknown as SeatRosterPayload)).toBe(false)
+  })
+})
+
+describe('coalesceSeatRosterMessages', () => {
+  it('create-or-refresh writes a fresh row when the round has none', () => {
+    const messages = [plain('m1')]
+    const result = coalesceSeatRosterMessages(messages, nextRoster, T0, 'create-or-refresh')
+    expect(result.payload).toEqual(nextRoster)
+    expect(result.messages).toHaveLength(1)
+  })
+
+  it('folds a run of adds into ONE row carrying the roster as it now stands', () => {
+    const messages = [plain('m1'), rosterMessage('r1', T0 - 5_000), plain('m2')]
+    const result = coalesceSeatRosterMessages(messages, nextRoster, T0, 'create-or-refresh')
+    // Lose exactly one row, gain exactly one — the transcript-stability contract.
+    expect(result.messages.map((m) => (m as { id: string }).id)).toEqual(['m1', 'm2'])
+    expect(result.payload?.seats).toHaveLength(2)
+  })
+
+  it('tombstones a row outside the window and starts a new one', () => {
+    const stale = T0 - SEAT_CHANGE_COALESCE_WINDOW_MS - 1
+    const messages = [rosterMessage('r1', stale)]
+    const result = coalesceSeatRosterMessages(messages, nextRoster, T0, 'create-or-refresh')
+    expect(result.messages.map((m) => (m as { id: string }).id)).toEqual(['r1'])
+    expect(result.payload).toEqual(nextRoster)
+  })
+
+  it('refresh-only writes NOTHING when there is no in-window row to refresh', () => {
+    const result = coalesceSeatRosterMessages([plain('m1')], nextRoster, T0, 'refresh-only')
+    expect(result.payload).toBeNull()
+    expect(result.messages.map((m) => (m as { id: string }).id)).toEqual(['m1'])
+  })
+
+  it('refresh-only restamps an in-window row so a mid-flurry seat edit cannot leave it stale', () => {
+    const messages = [rosterMessage('r1', T0 - 1_000)]
+    const result = coalesceSeatRosterMessages(messages, nextRoster, T0, 'refresh-only')
+    expect(result.messages).toHaveLength(0)
+    expect(result.payload?.seats).toHaveLength(2)
+  })
+
+  it('never mistakes a seat-CHANGE row for a roster row', () => {
+    const messages = [seatChangeMessage('s1', 'p1', T0 - 1_000)]
+    const result = coalesceSeatRosterMessages(messages, nextRoster, T0, 'refresh-only')
+    expect(result.payload).toBeNull()
+    expect(result.messages).toHaveLength(1)
+  })
+
+  it('and the change coalescer never consumes a ROSTER row', () => {
+    const messages = [rosterMessage('r1', T0 - 1_000)]
+    const result = coalesceSeatChangeMessages(messages, nextPayload, T0)
+    expect(result.messages).toHaveLength(1)
+    expect(result.payload).toEqual(nextPayload)
   })
 })

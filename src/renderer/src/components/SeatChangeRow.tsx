@@ -17,8 +17,12 @@ import { resolveProviderBrandLabel } from '../lib/ollamaDisplayBrand'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { reasoningDisplayLabel } from '../lib/composerChipFormat'
 import { composerPermissionOptions } from '../lib/planModeLabels'
-import { SEAT_CHANGE_COALESCE_WINDOW_MS } from '../../../shared/seatChange'
-import type { SeatChangeLink, SeatChangePayload } from '../../../shared/seatChange'
+import { SEAT_CHANGE_COALESCE_WINDOW_MS, isSeatRosterPayload } from '../../../shared/seatChange'
+import type {
+  SeatChangeLink,
+  SeatChangePayload,
+  SeatRosterPayload
+} from '../../../shared/seatChange'
 
 /**
  * SeatChangeRow — the authoritative seat-change transcript element (owner spec
@@ -191,6 +195,37 @@ function SeatPermissionChip({
 }
 
 /**
+ * The seat's NAME: stage/authority glyph + `#N Role`, tinted with the provider
+ * accent so same-model panels stay tellable apart.
+ *
+ * One function for every surface that names a seat — the rolling strip, the
+ * expanded "was" line, and the roster stack — because a third hand-rolled copy
+ * of this markup is exactly how the seat surfaces drift apart. `animate` is the
+ * only difference between them.
+ *
+ * The glyph sits OUTSIDE the odometer deliberately: an SVG has no character
+ * runs to roll, and nesting it would hand CharOdometer a slot it cannot
+ * measure. It swaps instantly while the text rolls.
+ */
+function seatRoleLabel(view: SeatSideView, animate: boolean): JSX.Element | null {
+  if (!view.role) return null
+  return (
+    <span
+      className="seat-change-role"
+      style={{ color: `var(--provider-${view.hue}-color, var(--accent))` }}
+      title={participantRoleIconTitle(view.authority, view.stageRole) || undefined}
+    >
+      <ParticipantRoleIcon
+        authority={view.authority}
+        stageRole={view.stageRole}
+        className="seat-change-role-icon"
+      />
+      {animate ? <CharOdometer text={view.role} /> : view.role}
+    </span>
+  )
+}
+
+/**
  * The seat strip itself: chair glyph, cluster + permission chips, role. Shared
  * by the transcript row and the round close-out table so both surfaces roll
  * the same element with the same chips — the close-out just renders it inline
@@ -225,23 +260,7 @@ function SeatStrip({
   // keeps a link from ever reaching the note.
   const briefUpdated = 'briefUpdated' in seatChange && seatChange.briefUpdated === true
 
-  const role = current.role ? (
-    <span
-      className="seat-change-role"
-      style={{ color: `var(--provider-${current.hue}-color, var(--accent))` }}
-      title={participantRoleIconTitle(current.authority, current.stageRole) || undefined}
-    >
-      {/* Outside the odometer on purpose: an SVG has no character runs to
-          roll, and nesting it would give CharOdometer a slot it cannot
-          measure. The glyph swaps instantly while the text rolls. */}
-      <ParticipantRoleIcon
-        authority={current.authority}
-        stageRole={current.stageRole}
-        className="seat-change-role-icon"
-      />
-      <CharOdometer text={current.role} />
-    </span>
-  ) : null
+  const role = seatRoleLabel(current, true)
 
   return (
     <>
@@ -340,7 +359,10 @@ export function SeatChangeInlineStrip({ link }: { link: SeatChangeLink }): JSX.E
 }
 
 export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Element | null {
-  const seatChange = message.metadata?.seatChange
+  const payload = message.metadata?.seatChange
+  // Both variants ride `metadata.seatChange`; narrow before touching a side.
+  const roster = isSeatRosterPayload(payload) ? payload : null
+  const seatChange = roster ? null : (payload as SeatChangePayload | undefined)
   // Fresh = still inside the coalescing window at MOUNT — gates only the HOP
   // (the coalesced-row reposition animation). The before->after ROLL replays
   // on every mount, by owner call 2026-08-05: the row is a record of a
@@ -348,12 +370,18 @@ export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Elemen
   // remounts included) is the feature.
   const [fresh] = useState(() =>
     Boolean(
-      seatChange &&
-        Date.now() - Date.parse(seatChange.appliedAt || '') < SEAT_CHANGE_COALESCE_WINDOW_MS
+      payload && Date.now() - Date.parse(payload.appliedAt || '') < SEAT_CHANGE_COALESCE_WINDOW_MS
     )
   )
   const [expanded, setExpanded] = useState(false)
   const before = useMemo(() => (seatChange ? seatSideView(seatChange.before) : null), [seatChange])
+  // After the hooks, never before them — a message never flips variant, but the
+  // early return still has to sit below every hook call to keep the order fixed.
+  if (roster) {
+    return roster.seats.length > 0 ? (
+      <SeatRosterStack roster={roster} timestamp={message.timestamp} fresh={fresh} />
+    ) : null
+  }
   if (!seatChange || !before) return null
 
   return (
@@ -378,22 +406,66 @@ export function SeatChangeRow({ message }: { message: ChatMessage }): JSX.Elemen
           <span className="seat-change-was-label">was</span>
           <SeatClusterChip view={before} animate={false} />
           <SeatPermissionChip view={before} animate={false} />
-          {before.role && (
-            <span
-              className="seat-change-role"
-              style={{ color: `var(--provider-${before.hue}-color, var(--accent))` }}
-              title={participantRoleIconTitle(before.authority, before.stageRole) || undefined}
-            >
-              <ParticipantRoleIcon
-                authority={before.authority}
-                stageRole={before.stageRole}
-                className="seat-change-role-icon"
-              />
-              {before.role}
-            </span>
-          )}
+          {seatRoleLabel(before, false)}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * The roster-created stack — the agent switched Ensemble on mid-round and built
+ * a roster (owner spec 2026-08-06).
+ *
+ * NO before side and no roll, and the two facts are the same fact: a moment ago
+ * these seats did not exist, so there is nothing to roll FROM. That also
+ * removes the click-to-expand — a "was" line here would be blank — and makes
+ * the odometer's measured per-character slots pure cost. What is left is a
+ * portrait of the roster as it now stands.
+ *
+ * The role LEADS each seat, as it does in the close-out table and for the same
+ * reason: a stack is read down its first column, so the seat's NAME has to be
+ * what the eye lands on. The single-change transcript row trails it instead,
+ * because there the question is "who moved", not "who is here".
+ *
+ * The chair glyph rides the head once. Repeated down the stack it would claim
+ * each seat had been separately reconfigured — the very thing that did not
+ * happen.
+ */
+function SeatRosterStack({
+  roster,
+  timestamp,
+  fresh
+}: {
+  roster: SeatRosterPayload
+  timestamp?: string
+  fresh: boolean
+}): JSX.Element {
+  const seats = useMemo(
+    () => roster.seats.map((seat) => ({ key: seat.participantId, view: seatSideView(seat) })),
+    [roster]
+  )
+  const time = formatSeatChangeTime(timestamp)
+  return (
+    <div className={`message-group seat-change-message seat-roster-message${fresh ? ' is-fresh' : ''}`}>
+      <div className="seat-roster-head">
+        <span className="seat-change-icon" aria-hidden>
+          <SeatChairIcon />
+        </span>
+        <span className="seat-roster-label">{roster.label}</span>
+        {time && <span className="seat-change-time">{time}</span>}
+      </div>
+      {/* An ordered list because roster order IS the seat's meaning — it is the
+          `#N` the role wears and the order the round speaks in. */}
+      <ol className="seat-roster-stack">
+        {seats.map(({ key, view }) => (
+          <li key={key} className="seat-roster-seat">
+            {seatRoleLabel(view, false)}
+            <SeatClusterChip view={view} animate={false} />
+            <SeatPermissionChip view={view} animate={false} />
+          </li>
+        ))}
+      </ol>
     </div>
   )
 }

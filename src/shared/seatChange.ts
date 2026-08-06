@@ -79,11 +79,64 @@ export interface SeatChangePayload {
   briefUpdated?: boolean
 }
 
+/**
+ * One seat in a roster-created stack.
+ *
+ * Carries its own `participantId` because the stack is a LIST — React needs a
+ * stable key per seat, and roster order alone is not one (a seat inserted
+ * mid-flurry would re-key every seat below it and remount their chips).
+ */
+export interface SeatRosterSeat extends SeatChangeSeatState {
+  participantId: string
+}
+
+/**
+ * The roster-created variant of the seat row: the agent switched Ensemble on
+ * mid-round and built a roster, so there is no "before" to roll from — the
+ * round did not have these seats at all a moment ago. It renders as a STACK of
+ * static seat elements: the roster as it now stands, in roster order.
+ *
+ * Rides the SAME `metadata.seatChange` carrier as a seat change rather than
+ * claiming a new metadata kind, which is what keeps the transcript dispatch and
+ * the `plainSystemNoticeMessage` exclusion working untouched. `seats` is the
+ * discriminator — see `isSeatRosterPayload`.
+ */
+export interface SeatRosterPayload {
+  /** Every seat the roster now has, in roster order. */
+  seats: SeatRosterSeat[]
+  /** Human summary used as the row's heading. */
+  label: string
+  /** ISO timestamp of the LATEST fold into this row. */
+  appliedAt: string
+  /**
+   * Never set. Declared as `undefined` so that `payload.participantId` still
+   * type-checks across the union — without it every existing reader of the
+   * carrier would need a type guard before touching a field it has always read.
+   */
+  participantId?: undefined
+}
+
+/** What `metadata.seatChange` may hold: a single seat's change, or a whole
+ * roster's creation. */
+export type SeatChangeRowPayload = SeatChangePayload | SeatRosterPayload
+
+/**
+ * Which variant a carrier holds. Checks `Array.isArray` rather than truthiness
+ * because this reads off PERSISTED message metadata — an older or hand-edited
+ * row could carry anything, and a non-array `seats` must fall back to the
+ * change branch rather than reaching the stack renderer's `.map`.
+ */
+export function isSeatRosterPayload(
+  payload: SeatChangeRowPayload | undefined
+): payload is SeatRosterPayload {
+  return Array.isArray((payload as SeatRosterPayload | undefined)?.seats)
+}
+
 /** Structural slice of ChatMessage the coalescer needs — keeps this module
  * free of main-process imports. */
 export interface SeatChangeCarrierMessage {
   metadata?: {
-    seatChange?: SeatChangePayload
+    seatChange?: SeatChangeRowPayload
   }
 }
 
@@ -109,7 +162,12 @@ export function coalesceSeatChangeMessages<T extends SeatChangeCarrierMessage>(
 ): SeatChangeCoalesceResult<T> {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = messages[index]?.metadata?.seatChange
-    if (!candidate || candidate.participantId !== next.participantId) continue
+    // Roster rows share this carrier and must be stepped over explicitly. They
+    // already fell through the id comparison below (a roster payload has no
+    // participantId), but only by accident — naming the case is what stops a
+    // later `participantId` on the roster variant from silently eating one.
+    if (!candidate || isSeatRosterPayload(candidate)) continue
+    if (candidate.participantId !== next.participantId) continue
     const appliedAtMs = Date.parse(candidate.appliedAt ?? '')
     if (!Number.isFinite(appliedAtMs) || nowMs - appliedAtMs > SEAT_CHANGE_COALESCE_WINDOW_MS) {
       // Newest row for this participant is already a tombstone — stop looking.
@@ -129,6 +187,63 @@ export function coalesceSeatChangeMessages<T extends SeatChangeCarrierMessage>(
     }
   }
   return { messages: [...messages], payload: next }
+}
+
+export interface SeatRosterCoalesceResult<T extends SeatChangeCarrierMessage> {
+  messages: T[]
+  /**
+   * The roster row to append — `null` means write nothing at all, which is the
+   * whole point of `refresh-only`: a seat edit must not CONJURE a roster row
+   * into a round that never had one.
+   */
+  payload: SeatRosterPayload | null
+}
+
+/**
+ * Fold a roster mutation into the round's single roster row.
+ *
+ * Building a roster is a RUN of tool calls — the agent adds seats one at a
+ * time — and one transcript row per add would bury the round in "Boss added X."
+ * lines that each say a fraction of the truth. So the newest in-window roster
+ * row is removed and re-appended carrying the roster as it NOW stands: the
+ * reader sees one row that grows, and it is correct at every intermediate step
+ * rather than only at the end.
+ *
+ * Same lose-one/gain-one row invariance the seat-change coalescer keeps (the
+ * augmentation lanes depend on it), the same sliding window measured from the
+ * latest fold, and the same tombstoning — a roster touched after the window is
+ * closed history, and the next mutation opens a new row beneath it.
+ *
+ * `mode` is the difference between the two callers. `create-or-refresh` is a
+ * roster-building mutation (a seat added or removed). `refresh-only` is for
+ * mutations that are ALREADY reported by their own row — a seat edit writes an
+ * animated seat-change row — but which would otherwise leave an open roster row
+ * displaying a seat's superseded configuration.
+ */
+export function coalesceSeatRosterMessages<T extends SeatChangeCarrierMessage>(
+  messages: readonly T[],
+  next: SeatRosterPayload,
+  nowMs: number,
+  mode: 'create-or-refresh' | 'refresh-only'
+): SeatRosterCoalesceResult<T> {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index]?.metadata?.seatChange
+    // Seat-CHANGE rows share this carrier; walk past them. A change row sitting
+    // between two roster mutations is normal (the agent edited a seat it had
+    // just added) and must not hide the roster row behind it.
+    if (!candidate || !isSeatRosterPayload(candidate)) continue
+    const appliedAtMs = Date.parse(candidate.appliedAt ?? '')
+    if (!Number.isFinite(appliedAtMs) || nowMs - appliedAtMs > SEAT_CHANGE_COALESCE_WINDOW_MS) {
+      // Newest roster row is already a tombstone — stop looking. A refresh has
+      // nothing left to correct; a creation starts a fresh row below it.
+      break
+    }
+    return {
+      messages: [...messages.slice(0, index), ...messages.slice(index + 1)],
+      payload: next
+    }
+  }
+  return { messages: [...messages], payload: mode === 'create-or-refresh' ? next : null }
 }
 
 /* ── Close-out table links ──────────────────────────────────────────
