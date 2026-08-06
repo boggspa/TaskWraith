@@ -3937,6 +3937,16 @@ struct ContextCompactionSummaryCard: View {
     }
 }
 
+/// Collapsed per-lane fan-out result viewport — matches Electron
+/// `COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT` / LiveActivityViewport labels on
+/// `EnsembleFanoutResultCard`. Header + card chrome stay outside the scroll.
+enum TWFanoutResultViewport {
+    static let collapsedMaxHeight: CGFloat = 331
+    static let edgeFadeHeight: CGFloat = 60
+    static let expandLabel = "Expand result"
+    static let collapseLabel = "Collapse result"
+}
+
 /// Header chrome for an ensemble fan-out lane result (desktop
 /// EnsembleFanoutResultCard parity): lane glyph, lane label, provider badge,
 /// role, model chip, participant order. HEADER only — the lane's output
@@ -4540,15 +4550,22 @@ struct ThreadRowView: View, Equatable {
                     }
                 }
                 // The lane header REPLACES the plain label line and frames the
-                // body below it. With interleaved parts on the wire, the lane's
-                // prose and tool blocks render nested here in production order
-                // (desktop card parity); without them, the ordinary flat
-                // branches below keep rendering inside the lane card.
+                // body below it. Body content (parts or flat tools+prose+media)
+                // sits in a clamped LiveActivityViewport-parity window; header
+                // and TWFanoutCardChrome stay outside the scroll.
                 if let fanout = row.fanoutResult {
                     EnsembleFanoutResultHeader(fanout: fanout, modelChip: settledRowModelChip)
                 }
-                if hasFanoutTranscriptParts {
-                    fanoutTranscriptPartsBody
+                if hasFanoutResultCard {
+                    ToolActivityViewport(
+                        maxHeight: TWFanoutResultViewport.collapsedMaxHeight,
+                        fadeHeight: TWFanoutResultViewport.edgeFadeHeight,
+                        overflowSlack: 0,
+                        expandLabel: TWFanoutResultViewport.expandLabel,
+                        collapseLabel: TWFanoutResultViewport.collapseLabel
+                    ) {
+                        fanoutLaneViewportBody
+                    }
                 }
                 if let failure = row.runFailure {
                     ProviderRunFailureCard(
@@ -4642,11 +4659,11 @@ struct ThreadRowView: View, Equatable {
                             showSideChat: false
                         )
                     }
-                } else if !hasFanoutTranscriptParts, let tools = row.toolSummary,
+                } else if !hasFanoutResultCard, let tools = row.toolSummary,
                     let count = tools.activityCount, count > 0
                 {
-                    // Suppressed in parts mode: the same activities already
-                    // render inside the interleave, in their real positions.
+                    // Suppressed for fan-out lanes: tools render inside the
+                    // clamped result viewport (parts interleave or flat summary).
                     if let entries = tools.tools, !entries.isEmpty {
                         ToolActivityCards(
                             entries: entries, totalCount: count, status: tools.status)
@@ -4667,8 +4684,9 @@ struct ThreadRowView: View, Equatable {
                 // media strip too (alongside the label/preview/showExpand guards)
                 // so an image attached to the plan turn can't render orphaned
                 // beneath the card. Guard every branch — gating only the first
-                // would fall through to the else-ifs.
-                if !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                // would fall through to the else-ifs. Fan-out media lives inside
+                // the result viewport (Electron strip-in-viewport parity).
+                if !hasFanoutResultCard, !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let media = row.media, !media.isEmpty
                 {
                     #if canImport(UIKit)
@@ -4677,7 +4695,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(media.count)
                     #endif
-                } else if !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                } else if !hasFanoutResultCard, !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let thumbs = row.imageThumbnails, !thumbs.isEmpty
                 {
                     #if canImport(UIKit)
@@ -4685,7 +4703,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(thumbs.count)
                     #endif
-                } else if !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                } else if !hasFanoutResultCard, !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let count = row.imageAttachmentCount, count > 0
                 {
                     imageAttachmentChip(count)
@@ -4713,11 +4731,11 @@ struct ThreadRowView: View, Equatable {
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {
-                        // In parts mode the prose already rendered inside the
-                        // interleave; this block keeps only the footer clock and
-                        // the action bar (whose copy target stays the joined
-                        // preview — the full lane prose in one string).
-                        if !hasFanoutTranscriptParts {
+                        // Fan-out prose (parts or flat) renders inside the
+                        // clamped result viewport; this block keeps only the
+                        // footer clock and the action bar (whose copy target
+                        // stays the joined preview — the full lane prose).
+                        if !hasFanoutResultCard {
                             MarkdownLite(
                                 preview,
                                 participants: participants,
@@ -4808,6 +4826,63 @@ struct ThreadRowView: View, Equatable {
             .padding()
             .presentationDetents([.medium])
         }
+    }
+
+    /// Body content for the per-lane clamped viewport (Electron
+    /// LiveActivityViewport parity). Parts mode nests tools+prose in
+    /// production order; flat mode falls back to toolSummary + preview.
+    /// Media rides inside so the strip scrolls with the result, not under
+    /// the Expand/Collapse chip.
+    @ViewBuilder
+    private var fanoutLaneViewportBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if hasFanoutTranscriptParts {
+                fanoutTranscriptPartsBody
+            } else {
+                if let tools = row.toolSummary, let count = tools.activityCount, count > 0 {
+                    if let entries = tools.tools, !entries.isEmpty {
+                        ToolActivityCards(
+                            entries: entries, totalCount: count, status: tools.status)
+                    } else {
+                        HStack(spacing: 5) {
+                            Image(systemName: "wrench.and.screwdriver")
+                            Text(toolLine(count: count, status: tools.status))
+                            if let status = tools.status {
+                                Circle().fill(TWTheme.statusColor(status))
+                                    .frame(width: 5, height: 5)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textTertiary)
+                    }
+                }
+                if let preview = row.preview, !preview.isEmpty {
+                    MarkdownLite(
+                        preview,
+                        participants: participants,
+                        baseColor: bodyColor
+                    )
+                    .textSelection(.enabled)
+                }
+            }
+            if let media = row.media, !media.isEmpty {
+                #if canImport(UIKit)
+                    TranscriptMediaStrip(
+                        model: model, threadId: threadId, rowId: row.id, media: media)
+                #else
+                    imageAttachmentChip(media.count)
+                #endif
+            } else if let thumbs = row.imageThumbnails, !thumbs.isEmpty {
+                #if canImport(UIKit)
+                    TranscriptImageThumbnails(thumbnails: thumbs)
+                #else
+                    imageAttachmentChip(thumbs.count)
+                #endif
+            } else if let count = row.imageAttachmentCount, count > 0 {
+                imageAttachmentChip(count)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The lane's interleaved output, nested inside the card chrome — the
