@@ -1,9 +1,9 @@
 # Host Arc — Status & Progress Tracker
 
 **Documentarian:** `@SparkDocs` (paperwork owner) · **This refresh:** `@SparkDocs` (Boss rule `host-arc-docs-must-record-DONE-never-IN-FLIGHT` — record closed waves only; never in-flight Cap/adopt status)  
-**Last updated:** 2026-08-06T16:54Z continuous round  
+**Last updated:** 2026-08-06T18:17Z continuous round  
 **Branch ahead of origin/master:** moving (`git log --oneline -1` is authoritative for HEAD)  
-**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a–c** + **4.3a pure/wire/adapter** + **Wave 4.4** `402f34e0e` + **Wave 4.3c** `1269e3fc7` + **Wave 4.3d** `e63add3c7` + **Wave 4.6** `d7b44f23c` + **Wave 4.5** `f1f950207` + **Wave 4.3e** `f370800da` + **Wave 4.6a** `3d3d766cc` all **LANDED**. Node production composition boots/serves/stops under test; TUI proves first **real** client round trip against real Host sockets with a hardened connection-evidence pin (three regex layers closed); Desktop mounts provider **and** reads Host via ungated `HostStatusRow` (Approvals). **Does NOT** retire AppStore authority. AC1–6 **PARTIAL** (never PASS). **Wave 4.8 observed under Electron:** Host **constructs** (identity persisted) but **never publishes** discovery — zero `taskwraith-host-v2.json` after a real isolated-dev launch. Socket suite **CLOSED as seat-specific** — durable seat matrix: **Claude = LISTEN OK · Pi = LISTEN OK · Cursor = EPERM**. **AppStore cutover** / **iOS** remain recon-only until Host publishes under Electron. **iOS Kit reachable:** Swift **6.2.4**; `test:swift:ios-kit` = **868/115 green ~6s** (warm cache).
+**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a–c** + **4.3a pure/wire/adapter** + **Wave 4.4** `402f34e0e` + **Wave 4.3c** `1269e3fc7` + **Wave 4.3d** `e63add3c7` + **Wave 4.6** `d7b44f23c` + **Wave 4.5** `f1f950207` + **Wave 4.3e** `f370800da` + **Wave 4.6a** `3d3d766cc` + **Wave 4.8** docs `998dde2cd` + **R4'-patch** `7abaf33be` all **LANDED**. Node production composition boots/serves/stops under test; TUI proves first **real** client round trip against real Host sockets with a hardened connection-evidence pin (three regex layers closed); Desktop mounts provider **and** reads Host via ungated `HostStatusRow` (Approvals). **Does NOT** retire AppStore authority. AC1–6 **PARTIAL** (never PASS). **Wave 4.8 observed under Electron:** Host **constructs** (identity persisted) but **never publishes** discovery. **Post–R4'-patch hostobs:** construction throw is **named** — `HostProductionBootstrap requires an injected chatList` (L287–289; `AppStore` is a class / `typeof === 'function'`). Socket suite **CLOSED as seat-specific** — durable seat matrix: **Claude = LISTEN OK · Pi = LISTEN OK · Cursor = EPERM**. **AppStore cutover** / **iOS** remain recon-only until Host publishes under Electron. **iOS Kit reachable:** Swift **6.2.4**; `test:swift:ios-kit` = **868/115 green ~6s** (warm cache).
 
 ---
 
@@ -13,8 +13,8 @@
 
 | Claim people will misread | What is actually true |
 |---|---|
-| “Host is ON” | **Wiring is committed** in Electron main (`b45d4297f`). `createHostProductionBootstrap` + `start().catch(...)` + `stopSync` exist in **HEAD** `index.ts`. |
-| “Host has booted / is listening” | **Not observed.** After Wave **4.8**, an isolated-dev Electron launch reached R4' construction and wrote `host-install-identity.json`, but wrote **no** `taskwraith-host-v2.json`, created **no** new `twh2-*` socket dir, and logged **no** `[host] production Host failed to start`. Identity ≠ publish. |
+| “Host is ON” | **Wiring is committed** in Electron main (`b45d4297f`). **R4'-patch** `7abaf33be` wraps construction in `try/catch` so construct failures log separately from `start().catch(...)`. |
+| “Host has booted / is listening” | **Not observed.** Wave **4.8** wrote identity with **no** discovery / socket / `[host]` start line. **After R4'-patch**, relaunch named the blocker: `[host] production Host failed to construct` → `requires an injected chatList`. Identity ≠ publish; a named construct throw ≠ listening. |
 | TUI Fake Host v2 green | **Client-path evidence over TCP loopback** in-process. Proves connect → snapshot → (4.2b) command submit / receipt poll / deferred ask. **Does not** prove live production Host under Electron. |
 | Wave **4.6** TUI live integration green | **FIRST REAL CLIENT ROUND TRIP** in the arc (`host-arc-46-first-real-client-round-trip-and-two-overclaims-corrected`). **LANDED** `d7b44f23c`. Real `createHostProductionBootstrap` defaults + real unix socket + real `TaskWraithTui`; kill-the-Host RED-proof (unreachable ≠ empty world). Evidence at land: focused **2/2** · full `src/tui/` **58/58** across **7** files · `typecheck:tui` exit 0 (correct project **named**). Cap Cursor seat **EPERM** disclosed; Pi/Claude suite accepted. |
 | Socket suite / `EPERM` | **CLOSED as seat-specific, not environmental.** **Seat matrix (durable routing):** Claude = **LISTEN OK** · Pi = **LISTEN OK** · Cursor = **EPERM**. Cap discloses Cursor `EPERM` rather than claiming sockets. Standing rule: an “environment cannot do X” claim is only environmental after X has been tried on a **different** shell-capable seat. |
@@ -35,8 +35,8 @@ Do **not** inherit the stronger claim by accident in a fresh context. Wave 4.4 g
 | **Wave 2E-2A** (Primitives A–E) | ✅ **PASS** | `@SolBoss` | Receipt position, actionId binding, read-alias gate, bootstrap recovery |
 | **Wave 2E-2B** (Deferred allow + Authority integration) | ✅ **PASS** | `@SolBoss` / `@GrokCapt` | Resolver `verifyCommand` split @ `aceb0993a`; `HostDeferredAllowPipeline` @ `9d4a2a104`; micro-fix @ `167f6916b` |
 | **Wave 2E-2C** (typecheck debt) | ✅ **PASS** | `@DSeekWork` | `joinFor` cleanup @ `5a0761793`; Ruling-C complete |
-| **Wave 3** (Dedicated Host + supervision) | ✅ **CLOSED** | `@SolBoss` / `@GrokCapt` | Substrate + Gates 1/2/3.6e + R4' wiring all committed. Host **wiring ON** in main. AC1–6 → **PARTIAL** (not PASS). Wave **4.8**: constructs under Electron, never publishes. |
-| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** — user-gated Electron launch next | `@SolBoss` / `@SolWork` / `@GrokCapt` / `@GrokWork` / `@DSeekWork` | Order ruled **TUI → Desktop → iOS**. **4.2a–c** + **4.3a pure/wire/adapter** + **4.4** + **4.3c** + **4.3d** + **4.6** + **4.5** + **4.3e** + **4.6a** all **LANDED**. Desktop Host consumer **ungated** (`f370800da`). Connection pin hardened (`3d3d766cc`). **4.3b** gated on live Electron Host observation. AppStore/iOS = **recon only** (Boss). |
+| **Wave 3** (Dedicated Host + supervision) | ✅ **CLOSED** | `@SolBoss` / `@GrokCapt` | Substrate + Gates 1/2/3.6e + R4' wiring + **R4'-patch** all committed. Host **wiring ON** in main. AC1–6 → **PARTIAL** (not PASS). Wave **4.8**: constructs under Electron, never publishes; throw now **named** post-patch. |
+| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** | `@SolBoss` / `@SolWork` / `@GrokCapt` / `@GrokWork` / `@DSeekWork` / `@GemProWork` / `@CursorWork` | Order ruled **TUI → Desktop → iOS**. **4.2a–c** + **4.3a pure/wire/adapter** + **4.4** + **4.3c** + **4.3d** + **4.6** + **4.5** + **4.3e** + **4.6a** + **4.8** docs + **R4'-patch** all **LANDED**. Desktop Host consumer **ungated** (`f370800da`). Connection pin hardened (`3d3d766cc`). Construct throw **named** (`chatList` guard vs `AppStore` class). **4.3b** gated on live Electron Host **publish**. AppStore/iOS = **recon only** (Boss). |
 | **Wave 5** (`.twmission` flight recorder) | NOT STARTED | `@SolBoss` | Blocked by Waves 3–4 progress; AC9 still NOT STARTED |
 | **Wave 6** (Adversarial review + final gates) | NOT STARTED | `@SolBoss` | Socket **unit** gap closed (seat-specific). Still blocked by Waves 3–5 + **live Electron Host observation** + remaining adversarial gates |
 
@@ -100,6 +100,36 @@ Verified by `@SolBoss` with shell (`host-arc-wave3-closed-four-shas`); Cap land 
 - **K3Review delta:** PASS (`host-arc-r4prime-k3review-delta-pass`)
 - **Marker:** SolWork courtesy fence dropped with atomic commit
 - **Runtime observation (later):** Wave **4.8** — Host **constructs but never publishes** under Electron (identity yes; discovery no). Wiring SHA stands; listening evidence does not.
+
+### R4'-patch — catch construction throws before `start()` attaches — ADOPTED
+
+- **SHA:** `7abaf33be`
+- **Path:** `src/main/index.ts` **only** · numstat `20\t10`
+- **Author:** `@SolWork` · **Adopter:** `@GrokCapt`
+- **Landed shape:**
+  1. `let hostSupervisor: ReturnType<typeof createHostProductionBootstrap> | undefined`
+  2. `try { hostSupervisor = createHostProductionBootstrap(...) } catch` logs `[host] production Host failed to construct` with the **error object** (no hand-format)
+  3. `hostSupervisor?.start().catch(...)` outside the try — start failures stay distinct
+  4. `will-quit` `hostSupervisor?.stopSync()` **untouched**
+- **Why:** Wave **4.8** proved identity can be written while construction throws **before** `.start().catch()` ever attaches — silent healthy app, no `[host]` line, no socket dir.
+- **What this SHA proves / does not:** Proves construct failures are **observable**. Does **not** prove Host publishes. Does **not** fix the named `chatList` throw.
+
+### Named throw (post–R4'-patch hostobs) — DONE observation
+
+Measured by `@GrokWork` after rebuild (stale-bundle trap avoided — chunk `BtW5Ij__` → `IVOcX63k`; wrap string present in bundle before launch):
+
+```text
+[host] production Host failed to construct Error: HostProductionBootstrap requires an injected chatList
+```
+
+| Fact | Location |
+|---|---|
+| Guard | `HostProductionBootstrap.ts` L287–289 — `typeof options.chatList !== 'object'` |
+| Production inject | `index.ts` — `chatList: AppStore` |
+| Runtime | `typeof AppStore === 'function'` (export **class** with `static getChatList`) |
+| Why tests missed it | Suite injects object-literal mocks; production passes the class |
+
+**Boss ruling (binding, `host-arc-57-STEP3-RULED-A-PRIME-check-the-METHOD-not-the-container`):** Step 3 is **(a')** — validate the **method** (`typeof getChatList === 'function'`), not the container's `typeof === 'object'`. Module contract already says the root may pass the class with statics directly. Re-entrancy registry **returns**, never throws (`host-arc-55-…`). Bridge twin: multi-method port — do **not** invent a 9-method checker in the same breath; report and leave. The seam fix itself is recorded only when Cap prints its SHA.
 
 ### WAVE 4.2a — TUI read-only Host projection — **LANDED**
 
@@ -275,7 +305,8 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 27. **iOS Kit is reachable and cheap** — Swift **6.2.4**; `npm run test:swift:ios-kit` = **868/115 green ~6s** warm (`host-arc-ios-kit-baseline-868-green-and-my-mirror-claim-was-too-broad`). Not user-gated.
 28. **Do not port HostSnapshot to Swift for "mirror safety"** — e2ee TS↔Swift is already golden-vector pinned both sides; the real reason is **churn** (HostSnapshot moved this round with 4.2c `commandId`), not technique.
 29. **Sections that duplicate a live source — `git status`, transcript routing — must be deleted, not reconciled.** Four staleness cycles (passes 21/23/25/27) all lived in 'Foreign Dirt' and 'Next actions'. Reconciliation recurs forever; deletion is terminal (`host-arc-delete-the-two-sections-not-the-lines-plus-conditional-owners`).
-30. **Identity file ≠ Host listening.** `resolveHostInstallId` is evaluated **inside** the R4' argument object (`index.ts` L47361) **before** `createHostProductionBootstrap` is entered. `host-runtime/host-install-identity.json` proves the wiring line was **reached**. It proves **nothing** about `start()`, listen, or discovery publish (`host-arc-52-HOST-CONSTRUCTS-BUT-NEVER-PUBLISHES-under-electron`).
+30. **Identity file ≠ Host listening.** `resolveHostInstallId` is evaluated **inside** the R4' argument object (`index.ts`) **before** `createHostProductionBootstrap` is entered. `host-runtime/host-install-identity.json` proves the wiring line was **reached**. It proves **nothing** about `start()`, listen, or discovery publish (`host-arc-52-HOST-CONSTRUCTS-BUT-NEVER-PUBLISHES-under-electron`).
+31. **Construction throws are outside `.start().catch()`.** R4'-patch `7abaf33be` wraps construction so construct failures log `[host] production Host failed to construct`. Registry at L303–306 **returns**, never throws. Named Electron throw: `requires an injected chatList` — `AppStore` is a class (`typeof === 'function'`); object-literal tests never exercised production (`host-arc-56-ROOT-CAUSE-AppStore-is-a-CLASS-guard-demands-object`). Boss Step 3 is **(a')** method-check (`host-arc-57-…`). Rebuild before every hostobs relaunch or a stale bundle produces a false negative.
 ---
 
 ## Wave 4.8 — Electron observation: Host constructs but never publishes
@@ -314,6 +345,10 @@ That is Wave **3.6e** `resolveHostInstallId` executing under real Electron for t
 
 Remain **PARTIAL**. Process half is no longer “never observed”; it is **Host constructs but never publishes under Electron**. Client projections still incomplete for PASS. **Never PASS** on this finding alone.
 
+### Follow-on (DONE observation after R4'-patch `7abaf33be`)
+
+Relaunch with the wrap in the rebuilt bundle named the throw: `requires an injected chatList`. Failure window is **construction validation**, not a silent hang. Discovery remains **absent**. The chatList seam fix is **not** claimed as landed in this refresh.
+
 ---
 
 ## Chronology (Host Arc commits, newest first)
@@ -321,6 +356,8 @@ Remain **PARTIAL**. Process half is no longer “never observed”; it is **Host
 Top-of-tree churns every pass with foreign concurrent-session commits. This table lists **arc-owned commits only** — run `git log --oneline -1` for current HEAD.
 
 ```text
+7abaf33be  fix(host): catch R4' Host construction throws before start attaches          (@SolWork authored; @GrokCapt adopted; R4'-PATCH)
+998dde2cd  docs(host): record Wave 4.8 Electron observation under DONE-only Host Arc status (@SparkDocs; @GrokCapt adopted; LESSON 30)
 83432f398  docs(host): record Wave 4.6a land under DONE-only Host Arc status              (@SparkDocs; @GrokCapt adopted)
 3d3d766cc  test(tui): harden Host live connection evidence pin (Wave 4.6a)              (@DSeekWork authored; @GrokCapt adopted; THREE REGEX LAYERS PINNED)
 976c06c3a  docs(host): tip Host Arc status at Wave 4.3e Cap land                          (@SparkDocs; @GrokCapt adopted)
@@ -426,8 +463,10 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 - ✅ **4.5 — Electron Host boot smoke harness** @ `f1f950207` — 1 file · `+400` · script landed; **not** Electron observation; AC1–6 unchanged
 - ✅ **4.3e — Host out of iOS-flag chrome** @ `f370800da` — 2 files · `+53/−7` · ungated Approvals mount; Devices cleared
 - ✅ **4.6a — durable connection pin** @ `3d3d766cc` — 1 file · `+62/−13` · three regex layers closed + negative pin · test-only
+- ✅ **Wave 4.8 docs** @ `998dde2cd` — Electron observation recorded (constructs ≠ publishes; lesson 30)
+- ✅ **R4'-patch** @ `7abaf33be` — construction `try/catch`; construct failures log distinctly from start failures
 
-### What remains (post–Wave 4.6a)
+### What remains (post–R4'-patch)
 | Item | Owner | Status |
 |---|---|---|
 | **Wave 4.2c — approval correlation (protocol)** | `@GrokWork` / `@GrokCapt` | ✅ **LANDED** `b74b33e33` — one-field `commandId` on approval. |
@@ -441,12 +480,15 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 | **Wave 4.5 — Electron Host boot smoke harness** | `@GrokWork` / `@GrokCapt` | ✅ **LANDED** `f1f950207` — Cap exact-path 1 file; script only. **Landing ≠ observation. AC1–6 stay PARTIAL.** |
 | **Wave 4.3e — Host out of iOS-flag chrome** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `f370800da` — Cap exact-path 2 files; ungated Approvals surface. |
 | **Wave 4.6a — durable connection pin** | `@DSeekWork` / `@GrokCapt` | ✅ **LANDED** `3d3d766cc` — Cap exact-path 1 file; three regex layers pinned. |
+| **Wave 4.8 — Electron observation** | `@GrokWork` / `@SolBoss` / docs `@SparkDocs` | ✅ **RECORDED** `998dde2cd` — constructs (identity) but never publishes; window before `HostLocalServer.start()` L225. |
+| **R4'-patch — construction catch** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `7abaf33be` — Cap exact-path `index.ts` only; construct failures now log. |
+| **Named construct throw** | `@GrokWork` observation | ✅ **NAMED** — `requires an injected chatList` (`AppStore` class vs object guard). Boss ruled Step 3 **(a')** method-check. |
 | **AppStore → Host metadata cutover** | `@SolBoss` sequencing (recon `@SolWork`) | 🔍 **RECON ONLY** — HostSnapshot metadata-only; transcripts excluded by design; recommend providers-first (`host-arc-appstore-cutover-gap-map-measured`). |
 | **iOS paired projection** | Downstream of Mac/Desktop cutover (recon `@GrokWork`) | 🔍 **RECON ONLY** — already e2ee-v1 projection client; zero Host types in `ios/`; Swift 6.2.4 + Kit **868/115** green; do **not** port HostSnapshot to Swift (churn, not technique — e2ee already vector-pinned). |
-| **Wave 4.3b — Desktop commands** | `@SolBoss` sequencing | **Unblocked** by 4.2c + consuming view (4.3d/4.3e); after live Electron Host observation. |
-| **Live Electron `taskwraith-host-v2.json`** | Wave 4.8 observation | **ABSENT after Electron launch** — Host constructs (identity yes) but never publishes; window before `HostLocalServer.start()` L225 |
+| **Wave 4.3b — Desktop commands** | `@CursorWork` | **Gated** on live Electron Host **publish** (`taskwraith-host-v2.json`). |
+| **Live Electron `taskwraith-host-v2.json`** | after chatList seam fix + rebuild + hostobs | **ABSENT** — construct throw named; discovery still unpublished. |
 | **Wave 5 — `.twmission` / AC9** | `@SolBoss` | **NOT STARTED** |
-| **Wave 6 — adversarial + closeout** | `@SolBoss` | Socket **unit** gap **CLOSED** (seat-specific). Live Electron Host observation still required for AC1–6. |
+| **Wave 6 — adversarial + closeout** | `@SolBoss` | Socket **unit** gap **CLOSED** (seat-specific). Live Electron Host **publish** still required for AC1–6. |
 
 ### Marker hygiene (this paperwork measurement)
 
@@ -469,10 +511,11 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 | `.WORK-IN-PROGRESS-host-arc-wave46-tui-live.md` | **Absent** | n/a (4.6 Cap-landed `d7b44f23c`; authored without marker) |
 | `.WORK-IN-PROGRESS-host-arc-wave43e-*.md` | **Absent** | n/a (4.3e Cap-landed `f370800da`; markers not required) |
 | `.WORK-IN-PROGRESS-host-arc-wave46a-*.md` | **Absent** | n/a (4.6a Cap-landed `3d3d766cc`; markers not required) |
+| `.WORK-IN-PROGRESS-host-arc-r4prime-patch.md` | **Absent** | n/a (R4'-patch Cap-landed `7abaf33be`) |
 
 Foreign markers present (not Host Arc): `.WORK-IN-PROGRESS-observatory-gpu-calm.md`, `.WORK-IN-PROGRESS-seat-strip-desktop.md`, `.WORK-IN-PROGRESS-tool-event-dual-lane-dedupe.md`.
 
-`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent**; **no docs marker raised** (Boss ruling). Waves through **4.6a** `3d3d766cc` **LANDED**; Wave **4.8** Electron observation recorded (constructs, never publishes). This file records **DONE** waves only (`host-arc-docs-must-record-DONE-never-IN-FLIGHT`); commit status is `git log`, not this file.
+`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent**; docs lease uses `expires` only. Waves through **4.6a** + **4.8** docs + **R4'-patch** `7abaf33be` **LANDED**; named construct throw **recorded**. This file records **DONE** waves only (`host-arc-docs-must-record-DONE-never-IN-FLIGHT`); commit status is `git log`, not this file.
 
 ### R5 — Evaluator Sourcing (DURABLE — unchanged; Gate 1 landed)
 
@@ -492,7 +535,7 @@ Ten names: `snapshot.get`, `deltas.since`, `receipt.lookup`, `ping`, `approval.d
 
 | AC | Status | Note |
 |---|---|---|
-| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Wave **4.4** proves Node production composition boots/serves/stops (`402f34e0e`). Wave **4.6** proves first real client round trip (`d7b44f23c`); Wave **4.6a** hardens the connection pin (`3d3d766cc`). Wave **4.3d/4.3e** Desktop **consumes** Host in ungated UI (`e63add3c7` / `f370800da`). Wave **4.5** harness **LANDED** (`f1f950207`) — **landing a script does not flip PASS.** Wave **4.8** Electron observation: Host **constructs but never publishes** under an isolated-dev launch (`TaskWraith Dev hostobs`) — identity written; **zero** `taskwraith-host-v2.json`; no new `twh2-*`; no `[host]` rejection line. Failure window is **before** `HostLocalServer.start()` L225 (not `listen` at L249). Packaged app in `dist/` still predates R4' (optional path; cheaper path already used). TUI read+commands+live round trip in HEAD; iOS is e2ee-v1 projection client (Mac still AppStore-derived — no Host v2 on phone; Kit **868/115** green). Socket **unit** suite **CLOSED** seat-specific (Claude + Pi LISTEN OK; Cursor may EPERM). Identity / Node / Fake Host ≠ listening Host. **Never PASS.** |
+| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). **R4'-patch** `7abaf33be` makes construct throws observable. Wave **4.4** proves Node production composition boots/serves/stops (`402f34e0e`). Wave **4.6** proves first real client round trip (`d7b44f23c`); Wave **4.6a** hardens the connection pin (`3d3d766cc`). Wave **4.3d/4.3e** Desktop **consumes** Host in ungated UI. Wave **4.5** harness **LANDED** (`f1f950207`) — script ≠ observation. Wave **4.8**: constructs under Electron, never publishes. **Post-patch hostobs:** throw **named** — `requires an injected chatList` (`AppStore` class). Discovery still **absent**. **Never PASS.** |
 | AC7–AC8 | ⚠️ PARTIAL | Host core authoritative; TUI is first full (read+command+live) projection client; Desktop mounts **and** consumes Host projection ungated (AppStore still authority for most views); iOS already e2ee-v1 projection client (not Host v2) — Mac still derives remote snapshots from AppStore |
 | AC9 | ❌ **NOT STARTED** | `.twmission` / mission evidence not started (Wave 5) |
 | AC10–AC11 | ⚠️ PARTIAL | TUI read+command+live paths live in HEAD; Desktop pure + wire + adapter + mount + leaf + ungated placement landed; Desktop commands not started; iOS Host-shaped work is Mac-side (downstream of AppStore cutover), not a Swift Host port |
@@ -519,7 +562,7 @@ Commits are exact-path only; markers with honest live pid **or** `lockOwnerId` a
 - `scripts/work-guard*`, `.githooks/**`
 - Provider admission / retirement / live membership / security ceilings
 - Unrelated history-deletion machinery
-- Composition roots (`index.ts`, `App.tsx`, `EnsembleOrchestrator.ts`) — tiny wiring hunks only, with Boss/Cap clearance (R4' already landed under that rule)
+- Composition roots (`index.ts`, `App.tsx`, `EnsembleOrchestrator.ts`) — tiny wiring hunks only, with Boss/Cap clearance (R4' + R4'-patch landed under that rule)
 
 ---
 
@@ -536,6 +579,6 @@ Commits are exact-path only; markers with honest live pid **or** `lockOwnerId` a
 
 - Goal: [`HOST_ARC_GOAL.md`](./HOST_ARC_GOAL.md)
 - Baseline: [`HOST_ARC_WAVE0_BASELINE.md`](./HOST_ARC_WAVE0_BASELINE.md)
-- Blackboard: `host-arc-wave3-closed-four-shas`, `host-arc-wave4-sequencing-ruling`, `host-arc-r4prime-adopt-authorized`, `host-arc-r4prime-does-NOT-pass-ac1-6`, `host-arc-production-host-has-never-actually-run`, `host-arc-socket-gap-CLOSED-seat-specific-not-environmental`, `host-arc-socket-epern-validation-gap` (superseded), `host-arc-43a-wire-and-adapter-verified-by-boss`, `host-arc-43a-adapter-chain-complete-appts-next`, `host-arc-43c-maints-wrap-corrects-my-own-ruling`, `host-arc-43c-already-ruled-stop-asking`, `host-arc-44-production-boot-proof-is-now-possible`, `host-arc-44-fake-composition-claim-is-FALSE-adjudicated`, `host-arc-44-boot-proof-REAL-COMPOSITION-BOOTS`, `host-arc-electron-observation-is-NOT-ops-a-harness-exists`, `host-arc-45-my-red-preauthorisation-was-a-trap-grokwork-caught-it`, `host-arc-45-harness-authored-plus-pgrep-guard-defect`, `host-arc-45-SUPERSEDED-app-fails-closed-not-open`, `host-arc-45-path-fixed-and-the-app-FAILS-CLOSED-not-open`, `host-arc-46-first-real-client-round-trip-and-two-overclaims-corrected`, `host-arc-46a-connection-pin-is-timing-dependent-and-worse-than-flagged`, `host-arc-46a-BLOCKED-regex-matches-DISCONNECTED`, `host-arc-46a-NOT-CONNECTED-is-reachable-from-product-code`, `host-arc-appstore-cutover-gap-map-measured`, `host-arc-ios-recon-already-a-projection-client-downstream-of-lane-A`, `host-arc-ios-toolchain-PRESENT-and-docs-header-lies-about-itself`, `host-arc-ios-kit-baseline-868-green-and-my-mirror-claim-was-too-broad`, `host-arc-docs-must-record-DONE-never-IN-FLIGHT`, `host-arc-cutover-and-ios-recon-only-not-implementation`, `host-arc-43e-host-consumer-must-not-live-behind-the-ios-flag`, `host-arc-43e-placement-pin-is-two-sided-and-red-proved`, `host-arc-43d-sidebar-is-prettier-dirty-do-not-write`, `host-arc-renderer-restart-per-window-store-is-CORRECT-not-a-defect`, `host-arc-markers-not-required-in-fanout-lanes-my-fix-failed`, `host-arc-lane-scope-omits-granted-marker-paths`, `host-arc-42c-one-field-grokwork-contest-upheld`, `host-arc-43a-cleared-and-wire-carveout-granted`, `host-arc-do-not-score-a-live-lane`, `host-arc-review-seats-have-no-shell`
+- Blackboard: `host-arc-wave3-closed-four-shas`, `host-arc-wave4-sequencing-ruling`, `host-arc-r4prime-adopt-authorized`, `host-arc-r4prime-does-NOT-pass-ac1-6`, `host-arc-production-host-has-never-actually-run`, `host-arc-socket-gap-CLOSED-seat-specific-not-environmental`, `host-arc-socket-epern-validation-gap` (superseded), `host-arc-43a-wire-and-adapter-verified-by-boss`, `host-arc-43a-adapter-chain-complete-appts-next`, `host-arc-43c-maints-wrap-corrects-my-own-ruling`, `host-arc-43c-already-ruled-stop-asking`, `host-arc-44-production-boot-proof-is-now-possible`, `host-arc-44-fake-composition-claim-is-FALSE-adjudicated`, `host-arc-44-boot-proof-REAL-COMPOSITION-BOOTS`, `host-arc-electron-observation-is-NOT-ops-a-harness-exists`, `host-arc-45-my-red-preauthorisation-was-a-trap-grokwork-caught-it`, `host-arc-45-harness-authored-plus-pgrep-guard-defect`, `host-arc-45-SUPERSEDED-app-fails-closed-not-open`, `host-arc-45-path-fixed-and-the-app-FAILS-CLOSED-not-open`, `host-arc-46-first-real-client-round-trip-and-two-overclaims-corrected`, `host-arc-46a-connection-pin-is-timing-dependent-and-worse-than-flagged`, `host-arc-46a-BLOCKED-regex-matches-DISCONNECTED`, `host-arc-46a-NOT-CONNECTED-is-reachable-from-product-code`, `host-arc-appstore-cutover-gap-map-measured`, `host-arc-ios-recon-already-a-projection-client-downstream-of-lane-A`, `host-arc-ios-toolchain-PRESENT-and-docs-header-lies-about-itself`, `host-arc-ios-kit-baseline-868-green-and-my-mirror-claim-was-too-broad`, `host-arc-docs-must-record-DONE-never-IN-FLIGHT`, `host-arc-cutover-and-ios-recon-only-not-implementation`, `host-arc-43e-host-consumer-must-not-live-behind-the-ios-flag`, `host-arc-43e-placement-pin-is-two-sided-and-red-proved`, `host-arc-43d-sidebar-is-prettier-dirty-do-not-write`, `host-arc-renderer-restart-per-window-store-is-CORRECT-not-a-defect`, `host-arc-markers-not-required-in-fanout-lanes-my-fix-failed`, `host-arc-lane-scope-omits-granted-marker-paths`, `host-arc-42c-one-field-grokwork-contest-upheld`, `host-arc-43a-cleared-and-wire-carveout-granted`, `host-arc-do-not-score-a-live-lane`, `host-arc-review-seats-have-no-shell`, `host-arc-55-registry-cannot-throw-suspect-is-ARG-EVALUATION`, `host-arc-56-ROOT-CAUSE-AppStore-is-a-CLASS-guard-demands-object`, `host-arc-57-STEP3-RULED-A-PRIME-check-the-METHOD-not-the-container`
 
 **Maintained by:** `@SparkDocs` · Scope-limited to repo paperwork · figures byte-verified against live git + markers at time of writing · records DONE only · commit status is `git log`, not this file.
