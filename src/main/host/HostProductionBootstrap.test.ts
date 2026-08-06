@@ -20,7 +20,10 @@ import {
   resetHostProductionBootstrapForTests
 } from './HostProductionBootstrap'
 import type { HostProductionBootstrapOptions } from './HostProductionBootstrap'
-import type { HostProductionChatListPort } from './HostProductionSuppliers'
+import type {
+  HostProductionChatListPort,
+  HostProductionProviderListPort
+} from './HostProductionSuppliers'
 import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import type { HostLocalServer, HostLocalServerOptions } from './HostLocalServer'
 import type { HostMainComposition, HostMainCompositionInput } from './HostMainComposition'
@@ -191,6 +194,34 @@ describe('HostProductionBootstrap options validation', () => {
         validOptions({ chatList: {} as unknown as HostProductionChatListPort })
       )
     ).toThrow('HostProductionBootstrap requires an injected chatList')
+  })
+
+  it('rejects a providers object missing getProviders (Step 5b guard)', () => {
+    // Mirrors the chatList empty-object pin. providers is OPTIONAL, but when
+    // present the METHOD must satisfy the port — otherwise snapshot reads
+    // throw mid-flight instead of failing closed to [].
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({ providers: {} as unknown as HostProductionProviderListPort })
+      )
+    ).toThrow('HostProductionBootstrap requires providers.getProviders to be a function')
+  })
+
+  it('accepts omitted providers — optional port stays optional', () => {
+    const result = createHostProductionBootstrap(validOptions())
+    expect(result).toBeDefined()
+  })
+
+  it('accepts a class-like providers port whose static getProviders satisfies the port', () => {
+    class ProvidersStub {
+      static getProviders(): [] {
+        return []
+      }
+    }
+    const result = createHostProductionBootstrap(
+      validOptions({ providers: ProvidersStub as unknown as HostProductionProviderListPort })
+    )
+    expect(result).toBeDefined()
   })
 
   it('rejects missing bridge', () => {
