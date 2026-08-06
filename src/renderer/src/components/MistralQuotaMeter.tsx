@@ -12,13 +12,15 @@
  * 2026-07-27:
  *
  *   - "Mistral publishes no quota figure for any plan" — the SUBSCRIPTION
- *     console does, as an "Included monthly usage" bar (Free €8.50, Pro €25.50).
- *     It is per-account and appears in no public pricing page, which is why the
- *     user enters it rather than us hardcoding it.
+ *     console does. It is per-account and appears in no public pricing page,
+ *     which is why the user enters it rather than us hardcoding it. Since ~3 Aug
+ *     2026 it shows TWO bars, and this seat is metered against the second: the
+ *     Vibe-Code-only "Vibe Code budget" (€255 on Pro), not the shared "Included
+ *     monthly usage" bar (€25.50). See PLAN_SEED_USD for the measurement.
  *   - "overflow is pay-as-you-go, so there is no wall to hit" — pay-as-you-go
  *     for Vibe Code is its own toggle and ships DISABLED. With it off, exhausting
- *     the included allowance STOPS the seat until the cycle resets. There is a
- *     wall, which is precisely why this meter matters.
+ *     the budget STOPS the seat until the cycle resets. There is a wall, which is
+ *     precisely why this meter matters.
  *
  * The user asked for exactly this and no more: "even if it's just 'I have used
  * quite a bit this month' rather than 'where is the ceiling vs my usage'".

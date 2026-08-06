@@ -113,9 +113,11 @@ describe('rolloverIfElapsed', () => {
 describe('estimateQuota', () => {
   it("seeds from the plan's observed allowance before anything has been observed", () => {
     const e = estimateQuota(startCycle(T0), 'pro', T0)
-    // Pro's real included allowance, read off admin.mistral.ai on 2026-07-27:
-    // €25.50, NOT the €14.99 subscription price the old seed assumed.
-    expect(e.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    // Pro's VIBE CODE budget, read off admin.mistral.ai on 2026-08-06: €255.
+    // NOT the €25.50 "Included monthly usage" bar this seed used to carry — as
+    // of ~3 Aug 2026 Vibe stopped debiting that pool entirely (see the module
+    // header), so metering against it under-read the real ceiling ~10x.
+    expect(e.estimatedCeilingUsd).toBeCloseTo(278, 6)
     expect(e.confidence).toBe('seeded')
     expect(e.usedPercent).toBe(0)
     expect(e.band).toBe('quiet')
@@ -123,24 +125,26 @@ describe('estimateQuota', () => {
 
   it('seeds an unknown plan LOW (as Free), so the default case warns early', () => {
     // The plan is undetectable from the lane, so `unknown` is where most users
-    // sit. Seeding it at Pro's ceiling would meter a Free seat against 3x its
-    // real allowance — late warnings are the failure this seed exists to avoid.
+    // sit. Seeding it at Pro's ceiling would now meter a Free seat against 30x
+    // its allowance — late warnings are the failure this seed exists to avoid.
+    // Free's own Vibe Code budget is UNOBSERVED, so this deliberately keeps the
+    // old €8.50 shared-pool figure: it is a floor, and erring low warns early.
     expect(estimateQuota(startCycle(T0), 'unknown', T0).estimatedCeilingUsd).toBeCloseTo(9.25, 6)
     expect(estimateQuota(startCycle(T0), 'free', T0).estimatedCeilingUsd).toBeCloseTo(9.25, 6)
   })
 
   it('walks the bands as spend climbs', () => {
     const at = (usd: number) => estimateQuota(cycleWith(usd), 'pro', T0).band
-    // Fractions of Pro's $27.80 ceiling: 20% / 50% / 80% / 100% are the edges.
-    expect(at(1)).toBe('quiet')
-    expect(at(7)).toBe('moderate')
-    expect(at(16)).toBe('heavy')
-    expect(at(24)).toBe('near-limit')
-    expect(at(30)).toBe('exceeded')
+    // Fractions of Pro's $278 ceiling: 20% / 50% / 80% / 100% are the edges.
+    expect(at(10)).toBe('quiet')
+    expect(at(70)).toBe('moderate')
+    expect(at(160)).toBe('heavy')
+    expect(at(240)).toBe('near-limit')
+    expect(at(300)).toBe('exceeded')
   })
 
   it('clamps the percentage rather than reporting over 100', () => {
-    expect(estimateQuota(cycleWith(100), 'pro', T0).usedPercent).toBe(100)
+    expect(estimateQuota(cycleWith(1000), 'pro', T0).usedPercent).toBe(100)
   })
 
   it('prefers a learned ceiling over the price anchor', () => {
@@ -159,7 +163,7 @@ describe('estimateQuota', () => {
   })
 
   it('reports the plain-language band the sidebar renders', () => {
-    expect(estimateQuota(cycleWith(16), 'pro', T0).label).toContain('Used quite a bit this month')
+    expect(estimateQuota(cycleWith(160), 'pro', T0).label).toContain('Used quite a bit this month')
   })
 
   it('moves from seeded to calibrating once turns have been observed', () => {
@@ -174,27 +178,27 @@ describe('estimateQuota', () => {
 
   it('survives a zero or negative stored ceiling by falling back to the seed', () => {
     const broken = cycleWith(3, { learnedCeilingUsd: 0 })
-    expect(estimateQuota(broken, 'pro', T0).estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    expect(estimateQuota(broken, 'pro', T0).estimatedCeilingUsd).toBeCloseTo(278, 6)
   })
 })
 
 describe('end-to-end calibration', () => {
   it('converges from a seeded guess to a measured ceiling over two cycles', () => {
-    // Cycle 1: $31.00 of use, no wall. The $27.80 seed says over; reality didn't
+    // Cycle 1: $310.00 of use, no wall. The $278 seed says over; reality didn't
     // agree, and an untouched cycle is evidence the ceiling is at least what was
     // spent.
     let c = startCycle(T0)
-    for (let i = 0; i < 100; i++) c = accumulate(c, { costUsd: 0.31, totalTokens: 200_000 })
-    expect(c.spentUsd).toBeCloseTo(31, 2)
+    for (let i = 0; i < 100; i++) c = accumulate(c, { costUsd: 3.1, totalTokens: 200_000 })
+    expect(c.spentUsd).toBeCloseTo(310, 2)
     expect(estimateQuota(c, 'pro', T0).band).toBe('exceeded')
     c = rolloverIfElapsed(c, new Date('2026-08-02T00:00:00.000Z'))
-    expect(c.learnedCeilingUsd).toBeCloseTo(38.75, 2)
+    expect(c.learnedCeilingUsd).toBeCloseTo(387.5, 2)
 
-    // Cycle 2: $24.80 of spend. Against the SEED that is 89% and would have
-    // cried "near-limit"; against the learned $38.75 ceiling it is 64% — heavy,
+    // Cycle 2: $248.00 of spend. Against the SEED that is 89% and would have
+    // cried "near-limit"; against the learned $387.50 ceiling it is 64% — heavy,
     // but not alarming. Calibration earning its keep by being less alarmist.
-    for (let i = 0; i < 80; i++) c = accumulate(c, { costUsd: 0.31, totalTokens: 200_000 })
-    expect(c.spentUsd).toBeCloseTo(24.8, 2)
+    for (let i = 0; i < 80; i++) c = accumulate(c, { costUsd: 3.1, totalTokens: 200_000 })
+    expect(c.spentUsd).toBeCloseTo(248, 2)
     expect(estimateQuota({ ...c, learnedCeilingUsd: undefined }, 'pro', T0).band).toBe('near-limit')
     const mid = estimateQuota(c, 'pro', new Date('2026-08-10T00:00:00.000Z'))
     expect(mid.band).toBe('heavy')
@@ -204,7 +208,7 @@ describe('end-to-end calibration', () => {
     c = recordLimitEvent(c)
     const after = estimateQuota(c, 'pro', new Date('2026-08-11T00:00:00.000Z'))
     expect(after.confidence).toBe('learned')
-    expect(after.estimatedCeilingUsd).toBeCloseTo(24.8, 2)
+    expect(after.estimatedCeilingUsd).toBeCloseTo(248, 2)
     expect(after.label).not.toContain('(estimated)')
   })
 })
@@ -215,19 +219,19 @@ describe('end-to-end calibration', () => {
 
 describe('applyAnchor — the user reads their own console', () => {
   const READING = {
-    // The observed 2026-07-27 Pro console: €0.28 of €25.50, resets in 4 days.
+    // The observed 2026-08-06 Pro console: the VIBE CODE budget bar, €255.
     // Converted to USD by the renderer before it ever reaches this module.
-    allowanceUsd: 27.8,
+    allowanceUsd: 278,
     spentUsd: 0.31,
     observedAt: '2026-07-27T12:00:00.000Z',
     cycleResetsAt: '2026-07-31T00:00:00.000Z',
-    declared: { allowance: 25.5, spent: 0.28, currency: 'EUR' }
+    declared: { allowance: 255, spent: 0.28, currency: 'EUR' }
   }
 
   it('outranks the plan seed for BOTH halves and stops hedging the label', () => {
     const anchored = applyAnchor(cycleWith(0.05), READING)
     const e = estimateQuota(anchored, 'pro', T0)
-    expect(e.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    expect(e.estimatedCeilingUsd).toBeCloseTo(278, 6)
     expect(e.spentUsd).toBeCloseTo(0.31, 6)
     expect(e.confidence).toBe('anchored')
     expect(e.ceilingConfidence).toBe('anchored')
@@ -238,7 +242,7 @@ describe('applyAnchor — the user reads their own console', () => {
   it('keeps the raw vendor figure and currency as provenance', () => {
     const e = estimateQuota(applyAnchor(startCycle(T0), READING), 'pro', T0)
     expect(e.spentSource.declared).toEqual({ amount: 0.28, currency: 'EUR' })
-    expect(e.ceilingSource.declared).toEqual({ amount: 25.5, currency: 'EUR' })
+    expect(e.ceilingSource.declared).toEqual({ amount: 255, currency: 'EUR' })
     expect(e.spentSource.asOf).toBe('2026-07-27T12:00:00.000Z')
   })
 
@@ -305,7 +309,7 @@ describe('applyAnchor — the user reads their own console', () => {
     expect(e.spentUsd).toBeCloseTo(4, 6)
     expect(e.confidence).not.toBe('anchored')
     // The allowance was plan knowledge, not a per-cycle observation — it stays.
-    expect(e.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    expect(e.estimatedCeilingUsd).toBeCloseTo(278, 6)
   })
 
   it('carries the allowance and advances the reset across a rollover, dropping the reading', () => {
@@ -314,10 +318,10 @@ describe('applyAnchor — the user reads their own console', () => {
     // The reading described July. Re-showing it against August's burn would lie.
     expect(rolled.anchor).toBeUndefined()
     // The allowance and the billing anniversary are plan facts and survive.
-    expect(rolled.knownAllowanceUsd).toBeCloseTo(27.8, 6)
+    expect(rolled.knownAllowanceUsd).toBeCloseTo(278, 6)
     expect(rolled.knownResetAt).toBe('2026-08-31T00:00:00.000Z')
     const e = estimateQuota(rolled, 'pro', new Date('2026-08-05T00:00:00.000Z'))
-    expect(e.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    expect(e.estimatedCeilingUsd).toBeCloseTo(278, 6)
     expect(e.spentUsd).toBe(0)
     // A carried vendor allowance is still a vendor figure, but the SPEND is
     // back to local accumulation — so the reading as a whole is not measured.
@@ -338,7 +342,7 @@ describe('applyReport — the Admin API answered', () => {
   it('outranks a console anchor for spend', () => {
     const c = applyReport(
       applyAnchor(cycleWith(1), {
-        allowanceUsd: 27.8,
+        allowanceUsd: 278,
         spentUsd: 0.31,
         observedAt: '2026-07-20T00:00:00.000Z'
       }),
@@ -356,7 +360,7 @@ describe('applyReport — the Admin API answered', () => {
     const e = estimateQuota(applyReport(startCycle(T0), REPORT), 'pro', T0)
     expect(e.confidence).toBe('reported')
     expect(e.ceilingConfidence).toBe('seeded')
-    expect(e.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    expect(e.estimatedCeilingUsd).toBeCloseTo(278, 6)
     // Half-measured is not measured: the label must still hedge.
     expect(e.vendorReported).toBe(false)
     expect(e.label).toContain('(estimated)')

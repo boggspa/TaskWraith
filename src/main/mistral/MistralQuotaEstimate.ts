@@ -19,9 +19,10 @@
  *      the guesswork applies.
  *   3. The allowance is not published. mistral.ai/pricing lists plan prices and
  *      feature blurbs but no credit figure; the only place the number appears is
- *      the user's OWN console at admin.mistral.ai/subscription, which shows an
- *      "Included monthly usage" bar (observed 2026-07-27 on Free: €0.28 of
- *      €8.50, explicitly shared across "Studio, Vibe Code, or API").
+ *      the user's OWN console at admin.mistral.ai/subscription. Since ~3 Aug
+ *      2026 that page carries TWO bars — a shared "Included monthly usage" pool
+ *      and a Vibe-Code-only "Vibe Code budget" — and this seat spends from the
+ *      SECOND one (measured; see PLAN_SEED_USD).
  *      That is why {@link MistralQuotaAnchor} exists — the user can read the two
  *      numbers off their own console and hand them to us, which beats any
  *      heuristic and works on every plan.
@@ -155,37 +156,49 @@ export interface MistralQuotaReport {
 }
 
 /**
- * Assumed monthly included-usage allowance per plan, in USD.
+ * Assumed monthly VIBE CODE budget per plan, in USD.
  *
- * These are no longer price guesses. Both figures below were read off a real
- * admin.mistral.ai/subscription console on 2026-07-27, from the "Included
- * monthly usage" bar that Mistral describes as usable across "Studio, Vibe Code,
- * or API":
+ * ── WHICH POOL THIS SEAT ACTUALLY SPENDS FROM (measured 2026-08-06) ──────────
+ * admin.mistral.ai/subscription now shows TWO bars, and they are not the same
+ * money:
  *
- *   Free  €8.50   (subscription €0)
- *   Pro   €25.50  (subscription €14.99)
+ *   "Included monthly usage"  €25.50 on Pro — shared across Studio, Vibe Code
+ *                             or API.
+ *   "Vibe Code budget"        €255 on Pro — "extra monthly usage on top of your
+ *                             API budget", Vibe Code only.
  *
- * Note what that kills: the old "anchor the ceiling to the plan PRICE" doctrine
- * had Pro at 14.99, but Pro's real allowance is **€25.50 — 1.7x its price**. The
- * price was never a proxy for the allowance, and using it under-read Pro's
- * ceiling by 41%. Erring low warns early rather than late, so the old value
- * failed safe, but it was wrong.
+ * The Vibe Code bar appeared around 3 Aug 2026, and from that point Vibe stopped
+ * debiting the shared pool. Measured on one Pro account inside a single billing
+ * cycle: €5.49 of Vibe spend moved the Vibe bar €15.81 -> €21.30 and left the
+ * shared bar at €1.84, unchanged TO THE CENT. Proportional draw across the two
+ * pools would have added ~€0.55 to the shared bar; it did not move at all. The
+ * same account's API usage page read €0.00 for the whole month, so the residual
+ * €1.84 is frozen Vibe spend from 1-3 Aug, before the split.
+ *
+ * So this seat's ceiling is the VIBE CODE budget. The old €25.50 figure is not
+ * merely stale — nothing this seat does debits that pool any more, and metering
+ * against it under-read the real ceiling by ~10x, which walls a user at a tenth
+ * of their runway.
  *
  * USD values carry the EUR figures at roughly 1.09 USD/EUR. The EUR numbers are
  * the source of truth — re-derive from them, don't drift the USD.
  *
- * `team` is NOT observed. It is seeded at Pro's allowance as a FLOOR ("Team
- * cannot plausibly include less than Pro"), which is safe reasoning, rather than
- * extrapolating a specific larger number, which would be invention.
+ * `free` is deliberately UNCHANGED at the old €8.50 shared-pool figure: Free's
+ * own Vibe Code budget has never been observed. It is kept as a FLOOR, because
+ * erring low warns early, and `unknown` seeds from it.
  *
- * All of these are per-account readings from one console, and the allowance
- * appears nowhere in Mistral's public pricing — so they are better DEFAULTS, not
- * facts. An {@link MistralQuotaAnchor} outranks them the moment one exists.
+ * `team` is NOT observed either. It stays seeded at Pro's budget as a FLOOR
+ * ("Team cannot plausibly include less than Pro"), which is safe reasoning,
+ * rather than extrapolating a specific larger number, which would be invention.
+ *
+ * All of these are per-account readings from one console, and neither allowance
+ * appears anywhere in Mistral's public pricing — so they are better DEFAULTS,
+ * not facts. An {@link MistralQuotaAnchor} outranks them the moment one exists.
  */
 const PLAN_SEED_USD: Readonly<Record<MistralPlanId, number>> = {
   free: 9.25,
-  pro: 27.8,
-  team: 27.8,
+  pro: 278,
+  team: 278,
   unknown: 9.25
 }
 

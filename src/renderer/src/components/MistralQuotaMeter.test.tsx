@@ -129,7 +129,7 @@ describe('MistralQuotaMeterView — honesty', () => {
 
   it('qualifies a SEEDED ceiling in place so it cannot read as a published allowance', () => {
     const html = render({ snapshot: snapshot(3.5, { plan: 'pro' }) })
-    expect(html).toContain('of ~$27.80 est.')
+    expect(html).toContain('of ~$278.00 est.')
   })
 
   it('drops the hedge once the allowance is a figure Mistral itself gave us', () => {
@@ -166,7 +166,7 @@ describe('MistralQuotaMeterView — honesty', () => {
     // Half-measured is not measured: a real numerator over a guessed denominator
     // is still a guessed ratio.
     const html = render({ snapshot: reportedSpendOnlySnapshot() })
-    expect(html).toContain('of ~$27.80 est.')
+    expect(html).toContain('of ~$278.00 est.')
     expect(visibleText(html)).toContain('(estimated)')
   })
 

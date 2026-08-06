@@ -154,7 +154,7 @@ describe('MistralQuotaStore — debounced flush', () => {
     const second = makeStore()
     const snapshot = await second.currentEstimate()
     expect(snapshot?.plan).toBe('team')
-    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(278, 6)
   })
 
   it('round-trips an Admin reading watermark and keeps accumulating after it', async () => {
@@ -271,11 +271,11 @@ describe('MistralQuotaStore — corrupt-file tolerance', () => {
       JSON.stringify({
         version: MISTRAL_QUOTA_SCHEMA_VERSION,
         plan: 'pro',
-        cycle: { ...startCycle(T0), spentUsd: 7, learnedCeilingUsd: 0 }
+        cycle: { ...startCycle(T0), spentUsd: 70, learnedCeilingUsd: 0 }
       })
     )
     const snapshot = await makeStore().currentEstimate()
-    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
+    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(278, 6)
     expect(snapshot?.estimate.band).toBe('moderate')
   })
 

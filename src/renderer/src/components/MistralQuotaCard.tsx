@@ -11,10 +11,16 @@ import { PillButton } from './PillButton'
  *   - Nothing Vibe sends over ACP reports the plan, so the store's `setPlan` had
  *     no caller anywhere and every seat metered as `unknown`.
  *   - The allowance appears in no public pricing page. The only place it exists
- *     is the "Included monthly usage" bar on the user's own
- *     admin.mistral.ai/subscription page (Free €8.50, Pro €25.50 as observed
- *     2026-07-27), which is also the only place the real reset date shows up
- *     ("Resets in 4 days" — an account anniversary, not the 1st of the month).
+ *     is the user's own admin.mistral.ai/subscription page, which is also the
+ *     only place the real reset date shows up ("Resets in 26 days" — an account
+ *     anniversary, not the 1st of the month).
+ *
+ * WHICH BAR TO TYPE IN. That page shows TWO. Since ~3 Aug 2026 the Vibe CLI
+ * debits only the "Vibe Code budget" bar (€255 on Pro), NOT the shared
+ * "Included monthly usage" bar (€25.50) — measured 2026-08-06: €5.49 of Vibe
+ * spend moved the Vibe bar and left the shared bar unchanged to the cent. So
+ * this card asks for the Vibe Code budget. Typing the shared figure in would
+ * meter the seat against roughly a tenth of its real ceiling.
  *
  * So the user reads their console and types both in. That is not a workaround —
  * for a non-Enterprise seat it is the single most accurate source available, and
@@ -145,11 +151,11 @@ export function MistralQuotaCardView({
 
       <div className="settings-field-row">
         <label className="settings-field">
-          <span className="settings-field-label">Included monthly usage</span>
+          <span className="settings-field-label">Vibe Code budget</span>
           <input
             className="settings-input"
             inputMode="decimal"
-            placeholder="25.50"
+            placeholder="255"
             value={allowanceDraft}
             disabled={busy}
             onChange={(event) => onAllowanceChange(event.target.value)}
@@ -160,7 +166,7 @@ export function MistralQuotaCardView({
           <input
             className="settings-input"
             inputMode="decimal"
-            placeholder="0.28"
+            placeholder="21.30"
             value={spentDraft}
             disabled={busy}
             onChange={(event) => onSpentChange(event.target.value)}
@@ -182,6 +188,11 @@ export function MistralQuotaCardView({
           </select>
         </label>
       </div>
+      <p className="settings-provider-auth-footnote">
+        Read these off the <strong>Vibe Code budget</strong> bar on your Mistral subscription page,
+        not the shared &ldquo;Included monthly usage&rdquo; bar above it. Vibe Code spends from its
+        own budget, so the shared bar stays still while this seat runs.
+      </p>
 
       <label className="settings-field">
         <span className="settings-field-label">Resets on (optional)</span>
