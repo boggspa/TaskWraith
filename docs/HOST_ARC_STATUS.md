@@ -1,11 +1,11 @@
 # Host Arc — Status & Progress Tracker
 
-**Documentarian:** `@SparkDocs` (paperwork owner) · **This refresh:** `@GrokCapt` (Cap post-adopt stamp — records Cap SHAs `b74b33e33` / `78b3845ed` + SparkDocs one-field ruling text; docs only)  
-**Last updated:** 2026-08-06T14:30Z continuous round  
-**HEAD (at time of writing):** `78b3845ed` — churns under concurrent foreign sessions; verify with `git log --oneline -1` before acting  
-**Docs SHA (Cap exact-path):** pending this commit — prior docs `afc48289a`  
-**Branch ahead of origin/master:** ~412 (moving)  
-**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a LANDED** `20a775d96`. **Wave 4.2b LANDED** `9b48bec48`. **Wave 4.2c LANDED** `b74b33e33` (one-field `commandId` on approval). **Wave 4.3a pure LANDED** `78b3845ed` (injected transport; no live IPC). AC1–6 **PARTIAL** (TUI read+command + Desktop pure in HEAD; live Desktop needs **4.3a-wire**; iOS still zero; production Host **STILL never observed running**). Wave **4.3a-wire** — **AUTHORISED / in flight** (`@SolWork`). AC9 **NOT STARTED**. Socket suite still never run (goal-completion blocker).
+**Documentarian:** `@SparkDocs` (paperwork owner) · **This refresh:** `@SparkDocs` (Boss-dispatched docs lane — Cap tip now `1269e3fc7` Wave 4.3c LANDED after 4.4 `402f34e0e`; 4.5 IN FLIGHT unscored; docs only · **not committed**)  
+**Last updated:** 2026-08-06T15:20Z continuous round  
+**HEAD (at time of writing):** `1269e3fc7` — chain `1269e3fc7` ← `402f34e0e` ← `dc404bf09` ← `21e625daa` ← `8dd6d4d3e` ← `e888d3c87` ← `78b3845ed` ← `b74b33e33`; verify with `git log --oneline -1` before acting  
+**Docs SHA (Cap exact-path):** pending Cap adopt of this refresh — prior docs Cap lands `e888d3c87` / `8dd6d4d3e`  
+**Branch ahead of origin/master:** ~418 (moving)  
+**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a** `20a775d96` · **4.2b** `9b48bec48` · **4.2c** `b74b33e33` · **4.3a pure** `78b3845ed` · **4.3a-wire** `21e625daa` · **4.3a-adapter** `dc404bf09` · **Wave 4.4** `402f34e0e` (**LANDED** — Cap exact-path **1** file, `+272/−0`) · **Wave 4.3c** `1269e3fc7` (**LANDED** — Cap exact-path **3** files: provider pair + `main.tsx`; **App.tsx untouched**). Node production composition **boots/serves/stops** under test; Desktop **mounts** the projection provider. **Does NOT** prove Host under Electron; **does NOT** retire AppStore authority. AC1–6 **PARTIAL** (never PASS). Production Host **STILL never observed running under Electron** — zero `taskwraith-host-v2.json`. Wave **4.5** Electron Host observation **IN FLIGHT** (`@GrokWork`) — **do not score**; “ops, not a code slice” was **FALSE** (`scripts/smoke-packaged-electron.cjs` already launches in `ci`). AC9 **NOT STARTED**. Socket suite **CLOSED as seat-specific** (Claude **929/929** across **36** files post-4.4; Cursor Cap may still `EPERM`).
 
 ---
 
@@ -17,9 +17,12 @@
 |---|---|
 | “Host is ON” | **Wiring is committed** in Electron main (`b45d4297f`). `createHostProductionBootstrap` + `start().catch(...)` + `stopSync` exist in **HEAD** `index.ts`. |
 | “Host has booted / is listening” | **Not observed.** Zero `taskwraith-host-v2.json` discovery files exist on this machine (prod + TaskWraith Dev userData searched). Running TaskWraith.app started **~2h11m before R4' landed** — it is a **stale binary** that predates Host wiring. Cause (a) stale process, not cause (b) `start()` failing into the logged catch. |
-| TUI Fake Host v2 green | **Client-path evidence over TCP loopback** in-process. Proves connect → snapshot → (4.2b) command submit / receipt poll / deferred ask. **Does not** prove unix-socket listen, live production Host, or narrow the `EPERM` socket-suite gap. |
+| TUI Fake Host v2 green | **Client-path evidence over TCP loopback** in-process. Proves connect → snapshot → (4.2b) command submit / receipt poll / deferred ask. **Does not** prove live production Host under Electron. |
+| Socket suite / `EPERM` | **CLOSED as seat-specific, not environmental** (`host-arc-socket-gap-CLOSED-seat-specific-not-environmental`). Claude seat post-4.4: full `src/main/host/` **929/929** across **36** files **including** sockets (was **923/923** / **35** pre-4.4). Cursor Cap disclosed `EPERM` on 4.4 adopt and **did not claim** the socket run — accepted behaviour. Standing rule: an “environment cannot do X” claim is only environmental after X has been tried on a **different** shell-capable seat. |
+| Wave **4.4** Node boot proof green | **LANDED** `402f34e0e`. Proves real `createHostMainComposition` + real `HostLocalServer` boot → serve authenticated snapshot → stop under **Node** (`fs.mkdtemp`). **Not** Electron launch; **not** live `taskwraith-host-v2.json`. |
+| “Electron observation is ops, not code” | **FALSE** (`host-arc-electron-observation-is-NOT-ops-a-harness-exists`). `scripts/smoke-packaged-electron.cjs` already launches the packaged app in `ci`; it only never asserted Host discovery. Wave **4.5** closes that hole in code — **IN FLIGHT**, unscored. |
 
-Do **not** inherit the stronger claim by accident in a fresh context. Restart / rebuild of a post-R4' binary is an ops follow-up, not a 4.2a/4.2b code defect.
+Do **not** inherit the stronger claim by accident in a fresh context. Wave 4.4 green under Node ≠ Host under Electron. Live Electron discovery remains unobserved until Wave 4.5 (or an equivalent post-R4' launch) produces evidence.
 
 ---
 
@@ -32,9 +35,9 @@ Do **not** inherit the stronger claim by accident in a fresh context. Restart / 
 | **Wave 2E-2B** (Deferred allow + Authority integration) | ✅ **PASS** | `@SolBoss` / `@GrokCapt` | Resolver `verifyCommand` split @ `aceb0993a`; `HostDeferredAllowPipeline` @ `9d4a2a104`; micro-fix @ `167f6916b` |
 | **Wave 2E-2C** (typecheck debt) | ✅ **PASS** | `@DSeekWork` | `joinFor` cleanup @ `5a0761793`; Ruling-C complete |
 | **Wave 3** (Dedicated Host + supervision) | ✅ **CLOSED** | `@SolBoss` / `@GrokCapt` | Substrate + Gates 1/2/3.6e + R4' wiring all committed. Host **wiring ON** in main. AC1–6 → **PARTIAL** (not PASS). Production Host **never observed running**. |
-| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** — 4.3a-wire | `@SolBoss` / `@SolWork` / `@GrokCapt` | Order ruled **TUI → Desktop → iOS**. **4.2a** `20a775d96` + **4.2b** `9b48bec48` + **4.2c** `b74b33e33` + **4.3a pure** `78b3845ed` **LANDED**. **4.3a-wire** **AUTHORISED / in flight** (IPC + one `index.ts` registration). **4.3b** unlocked by 4.2c Cap land (sequencing still Boss-owned). |
+| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** — 4.5 | `@SolBoss` / `@SolWork` / `@GrokCapt` / `@GrokWork` | Order ruled **TUI → Desktop → iOS**. **4.2a–c** + **4.3a pure/wire/adapter** + **4.4** `402f34e0e` + **4.3c** `1269e3fc7` **LANDED**. Desktop mounts HostProjectionProvider (`main.tsx` wrap; App.tsx untouched; AppStore authority **not** retired). **4.5** Electron Host observation **IN FLIGHT** (unscored). **4.3b** unlocked by 4.2c; sequenced after live Host observation. |
 | **Wave 5** (`.twmission` flight recorder) | NOT STARTED | `@SolBoss` | Blocked by Waves 3–4 progress; AC9 still NOT STARTED |
-| **Wave 6** (Adversarial review + final gates) | NOT STARTED | `@SolBoss` | Blocked by Waves 3–5 **and** HostLocalServer socket-suite gap |
+| **Wave 6** (Adversarial review + final gates) | NOT STARTED | `@SolBoss` | Socket **unit** gap closed (seat-specific). Still blocked by Waves 3–5 + **live Electron Host observation** (Wave 4.5 in flight) + remaining adversarial gates |
 
 ---
 
@@ -161,13 +164,14 @@ Verified by `@SolBoss` with shell (`host-arc-wave3-closed-four-shas`); Cap land 
 **Host process wiring in main: ON** (`b45d4297f`).  
 **Host process observed running: NO** (zero `taskwraith-host-v2.json`; stale pre-R4' app).
 
-**AC1–6: PARTIAL — never write PASS** (`host-arc-r4prime-does-NOT-pass-ac1-6`, updated after 4.2b):
+**AC1–6: PARTIAL — never write PASS** (`host-arc-r4prime-does-NOT-pass-ac1-6`, updated after Wave 4.4 land):
 
 - Process half (wiring): **yes**.
-- Process half (observed boot): **no**.
-- Client projections: **TUI read** (`20a775d96`) + **TUI commands** (`9b48bec48`); Desktop / paired-iOS **still zero**.
-- Approval correlation on the wire: **authored + handed off** (4.2c — Cap adopt pending; suite must include Boss-cleared shared fixture one-liners).
-- Desktop read-only pure layer: **authored + handed off** (4.3a — Cap adopt pending). Live Desktop snapshot still needs **4.3a-wire**.
+- Process half (Node production composition boot under test): **yes** — Wave **4.4** `402f34e0e` (real composition + real server; BOOT → SERVE → STOP).
+- Process half (observed boot under Electron): **no** — zero `taskwraith-host-v2.json` on the machine; production Host **STILL never observed running under Electron**. Wave **4.5** is the code path to close this — **IN FLIGHT**, unscored.
+- Client projections: **TUI read** (`20a775d96`) + **TUI commands** (`9b48bec48`); Desktop **transport chain complete** (`21e625daa` + `dc404bf09`); UI consumer (**4.3c**) ✅ **LANDED** `1269e3fc7` — provider mounted in `main.tsx`; **no** AppStore view cutover; paired-iOS **still zero**.
+- Approval correlation on the wire: ✅ **LANDED** `b74b33e33` (one-field `commandId`).
+- Desktop read-only pure layer: ✅ **LANDED** `78b3845ed`. Live Desktop IPC bridge: ✅ **LANDED** `21e625daa`. Renderer IPC transport: ✅ **LANDED** `dc404bf09`. Production boot proof (Node): ✅ **LANDED** `402f34e0e`. Desktop UI mount: ✅ **LANDED** `1269e3fc7`.
 
 ### Typecheck evidence convention (corrected — binding)
 
@@ -179,15 +183,22 @@ Verified by `@SolBoss` with shell (`host-arc-wave3-closed-four-shas`); Cap land 
 
 Authority on a lane’s readiness is the **owner’s handoff only**. Scouts reading a moving target report *in flight, with a timestamp*, not a green/red verdict (`host-arc-do-not-score-a-live-lane`). Cap adopts only on owner handoff + Cap’s own live re-run.
 
-### WAVE 6 — HostLocalServer socket-suite GOAL-COMPLETION BLOCKER
+### WAVE 6 — HostLocalServer socket-suite — **CLOSED as seat-specific** (not environmental)
 
-**Still open.** `HostLocalServer` unix-socket listen tests have **never** run green in an environment that permits listen. Cap correctly disclosed `EPERM` on every substrate adopt and on 4.2a/4.2b. That does **not** scale to goal completion (`host-arc-socket-epern-validation-gap`).
+**Supersedes** `host-arc-socket-epern-validation-gap`. Measured by `@SolBoss` (`host-arc-socket-gap-CLOSED-seat-specific-not-environmental`):
 
-**4.2a/4.2b nuance:** Fake Host v2 over **TCP loopback** exercises client logic only (including deferred command/receipt paths after 4.2b). It is **not** unix-socket proof and **does not** narrow this gap. A future successful live connection to a post-R4' Host may produce **happy-path** evidence only — say *"happy path proven live, error paths still unrun"* — **never** *"socket gap closed"*.
+| Seat | Result |
+|---|---|
+| **Claude** (Boss / GrokWork-class) | HostLocalServer **35/35** PASSED · full `npx vitest run src/main/host/` **923/923** across **35** files **INCLUDING** sockets (pre-4.4). Post-4.4 handoff evidence: **929/929** across **36** files (923+6) |
+| **Cursor** (Cap / SparkDocs-class) | May still get unix-socket listen `EPERM` — disclose, do not claim that path. Cap on 4.4 adopt: probe + suite **6/6 FAIL** `listen EPERM` — **disclosed, not claimed**; accepted GrokWork Claude-seat **6/6** + **929/929** |
 
-Any adopt that cites a host-suite count **must** state whether socket tests ran, skipped, or failed.
+**Standing rule (binding):** an “environment cannot do X” claim is only environmental after X has been tried on a **different** shell-capable seat. Cap was right to disclose Cursor `EPERM` on every substrate adopt; that was seat-true, not machine-true.
 
-### WAVE 4 sequencing (binding) — `host-arc-wave4-sequencing-ruling` + `host-arc-42c-slice-and-refined-43-gate`
+**4.2a/4.2b nuance unchanged:** Fake Host v2 over **TCP loopback** remains client-path evidence only — it is still **not** a substitute for the real unix-socket suite (now proven on a Claude seat) or for live Electron Host boot.
+
+Any adopt that cites a host-suite count **must** still state whether socket tests ran, skipped, or failed **on that seat**.
+
+### WAVE 4 sequencing (binding) — `host-arc-wave4-sequencing-ruling` + `host-arc-42c-slice-and-refined-43-gate` + `host-arc-44-production-boot-proof-is-now-possible`
 
 **Order: TUI → Desktop → iOS.**
 
@@ -198,9 +209,13 @@ Any adopt that cites a host-suite count **must** state whether socket tests ran,
 | **4.2b** TUI command cutover | ✅ **LANDED** `9b48bec48` | `@CursorWork` / `@GrokCapt` | Same client + `commands`/`receipts`. Deferred-receipt poll; pending ≠ succeeded; y/n → `approval.decide`. No parallel v1 mutation socket. Evidence: `typecheck:tui` + 38/38 owned non-socket. |
 | **4.2c** Approval correlation (protocol) | ✅ **LANDED** `b74b33e33` | `@GrokWork` / `@GrokCapt` | **ONE field only** (`host-arc-42c-one-field-grokwork-contest-upheld`): required `commandId` on `HostApprovalProjection`; **NO** `approvalId` on `HostCommandReceipt`. Cap evidence: `typecheck:node` + `typecheck:tui` exit 0 (owned clean); owned non-socket **103/103** across protocol/host/TUI files; dual same-`actionKind` RED-proof + decode reject pin + composition publish pin. Exact-path **10 files**. |
 | **4.3a** Desktop read-only **pure** layer | ✅ **LANDED** `78b3845ed` | `@SolWork` / `@GrokCapt` | Injected `HostProjectionTransport { fetchSnapshot() }` — mapper/store/hook + honesty pins (cached ≠ live, unavailable ≠ zero, no empty fabricate). **No** live Host / preload / `index.ts` in this SHA. Cap evidence: `typecheck:web` owned clean; **24/24**. Exact-path **5 files**. |
-| **4.3a-wire** Desktop IPC bridge | 🔄 **AUTHORISED / in flight** | `@SolWork` | Boss carve-out (`host-arc-43a-cleared-and-wire-carveout-granted`): `src/main/ipc/hostProjectionHandlers.ts` (+ test) + thin `src/preload/index.ts` + **exactly one** `src/main/index.ts` registration under R4' discipline. Still **read-only**. Evidence must name **both** `typecheck:node` **and** `typecheck:web`. |
-| **4.3b** Desktop command cutover | NOT STARTED | TBD | **Unblocked** by Cap-landed 4.2c (`b74b33e33`); sequencing still Boss-owned. |
-| **4.4+** Retire AppStore-as-authority / paired iOS | NOT STARTED | TBD | Separate slices |
+| **4.3a-wire** Desktop IPC bridge | ✅ **LANDED** `21e625daa` | `@SolWork` / `@GrokCapt` | Exact-path **4** files · `+403/−0` · `index.ts` **+10/0** · preload **+7/0**. Protocol client (not store shortcut); read-only `bootstrap/snapshot/health`; `{ok:false}` never empty snapshot. Cap: `typecheck:node` + `typecheck:web` owned clean; handler **11/11**. |
+| **4.3a-adapter** renderer IPC transport | ✅ **LANDED** `dc404bf09` | `@SolWork` / `@GrokCapt` | Exact-path **5** files · `+336/−2`. `hostProjectionIpcTransport{,.test}.ts` + `index.d.ts` + prose (`commandId`). Honesty hinge: `{ok:false}` → **reject**, never empty snapshot. Cap: `typecheck:web` + `typecheck:node` owned clean; **36/36** across 3 files. Transport chain complete in code. |
+| **4.3b** Desktop command cutover | NOT STARTED | TBD | **Unblocked** by Cap-landed 4.2c (`b74b33e33`); sequenced after **4.3c consumer** + live Host observation (Boss). |
+| **4.3c** Desktop UI consumer | ✅ **LANDED** `1269e3fc7` | `@SolWork` / `@GrokCapt` | Exact-path **3** files: `HostProjectionProvider{,.test}.tsx` + `main.tsx`. Provider wraps App + PopoutApp **inside** ErrorBoundary; **App.tsx untouched**; **ZERO forbidden roots**. First UI call site for store+IPC transport. Does **not** retire AppStore authority. Cap land during this docs pass (Boss brief still said IN FLIGHT — Cap tip supersedes). |
+| **4.4** Production boot proof (Node) | ✅ **LANDED** `402f34e0e` | `@GrokWork` / `@GrokCapt` | Exact-path **1** file · `+272/−0` · `HostProductionBootstrap.boot.test.ts` only. Omits both seams (`createComposition` / `createServer`); real composition + real server. BOOT → SERVE → STOP against `fs.mkdtemp`. Identity on **`welcome.hostId`**, not snapshot. Cap: Prettier clean · `typecheck:node` zero owned · Cursor sockets **EPERM disclosed not claimed** · accept GrokWork Claude **6/6** + host **929/929**. CursorScout fake-`createComposition` claim adjudicated **FALSE**. **Proves Node boot; does NOT prove Electron Host.** |
+| **4.5** Observe Host under Electron | 🔄 **IN FLIGHT** | `@GrokWork` → `@GrokCapt` | Closes the last AC1–6 hole in **code**, not ops (`host-arc-electron-observation-is-NOT-ops-a-harness-exists`). Sibling script `scripts/smoke-host-boot-electron.cjs` (additive; do **not** edit `smoke-packaged-electron.cjs` / `package.json` this pass). Must fail loudly on missing/undecodable `taskwraith-host-v2.json`. Recon-first: isolated instance must not disturb user’s running app. **Do not score**; do **not** pre-write a result. |
+| **4.4+** Retire AppStore-as-authority / paired iOS | NOT STARTED | TBD | Separate slices after live Electron Host observation |
 
 ### `index.ts` staging RULE (not a window status)
 
@@ -228,7 +243,9 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 8. **“Host ON” ≠ Host booted** — zero `taskwraith-host-v2.json` until a post-R4' binary actually runs.
 9. **`typecheck:web` for renderer** — Desktop slices must name the web project; node/tui cannot see `src/renderer/**` meaningfully for this gate.
 10. **Approval correlation is ONE field** — required `commandId` on approval projection; no `approvalId` on receipt (join key suffices; receipt has no challenge link). 4.3a read-only / 4.3a-wire ungated; 4.3b mutations hard-gated on Cap-landed 4.2c.
-11. **`typecheck:web` vs preload** — `tsconfig.web.json` includes only `src/preload/*.d.ts`; preload `.ts` is covered by `typecheck:node`. Wire slices spanning preload need **both** projects.
+12. **4.4 evidence ownership is seat-split** — Cap’s Cursor seat may `EPERM` on unix sockets; Cap owns staging / typecheck / commit and must disclose EPERM rather than claim sockets; Claude-seat (GrokWork / Boss) owns the socket re-run evidence. Nobody is asked for evidence their sandbox forbids.
+13. **4.3c wrap is `main.tsx`, not App.tsx** — App mounts from `main.tsx` (32 lines); goal forbids `App.tsx`, not `main.tsx`. Earlier “one-line App.tsx wrap” ruling is **corrected** (`host-arc-43c-maints-wrap-corrects-my-own-ruling`). STOP asking Boss (a) vs (b) — ruled (`host-arc-43c-already-ruled-stop-asking`).
+14. **“Electron observation is ops” was FALSE** — `scripts/smoke-packaged-electron.cjs` already launches the packaged app in `ci`; Wave **4.5** adds Host discovery assertions in a sibling script. Node 4.4 green ≠ Electron Host observed.
 
 ---
 
@@ -237,6 +254,14 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 Top-of-tree churns every pass with foreign concurrent-session commits. This table lists **arc-owned commits only** — run `git log --oneline -1` for current HEAD.
 
 ```text
+1269e3fc7  feat(renderer): mount Desktop Host projection provider (Wave 4.3c)            (@SolWork authored; @GrokCapt adopted)
+402f34e0e  feat(host): prove production Host composition boots over real sockets (Wave 4.4) (@GrokWork authored; @GrokCapt adopted)
+dc404bf09  feat(renderer): add Desktop Host projection IPC transport (Wave 4.3a-adapter) (@SolWork authored; @GrokCapt adopted)
+21e625daa  feat(host): wire Desktop Host projection IPC bridge (Wave 4.3a-wire)         (@SolWork authored; @GrokCapt adopted)
+8dd6d4d3e  docs(host): point next actions at 4.3a-wire after Cap lands                 (@SparkDocs; @GrokCapt adopted)
+e888d3c87  docs(host): record Wave 4.2c and 4.3a Cap lands                             (@SparkDocs; @GrokCapt adopted)
+78b3845ed  feat(renderer): add pure Desktop Host projection layer (Wave 4.3a)           (@SolWork authored; @GrokCapt adopted)
+b74b33e33  feat(host): bind approvals to commands by commandId (Wave 4.2c)              (@GrokWork authored; @GrokCapt adopted)
 afc48289a  docs(host): record Wave 4.2b land and active 4.2c/4.3a lanes                 (@SparkDocs; @GrokCapt adopted)
 9b48bec48  feat(tui): route TUI mutations through Host with deferred receipts (Wave 4.2b) (@CursorWork authored; @GrokCapt adopted)
 4cb932c31  docs(host): record Wave 4.2a land and Host-never-run ops gap                  (@SparkDocs; @GrokCapt adopted)
@@ -315,17 +340,26 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 - ✅ **4.2c — approval correlation (one-field)** @ `b74b33e33`
 - ✅ **4.3a — Desktop pure projection layer** @ `78b3845ed`
 - ✅ **Docs catch-up (4.2c / 4.3a Cap lands)** @ `e888d3c87`
+- ✅ **Docs next-actions → wire** @ `8dd6d4d3e`
+- ✅ **4.3a-wire — Desktop IPC bridge** @ `21e625daa` — 4 files · `+403/−0` · `index.ts` exactly `+10/0`
+- ✅ **4.3a-adapter — renderer IPC transport** @ `dc404bf09` — 5 files · `+336/−2` · honesty hinge `{ok:false}` → reject
+- ✅ **4.4 — production boot proof (Node)** @ `402f34e0e` — 1 file · `+272/−0` · real composition + real server boots/serves/stops under test · **not** Electron observation
+- ✅ **4.3c — Desktop UI consumer** @ `1269e3fc7` — 3 files · provider + `main.tsx` wrap · App.tsx untouched · mounts projection; **does not** retire AppStore
 
-### What remains (post–4.2c / post–4.3a pure)
+### What remains (post–Wave 4.3c)
 | Item | Owner | Status |
 |---|---|---|
-| **Wave 4.2c — approval correlation (protocol)** | `@GrokWork` / `@GrokCapt` | ✅ **LANDED** `b74b33e33` — one-field `commandId` on approval; Cap live evidence named. |
+| **Wave 4.2c — approval correlation (protocol)** | `@GrokWork` / `@GrokCapt` | ✅ **LANDED** `b74b33e33` — one-field `commandId` on approval. |
 | **Wave 4.3a — Desktop read-only pure layer** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `78b3845ed` — injected transport; no live Host in this SHA. |
-| **Wave 4.3a-wire — IPC + one `index.ts` line** | `@SolWork` | 🔄 **AUTHORISED / in flight** under composition-root carve-out. R4' discipline. Still read-only. Cap adopt later, separate SHA. |
-| **Wave 4.3b — Desktop commands** | `@SolBoss` sequencing | **Unblocked** by 4.2c Cap land; not started. |
-| **Ops — restart post-R4' app** | user / Cap | Needed before any live `taskwraith-host-v2.json` evidence — **Host STILL never observed running** |
+| **Wave 4.3a-wire — IPC + one `index.ts` line** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `21e625daa` — Cap exact-path 4 files; Host-only hunk. |
+| **Wave 4.3a-adapter — renderer IPC transport** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `dc404bf09` — Cap exact-path 5 files; transport complete in code. |
+| **Wave 4.4 — production boot proof (Node)** | `@GrokWork` / `@GrokCapt` | ✅ **LANDED** `402f34e0e` — Cap exact-path 1 file; Claude-seat sockets accepted; Cap Cursor EPERM disclosed. **Not** Electron observation. |
+| **Wave 4.3c — Desktop UI consumer** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `1269e3fc7` — Cap exact-path 3 files; provider mounted; AppStore authority **not** retired. |
+| **Wave 4.5 — observe Host under Electron** | `@GrokWork` → `@GrokCapt` | 🔄 **IN FLIGHT** — sibling smoke script; fail-closed on missing discovery. **Do not score**; do not pre-write result. |
+| **Wave 4.3b — Desktop commands** | `@SolBoss` sequencing | **Unblocked** by 4.2c; after live Host observation (4.3c mount now Cap-landed). |
+| **Live Electron `taskwraith-host-v2.json`** | Wave 4.5 | **STILL never observed** — Node 4.4 ≠ Electron Host |
 | **Wave 5 — `.twmission` / AC9** | `@SolBoss` | **NOT STARTED** |
-| **Wave 6 — adversarial + socket suite** | `@SolBoss` | **NOT STARTED**; socket suite remains goal-completion blocker |
+| **Wave 6 — adversarial + closeout** | `@SolBoss` | Socket **unit** gap **CLOSED** (seat-specific). Live Electron Host observation still required for AC1–6. |
 
 ### Marker hygiene (this paperwork measurement)
 
@@ -336,13 +370,18 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 | `.WORK-IN-PROGRESS-host-arc-install-identity.md` | **Absent** | n/a (3.6e landed) |
 | `.WORK-IN-PROGRESS-host-arc-r4prime-index-wiring.md` | **Absent** | n/a (R4' landed) |
 | `.WORK-IN-PROGRESS-host-arc-wave42a-tui-projection.md` | **Absent** | n/a (4.2a landed) |
-| `.WORK-IN-PROGRESS-host-arc-wave42b-tui-commands.md` | **Absent** | n/a (4.2b landed; Cap dropped fence) |
-| `.WORK-IN-PROGRESS-host-arc-wave42c-approval-correlation.md` | **Present** (GrokWork) | Courtesy fence — `pid: 4902` shared host; **`TASKWRAITH_LOCK_OWNER_ID` absent**; expires may have lapsed — owners must re-stamp; Cap does not treat as enforceable adopt claim |
-| `.WORK-IN-PROGRESS-host-arc-wave43a-desktop-projection.md` | **Present** (SolWork) | Same class — courtesy fence / decayed shared pid; re-stamp before further edits |
+| `.WORK-IN-PROGRESS-host-arc-wave42b-tui-commands.md` | **Absent** | n/a (4.2b landed) |
+| `.WORK-IN-PROGRESS-host-arc-wave42c-approval-correlation.md` | **Absent** | n/a (4.2c Cap-landed) |
+| `.WORK-IN-PROGRESS-host-arc-wave43a-desktop-projection.md` | **Absent** | n/a (4.3a pure Cap-landed) |
+| `.WORK-IN-PROGRESS-host-arc-wave43a-wire.md` | **Absent** | n/a (4.3a-wire Cap-landed `21e625daa`) |
+| `.WORK-IN-PROGRESS-host-arc-wave43a-adapter.md` | **Absent** | n/a (4.3a-adapter Cap-landed `dc404bf09`) |
+| `.WORK-IN-PROGRESS-host-arc-wave44-boot-proof.md` | **Absent** | n/a (4.4 Cap-landed `402f34e0e`; Cap + GrokWork markers dropped on land) |
+| `.WORK-IN-PROGRESS-host-arc-wave43c-desktop-consumer.md` | **Absent** | n/a (4.3c Cap-landed `1269e3fc7`; authored without marker — `host-arc-lane-scope-omits-granted-marker-paths`) |
+| `.WORK-IN-PROGRESS-host-arc-wave45-electron-observe.md` | **Absent / unknown** | 4.5 **IN FLIGHT** under `@GrokWork` — recon-first; re-measure before quoting |
 
 Foreign markers present (not Host Arc): `.WORK-IN-PROGRESS-observatory-gpu-calm.md`, `.WORK-IN-PROGRESS-seat-strip-desktop.md`, `.WORK-IN-PROGRESS-tool-event-dual-lane-dedupe.md`.
 
-`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent** and no stable long-lived seat pid; **no docs marker raised** (a no-identity marker would claim nothing). **Could not re-measure** live userData discovery this pass — accepting Boss blackboard `host-arc-production-host-has-never-actually-run` as authority that production Host is **STILL never observed running**. Cap live suite for 4.2c/4.3a **not** claimed here.
+`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent** and no stable long-lived seat pid; **no docs marker raised** (a no-identity marker would claim nothing). Accepting Cap tip: wire **`21e625daa`** + adapter **`dc404bf09`** + Wave 4.4 **`402f34e0e`** + Wave 4.3c **`1269e3fc7` LANDED**; 4.5 **IN FLIGHT unscored**; production Host **STILL never observed running under Electron**. **Not committed** this pass.
 
 ### R5 — Evaluator Sourcing (DURABLE — unchanged; Gate 1 landed)
 
@@ -362,13 +401,13 @@ Ten names: `snapshot.get`, `deltas.since`, `receipt.lookup`, `ping`, `approval.d
 
 | AC | Status | Note |
 |---|---|---|
-| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Production Host **STILL never observed running** (zero `taskwraith-host-v2.json`). TUI read (`20a775d96`) + TUI commands (`9b48bec48`); Desktop pure layer handed off (Cap adopt pending); live Desktop needs 4.3a-wire; iOS still zero. Socket-path unit suite still never run — goal-closeout blocker. Fake Host v2 ≠ socket gap closed. **Never PASS.** |
-| AC7–AC8 | ⚠️ PARTIAL | Host core authoritative; TUI is first full (read+command) projection client; Desktop/iOS still legacy |
+| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Wave **4.4** proves Node production composition boots/serves/stops (`402f34e0e`). Wave **4.3c** mounts Desktop provider (`1269e3fc7`) without retiring AppStore. Production Host **STILL never observed running under Electron** (zero `taskwraith-host-v2.json`). TUI read+commands in HEAD; iOS still zero. Socket **unit** suite **CLOSED** seat-specific (Claude **929/929** post-4.4). Fake Host / Node boot-test ≠ Electron boot. Wave **4.5** in flight to close the Electron hole. **Never PASS.** |
+| AC7–AC8 | ⚠️ PARTIAL | Host core authoritative; TUI is first full (read+command) projection client; Desktop mounts Host projection (AppStore still authority for most views); iOS still legacy |
 | AC9 | ❌ **NOT STARTED** | `.twmission` / mission evidence not started (Wave 5) |
-| AC10–AC11 | ⚠️ PARTIAL | TUI read+command paths live in HEAD; Desktop pure (4.3a) handed off; 4.3a-wire authorised; Desktop commands / iOS not started |
+| AC10–AC11 | ⚠️ PARTIAL | TUI read+command paths live in HEAD; Desktop pure + wire + adapter + mount landed; Desktop commands / iOS not started |
 | AC12–AC13 | ✅ PASS | Provider/security boundaries untouched by Arc commits |
-| AC14 | ⚠️ PARTIAL | Path-scoped evidence only; Wave 4 TUI uses `typecheck:tui`; Desktop pure uses `typecheck:web`; wire/preload needs **node+web**; protocol slice needs **node+tui** |
-| AC15 | ✅ PASS | No forbidden path drift in scoped arc handoffs (4.2b exact-path seven files; docs `afc48289a` exact-path) |
+| AC14 | ⚠️ PARTIAL | Path-scoped evidence only; Wave 4 TUI uses `typecheck:tui`; Desktop pure/adapter/consumer uses `typecheck:web`; wire/preload needs **node+web**; protocol slice needs **node+tui**; 4.4 uses `typecheck:node` |
+| AC15 | ✅ PASS | No forbidden path drift in scoped arc Cap lands (4.3c exact-path 3 files; 4.4 exact-path 1; adapter 5; wire 4; prior exact-path lands stand) |
 
 ---
 
@@ -378,7 +417,7 @@ Ten names: `snapshot.get`, `deltas.since`, `receipt.lookup`, `ping`, `approval.d
 
 **Aliases:** `@SparkDocs` `@MistralScout` `@DSeekScout` `@K2.7Scout` `@CursorScout` `@DSeekWork` `@GemProWork` `@GrokWork` `@SolWork` `@CursorWork` `@MistralReview` `@GrokReview` `@K3Review` `@GrokCapt` `@SolBoss`
 
-Commits are exact-path only; markers with honest live pid **or** `lockOwnerId` and adopter-window expiry; drop on adopt. Workers leave validated handoffs; Cap commits post-review. **One owner per gate.** Live suite at adopt = shell-capable seat. **Nobody commits from work seats on the current 4.2c / 4.3a fan-out** — validated handoff to `@GrokCapt`. Scouts do not score live lanes.
+Commits are exact-path only; markers with honest live pid **or** `lockOwnerId` and adopter-window expiry; drop on adopt. Workers leave validated handoffs; Cap commits post-review. **One owner per gate.** Live suite at adopt = shell-capable seat. **Nobody commits from work seats on the current 4.5 fan-out** — validated handoff to `@GrokCapt`. Scouts do not score live lanes. **4.4 socket evidence** = GrokWork Claude-seat (Cap disclosed Cursor `EPERM`).
 
 ---
 
@@ -398,8 +437,8 @@ Commits are exact-path only; markers with honest live pid **or** `lockOwnerId` a
 Snapshot at this paperwork pass (`git status --porcelain`). Re-check before staging. **Not an `index.ts` window claim.**
 
 **Arc-owned (uncommitted — Cap adopts separately):**
-- ` M docs/HOST_ARC_STATUS.md` (this paperwork lane — one-field correction)
-- 4.2c / 4.3a code paths dirty under worker markers — **Cap exact-path only**; exclude foreign persistence dirt
+- ` M docs/HOST_ARC_STATUS.md` (this paperwork lane)
+- Wave **4.5** sibling smoke script (when authored) — Cap exact-path after handoff; exclude from docs land
 
 **Foreign / other-session (illustrative — re-measure before acting):**
 - `electron.vite.config.ts`, `src/main/store/{index,PersistenceWriteWorker*,persistenceDurability*,persistenceWriteBaseline*}`, `src/main/workers/persistenceWriteWorker.ts` — **not Host Arc scope**
@@ -410,13 +449,12 @@ Exact-path staging only — never `git add -A` / `git add .` / `commit -a`.
 
 ## Next actions (paperwork view)
 
-1. `@SolWork` — finish **4.3a-wire** under the granted carve-out (handler first, `index.ts` last, R4' discipline); hand Cap with **both** `typecheck:node` **and** `typecheck:web`; **no commit**.
-2. `@GrokCapt` — adopt **4.3a-wire** only on handoff + Cap live re-run; exact-path; drop wire marker with land. **HOLD** while wire is live.
-3. `@K3Review` / `@GrokReview` / `@MistralReview` — delta-only on Cap lands `b74b33e33` / `78b3845ed` / future wire; no Wave 3 / 4.2a / 4.2b reopen.
-4. `@SolBoss` — sequence 4.3b after wire; keep AC1–6 PARTIAL until live Desktop + Host observed + socket suite.
-5. Ops / user — restart a **post-R4'** TaskWraith binary before treating live Host discovery as expected. **Production Host STILL never observed running.**
-6. Wave 6 / goal closeout — HostLocalServer socket suite where unix-socket listen is permitted; Fake Host ≠ substitute.
-7. `@SparkDocs` — optional polish; keep one-field ruling + Cap SHAs aligned (4.2c/4.3a pure already Cap-landed).
+1. `@GrokCapt` — exact-path adopt **Wave 4.5** only after GrokWork formal handoff; disclose Cursor limits rather than claim a launch you cannot run. Exact-path this docs refresh alone or with that adopt (exclude foreign dirt).
+2. `@GrokWork` — finish **Wave 4.5** recon-first Electron observation handoff; Cap adopts only after formal handoff. **Do not score** while live. A RED is a real P0 result, not a lane failure.
+3. `@K3Review` / `@GrokReview` / `@MistralReview` — delta-only on Cap lands `402f34e0e` (4.4) and `1269e3fc7` (4.3c); HOLD 4.5 until Cap SHA; no Wave 3 / 4.2 / 4.3a / 4.4 reopen.
+4. `@SolBoss` — Cap-clear 4.5 adopt when handed off; sequence **4.3b** only after live Electron Host observation; keep AC1–6 **PARTIAL**.
+5. **PROMINENT:** Production Host **STILL never observed running under Electron** — zero `taskwraith-host-v2.json`. Wave 4.4 green under Node ≠ Electron observation. Wave 4.5 is the code path; do **not** pre-write its result.
+6. `@SparkDocs` — optional polish after Cap lands 4.5 SHA; do not invent Electron boot evidence.
 
 ---
 
@@ -432,6 +470,6 @@ Exact-path staging only — never `git add -A` / `git add .` / `commit -a`.
 
 - Goal: [`HOST_ARC_GOAL.md`](./HOST_ARC_GOAL.md)
 - Baseline: [`HOST_ARC_WAVE0_BASELINE.md`](./HOST_ARC_WAVE0_BASELINE.md)
-- Blackboard: `host-arc-wave3-closed-four-shas`, `host-arc-wave4-sequencing-ruling`, `host-arc-r4prime-adopt-authorized`, `host-arc-r4prime-does-NOT-pass-ac1-6`, `host-arc-r4prime-k3review-delta-pass`, `host-arc-r4prime-staging-rule-restated`, `host-arc-r4prime-hunk-content-ruling`, `host-arc-three-shas-confirmed-by-boss`, `host-arc-hostid-ruling`, `host-arc-typecheck-131-ts6307-was-an-artefact`, `host-arc-tui-needs-typecheck-tui-not-node`, `host-arc-do-not-score-a-live-lane`, `host-arc-production-host-has-never-actually-run`, `host-arc-socket-epern-validation-gap`, `host-arc-window-is-instantaneous`, `host-arc-review-seats-have-no-shell`, `host-arc-stop-reverifying-the-four`, `host-arc-42b-adopt-authorized-plus-approvalid-ruling`, `host-arc-42b-b1b2b3-resolved-adjudicated`, `host-arc-approval-correlation-is-a-protocol-gap`, `host-arc-42c-slice-and-refined-43-gate`, `host-arc-42c-one-field-grokwork-contest-upheld`, `host-arc-42c-correlation-handoff`, `host-arc-42c-cleared-and-boss-scoping-error`, `host-arc-43a-split-pure-then-wire`, `host-arc-43a-desktop-seam-needs-main-ipc`, `host-arc-43a-cleared-and-wire-carveout-granted`
+- Blackboard: `host-arc-wave3-closed-four-shas`, `host-arc-wave4-sequencing-ruling`, `host-arc-r4prime-adopt-authorized`, `host-arc-r4prime-does-NOT-pass-ac1-6`, `host-arc-production-host-has-never-actually-run`, `host-arc-socket-gap-CLOSED-seat-specific-not-environmental`, `host-arc-socket-epern-validation-gap` (superseded), `host-arc-43a-wire-and-adapter-verified-by-boss`, `host-arc-43a-adapter-chain-complete-appts-next`, `host-arc-43c-maints-wrap-corrects-my-own-ruling`, `host-arc-43c-already-ruled-stop-asking`, `host-arc-44-production-boot-proof-is-now-possible`, `host-arc-44-fake-composition-claim-is-FALSE-adjudicated`, `host-arc-44-boot-proof-REAL-COMPOSITION-BOOTS`, `host-arc-electron-observation-is-NOT-ops-a-harness-exists`, `host-arc-lane-scope-omits-granted-marker-paths`, `host-arc-42c-one-field-grokwork-contest-upheld`, `host-arc-43a-cleared-and-wire-carveout-granted`, `host-arc-do-not-score-a-live-lane`, `host-arc-review-seats-have-no-shell`
 
 **Maintained by:** `@SparkDocs` · Scope-limited to repo paperwork · figures byte-verified against live git + markers at time of writing · **not committed** this pass.
