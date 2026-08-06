@@ -62,6 +62,50 @@ describe('SeatChangeRow composer-parity contract', () => {
   })
 })
 
+describe('brief-only seat changes say so', () => {
+  it('trails the after side with the note, ahead of the timestamp', () => {
+    // Every other seat field has a chip; the brief has none, so a brief-only
+    // edit rolled a row whose two sides were identical. Owner call 2026-08-06:
+    // the note lands at the right end of the AFTER row, with the timestamp
+    // staying the row's last element as it is on every other transcript row.
+    const start = rowSource.indexOf('function SeatStrip(')
+    const region = rowSource.slice(start, rowSource.indexOf('export function seatAccentVar'))
+    expect(region).toContain('className="seat-change-brief-note"')
+    expect(region).toContain('(Brief updated)')
+    const note = region.indexOf('className="seat-change-brief-note"')
+    expect(note).toBeGreaterThan(region.indexOf('{inline ? null : role}'))
+    expect(note).toBeLessThan(region.indexOf('className="seat-change-time"'))
+  })
+
+  it('shows it WITH the after state, never during the before pre-wait', () => {
+    // The row opens on the before seat for 2 s. A note that is already there
+    // describes a change that, at that instant, has not been shown yet — and on
+    // a brief-only change it is the ONLY thing that moves, so it is the roll.
+    const start = rowSource.indexOf('function SeatStrip(')
+    const region = rowSource.slice(start, rowSource.indexOf('export function seatAccentVar'))
+    expect(region).toContain("briefUpdated && phase === 'after'")
+  })
+
+  it('reads the flag off the payload, so a close-out cell can never claim one', () => {
+    // SeatStrip is shared with the close-out table, which feeds it a
+    // SeatChangeLink. A link has no brief field — the `in` check is what keeps
+    // an unrelated truthy key from turning a RECORD into a change claim.
+    expect(rowSource).toContain("'briefUpdated' in seatChange")
+  })
+
+  it('styles the note as row chrome, not as a chip', () => {
+    // Owner: "the same tool call font/style" — it rides the row's own trailing
+    // treatment beside the timestamp. A chip would read as a seat VALUE, and
+    // there is no brief value here to show.
+    const start = cssSource.indexOf('.seat-change-brief-note {')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const block = cssSource.slice(start, cssSource.indexOf('}', start))
+    expect(block).toContain('var(--font-size-xs)')
+    expect(block).not.toContain('background:')
+    expect(block).not.toContain('border:')
+  })
+})
+
 describe('CharOdometer family contract', () => {
   it('omits the permission chip when the tier is unknown, rather than claiming default', () => {
     // An absent preset is not the default preset. Rows predating the seat

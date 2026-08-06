@@ -12109,6 +12109,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* "(Brief updated)" — the row's trailing chrome, sharing the timestamp's size
+ * and mute so the two read as one trailing group. Deliberately NOT a chip: a
+ * chip states a seat VALUE, and there is no brief value on this row to state —
+ * the note only says that one moved. */
+.seat-change-brief-note {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+}
+
 /* Character wheels: widths are measured per character, and a width
  * transition carries old→new advances in lockstep with the roll. */
 .char-odometer__slot {

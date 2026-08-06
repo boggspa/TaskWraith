@@ -18555,7 +18555,13 @@ export class EnsembleOrchestrator {
         label: participantLabel(after) || participantLabel(before),
         before: seatChangeSeatState(before, grantsCount, seatAuthorityFor(before)),
         after: seatChangeSeatState(after, grantsCount, seatAuthorityFor(after)),
-        appliedAt: timestamp
+        appliedAt: timestamp,
+        // The brief is the one part of a seat `seatChangeSeatState` does not
+        // carry — nothing renders it, and the text is paragraphs against the
+        // row's one line. So a brief-only edit produced a payload whose two
+        // sides were identical: a change row with nothing changed in it. The
+        // flag is what the row's "(Brief updated)" note reads.
+        ...(before.instructions !== after.instructions ? { briefUpdated: true } : {})
       },
       this.deps.now()
     )

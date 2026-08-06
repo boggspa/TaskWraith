@@ -219,6 +219,11 @@ function SeatStrip({
   const after = useMemo(() => seatSideView(seatChange.after), [seatChange])
   const current = phase === 'before' ? before : after
   const time = inline ? '' : formatSeatChangeTime(timestamp)
+  // Narrowed by key rather than by `inline`: this strip is shared with the
+  // close-out table, which feeds it a SeatChangeLink — a RECORD of what a seat
+  // was, with no brief field that could have moved. The `in` check is what
+  // keeps a link from ever reaching the note.
+  const briefUpdated = 'briefUpdated' in seatChange && seatChange.briefUpdated === true
 
   const role = current.role ? (
     <span
@@ -261,6 +266,16 @@ function SeatStrip({
       <SeatClusterChip view={current} animate />
       <SeatPermissionChip view={current} animate />
       {inline ? null : role}
+      {/* Every other seat field has a chip to change; the brief has none, so a
+          brief-only edit rolled a row whose two sides read identically. This
+          note is what makes that row true. It arrives WITH the after state —
+          during the pre-wait the reader is still looking at the old seat, and
+          on a brief-only change the note appearing IS the roll. Ahead of the
+          timestamp (owner call 2026-08-06) so the time stays the row's last
+          element, as on every other transcript row. */}
+      {briefUpdated && phase === 'after' && (
+        <span className="seat-change-brief-note">(Brief updated)</span>
+      )}
       {time && <span className="seat-change-time">{time}</span>}
     </>
   )

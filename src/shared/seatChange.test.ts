@@ -109,6 +109,25 @@ describe('coalesceSeatChangeMessages (120 s sliding window, tombstoning)', () =>
     const r2 = coalesceSeatChangeMessages([malformed], nextPayload, T0)
     expect(r2.messages.map((m) => m.id)).toEqual(['bad'])
   })
+
+  it('keeps a brief update announced when a later tweak in the flurry did not touch it', () => {
+    // The surviving row shows the INHERITED before-state, so it stands for the
+    // whole flurry. Letting the latest tweak's (absent) flag win would un-say a
+    // brief change the reader was already shown — the note would blink out.
+    const prior = seatChangeMessage('m1', 'p1', T0 - 30_000)
+    prior.metadata!.seatChange!.briefUpdated = true
+    expect(nextPayload.briefUpdated).toBeUndefined()
+    const { payload } = coalesceSeatChangeMessages([prior], nextPayload, T0)
+    expect(payload.briefUpdated).toBe(true)
+  })
+
+  it('leaves the flag off entirely when no brief moved on either side', () => {
+    // Absent, not `false`: the row renders no note, and old persisted rows that
+    // predate the flag decode the same way a fresh unchanged one does.
+    const prior = seatChangeMessage('m1', 'p1', T0 - 30_000)
+    const { payload } = coalesceSeatChangeMessages([prior], nextPayload, T0)
+    expect(payload.briefUpdated).toBeUndefined()
+  })
 })
 
 describe('close-out seat links', () => {

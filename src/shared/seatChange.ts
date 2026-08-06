@@ -65,6 +65,18 @@ export interface SeatChangePayload {
   after: SeatChangeSeatState
   /** ISO timestamp of the LATEST coalesced adjustment. */
   appliedAt: string
+  /**
+   * The seat's goal/brief text moved in this change.
+   *
+   * A flag on the PAYLOAD rather than a field on either side, because the
+   * brief is the one part of a seat that no chip renders: provider, model,
+   * reasoning, tier, grants and role each have one, the brief has none. So a
+   * brief-only edit produced a row whose two sides were character-for-
+   * character identical — a change announcement with nothing changed in it.
+   * The flag says a brief moved; it deliberately does not carry the text,
+   * which is paragraphs against the row's one line.
+   */
+  briefUpdated?: boolean
 }
 
 /** Structural slice of ChatMessage the coalescer needs — keeps this module
@@ -105,7 +117,15 @@ export function coalesceSeatChangeMessages<T extends SeatChangeCarrierMessage>(
     }
     return {
       messages: [...messages.slice(0, index), ...messages.slice(index + 1)],
-      payload: { ...next, before: candidate.before }
+      payload: {
+        ...next,
+        before: candidate.before,
+        // The coalesced row inherits the ORIGINAL before-state, so it describes
+        // the whole flurry rather than its last step — and a brief edited in an
+        // earlier tweak is still news when the latest one only moved the model.
+        // Without this OR the note would blink out on the next unrelated tweak.
+        ...(candidate.briefUpdated || next.briefUpdated ? { briefUpdated: true } : {})
+      }
     }
   }
   return { messages: [...messages], payload: next }

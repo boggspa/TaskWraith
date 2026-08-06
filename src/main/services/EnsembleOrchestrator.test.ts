@@ -8918,6 +8918,54 @@ Next action:
     expect(seatChangeMessages()[0].id).not.toBe(firstRow.id)
   })
 
+  it('flags a brief-only edit, which changes nothing the seat chips can show', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const seatChangeRow = () =>
+      harness.chat.messages.filter(
+        (message) => message.metadata?.seatChange?.participantId === 'codex'
+      ).at(-1)?.metadata?.seatChange
+
+    // Brief only: provider, model, role, tier, grants and stage all hold, so
+    // every chip on the row is identical on both sides. Without the flag the
+    // transcript announces a change and then shows none.
+    await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'codex',
+      participant: { instructions: 'Sweep the provider seams before you touch dispatch.' }
+    })
+    expect(seatChangeRow()).toMatchObject({ briefUpdated: true })
+    expect(seatChangeRow()!.before).toEqual(seatChangeRow()!.after)
+
+    // A later edit that leaves the brief alone must not carry the flag — it is
+    // read as "the brief moved", not "this row is a seat change".
+    await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'codex',
+      participant: { model: 'gpt-5.5' }
+    })
+    // ...except through the coalescing window, where the surviving row still
+    // stands for the brief edit it inherited its before-state from.
+    expect(seatChangeRow()).toMatchObject({ briefUpdated: true })
+    expect(seatChangeRow()!.after).toMatchObject({ model: 'gpt-5.5' })
+  })
+
   it('merges active-seat picker edits and applies them at the execution boundary', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
