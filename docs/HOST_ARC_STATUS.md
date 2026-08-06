@@ -1,10 +1,11 @@
 # Host Arc — Status & Progress Tracker
 
-**Documentarian:** `@SparkDocs` (paperwork owner) · **This refresh:** `@SparkDocs` (Boss Wave-4.2c/4.3a paperwork fan-out — docs only; byte-verified against live `git status` / `git log` / `git show` / root markers)  
-**Last updated:** 2026-08-06T15:10Z continuous round  
-**HEAD (at time of writing):** `9b48bec48` — churns every pass under concurrent foreign sessions; verify with `git log --oneline -1` before acting  
-**Branch ahead of origin/master:** ~409 (moving)  
-**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a LANDED** `20a775d96` (TUI read-only). **Wave 4.2b LANDED** `9b48bec48` — TUI mutations via same `HostProjectionClient` with deferred-receipt poll + y/n → `approval.decide` (pending **never** painted as succeeded). AC1–6 **PARTIAL** (Host wiring committed; TUI read+command paths in HEAD; Desktop/iOS still zero; production Host process **never observed running**). Wave **4.2c** (protocol approval correlation) **ACTIVE** · `@GrokWork`. Wave **4.3a** (Desktop read-only) **ACTIVE** · `@SolWork`. AC9 **NOT STARTED**. Socket suite still never run (goal-completion blocker).
+**Documentarian:** `@SparkDocs` (paperwork owner) · **This refresh:** `@GrokCapt` (Cap post-adopt stamp — records Cap SHAs `b74b33e33` / `78b3845ed` + SparkDocs one-field ruling text; docs only)  
+**Last updated:** 2026-08-06T14:30Z continuous round  
+**HEAD (at time of writing):** `78b3845ed` — churns under concurrent foreign sessions; verify with `git log --oneline -1` before acting  
+**Docs SHA (Cap exact-path):** pending this commit — prior docs `afc48289a`  
+**Branch ahead of origin/master:** ~412 (moving)  
+**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a LANDED** `20a775d96`. **Wave 4.2b LANDED** `9b48bec48`. **Wave 4.2c LANDED** `b74b33e33` (one-field `commandId` on approval). **Wave 4.3a pure LANDED** `78b3845ed` (injected transport; no live IPC). AC1–6 **PARTIAL** (TUI read+command + Desktop pure in HEAD; live Desktop needs **4.3a-wire**; iOS still zero; production Host **STILL never observed running**). Wave **4.3a-wire** — **AUTHORISED / in flight** (`@SolWork`). AC9 **NOT STARTED**. Socket suite still never run (goal-completion blocker).
 
 ---
 
@@ -31,7 +32,7 @@ Do **not** inherit the stronger claim by accident in a fresh context. Restart / 
 | **Wave 2E-2B** (Deferred allow + Authority integration) | ✅ **PASS** | `@SolBoss` / `@GrokCapt` | Resolver `verifyCommand` split @ `aceb0993a`; `HostDeferredAllowPipeline` @ `9d4a2a104`; micro-fix @ `167f6916b` |
 | **Wave 2E-2C** (typecheck debt) | ✅ **PASS** | `@DSeekWork` | `joinFor` cleanup @ `5a0761793`; Ruling-C complete |
 | **Wave 3** (Dedicated Host + supervision) | ✅ **CLOSED** | `@SolBoss` / `@GrokCapt` | Substrate + Gates 1/2/3.6e + R4' wiring all committed. Host **wiring ON** in main. AC1–6 → **PARTIAL** (not PASS). Production Host **never observed running**. |
-| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** — 4.2c + 4.3a | `@SolBoss` / `@GrokWork` / `@SolWork` | Order ruled **TUI → Desktop → iOS**. **4.2a** `20a775d96` + **4.2b** `9b48bec48` **LANDED**. **4.2c** protocol correlation (receipt↔approval) in flight · `@GrokWork`. **4.3a** Desktop read-only projection in flight · `@SolWork` (not gated by approvalId — read-only submits no mutations). **4.3b** remains hard-gated on exact correlation. |
+| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** — 4.3a-wire | `@SolBoss` / `@SolWork` / `@GrokCapt` | Order ruled **TUI → Desktop → iOS**. **4.2a** `20a775d96` + **4.2b** `9b48bec48` + **4.2c** `b74b33e33` + **4.3a pure** `78b3845ed` **LANDED**. **4.3a-wire** **AUTHORISED / in flight** (IPC + one `index.ts` registration). **4.3b** unlocked by 4.2c Cap land (sequencing still Boss-owned). |
 | **Wave 5** (`.twmission` flight recorder) | NOT STARTED | `@SolBoss` | Blocked by Waves 3–4 progress; AC9 still NOT STARTED |
 | **Wave 6** (Adversarial review + final gates) | NOT STARTED | `@SolBoss` | Blocked by Waves 3–5 **and** HostLocalServer socket-suite gap |
 
@@ -150,10 +151,10 @@ Verified by `@SolBoss` with shell (`host-arc-wave3-closed-four-shas`); Cap land 
 - **Live Host v2 discovery:** **not observed** (see critical distinction). TCP Fake Host v2 allow+defer = client-path only.
 - **Markers:** CursorWork courtesy fence + Cap adopt fence **dropped** with land.
 - **AC1–6 after land:** still **PARTIAL** — TUI read **and** command paths in HEAD; Desktop/iOS still **zero**. Never PASS.
-- **Carried into 4.2c / 4.3 (not 4.2b blockers):**
-  - Protocol has **no** receipt↔approval correlation field either direction (`host-arc-approval-correlation-is-a-protocol-gap`) — `findPendingApprovalId` by `actionKind` was the only wire-permitted bind
-  - Timeout clears local `pendingHostMutation` while Host ask may remain — multi-projection class
-  - Exact correlation is **Wave 4.2c** (protocol) and a **hard prerequisite of 4.3b** (Desktop mutations), not of 4.3a read-only
+- **Carried into 4.2c / 4.3 (not 4.2b blockers — status at this refresh):**
+  - At 4.2b land the wire had **no** correlation field either direction (`host-arc-approval-correlation-is-a-protocol-gap`) — TUI used `actionKind` scan
+  - **4.2c binding ruling (supersedes two-field preference):** **ONE field only** — required `commandId` on `HostApprovalProjection`; explicitly **NO** `approvalId` on `HostCommandReceipt` (`host-arc-42c-one-field-grokwork-contest-upheld`). Reason: `commandId` is a **join key** (client already knows its own command id); receipt store has **no** challenge link, so direction B would cost a durable schema migration for a saved refresh, not a correctness property
+  - Exact correlation is **Wave 4.2c** (protocol) and a **hard prerequisite of 4.3b**; **not** of 4.3a read-only / 4.3a-wire
 
 ### Host process / AC1–6 expectation (binding)
 
@@ -165,8 +166,8 @@ Verified by `@SolBoss` with shell (`host-arc-wave3-closed-four-shas`); Cap land 
 - Process half (wiring): **yes**.
 - Process half (observed boot): **no**.
 - Client projections: **TUI read** (`20a775d96`) + **TUI commands** (`9b48bec48`); Desktop / paired-iOS **still zero**.
-- Approval correlation on the wire: **not yet** (4.2c).
-- Desktop read-only projection: **in flight** (4.3a).
+- Approval correlation on the wire: **authored + handed off** (4.2c — Cap adopt pending; suite must include Boss-cleared shared fixture one-liners).
+- Desktop read-only pure layer: **authored + handed off** (4.3a — Cap adopt pending). Live Desktop snapshot still needs **4.3a-wire**.
 
 ### Typecheck evidence convention (corrected — binding)
 
@@ -195,9 +196,10 @@ Any adopt that cites a host-suite count **must** state whether socket tests ran,
 | **4.1** `HostProjectionClient` | ✅ LANDED `9c31bd54f` | `@CursorWork` | Authenticated v2 wire client |
 | **4.2a** TUI read-only projection | ✅ **LANDED** `20a775d96` | `@CursorWork` / `@GrokCapt` | Connect via `HostProjectionClient`, one `HostSnapshot`, map to TUI render model. Commands blocked. v1 retained unused on live path. `src/tui/**` only. |
 | **4.2b** TUI command cutover | ✅ **LANDED** `9b48bec48` | `@CursorWork` / `@GrokCapt` | Same client + `commands`/`receipts`. Deferred-receipt poll; pending ≠ succeeded; y/n → `approval.decide`. No parallel v1 mutation socket. Evidence: `typecheck:tui` + 38/38 owned non-socket. |
-| **4.2c** Approval correlation (protocol) | 🔄 **ACTIVE** | `@GrokWork` | Make exact command↔approval binding possible both directions — no `actionKind` scan. Boss preference: optional `approvalId` on receipt; required `commandId` on approval projection (contest if one direction suffices). Enumerate every encode/decode/validate site; prove round-trip survival. **Mandatory RED-proof:** two concurrent pending asks of the **same** `actionKind`. Scope: `src/shared/hostProtocol.ts`, `src/main/host/**`, TUI binding files. Evidence: `typecheck:node` **and** `typecheck:tui`. |
-| **4.3a** Desktop read-only projection | 🔄 **ACTIVE** | `@SolWork` | Read-only HostSnapshot → Desktop render path. **Not** gated by approvalId (read-only submits no mutations). New `src/renderer/src/lib/host/**` + hooks + thin preload/IPC conduit. **Do not** touch `App.tsx` / `index.ts` / `EnsembleOrchestrator.ts`. Do **not** retire AppStore path. Honesty rules: cached ≠ live, unavailable ≠ zero. Evidence: `typecheck:web` (not node/tui). |
-| **4.3b** Desktop command cutover | NOT STARTED | TBD | **Hard-gated** on 4.2c exact correlation. |
+| **4.2c** Approval correlation (protocol) | ✅ **LANDED** `b74b33e33` | `@GrokWork` / `@GrokCapt` | **ONE field only** (`host-arc-42c-one-field-grokwork-contest-upheld`): required `commandId` on `HostApprovalProjection`; **NO** `approvalId` on `HostCommandReceipt`. Cap evidence: `typecheck:node` + `typecheck:tui` exit 0 (owned clean); owned non-socket **103/103** across protocol/host/TUI files; dual same-`actionKind` RED-proof + decode reject pin + composition publish pin. Exact-path **10 files**. |
+| **4.3a** Desktop read-only **pure** layer | ✅ **LANDED** `78b3845ed` | `@SolWork` / `@GrokCapt` | Injected `HostProjectionTransport { fetchSnapshot() }` — mapper/store/hook + honesty pins (cached ≠ live, unavailable ≠ zero, no empty fabricate). **No** live Host / preload / `index.ts` in this SHA. Cap evidence: `typecheck:web` owned clean; **24/24**. Exact-path **5 files**. |
+| **4.3a-wire** Desktop IPC bridge | 🔄 **AUTHORISED / in flight** | `@SolWork` | Boss carve-out (`host-arc-43a-cleared-and-wire-carveout-granted`): `src/main/ipc/hostProjectionHandlers.ts` (+ test) + thin `src/preload/index.ts` + **exactly one** `src/main/index.ts` registration under R4' discipline. Still **read-only**. Evidence must name **both** `typecheck:node` **and** `typecheck:web`. |
+| **4.3b** Desktop command cutover | NOT STARTED | TBD | **Unblocked** by Cap-landed 4.2c (`b74b33e33`); sequencing still Boss-owned. |
 | **4.4+** Retire AppStore-as-authority / paired iOS | NOT STARTED | TBD | Separate slices |
 
 ### `index.ts` staging RULE (not a window status)
@@ -225,7 +227,8 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 7. **Do not score a live lane** — only the owner’s handoff is adopt authority.
 8. **“Host ON” ≠ Host booted** — zero `taskwraith-host-v2.json` until a post-R4' binary actually runs.
 9. **`typecheck:web` for renderer** — Desktop slices must name the web project; node/tui cannot see `src/renderer/**` meaningfully for this gate.
-10. **Approval correlation is a protocol gap** — not a TUI client bug; 4.2c owns the wire fields; 4.3a read-only is ungated; 4.3b mutations are hard-gated.
+10. **Approval correlation is ONE field** — required `commandId` on approval projection; no `approvalId` on receipt (join key suffices; receipt has no challenge link). 4.3a read-only / 4.3a-wire ungated; 4.3b mutations hard-gated on Cap-landed 4.2c.
+11. **`typecheck:web` vs preload** — `tsconfig.web.json` includes only `src/preload/*.d.ts`; preload `.ts` is covered by `typecheck:node`. Wire slices spanning preload need **both** projects.
 
 ---
 
@@ -234,6 +237,7 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 Top-of-tree churns every pass with foreign concurrent-session commits. This table lists **arc-owned commits only** — run `git log --oneline -1` for current HEAD.
 
 ```text
+afc48289a  docs(host): record Wave 4.2b land and active 4.2c/4.3a lanes                 (@SparkDocs; @GrokCapt adopted)
 9b48bec48  feat(tui): route TUI mutations through Host with deferred receipts (Wave 4.2b) (@CursorWork authored; @GrokCapt adopted)
 4cb932c31  docs(host): record Wave 4.2a land and Host-never-run ops gap                  (@SparkDocs; @GrokCapt adopted)
 20a775d96  feat(tui): project Host snapshots into the TUI (Wave 4.2a)                   (@CursorWork authored; @GrokCapt adopted; FIRST CLIENT PROJECTION)
@@ -307,15 +311,17 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 - ✅ **4.2a — TUI read-only projection** @ `20a775d96` — first client projection in HEAD
 - ✅ **4.2b — TUI commands + deferred receipts** @ `9b48bec48` — same client; pending ≠ succeeded; y/n → `approval.decide`
 - ✅ **Docs catch-up (4.2a / Host-never-run)** @ `4cb932c31`
+- ✅ **Docs catch-up (4.2b / active 4.2c·4.3a)** @ `afc48289a`
 
-### What remains (post–4.2b)
+### What remains (post–4.2b / post–docs `afc48289a`)
 
 | Item | Owner | Status |
 |---|---|---|
-| **Wave 4.2c — approval correlation (protocol)** | `@GrokWork` | **ACTIVE** (Boss locked-writer fan-out). Wire fields + round-trip + RED-proof for same-`actionKind` dual pending. Validated handoff to Cap; **nobody commits from work seats.** |
-| **Wave 4.3a — Desktop read-only projection** | `@SolWork` | **ACTIVE** (Boss locked-writer fan-out). Read-only only; not gated by 4.2c. No `App.tsx` / `index.ts` / `EnsembleOrchestrator.ts`. Evidence: `typecheck:web`. |
-| **Wave 4.3b — Desktop commands** | `@SolBoss` sequencing | **Hard-gated** on 4.2c exact correlation |
-| **Ops — restart post-R4' app** | user / Cap | Needed before any live `taskwraith-host-v2.json` evidence |
+| **Wave 4.2c — approval correlation (protocol)** | `@GrokWork` / `@GrokCapt` | ✅ **LANDED** `b74b33e33` — one-field `commandId` on approval; Cap live evidence named. |
+| **Wave 4.3a — Desktop read-only pure layer** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `78b3845ed` — injected transport; no live Host in this SHA. |
+| **Wave 4.3a-wire — IPC + one `index.ts` line** | `@SolWork` | 🔄 **AUTHORISED / in flight** under composition-root carve-out. R4' discipline. Still read-only. Cap adopt later, separate SHA. |
+| **Wave 4.3b — Desktop commands** | `@SolBoss` sequencing | **Unblocked** by 4.2c Cap land; not started. |
+| **Ops — restart post-R4' app** | user / Cap | Needed before any live `taskwraith-host-v2.json` evidence — **Host STILL never observed running** |
 | **Wave 5 — `.twmission` / AC9** | `@SolBoss` | **NOT STARTED** |
 | **Wave 6 — adversarial + socket suite** | `@SolBoss` | **NOT STARTED**; socket suite remains goal-completion blocker |
 
@@ -329,10 +335,12 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 | `.WORK-IN-PROGRESS-host-arc-r4prime-index-wiring.md` | **Absent** | n/a (R4' landed) |
 | `.WORK-IN-PROGRESS-host-arc-wave42a-tui-projection.md` | **Absent** | n/a (4.2a landed) |
 | `.WORK-IN-PROGRESS-host-arc-wave42b-tui-commands.md` | **Absent** | n/a (4.2b landed; Cap dropped fence) |
+| `.WORK-IN-PROGRESS-host-arc-wave42c-approval-correlation.md` | **Present** (GrokWork) | Courtesy fence — `pid: 4902` shared host; **`TASKWRAITH_LOCK_OWNER_ID` absent**; expires may have lapsed — owners must re-stamp; Cap does not treat as enforceable adopt claim |
+| `.WORK-IN-PROGRESS-host-arc-wave43a-desktop-projection.md` | **Present** (SolWork) | Same class — courtesy fence / decayed shared pid; re-stamp before further edits |
 
 Foreign markers present (not Host Arc): `.WORK-IN-PROGRESS-observatory-gpu-calm.md`, `.WORK-IN-PROGRESS-seat-strip-desktop.md`, `.WORK-IN-PROGRESS-tool-event-dual-lane-dedupe.md`.
 
-`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent** and no stable long-lived host pid; **no docs marker raised** (a no-identity marker would claim nothing). **Could not measure** live userData discovery files from this seat this pass — accepting Boss blackboard `host-arc-production-host-has-never-actually-run` as the authority for the zero-`taskwraith-host-v2.json` claim. Cap live suite / `typecheck:tui` for 4.2b accepted from Cap land record (this seat did not re-run).
+`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent** and no stable long-lived seat pid; **no docs marker raised** (a no-identity marker would claim nothing). **Could not re-measure** live userData discovery this pass — accepting Boss blackboard `host-arc-production-host-has-never-actually-run` as authority that production Host is **STILL never observed running**. Cap live suite for 4.2c/4.3a **not** claimed here.
 
 ### R5 — Evaluator Sourcing (DURABLE — unchanged; Gate 1 landed)
 
@@ -352,13 +360,13 @@ Ten names: `snapshot.get`, `deltas.since`, `receipt.lookup`, `ping`, `approval.d
 
 | AC | Status | Note |
 |---|---|---|
-| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Production Host **never observed running** (zero `taskwraith-host-v2.json`). TUI read (`20a775d96`) + TUI commands (`9b48bec48`); Desktop/iOS still zero; 4.2c/4.3a in flight. Socket-path unit suite still never run — goal-closeout blocker. Fake Host v2 ≠ socket gap closed. **Never PASS.** |
+| AC1–AC6 | ⚠️ **PARTIAL** | Host **wiring** ON in main (`b45d4297f`). Production Host **STILL never observed running** (zero `taskwraith-host-v2.json`). TUI read (`20a775d96`) + TUI commands (`9b48bec48`); Desktop pure layer handed off (Cap adopt pending); live Desktop needs 4.3a-wire; iOS still zero. Socket-path unit suite still never run — goal-closeout blocker. Fake Host v2 ≠ socket gap closed. **Never PASS.** |
 | AC7–AC8 | ⚠️ PARTIAL | Host core authoritative; TUI is first full (read+command) projection client; Desktop/iOS still legacy |
 | AC9 | ❌ **NOT STARTED** | `.twmission` / mission evidence not started (Wave 5) |
-| AC10–AC11 | ⚠️ PARTIAL | TUI read+command paths live in HEAD; Desktop read-only (4.3a) in flight; Desktop commands / iOS not started |
+| AC10–AC11 | ⚠️ PARTIAL | TUI read+command paths live in HEAD; Desktop pure (4.3a) handed off; 4.3a-wire authorised; Desktop commands / iOS not started |
 | AC12–AC13 | ✅ PASS | Provider/security boundaries untouched by Arc commits |
-| AC14 | ⚠️ PARTIAL | Path-scoped evidence only; Wave 4 TUI uses `typecheck:tui`; Desktop uses `typecheck:web`; protocol slice needs both node+tui |
-| AC15 | ✅ PASS | No forbidden path drift in scoped arc handoffs (4.2b exact-path seven files) |
+| AC14 | ⚠️ PARTIAL | Path-scoped evidence only; Wave 4 TUI uses `typecheck:tui`; Desktop pure uses `typecheck:web`; wire/preload needs **node+web**; protocol slice needs **node+tui** |
+| AC15 | ✅ PASS | No forbidden path drift in scoped arc handoffs (4.2b exact-path seven files; docs `afc48289a` exact-path) |
 
 ---
 
@@ -387,25 +395,26 @@ Commits are exact-path only; markers with honest live pid **or** `lockOwnerId` a
 
 Snapshot at this paperwork pass (`git status --porcelain`). Re-check before staging. **Not an `index.ts` window claim.**
 
-**Arc-owned (uncommitted):**
-- ` M docs/HOST_ARC_STATUS.md` (this paperwork lane)
+**Arc-owned (uncommitted — Cap adopts separately):**
+- ` M docs/HOST_ARC_STATUS.md` (this paperwork lane — one-field correction)
+- 4.2c / 4.3a code paths dirty under worker markers — **Cap exact-path only**; exclude foreign persistence dirt
 
 **Foreign / other-session (illustrative — re-measure before acting):**
 - `electron.vite.config.ts`, `src/main/store/{index,PersistenceWriteWorker*,persistenceDurability*,persistenceWriteBaseline*}`, `src/main/workers/persistenceWriteWorker.ts` — **not Host Arc scope**
 
-`src/main/index.ts` measured **EMPTY** diff this pass. `src/tui/**` clean after Cap’s 4.2b land. Exact-path staging only — never `git add -A` / `git add .` / `commit -a`.
+Exact-path staging only — never `git add -A` / `git add .` / `commit -a`.
 
 ---
 
 ## Next actions (paperwork view)
 
-1. `@GrokWork` — Wave **4.2c** protocol correlation (`hostProtocol` + host encode/decode + TUI bind); RED-proof two same-`actionKind` pendings; `typecheck:node` **and** `typecheck:tui`; validated handoff to Cap; **no commit**.
-2. `@SolWork` — Wave **4.3a** Desktop read-only (`src/renderer/src/lib/host/**` + hooks + thin preload); `typecheck:web`; no commands; no forbidden roots; validated handoff to Cap; **no commit**.
-3. `@GrokCapt` — adopt each lane on owner handoff + Cap live re-run; exact-path; disclose socket vs non-socket; drop worker markers with commit. Docs land with or after those adopts is fine.
-4. `@K3Review` / `@GrokReview` / `@MistralReview` — delta-only on Cap lands of 4.2c / 4.3a; no Wave 3 / 4.2a / 4.2b reopen.
-5. Ops / user — restart a **post-R4'** TaskWraith binary before treating live Host discovery as expected.
+1. `@GrokWork` — finish Boss-cleared 4.2c fixture one-liners + K3 pins if still open; re-stamp marker; hand Cap with named `typecheck:node` **and** `typecheck:tui`; **no commit**.
+2. `@SolWork` — Cap will adopt **4.3a pure** as its own SHA when ready; meanwhile execute **4.3a-wire** under the granted carve-out (handler first, `index.ts` last, R4' discipline); **no commit**.
+3. `@GrokCapt` — adopt **4.2c** and **4.3a pure** as **SEPARATE SHAs** on handoff + Cap live re-run; exact-path; disclose socket vs non-socket; drop worker markers with each land. Docs one-field refresh may land alone or with those adopts.
+4. `@K3Review` / `@GrokReview` / `@MistralReview` — delta-only on Cap lands of 4.2c / 4.3a / 4.3a-wire; no Wave 3 / 4.2a / 4.2b reopen.
+5. Ops / user — restart a **post-R4'** TaskWraith binary before treating live Host discovery as expected. **Production Host STILL never observed running.**
 6. Wave 6 / goal closeout — HostLocalServer socket suite in an environment that permits unix-socket listen; Fake Host / future happy-path live evidence is additive, not a substitute.
-7. `@SparkDocs` — refresh again after 4.2c / 4.3a SHAs land (or Cap adopts docs with those lands).
+7. `@SparkDocs` — refresh again after Cap SHAs for 4.2c / 4.3a / 4.3a-wire land.
 
 ---
 
@@ -421,6 +430,6 @@ Snapshot at this paperwork pass (`git status --porcelain`). Re-check before stag
 
 - Goal: [`HOST_ARC_GOAL.md`](./HOST_ARC_GOAL.md)
 - Baseline: [`HOST_ARC_WAVE0_BASELINE.md`](./HOST_ARC_WAVE0_BASELINE.md)
-- Blackboard: `host-arc-wave3-closed-four-shas`, `host-arc-wave4-sequencing-ruling`, `host-arc-r4prime-adopt-authorized`, `host-arc-r4prime-does-NOT-pass-ac1-6`, `host-arc-r4prime-k3review-delta-pass`, `host-arc-r4prime-staging-rule-restated`, `host-arc-r4prime-hunk-content-ruling`, `host-arc-three-shas-confirmed-by-boss`, `host-arc-hostid-ruling`, `host-arc-typecheck-131-ts6307-was-an-artefact`, `host-arc-tui-needs-typecheck-tui-not-node`, `host-arc-do-not-score-a-live-lane`, `host-arc-production-host-has-never-actually-run`, `host-arc-socket-epern-validation-gap`, `host-arc-window-is-instantaneous`, `host-arc-review-seats-have-no-shell`, `host-arc-stop-reverifying-the-four`, `host-arc-42b-adopt-authorized-plus-approvalid-ruling`, `host-arc-42b-b1b2b3-resolved-adjudicated`, `host-arc-approval-correlation-is-a-protocol-gap`, `host-arc-42c-slice-and-refined-43-gate`
+- Blackboard: `host-arc-wave3-closed-four-shas`, `host-arc-wave4-sequencing-ruling`, `host-arc-r4prime-adopt-authorized`, `host-arc-r4prime-does-NOT-pass-ac1-6`, `host-arc-r4prime-k3review-delta-pass`, `host-arc-r4prime-staging-rule-restated`, `host-arc-r4prime-hunk-content-ruling`, `host-arc-three-shas-confirmed-by-boss`, `host-arc-hostid-ruling`, `host-arc-typecheck-131-ts6307-was-an-artefact`, `host-arc-tui-needs-typecheck-tui-not-node`, `host-arc-do-not-score-a-live-lane`, `host-arc-production-host-has-never-actually-run`, `host-arc-socket-epern-validation-gap`, `host-arc-window-is-instantaneous`, `host-arc-review-seats-have-no-shell`, `host-arc-stop-reverifying-the-four`, `host-arc-42b-adopt-authorized-plus-approvalid-ruling`, `host-arc-42b-b1b2b3-resolved-adjudicated`, `host-arc-approval-correlation-is-a-protocol-gap`, `host-arc-42c-slice-and-refined-43-gate`, `host-arc-42c-one-field-grokwork-contest-upheld`, `host-arc-42c-correlation-handoff`, `host-arc-42c-cleared-and-boss-scoping-error`, `host-arc-43a-split-pure-then-wire`, `host-arc-43a-desktop-seam-needs-main-ipc`, `host-arc-43a-cleared-and-wire-carveout-granted`
 
 **Maintained by:** `@SparkDocs` · Scope-limited to repo paperwork · figures byte-verified against live git + markers at time of writing · **not committed** this pass.
