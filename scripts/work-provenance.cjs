@@ -63,6 +63,11 @@ function physicalPath(candidate) {
   }
 }
 
+function repositoryPath(candidate) {
+  const value = String(candidate || '')
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value
+}
+
 function resolveWorkspaceIdentity(root) {
   const raw = gitQuiet(root, [
     'rev-parse',
@@ -382,12 +387,14 @@ function sameFingerprint(left, right) {
 function dirtyFingerprintMap(root, dirtyEntries) {
   const map = new Map()
   for (const entry of (dirtyEntries || []).slice(0, MAX_DIRTY_PATHS)) {
-    if (!entry?.path || entry.path === '.git' || entry.path.startsWith('.git/')) continue
-    map.set(entry.path, {
+    if (!entry?.path) continue
+    const targetPath = repositoryPath(entry.path)
+    if (targetPath === '.git' || targetPath.startsWith('.git/')) continue
+    map.set(targetPath, {
       status: entry.status,
-      renamedFrom: entry.renamedFrom || null,
+      renamedFrom: entry.renamedFrom ? repositoryPath(entry.renamedFrom) : null,
       mtimeMs: entry.mtimeMs ?? null,
-      fingerprint: fingerprintPath(path.join(root, entry.path))
+      fingerprint: fingerprintPath(path.join(root, targetPath))
     })
   }
   return map
@@ -395,7 +402,7 @@ function dirtyFingerprintMap(root, dirtyEntries) {
 
 function markerObservationSnapshot(marker, observationId, claimedDirty, now) {
   const dirtySnapshot = claimedDirty.map((entry) => ({
-    path: entry.path,
+    path: repositoryPath(entry.path),
     status: entry.status,
     renamedFrom: entry.renamedFrom || null,
     mtimeMs: entry.mtimeMs ?? null,
@@ -558,13 +565,14 @@ function originEventFromTombstone(
   predecessorOriginEventId
 ) {
   const marker = { file: tombstone.file, ...(tombstone.marker || {}) }
+  const entryPath = repositoryPath(entry.path)
   const baseline = (tombstone.baselineDirty || []).find(
-    (candidate) => candidate.path === entry.path
+    (candidate) => repositoryPath(candidate.path) === entryPath
   )
   const preexistingDirty = Boolean(baseline)
   const observedChange = !baseline || !sameFingerprint(baseline.fingerprint, entry.fingerprint)
   const eventId = `origin-marker-${sha256(
-    `${tombstone.observationId}\0${entry.path}\0${fingerprintKey(entry.fingerprint)}`
+    `${tombstone.observationId}\0${entryPath}\0${fingerprintKey(entry.fingerprint)}`
   )}`
   return {
     schemaVersion: EVENT_SCHEMA_VERSION,
@@ -577,7 +585,7 @@ function originEventFromTombstone(
     confidence,
     source: 'work-guard-marker',
     workspace: identity,
-    path: entry.path,
+    path: entryPath,
     ...(baseline ? { before: baseline.fingerprint } : {}),
     after: entry.fingerprint,
     actor: markerActor(marker, tombstone.observationId),
@@ -681,11 +689,12 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
   for (const tombstone of Object.values(sidecar.tombstones || {})) {
     if ((tombstone.provenanceEventIds || []).length > 0) continue
     for (const claimed of tombstone.claimedDirty || []) {
-      const live = current.get(claimed.path)
+      const claimedPath = repositoryPath(claimed.path)
+      const live = current.get(claimedPath)
       const exact = live
         ? origins().find(
             (origin) =>
-              origin.path === claimed.path &&
+              repositoryPath(origin.path) === claimedPath &&
               origin.confidence === 'exact' &&
               sameFingerprint(origin.after, claimed.fingerprint) &&
               originMatchesCurrent(origin, live)
@@ -700,13 +709,14 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
   }
   const candidateCounts = new Map()
   for (const candidate of tombstoneCandidates) {
-    const key = `${candidate.claimed.path}\0${fingerprintKey(candidate.claimed.fingerprint)}`
+    const key = `${repositoryPath(candidate.claimed.path)}\0${fingerprintKey(candidate.claimed.fingerprint)}`
     candidateCounts.set(key, (candidateCounts.get(key) || 0) + 1)
   }
   for (const candidate of tombstoneCandidates) {
-    const key = `${candidate.claimed.path}\0${fingerprintKey(candidate.claimed.fingerprint)}`
+    const claimedPath = repositoryPath(candidate.claimed.path)
+    const key = `${claimedPath}\0${fingerprintKey(candidate.claimed.fingerprint)}`
     const baseline = (candidate.tombstone.baselineDirty || []).find(
-      (entry) => entry.path === candidate.claimed.path
+      (entry) => repositoryPath(entry.path) === claimedPath
     )
     const observedChange =
       !baseline || !sameFingerprint(baseline.fingerprint, candidate.claimed.fingerprint)
@@ -714,7 +724,7 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
       ? origins()
           .filter(
             (origin) =>
-              origin.path === candidate.claimed.path &&
+              repositoryPath(origin.path) === claimedPath &&
               sameFingerprint(origin.after, baseline.fingerprint) &&
               !resolutions().has(origin.eventId) &&
               origin.recordedAt <= candidate.tombstone.firstObservedAt
@@ -748,9 +758,10 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
   const currentMarkers = Object.values(sidecar.markers || {})
   for (const origin of originList) {
     if (resolved.has(origin.eventId)) continue
-    const live = current.get(origin.path)
+    const originPath = repositoryPath(origin.path)
+    const live = current.get(originPath)
     if (!live) {
-      const working = fingerprintPath(path.join(identity.root, origin.path))
+      const working = fingerprintPath(path.join(identity.root, originPath))
       const reason =
         origin.before && sameFingerprint(working, origin.before)
           ? 'reverted'
@@ -767,7 +778,7 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
       .filter(
         (candidate) =>
           candidate.eventId !== origin.eventId &&
-          candidate.path === origin.path &&
+          repositoryPath(candidate.path) === originPath &&
           candidate.recordedAt >= origin.recordedAt &&
           originMatchesCurrent(candidate, live) &&
           !resolved.has(candidate.eventId)
@@ -788,9 +799,11 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
       continue
     }
     const adopter = currentMarkers.find((entry) => {
-      const claimed = (entry.claimedDirty || []).find((candidate) => candidate.path === origin.path)
+      const claimed = (entry.claimedDirty || []).find(
+        (candidate) => repositoryPath(candidate.path) === originPath
+      )
       const baseline = (entry.baselineDirty || []).find(
-        (candidate) => candidate.path === origin.path
+        (candidate) => repositoryPath(candidate.path) === originPath
       )
       const startedMs = Date.parse(entry.marker?.started || entry.firstObservedAt || '')
       const mtimeChangedSinceObservation =
@@ -816,7 +829,7 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
           identity,
           adopter,
           {
-            path: origin.path,
+            path: originPath,
             status: live.status,
             fingerprint: live.fingerprint
           },
@@ -885,7 +898,10 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
       }
       continue
     }
-    if (!originMatchesCurrent(origin, current.get(origin.path)) || recoveries.has(origin.eventId)) {
+    if (
+      !originMatchesCurrent(origin, current.get(repositoryPath(origin.path))) ||
+      recoveries.has(origin.eventId)
+    ) {
       continue
     }
     const recovery = pinRecovery(root, identity, origin, snapshot, now)
@@ -913,10 +929,10 @@ function parseDirtyEntries(root, raw) {
     const field = fields[index]
     if (!field || field.length < 4) continue
     const status = field.slice(0, 2)
-    const targetPath = field.slice(3)
+    const targetPath = repositoryPath(field.slice(3))
     let renamedFrom = null
     if (status[0] === 'R' || status[0] === 'C') {
-      renamedFrom = fields[index + 1] || null
+      renamedFrom = fields[index + 1] ? repositoryPath(fields[index + 1]) : null
       index += 1
     }
     if (!targetPath) continue
@@ -947,11 +963,11 @@ function parseNumstat(raw) {
     if (firstTab < 0 || secondTab < 0) continue
     const additionsText = header.slice(0, firstTab)
     const deletionsText = header.slice(firstTab + 1, secondTab)
-    let targetPath = header.slice(secondTab + 1)
+    let targetPath = repositoryPath(header.slice(secondTab + 1))
     let renamedFrom = null
     if (!targetPath) {
-      renamedFrom = fields[index + 1] || null
-      targetPath = fields[index + 2] || ''
+      renamedFrom = fields[index + 1] ? repositoryPath(fields[index + 1]) : null
+      targetPath = fields[index + 2] ? repositoryPath(fields[index + 2]) : ''
       index += 2
     }
     if (!targetPath) continue
@@ -1233,10 +1249,11 @@ function queryWorkProvenance(root, options = {}) {
   }
   const groups = new Map()
   for (const origin of worktreeOrigins) {
-    const key = `${origin.path}\0${fingerprintKey(origin.after)}`
+    const originPath = repositoryPath(origin.path)
+    const key = `${originPath}\0${fingerprintKey(origin.after)}`
     const group = groups.get(key) || {
       workItemId: `work-${sha256(`${identity.worktreeId}\0${key}`)}`,
-      path: origin.path,
+      path: originPath,
       origins: []
     }
     group.origins.push(origin)
@@ -1284,7 +1301,7 @@ function queryWorkProvenance(root, options = {}) {
         const origin = worktreeOrigins
           .filter(
             (candidate) =>
-              candidate.path === group.path &&
+              repositoryPath(candidate.path) === group.path &&
               (candidate.actor?.markerObservationId === markerRow.observationId ||
                 actorIdentity(candidate.actor) === markerActorIdentity)
           )
@@ -1312,7 +1329,7 @@ function queryWorkProvenance(root, options = {}) {
       for (const predecessorId of predecessorIds) {
         if (lineageSeen.has(predecessorId)) continue
         const predecessor = originsById.get(predecessorId)
-        if (!predecessor || predecessor.path !== group.path) continue
+        if (!predecessor || repositoryPath(predecessor.path) !== group.path) continue
         lineageSeen.add(predecessorId)
         lineageRows.push({
           origin: predecessor,
@@ -1655,7 +1672,7 @@ function equivalentPhysicalPath(left, right) {
 }
 
 function markerClaimsPath(marker, targetPath) {
-  const normalizedTarget = String(targetPath || '').replace(/\\/g, '/')
+  const normalizedTarget = repositoryPath(targetPath)
   const matcherClaimed = marker?.matchers?.some((match) => {
     try {
       return match(targetPath) || match(normalizedTarget)
@@ -1665,7 +1682,7 @@ function markerClaimsPath(marker, targetPath) {
   })
   if (matcherClaimed) return true
   return (marker?.paths || []).some((claimedPath) => {
-    const normalizedClaim = String(claimedPath || '').replace(/\\/g, '/')
+    const normalizedClaim = repositoryPath(claimedPath)
     return normalizedClaim.endsWith('/')
       ? normalizedTarget.startsWith(normalizedClaim)
       : normalizedTarget === normalizedClaim
