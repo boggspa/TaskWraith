@@ -614,6 +614,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'media-asset:reveal': ['object'],
   'media-asset:get-path': ['object'],
   'media-asset:save-as': ['object'],
+  'media-asset:copy-image': ['object'],
   'favicon:getForUrl': ['nonEmptyString'],
   'start-pty': ['workspacePath', 'optionalString'],
   'stop-pty': ['optionalString'],

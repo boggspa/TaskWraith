@@ -1340,6 +1340,7 @@ declare global {
         mimeType: string,
         suggestedName: string
       ) => Promise<{ ok: boolean; canceled: boolean }>
+      copyMediaAssetImage: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>
       getFaviconForUrl: (url: string) => Promise<
         | {
             ok: true

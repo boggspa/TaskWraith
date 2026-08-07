@@ -31,6 +31,10 @@ export interface MediaAssetHandlersDeps {
   copyFile: (src: string, dest: string) => Promise<void>
   /** Test seam; production defaults to the descriptor-backed streaming copy. */
   copyOpenedAsset?: (asset: ResolvedTwMediaAsset, dest: string) => Promise<void>
+  /** Copy a native image bitmap to the system clipboard. */
+  writeImageToClipboard?: (image: Electron.NativeImage) => void
+  createNativeImageFromPath?: (path: string) => Electron.NativeImage
+  createNativeImageFromBuffer?: (buffer: Buffer) => Electron.NativeImage
 }
 
 export interface MediaAssetIdentity {
@@ -229,6 +233,39 @@ export function registerMediaAssetHandlers(deps: MediaAssetHandlersDeps): void {
         } catch {
           return { ok: false, canceled: false }
         }
+      } finally {
+        asset.close()
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'media-asset:copy-image',
+    async (event, input: unknown): Promise<{ ok: boolean }> => {
+      const asset = openAuthorizedMediaAsset(deps, event, input)
+      if (!asset) return { ok: false }
+      try {
+        if (!asset.mimeType.startsWith('image/')) return { ok: false }
+        const createFromPath =
+          deps.createNativeImageFromPath ||
+          ((path: string) => {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { nativeImage } = require('electron') as typeof import('electron')
+            return nativeImage.createFromPath(path)
+          })
+        const writeImage =
+          deps.writeImageToClipboard ||
+          ((image: Electron.NativeImage) => {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { clipboard } = require('electron') as typeof import('electron')
+            clipboard.writeImage(image)
+          })
+        const image = createFromPath(asset.realPath)
+        if (!image || image.isEmpty()) return { ok: false }
+        writeImage(image)
+        return { ok: true }
+      } catch {
+        return { ok: false }
       } finally {
         asset.close()
       }

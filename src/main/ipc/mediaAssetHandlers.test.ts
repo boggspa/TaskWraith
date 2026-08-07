@@ -94,6 +94,7 @@ describe('registerMediaAssetHandlers', () => {
     expect(handlerFor('media-asset:reveal')).toBeTypeOf('function')
     expect(handlerFor('media-asset:get-path')).toBeTypeOf('function')
     expect(handlerFor('media-asset:save-as')).toBeTypeOf('function')
+    expect(handlerFor('media-asset:copy-image')).toBeTypeOf('function')
   })
 
   it('resolver returns null for invalid input, path-jail failures, and missing assets', async () => {

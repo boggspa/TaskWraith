@@ -190,6 +190,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'media-asset:get-path',
   'media-asset:reveal',
   'media-asset:save-as',
+  'media-asset:copy-image',
   'mistral-quota:get',
   'native-capabilities:snapshot',
   'open-workspace-popout',

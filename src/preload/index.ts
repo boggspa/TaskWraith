@@ -1412,6 +1412,8 @@ const api = {
       ok: boolean
       canceled: boolean
     }>,
+  copyMediaAssetImage: (sha256: string, mimeType: string) =>
+    ipcRenderer.invoke('media-asset:copy-image', { sha256, mimeType }) as Promise<{ ok: boolean }>,
   getFaviconForUrl: (url: string) =>
     ipcRenderer.invoke('favicon:getForUrl', url) as Promise<
       | {

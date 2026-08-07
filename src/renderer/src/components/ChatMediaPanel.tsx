@@ -366,6 +366,9 @@ export function buildMediaCardActions(
   const sha256 = mediaRef.sha256
   const mimeType = mediaRef.mimeType
   const canUseAssetChannels = Boolean(sha256 && mimeType)
+  const canCopyImage = Boolean(
+    canUseAssetChannels && mimeType && mimeType.startsWith('image/')
+  )
   // "Detach to pane" only makes sense for a playable A/V ref (it pops out a
   // player) AND only when the host wired the callback (Multiview is available).
   const canDetach = Boolean(onDetachToPane && isAvMediaKind(mediaRef.kind))
@@ -377,6 +380,18 @@ export function buildMediaCardActions(
             id: 'detach-to-pane',
             label: 'Detach to pane',
             onSelect: () => onDetachToPane?.(mediaRef)
+          } as MediaActionMenuItem
+        ]
+      : []),
+    ...(canCopyImage
+      ? [
+          {
+            id: 'copy-image',
+            label: 'Copy image',
+            onSelect: () => {
+              if (typeof window === 'undefined' || !sha256 || !mimeType) return
+              void window.api?.copyMediaAssetImage?.(sha256, mimeType)
+            }
           } as MediaActionMenuItem
         ]
       : []),
@@ -413,7 +428,7 @@ export function buildMediaCardActions(
     },
     {
       id: 'save-as',
-      label: 'Save as',
+      label: mediaRef.kind === 'image' || (mimeType?.startsWith('image/') ?? false) ? 'Save image' : 'Save as',
       disabled: !canUseAssetChannels,
       onSelect: () => {
         if (typeof window === 'undefined' || !sha256 || !mimeType) return
@@ -868,11 +883,15 @@ function ChatMessageImageAttachment({
   onPreviewImage?: (ref: ChatMediaRef) => void
   onCopy: () => void
 }) {
+  const { copy } = useCopyFeedback()
   const [previewFailed, setPreviewFailed] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
   useEffect(() => {
     setPreviewFailed(false)
   }, [mediaRef.path, previewSrc])
 
+  const actions = buildMediaCardActions(mediaRef, copy)
   const statusLabel = chatMediaStatusLabel(mediaRef.status)
   const title = statusLabel
     ? `${mediaRef.name}: ${statusLabel}`
@@ -893,6 +912,12 @@ function ChatMessageImageAttachment({
       onCopy()
     }
   }
+  const onContextMenu = (event: ReactMouseEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setMenuPos({ x: event.clientX, y: event.clientY })
+    setMenuOpen(true)
+  }
 
   if (!previewSrc || previewFailed) {
     return (
@@ -908,21 +933,108 @@ function ChatMessageImageAttachment({
   }
 
   return (
-    <button
-      type="button"
-      className="message-attachment-card message-attachment-thumb is-image"
-      title={title}
-      aria-label={ariaLabel}
-      onClick={onClick}
+    <span className="message-attachment-image-wrap" style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        className="message-attachment-card message-attachment-thumb is-image"
+        title={title}
+        aria-label={ariaLabel}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+      >
+        <img
+          src={previewSrc}
+          alt={mediaRef.name}
+          loading="lazy"
+          decoding="async"
+          onError={() => setPreviewFailed(true)}
+        />
+      </button>
+      {menuOpen && menuPos && (
+        <ImageAttachmentContextMenu
+          items={actions}
+          x={menuPos.x}
+          y={menuPos.y}
+          onClose={() => {
+            setMenuOpen(false)
+            setMenuPos(null)
+          }}
+        />
+      )}
+    </span>
+  )
+}
+
+function ImageAttachmentContextMenu({
+  items,
+  x,
+  y,
+  onClose
+}: {
+  items: MediaActionMenuItem[]
+  x: number
+  y: number
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    const onPointer = (): void => onClose()
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onPointer)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onPointer)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      className="message-attachment-context-menu"
+      role="menu"
+      style={{
+        position: 'fixed',
+        left: x,
+        top: y,
+        zIndex: 10000,
+        minWidth: 160,
+        padding: '4px 0',
+        borderRadius: 8,
+        background: 'var(--bg-elevated, #1e1e1e)',
+        border: '1px solid var(--border-subtle, rgba(255,255,255,0.12))',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.35)'
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
     >
-      <img
-        src={previewSrc}
-        alt={mediaRef.name}
-        loading="lazy"
-        decoding="async"
-        onError={() => setPreviewFailed(true)}
-      />
-    </button>
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          role="menuitem"
+          disabled={item.disabled}
+          className="message-attachment-context-item"
+          style={{
+            display: 'block',
+            width: '100%',
+            textAlign: 'left',
+            padding: '6px 12px',
+            background: 'transparent',
+            border: 0,
+            color: 'inherit',
+            cursor: item.disabled ? 'default' : 'pointer',
+            opacity: item.disabled ? 0.45 : 1
+          }}
+          onClick={() => {
+            if (item.disabled) return
+            item.onSelect()
+            onClose()
+          }}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
   )
 }
 
