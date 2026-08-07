@@ -339,7 +339,6 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'creative_midi_dispatch',
         'creative_timeline_import',
         'delete_path',
-        'delegate_to_subthread',
         'get_diagnostics',
         'git_commit',
         'git_create_pr',
@@ -479,6 +478,10 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('ensemble_yield', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ask_user_question', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('request_tool_permission', ro)).toBe(false)
+    // Sub-thread delegation is orchestration + dedicated service so Ask/Plan can
+    // modal-approve it rather than hard-deny before the gate.
+    expect(isReadOnlyBlockedTool('delegate_to_subthread', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('cancel_subthread', ro)).toBe(false)
     expect(classifyTool('canvas_sketch_open')).toBe('orchestration')
     expect(isReadOnlyBlockedTool('canvas_sketch_open', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('canvas_sketch_get', ro)).toBe(false)

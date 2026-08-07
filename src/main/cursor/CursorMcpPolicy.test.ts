@@ -8,6 +8,7 @@ import type { EffectiveRunPermissions } from '../store/types'
 import {
   assertCursorWriteMcpPosture,
   cursorMcpToolsDenied,
+  cursorTaskWraithBrokerAttachAllowed,
   resolveCursorUserMcpLaunchServers
 } from './CursorMcpPolicy'
 
@@ -73,5 +74,19 @@ describe('Cursor MCP effective-posture guard', () => {
     )
     expect(() => assertCursorWriteMcpPosture(false, permissions('deny'))).not.toThrow()
     expect(() => assertCursorWriteMcpPosture(true, permissions('ask'))).not.toThrow()
+  })
+
+  it('allows TaskWraith broker attach on Plan even when mcpTools is deny', () => {
+    const planDenied = {
+      ...permissions('deny'),
+      presetId: 'plan' as const,
+      approvalMode: 'plan' as const,
+      readOnly: true
+    }
+    expect(cursorMcpToolsDenied(planDenied)).toBe(true)
+    expect(cursorTaskWraithBrokerAttachAllowed(planDenied)).toBe(true)
+    // Custom + mcpTools deny still blocks attach (user MCP and generic deny).
+    expect(cursorTaskWraithBrokerAttachAllowed(permissions('deny'))).toBe(false)
+    expect(cursorTaskWraithBrokerAttachAllowed(permissions('ask'))).toBe(true)
   })
 })

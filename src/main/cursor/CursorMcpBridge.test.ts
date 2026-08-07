@@ -130,12 +130,22 @@ describe('canonical global broker allow rules', () => {
     // the Work Session removal.
     expect(CURSOR_GATEWAY_MCP_TOOL_NAMES).toHaveLength(40)
     expect(CURSOR_GATEWAY_MCP_TOOL_NAMES).toContain('ensemble_propose_goal_complete')
+    expect(CURSOR_GATEWAY_MCP_TOOL_NAMES).toContain('delegate_to_subthread')
+    expect(CURSOR_BROKER_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:delegate_to_subthread)`
+    )
     for (const tool of CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES) {
       expect(isCapabilityGatewayToolName(tool) || isReadOnlyAdvertisedTool(tool)).toBe(true)
     }
     for (const tool of CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES) {
       expect(isCapabilityGatewayToolName(tool) || isPlanAdvertisedTool(tool)).toBe(true)
     }
+    // Ask/Plan safe-subset seats now advertise sub-thread instruments.
+    expect(CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES).toContain('delegate_to_subthread')
+    expect(CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES).toContain('delegate_to_subthread')
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:delegate_to_subthread)`
+    )
   })
 })
 

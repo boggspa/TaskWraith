@@ -89,6 +89,29 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
  */
 export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V10_MCP_DIRECT_TOOLS
 
+/**
+ * Sub-thread control is a remote/brokered seat capability. Ollama's local tool
+ * loop must never advertise or execute these — including via capability_invoke —
+ * even though they remain in the shared gateway direct catalog for other
+ * providers. Capability UI already reports Ollama cannot spawn sub-threads.
+ */
+export const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES = Object.freeze([
+  'delegate_to_subthread',
+  'list_subthreads',
+  'read_subthread_result',
+  'cancel_subthread'
+] as const satisfies readonly OllamaToolName[])
+
+const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET = new Set<string>(OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES)
+
+export function isOllamaExcludedSubthreadTool(toolName: string): boolean {
+  return OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET.has(toolName)
+}
+
+function withoutOllamaExcludedSubthreadTools(names: readonly OllamaToolName[]): OllamaToolName[] {
+  return names.filter((toolName) => !isOllamaExcludedSubthreadTool(toolName))
+}
+
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
 const READ_ONLY_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(
   READ_ONLY_MCP_ADVERTISE_TOOLS
@@ -126,7 +149,7 @@ export function ollamaAdvertisedToolNames(
   const directNames = localProfileId
     ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
     : OLLAMA_ADVERTISED_TOOL_NAMES
-  let names: OllamaToolName[] = [...directNames]
+  let names: OllamaToolName[] = withoutOllamaExcludedSubthreadTools(directNames)
   if (options.networkAccess === 'deny') {
     names = names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
   }
@@ -152,7 +175,7 @@ export function isOllamaAdvertisedTool(toolName: string): boolean {
 export function ollamaCallableToolNames(
   options: { networkAccess?: string | null } = {}
 ): OllamaToolName[] {
-  const names: OllamaToolName[] = [...OLLAMA_ADVERTISED_TOOL_NAMES]
+  const names: OllamaToolName[] = withoutOllamaExcludedSubthreadTools(OLLAMA_ADVERTISED_TOOL_NAMES)
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names
@@ -184,9 +207,10 @@ export function ollamaToolNamesForTier(
   options: { networkAccess?: string | null } = {}
 ): OllamaToolName[] {
   // The retired tier argument no longer changes membership. Ollama shares the
-  // compact gateway direct profile; hidden capabilities are invoked through the
-  // gateway and retain their standard run-role policy at main's executor.
-  const names: OllamaToolName[] = [...OLLAMA_ADVERTISED_TOOL_NAMES]
+  // compact gateway direct profile (minus hard-excluded sub-thread tools);
+  // hidden capabilities are invoked through the gateway and retain their
+  // standard run-role policy at main's executor.
+  const names = withoutOllamaExcludedSubthreadTools(OLLAMA_ADVERTISED_TOOL_NAMES)
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names

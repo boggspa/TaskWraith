@@ -2916,10 +2916,11 @@ describe('runOllamaProvider streaming', () => {
     const enumNames: string[] = format?.properties?.taskwraith_tool?.properties?.name?.enum
     expect(Array.isArray(enumNames)).toBe(true)
     expect(enumNames).toEqual([
-      ...GATEWAY_V9_MCP_DIRECT_TOOLS,
+      ...GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread'),
       ...CAPABILITY_GATEWAY_TOOL_NAMES,
       'tool_help'
     ])
+    expect(enumNames).not.toContain('delegate_to_subthread')
     expect(enumNames).not.toContain('git_blame')
   })
 
@@ -4064,13 +4065,10 @@ describe('ollamaNativeToolDefinitions', () => {
   it('exposes the exact fresh gateway-v9 canonical surface plus virtual helpers', () => {
     const defs = ollamaNativeToolDefinitions('read_only')
     const names = defs.map((def) => def.function.name)
-    expect(names.slice(0, GATEWAY_V9_MCP_DIRECT_TOOLS.length)).toEqual([
-      ...GATEWAY_V9_MCP_DIRECT_TOOLS
-    ])
-    expect(names.slice(GATEWAY_V9_MCP_DIRECT_TOOLS.length)).toEqual([
-      ...CAPABILITY_GATEWAY_TOOL_NAMES,
-      'tool_help'
-    ])
+    const direct = GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread')
+    expect(names.slice(0, direct.length)).toEqual([...direct])
+    expect(names).not.toContain('delegate_to_subthread')
+    expect(names.slice(direct.length)).toEqual([...CAPABILITY_GATEWAY_TOOL_NAMES, 'tool_help'])
   })
 
   it('declares a compact action-plus-params shape for portable Ensemble control', () => {
@@ -4233,8 +4231,10 @@ describe('Ollama tool surface (tier retired)', () => {
     // the standard permission role at the approval gate.
     expect(normalizeOllamaToolControlTier('bad-value')).toBe('read_only')
     const readOnly = ollamaToolNamesForTier('read_only')
+    const expected = GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread')
     expect(readOnly).toEqual(ollamaToolNamesForTier('provider_parity'))
-    expect(readOnly).toEqual([...GATEWAY_V9_MCP_DIRECT_TOOLS])
+    expect(readOnly).toEqual(expected)
+    expect(readOnly).not.toContain('delegate_to_subthread')
     expect(readOnly).not.toContain('web_search')
     expect(readOnly).not.toContain('git_push')
   })
@@ -4251,7 +4251,8 @@ describe('Ollama tool surface (tier retired)', () => {
 
   it('keeps every legacy tier value on the same compact direct profile', () => {
     const tools = ollamaToolNamesForTier('provider_parity')
-    expect(tools).toEqual([...GATEWAY_V9_MCP_DIRECT_TOOLS])
+    const expected = GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread')
+    expect(tools).toEqual(expected)
     expect(ollamaToolNamesForTier('read_only')).toEqual(tools)
   })
 })

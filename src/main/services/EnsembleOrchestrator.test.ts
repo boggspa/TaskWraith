@@ -19602,6 +19602,9 @@ Next action:
     expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('plan')
     expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(true)
     expect(harness.dispatched[0].approvalMode).toBe('plan')
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
+      'deny'
+    )
 
     // Advance to the write-capable Codex participant.
     harness.orchestrator.handleProviderOutput(
@@ -19620,6 +19623,9 @@ Next action:
     expect(harness.dispatched[1].approvalMode).toBe('plan')
     expect(harness.dispatched[1].effectivePermissions?.agenticServices.shellCommands).toBe('deny')
     expect(harness.dispatched[1].effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
+      'deny'
+    )
   })
 
   it('P1b: an interactive round (unattended omitted) preserves the write-capable preset', async () => {
@@ -19661,6 +19667,9 @@ Next action:
     expect(harness.dispatched[0].effectivePermissions?.approvalMode).toBe('auto_edit')
     // Unattended elevation force-denies network egress.
     expect(harness.dispatched[0].effectivePermissions?.networkAccess).toBe('deny')
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
+      'deny'
+    )
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -19671,6 +19680,9 @@ Next action:
     expect(harness.dispatched[1].provider).toBe('codex')
     expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
     expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(false)
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
+      'deny'
+    )
   })
 
   it('honors elevation for GA GPT-5.6 participants in elevated unattended rounds (5.5 parity)', async () => {

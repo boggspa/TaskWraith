@@ -28,6 +28,7 @@ import {
 import {
   resolveUnattendedApprovalMode,
   unattendedElevationPresetId,
+  unattendedSubThreadDelegationOverride,
   type UnattendedElevationAck
 } from '../UnattendedPostureGate'
 import { resolveProviderDispatch, type ProviderDispatchResolution } from '../ProviderRunPause'
@@ -633,7 +634,8 @@ export class ComposerService {
             // keep readOnly:true so the signed posture still clears the clamp.
             // Unattended (scheduled) plan-mode runs force the plan no-ask floor:
             // an Ask posture would raise modals nobody is attending.
-            presetId: workflowMode === 'plan' || unattended ? 'plan' : 'read_only'
+            presetId: workflowMode === 'plan' || unattended ? 'plan' : 'read_only',
+            ...(unattended ? { overrides: unattendedSubThreadDelegationOverride() } : {})
           })
         : elevatedPresetId
           ? resolveEffectiveRunPermissions({
@@ -645,8 +647,13 @@ export class ComposerService {
               presetId: elevatedPresetId,
               // Unattended elevation NEVER gets network egress (exfiltration risk on
               // an unattended loop). workspace_write/default don't set networkAccess
-              // (→ settings default 'allow'), so force-deny it here.
-              overrides: { networkAccess: 'deny' }
+              // (→ settings default 'allow'), so force-deny it here. Sub-thread
+              // delegation is also denied so elevated unattended loops cannot
+              // silently spawn children (interactive Accept/Full WS still allow).
+              overrides: {
+                networkAccess: 'deny',
+                ...unattendedSubThreadDelegationOverride()
+              }
             })
           : previewRiskModel
             ? resolveEffectiveRunPermissions({

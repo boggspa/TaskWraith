@@ -229,18 +229,23 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
 /**
  * Recon-tier instrument tools: the approval-gated instruments a `read_only`
  * (Recon) seat may REACH that remain outside MCP_AUTO_ALLOWED_TOOLS. Today this
- * is exactly Canvas Browser navigation (user decision 2026-08-04): read-class
- * browsing in the sandboxed preview surface — the same reach web_fetch already
- * has prompt-free — offered to Recon as a per-invocation ASK instead of the
- * old silent unavailability. CRITICAL INVARIANT (mirrors the plan-instrument
- * tier below): nothing here is auto-allowed, so every call still hits the host
- * approval gate; advertising makes it REACHABLE and approval-queued, NEVER
- * auto-run. Its dedicated `webBrowsing` service resolves to ASK under
- * read_only/plan with grant-immunity (isPlanInstrumentGrantHold), and the
- * global kill switch still forces deny. DERIVED, never hand-listed.
+ * is Canvas Browser navigation (user decision 2026-08-04) plus sub-thread
+ * delegation/cancel (user decision 2026-08-08): reachable on Ask/Plan as a
+ * per-invocation ASK instead of silent unavailability. CRITICAL INVARIANT
+ * (mirrors the plan-instrument tier below): nothing here is auto-allowed, so
+ * every call still hits the host approval gate; advertising makes it REACHABLE
+ * and approval-queued, NEVER auto-run. `webBrowsing` / `subThreadDelegation`
+ * resolve to ASK under read_only (and Plan for subThreadDelegation) with
+ * grant-immunity (isPlanInstrumentGrantHold); the global kill switch still
+ * forces deny. DERIVED, never hand-listed.
  */
 export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
-  TASKWRAITH_MCP_TOOLS.filter((tool) => tool === 'canvas_navigate')
+  TASKWRAITH_MCP_TOOLS.filter(
+    (tool) =>
+      tool === 'canvas_navigate' ||
+      tool === 'delegate_to_subthread' ||
+      tool === 'cancel_subthread'
+  )
 )
 
 /**

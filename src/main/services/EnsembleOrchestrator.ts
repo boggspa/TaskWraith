@@ -9,6 +9,7 @@ import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   unattendedElevationPresetId,
+  unattendedSubThreadDelegationOverride,
   type UnattendedElevationLevel
 } from '../UnattendedPostureGate'
 import {
@@ -20411,7 +20412,12 @@ export class EnsembleOrchestrator {
         // Force-deny network egress in EVERY unattended posture (plan/read
         // presets carry networkAccess 'allow' for attended web reads, and
         // workspace_write/default fall to the settings default 'allow').
-        overrides: { networkAccess: 'deny' }
+        // Also deny sub-thread delegation so unattended Plan/elevation cannot
+        // modal-ask or silently spawn children.
+        overrides: {
+          networkAccess: 'deny',
+          ...unattendedSubThreadDelegationOverride()
+        }
         // Deliberately drop explicitExternalPathGrants either way: an unattended
         // round must not widen file access via composer-supplied grants.
       })

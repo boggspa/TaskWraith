@@ -38,10 +38,13 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 // `readOnly: true` — native lanes stay physically plan-contained), but they now
 // differ on the OPPOSITE axis from the original W7 split:
 //
-//   plan ("Plan" — the strict floor): NO mid-run permission asks at all.
-//     Anything not auto-allowed is DENIED — "denied and no elevation offered".
-//     The only elevation is the proposed-plan document approval (which flips
-//     the chat to Accept Edits and re-dispatches), and the only write is the
+//   plan ("Plan" — the strict floor): NO mid-run permission asks for ordinary
+//     mutating services. Anything not auto-allowed is DENIED — "denied and no
+//     elevation offered". Deliberate attended exception (2026-08-08):
+//     `subThreadDelegation` stays ASK so `delegate_to_subthread` can modal-
+//     approve; unattended/scheduled Plan overrides that back to DENY. The only
+//     other elevation is the proposed-plan document approval (which flips the
+//     chat to Accept Edits and re-dispatches), and the only write is the
 //     product-managed markdown plan artifact (executor-owned carve-out, not a
 //     service policy).
 //   read_only ("Ask" — the ask tier): anything not auto-allowed MAY be asked
@@ -51,11 +54,12 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 //     provider-NATIVE mutating tools remain contained by the physical plan
 //     mode both postures still run under.
 //
-// plan is therefore a strict SUBSET of read_only in reachable authority: it
-// only ever TIGHTENS read_only's ASK to DENY, never the reverse. The
+// plan is therefore a strict SUBSET of read_only in reachable authority for
+// ordinary services: it only ever TIGHTENS read_only's ASK to DENY, never the
+// reverse — except the attended subThreadDelegation carve-out above. The
 // deny-survival line in effectiveAgenticSettings still preserves every global
 // DENY across the key-by-key rebuild, and the grant-hold below keeps standing
-// grants from zero-clicking read_only's asks.
+// grants from zero-clicking read_only's asks (and Plan's subThreadDelegation).
 const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'ask',
   fileChanges: 'ask',
@@ -79,16 +83,19 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   webBrowsing: 'ask'
 }
 
-// `plan` = the no-ask floor. Every service is DENY: a Plan turn must never
-// interrupt the user with a permission modal — its elevation path is the plan
-// document approval, nothing else. (Auto-allowed read tools skip the gate
-// entirely via MCP_AUTO_ALLOWED_TOOLS, so this map only governs gated calls.)
+// `plan` = the no-ask floor for ordinary mutating services. Plan must not
+// interrupt mid-run for shell/file/canvas/… — those stay DENY and elevate only
+// via the plan document. Deliberate exception (2026-08-08): subThreadDelegation
+// is ASK so `delegate_to_subthread` stays reachable with a request modal on
+// Plan seats (grant-held via PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES). Generic
+// mcpTools stays DENY; scoped TaskWraith broker attach may still list the
+// gated instrument set without reopening the full MCP ask surface.
 const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
   externalPublish: 'deny',
   mcpTools: 'deny',
-  subThreadDelegation: 'deny',
+  subThreadDelegation: 'ask',
   canvasInteraction: 'deny',
   sketchCanvas: 'deny',
   meshCanvas: 'deny',
@@ -140,7 +147,10 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     //     detection force-prompts (never auto-allows escapes)
     //   - preview-risk models clamp fileChanges back to 'ask'
     agenticServices: {
-      fileChanges: 'allow'
+      fileChanges: 'allow',
+      // Accept Edits authorizes TaskWraith sub-thread delegation as a standard
+      // brokered tool (no per-call modal). Ask/Plan remain modal-gated.
+      subThreadDelegation: 'allow'
     }
   },
   workspace_write: {
@@ -179,7 +189,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // Browser navigation adds no egress a workspace_write seat lacks (shell
       // 'allow' already reaches the network); the surface itself stays
       // sandboxed + SSRF-guarded, and actuation remains separately gated.
-      webBrowsing: 'allow'
+      webBrowsing: 'allow',
+      // Full WS Access also authorizes standard brokered sub-thread delegation.
+      subThreadDelegation: 'allow'
     }
   },
   full_access: {
@@ -244,13 +256,12 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'webBrowsing'
 ]
 
-// Posture inversion (2026-08-04): `plan` no longer has ANY ask surface — every
-// service in its map is DENY, so there is nothing for a grant to zero-click and
-// this set is empty. Kept exported (the gate folds it into neverAutoAllow) so
-// the enforcement shape survives; membership would only return if Plan ever
-// regained a per-invocation instrument.
+// Plan's deliberate per-invocation instrument (2026-08-08): sub-thread
+// delegation stays ASK under Plan and must not be zero-clicked by a standing
+// grant minted under Accept Edits / Full WS / Full Access. Kept exported so
+// the approval gate folds it into neverAutoAllow.
 export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
-  new Set<AgenticServiceId>([])
+  new Set<AgenticServiceId>(['subThreadDelegation'])
 
 // The Ask tier's defining property is PER-INVOCATION human approval: anything
 // the map asks for must genuinely prompt, so a standing workspace grant or an

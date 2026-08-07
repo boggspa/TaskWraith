@@ -1563,8 +1563,12 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
+  // Orchestration (not workspace_write): Ask/Plan seats are readOnly:true and
+  // isReadOnlyBlockedTool hard-denies workspace_write before the dedicated
+  // subThreadDelegation modal can fire. The spawn itself does not mutate the
+  // parent workspace; child writes are capped by SubThreadPermissions.
   delegate_to_subthread: tool(
-    'workspace_write',
+    'orchestration',
     'subThreadDelegation',
     'control.mutate',
     'subthread-control',

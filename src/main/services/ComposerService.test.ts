@@ -687,7 +687,7 @@ describe('ComposerService', () => {
     expect(payload.composer.workflowMode).toBe('plan')
   })
 
-  it('posture inversion: a Plan-workflow solo run resolves the plan no-ask floor', () => {
+  it('posture inversion: a Plan-workflow solo run keeps the no-ask floor except sub-thread delegation', () => {
     const payload = compose(
       { provider: 'claude', workflowMode: 'plan' },
       { approvalMode: 'default' }
@@ -695,13 +695,11 @@ describe('ComposerService', () => {
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
-    // The Plan row is the no-ask floor: canvas/media/subthread deny outright
-    // (its only elevation is the plan-document approval)…
     expect(payload.effectivePermissions?.presetId).toBe('plan')
     expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('deny')
     expect(payload.effectivePermissions?.agenticServices.mediaEditing).toBe('deny')
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
-    // …while direct writes remain denied (plan is not a write mode).
+    // Sub-thread delegation remains modal-gated on Plan (2026-08-08).
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('ask')
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
     expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
   })
@@ -1810,6 +1808,9 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
     // unattended runs take the plan no-ask floor.
     expect(payload.effectivePermissions?.readOnly).toBe(true)
     expect(payload.effectivePermissions?.presetId).toBe('plan')
+    // Attended Plan asks for sub-thread spawn; unattended Plan must deny so the
+    // scheduled no-modal floor cannot hang on delegate_to_subthread approval.
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
   })
 
   it('clears externalPathGrants for the forced-plan unattended run (interactive contrast keeps them)', () => {
@@ -1915,6 +1916,9 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.readOnly).toBe(false)
     // Unattended elevation force-denies network egress (no exfiltration on a loop).
     expect(payload.effectivePermissions?.networkAccess).toBe('deny')
+    // Interactive Accept Edits / Full WS allow sub-thread spawn; elevated
+    // unattended must not silently auto-allow child seats.
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
     // Elevated ⇒ approvalMode !== 'plan' ⇒ the grant-clear is skipped.
     expect(payload.externalPathGrants).toEqual([grant])
     expect(payload.prompt).toContain('/outside')
@@ -1995,6 +1999,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.approvalMode).toBe('default')
     expect(payload.effectivePermissions?.presetId).toBe('default')
     expect(payload.effectivePermissions?.readOnly).toBe(false)
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
   })
 
   it('no ack (resolve → null) → plan approvalMode + plan no-ask floor (P1 regression); tampered/stale surface here as null too', () => {
@@ -2004,5 +2009,6 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     // no-ask floor, not read_only (Ask) — no modals with nobody attending.
     expect(payload.effectivePermissions?.presetId).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
   })
 })

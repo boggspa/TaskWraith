@@ -131,14 +131,14 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
   })
 
-  it('plan is the no-ask floor — every gated service denies, no mid-run modals', () => {
+  it('plan is the no-ask floor except sub-thread delegation (modal instrument)', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'plan'
     })
-    expect(resolved.agenticServices.subThreadDelegation).toBe('deny')
+    expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
     expect(resolved.agenticServices.canvasInteraction).toBe('deny')
     expect(resolved.agenticServices.sketchCanvas).toBe('deny')
     expect(resolved.agenticServices.meshCanvas).toBe('deny')
@@ -148,8 +148,8 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('deny')
     expect(resolved.agenticServices.mcpTools).toBe('deny')
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
-    // Plan never prompts — even eval denies outright; the plan-document
-    // approval is the only elevation path.
+    // Plan never prompts for eval — the plan-document approval is the only
+    // elevation path for ordinary mutating services.
     expect(resolved.agenticServices.canvasEval).toBe('deny')
   })
 
@@ -323,7 +323,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.webBrowsing).toBe('workspace')
   })
 
-  it('plan tightens read_only exactly — every Ask becomes deny, capture equal-deny (drift guard)', () => {
+  it('plan tightens read_only except sub-thread delegation (modal instrument carve-out)', () => {
     const base = { provider: 'claude' as const, workspacePath: '/repo', settings: settings() }
     const readOnly = resolveEffectiveRunPermissions({ ...base, presetId: 'read_only' }).agenticServices
     const plan = resolveEffectiveRunPermissions({ ...base, presetId: 'plan' }).agenticServices
@@ -332,12 +332,33 @@ describe('resolveEffectiveRunPermissions', () => {
         // The one shared auto-deny: no attended capture flow exists to approve.
         expect(readOnly[service]).toBe('deny')
         expect(plan[service]).toBe('deny')
+      } else if (service === 'subThreadDelegation') {
+        // Deliberate Plan instrument (2026-08-08): stays ASK so delegate_to_subthread
+        // can modal-approve without reopening the no-ask floor for other services.
+        expect(readOnly[service]).toBe('ask')
+        expect(plan[service]).toBe('ask')
       } else {
         // Ask prompts; plan is the no-ask floor — strictly tighter, never looser.
         expect(readOnly[service]).toBe('ask')
         expect(plan[service]).toBe('deny')
       }
     }
+  })
+
+  it('pins the sub-thread delegation ladder across every permission preset', () => {
+    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+      resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: settings(),
+        presetId
+      }).agenticServices.subThreadDelegation
+
+    expect(policyFor('read_only')).toBe('ask')
+    expect(policyFor('plan')).toBe('ask')
+    expect(policyFor('default')).toBe('allow')
+    expect(policyFor('workspace_write')).toBe('allow')
+    expect(policyFor('full_access')).toBe('allow')
   })
 
   it('plan stays denied — a standing workspace grant does NOT lift the no-ask floor', () => {
@@ -1039,10 +1060,8 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
     expect(isPlanInstrumentGrantHold('read_only', 'externalPublish')).toBe(false)
   })
 
-  it('does NOT hold for plan + non-instrument services (subthread was already grantable)', () => {
-    // subThreadDelegation was ASK + grantable under plan before the split — a
-    // grant hold here would be a regression, so it is deliberately excluded.
-    expect(isPlanInstrumentGrantHold('plan', 'subThreadDelegation')).toBe(false)
+  it('holds subThreadDelegation under plan so standing grants cannot zero-click delegation', () => {
+    expect(isPlanInstrumentGrantHold('plan', 'subThreadDelegation')).toBe(true)
     expect(isPlanInstrumentGrantHold('plan', 'mcpTools')).toBe(false)
     expect(isPlanInstrumentGrantHold('plan', 'fileChanges')).toBe(false)
   })

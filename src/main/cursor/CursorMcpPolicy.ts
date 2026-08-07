@@ -6,7 +6,7 @@ import type { EffectiveRunPermissions } from '../store/types'
 // selectable. A posture-denied or failed broker attachment leaves the managed
 // Cursor launch on its native-tool stack under the pinned OS sandbox.
 
-type CursorEffectivePermissions = Pick<EffectiveRunPermissions, 'agenticServices'>
+type CursorEffectivePermissions = Pick<EffectiveRunPermissions, 'agenticServices' | 'presetId'>
 
 /**
  * Read Cursor's MCP ceiling from the canonical, main-resolved run posture.
@@ -17,6 +17,22 @@ export function cursorMcpToolsDenied(
   effectivePermissions: CursorEffectivePermissions | null | undefined
 ): boolean {
   return effectivePermissions?.agenticServices?.mcpTools === 'deny'
+}
+
+/**
+ * Whether the managed TaskWraith broker may attach for this Cursor seat.
+ *
+ * Plan keeps `mcpTools: 'deny'` (no mid-run modals for generic MCP) but still
+ * needs the scoped safe/plan-subset broker so gated instruments such as
+ * `delegate_to_subthread` can be listed and modal-approved. User-owned MCP
+ * servers remain gated by {@link cursorMcpToolsDenied} alone.
+ */
+export function cursorTaskWraithBrokerAttachAllowed(
+  effectivePermissions: CursorEffectivePermissions | null | undefined
+): boolean {
+  if (!effectivePermissions) return false
+  if (!cursorMcpToolsDenied(effectivePermissions)) return true
+  return effectivePermissions.presetId === 'plan'
 }
 
 /**

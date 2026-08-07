@@ -1550,7 +1550,7 @@ import {
   cursorGlobalBrokerRegistryLeases,
   type CursorGlobalBrokerRegistryLease
 } from './cursor/CursorGlobalBrokerRegistryLease'
-import { cursorMcpToolsDenied } from './cursor/CursorMcpPolicy'
+import { cursorTaskWraithBrokerAttachAllowed } from './cursor/CursorMcpPolicy'
 import {
   createGrokTurnAbortController,
   runGrokAcpTurn,
@@ -20714,9 +20714,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // complete, a user-approved write seat retains Cursor-native Shell/Write
   // inside `--sandbox enabled` rather than losing the lane.
   const writeCapable = cursorWriteCapable(payload.approvalMode)
-  const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
   const cursorAdvertiseTaskWraithMcp =
-    payload.taskWraithMcpAdvertised === true && !mcpToolsDenied && Boolean(payload.workspace)
+    payload.taskWraithMcpAdvertised === true &&
+    cursorTaskWraithBrokerAttachAllowed(payload.effectivePermissions) &&
+    Boolean(payload.workspace)
   const cursorPlanSeat = !writeCapable && payload.effectivePermissions?.presetId === 'plan'
   const cursorBrokerPolicy = resolveCursorPathBBrokerPolicy({
     writeCapable,

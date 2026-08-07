@@ -90,6 +90,36 @@ describe('createOllamaMainRuntime', () => {
     )
   })
 
+  it('hard-denies sub-thread tools on the local loop, including capability_invoke', async () => {
+    const deps = dependencies()
+    const runtime = createOllamaMainRuntime(deps)
+
+    const direct = await runtime.executeLocalTool({
+      toolName: 'delegate_to_subthread',
+      arguments: { provider: 'codex', prompt: 'recon' },
+      workspacePath: '/repo',
+      appRunId: 'run-1',
+      appChatId: 'chat-1'
+    })
+    expect(direct.ok).toBe(false)
+    expect(direct.output).toMatch(/cannot use TaskWraith sub-thread tools/i)
+    expect(deps.executeMcpTool).not.toHaveBeenCalled()
+
+    const viaInvoke = await runtime.executeLocalTool({
+      toolName: 'capability_invoke',
+      arguments: {
+        name: 'delegate_to_subthread',
+        arguments: { provider: 'codex', prompt: 'recon' }
+      },
+      workspacePath: '/repo',
+      appRunId: 'run-1',
+      appChatId: 'chat-1'
+    })
+    expect(viaInvoke.ok).toBe(false)
+    expect(viaInvoke.output).toMatch(/cannot invoke TaskWraith sub-thread tools/i)
+    expect(deps.executeMcpTool).not.toHaveBeenCalled()
+  })
+
   it('formats workspace search results without bypassing the scoped executor', async () => {
     const executeWorkspaceSearch = vi.fn(async () => ({
       matches: [

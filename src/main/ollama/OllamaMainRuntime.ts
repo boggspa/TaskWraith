@@ -33,6 +33,7 @@ import {
   type OllamaToolExecutionRequest,
   type OllamaToolExecutionResult
 } from './OllamaProvider'
+import { isOllamaExcludedSubthreadTool } from './OllamaToolTiers'
 import {
   normalizeOllamaSessionMemory,
   normalizeOllamaSessionMemoryMap,
@@ -314,6 +315,24 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
       // Rebind locally so executors see canonical keys without mutating the
       // caller-owned request (tool_use / trajectory keep model-emitted args).
       request = { ...request, arguments: canonicalArguments }
+
+      if (isOllamaExcludedSubthreadTool(request.toolName)) {
+        return {
+          ok: false,
+          output:
+            'Ollama local mode cannot use TaskWraith sub-thread tools (delegate_to_subthread / list_subthreads / read_subthread_result / cancel_subthread).'
+        }
+      }
+      if (
+        request.toolName === 'capability_invoke' &&
+        isOllamaExcludedSubthreadTool(String(request.arguments.name ?? ''))
+      ) {
+        return {
+          ok: false,
+          output:
+            'Ollama local mode cannot invoke TaskWraith sub-thread tools through capability_invoke.'
+        }
+      }
 
       if (isCapabilityGatewayToolName(request.toolName)) {
         const result = await deps.executeMcpTool(

@@ -152,6 +152,10 @@ describe('CursorPathBLaunchPlan', () => {
     expect(degraded.broker.denyRules).toEqual([])
     expect(degraded.prompt).toContain('user-approved write posture remains active')
     expect(degraded.prompt).toContain('enabled workspace sandbox')
+    expect(degraded.prompt).toContain('not a substitute for TaskWraith sub-thread')
+    expect(degraded.prompt).not.toContain('delegate_to_subthread')
+    expect(degraded.prompt).not.toContain('taskwraith__delegate_to_subthread')
+    expect(degraded.taskWraithMcpAdvertised).toBe(false)
 
     const active = buildCursorPathBLaunchPlan(
       input({
@@ -164,6 +168,9 @@ describe('CursorPathBLaunchPlan', () => {
     expect(active.controls.executionMode).toBe('contained-default')
     expect(active.argv).toContain('--force')
     expect(active.broker.denyRules).toEqual(['Shell(**)', 'Write(**)'])
+    expect(active.broker.allowRules).toEqual(
+      expect.arrayContaining([`Mcp(taskwraith-broker:delegate_to_subthread)`])
+    )
   })
 
   it('resolves Cursor Grok reasoning and fast controls into the wire model', () => {

@@ -35,6 +35,7 @@ describe('buildProviderShellRoutingPrompt', () => {
     expect(prompt).toContain('taskwraith__run_shell_command')
     expect(prompt).toContain('normal user approval request')
     expect(prompt).toContain('native Shell/Write remain available')
+    expect(prompt).toContain('not a substitute for TaskWraith sub-thread')
   })
 
   it('does not advertise a managed shell reroute when either governing service is denied', () => {

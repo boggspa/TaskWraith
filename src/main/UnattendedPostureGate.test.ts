@@ -4,6 +4,7 @@ import {
   isUnattendedElevationAckCurrent,
   resolveUnattendedApprovalMode,
   unattendedElevationPresetId,
+  unattendedSubThreadDelegationOverride,
   UNATTENDED_SAFE_APPROVAL_MODE,
   type UnattendedElevationAck,
   type WorkflowForElevationAck
@@ -18,6 +19,16 @@ const ack = (over: Partial<UnattendedElevationAck> = {}): UnattendedElevationAck
   acknowledgedApprovalMode: 'auto_edit',
   authorityDigest: AUTHORITY_DIGEST,
   ...over
+})
+
+describe('unattendedSubThreadDelegationOverride', () => {
+  it('denies sub-thread delegation on every unattended resolve (plan floor + elevation)', () => {
+    // Attended Plan/Accept may ask or allow; scheduled runs must never modal
+    // or silently spawn children under the same preset ids.
+    expect(unattendedSubThreadDelegationOverride()).toEqual({
+      agenticServices: { subThreadDelegation: 'deny' }
+    })
+  })
 })
 
 describe('resolveUnattendedApprovalMode', () => {

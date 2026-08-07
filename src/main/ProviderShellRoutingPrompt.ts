@@ -91,7 +91,7 @@ export function buildProviderShellRoutingPrompt(input: {
       : []),
     ...(input.provider === 'cursor'
       ? [
-          '- Cursor continuity: when the managed TaskWraith shell tool is absent on a user-approved write seat, native Shell/Write remain available inside Cursor’s enabled workspace sandbox. Stay inside the assigned lane scope, expose the exact command/path, and continue the turn if the sandbox refuses it.'
+          '- Cursor continuity: when the managed TaskWraith shell tool is absent on a user-approved write seat, native Shell/Write remain available inside Cursor’s enabled workspace sandbox. Shell is not a substitute for TaskWraith sub-thread or cross-provider spawn. Stay inside the assigned lane scope, expose the exact command/path, and continue the turn if the sandbox refuses it.'
         ]
       : []),
     TASKWRAITH_SHELL_ROUTING_PROMPT_CLOSE,

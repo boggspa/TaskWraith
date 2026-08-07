@@ -207,19 +207,17 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
-  it('RECON INSTRUMENT INVARIANT: exactly canvas_navigate, host-gated via webBrowsing', () => {
-    // The recon tier is the ONE deliberate exception to "read_only advertises
-    // only auto-allowed tools" (user decision 2026-08-04). Growing it is a
-    // capability-governance decision, not a convenience: update this test only
-    // alongside an explicit user-approved widening.
-    expect([...RECON_INSTRUMENT_ADVERTISE_TOOLS]).toEqual(['canvas_navigate'])
+  it('RECON INSTRUMENT INVARIANT: canvas_navigate + sub-thread controls, never auto-allowed', () => {
+    // Growing this tier is a capability-governance decision, not a convenience.
+    expect([...RECON_INSTRUMENT_ADVERTISE_TOOLS].sort()).toEqual(
+      ['cancel_subthread', 'canvas_navigate', 'delegate_to_subthread'].sort()
+    )
     const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
+    expect(TASKWRAITH_TOOL_ACTIONS.canvas_navigate.service).toBe('webBrowsing')
+    expect(TASKWRAITH_TOOL_ACTIONS.delegate_to_subthread.service).toBe('subThreadDelegation')
+    expect(TASKWRAITH_TOOL_ACTIONS.cancel_subthread.service).toBe('subThreadDelegation')
     for (const tool of RECON_INSTRUMENT_ADVERTISE_TOOLS) {
-      // Never auto-allowed: reaching it must queue the host approval gate.
       expect(autoAllowedTools.has(tool)).toBe(false)
-      // Its dedicated service keeps it clear of the read-only
-      // mcpTools→shellCommands hard-deny reroute so the preset's ASK governs.
-      expect(TASKWRAITH_TOOL_ACTIONS[tool].service).toBe('webBrowsing')
     }
   })
 })
@@ -284,13 +282,24 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'schedule_wakeup',
       'cancel_wakeup',
       'blackboard_delete',
-      'delegate_to_subthread',
       'cancel_active_run',
       'workspace_board_apply_plan',
       'totally_unknown_future_tool'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
     }
+  })
+
+  it('advertises sub-thread delegation as an approval-queued Ask instrument', () => {
+    expect(isReadOnlyAdvertisedTool('delegate_to_subthread')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('cancel_subthread')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_to_subthread')).toBe(
+      false
+    )
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('cancel_subthread')).toBe(false)
+    expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toEqual(
+      expect.arrayContaining(['delegate_to_subthread', 'cancel_subthread', 'canvas_navigate'])
+    )
   })
 
   it('does NOT advertise the plan instruments to a read_only seat', () => {
@@ -367,13 +376,16 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
       // canvas_eval (RCE) + canvas window lifecycle are NOT plan instruments.
       'canvas_eval',
       'canvas_open',
-      // subthread delegation is a plan capability but deliberately out of the
-      // bridge-parity scope (canvas + media only); it keeps its own gate.
-      'delegate_to_subthread',
       'workspace_board_apply_plan',
       'totally_unknown_future_tool'
     ]) {
       expect(isPlanAdvertisedTool(tool)).toBe(false)
     }
+  })
+
+  it('inherits Ask sub-thread instruments on plan seats (modal-gated, not auto-allowed)', () => {
+    expect(isPlanAdvertisedTool('delegate_to_subthread')).toBe(true)
+    expect(isPlanAdvertisedTool('cancel_subthread')).toBe(true)
+    expect(autoAllowedTools.has('delegate_to_subthread')).toBe(false)
   })
 })

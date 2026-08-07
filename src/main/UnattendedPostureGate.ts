@@ -118,6 +118,18 @@ export function unattendedElevationPresetId(
 }
 
 /**
+ * Agentic-service overrides applied on EVERY unattended resolve (plan floor and
+ * verified elevation). Attended Plan may modal-approve `subThreadDelegation`
+ * (2026-08-08), but a scheduled/unattended run must never block on that modal
+ * or silently auto-spawn child seats under elevated Accept Edits / Full WS.
+ */
+export function unattendedSubThreadDelegationOverride(): {
+  agenticServices: { subThreadDelegation: 'deny' }
+} {
+  return { agenticServices: { subThreadDelegation: 'deny' } }
+}
+
+/**
  * The minimal WorkflowDefinition shape buildUnattendedElevationAck needs. Kept
  * structural (no store import) so this module stays Electron-free and its unit
  * tests don't drag the store in.
