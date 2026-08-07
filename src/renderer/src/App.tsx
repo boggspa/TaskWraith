@@ -259,6 +259,7 @@ import {
   getUsageWorkspaceIdForChat
 } from './lib/chatScope'
 import { resolvePaneWorkspace, resolvePaneWorkspacePath } from './lib/mainPaneWorkspaceHeader'
+import { resolveComposerFocusedWorkspace } from './lib/composerFocusedWorkspace'
 import { updatePathKeyedWorkspaceSnapshot } from './lib/multiviewWorkspacePresentation'
 import {
   SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY,
@@ -22774,7 +22775,14 @@ function App(): React.JSX.Element {
     isMultiviewSplit && currentGitPresentationPath
       ? gitSnapshotByWorkspace[currentGitPresentationPath] ?? null
       : singlePanePrimaryGitSnapshot
-  const focusedCurrentWorkspace = isMultiviewSplit ? currentChatWorkspace : currentWorkspace
+  // Always prefer the chat-resolved workspace. Single-pane historically used
+  // app-global currentWorkspace, so the footer Workspaces pill and Composer
+  // git branch/commit paths could stay on a previous thread's primary.
+  const focusedCurrentWorkspace = resolveComposerFocusedWorkspace({
+    isMultiviewSplit,
+    currentChatWorkspace,
+    currentWorkspace
+  })
   const setFocusedPrimaryGitSnapshot = useCallback(
     (snapshot: GitRepositorySnapshot | null) => {
       if (isMultiviewSplit && currentGitPresentationPath) {

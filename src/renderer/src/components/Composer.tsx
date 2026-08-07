@@ -186,6 +186,7 @@ import {
 } from '../../../shared/grok45Models'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import { resolveComposerEffectiveWorkspacePath } from '../lib/composerWorktreeSelection'
+import { resolveComposerGitActionBasePath } from '../lib/composerFocusedWorkspace'
 import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { pathComparisonKey } from '../lib/pathDisplay'
@@ -890,7 +891,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const isTerminalOpen = Boolean(
     currentChat?.appChatId && terminalOpenByChatId[currentChat.appChatId]
   )
-  const canShowTerminal = Boolean(currentWorkspace?.path && !isCurrentGlobalChat)
+  // Prefer chat-resolved path so terminal / lock / git actions cannot target a
+  // stale app-global primary after a thread switch.
+  const composerGitActionBasePath = resolveComposerGitActionBasePath({
+    currentWorkspacePath,
+    currentWorkspace
+  })
+  const canShowTerminal = Boolean(composerGitActionBasePath && !isCurrentGlobalChat)
 
   const [transcriptRoot, setTranscriptRoot] = useState<HTMLElement | null>(null)
   useLayoutEffect(() => {
@@ -2380,8 +2387,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   appearance.composerStyle === 'cursor' ||
                   appearance.composerStyle === 'codex' ||
                   appearance.composerStyle === 'chatgpt'
+                // Prefer chat-resolved currentWorkspacePath over a stale
+                // currentWorkspace record so Branch/Commit/Create PR cannot
+                // mutate the previously focused primary.
+                const primaryGitActionBasePath = composerGitActionBasePath
                 const primaryGitActionPath = resolveComposerEffectiveWorkspacePath(
-                  currentWorkspace?.path,
+                  primaryGitActionBasePath,
                   composerWorktreeSelection
                 )
                 // (The GitHub PR/CI satellite pill moved from its own row
@@ -2420,13 +2431,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         <span>
                           {resolveWorkspaceDisplayName({
                             displayName: currentWorkspace.displayName,
-                            path: currentWorkspace.path,
+                            path: primaryGitActionBasePath || currentWorkspace.path,
                             repoRoot: primaryGitSnapshot?.repoRoot,
                             remoteUrl: primaryGitSnapshot?.remoteUrl
                           })}
                           {' · '}
                           <ComposerBranchWorktreePopover
-                            workspacePath={currentWorkspace?.path}
+                            workspacePath={primaryGitActionBasePath}
                             gitSnapshot={primaryGitSnapshot}
                             fallbackBranch={currentWorkspace?.branch}
                             detached={primaryGitSnapshot?.detached ?? false}
@@ -5914,9 +5925,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         />
                       )}
                       <WorkspaceLockPill
-                        workspacePath={currentWorkspace.path}
+                        workspacePath={composerGitActionBasePath || currentWorkspace.path}
                         effectiveWorkspacePath={
-                          composerWorktreeSelection?.effectiveWorkspacePath || currentWorkspace.path
+                          composerWorktreeSelection?.effectiveWorkspacePath ||
+                          composerGitActionBasePath ||
+                          currentWorkspace.path
                         }
                       />
                     </div>
@@ -5952,7 +5965,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
             )}
             {isTerminalOpen &&
               transcriptRoot &&
-              currentWorkspace?.path &&
+              composerGitActionBasePath &&
               createPortal(
                 <>
                   {/* Sits on the pane's top edge (it overlaps 2px into it) and
@@ -5973,7 +5986,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     title="Resize workspace terminal"
                   />
                   <TerminalPanel
-                    workspacePath={currentWorkspace.path}
+                    workspacePath={composerGitActionBasePath}
                     className="workspace-terminal-split"
                     variant="pane"
                   />
