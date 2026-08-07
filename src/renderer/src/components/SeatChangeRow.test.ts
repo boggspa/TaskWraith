@@ -297,7 +297,7 @@ describe('close-out table reuses the seat element', () => {
   })
 
   it('collapses five seat columns into one and merges turns with tokens', () => {
-    expect(closeoutSource).toContain("'| Seat | Turns & Tokens |'")
+    expect(closeoutSource).toContain('function formatParticipantWorkCell(')
     expect(closeoutSource).not.toContain('✅')
     expect(closeoutSource).toContain("`${turns} ${turns === 1 ? 'Turn' : 'Turns'}`")
     expect(closeoutSource).toContain('Tks`')

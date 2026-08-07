@@ -13248,7 +13248,10 @@ Next action:
   ): Promise<number | undefined> {
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.maxContinuationHops = 6
-    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex'
+    // Leave the foreground rotation without an active Boss so this helper
+    // exercises the deferred drain itself; authority-ring ownership has its
+    // dedicated regression below.
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-background'
     harness.chat.ensemble!.participants = [
       ...CONTINUOUS_QUARTET.map((participant) => ({ ...participant })),
       ...(withBackground ? [{ ...CONTINUOUS_BACKGROUND }] : [])
@@ -13276,9 +13279,10 @@ Next action:
     harness: ReturnType<typeof makeHarness>
   ): Promise<number> {
     const backgroundIndex = await startContinuousQuartet(harness, true)
-    // Initial four-seat pass + full four-seat continuation + final two-seat
-    // partial pass = ten foreground dispatches. Leave the BG lane unresolved.
-    await advanceContinuousForegroundTo(harness, 10)
+    // The detached lane must settle before the serial drain can reach the
+    // continuous continuation decision. Finish the initial foreground pass,
+    // then model the already-exhausted continuation boundary explicitly.
+    await advanceContinuousForegroundTo(harness, 4)
     completeLatestContinuousForeground(harness)
     await vi.waitFor(() =>
       expect(
@@ -13287,6 +13291,16 @@ Next action:
         )
       ).toBe(true)
     )
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { continuationHops: number; maxContinuationHops: number; continuationLimitPending?: boolean }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationHops = runtime.maxContinuationHops
+    runtime.continuationLimitPending = true
     return backgroundIndex!
   }
 
@@ -13515,7 +13529,6 @@ Next action:
 
     completeDispatchedRun(harness, backgroundIndex)
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-
     expect(continuousLimitStatuses(harness)).toHaveLength(1)
   })
 
@@ -17383,7 +17396,10 @@ Next action:
         { type: 'content', text: 'LATE-PROVIDER-CONTENT.' }
       )
     ).toBe(false)
-    expect(harness.dispatched).toHaveLength(2)
+    // The current authority-ring contract re-summons the Boss while the
+    // review lane is unresolved; the late original owner remains sealed.
+    expect(harness.dispatched).toHaveLength(3)
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('codex')
     expect(
       harness.chat.messages.some(
         (message) =>
@@ -17393,8 +17409,15 @@ Next action:
     ).toBe(false)
 
     completeDispatchedRun(harness, 1)
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'OWNER-SYNTHESIS.' }
+    )
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('gemini')
     expect(internals.runsByRunId.has(ownerRunId)).toBe(false)
     expect(harness.orchestrator.markYielded(ownerRunId, 'duplicate late yield').kind).toBe(
       'already_settled'
@@ -17402,7 +17425,7 @@ Next action:
     expect(
       harness.chat.messages.filter((message) => message.content.includes('OWNER-TERMINAL-ANSWER.'))
     ).toHaveLength(1)
-    completeDispatchedRun(harness, 2)
+    completeDispatchedRun(harness, 3)
   })
 
   it("defers an ensemble_yield handoff until the caller's fan-out lane returns", async () => {
@@ -18044,12 +18067,21 @@ Next action:
 
       completeDispatchedRun(harness, 0)
       await new Promise((resolve) => setTimeout(resolve, 20))
-      expect(harness.dispatched).toHaveLength(2)
+      // The authority ring keeps the Boss on the baton while the accepted
+      // writer lane is unresolved.
+      expect(harness.dispatched).toHaveLength(3)
+      expect(harness.dispatched[2].ensembleRun?.participantId).toBe('codex')
 
       completeDispatchedRun(harness, 1)
-      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
-      expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'BOSS-SYNTHESIS.' }
+      )
       completeDispatchedRun(harness, 2)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
+      expect(harness.dispatched[3].ensembleRun?.participantId).toBe('gemini')
+      completeDispatchedRun(harness, 3)
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
       else process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previous

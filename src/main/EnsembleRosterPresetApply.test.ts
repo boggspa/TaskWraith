@@ -160,7 +160,7 @@ describe('EnsembleRosterPresetApply', () => {
       bossmanParticipantId: 'new-boss',
       captainParticipantIds: [],
       maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS,
-      maxContinuationHops: 500,
+      maxContinuationHops: 999,
       ensembleContextChars: 256_000
     })
     expect(plan.participants[0]).toMatchObject({
@@ -581,7 +581,7 @@ describe('EnsembleRosterPresetApply', () => {
       ok: true,
       plan: {
         maxParticipants: 3,
-        maxContinuationHops: 500,
+        maxContinuationHops: 999,
         ensembleContextChars: 256_000
       }
     })

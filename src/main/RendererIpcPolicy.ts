@@ -56,6 +56,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'discover-gemini-memory',
   'dock-side-chat-popout',
   'external-path:pick-and-persist',
+  'external-path:repair-stale',
   'external-path:revoke',
   'fallback-promoted-steer-job',
   'favicon:getForUrl',
