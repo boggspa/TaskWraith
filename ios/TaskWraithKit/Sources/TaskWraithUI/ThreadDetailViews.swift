@@ -2092,13 +2092,6 @@ struct ThreadDetailView: View {
                     model.navigationTarget = childId
                 }
 
-                TranscriptParticipantFilterRail(
-                    items: transcriptFilterItems,
-                    activeFilterKeys: activeTranscriptFilterKeys
-                ) { key in
-                    activeTranscriptFilterKeys = TranscriptParticipantFilter.toggle(
-                        key: key, in: activeTranscriptFilterKeys)
-                }
                 topActionBanner
                 attentionBanner
             }
