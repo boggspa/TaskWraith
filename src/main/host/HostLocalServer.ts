@@ -308,8 +308,8 @@ export class HostLocalServer {
     const closePromise = server?.listening
       ? new Promise<void>((resolve) => server.close(() => resolve()))
       : Promise.resolve()
-    // Register the listener close callback before destroying active clients.
-    // This ordering matters for Windows named pipes, where destroying the last
+    // Register the listener close callback before closing active clients. This
+    // ordering matters for Windows named pipes, where closing the last
     // connection can otherwise race the close callback and leave stop() pending.
     this.disconnectClients()
     await closePromise
@@ -380,9 +380,10 @@ export class HostLocalServer {
         event: 'host.closing',
         sequence: 0
       }
-      socketWrite(client.socket, event)
+      const wroteClosingEvent = socketWrite(client.socket, event)
       clearTimeout(client.handshakeTimer)
-      client.socket.destroy()
+      if (wroteClosingEvent) client.socket.end()
+      else client.socket.destroy()
     }
     this.clients.clear()
   }

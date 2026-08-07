@@ -1881,8 +1881,8 @@ describe('T2 runner (no Electron launch)', () => {
     expect(spawned[0].cmd).not.toBe('npx')
     expect(child.pid).toBe(4242)
     expect(child.electronBinary).toBe(path.resolve('/virtual/Electron'))
-    expect(child.pgid).toBe(4242)
-    expect(spawned[0].opts.detached).toBe(true)
+    expect(child.pgid).toBe(process.platform === 'win32' ? undefined : 4242)
+    expect(spawned[0].opts.detached).toBe(process.platform !== 'win32')
 
     expect(() =>
       spawnExactElectronChild({

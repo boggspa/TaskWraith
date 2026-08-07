@@ -37,6 +37,7 @@ claim_block=0
 # ── epoch helper: GNU and BSD date disagree; unparseable means "do not block".
 to_epoch() {
   local iso="$1"
+  [ -z "$iso" ] && { printf ''; return 0; }
   date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
   date -u -d "$iso" +%s 2>/dev/null && return 0
   # Runtime markers use JavaScript ISO timestamps, which include fractional

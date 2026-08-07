@@ -138,14 +138,21 @@ function archiveReader(asarPath, asarApi) {
         throw new Error(`Packaged file is missing from app.asar: ${normalized}`)
       }
       const rawEntry = rawByNormalized.get(normalized)
-      try {
-        return Buffer.from(asarApi.extractFile(asarPath, rawEntry))
-      } catch (error) {
-        // Some ASAR versions report a leading separator from listPackage but
-        // accept only the normalized root-relative spelling on extraction.
-        if (rawEntry === normalized) throw error
-        return Buffer.from(asarApi.extractFile(asarPath, normalized))
+      const candidates = [
+        rawEntry,
+        typeof rawEntry === 'string' ? rawEntry.replace(/^[/\\]+/, '') : null,
+        normalized,
+        normalized.split('/').join(path.sep)
+      ].filter((candidate, index, list) => candidate && list.indexOf(candidate) === index)
+      let lastError
+      for (const candidate of candidates) {
+        try {
+          return Buffer.from(asarApi.extractFile(asarPath, candidate))
+        } catch (error) {
+          lastError = error
+        }
       }
+      throw lastError || new Error(`Packaged file cannot be read from app.asar: ${normalized}`)
     }
   }
 }

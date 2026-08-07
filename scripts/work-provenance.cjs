@@ -470,7 +470,7 @@ function advanceMarkerObservations({ root, markers, dirty, previousSidecar, now,
     const markerRoot = physicalPath(path.resolve(root, marker.worktree || root))
     const claimsThisRoot = markerRoot === physicalPath(root)
     const claimed = [...dirtyMap.entries()]
-      .filter(([dirtyPath]) => claimsThisRoot && marker.matchers.some((match) => match(dirtyPath)))
+      .filter(([dirtyPath]) => claimsThisRoot && markerClaimsPath(marker, dirtyPath))
       .map(([dirtyPath, evidence]) => ({ path: dirtyPath, ...evidence }))
     const prior = previous.markers[marker.file]
     const legacy = previous.legacy?.[marker.file]
@@ -1271,7 +1271,7 @@ function queryWorkProvenance(root, options = {}) {
           (row) =>
             row.state?.live &&
             markerTargetsWorktree(row, identity.root) &&
-            row.marker?.matchers?.some((match) => match(group.path))
+            markerClaimsPath(row.marker, group.path)
         )
       : []
     const lineageRows = []
@@ -1629,9 +1629,7 @@ function confidenceReason(confidence, source) {
 
 function markerLiveness(targetPath, markerRows, worktreeRoot) {
   const matching = markerRows.filter(
-    (row) =>
-      markerTargetsWorktree(row, worktreeRoot) &&
-      row.marker?.matchers?.some((match) => match(targetPath))
+    (row) => markerTargetsWorktree(row, worktreeRoot) && markerClaimsPath(row.marker, targetPath)
   )
   if (matching.some((row) => row.marker?.derived && row.state?.live)) return 'runtime'
   if (matching.some((row) => row.state?.live)) return 'live'
@@ -1646,6 +1644,24 @@ function markerTargetsWorktree(row, worktreeRoot) {
     ? path.resolve(markerBaseRoot, marker.worktree)
     : path.resolve(markerBaseRoot)
   return physicalPath(declaredRoot) === physicalPath(worktreeRoot)
+}
+
+function markerClaimsPath(marker, targetPath) {
+  const normalizedTarget = String(targetPath || '').replace(/\\/g, '/')
+  const matcherClaimed = marker?.matchers?.some((match) => {
+    try {
+      return match(targetPath) || match(normalizedTarget)
+    } catch {
+      return false
+    }
+  })
+  if (matcherClaimed) return true
+  return (marker?.paths || []).some((claimedPath) => {
+    const normalizedClaim = String(claimedPath || '').replace(/\\/g, '/')
+    return normalizedClaim.endsWith('/')
+      ? normalizedTarget.startsWith(normalizedClaim)
+      : normalizedTarget === normalizedClaim
+  })
 }
 
 function recoveryProjection(root, event) {
