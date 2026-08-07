@@ -10882,8 +10882,9 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     if (isChatPopoutWindow) return
-    void window.api.getScheduledTasks(currentWorkspace?.id).then(setScheduledTasks)
-    void window.api.getWorkflowDefinitions(currentWorkspace?.id).then(setWorkflowDefinitions)
+    const workspaceId = currentChatWorkspace?.id || currentWorkspace?.id
+    void window.api.getScheduledTasks(workspaceId).then(setScheduledTasks)
+    void window.api.getWorkflowDefinitions(workspaceId).then(setWorkflowDefinitions)
     if (workspaceBoardApiReady) {
       void window.api.getWorkspaceBoards().then(setWorkspaceBoards)
       void window.api.getWorkspaceBoardCards().then(setWorkspaceBoardCards)
@@ -10893,11 +10894,17 @@ function App(): React.JSX.Element {
       setActiveWorkspaceBoardId(null)
     }
     if (evidencePackApiReady) {
-      void window.api.getCapabilityLedgerSnapshot(currentWorkspace?.id).then(setCapabilityLedgerSnapshot)
+      void window.api.getCapabilityLedgerSnapshot(workspaceId).then(setCapabilityLedgerSnapshot)
     } else {
       setCapabilityLedgerSnapshot(null)
     }
-  }, [currentWorkspace?.id, evidencePackApiReady, isChatPopoutWindow, workspaceBoardApiReady])
+  }, [
+    currentChatWorkspace?.id,
+    currentWorkspace?.id,
+    evidencePackApiReady,
+    isChatPopoutWindow,
+    workspaceBoardApiReady
+  ])
 
   useEffect(() => {
     scheduledTasksRef.current = scheduledTasks
@@ -18287,7 +18294,8 @@ function App(): React.JSX.Element {
       return true
     }
 
-    if (!currentWorkspace || typeof geminiSessionApi.startGeminiSession !== 'function') {
+    const sessionWorkspace = currentChatWorkspace || currentWorkspace
+    if (!sessionWorkspace || typeof geminiSessionApi.startGeminiSession !== 'function') {
       setPersistentSessionStatus('unavailable')
       setRawLogs((prev) => [
         ...prev,
@@ -18301,7 +18309,7 @@ function App(): React.JSX.Element {
     }
 
     const modelToPass = selectedModelType === 'custom' ? customModel.trim() : selectedModelType
-    const worktree = resolveGeminiWorktreeConfig(currentWorkspace)
+    const worktree = resolveGeminiWorktreeConfig(sessionWorkspace)
     const resumeDecision = currentChat
       ? resolveGeminiResumeForRun(
           currentChat,
@@ -18328,7 +18336,7 @@ function App(): React.JSX.Element {
 
     try {
       await geminiSessionApi.startGeminiSession(
-        currentWorkspace.path,
+        sessionWorkspace.path,
         modelToPass,
         approvalMode,
         sessionTrust,
