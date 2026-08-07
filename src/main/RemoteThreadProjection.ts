@@ -614,6 +614,40 @@ export interface RemoteSeatChange {
   appliedAt: string
 }
 
+/** Seat attribution on a close-out Participants / Commits row (same seat strip). */
+export interface RemoteCloseoutSeatLink {
+  participantId: string
+  before: RemoteSeatChangeSeat
+  after: RemoteSeatChangeSeat
+}
+
+/**
+ * Structured Participants table for the iOS Task-complete epic stack.
+ * Tombstoned on the close-out message; mirrors desktop closeoutParticipantTable.
+ */
+export interface RemoteCloseoutParticipantTable {
+  rows: Array<{
+    participantId: string
+    seatText: string
+    workLabel: string
+    status: string
+    seatLink?: RemoteCloseoutSeatLink
+  }>
+  totalWorkLabel: string
+}
+
+/** Structured Commits rows for the iOS Task-complete epic stack. */
+export interface RemoteCloseoutCommit {
+  hash: string
+  subject?: string
+  stats?: string
+  participantId?: string
+  seatLink?: RemoteCloseoutSeatLink
+}
+
+/** Cap matches desktop CLOSEOUT_COMMIT_TABLE_LIMIT. */
+const REMOTE_CLOSEOUT_COMMIT_LIMIT = 8
+
 /** Structured `ask_user_question` prompt — the desktop AgentQuestionCard's data,
  * projected so the phone can render the question INLINE in the transcript
  * (anchored to its asking system message) instead of only in the top attention
@@ -903,6 +937,14 @@ export interface RemoteThreadRow {
    * (desktop SeatChangeRow parity). The row stays kind 'system' with its plain
    * sentence in `preview`, so clients without the strip are unaffected. */
   seatChange?: RemoteSeatChange
+  /**
+   * TaskWraith close-out Participants table for the Task-complete epic stack.
+   * Absent on older Macs and non-close-out rows; the phone falls back to the
+   * legacy Run-details token grid when missing.
+   */
+  closeoutParticipantTable?: RemoteCloseoutParticipantTable
+  /** TaskWraith close-out Commits rows for the Task-complete epic stack. */
+  closeoutCommits?: RemoteCloseoutCommit[]
   /** Present on an ask_user_question asking message — drives the inline question
    * card (the same prompt the top attention banner shows) so remote clients can
    * answer it in place, matching the desktop AgentQuestionCard. */
@@ -2066,6 +2108,74 @@ function buildSeatChange(message: ChatMessage): RemoteSeatChange | undefined {
   }
 }
 
+function buildCloseoutSeatLink(raw: unknown): RemoteCloseoutSeatLink | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const payload = raw as Record<string, unknown>
+  const participantId = stringField(payload.participantId, REMOTE_SEAT_FIELD_MAX)
+  const after = buildSeatChangeSeat(payload.after)
+  if (!participantId || !after) return undefined
+  const before = buildSeatChangeSeat(payload.before) ?? after
+  return { participantId, before, after }
+}
+
+function buildCloseoutParticipantTable(
+  metadata: Record<string, unknown> | undefined
+): RemoteCloseoutParticipantTable | undefined {
+  const raw = metadata?.closeoutParticipantTable
+  if (!raw || typeof raw !== 'object') return undefined
+  const table = raw as Record<string, unknown>
+  if (!Array.isArray(table.rows)) return undefined
+  const rows: RemoteCloseoutParticipantTable['rows'] = []
+  for (const entry of table.rows) {
+    if (!entry || typeof entry !== 'object') continue
+    const row = entry as Record<string, unknown>
+    const participantId = stringField(row.participantId, REMOTE_SEAT_FIELD_MAX)
+    const seatText = stringField(row.seatText, 400) ?? ''
+    const workLabel = stringField(row.workLabel, 120) ?? '—'
+    const status = stringField(row.status, 40) ?? 'idle'
+    if (!participantId) continue
+    const projected: RemoteCloseoutParticipantTable['rows'][number] = {
+      participantId,
+      seatText,
+      workLabel,
+      status
+    }
+    const seatLink = buildCloseoutSeatLink(row.seatLink)
+    if (seatLink) projected.seatLink = seatLink
+    rows.push(projected)
+  }
+  if (rows.length === 0) return undefined
+  return {
+    rows,
+    totalWorkLabel: stringField(table.totalWorkLabel, 120) ?? '—'
+  }
+}
+
+function buildCloseoutCommits(
+  metadata: Record<string, unknown> | undefined
+): RemoteCloseoutCommit[] | undefined {
+  const raw = metadata?.closeoutCommits
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const commits: RemoteCloseoutCommit[] = []
+  for (const entry of raw.slice(0, REMOTE_CLOSEOUT_COMMIT_LIMIT)) {
+    if (!entry || typeof entry !== 'object') continue
+    const commit = entry as Record<string, unknown>
+    const hash = stringField(commit.hash, 64)
+    if (!hash) continue
+    const projected: RemoteCloseoutCommit = { hash }
+    const subject = stringField(commit.subject, 240)
+    if (subject) projected.subject = subject
+    const stats = stringField(commit.stats, 120)
+    if (stats) projected.stats = stats
+    const participantId = stringField(commit.participantId, REMOTE_SEAT_FIELD_MAX)
+    if (participantId) projected.participantId = participantId
+    const seatLink = buildCloseoutSeatLink(commit.seatLink)
+    if (seatLink) projected.seatLink = seatLink
+    commits.push(projected)
+  }
+  return commits.length > 0 ? commits : undefined
+}
+
 /**
  * Project an ask_user_question prompt from its asking message. The renderer
  * stamps `metadata.kind === 'agentQuestion'` (+ questionId / agentQuestion /
@@ -2355,6 +2465,12 @@ function buildRow(
     if (typeof metadata.closeoutRoundId === 'string' && metadata.closeoutRoundId.trim()) {
       row.ensembleRoundId = metadata.closeoutRoundId.trim()
     }
+    // Epic-stack tables live on the close-out row so Task-complete can render
+    // Participants → File changes → Commits without reparsing markdown.
+    const participantTable = buildCloseoutParticipantTable(metadata)
+    if (participantTable) row.closeoutParticipantTable = participantTable
+    const commits = buildCloseoutCommits(metadata)
+    if (commits) row.closeoutCommits = commits
   }
   const rowMedia = [...buildRowMedia(metadata), ...buildToolActivityMedia(message)].slice(
     0,

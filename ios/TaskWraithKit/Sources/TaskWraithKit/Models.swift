@@ -1829,6 +1829,37 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             }
         }
         public let runFailure: RunFailure?
+
+        /// TaskWraith close-out Participants table for the Task-complete epic
+        /// stack (desktop RunCompleteEpicStack parity). Absent on older Macs
+        /// and non-close-out rows — the card falls back to the legacy Run
+        /// details token grid when missing.
+        public struct CloseoutParticipantTable: Codable, Sendable, Equatable {
+            public let totalWorkLabel: String?
+            public let rows: [CloseoutParticipantRow]?
+
+            public struct CloseoutParticipantRow: Codable, Sendable, Equatable, Identifiable {
+                public let participantId: String?
+                public let seatText: String?
+                public let workLabel: String?
+                public let status: String?
+                /// Same seat-strip payload shape as `seatChange` (before/after).
+                public let seatLink: TWSeatChangePayload?
+                public var id: String { participantId ?? seatText ?? workLabel ?? "row" }
+            }
+        }
+        public let closeoutParticipantTable: CloseoutParticipantTable?
+
+        /// TaskWraith close-out Commits rows for the Task-complete epic stack.
+        public struct CloseoutCommit: Codable, Sendable, Equatable, Identifiable {
+            public let hash: String?
+            public let subject: String?
+            public let stats: String?
+            public let participantId: String?
+            public let seatLink: TWSeatChangePayload?
+            public var id: String { hash ?? subject ?? "commit" }
+        }
+        public let closeoutCommits: [CloseoutCommit]?
     }
     public struct RunSummary: Codable, Sendable, Equatable {
         public let runId: String?

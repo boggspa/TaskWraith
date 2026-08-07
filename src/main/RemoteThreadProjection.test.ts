@@ -636,6 +636,84 @@ describe('RemoteThreadProjection', () => {
       expect(closeoutRow?.ensembleRoundId).toBe('round-1')
     })
 
+    it('projects closeout Participant/Commit tables for the iOS Task-complete epic stack', () => {
+      const seat = {
+        participantId: 'p1',
+        before: {
+          provider: 'codex',
+          model: 'gpt-5.3-codex-spark',
+          role: 'SparkDocs',
+          seatNumber: 2,
+          permissionPresetId: 'workspace_write'
+        },
+        after: {
+          provider: 'codex',
+          model: 'gpt-5.3-codex-spark',
+          role: 'SparkDocs',
+          seatNumber: 2,
+          permissionPresetId: 'workspace_write'
+        }
+      }
+      const snap = project(
+        { kind: 'latestN', n: 50 },
+        [
+          msg(1, {
+            id: 'closeout-epic',
+            role: 'system',
+            content: '**Worked for 1m**\n\nClose-out:\n- Status: complete.',
+            metadata: {
+              kind: 'taskWraithCloseout',
+              closeoutRoundId: 'round-1',
+              closeoutParticipantTable: {
+                totalWorkLabel: '202k Tks / 1 Turn',
+                rows: [
+                  {
+                    participantId: 'p1',
+                    seatText: '#2 SparkDocs',
+                    workLabel: '202k Tks / 1 Turn',
+                    status: 'answered',
+                    statusGlyphMarkdown: '[Answered](ensemble-status://answered)',
+                    seatLink: seat
+                  }
+                ]
+              },
+              closeoutCommits: [
+                {
+                  hash: '18003ca96abcdef',
+                  subject: 'Add TaskWraith transcript closeouts',
+                  stats: '21 files',
+                  participantId: 'p1',
+                  seatLink: seat
+                }
+              ]
+            }
+          })
+        ]
+      )
+      const closeoutRow = snap.rows.find((row) => row.id === 'closeout-epic')
+      expect(closeoutRow?.closeoutParticipantTable).toEqual({
+        totalWorkLabel: '202k Tks / 1 Turn',
+        rows: [
+          {
+            participantId: 'p1',
+            seatText: '#2 SparkDocs',
+            workLabel: '202k Tks / 1 Turn',
+            status: 'answered',
+            seatLink: seat
+          }
+        ]
+      })
+      expect(closeoutRow?.closeoutCommits).toEqual([
+        {
+          hash: '18003ca96abcdef',
+          subject: 'Add TaskWraith transcript closeouts',
+          stats: '21 files',
+          participantId: 'p1',
+          seatLink: seat
+        }
+      ])
+    })
+
     it('leaves a run-scoped close-out untagged by any round', () => {
       const snap = project(
         { kind: 'latestN', n: 50 },

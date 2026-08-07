@@ -1,0 +1,56 @@
+import Foundation
+import Testing
+import TaskWraithKit
+
+@testable import TaskWraithUI
+
+/// Wire decode for Task-complete epic-stack tables projected on close-out rows.
+@Suite("Task-complete epic stack (desktop Participants/Commits parity)")
+struct RunCompleteEpicStackTests {
+    private func row(_ json: String) throws -> RemoteThreadSnapshot.Row {
+        try JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: Data(json.utf8))
+    }
+
+    @Test func decodesCloseoutParticipantAndCommitTables() throws {
+        let decoded = try row(
+            """
+            {"id":"closeout-epic","role":"system","kind":"system","speaker":"TaskWraith",
+             "preview":"Worked for 1m","ensembleRoundId":"round-1",
+             "closeoutParticipantTable":{
+               "totalWorkLabel":"202k Tks / 1 Turn",
+               "rows":[{
+                 "participantId":"p1","seatText":"#2 SparkDocs",
+                 "workLabel":"202k Tks / 1 Turn","status":"answered",
+                 "seatLink":{"participantId":"p1",
+                   "after":{"provider":"codex","model":"gpt-5.3-codex-spark",
+                            "role":"SparkDocs","seatNumber":2,
+                            "permissionPresetId":"workspace_write"}}
+               }]},
+             "closeoutCommits":[{
+               "hash":"18003ca96abcdef","subject":"Add TaskWraith transcript closeouts",
+               "stats":"21 files","participantId":"p1",
+               "seatLink":{"participantId":"p1",
+                 "after":{"provider":"codex","model":"gpt-5.3-codex-spark",
+                          "role":"SparkDocs","seatNumber":2,
+                          "permissionPresetId":"workspace_write"}}
+             }]}
+            """)
+        let table = try #require(decoded.closeoutParticipantTable)
+        #expect(table.totalWorkLabel == "202k Tks / 1 Turn")
+        #expect(table.rows?.count == 1)
+        #expect(table.rows?.first?.status == "answered")
+        #expect(table.rows?.first?.seatLink?.renderableLink?.after.provider == "codex")
+        let commits = try #require(decoded.closeoutCommits)
+        #expect(commits.count == 1)
+        #expect(commits.first?.hash == "18003ca96abcdef")
+        #expect(commits.first?.seatLink?.renderableLink != nil)
+    }
+
+    @Test func toleratesCloseoutRowsWithoutEpicTables() throws {
+        let decoded = try row(
+            #"{"id":"closeout-legacy","role":"system","kind":"system","speaker":"TaskWraith","preview":"done"}"#
+        )
+        #expect(decoded.closeoutParticipantTable == nil)
+        #expect(decoded.closeoutCommits == nil)
+    }
+}

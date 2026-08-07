@@ -1496,6 +1496,33 @@ struct ThreadDetailView: View {
         return twRunHasFailureExplanation(rows: rows, runId: summary.runId)
     }
 
+
+    /// Tombstoned Participants / Commits tables from the matching close-out
+    /// row (desktop RunCompleteEpicStack). Prefer round close-out, then
+    /// run-scoped close-out. Absent on older Macs — TaskCompleteCard keeps
+    /// the legacy Run-details token grid.
+    private func closeoutEpicTables(for summary: RemoteThreadSnapshot.RunSummary) -> (
+        RemoteThreadSnapshot.Row.CloseoutParticipantTable?,
+        [RemoteThreadSnapshot.Row.CloseoutCommit]?
+    ) {
+        let rows = snapshot?.rows ?? []
+        func hasEpicTables(_ row: RemoteThreadSnapshot.Row) -> Bool {
+            (row.closeoutParticipantTable?.rows?.isEmpty == false)
+                || (row.closeoutCommits?.isEmpty == false)
+        }
+        if let roundId = summary.ensembleRoundId, !roundId.isEmpty,
+            let row = rows.last(where: { $0.ensembleRoundId == roundId && hasEpicTables($0) })
+        {
+            return (row.closeoutParticipantTable, row.closeoutCommits)
+        }
+        if let runId = summary.runId, !runId.isEmpty,
+            let row = rows.last(where: { $0.runId == runId && hasEpicTables($0) })
+        {
+            return (row.closeoutParticipantTable, row.closeoutCommits)
+        }
+        return (nil, nil)
+    }
+
     /// The terminal summary to show after this row, if it's a run's last row.
     private func runCardSummary(after row: RemoteThreadSnapshot.Row)
         -> RemoteThreadSnapshot.RunSummary?
@@ -1758,11 +1785,14 @@ struct ThreadDetailView: View {
                         // envelope from an older run must not decorate a
                         // newer no-edit card. run.fileChanges (per-run, in
                         // the snapshot) is the primary source either way.
+                        let epic = closeoutEpicTables(for: runCard)
                         TaskCompleteCard(
                             run: runCard,
                             diff: diffSummary?.runId == runCard.runId ? diffSummary : nil,
                             runSummaries: runSummaries,
                             participants: transcriptParticipants,
+                            closeoutParticipantTable: epic.0,
+                            closeoutCommits: epic.1,
                             hasFailureDetail: runCardHasFailureDetail(runCard)
                         )
                         .listRowInsets(
@@ -1811,11 +1841,14 @@ struct ThreadDetailView: View {
                                 value: settledFoldMotionSignature)
                         if showsSystemTranscriptRows, showsRunCompleteSummary,
                             let runCard = runCardSummary(after: item.lastRow) {
+                            let epic = closeoutEpicTables(for: runCard)
                             TaskCompleteCard(
                                 run: runCard,
                                 diff: diffSummary?.runId == runCard.runId ? diffSummary : nil,
                                 runSummaries: runSummaries,
                                 participants: transcriptParticipants,
+                                closeoutParticipantTable: epic.0,
+                                closeoutCommits: epic.1,
                                 hasFailureDetail: runCardHasFailureDetail(runCard)
                             )
                             .listRowInsets(
@@ -1859,11 +1892,14 @@ struct ThreadDetailView: View {
                         .listRowBackground(Color.clear)
                 }
                 if showsSystemTranscriptRows, showsRunCompleteSummary, let run = unanchoredRunCardSummary {
+                    let epic = closeoutEpicTables(for: run)
                     TaskCompleteCard(
                         run: run,
                         diff: diffSummary?.runId == run.runId ? diffSummary : nil,
                         runSummaries: runSummaries,
                         participants: transcriptParticipants,
+                        closeoutParticipantTable: epic.0,
+                        closeoutCommits: epic.1,
                         hasFailureDetail: runCardHasFailureDetail(run)
                     )
                     .listRowBackground(Color.clear)

@@ -44,11 +44,17 @@ struct TaskCompleteCard: View {
     /// `run.fileChanges` (per-run, every card) wins when the Mac sends it.
     var diff: MobileDiffSummary? = nil
     /// Recent per-run summaries from the Mac snapshot. Ensemble cards use this
-    /// to fold every participant in the completed round into one token table.
+    /// to fold every participant in the completed round into one token table
+    /// when the Mac has not yet projected closeoutParticipantTable.
     var runSummaries: [RemoteThreadSnapshot.RunSummary] = []
     /// Current ensemble roster, already enriched with model ids by the session
     /// model so provider marks and Ollama display branding stay accurate.
     var participants: [RemoteEnsembleState.Participant] = []
+    /// Tombstoned Participants table from the round/run close-out (desktop epic
+    /// stack). When present, replaces the legacy P# Run-details grid.
+    var closeoutParticipantTable: RemoteThreadSnapshot.Row.CloseoutParticipantTable? = nil
+    /// Tombstoned Commits rows from the close-out (desktop epic stack).
+    var closeoutCommits: [RemoteThreadSnapshot.Row.CloseoutCommit]? = nil
     /// Whether the transcript above actually carries this run's failure
     /// explanation (`twRunHasFailureExplanation`). A failed run used to be able
     /// to reach the phone with an empty tail — a bridge run that finalized with
@@ -56,6 +62,11 @@ struct TaskCompleteCard: View {
     /// card sent the user looking for details that were never written.
     /// Defaults to the historical copy so fixtures/previews are unaffected.
     var hasFailureDetail: Bool = true
+
+    private var usesEpicStack: Bool {
+        (closeoutParticipantTable?.rows?.isEmpty == false)
+            || (closeoutCommits?.isEmpty == false)
+    }
 
     private var failed: Bool { run.status == "failed" || run.status == "error" }
 
@@ -107,6 +118,15 @@ struct TaskCompleteCard: View {
         run.fileChanges?.filesChanged ?? diff?.filesChanged ?? fileRows.count
     }
     private var hasFileChangeSummary: Bool { run.fileChanges != nil || diff != nil }
+
+    private var fileChangesMeta: String {
+        let created = run.fileChanges?.createdFiles ?? 0
+        let deleted = run.fileChanges?.deletedFiles ?? 0
+        let modified =
+            run.fileChanges?.modifiedFiles
+            ?? max(0, totalFilesChanged - created - deleted)
+        return "Created \(created) · Edited \(modified) · Deleted \(deleted)"
+    }
 
     private var title: String { failed ? "Run failed" : "Task complete" }
 
@@ -380,6 +400,95 @@ struct TaskCompleteCard: View {
         .frame(height: dense ? 62 : 66)
     }
 
+    @ViewBuilder
+    private var fileChangesSection: some View {
+        if hasFileChangeSummary {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("File changes")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                    Spacer()
+                    Text(fileChangesMeta)
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if let additions = totalAdditions, additions > 0 {
+                        Text("+\(additions)")
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(TWTheme.statusSuccess)
+                    }
+                    if let deletions = totalDeletions, deletions > 0 {
+                        Text("−\(deletions)")
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(TWTheme.statusFailed)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                if fileRows.isEmpty {
+                    Text(
+                        totalFilesChanged > 0
+                            ? "\(totalFilesChanged) file\(totalFilesChanged == 1 ? "" : "s") changed."
+                            : "No file changes detected."
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                } else {
+                    ForEach(Array(fileRows.prefix(8).enumerated()), id: \.element.id) { _, file in
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(
+                                    file.status == "created" || file.status == "untracked"
+                                        ? TWTheme.statusSuccess
+                                        : file.status == "deleted"
+                                            ? TWTheme.statusFailed : TWTheme.chroma1
+                                )
+                                .frame(width: 5, height: 5)
+                            Text(file.status?.capitalized ?? "Edited")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(TWTheme.chroma1)
+                                .frame(width: 52, alignment: .leading)
+                            Text(file.path)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(TWTheme.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                            Spacer(minLength: 4)
+                            if let additions = file.additions, additions > 0 {
+                                Text("+\(additions)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(TWTheme.statusSuccess)
+                            }
+                            if let deletions = file.deletions, deletions > 0 {
+                                Text("−\(deletions)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(TWTheme.statusFailed)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(TWTheme.surface2.opacity(0.55))
+                    }
+                    if totalFilesChanged > min(8, fileRows.count) {
+                        Text("+\(totalFilesChanged - min(8, fileRows.count)) more files changed")
+                            .font(.caption2)
+                            .foregroundStyle(TWTheme.textMuted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 6)
+                    }
+                }
+            }
+            .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
+        }
+    }
+
     var body: some View {
         let cells = tokenParticipants
         let dense = cells.count >= 6
@@ -403,92 +512,29 @@ struct TaskCompleteCard: View {
                     .foregroundStyle(TWTheme.textMuted)
             }
 
-            VStack(spacing: 0) {
-                Text("Run details")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TWTheme.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                runDetailsTokenTable(cells: cells, roundTotal: roundTotalTokens, dense: dense)
-            }
-            .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
-
-            if hasFileChangeSummary {
+            if usesEpicStack {
+                RunCompleteEpicStack(
+                    participantTable: closeoutParticipantTable,
+                    commits: closeoutCommits
+                ) {
+                    fileChangesSection
+                }
+            } else {
+                // Legacy Mac / pre-epic snapshot: keep the P# token grid so
+                // older transcripts still show a Participants-like summary.
                 VStack(spacing: 0) {
-                    HStack {
-                        Text("File changes")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(TWTheme.textPrimary)
-                        Spacer()
-                        if let additions = totalAdditions, additions > 0 {
-                            Text("+\(additions)")
-                                .font(.caption2.monospacedDigit().weight(.semibold))
-                                .foregroundStyle(TWTheme.statusSuccess)
-                        }
-                        if let deletions = totalDeletions, deletions > 0 {
-                            Text("−\(deletions)")
-                                .font(.caption2.monospacedDigit().weight(.semibold))
-                                .foregroundStyle(TWTheme.statusFailed)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    if fileRows.isEmpty {
-                        Text(
-                            totalFilesChanged > 0
-                                ? "\(totalFilesChanged) file\(totalFilesChanged == 1 ? "" : "s") changed."
-                                : "No file changes detected."
-                        )
-                        .font(.caption2)
-                        .foregroundStyle(TWTheme.textMuted)
+                    Text("Run details")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                    } else {
-                        ForEach(fileRows.prefix(8)) { file in
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(
-                                        file.status == "created" || file.status == "untracked"
-                                            ? TWTheme.statusSuccess
-                                            : file.status == "deleted"
-                                                ? TWTheme.statusFailed : TWTheme.chroma1
-                                    )
-                                    .frame(width: 5, height: 5)
-                                Text(file.path)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(TWTheme.textSecondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.head)
-                                Spacer(minLength: 4)
-                                if let additions = file.additions, additions > 0 {
-                                    Text("+\(additions)")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(TWTheme.statusSuccess)
-                                }
-                                if let deletions = file.deletions, deletions > 0 {
-                                    Text("−\(deletions)")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(TWTheme.statusFailed)
-                                }
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                        }
-                        if totalFilesChanged > min(8, fileRows.count) {
-                            Text("+\(totalFilesChanged - min(8, fileRows.count)) more files changed")
-                                .font(.caption2)
-                                .foregroundStyle(TWTheme.textMuted)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 10)
-                                .padding(.bottom, 6)
-                            }
-                        }
+                    runDetailsTokenTable(cells: cells, roundTotal: roundTotalTokens, dense: dense)
                 }
                 .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
+
+                fileChangesSection
             }
         }
         .padding(10)
