@@ -15,6 +15,9 @@ import {
 import { createPortal } from 'react-dom'
 import { MascotGhost, SidebarRunningGhost, WorkflowGlyphIcon } from './AppChromeSymbols'
 import { HostStatusRow } from './HostStatusRow'
+import { useHostProjectionStore } from './HostProjectionProvider'
+import { useHostProjection } from '../hooks/useHostProjection'
+import { joinHostPendingApprovals } from '../hooks/usePendingApprovalsProjection'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 import { isUpdatePillVisible, UpdatePill } from './UpdatePill'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
@@ -3147,22 +3150,20 @@ export function Sidebar({
     },
     [onOpenSettingsTab, onOpenSettings]
   )
-  // Flatten the per-chat approval head + queue tails into one pending list for
-  // the Approvals popover. Heads first so the currently-blocking approval for
-  // each chat leads.
-  const pendingApprovalsFlat = useMemo(() => {
-    // Carry the MAP KEY (the chatId the approval is filed under) alongside each
-    // request — the approval's own `appChatId` can be absent or diverge from the
-    // resolved filing chat (sub-thread / fan-out runs), so the key is the source
-    // of truth for "which thread is blocked" and drives the jump.
-    const out: Array<{ chatId: string; approval: AgentApprovalRequest }> = []
-    for (const [chatId, head] of Object.entries(pendingAgentApprovalByChatId)) {
-      if (head) out.push({ chatId, approval: head })
-      const tail = pendingApprovalQueueByChatId[chatId]
-      if (tail) for (const approval of tail) out.push({ chatId, approval })
-    }
-    return out
-  }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
+  // Host Arc Wave 5c Phase 2 — dual-read join. Host not live → AppStore
+  // verbatim; Host live + shadow-backed → Host membership filters AppStore
+  // rows by approvalId. Heads-first flatten lives in joinHostPendingApprovals.
+  const hostProjectionStore = useHostProjectionStore()
+  const hostProjectionState = useHostProjection(hostProjectionStore)
+  const pendingApprovalsFlat = useMemo(
+    () =>
+      joinHostPendingApprovals(
+        hostProjectionState,
+        pendingAgentApprovalByChatId,
+        pendingApprovalQueueByChatId
+      ),
+    [hostProjectionState, pendingAgentApprovalByChatId, pendingApprovalQueueByChatId]
+  )
   const pendingQuestionsFlat = useMemo(
     () => flattenPendingAgentQuestions(pendingAgentQuestionsByChatId),
     [pendingAgentQuestionsByChatId]

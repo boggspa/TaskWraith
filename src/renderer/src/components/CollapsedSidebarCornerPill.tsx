@@ -17,6 +17,9 @@ import {
   type PairedRemoteDeviceSummary,
   type SidebarSettingsMenuPane
 } from './Sidebar'
+import { useHostProjectionStore } from './HostProjectionProvider'
+import { useHostProjection } from '../hooks/useHostProjection'
+import { joinHostPendingApprovals } from '../hooks/usePendingApprovalsProjection'
 
 type CornerPillPanel = 'settings' | 'approvals' | 'shares' | 'devices'
 
@@ -141,17 +144,18 @@ export function CollapsedSidebarCornerPill({
     }
   }, [openPanel])
 
-  // Flatten per-chat approval heads + queue tails — same shape (and reasoning)
-  // as the Sidebar's pendingApprovalsFlat.
-  const pendingApprovalsFlat = useMemo(() => {
-    const out: Array<{ chatId: string; approval: AgentApprovalRequest }> = []
-    for (const [chatId, head] of Object.entries(pendingAgentApprovalByChatId)) {
-      if (head) out.push({ chatId, approval: head })
-      const tail = pendingApprovalQueueByChatId[chatId]
-      if (tail) for (const approval of tail) out.push({ chatId, approval })
-    }
-    return out
-  }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
+  // Host Arc Wave 5c Phase 2 — dual-read join (same contract as Sidebar).
+  const hostProjectionStore = useHostProjectionStore()
+  const hostProjectionState = useHostProjection(hostProjectionStore)
+  const pendingApprovalsFlat = useMemo(
+    () =>
+      joinHostPendingApprovals(
+        hostProjectionState,
+        pendingAgentApprovalByChatId,
+        pendingApprovalQueueByChatId
+      ),
+    [hostProjectionState, pendingAgentApprovalByChatId, pendingApprovalQueueByChatId]
+  )
   const pendingQuestionsFlat = useMemo(
     () => flattenPendingAgentQuestions(pendingAgentQuestionsByChatId),
     [pendingAgentQuestionsByChatId]

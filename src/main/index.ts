@@ -872,6 +872,7 @@ import { AppStore } from './store'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { createHostProductionProviderAdmission } from './host/HostProductionProviderAdmission'
+import { createHostProductionApprovalShadow } from './host/HostProductionApprovalShadow'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -47513,6 +47514,18 @@ if (isGeminiMcpBridgeProcess) {
         // module; this root stays wiring-only.
         providers: createHostProductionProviderAdmission({
           getConfiguredSnapshot: () => getConfiguredProviderSnapshot()
+        }),
+        // Wave 5c Phase 2 — AppStore pending shadow into Host approvals family.
+        // ARROW IS LOAD-BEARING: approvalService is assigned ~L54143 AFTER this
+        // call (same TDZ lesson as providers). Do NOT pass approvalService bare.
+        approvals: createHostProductionApprovalShadow({
+          listPending: () =>
+            (approvalService?.listProjectionCards() ?? []).map((c) => ({
+              approvalId: c.toolCallId,
+              kind: 'appstore',
+              title: c.title,
+              ...(c.threadId ? { threadId: c.threadId } : {})
+            }))
         })
       })
     } catch (error) {
