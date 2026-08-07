@@ -171,6 +171,28 @@ describe('queued message row helpers', () => {
     expect(merged).toBe(incoming)
   })
 
+  it('accepts an authoritative empty queue after a steered item was restored locally', () => {
+    // Post-steer race: stale absorb restored ['steered'] after optimistic clear;
+    // the later empty dequeue must win, not get treated as unechoed append.
+    const incoming = ensembleChat('chat-1', 'round-1', [])
+    const local = ensembleChat('chat-1', 'round-1', ['steered'], [
+      entry('durable-steered', 'steered')
+    ])
+
+    const merged = preserveOptimisticEnsembleQueue(incoming, local)
+
+    expect(merged).toBe(incoming)
+  })
+
+  it('does not preserve a longer local queue that is not a prefix of main', () => {
+    const incoming = ensembleChat('chat-1', 'round-1', ['kept'])
+    const local = ensembleChat('chat-1', 'round-1', ['steered-away', 'kept'])
+
+    const merged = preserveOptimisticEnsembleQueue(incoming, local)
+
+    expect(merged).toBe(incoming)
+  })
+
   it('does not preserve local ensemble queues across different rounds', () => {
     const incoming = ensembleChat('chat-1', 'round-2', [])
     const local = ensembleChat('chat-1', 'round-1', ['stale'])

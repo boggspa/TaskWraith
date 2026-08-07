@@ -4730,6 +4730,66 @@ Next action:
     ).toBe(true)
   })
 
+  it('dequeues a steered prompt before the mid-run absorb save so the row cannot stick', async () => {
+    // Regression: absorb used to broadcast with the item still in
+    // queuedPrompts; the renderer optimistic-cleared, then restored from that
+    // stale longer queue and refused the later empty update.
+    const queuesSeenAtAbsorb: Array<string[] | undefined> = []
+    const holder: { harness?: ReturnType<typeof makeHarness> } = {}
+    holder.harness = makeHarness({
+      appendMidRunSteering: (input) => {
+        const current = holder.harness!.chat
+        queuesSeenAtAbsorb.push(
+          current.ensemble?.activeRound?.queuedPrompts
+            ? [...current.ensemble.activeRound.queuedPrompts]
+            : undefined
+        )
+        holder.harness!.saveChat({
+          ...current,
+          messages: [
+            ...current.messages,
+            {
+              id: `steer-message-${queuesSeenAtAbsorb.length}`,
+              role: 'user',
+              content: input.text,
+              timestamp: '2026-05-24T00:00:01.000Z',
+              metadata: { kind: 'midRunSteering' }
+            }
+          ],
+          updatedAt: Date.now()
+        })
+        return { messageId: `steer-message-${queuesSeenAtAbsorb.length}`, entryId: 'steer-entry-1' }
+      }
+    })
+    const harness = holder.harness
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Steer me now',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Steer me now'])
+
+    const steered = harness.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Steer me now',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(steered.status).toBe('steered')
+    expect(queuesSeenAtAbsorb).toEqual([[]])
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts || []).toEqual([])
+    expect(harness.chat.messages.map((message) => message.content)).toContain('Steer me now')
+  })
+
   it('recovers a restart-orphaned queued steer (no in-memory runtime) by starting a fresh round', async () => {
     // Build a persisted `running` round with a FIFO queue on one orchestrator,
     // then hand its chat to a FRESH orchestrator whose `roundsByChatId` is empty

@@ -4379,6 +4379,15 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, targetError)
       return false
     }
+    // Same ordering as steerQueuedPrompt: dequeue before absorb so the
+    // mid-run append broadcast never republishes this prompt as queued.
+    const previousQueue = runtime.queuedPrompts
+    runtime.queuedPrompts = remainingQueue
+    this.updateChatRound(runtime.chatId, (round) =>
+      round?.roundId === runtime.roundId
+        ? { ...round, ...this.queuedPromptFields(remainingQueue) }
+        : round
+    )
     const absorbed = this.absorbMidRunSteering({
       chatId: runtime.chatId,
       roundId: runtime.roundId,
@@ -4390,14 +4399,14 @@ export class EnsembleOrchestrator {
       externalPathGrants: nextEntry.externalPathGrants,
       discordContextSnapshots: nextEntry.discordContextSnapshots
     })
-    if (absorbed.status !== 'steered') return false
-    runtime.queuedPrompts = remainingQueue
+    if (absorbed.status === 'steered') return true
+    runtime.queuedPrompts = previousQueue
     this.updateChatRound(runtime.chatId, (round) =>
       round?.roundId === runtime.roundId
-        ? { ...round, ...this.queuedPromptFields(remainingQueue) }
+        ? { ...round, ...this.queuedPromptFields(previousQueue) }
         : round
     )
-    return true
+    return false
   }
 
   startRound(input: {
@@ -4834,6 +4843,18 @@ export class EnsembleOrchestrator {
           exactTargetParticipantId: selected.dmTargetParticipantId
         })
       : null
+    // Dequeue BEFORE mid-run absorb. Absorb appends a transcript message via
+    // saveAndBroadcastChat; if the steered prompt is still in queuedPrompts
+    // on that broadcast, the renderer can restore it after an optimistic
+    // splice and then refuse the later empty-queue update
+    // (preserveOptimisticEnsembleQueue keeps any longer local FIFO).
+    const previousQueue = runtime.queuedPrompts
+    runtime.queuedPrompts = remainingQueue
+    this.updateChatRound(input.chatId, (round) =>
+      round?.roundId === runtime.roundId
+        ? { ...round, ...this.queuedPromptFields(remainingQueue) }
+        : round
+    )
     const absorption = this.absorbMidRunSteeringWithReceipt({
       chatId: input.chatId,
       roundId: runtime.roundId,
@@ -4847,12 +4868,6 @@ export class EnsembleOrchestrator {
     })
     const absorbed = absorption.result
     if (absorbed.status === 'steered') {
-      runtime.queuedPrompts = remainingQueue
-      this.updateChatRound(input.chatId, (round) =>
-        round?.roundId === runtime.roundId
-          ? { ...round, ...this.queuedPromptFields(remainingQueue) }
-          : round
-      )
       if (userFanout?.hasParticipantMention) {
         for (const ambiguity of userFanout.ambiguities) {
           this.appendRoundStatus(
@@ -4874,6 +4889,13 @@ export class EnsembleOrchestrator {
       }
       return absorbed
     }
+    // Absorb failed — put the entry back so Steer is not a silent drop.
+    runtime.queuedPrompts = previousQueue
+    this.updateChatRound(input.chatId, (round) =>
+      round?.roundId === runtime.roundId
+        ? { ...round, ...this.queuedPromptFields(previousQueue) }
+        : round
+    )
     return { status: 'ignored', error: absorbed.error || 'No active Ensemble round' }
   }
 

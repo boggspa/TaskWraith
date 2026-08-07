@@ -243,6 +243,31 @@ export const preserveOptimisticEnsembleQueue = (
   const localQueue = ensembleQueuedPromptsFromRound(localRound)
   if (localQueue.length <= incomingQueue.length) return incoming
 
+  // Only preserve when main's queue is a true prefix of local. A shorter
+  // authoritative queue that removed a steered/deleted item (or cleared)
+  // must win — otherwise a stale mid-run absorb broadcast that still
+  // carried the item can restore it after an optimistic splice, and this
+  // helper then rejects the later empty/shorter update forever.
+  if (!incomingQueue.every((prompt, index) => localQueue[index] === prompt)) {
+    return incoming
+  }
+
+  const localEntries = Array.isArray(localRound.queuedPromptEntries)
+    ? localRound.queuedPromptEntries
+    : null
+  if (localEntries && localEntries.length === localQueue.length) {
+    const localOnlyEntries = localEntries.slice(incomingQueue.length)
+    const allOptimisticTails = localOnlyEntries.every(
+      (entry) =>
+        typeof entry?.id === 'string' && entry.id.startsWith('optimistic-queued')
+    )
+    if (!allOptimisticTails) return incoming
+  } else if (incomingQueue.length === 0) {
+    // Empty main queue vs longer local without optimistic-entry proof:
+    // treat main as cleared (post-steer / post-delete), not "unechoed append".
+    return incoming
+  }
+
   // Local has optimistic tail(s) main has not yet echoed. Keep main's
   // structured mirror for the shared prefix and extend with empty-attachment
   // placeholders so prompt/entry lengths never diverge.
