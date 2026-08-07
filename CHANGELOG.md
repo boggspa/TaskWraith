@@ -8,6 +8,25 @@ to answer.
 
 ## 1.9.3 - 2026-08-07
 
+1.9.3 is a broad platform-integration and release-hardening cycle. The Host
+authority path moves closer to production, Ensemble grows into a larger and
+more resilient workspace, iOS catches up across the transcript and collaboration
+surfaces, and the release floor gets more evidence around the bytes it ships.
+
+### A governed Host path reaches the desktop and terminal
+
+The desktop Host now has a production composition path with authenticated
+projection, command and receipt routing, deferred approvals, provider admission,
+and real-socket smoke coverage. The terminal surface follows the same authority
+path for Host snapshots and mutations, while approval decisions bind to the
+command that requested them instead of relying on loose UI state.
+
+### Ensemble scales without losing the thread
+
+- **50-seat rosters.** Ensemble capacity now reaches 50 participants across desktop, iOS, presets, bridge validation, agent schemas, and orchestration. The transcript's compact participant filter rail keeps that full roster to two 25-seat columns.
+- **Fan-out remains legible.** Two-column lane cards, bounded result viewports, agent-built roster rows, working-seat navigation, and settled question/answer preservation keep a busy round readable while it is still moving.
+- **Continuity survives change.** Mid-round steering and queue delivery now absorb late settlements without cancelling live work; seat controls, permissions, effort, and Fast carry across provider changes; and blackboard workflows recover cleanly across supported native tools.
+
 ### Ensemble save-path performance
 
 - **Per-chat flush scheduler.** The 250 ms flush timer moved from per-run to per-chat (`EnsembleChatFlushScheduler`). All lanes' deltas for the same chat batch into one `saveChat`, removing the N× multiplier on fan-out.
@@ -40,6 +59,24 @@ the global kill switch still wins everywhere. Clicking, typing, and script
 evaluation are untouched — they keep their own stricter Canvas interaction and
 signed-elevated eval gates. Navigations are audited with query-redacted URLs,
 and your own address-bar driving is never metered against agent budgets.
+
+### iOS and collaboration parity
+
+iOS adds the task-complete epic stack for Participants, Commits, and File
+changes, along with transcript parity for delegation, peer messages, pinned
+message actions, feedback, deletion, participant filtering, and workspace
+activity. Layout and follow-state repairs keep the transcript usable on iPad,
+and the App Store submission-readiness package, refreshed app-icon set, and
+third-party notices bring the mobile release path closer to ship-ready.
+
+### Permissions, continuity, and release confidence
+
+Active provider seats can re-mint stale workspace grants instead of silently
+skipping work. Provider permission continuity, work-lock ownership, marker
+lease decay, and cross-process identity checks now fail more honestly across
+restarts and reused processes. Release gates add platform evidence, hosted
+portability and Windows artifact recovery, while packaged notices and runtime
+checks keep the published asset set auditable.
 
 ## 1.9.2 - 2026-07-31
 
@@ -107,10 +144,6 @@ The iOS reconnect supervisor no longer tears down a healthy dial. Remote
 provider model catalogues arrive reliably, configured AntiGravity seats are
 admitted through their existing consent and credential wall, and workspace
 provider grants can be edited without recreating the workspace.
-
-Ensemble capacity now reaches 50 participants across desktop, iOS, presets,
-bridge validation, agent schemas, and orchestration. The transcript's compact
-participant filter rail keeps that full roster to two 25-seat columns.
 
 This release deliberately does not open Channels or agent participation.
 Channels P1 remains behind the two-real-Mac People transport proof; 1.9.2 records
