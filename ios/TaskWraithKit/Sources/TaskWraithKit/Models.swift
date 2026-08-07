@@ -1860,6 +1860,18 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public var id: String { hash ?? subject ?? "commit" }
         }
         public let closeoutCommits: [CloseoutCommit]?
+
+        /// TaskWraith close-out File Changes rows for the Task-complete epic
+        /// stack (desktop slim shape; never carries diffText). Absent on older
+        /// Macs — TaskCompleteCard keeps `run.fileChanges` / legacy diff.
+        public struct CloseoutFileChange: Codable, Sendable, Equatable, Identifiable {
+            public let path: String?
+            public let status: String?
+            public let additions: Int?
+            public let deletions: Int?
+            public var id: String { path ?? "file" }
+        }
+        public let closeoutFileChanges: [CloseoutFileChange]?
     }
     public struct RunSummary: Codable, Sendable, Equatable {
         public let runId: String?

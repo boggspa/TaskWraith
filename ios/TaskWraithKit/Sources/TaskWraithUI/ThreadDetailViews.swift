@@ -1530,30 +1530,32 @@ struct ThreadDetailView: View {
         return twRunHasFailureExplanation(rows: rows, runId: summary.runId)
     }
 
-    /// Tombstoned Participants / Commits tables from the matching close-out
-    /// row (desktop RunCompleteEpicStack). Prefer round close-out, then
-    /// run-scoped close-out. Absent on older Macs — TaskCompleteCard keeps
-    /// the legacy Run-details token grid.
+    /// Tombstoned Participants / File changes / Commits tables from the
+    /// matching close-out row (desktop RunCompleteEpicStack). Prefer round
+    /// close-out, then run-scoped close-out. Absent on older Macs —
+    /// TaskCompleteCard keeps the legacy Run-details token grid.
     private func closeoutEpicTables(for summary: RemoteThreadSnapshot.RunSummary) -> (
         RemoteThreadSnapshot.Row.CloseoutParticipantTable?,
-        [RemoteThreadSnapshot.Row.CloseoutCommit]?
+        [RemoteThreadSnapshot.Row.CloseoutCommit]?,
+        [RemoteThreadSnapshot.Row.CloseoutFileChange]?
     ) {
         let rows = snapshot?.rows ?? []
         func hasEpicTables(_ row: RemoteThreadSnapshot.Row) -> Bool {
             (row.closeoutParticipantTable?.rows?.isEmpty == false)
                 || (row.closeoutCommits?.isEmpty == false)
+                || (row.closeoutFileChanges?.isEmpty == false)
         }
         if let roundId = summary.ensembleRoundId, !roundId.isEmpty,
             let row = rows.last(where: { $0.ensembleRoundId == roundId && hasEpicTables($0) })
         {
-            return (row.closeoutParticipantTable, row.closeoutCommits)
+            return (row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges)
         }
         if let runId = summary.runId, !runId.isEmpty,
             let row = rows.last(where: { $0.runId == runId && hasEpicTables($0) })
         {
-            return (row.closeoutParticipantTable, row.closeoutCommits)
+            return (row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges)
         }
-        return (nil, nil)
+        return (nil, nil, nil)
     }
 
     /// The terminal summary to show after this row, if it's a run's last row.
@@ -1826,6 +1828,7 @@ struct ThreadDetailView: View {
                             participants: transcriptParticipants,
                             closeoutParticipantTable: epic.0,
                             closeoutCommits: epic.1,
+                            closeoutFileChanges: epic.2,
                             hasFailureDetail: runCardHasFailureDetail(runCard)
                         )
                         .listRowInsets(
@@ -1882,6 +1885,7 @@ struct ThreadDetailView: View {
                                 participants: transcriptParticipants,
                                 closeoutParticipantTable: epic.0,
                                 closeoutCommits: epic.1,
+                                closeoutFileChanges: epic.2,
                                 hasFailureDetail: runCardHasFailureDetail(runCard)
                             )
                             .listRowInsets(
@@ -1933,6 +1937,7 @@ struct ThreadDetailView: View {
                         participants: transcriptParticipants,
                         closeoutParticipantTable: epic.0,
                         closeoutCommits: epic.1,
+                        closeoutFileChanges: epic.2,
                         hasFailureDetail: runCardHasFailureDetail(run)
                     )
                     .listRowBackground(Color.clear)

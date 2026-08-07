@@ -26,6 +26,10 @@ struct RunCompleteEpicStackTests {
                             "role":"SparkDocs","seatNumber":2,
                             "permissionPresetId":"workspace_write"}}
                }]},
+             "closeoutFileChanges":[{
+               "path":"src/main/RemoteThreadProjection.ts","status":"modified",
+               "additions":18,"deletions":2
+             }],
              "closeoutCommits":[{
                "hash":"18003ca96abcdef","subject":"Add TaskWraith transcript closeouts",
                "stats":"21 files","participantId":"p1",
@@ -40,6 +44,11 @@ struct RunCompleteEpicStackTests {
         #expect(table.rows?.count == 1)
         #expect(table.rows?.first?.status == "answered")
         #expect(table.rows?.first?.seatLink?.renderableLink?.after.provider == "codex")
+        let files = try #require(decoded.closeoutFileChanges)
+        #expect(files.count == 1)
+        #expect(files.first?.path == "src/main/RemoteThreadProjection.ts")
+        #expect(files.first?.status == "modified")
+        #expect(files.first?.additions == 18)
         let commits = try #require(decoded.closeoutCommits)
         #expect(commits.count == 1)
         #expect(commits.first?.hash == "18003ca96abcdef")
@@ -52,5 +61,6 @@ struct RunCompleteEpicStackTests {
         )
         #expect(decoded.closeoutParticipantTable == nil)
         #expect(decoded.closeoutCommits == nil)
+        #expect(decoded.closeoutFileChanges == nil)
     }
 }

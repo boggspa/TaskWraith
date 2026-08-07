@@ -3,6 +3,8 @@ import type {
   ChatMessage,
   ChatRecord,
   ChatRun,
+  DiffFileStatus,
+  DiffFileSummaryOwner,
   EnsembleParticipantStatus,
   EnsembleRoundParticipantState,
   EnsembleRoundState,
@@ -30,6 +32,7 @@ import {
 } from './planModeLabels'
 import { getProviderLabel } from './providerLabels'
 import { extractUsageCountsFromCandidate } from './usageStats'
+import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
 
 type CloseoutPlacement = {
   sourceRunId?: string
@@ -45,12 +48,22 @@ export type CloseoutAiSummary = {
   model?: string
 }
 
+/** Slim file-change row tombstoned onto close-out metadata (no diffText). */
+export type CloseoutFileChange = {
+  path: string
+  status: DiffFileStatus
+  additions?: number
+  deletions?: number
+  owners?: DiffFileSummaryOwner[]
+}
+
 export function buildTaskWraithRunCloseoutMessage(input: {
   chat: ChatRecord
   run: ChatRun
   completedAt: string
   exitCode?: number
   aiSummary?: CloseoutAiSummary
+  fileChanges?: CloseoutFileChange[]
   now?: Date
 }): ChatMessage {
   const { chat, run, completedAt, exitCode } = input
@@ -82,8 +95,12 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     (message) => message.runId === run.runId,
     { chat }
   )
-  // Commits render in the Task-complete epic stack from metadata — keep the
-  // close-out bubble to Worked-for + prose (Foundation Models via meta).
+  const closeoutFileChanges =
+    input.fileChanges !== undefined
+      ? normalizeCloseoutFileChanges(input.fileChanges)
+      : collectCloseoutFileChanges(chat.messages, (message) => message.runId === run.runId)
+  // Commits + File Changes render in the Task-complete epic stack from
+  // metadata — keep the close-out bubble to Worked-for + prose.
 
   return {
     id: taskWraithRunCloseoutId(run.runId),
@@ -100,7 +117,8 @@ export function buildTaskWraithRunCloseoutMessage(input: {
       ...(durationMs > 0 ? { closeoutDurationMs: durationMs } : {}),
       ...(run.activeGoalId ? { closeoutGoalId: run.activeGoalId } : {}),
       ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
-      ...(closeoutCommits.length > 0 ? { closeoutCommits } : {})
+      ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
+      ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {})
     }
   }
 }
@@ -110,6 +128,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   round: EnsembleRoundState
   completedAt: string
   aiSummary?: CloseoutAiSummary
+  fileChanges?: CloseoutFileChange[]
   now?: Date
 }): ChatMessage {
   const { chat, round, completedAt } = input
@@ -135,8 +154,15 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     (message) => message.metadata?.ensembleRoundId === round.roundId,
     { chat }
   )
-  // Participants + Commits render in the Task-complete epic stack. The close-out
-  // bubble above it keeps Worked-for + Close-out prose only.
+  const closeoutFileChanges =
+    input.fileChanges !== undefined
+      ? normalizeCloseoutFileChanges(input.fileChanges)
+      : collectCloseoutFileChanges(
+          chat.messages,
+          (message) => message.metadata?.ensembleRoundId === round.roundId
+        )
+  // Participants + Commits + File Changes render in the Task-complete epic
+  // stack. The close-out bubble above it keeps Worked-for + Close-out prose only.
 
   return {
     id: taskWraithRoundCloseoutId(round.roundId),
@@ -153,9 +179,81 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
       ...(chat.activeGoal?.id ? { closeoutGoalId: chat.activeGoal.id } : {}),
       ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
       ...(participantTable ? { closeoutParticipantTable: participantTable } : {}),
-      ...(closeoutCommits.length > 0 ? { closeoutCommits } : {})
+      ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
+      ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {})
     }
   }
+}
+
+/** Cap for slim file-change rows tombstoned onto close-out metadata. */
+export const CLOSEOUT_FILE_CHANGES_LIMIT = 40
+
+/**
+ * Harvest slim file-change rows from tool-activity evidence in scoped messages
+ * (same scoping pattern as {@link collectCloseoutCommits}). Omits diffText.
+ */
+export function collectCloseoutFileChanges(
+  messages: ChatMessage[],
+  includeMessage: (message: ChatMessage) => boolean
+): CloseoutFileChange[] {
+  const scoped = messages.filter(includeMessage)
+  if (scoped.length === 0) return []
+  const summaries = getLiveToolFileDiffSummaries(scoped)
+  if (summaries.length === 0) return []
+  return normalizeCloseoutFileChanges(
+    summaries.slice(0, CLOSEOUT_FILE_CHANGES_LIMIT).map((summary) => ({
+      path: summary.path,
+      status: summary.status,
+      ...(typeof summary.additions === 'number' ? { additions: summary.additions } : {}),
+      ...(typeof summary.deletions === 'number' ? { deletions: summary.deletions } : {}),
+      ...(summary.owners && summary.owners.length > 0 ? { owners: summary.owners } : {})
+    }))
+  )
+}
+
+function normalizeCloseoutFileChanges(
+  fileChanges: CloseoutFileChange[] | undefined
+): CloseoutFileChange[] {
+  if (!fileChanges || fileChanges.length === 0) return []
+  return fileChanges
+    .map((file) => {
+      const path = typeof file.path === 'string' ? file.path.trim() : ''
+      if (!path || !file.status) return null
+      const row: CloseoutFileChange = { path, status: file.status }
+      if (typeof file.additions === 'number' && Number.isFinite(file.additions)) {
+        row.additions = file.additions
+      }
+      if (typeof file.deletions === 'number' && Number.isFinite(file.deletions)) {
+        row.deletions = file.deletions
+      }
+      if (Array.isArray(file.owners) && file.owners.length > 0) {
+        row.owners = file.owners
+      }
+      return row
+    })
+    .filter((row): row is CloseoutFileChange => row !== null)
+}
+
+/** True when an upsert would not change durable close-out prose or epic tables. */
+export function isSameTaskWraithCloseout(existing: ChatMessage, next: ChatMessage): boolean {
+  if (existing.content !== next.content || existing.timestamp !== next.timestamp) return false
+  const a = existing.metadata
+  const b = next.metadata
+  return (
+    a?.closeoutAiSummary === b?.closeoutAiSummary &&
+    JSON.stringify(a?.closeoutParticipantTable ?? null) ===
+      JSON.stringify(b?.closeoutParticipantTable ?? null) &&
+    sameCloseoutTombstoneList(a?.closeoutCommits, b?.closeoutCommits) &&
+    sameCloseoutTombstoneList(a?.closeoutFileChanges, b?.closeoutFileChanges)
+  )
+}
+
+/** Empty rebuilds must not wipe a previously tombstoned list. */
+function sameCloseoutTombstoneList(existing: unknown, next: unknown): boolean {
+  if (JSON.stringify(existing ?? null) === JSON.stringify(next ?? null)) return true
+  const existingList = Array.isArray(existing) ? existing : null
+  const nextList = Array.isArray(next) ? next : null
+  return Boolean(existingList && existingList.length > 0 && (!nextList || nextList.length === 0))
 }
 
 export function upsertTaskWraithCloseoutMessage(
@@ -165,8 +263,32 @@ export function upsertTaskWraithCloseoutMessage(
 ): ChatMessage[] {
   const existingIndex = messages.findIndex((message) => message.id === closeout.id)
   if (existingIndex >= 0) {
+    const previous = messages[existingIndex]
+    const nextMeta = { ...(closeout.metadata || {}) }
+    // Preserve tombstoned epic tables when a rebuild harvests nothing (tool
+    // activities may have been compacted away after the original close-out).
+    if (
+      (!Array.isArray(nextMeta.closeoutFileChanges) || nextMeta.closeoutFileChanges.length === 0) &&
+      Array.isArray(previous.metadata?.closeoutFileChanges) &&
+      previous.metadata.closeoutFileChanges.length > 0
+    ) {
+      nextMeta.closeoutFileChanges = previous.metadata.closeoutFileChanges
+    }
+    if (
+      (!Array.isArray(nextMeta.closeoutCommits) || nextMeta.closeoutCommits.length === 0) &&
+      Array.isArray(previous.metadata?.closeoutCommits) &&
+      previous.metadata.closeoutCommits.length > 0
+    ) {
+      nextMeta.closeoutCommits = previous.metadata.closeoutCommits
+    }
+    if (
+      !nextMeta.closeoutParticipantTable &&
+      previous.metadata?.closeoutParticipantTable
+    ) {
+      nextMeta.closeoutParticipantTable = previous.metadata.closeoutParticipantTable
+    }
     const next = [...messages]
-    next[existingIndex] = { ...next[existingIndex], ...closeout }
+    next[existingIndex] = { ...previous, ...closeout, metadata: nextMeta }
     return next
   }
 

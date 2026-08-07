@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { CloseoutFileChangesSection } from './CloseoutFileChangesSection'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
 
 describe('RunCompleteEpicStack', () => {
@@ -87,5 +88,32 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('Commit 8')
     expect(html).not.toContain('Commit 9')
     expect(html).toContain('2 more commits not shown.')
+  })
+
+  it('renders compact closeout file changes without workbench interactions', () => {
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack
+        fileChanges={
+          <CloseoutFileChangesSection
+            changes={[
+              {
+                path: 'src/example.ts',
+                status: 'modified',
+                additions: 4,
+                deletions: 2
+              }
+            ]}
+          />
+        }
+      />
+    )
+    expect(html).toContain('run-complete-epic-stack')
+    expect(html).toContain('File changes')
+    expect(html).toContain('src/example.ts')
+    expect(html).toContain('edited')
+    expect(html).toContain('+4')
+    expect(html).toContain('-2')
+    expect(html).not.toContain('file-change-summary-item-interactive')
+    expect(html).not.toContain('Open Workbench')
   })
 })

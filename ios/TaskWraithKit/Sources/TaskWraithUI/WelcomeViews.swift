@@ -55,6 +55,9 @@ struct TaskCompleteCard: View {
     var closeoutParticipantTable: RemoteThreadSnapshot.Row.CloseoutParticipantTable? = nil
     /// Tombstoned Commits rows from the close-out (desktop epic stack).
     var closeoutCommits: [RemoteThreadSnapshot.Row.CloseoutCommit]? = nil
+    /// Tombstoned File Changes rows from the close-out (desktop epic stack).
+    /// Used when `run.fileChanges` / legacy diff are empty.
+    var closeoutFileChanges: [RemoteThreadSnapshot.Row.CloseoutFileChange]? = nil
     /// Whether the transcript above actually carries this run's failure
     /// explanation (`twRunHasFailureExplanation`). A failed run used to be able
     /// to reach the phone with an empty tail — a bridge run that finalized with
@@ -66,6 +69,7 @@ struct TaskCompleteCard: View {
     private var usesEpicStack: Bool {
         (closeoutParticipantTable?.rows?.isEmpty == false)
             || (closeoutCommits?.isEmpty == false)
+            || (closeoutFileChanges?.isEmpty == false)
     }
 
     private var failed: Bool { run.status == "failed" || run.status == "error" }
@@ -108,23 +112,49 @@ struct TaskCompleteCard: View {
                     additions: $0.additions, deletions: $0.deletions)
             }
         }
+        if let files = closeoutFileChanges, !files.isEmpty {
+            return files.compactMap { file in
+                guard let path = file.path, !path.isEmpty else { return nil }
+                return ChangedFileRow(
+                    path: path, status: file.status,
+                    additions: file.additions, deletions: file.deletions)
+            }
+        }
         return []
     }
 
-    private var totalAdditions: Int? { run.fileChanges?.additions ?? diff?.additions }
-    private var totalDeletions: Int? { run.fileChanges?.deletions ?? diff?.deletions }
+    private var totalAdditions: Int? {
+        if let additions = run.fileChanges?.additions ?? diff?.additions { return additions }
+        guard !(closeoutFileChanges?.isEmpty ?? true) else { return nil }
+        return fileRows.compactMap(\.additions).reduce(0, +)
+    }
+    private var totalDeletions: Int? {
+        if let deletions = run.fileChanges?.deletions ?? diff?.deletions { return deletions }
+        guard !(closeoutFileChanges?.isEmpty ?? true) else { return nil }
+        return fileRows.compactMap(\.deletions).reduce(0, +)
+    }
     /// True changed-file count — the row list is capped on the wire.
     private var totalFilesChanged: Int {
         run.fileChanges?.filesChanged ?? diff?.filesChanged ?? fileRows.count
     }
-    private var hasFileChangeSummary: Bool { run.fileChanges != nil || diff != nil }
+    private var hasFileChangeSummary: Bool {
+        run.fileChanges != nil || diff != nil || !(closeoutFileChanges?.isEmpty ?? true)
+    }
 
     private var fileChangesMeta: String {
-        let created = run.fileChanges?.createdFiles ?? 0
-        let deleted = run.fileChanges?.deletedFiles ?? 0
-        let modified =
-            run.fileChanges?.modifiedFiles
-            ?? max(0, totalFilesChanged - created - deleted)
+        if run.fileChanges != nil || diff != nil {
+            let created = run.fileChanges?.createdFiles ?? 0
+            let deleted = run.fileChanges?.deletedFiles ?? 0
+            let modified =
+                run.fileChanges?.modifiedFiles
+                ?? max(0, totalFilesChanged - created - deleted)
+            return "Created \(created) · Edited \(modified) · Deleted \(deleted)"
+        }
+        let created = fileRows.filter {
+            $0.status == "created" || $0.status == "untracked"
+        }.count
+        let deleted = fileRows.filter { $0.status == "deleted" }.count
+        let modified = max(0, fileRows.count - created - deleted)
         return "Created \(created) · Edited \(modified) · Deleted \(deleted)"
     }
 

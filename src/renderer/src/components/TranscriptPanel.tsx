@@ -48,8 +48,10 @@ import {
 } from '../lib/runCompleteSummary'
 import type {
   CloseoutCommit,
+  CloseoutFileChange,
   CloseoutParticipantTable
 } from '../lib/taskWraithCloseoutMessage'
+import { CloseoutFileChangesSection } from './CloseoutFileChangesSection'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import {
@@ -2422,9 +2424,10 @@ export const TranscriptPanel = memo(
     }, [messageContextMenu, visibleMessages])
     const shouldShowRunCompleteNotice =
       Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
-    // Latest TaskWraith close-out carries tombstoned Participants/Commits for
-    // the Task-complete epic stack. The close-out bubble above keeps Worked-for
-    // + Foundation Models prose; the tables live here.
+    // Latest TaskWraith close-out carries tombstoned Participants/Commits/File
+    // changes. Prefer the in-transcript stack under that message; the footer
+    // keeps title/actions and only falls back to an epic stack when the latest
+    // close-out does not already render one.
     const runCompleteCloseoutTables = useMemo(() => {
       for (let index = resolvedMessages.length - 1; index >= 0; index -= 1) {
         const message = resolvedMessages[index]
@@ -2434,11 +2437,34 @@ export const TranscriptPanel = memo(
             null) as CloseoutParticipantTable | null,
           commits: (Array.isArray(message.metadata.closeoutCommits)
             ? message.metadata.closeoutCommits
-            : null) as CloseoutCommit[] | null
+            : null) as CloseoutCommit[] | null,
+          fileChanges: (Array.isArray(message.metadata.closeoutFileChanges)
+            ? message.metadata.closeoutFileChanges
+            : null) as CloseoutFileChange[] | null
         }
       }
-      return { participantTable: null, commits: null }
+      return { participantTable: null, commits: null, fileChanges: null }
     }, [resolvedMessages])
+    // Prefer in-transcript epic sections under the latest close-out. Keep the
+    // footer's live File changes when the close-out has no tombstoned file
+    // list (legacy rows / empty harvest) so Workbench rows are not dropped.
+    const latestCloseoutHasParticipants = Boolean(
+      runCompleteCloseoutTables.participantTable?.rows?.length
+    )
+    const latestCloseoutHasCommits = Boolean(runCompleteCloseoutTables.commits?.length)
+    const latestCloseoutHasFileChanges = Boolean(runCompleteCloseoutTables.fileChanges?.length)
+    const footerParticipantTable = latestCloseoutHasParticipants
+      ? null
+      : runCompleteCloseoutTables.participantTable
+    const footerCommits = latestCloseoutHasCommits ? null : runCompleteCloseoutTables.commits
+    const footerShowsLiveFileChanges =
+      (!isGlobal || displayFileChangeSummaries.length > 0) &&
+      displayFileChangeSummaries.length > 0 &&
+      !latestCloseoutHasFileChanges
+    const showFooterRunCompleteEpicStack =
+      Boolean(footerParticipantTable?.rows?.length) ||
+      Boolean(footerCommits?.length) ||
+      footerShowsLiveFileChanges
     // The run-complete card's title is a dynamic status, not a fixed "Task
     // complete": blockers the orchestrator flagged for the round REPLACE the
     // title (and tint it) instead of contradicting it from an advisory banner
@@ -5041,6 +5067,32 @@ export const TranscriptPanel = memo(
                         )
                       })()
                     )}
+                    {isTaskWraithCloseout &&
+                      showRunCompleteSummary !== false &&
+                      (() => {
+                        const participantTable = (msg.metadata?.closeoutParticipantTable ||
+                          null) as CloseoutParticipantTable | null
+                        const commits = (Array.isArray(msg.metadata?.closeoutCommits)
+                          ? msg.metadata.closeoutCommits
+                          : null) as CloseoutCommit[] | null
+                        const fileChanges = (Array.isArray(msg.metadata?.closeoutFileChanges)
+                          ? msg.metadata.closeoutFileChanges
+                          : null) as CloseoutFileChange[] | null
+                        return (
+                          <RunCompleteEpicStack
+                            participantTable={participantTable}
+                            commits={commits}
+                            fileChanges={
+                              fileChanges && fileChanges.length > 0 ? (
+                                <CloseoutFileChangesSection
+                                  changes={fileChanges}
+                                  workspacePath={currentWorkspacePath}
+                                />
+                              ) : undefined
+                            }
+                          />
+                        )
+                      })()}
                     {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
                       <div className="plan-choice-card">
                         <div className="plan-choice-question">{pendingPlanChoice.question}</div>
@@ -5371,15 +5423,14 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
-              {(!isGlobal ||
-                displayFileChangeSummaries.length > 0 ||
-                Boolean(runCompleteCloseoutTables.participantTable?.rows?.length) ||
-                Boolean(runCompleteCloseoutTables.commits?.length)) && (
+              {/* Omit epic sections already mounted under the latest close-out;
+                  keep live File changes here when that close-out has none. */}
+              {showFooterRunCompleteEpicStack && (
               <RunCompleteEpicStack
-                participantTable={runCompleteCloseoutTables.participantTable}
-                commits={runCompleteCloseoutTables.commits}
+                participantTable={footerParticipantTable}
+                commits={footerCommits}
                 fileChanges={
-                  (!isGlobal || displayFileChangeSummaries.length > 0) ? (
+                  footerShowsLiveFileChanges ? (
               <div className="file-change-summary-card">
                 <div className="file-change-summary-header">
                   <strong>File changes</strong>

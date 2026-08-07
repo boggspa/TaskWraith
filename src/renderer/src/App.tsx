@@ -804,6 +804,7 @@ import { formatWorkDuration } from './lib/runCompleteSummary'
 import {
   buildTaskWraithRoundCloseoutMessage,
   buildTaskWraithRunCloseoutMessage,
+  isSameTaskWraithCloseout,
   upsertTaskWraithCloseoutMessage,
   type CloseoutAiSummary
 } from './lib/taskWraithCloseoutMessage'
@@ -24719,7 +24720,7 @@ function App(): React.JSX.Element {
               : null) ||
             undefined
         })
-        if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
+        if (existing && isSameTaskWraithCloseout(existing, closeout)) {
           return source
         }
         return {
@@ -24750,7 +24751,7 @@ function App(): React.JSX.Element {
           closeoutAiSummaryFromMetadata(existing?.metadata) ||
           undefined
       })
-      if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
+      if (existing && isSameTaskWraithCloseout(existing, closeout)) {
         return source
       }
       return {
@@ -24846,7 +24847,7 @@ function App(): React.JSX.Element {
             completedAt: roundCompletedAt,
             aiSummary
           })
-          if (existing.content === closeout.content && existing.timestamp === closeout.timestamp) {
+          if (isSameTaskWraithCloseout(existing, closeout)) {
             return source
           }
           return {
@@ -24878,7 +24879,7 @@ function App(): React.JSX.Element {
             exitCode,
             aiSummary
           })
-          if (existing.content === closeout.content && existing.timestamp === closeout.timestamp) {
+          if (isSameTaskWraithCloseout(existing, closeout)) {
             return source
           }
           return {

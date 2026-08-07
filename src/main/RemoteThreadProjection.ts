@@ -645,8 +645,25 @@ export interface RemoteCloseoutCommit {
   seatLink?: RemoteCloseoutSeatLink
 }
 
+/** Slim File Changes rows for the iOS Task-complete epic stack (no diffText). */
+export interface RemoteCloseoutFileChange {
+  path: string
+  status: string
+  additions?: number
+  deletions?: number
+  owners?: Array<{
+    provider?: string
+    participantId?: string
+    role?: string
+    order?: number
+  }>
+}
+
 /** Cap matches desktop CLOSEOUT_COMMIT_TABLE_LIMIT. */
 const REMOTE_CLOSEOUT_COMMIT_LIMIT = 8
+
+/** Cap matches desktop CLOSEOUT_FILE_CHANGES_LIMIT. */
+const REMOTE_CLOSEOUT_FILE_CHANGES_LIMIT = 40
 
 /** Structured `ask_user_question` prompt — the desktop AgentQuestionCard's data,
  * projected so the phone can render the question INLINE in the transcript
@@ -945,6 +962,11 @@ export interface RemoteThreadRow {
   closeoutParticipantTable?: RemoteCloseoutParticipantTable
   /** TaskWraith close-out Commits rows for the Task-complete epic stack. */
   closeoutCommits?: RemoteCloseoutCommit[]
+  /**
+   * TaskWraith close-out File Changes rows for the Task-complete epic stack.
+   * Absent on older Macs and non-close-out rows; never carries diffText.
+   */
+  closeoutFileChanges?: RemoteCloseoutFileChange[]
   /** Present on an ask_user_question asking message — drives the inline question
    * card (the same prompt the top attention banner shows) so remote clients can
    * answer it in place, matching the desktop AgentQuestionCard. */
@@ -2176,6 +2198,63 @@ function buildCloseoutCommits(
   return commits.length > 0 ? commits : undefined
 }
 
+function clipCloseoutFilePath(path: string): string {
+  return path.length > 200 ? `…${path.slice(-199)}` : path
+}
+
+function buildCloseoutFileChangeOwners(
+  raw: unknown
+): RemoteCloseoutFileChange['owners'] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const owners: NonNullable<RemoteCloseoutFileChange['owners']> = []
+  for (const entry of raw.slice(0, 8)) {
+    if (!entry || typeof entry !== 'object') continue
+    const owner = entry as Record<string, unknown>
+    const projected: NonNullable<RemoteCloseoutFileChange['owners']>[number] = {}
+    const provider = stringField(owner.provider, 40)
+    if (provider) projected.provider = provider
+    const participantId = stringField(owner.participantId, REMOTE_SEAT_FIELD_MAX)
+    if (participantId) projected.participantId = participantId
+    const role = stringField(owner.role, REMOTE_SEAT_FIELD_MAX)
+    if (role) projected.role = role
+    if (typeof owner.order === 'number' && Number.isFinite(owner.order)) {
+      projected.order = Math.floor(owner.order)
+    }
+    if (Object.keys(projected).length === 0) continue
+    owners.push(projected)
+  }
+  return owners.length > 0 ? owners : undefined
+}
+
+function buildCloseoutFileChanges(
+  metadata: Record<string, unknown> | undefined
+): RemoteCloseoutFileChange[] | undefined {
+  const raw = metadata?.closeoutFileChanges
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const files: RemoteCloseoutFileChange[] = []
+  for (const entry of raw.slice(0, REMOTE_CLOSEOUT_FILE_CHANGES_LIMIT)) {
+    if (!entry || typeof entry !== 'object') continue
+    const file = entry as Record<string, unknown>
+    const pathRaw = stringField(file.path, 2000)
+    const status = stringField(file.status, 40)
+    if (!pathRaw || !status) continue
+    const projected: RemoteCloseoutFileChange = {
+      path: clipCloseoutFilePath(pathRaw),
+      status
+    }
+    if (typeof file.additions === 'number' && Number.isFinite(file.additions)) {
+      projected.additions = Math.max(0, Math.floor(file.additions))
+    }
+    if (typeof file.deletions === 'number' && Number.isFinite(file.deletions)) {
+      projected.deletions = Math.max(0, Math.floor(file.deletions))
+    }
+    const owners = buildCloseoutFileChangeOwners(file.owners)
+    if (owners) projected.owners = owners
+    files.push(projected)
+  }
+  return files.length > 0 ? files : undefined
+}
+
 /**
  * Project an ask_user_question prompt from its asking message. The renderer
  * stamps `metadata.kind === 'agentQuestion'` (+ questionId / agentQuestion /
@@ -2469,6 +2548,8 @@ function buildRow(
     // Participants → File changes → Commits without reparsing markdown.
     const participantTable = buildCloseoutParticipantTable(metadata)
     if (participantTable) row.closeoutParticipantTable = participantTable
+    const fileChanges = buildCloseoutFileChanges(metadata)
+    if (fileChanges) row.closeoutFileChanges = fileChanges
     const commits = buildCloseoutCommits(metadata)
     if (commits) row.closeoutCommits = commits
   }

@@ -476,6 +476,154 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('taskwraith-closeout-badge provider-pi')
   })
 
+  it('renders persisted closeout epic stack from message metadata without runCompleteNotice', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: null,
+          messages: [
+            {
+              id: 'closeout-epic',
+              role: 'system',
+              content: 'Worked for 1m.\n\nClose-out:\n\nDone.',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutParticipantTable: {
+                  totalWorkLabel: '2k Tks / 1 Turn',
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker · Codex',
+                      workLabel: '2k Tks / 1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                },
+                closeoutCommits: [
+                  {
+                    hash: 'abcdef1234567890',
+                    subject: 'Persist closeout epic',
+                    stats: '1 file'
+                  }
+                ],
+                closeoutFileChanges: [
+                  {
+                    path: 'src/foo.ts',
+                    status: 'modified',
+                    additions: 3,
+                    deletions: 1
+                  }
+                ]
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('run-complete-epic-stack')
+    expect(html).toContain('Participants')
+    expect(html).toContain('Commits')
+    expect(html).toContain('Persist closeout epic')
+    expect(html).toContain('File changes')
+    expect(html).toContain('src/foo.ts')
+    expect(html).toContain('+3')
+    expect(html).toContain('-1')
+    expect(html).not.toContain('run-complete-card')
+  })
+
+  it('omits duplicate footer participants when latest closeout already renders them', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:00:10.000Z',
+            exitCode: 0
+          },
+          messages: [
+            {
+              id: 'closeout-latest',
+              role: 'system',
+              content: 'Worked for 30s.\n\nClose-out:\n\nDone.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('run-complete-card')
+    expect(html).toContain('Task complete')
+    expect((html.match(/run-complete-epic-stack/g) || []).length).toBe(1)
+  })
+
+  it('keeps footer live file changes when closeout has participants but no file tombstone', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:00:10.000Z',
+            exitCode: 0
+          },
+          displayFileChangeSummaries: [
+            {
+              path: 'src/main.ts',
+              status: 'modified',
+              additions: 2,
+              deletions: 1,
+              previewKind: 'unified'
+            }
+          ],
+          fileChangeSummaryText: '1 file edited',
+          messages: [
+            {
+              id: 'closeout-latest',
+              role: 'system',
+              content: 'Worked for 30s.\n\nClose-out:\n\nDone.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect((html.match(/run-complete-epic-stack/g) || []).length).toBe(2)
+    expect(html).toContain('src/main.ts')
+  })
+
   it('prepends participant-style headers to thinking trace viewports', () => {
     const participant = ensembleParticipant({
       id: 'codex-captain',

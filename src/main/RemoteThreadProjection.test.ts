@@ -685,6 +685,20 @@ describe('RemoteThreadProjection', () => {
                   participantId: 'p1',
                   seatLink: seat
                 }
+              ],
+              closeoutFileChanges: [
+                {
+                  path: 'src/renderer/src/lib/taskWraithCloseoutMessage.ts',
+                  status: 'modified',
+                  additions: 42,
+                  deletions: 3,
+                  owners: [{ provider: 'codex', participantId: 'p1', role: 'SparkDocs', order: 2 }]
+                },
+                {
+                  path: 'src/main/RemoteThreadProjection.ts',
+                  status: 'created',
+                  additions: 18
+                }
               ]
             }
           })
@@ -710,6 +724,20 @@ describe('RemoteThreadProjection', () => {
           stats: '21 files',
           participantId: 'p1',
           seatLink: seat
+        }
+      ])
+      expect(closeoutRow?.closeoutFileChanges).toEqual([
+        {
+          path: 'src/renderer/src/lib/taskWraithCloseoutMessage.ts',
+          status: 'modified',
+          additions: 42,
+          deletions: 3,
+          owners: [{ provider: 'codex', participantId: 'p1', role: 'SparkDocs', order: 2 }]
+        },
+        {
+          path: 'src/main/RemoteThreadProjection.ts',
+          status: 'created',
+          additions: 18
         }
       ])
     })

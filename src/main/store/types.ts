@@ -3420,6 +3420,17 @@ export interface ChatMessage {
       seatLink?: SeatChangeLink
       participantId?: string
     }>
+    /**
+     * Slim File Changes rows for the Task-complete epic stack.
+     * Tombstoned at close-out time; never stores diffText.
+     */
+    closeoutFileChanges?: Array<{
+      path: string
+      status: DiffFileStatus
+      additions?: number
+      deletions?: number
+      owners?: DiffFileSummaryOwner[]
+    }>
     /** User pin timestamp (ms since epoch). Missing means not pinned. */
     pinnedAt?: number
     /** User thumbs feedback on an ASSISTANT message. This field is the render

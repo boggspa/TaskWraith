@@ -111,6 +111,278 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.content).not.toContain('- Commits:')
   })
 
+  it('tombstones slim fileChanges in metadata and keeps them out of bubble prose', () => {
+    const run: ChatRun = {
+      runId: 'run-file-changes',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:30.000Z',
+      status: 'success'
+    }
+    const fileChanges = [
+      {
+        path: 'src/main/store/types.ts',
+        status: 'modified' as const,
+        additions: 12,
+        deletions: 2,
+        owners: [{ provider: 'codex' as const, participantId: 'p1', role: 'Builder' }]
+      },
+      {
+        path: 'src/renderer/src/lib/taskWraithCloseoutMessage.ts',
+        status: 'created' as const,
+        additions: 40
+      }
+    ]
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          { ...message('a1', 'assistant', 'Persisted closeout file changes.'), runId: run.runId }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0,
+      fileChanges
+    })
+
+    expect(closeout.metadata?.closeoutFileChanges).toEqual(fileChanges)
+    expect(closeout.content).not.toContain('src/main/store/types.ts')
+    expect(closeout.content).not.toContain('taskWraithCloseoutMessage.ts')
+    expect(closeout.content).not.toContain('File Changes')
+    expect(closeout.content).not.toContain('Changed:')
+    expect(JSON.stringify(closeout.metadata?.closeoutFileChanges)).not.toContain('diffText')
+
+    const round: EnsembleRoundState = {
+      roundId: 'round-file-changes',
+      status: 'completed',
+      prompt: 'Persist file changes',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:01:00.000Z',
+      participants: [
+        { participantId: 'p1', provider: 'codex', role: 'Builder', order: 1, status: 'answered' }
+      ]
+    }
+    const roundCloseout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        ensemble: { activeRound: round } as ChatRecord['ensemble']
+      }),
+      round,
+      completedAt: round.endedAt!,
+      fileChanges
+    })
+
+    expect(roundCloseout.metadata?.closeoutFileChanges).toEqual(fileChanges)
+    expect(roundCloseout.content).not.toContain('src/main/store/types.ts')
+    expect(roundCloseout.content).not.toContain('File Changes')
+  })
+
+  it('harvests slim fileChanges from run-scoped tool activities when input is omitted', () => {
+    const run: ChatRun = {
+      runId: 'run-harvest-files',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:30.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('a1', 'assistant', 'Edited a couple of files.'),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                id: 'edit-1',
+                toolName: 'edit_file',
+                displayName: 'Edit file',
+                category: 'write',
+                status: 'success',
+                parameters: {
+                  file_path: 'src/main/store/types.ts',
+                  old_string: 'a\nb',
+                  new_string: 'a\nb\nc\nd'
+                }
+              }),
+              activity({
+                id: 'write-1',
+                toolName: 'write_file',
+                displayName: 'Write file',
+                category: 'write',
+                status: 'success',
+                parameters: {
+                  file_path: 'src/renderer/src/lib/taskWraithCloseoutMessage.ts',
+                  content: 'line1\nline2\nline3'
+                }
+              })
+            ]
+          },
+          {
+            // Other-run noise — must not bleed into this closeout.
+            ...message('a2', 'assistant', 'Unrelated edit.'),
+            runId: 'run-other',
+            toolActivities: [
+              activity({
+                id: 'edit-other',
+                toolName: 'edit_file',
+                category: 'write',
+                parameters: {
+                  file_path: 'src/unrelated.ts',
+                  old_string: 'x',
+                  new_string: 'y'
+                }
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutFileChanges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'src/main/store/types.ts',
+          status: 'modified'
+        }),
+        expect.objectContaining({
+          path: 'src/renderer/src/lib/taskWraithCloseoutMessage.ts',
+          status: 'created'
+        })
+      ])
+    )
+    expect(closeout.metadata?.closeoutFileChanges).toHaveLength(2)
+    expect(JSON.stringify(closeout.metadata?.closeoutFileChanges)).not.toContain('diffText')
+    expect(closeout.content).not.toContain('src/main/store/types.ts')
+    expect(closeout.content).not.toContain('taskWraithCloseoutMessage.ts')
+    expect(closeout.content).not.toContain('File Changes')
+  })
+
+  it('harvests slim fileChanges from round-scoped tool activities when input is omitted', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-harvest-files',
+      status: 'completed',
+      prompt: 'Harvest round file changes',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:01:00.000Z',
+      participants: [
+        { participantId: 'p1', provider: 'codex', role: 'Builder', order: 1, status: 'answered' }
+      ]
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        ensemble: { activeRound: round } as ChatRecord['ensemble'],
+        messages: [
+          {
+            ...message('a1', 'assistant', 'Round edits.', {
+              ensembleRoundId: round.roundId,
+              ensembleParticipantId: 'p1',
+              ensembleProvider: 'codex',
+              ensembleRole: 'Builder'
+            }),
+            toolActivities: [
+              activity({
+                id: 'edit-round',
+                toolName: 'edit_file',
+                category: 'write',
+                status: 'success',
+                parameters: {
+                  file_path: 'src/shared/taskWraithCloseout.ts',
+                  old_string: 'export const A = 1',
+                  new_string: 'export const A = 2'
+                },
+                metadata: {
+                  ensembleProvider: 'codex',
+                  ensembleParticipantId: 'p1'
+                }
+              })
+            ]
+          },
+          {
+            ...message('a2', 'assistant', 'Other round.', {
+              ensembleRoundId: 'round-other'
+            }),
+            toolActivities: [
+              activity({
+                id: 'edit-other-round',
+                toolName: 'write_file',
+                category: 'write',
+                parameters: { file_path: 'src/other-round.ts', content: 'x' }
+              })
+            ]
+          }
+        ]
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    expect(closeout.metadata?.closeoutFileChanges).toEqual([
+      expect.objectContaining({
+        path: 'src/shared/taskWraithCloseout.ts',
+        status: 'modified'
+      })
+    ])
+    expect(closeout.content).not.toContain('src/shared/taskWraithCloseout.ts')
+    expect(closeout.content).not.toContain('src/other-round.ts')
+    expect(closeout.content).not.toContain('File Changes')
+  })
+
+  it('prefers explicit fileChanges input over harvested tool-activity rows', () => {
+    const run: ChatRun = {
+      runId: 'run-override-files',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:30.000Z',
+      status: 'success'
+    }
+    const fileChanges = [
+      {
+        path: 'caller/override.ts',
+        status: 'modified' as const,
+        additions: 1,
+        deletions: 0
+      }
+    ]
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('a1', 'assistant', 'Tool evidence present.'),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                id: 'edit-1',
+                toolName: 'edit_file',
+                category: 'write',
+                parameters: {
+                  file_path: 'harvested/should-not-appear.ts',
+                  old_string: 'a',
+                  new_string: 'b'
+                }
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0,
+      fileChanges
+    })
+
+    expect(closeout.metadata?.closeoutFileChanges).toEqual(fileChanges)
+    expect(JSON.stringify(closeout.metadata?.closeoutFileChanges)).not.toContain(
+      'harvested/should-not-appear.ts'
+    )
+  })
+
   it('keeps a long assistant summary intact and flattens Markdown into prose', () => {
     const run: ChatRun = {
       runId: 'run-long-summary',
