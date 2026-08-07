@@ -4288,6 +4288,52 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Open the additive User Fan-Out wave an absorbed steer asked for.
+   *
+   * Both steer entries reach this: the queued-row Steer and the composer's
+   * direct steer. They differ only in how the prompt arrived, never in what an
+   * @mention means — routing the tagged seat a lane NOW rather than making the
+   * user wait for its serial turn. Leaving it on one path made the same typed
+   * text fan out or not depending on whether it had been parked in the queue
+   * first, and silently dropped the wave for the composer's own Retry.
+   *
+   * Additive by construction: `launchUserFanout` skips seats already executing
+   * and never replaces the active round.
+   */
+  private launchUserFanoutForAbsorbedSteer(
+    runtime: ActiveRoundRuntime,
+    input: {
+      prompt: string
+      dmTargetParticipantId?: string
+      receipt?: MidRunSteeringAppendReceipt
+    }
+  ): void {
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) return
+    const userFanout = resolveEnsembleUserFanoutTargets({
+      text: input.prompt,
+      participants: chat.ensemble.participants,
+      ...(input.dmTargetParticipantId
+        ? { exactTargetParticipantId: input.dmTargetParticipantId }
+        : {})
+    })
+    if (!userFanout.hasParticipantMention) return
+    for (const ambiguity of userFanout.ambiguities) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `User Fan-Out: \`@${ambiguity.text}\` is ambiguous (${ambiguity.participants
+          .map((participant) => participantDisplayName(participant))
+          .join(', ')}); no lane was started for that tag. Use a unique @role, @model, or @id.`
+      )
+    }
+    // No receipt means the interjection never reached the transcript, so a lane
+    // would have no user message to cite as its source.
+    if (!input.receipt?.messageId) return
+    this.launchUserFanout(runtime, userFanout.targets, input.prompt, input.receipt.messageId)
+  }
+
   private mergeLiveRoundInterjectionOntoRuntime(
     runtime: ActiveRoundRuntime,
     input: {
@@ -4546,7 +4592,7 @@ export class EnsembleOrchestrator {
       if (input.mode === 'steer') {
         // Never cancel + beginRound for a live round. Absorb every shape into
         // the current round; fresh rounds are only for idle chats.
-        const absorbed = this.absorbMidRunSteering({
+        const absorption = this.absorbMidRunSteeringWithReceipt({
           chatId: input.chatId,
           roundId: existing.roundId,
           text: prompt,
@@ -4556,7 +4602,15 @@ export class EnsembleOrchestrator {
           externalPathGrants: input.externalPathGrants,
           discordContextSnapshots: input.discordContextSnapshots
         })
+        const absorbed = absorption.result
         if (absorbed.status === 'steered') {
+          this.launchUserFanoutForAbsorbedSteer(existing, {
+            prompt,
+            ...(input.dmTargetParticipantId
+              ? { dmTargetParticipantId: input.dmTargetParticipantId }
+              : {}),
+            ...(absorption.receipt ? { receipt: absorption.receipt } : {})
+          })
           return { status: 'steered', roundId: existing.roundId }
         }
         // Absorb unavailable — queue instead of interrupting the live round.
@@ -4827,14 +4881,6 @@ export class EnsembleOrchestrator {
     const remainingQueue = runtime.queuedPrompts.filter(
       (_, queuedIndex) => queuedIndex !== selectedIndex
     )
-    const activeChat = this.deps.getChat(input.chatId)
-    const userFanout = activeChat?.ensemble
-      ? resolveEnsembleUserFanoutTargets({
-          text: selected.prompt,
-          participants: activeChat.ensemble.participants,
-          exactTargetParticipantId: selected.dmTargetParticipantId
-        })
-      : null
     // Dequeue BEFORE mid-run absorb. Absorb appends a transcript message via
     // saveAndBroadcastChat; if the steered prompt is still in queuedPrompts
     // on that broadcast, the renderer can restore it after an optimistic
@@ -4860,25 +4906,13 @@ export class EnsembleOrchestrator {
     })
     const absorbed = absorption.result
     if (absorbed.status === 'steered') {
-      if (userFanout?.hasParticipantMention) {
-        for (const ambiguity of userFanout.ambiguities) {
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `User Fan-Out: \`@${ambiguity.text}\` is ambiguous (${ambiguity.participants
-              .map((participant) => participantDisplayName(participant))
-              .join(', ')}); no lane was started for that tag. Use a unique @role, @model, or @id.`
-          )
-        }
-        if (absorption.receipt?.messageId) {
-          this.launchUserFanout(
-            runtime,
-            userFanout.targets,
-            selected.prompt,
-            absorption.receipt.messageId
-          )
-        }
-      }
+      this.launchUserFanoutForAbsorbedSteer(runtime, {
+        prompt: selected.prompt,
+        ...(selected.dmTargetParticipantId
+          ? { dmTargetParticipantId: selected.dmTargetParticipantId }
+          : {}),
+        ...(absorption.receipt ? { receipt: absorption.receipt } : {})
+      })
       return absorbed
     }
     // Absorb failed — put the entry back so Steer is not a silent drop.

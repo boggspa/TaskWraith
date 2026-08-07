@@ -456,6 +456,44 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     })
   })
 
+  // The queued row and the composer send the same typed text through two
+  // entries, and only the queued one opened a wave — so whether "@Seat do this"
+  // reached that seat now or waited for its serial turn depended on whether the
+  // text had been parked in the queue first. Retry rides this entry too.
+  it('opens a User Fan-Out from a composer steer, not only from the queued row', async () => {
+    const roster = [
+      participant('codex', 'codex', 1, { role: 'Worker' }),
+      participant('claude', 'claude', 2, { role: 'Reviewer' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const prompt = '@Reviewer try your slice again.'
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'steer'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
+    expect(
+      harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
+    ).toBe(true)
+    // Additive: the original speaker is never interrupted to make room.
+    expect(harness.cancelRun).not.toHaveBeenCalled()
+  })
+
   // A directed absorb carries routing intent for the seats still to speak. It
   // must not retroactively rewrite the round that is already running: the other
   // seats are live members of it, and dropping them from `participants` loses
