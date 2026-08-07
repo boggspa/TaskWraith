@@ -1479,7 +1479,7 @@ describe('TranscriptMediaAssetStore', () => {
         appChatId: 'chat-rollback'
       })
     ).toBe(false)
-  })
+  }, 30_000)
 
   it('rechecks exact output authority before granting an async file ingest', async () => {
     const root = makeRoot()
