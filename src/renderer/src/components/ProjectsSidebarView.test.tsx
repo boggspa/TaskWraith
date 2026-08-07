@@ -348,6 +348,25 @@ describe('ProjectsSidebarView', () => {
     expect(html).not.toContain('provider-glyph-codex')
   })
 
+  it('marks project members with a project-scoped reorder list', () => {
+    seedStore([projectRecord('project-a', 'Alpha', ['chat-1', 'chat-2'])], [])
+    fake.store.set('taskwraith-sidebar-expanded-project-ids', JSON.stringify(['project-a']))
+
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[chatRecord('chat-1', 'First'), chatRecord('chat-2', 'Second')]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-sidebar-thread-list="work:project:project-a"')
+    expect(html).toContain('data-sidebar-thread-id="chat-1"')
+    expect(html).toContain('draggable="true"')
+  })
+
   it('offers Start Project Home on unhomed projects when the host provides the handler', () => {
     seedStore([projectRecord('project-a', 'Alpha', [])], [])
     const html = renderToStaticMarkup(

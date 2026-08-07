@@ -102,6 +102,17 @@ import {
   sidebarSuccessInkPredatesEpoch,
   type SidebarRowTone
 } from '../lib/sidebarTerminalOutcome'
+import {
+  loadSidebarThreadOrderState,
+  orderSidebarThreads,
+  parseSidebarThreadDragPayload,
+  reorderSidebarThreadOrder,
+  saveSidebarThreadOrderState,
+  serializeSidebarThreadDragPayload,
+  SIDEBAR_THREAD_DRAG_MIME,
+  type SidebarThreadDragPayload,
+  type SidebarThreadOrderState
+} from '../lib/sidebarThreadOrder'
 
 export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
 
@@ -1546,6 +1557,9 @@ type SidebarChatTileDragProps = {
   onDragStart?: (event: ReactDragEvent<HTMLElement>) => void
   onDragEnd?: () => void
   'data-dragging'?: 'true' | undefined
+  'data-sidebar-thread-id'?: string
+  'data-sidebar-thread-list'?: string
+  'data-sidebar-thread-drop-target'?: 'true' | undefined
 }
 
 interface SidebarCompactChatRowProps {
@@ -1659,7 +1673,7 @@ function SidebarCompactChatRowInner({
                     ? `${chat.title}, blocked or failed, unread`
                     : chat.title
       }
-      {...(variant === 'recents' && dragHandlers ? dragHandlers : {})}
+      {...(dragHandlers || {})}
     >
       <ProviderBrandLogoIcon provider={badgeId} />
       {gitMarker && <SidebarGitWorkflowIcon marker={gitMarker} />}
@@ -1707,6 +1721,8 @@ export function sidebarCompactChatRowPropsAreEqual(
     a.draggable === b.draggable &&
     a.isDragging === b.isDragging &&
     a.query === b.query &&
+    (a.dragHandlers?.['data-sidebar-thread-drop-target'] ?? null) ===
+      (b.dragHandlers?.['data-sidebar-thread-drop-target'] ?? null) &&
     (a.identityTicker ?? null) === (b.identityTicker ?? null) &&
     (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null) &&
     (a.identityBranch ?? null) === (b.identityBranch ?? null)
@@ -1739,6 +1755,8 @@ interface SidebarChatRowProps {
   identityGitIndicators?: string | null
   /** See SidebarCompactChatRowProps.identityBranch. */
   identityBranch?: string | null
+  /** Drag/reorder props for the list this row belongs to. */
+  dragHandlers?: SidebarChatTileDragProps
   onSelect: (chat: ChatRecord) => void
   onRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, chat: ChatRecord) => void
   onToggleSubThreads: (
@@ -1784,7 +1802,8 @@ function SidebarChatRowInner({
   onStartRename,
   onSubmitRename,
   onCancelRename,
-  buildMenuItems
+  buildMenuItems,
+  dragHandlers
 }: SidebarChatRowProps): ReactNode {
   const provider = chat.provider || 'gemini'
   const gitMarker = chatGitWorkflowMarker(chat)
@@ -1840,6 +1859,7 @@ function SidebarChatRowInner({
       aria-label={a11y.ariaLabel}
       aria-current={a11y.ariaCurrent}
       aria-describedby={a11y.statusDescribedById}
+      {...(dragHandlers || {})}
     >
       {a11y.statusDescription && (
         <span id={a11y.statusDescribedById} className="sr-only">
@@ -1959,6 +1979,13 @@ export function sidebarChatRowPropsAreEqual(
     a.liveSubThreadCount === b.liveSubThreadCount &&
     a.subThreadsExpanded === b.subThreadsExpanded &&
     a.query === b.query &&
+    (a.dragHandlers?.draggable ?? false) === (b.dragHandlers?.draggable ?? false) &&
+    (a.dragHandlers?.['data-dragging'] ?? null) ===
+      (b.dragHandlers?.['data-dragging'] ?? null) &&
+    (a.dragHandlers?.['data-sidebar-thread-list'] ?? null) ===
+      (b.dragHandlers?.['data-sidebar-thread-list'] ?? null) &&
+    (a.dragHandlers?.['data-sidebar-thread-drop-target'] ?? null) ===
+      (b.dragHandlers?.['data-sidebar-thread-drop-target'] ?? null) &&
     (a.identityTicker ?? null) === (b.identityTicker ?? null) &&
     (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null) &&
     (a.identityBranch ?? null) === (b.identityBranch ?? null)
@@ -3170,6 +3197,15 @@ export function Sidebar({
    */
   const [draggedChatId, setDraggedChatId] = useState<string | null>(null)
   const [pinDropActive, setPinDropActive] = useState(false)
+  const [sidebarThreadOrderState, setSidebarThreadOrderState] =
+    useState<SidebarThreadOrderState>(() => loadSidebarThreadOrderState())
+  const draggedThreadPayloadRef = useRef<SidebarThreadDragPayload | null>(null)
+  const [draggedThreadPayload, setDraggedThreadPayload] =
+    useState<SidebarThreadDragPayload | null>(null)
+  const [threadDropTarget, setThreadDropTarget] = useState<SidebarThreadDragPayload | null>(null)
+  useEffect(() => {
+    saveSidebarThreadOrderState(sidebarThreadOrderState)
+  }, [sidebarThreadOrderState])
   // 1.0.3 sidebar rename — single source of "which chat row is being
   // edited right now". Key by both chat id AND render surface: the same
   // chat can appear in Recents, Workspaces, Pinned, and Shared at once.
@@ -3327,6 +3363,19 @@ export function Sidebar({
       !isContentlessRemoteDraftChat(chat) &&
       !isHideableUnstartedDraft(chat, { protectedChatIds: draftVisibilityProtectedIds })
   )
+  const orderSidebarChatList = (listId: string, list: readonly ChatRecord[]): ChatRecord[] =>
+    orderSidebarThreads(list, listId, sidebarThreadOrderState)
+  const applySidebarThreadDrop = (
+    listId: string,
+    listIds: readonly string[],
+    draggedChatId: string,
+    targetChatId: string | null,
+    placement: 'before' | 'after'
+  ): void => {
+    setSidebarThreadOrderState((current) =>
+      reorderSidebarThreadOrder(current, listId, listIds, draggedChatId, targetChatId, placement)
+    )
+  }
   const topLevelChats = displayChats.filter(
     (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
   )
@@ -3365,13 +3414,17 @@ export function Sidebar({
   const isSidebarSearchActive = sidebarSearchQuery.length > 0
   const visibleWorkspaceEntries = workspaces
     .map((workspace) => {
-      const workspaceChats = chatsByWorkspace.get(workspace.id) || []
+      const workspaceChats = orderSidebarChatList(
+        `code:workspace:${workspace.id}`,
+        chatsByWorkspace.get(workspace.id) || []
+      )
       const workspaceMatched = workspaceMatchesSearch(workspace, sidebarSearchQuery)
       const visibleChats = isSidebarSearchActive
         ? workspaceChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
         : workspaceChats
       return {
         workspace,
+        workspaceChats,
         workspaceMatched,
         visibleChats,
         totalChats: workspaceChats.length
@@ -3380,9 +3433,10 @@ export function Sidebar({
     .filter(
       (entry) => !isSidebarSearchActive || entry.workspaceMatched || entry.visibleChats.length > 0
     )
+  const orderedGlobalChats = orderSidebarChatList('chat:chats', globalChats)
   const visibleGlobalChats = isSidebarSearchActive
-    ? globalChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
-    : globalChats
+    ? orderedGlobalChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
+    : orderedGlobalChats
   const visibleChatCounts = displayChats.reduce(
     (counts, chat) => {
       if (!chat.archived && !chat.hiddenFromMainList) counts[getChatSidebarTab(chat)] += 1
@@ -3450,9 +3504,12 @@ export function Sidebar({
     ),
     { limit: SIDEBAR_RECENTS_MAX }
   )
+  const orderedEnsembleChats = orderSidebarChatList('code:ensembles', ensembleChats)
   const visibleEnsembleChats = isSidebarSearchActive
-    ? ensembleChats.filter((chat) => !chat.pinned && chatMatchesSearch(chat, sidebarSearchQuery))
-    : ensembleChats.filter((chat) => !chat.pinned)
+    ? orderedEnsembleChats.filter(
+        (chat) => !chat.pinned && chatMatchesSearch(chat, sidebarSearchQuery)
+      )
+    : orderedEnsembleChats.filter((chat) => !chat.pinned)
   const sharedChats = topLevelChats.filter(
     (chat) =>
       collaboratingChatIds.has(chat.appChatId) &&
@@ -3460,9 +3517,10 @@ export function Sidebar({
       !chat.hiddenFromMainList &&
       getChatSidebarTab(chat) === activeChatSurfaceTab
   )
+  const orderedSharedChats = orderSidebarChatList('code:shared', sharedChats)
   const visibleSharedChats = isSidebarSearchActive
-    ? sharedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
-    : sharedChats
+    ? orderedSharedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
+    : orderedSharedChats
 
   // Git section — an ADDITIONAL reference surface for chats carrying a git
   // workflow marker (dual-surfacing, the sidebar norm: the same chat keeps
@@ -3478,7 +3536,10 @@ export function Sidebar({
   const visibleGitWorkflowChats = isSidebarSearchActive
     ? gitWorkflowChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
     : gitWorkflowChats
-  const gitWorkflowGroups = groupChatsByGitWorkflow(visibleGitWorkflowChats)
+  const gitWorkflowGroups = groupChatsByGitWorkflow(visibleGitWorkflowChats).map((group) => ({
+    ...group,
+    chats: orderSidebarChatList(`code:git:${group.group}`, group.chats)
+  }))
 
   const visiblePinnedWorkspaces =
     activeChatSurfaceTab === 'chat'
@@ -3488,12 +3549,14 @@ export function Sidebar({
             workspaceMatchesSearch(workspace, sidebarSearchQuery)
           )
         : pinnedWorkspaces
+  const orderedPinnedChats = orderSidebarChatList('code:pinned', pinnedChats)
   const visiblePinnedChats = isSidebarSearchActive
-    ? pinnedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
-    : pinnedChats
+    ? orderedPinnedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
+    : orderedPinnedChats
+  const orderedRecentChats = orderSidebarChatList('code:recents', recentChats)
   const visibleRecentChats = isSidebarSearchActive
-    ? recentChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
-    : recentChats
+    ? orderedRecentChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
+    : orderedRecentChats
   const visibleWorkflows = isSidebarSearchActive
     ? scopedWorkflows.filter((workflow) => workflowMatchesSearch(workflow, sidebarSearchQuery))
     : scopedWorkflows
@@ -3588,49 +3651,112 @@ export function Sidebar({
   // affordances now live in the per-tile three-dots overflow menu,
   // wired via `buildChatMenuItems` / `buildWorkspaceMenuItems`.
 
-  /*
-   * 1.0.5-SB5 — Drag-and-drop pinning. Returns the prop bag a
-   * chat tile spreads onto its outer element to participate in
-   * the drag interaction. Disabled (returns empty) when the
-   * chat is currently being renamed or `onTogglePinChat` isn't
-   * wired — protects the rename input from accidentally
-   * starting a drag, and skips DnD entirely on read-only views.
-   *
-   * Sets the custom MIME type `application/x-taskwraith-chat-id`
-   * with the chat's appChatId so the drop handler can read it
-   * back. Also sets `text/plain` to the chat title as a
-   * courtesy for external drag-receivers (e.g. dragging into a
-   * text editor pastes the title); the drop logic ignores
-   * text/plain.
+  const getSidebarThreadListDropProps = (
+    listId: string,
+    list: readonly ChatRecord[]
+  ) => {
+    const listIds = list.map((chat) => chat.appChatId)
+    const findTarget = (event: ReactDragEvent<HTMLElement>): HTMLElement | null => {
+      if (!(event.target instanceof HTMLElement)) return null
+      const target = event.target.closest<HTMLElement>('[data-sidebar-thread-id]')
+      if (!target || target.dataset.sidebarThreadList !== listId) return null
+      if (!event.currentTarget.contains(target)) return null
+      return target
+    }
+    return {
+      onDragOver: (event: ReactDragEvent<HTMLElement>) => {
+        const active = draggedThreadPayloadRef.current
+        if (
+          !active ||
+          active.listId !== listId ||
+          !event.dataTransfer.types.includes(SIDEBAR_THREAD_DRAG_MIME)
+        ) {
+          return
+        }
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        const target = findTarget(event)
+        if (target) {
+          const nextTarget = { listId, chatId: target.dataset.sidebarThreadId || '' }
+          setThreadDropTarget((current) =>
+            current?.listId === nextTarget.listId && current.chatId === nextTarget.chatId
+              ? current
+              : nextTarget
+          )
+        }
+      },
+      onDragLeave: (event: ReactDragEvent<HTMLElement>) => {
+        const relatedTarget = event.relatedTarget
+        if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) return
+        setThreadDropTarget(null)
+      },
+      onDrop: (event: ReactDragEvent<HTMLElement>) => {
+        const active = draggedThreadPayloadRef.current
+        if (!active || active.listId !== listId) return
+        const payload = parseSidebarThreadDragPayload(
+          event.dataTransfer.getData(SIDEBAR_THREAD_DRAG_MIME)
+        )
+        if (!payload || payload.listId !== listId || !listIds.includes(payload.chatId)) return
+        event.preventDefault()
+        event.stopPropagation()
+        const target = findTarget(event)
+        const targetChatId = target?.dataset.sidebarThreadId || null
+        const rect = target?.getBoundingClientRect()
+        const placement = rect && event.clientY > rect.top + rect.height / 2 ? 'after' : 'before'
+        applySidebarThreadDrop(listId, listIds, payload.chatId, targetChatId, placement)
+        draggedThreadPayloadRef.current = null
+        setDraggedThreadPayload(null)
+        setThreadDropTarget(null)
+      },
+      'data-sidebar-thread-list': listId
+    }
+  }
+
+  /**
+   * Drag props shared by every reorderable thread row. The source list id is
+   * carried in the payload and is checked again by the list drop target; a
+   * thread therefore cannot be reordered into an adjacent list or workspace.
+   * The legacy chat-id MIME remains available only for the existing pin drop.
    */
   const getChatTileDragProps = (
-    chat: ChatRecord
-  ): {
-    draggable: boolean
-    onDragStart?: (event: React.DragEvent<HTMLElement>) => void
-    onDragEnd?: () => void
-    'data-dragging'?: 'true' | undefined
-  } => {
-    // Skip if pin handler isn't wired, the chat is currently
-    // being renamed, OR the chat is already pinned — pinned
-    // chats have no useful drag-to-pin gesture (drop on Pinned
-    // would be a no-op; drop reordering is future work).
-    if (!onTogglePinChat || editingChatTarget?.chatId === chat.appChatId || chat.pinned) {
+    chat: ChatRecord,
+    listId: string
+  ): SidebarChatTileDragProps => {
+    if (!listId || editingChatTarget?.chatId === chat.appChatId) {
       return { draggable: false }
     }
+    const canPin = Boolean(onTogglePinChat) && chat.pinned !== true
     return {
       draggable: true,
       onDragStart: (event) => {
-        event.dataTransfer.effectAllowed = 'move'
-        event.dataTransfer.setData('application/x-taskwraith-chat-id', chat.appChatId)
+        const payload = { listId, chatId: chat.appChatId }
+        draggedThreadPayloadRef.current = payload
+        setDraggedThreadPayload(payload)
+        event.dataTransfer.effectAllowed = canPin ? 'copyMove' : 'move'
+        event.dataTransfer.setData(SIDEBAR_THREAD_DRAG_MIME, serializeSidebarThreadDragPayload(payload))
+        if (canPin) {
+          event.dataTransfer.setData('application/x-taskwraith-chat-id', chat.appChatId)
+          setDraggedChatId(chat.appChatId)
+        }
         event.dataTransfer.setData('text/plain', chat.title)
-        setDraggedChatId(chat.appChatId)
       },
       onDragEnd: () => {
+        draggedThreadPayloadRef.current = null
+        setDraggedThreadPayload(null)
         setDraggedChatId(null)
         setPinDropActive(false)
+        setThreadDropTarget(null)
       },
-      'data-dragging': draggedChatId === chat.appChatId ? 'true' : undefined
+      'data-dragging':
+        draggedThreadPayload?.listId === listId && draggedThreadPayload.chatId === chat.appChatId
+          ? 'true'
+          : undefined,
+      'data-sidebar-thread-id': chat.appChatId,
+      'data-sidebar-thread-list': listId,
+      'data-sidebar-thread-drop-target':
+        threadDropTarget?.listId === listId && threadDropTarget.chatId === chat.appChatId
+          ? 'true'
+          : undefined
     }
   }
 
@@ -5618,7 +5744,10 @@ export function Sidebar({
                 </button>
               </div>
               {!isSectionCollapsed('pinned') && (
-                <div className="sidebar-pinned-list">
+                <div
+                  className="sidebar-pinned-list"
+                  {...getSidebarThreadListDropProps('code:pinned', orderedPinnedChats)}
+                >
                   {visiblePinnedWorkspaces.map((workspace) => (
                     <div
                       key={`pinned-workspace-${workspace.id}`}
@@ -5647,6 +5776,7 @@ export function Sidebar({
                   ))}
                   {visiblePinnedChats.map((chat) => {
                     const renameSurfaceId = `pinned-${chat.appChatId}`
+                    const dragHandlers = getChatTileDragProps(chat, 'code:pinned')
                     return (
                       <SidebarCompactChatRow
                         key={`pinned-chat-${chat.appChatId}`}
@@ -5671,8 +5801,9 @@ export function Sidebar({
                         identityBranch={
                           selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
                         }
-                        draggable={false}
-                        isDragging={false}
+                        draggable={dragHandlers.draggable}
+                        isDragging={dragHandlers['data-dragging'] === 'true'}
+                        dragHandlers={dragHandlers}
                         onSelect={selectAndAcknowledgeChat}
                         onStartRename={startChatRename}
                         onSubmitRename={commitChatRename}
@@ -5733,10 +5864,18 @@ export function Sidebar({
               {!isSectionCollapsed('git') && (
                 <div className="sidebar-git-list">
                   {gitWorkflowGroups.map((group) => (
-                    <div key={`git-group-${group.group}`} className="sidebar-git-group">
+                    <div
+                      key={`git-group-${group.group}`}
+                      className="sidebar-git-group"
+                      {...getSidebarThreadListDropProps(`code:git:${group.group}`, group.chats)}
+                    >
                       <div className="sidebar-git-subheader">{group.label}</div>
                       {previewSidebarList(`git:${group.group}`, group.chats).map((chat) => {
                         const renameSurfaceId = `git-${group.group}-${chat.appChatId}`
+                        const dragHandlers = getChatTileDragProps(
+                          chat,
+                          `code:git:${group.group}`
+                        )
                         return (
                           <SidebarCompactChatRow
                             key={`git-chat-${group.group}-${chat.appChatId}`}
@@ -5761,8 +5900,9 @@ export function Sidebar({
                             identityBranch={
                               selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
                             }
-                            draggable={false}
-                            isDragging={false}
+                            draggable={dragHandlers.draggable}
+                            isDragging={dragHandlers['data-dragging'] === 'true'}
+                            dragHandlers={dragHandlers}
                             onSelect={selectAndAcknowledgeChat}
                             onStartRename={startChatRename}
                             onSubmitRename={commitChatRename}
@@ -5809,10 +5949,13 @@ export function Sidebar({
                 </button>
               </div>
               {!isSectionCollapsed('recents') && (
-                <div className="sidebar-recents-list">
+                <div
+                  className="sidebar-recents-list"
+                  {...getSidebarThreadListDropProps('code:recents', orderedRecentChats)}
+                >
                   {previewSidebarList('recents', visibleRecentChats).map((chat) => {
                     const renameSurfaceId = `recent-${chat.appChatId}`
-                    const dragHandlers = getChatTileDragProps(chat)
+                    const dragHandlers = getChatTileDragProps(chat, 'code:recents')
                     return (
                       <SidebarCompactChatRow
                         key={`recent-${chat.appChatId}`}
@@ -5912,7 +6055,10 @@ export function Sidebar({
                     </span>
                   </div>
                 ) : (
-                  <div className="sidebar-chat-list sidebar-ensemble-list">
+                  <div
+                    className="sidebar-chat-list sidebar-ensemble-list"
+                    {...getSidebarThreadListDropProps('code:ensembles', orderedEnsembleChats)}
+                  >
                     {previewSidebarList('ensembles', visibleEnsembleChats).map((chat) => {
                       const activeRound = chat.ensemble?.activeRound
                       const activeParticipant = chat.ensemble?.participants.find(
@@ -5965,7 +6111,7 @@ export function Sidebar({
                             aria-label={ensembleRowA11y.ariaLabel}
                             aria-current={ensembleRowA11y.ariaCurrent}
                             aria-describedby={ensembleRowA11y.statusDescribedById}
-                            {...getChatTileDragProps(chat)}
+                            {...getChatTileDragProps(chat, 'code:ensembles')}
                           >
                             {ensembleRowA11y.statusDescription ? (
                               <span id={ensembleRowA11y.statusDescribedById} className="sr-only">
@@ -6140,9 +6286,8 @@ export function Sidebar({
                 global-chat controls.
               */}
               {!isSectionCollapsed('workspaces') &&
-                visibleWorkspaceEntries.map(({ workspace: ws, visibleChats, totalChats }) => {
+                visibleWorkspaceEntries.map(({ workspace: ws, workspaceChats, visibleChats, totalChats }) => {
                   const expanded = isSidebarSearchActive ? true : expandedWorkspaceIds.has(ws.id)
-                  const workspaceChats = chatsByWorkspace.get(ws.id) || []
                   const workspaceHasRunning = workspaceChats.some((chat) =>
                     runningChatIdSet.has(chat.appChatId)
                   )
@@ -6239,7 +6384,13 @@ export function Sidebar({
                         />
                       </div>
                       {visibleChats.length > 0 && expanded ? (
-                        <div className="sidebar-chat-list">
+                        <div
+                          className="sidebar-chat-list"
+                          {...getSidebarThreadListDropProps(
+                            `code:workspace:${ws.id}`,
+                            workspaceChats
+                          )}
+                        >
                           {previewSidebarList(workspaceListId, workspaceTopLevelChats)
                             .map((chat) => {
                               const subThreads = subThreadsByParentId.get(chat.appChatId) ?? []
@@ -6255,6 +6406,10 @@ export function Sidebar({
                                 0
                               )
                               const renameSurfaceId = `workspace-${ws.id}-${chat.appChatId}`
+                              const dragHandlers = getChatTileDragProps(
+                                chat,
+                                `code:workspace:${ws.id}`
+                              )
                               return (
                                 <div key={chat.appChatId} className="sidebar-chat-family">
                                   <SidebarChatRow
@@ -6284,6 +6439,7 @@ export function Sidebar({
                                         ? activeChatIdentityGitIndicators
                                         : null
                                     }
+                                    dragHandlers={dragHandlers}
                                     onSelect={selectAndAcknowledgeChat}
                                     onRowKeyDown={handleChatRowKeyDown}
                                     onToggleSubThreads={toggleSubThreadsExpanded}
@@ -6346,9 +6502,13 @@ export function Sidebar({
                 </button>
               </div>
               {!isSectionCollapsed('chats') && (
-                <div className="sidebar-chat-list sidebar-global-chat-list">
+                <div
+                  className="sidebar-chat-list sidebar-global-chat-list"
+                  {...getSidebarThreadListDropProps('chat:chats', orderedGlobalChats)}
+                >
                   {previewSidebarList('chats', visibleGlobalChats).map((chat) => {
                     const renameSurfaceId = `global-${chat.appChatId}`
+                    const dragHandlers = getChatTileDragProps(chat, 'chat:chats')
                     return (
                       <SidebarChatRow
                         key={chat.appChatId}
@@ -6377,6 +6537,7 @@ export function Sidebar({
                         identityBranch={
                           selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
                         }
+                        dragHandlers={dragHandlers}
                         onSelect={selectAndAcknowledgeChat}
                         onRowKeyDown={handleChatRowKeyDown}
                         onToggleSubThreads={toggleSubThreadsExpanded}
@@ -6466,9 +6627,13 @@ export function Sidebar({
                 )}
               </div>
               {!isSectionCollapsed('shared') && (
-                <div className="sidebar-chat-list sidebar-shared-chat-list">
+                <div
+                  className="sidebar-chat-list sidebar-shared-chat-list"
+                  {...getSidebarThreadListDropProps('code:shared', orderedSharedChats)}
+                >
                   {previewSidebarList('shared', visibleSharedChats).map((chat) => {
                     const renameSurfaceId = `shared-${chat.appChatId}`
+                    const dragHandlers = getChatTileDragProps(chat, 'code:shared')
                     return (
                       <SidebarChatRow
                         key={chat.appChatId}
@@ -6497,6 +6662,7 @@ export function Sidebar({
                         identityBranch={
                           selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
                         }
+                        dragHandlers={dragHandlers}
                         onSelect={selectAndAcknowledgeChat}
                         onRowKeyDown={handleChatRowKeyDown}
                         onToggleSubThreads={toggleSubThreadsExpanded}

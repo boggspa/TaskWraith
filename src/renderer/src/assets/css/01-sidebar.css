@@ -442,6 +442,23 @@
   flex: 1;
 }
 
+/* Thread reordering is scoped by the list drop handlers. The payload carries
+ * that same list id, so this affordance never implies cross-workspace moves. */
+[data-sidebar-thread-id][draggable='true'] {
+  cursor: grab;
+}
+[data-sidebar-thread-id][draggable='true']:active {
+  cursor: grabbing;
+}
+[data-sidebar-thread-id][data-dragging='true'] {
+  opacity: 0.55;
+}
+[data-sidebar-thread-id][data-sidebar-thread-drop-target='true'] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .sidebar-pinned-list,
 .sidebar-recents-list,
 .sidebar-workflow-list,

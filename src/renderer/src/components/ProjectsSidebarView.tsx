@@ -51,6 +51,17 @@ import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { IdentityIconPicker } from './IdentityIconPicker'
 import { ActiveRunsSection } from './ActiveRunsSection'
+import {
+  loadSidebarThreadOrderState,
+  orderSidebarThreads,
+  parseSidebarThreadDragPayload,
+  reorderSidebarThreadOrder,
+  saveSidebarThreadOrderState,
+  serializeSidebarThreadDragPayload,
+  SIDEBAR_THREAD_DRAG_MIME,
+  type SidebarThreadDragPayload,
+  type SidebarThreadOrderState
+} from '../lib/sidebarThreadOrder'
 
 const EXPANDED_PROJECTS_STORAGE_KEY = 'taskwraith-sidebar-expanded-project-ids'
 const PROJECT_CHAT_DRAG_MIME = 'application/x-taskwraith-chat-id'
@@ -258,6 +269,12 @@ export function ProjectsSidebarView({
   )
   const [showArchivedProjects, setShowArchivedProjects] = useState(false)
   const [projectDropTargetId, setProjectDropTargetId] = useState<string | null>(null)
+  const [sidebarThreadOrderState, setSidebarThreadOrderState] =
+    useState<SidebarThreadOrderState>(() => loadSidebarThreadOrderState())
+  const draggedThreadPayloadRef = useRef<SidebarThreadDragPayload | null>(null)
+  const [draggedThreadPayload, setDraggedThreadPayload] =
+    useState<SidebarThreadDragPayload | null>(null)
+  const [threadDropTarget, setThreadDropTarget] = useState<SidebarThreadDragPayload | null>(null)
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => {
     try {
@@ -288,6 +305,10 @@ export function ProjectsSidebarView({
       // Project expansion memory is renderer-local and best-effort.
     }
   }, [expandedProjectIds])
+
+  useEffect(() => {
+    saveSidebarThreadOrderState(sidebarThreadOrderState)
+  }, [sidebarThreadOrderState])
 
   useEffect(() => {
     onSelectedProjectChange?.(selectedProjectId)
@@ -538,6 +559,89 @@ export function ProjectsSidebarView({
     onSelectedProjectChange?.(projectId)
   }
 
+  const projectThreadListId = (projectId: string): string => `work:project:${projectId}`
+
+  const orderProjectThreads = (projectId: string, list: readonly ChatRecord[]): ChatRecord[] =>
+    orderSidebarThreads(list, projectThreadListId(projectId), sidebarThreadOrderState)
+
+  const applyProjectThreadDrop = (
+    projectId: string,
+    listIds: readonly string[],
+    draggedChatId: string,
+    targetChatId: string | null,
+    placement: 'before' | 'after'
+  ): void => {
+    setSidebarThreadOrderState((current) =>
+      reorderSidebarThreadOrder(
+        current,
+        projectThreadListId(projectId),
+        listIds,
+        draggedChatId,
+        targetChatId,
+        placement
+      )
+    )
+  }
+
+  const getProjectThreadListDropProps = (projectId: string, list: readonly ChatRecord[]) => {
+    const listId = projectThreadListId(projectId)
+    const listIds = list.map((chat) => chat.appChatId)
+    const findTarget = (event: ReactDragEvent<HTMLElement>): HTMLElement | null => {
+      if (!(event.target instanceof HTMLElement)) return null
+      const target = event.target.closest<HTMLElement>('[data-sidebar-thread-id]')
+      if (!target || target.dataset.sidebarThreadList !== listId) return null
+      if (!event.currentTarget.contains(target)) return null
+      return target
+    }
+    return {
+      onDragOver: (event: ReactDragEvent<HTMLElement>) => {
+        const active = draggedThreadPayloadRef.current
+        if (
+          !active ||
+          active.listId !== listId ||
+          !event.dataTransfer.types.includes(SIDEBAR_THREAD_DRAG_MIME)
+        ) {
+          return
+        }
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        const target = findTarget(event)
+        if (target) {
+          const nextTarget = { listId, chatId: target.dataset.sidebarThreadId || '' }
+          setThreadDropTarget((current) =>
+            current?.listId === nextTarget.listId && current.chatId === nextTarget.chatId
+              ? current
+              : nextTarget
+          )
+        }
+      },
+      onDragLeave: (event: ReactDragEvent<HTMLElement>) => {
+        const relatedTarget = event.relatedTarget
+        if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) return
+        setThreadDropTarget(null)
+      },
+      onDrop: (event: ReactDragEvent<HTMLElement>) => {
+        const active = draggedThreadPayloadRef.current
+        if (!active || active.listId !== listId) return
+        const payload = parseSidebarThreadDragPayload(
+          event.dataTransfer.getData(SIDEBAR_THREAD_DRAG_MIME)
+        )
+        if (!payload || payload.listId !== listId || !listIds.includes(payload.chatId)) return
+        event.preventDefault()
+        event.stopPropagation()
+        const target = findTarget(event)
+        const targetChatId = target?.dataset.sidebarThreadId || null
+        const rect = target?.getBoundingClientRect()
+        const placement = rect && event.clientY > rect.top + rect.height / 2 ? 'after' : 'before'
+        applyProjectThreadDrop(projectId, listIds, payload.chatId, targetChatId, placement)
+        draggedThreadPayloadRef.current = null
+        setDraggedThreadPayload(null)
+        setThreadDropTarget(null)
+      },
+      'data-sidebar-thread-list': listId
+    }
+  }
+
   const onProjectDragOver = (
     event: ReactDragEvent<HTMLElement>,
     project: Project
@@ -612,6 +716,7 @@ export function ProjectsSidebarView({
     const isRunning = runningChatIdSet.has(chat.appChatId)
     const isArchived = chat.archived === true
     const isHome = homeChatIdByProjectId.get(project.id) === chat.appChatId
+    const listId = projectThreadListId(project.id)
     return (
       <div
         key={chat.appChatId}
@@ -634,11 +739,35 @@ export function ProjectsSidebarView({
           }}
           disabled={isArchived}
           draggable={!isArchived}
+          data-sidebar-thread-id={chat.appChatId}
+          data-sidebar-thread-list={listId}
+          data-sidebar-thread-drop-target={
+            threadDropTarget?.listId === listId && threadDropTarget.chatId === chat.appChatId
+              ? 'true'
+              : undefined
+          }
           onDragStart={(event) => {
-            event.dataTransfer.effectAllowed = 'copy'
+            const payload = { listId, chatId: chat.appChatId }
+            draggedThreadPayloadRef.current = payload
+            setDraggedThreadPayload(payload)
+            event.dataTransfer.effectAllowed = 'copyMove'
+            event.dataTransfer.setData(
+              SIDEBAR_THREAD_DRAG_MIME,
+              serializeSidebarThreadDragPayload(payload)
+            )
             event.dataTransfer.setData(PROJECT_CHAT_DRAG_MIME, chat.appChatId)
             event.dataTransfer.setData('text/plain', chat.title)
           }}
+          onDragEnd={() => {
+            draggedThreadPayloadRef.current = null
+            setDraggedThreadPayload(null)
+            setThreadDropTarget(null)
+          }}
+          data-dragging={
+            draggedThreadPayload?.listId === listId && draggedThreadPayload.chatId === chat.appChatId
+              ? 'true'
+              : undefined
+          }
           title={isArchived ? `${chat.title} is archived` : chat.title}
         >
           <span className="sidebar-project-member-title-line">
@@ -701,7 +830,8 @@ export function ProjectsSidebarView({
     const allMemberChats = project.memberChatIds
       .map((id) => chatById.get(id))
       .filter((chat): chat is ChatRecord => Boolean(chat))
-    const memberChats = allMemberChats
+    const orderedMemberChats = orderProjectThreads(project.id, allMemberChats)
+    const memberChats = orderedMemberChats
       .filter((chat) => !isSearchActive || chatMatchesSearch(chat, searchQuery))
     const availableChats = chats
       .filter((chat) => !chat.archived && !project.memberChatIds.includes(chat.appChatId))
@@ -1150,7 +1280,14 @@ export function ProjectsSidebarView({
           </div>
         )}
 
-        {memberChats.length > 0 && <div className="sidebar-project-members">{memberChats.map((chat) => renderChatRow(chat, project))}</div>}
+        {memberChats.length > 0 && (
+          <div
+            className="sidebar-project-members"
+            {...getProjectThreadListDropProps(project.id, orderedMemberChats)}
+          >
+            {memberChats.map((chat) => renderChatRow(chat, project))}
+          </div>
+        )}
         {expanded && childRows.some(Boolean) && (
           <div className="sidebar-project-children">{childRows}</div>
         )}
