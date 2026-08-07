@@ -140,6 +140,40 @@ enum TranscriptFollowPolicy {
 }
 
 extension View {
+    /// A tap on the transcript blurs the composer.
+    ///
+    /// The compact pill row — workspace, diff, and the Tools pill that opens
+    /// Goal/Plan/Ensemble/Blackboard — is the composer's UNFOCUSED face, so it
+    /// is off-screen for as long as focus is held. On iPhone that always ends:
+    /// either `compactHeight` keeps the row up through focus, or the software
+    /// keyboard rises and the floating dismiss pill (gated on `keyboardVisible`)
+    /// offers a way out.
+    ///
+    /// iPad had NEITHER exit. `compactHeight` is `verticalSizeClass == .compact`
+    /// and iPad is regular in both orientations, so it is permanently false; and
+    /// with a hardware keyboard attached — a Magic Keyboard, or any Mac running
+    /// the Simulator — no software keyboard rises, so `keyboardVisible` stays
+    /// false and the dismiss pill never appears. Nothing else resigned first
+    /// responder, so the FIRST tap in the composer hid the Tools pill for the
+    /// rest of the session and only a thread switch (which rebuilds the view on
+    /// `.id(taskId)`) brought it back. That reads exactly like "the Tools pill
+    /// isn't tappable".
+    ///
+    /// `simultaneousGesture`, so a tap that lands on a transcript control still
+    /// reaches it: this only ADDS the blur, it never swallows the tap.
+    func transcriptTapDismissesComposerFocus(_ composerFocused: Bool) -> some View {
+        #if canImport(UIKit)
+            return simultaneousGesture(
+                TapGesture().onEnded {
+                    guard composerFocused else { return }
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                })
+        #else
+            return self
+        #endif
+    }
+
     /// Shared by ThreadDetailView and MiniThreadView so iPhone/iPad touch
     /// stamping stays one policy.
     func transcriptTouchTracking(isPadInterface: Bool, onTouch: @escaping () -> Void) -> some View {
@@ -2052,6 +2086,7 @@ struct ThreadDetailView: View {
         .transcriptTouchTracking(isPadInterface: isPadInterface) {
             followPin.lastUserTouchAt = Date()
         }
+        .transcriptTapDismissesComposerFocus(composerFocused)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 4) {
                 SubThreadStatusTickerView(model: subThreadTickerModel) { childId in
