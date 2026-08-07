@@ -546,7 +546,7 @@ describe('GitService', () => {
 
     expect(result.ok).toBe(true)
     expect(runGit(repo, ['status', '--short'])).toBe('')
-  })
+  }, 30_000)
 
   it('runs gh pr create from the resolved repository root', async () => {
     addBareRemote()

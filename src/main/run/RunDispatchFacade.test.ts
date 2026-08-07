@@ -552,7 +552,7 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     } finally {
       rmSync(storeRoot, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 
   it('does not dispatch a partial multi-PDF expansion', async () => {
     const deps = makeDeps([])

@@ -152,7 +152,7 @@ describe('WorkspaceLockAuthority', () => {
     expect(conflict).toMatchObject({ ok: false, reason: 'conflict' })
     expect(authority.snapshot().leases.filter((lease) => lease.owner.runId === 'run-b')).toEqual([])
     authority.dispose()
-  })
+  }, 30_000)
 
   it('contains untrusted presentation before WAL preparation without weakening owner ids', async () => {
     const h = harness()

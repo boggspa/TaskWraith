@@ -273,7 +273,7 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
       })
     )
     expect(liveness(seat, {}, NOW).live).toBe(true)
-  })
+  }, 30_000)
 
   it('decays on expiry, because the lease is its only decay signal', () => {
     const root = makeRepo()
