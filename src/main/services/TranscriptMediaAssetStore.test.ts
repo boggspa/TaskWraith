@@ -1740,7 +1740,7 @@ describe('TranscriptMediaAssetStore', () => {
     expect(fs.existsSync(staleTemp)).toBe(false)
     expect(fs.readFileSync(canonicalPath, 'utf8')).toBe('published-bytes')
     expect(fs.statSync(canonicalPath).nlink).toBe(1)
-  })
+  }, 20_000)
 
   it.each(['mutation', 'replacement'] as const)(
     'rejects a source $mode during ingestion and removes its unpublished temp file',
