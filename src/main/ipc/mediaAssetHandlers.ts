@@ -245,7 +245,7 @@ export function registerMediaAssetHandlers(deps: MediaAssetHandlersDeps): void {
       const asset = openAuthorizedMediaAsset(deps, event, input)
       if (!asset) return { ok: false }
       try {
-        if (!asset.mimeType.startsWith('image/')) return { ok: false }
+        if (!asset.mime.startsWith('image/')) return { ok: false }
         const createFromPath =
           deps.createNativeImageFromPath ||
           ((path: string) => {

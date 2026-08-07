@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createAppshotsToolExecutors } from './AppshotsToolExecutors'
-import type { DesktopToolContext } from './DesktopToolExecutors'
+import type { DesktopBridgeDaemon, DesktopToolContext } from './DesktopToolExecutors'
 import type { ScopedAttachedWindowSnapshot } from '../nativeWindow/ScopedAttachedWindowState'
 
 function context(partial: Partial<DesktopToolContext> = {}): DesktopToolContext {
@@ -73,7 +73,7 @@ describe('createAppshotsToolExecutors', () => {
     const executors = createAppshotsToolExecutors({
       getBridgeDaemon: () => ({
         status: () => ({ running: true, startedAt: null, pid: 1 }),
-        request
+        request: request as unknown as DesktopBridgeDaemon['request']
       }),
       attachedWindow: {
         getForChat: () => attached(4242),
@@ -107,7 +107,7 @@ describe('createAppshotsToolExecutors', () => {
     const executors = createAppshotsToolExecutors({
       getBridgeDaemon: () => ({
         status: () => ({ running: true, startedAt: null, pid: 1 }),
-        request
+        request: request as unknown as DesktopBridgeDaemon['request']
       }),
       attachedWindow: {
         getForChat: () => null,
