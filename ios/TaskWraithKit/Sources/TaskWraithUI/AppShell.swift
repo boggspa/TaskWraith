@@ -305,6 +305,38 @@ struct MastheadRow: View {
     }
 }
 
+/// Width budget for the hand-rolled inspector column inside the iPad detail
+/// pane.
+///
+/// The inspector took a FIXED `appScale.scaled(390)`, which quietly assumed the
+/// detail pane is always ~800pt wide. On an 11-inch iPad in portrait it is not:
+/// an 834pt window minus the ~350pt sidebar leaves ~484pt, the inspector took
+/// ~296pt of that, and the transcript was left ~180pt — narrower than its rows
+/// compress to, so ThreadDetailView laid out WIDER than its column and clipped
+/// on both edges. iPhone never hits this: in compact width the same
+/// `inspectorPresented` binding presents as a sheet.
+///
+/// The transcript's floor is the invariant. The inspector's preferred width is
+/// only ever a ceiling, and a pane that cannot seat both columns gets no split
+/// at all — the inspector presents OVER the transcript instead, which is what
+/// the compact branch already does.
+enum ThreadInspectorColumnPolicy {
+    /// Below this the transcript's rows stop compressing and start overflowing.
+    static let transcriptFloor: CGFloat = 420
+    /// An inspector narrower than this cannot carry its tab strip, so taking
+    /// width for it buys nothing.
+    static let inspectorFloor: CGFloat = 320
+
+    /// Width for the inline inspector column, or nil when the pane cannot
+    /// afford two columns and the inspector must be presented over the
+    /// transcript.
+    static func inlineWidth(paneWidth: CGFloat, preferred: CGFloat) -> CGFloat? {
+        let affordable = paneWidth - transcriptFloor
+        guard affordable >= inspectorFloor else { return nil }
+        return min(preferred, affordable)
+    }
+}
+
 /// iPhone: NavigationStack. iPad (regular width): NavigationSplitView with the
 /// thread list as a persistent sidebar — the home for future iPad-exclusive
 /// affordances (sub-thread management, multi-pane).
@@ -412,22 +444,55 @@ struct ConnectedShell: View {
                         // presents as an overlay here regardless of attach
                         // level (tried both); an HStack pane DETERMINISTICALLY
                         // resizes the transcript — desktop's three-pane anatomy.
-                        HStack(spacing: 0) {
-                            NavigationStack {
-                                ThreadDetailView(model: model, taskId: taskId)
+                        //
+                        // The width is BUDGETED against the pane, never fixed
+                        // (see ThreadInspectorColumnPolicy). A pane too narrow
+                        // to seat both columns keeps the transcript above its
+                        // floor and takes the OVERLAY presentation instead —
+                        // which is the `.inspector` behaviour the note above
+                        // rejects for the WIDE case, and the right answer for
+                        // the narrow one.
+                        //
+                        // `pane.size` is read and used inline, never written
+                        // back to @State, so this cannot reintroduce a
+                        // measurement→state layout oscillation.
+                        GeometryReader { pane in
+                            let inlineWidth = ThreadInspectorColumnPolicy.inlineWidth(
+                                paneWidth: pane.size.width,
+                                preferred: appScale.scaled(390))
+                            HStack(spacing: 0) {
+                                NavigationStack {
+                                    ThreadDetailView(model: model, taskId: taskId)
+                                }
+                                if model.inspectorPresented, let inlineWidth {
+                                    ThreadInspector(model: model, threadId: taskId) { childId in
+                                        model.inspectorPresented = false
+                                        model.selectedTaskId = childId
+                                    }
+                                    .frame(width: inlineWidth)
+                                    .background(TWTheme.appBg)
+                                    .iPadSidebarInnerRim(edge: .leading)
+                                    .transition(.move(edge: .trailing))
+                                }
                             }
-                            if model.inspectorPresented {
+                            // Load-bearing: GeometryReader gives its child no
+                            // size proposal and pins it top-leading, so without
+                            // this the HStack would stop filling the pane.
+                            .frame(width: pane.size.width, height: pane.size.height)
+                            .animation(
+                                .easeInOut(duration: 0.22), value: model.inspectorPresented
+                            )
+                            .inspector(
+                                isPresented: Binding(
+                                    get: { model.inspectorPresented && inlineWidth == nil },
+                                    set: { model.inspectorPresented = $0 })
+                            ) {
                                 ThreadInspector(model: model, threadId: taskId) { childId in
                                     model.inspectorPresented = false
                                     model.selectedTaskId = childId
                                 }
-                                .frame(width: appScale.scaled(390))
-                                .background(TWTheme.appBg)
-                                .iPadSidebarInnerRim(edge: .leading)
-                                .transition(.move(edge: .trailing))
                             }
                         }
-                        .animation(.easeInOut(duration: 0.22), value: model.inspectorPresented)
                         .id(taskId)
                         .tint(TWTheme.chroma1)
                     } else {
