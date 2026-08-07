@@ -5348,6 +5348,58 @@ export class EnsembleOrchestrator {
     return true
   }
 
+  /**
+   * Skip one live fan-out lane (User Fan-Out / orchestrated reader or writer
+   * viewport) without cancelling the round or sibling lanes. The lane is
+   * finalized as `cancelled` so wave waiters (`ensemble_await`, owned
+   * settlements, concurrent-mode drain) treat it as terminal — not `failed`
+   * (provider fault) and not participant `skipped` (which would map the lane
+   * to `completed`).
+   *
+   * Distinct from `skipReadFanout` (whole read wave) and
+   * `skipActiveParticipant` (serial speaker + owned-lane cascade).
+   */
+  async skipFanoutLane(chatId: string, laneId: string): Promise<boolean> {
+    const trimmedLaneId = typeof laneId === 'string' ? laneId.trim() : ''
+    if (!trimmedLaneId) return false
+    const runtime = this.roundsByChatId.get(chatId)
+    if (!runtime || runtime.cancelled) return false
+    const chat = this.deps.getChat(chatId)
+    const round = chat?.ensemble?.activeRound
+    if (!round?.lanes || round.roundId !== runtime.roundId) return false
+    const lane = round.lanes[trimmedLaneId]
+    if (!lane || isTerminalLaneStatus(lane.status)) return false
+
+    const activeRuns = [...(runtime.activeScoutRunIds || [])]
+      .map((runId) => this.runsByRunId.get(runId))
+      .filter((run): run is ActiveParticipantRun => Boolean(run?.laneId))
+    const run =
+      activeRuns.find((candidate) => candidate.laneId === trimmedLaneId) ||
+      [...this.runsByRunId.values()].find(
+        (candidate) =>
+          candidate.chatId === chatId &&
+          candidate.roundId === runtime.roundId &&
+          candidate.laneId === trimmedLaneId &&
+          candidate.terminalFinalized !== true
+      )
+    if (!run) return false
+
+    const reason = 'Fan-out lane skipped by user.'
+    this.finalizeRun(run, 'cancelled', reason)
+    runtime.activeScoutRunIds?.delete(run.runId)
+    if (runtime.activeScoutRunIds?.size === 0) {
+      runtime.activeScoutRunIds = undefined
+    }
+    const who = participantDisplayName(run.participant)
+    this.appendRoundStatus(
+      chatId,
+      runtime.roundId,
+      `Fan-out lane skipped · ${who} stopped; remaining lanes continue.`
+    )
+    await this.deps.cancelRun(run.participant.provider, run.runId).catch(() => undefined)
+    return true
+  }
+
   markYielded(runId: string, reason?: string, target?: string): EnsembleYieldOutcome {
     const run = this.actionableRunForTool(runId)
     if (!run) {
