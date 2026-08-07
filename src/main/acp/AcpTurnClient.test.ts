@@ -672,6 +672,121 @@ describe('runAcpTurn — neutral core', () => {
     ])
   })
 
+  it('retries a transient upstream prompt failure on the same session', async () => {
+    const child = new FakeAcpChild()
+    const closes: Array<{ turnComplete: boolean; terminalStatus?: string }> = []
+    const { events } = baseOptions(child, {
+      transientPromptRetryDelayMs: 0,
+      onClose: (_code, turnComplete, terminalStatus) => {
+        closes.push({ turnComplete, terminalStatus })
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // The exact shape xAI's 500 takes through grok's JSON-RPC error channel:
+    // a generic "Internal error" whose data carries the real upstream status.
+    child.emit({
+      jsonrpc: '2.0',
+      id: 3,
+      error: {
+        code: -32603,
+        message: 'Internal error',
+        data: '{"message":"API error (status 500 Internal Server Error): error: Service temporarily unavailable.","http_status":500}'
+      }
+    })
+    await new Promise((r) => setTimeout(r, 5))
+
+    // The agent process and its ACP session are healthy — only the upstream
+    // call failed. Re-send the SAME prompt on a fresh rpc id, same session.
+    expect(child.killed).toBe(false)
+    const prompts = child.sent().filter((m) => m.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1].id).not.toBe(prompts[0].id)
+    expect(prompts[1].params).toEqual({
+      sessionId: 's-1',
+      prompt: [{ type: 'text', text: 'hi' }]
+    })
+    expect(events.some((e) => e.type === 'provider_warning' && /retrying/i.test(e.text || ''))).toBe(
+      true
+    )
+
+    child.emit({ jsonrpc: '2.0', id: prompts[1].id as number, result: { stopReason: 'end_turn' } })
+    await new Promise((r) => setTimeout(r, 40))
+    expect(closes).toEqual([{ turnComplete: true, terminalStatus: 'end_turn' }])
+  })
+
+  it('terminalizes once the transient prompt retry budget is exhausted', async () => {
+    const child = new FakeAcpChild()
+    const closes: Array<{ turnComplete: boolean; terminalStatus?: string }> = []
+    baseOptions(child, {
+      transientPromptRetryDelayMs: 0,
+      transientPromptRetryLimit: 1,
+      onClose: (_code, turnComplete, terminalStatus) => {
+        closes.push({ turnComplete, terminalStatus })
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    const failPrompt = (id: number): void =>
+      child.emit({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32603, message: 'Internal error', data: { http_status: 503 } }
+      })
+
+    failPrompt(3)
+    await new Promise((r) => setTimeout(r, 5))
+    const prompts = child.sent().filter((m) => m.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+
+    failPrompt(prompts[1].id as number)
+    await new Promise((r) => setTimeout(r, 20))
+    // Budget spent: no third attempt, and the real RPC failure survives to the
+    // caller so adapters do not normalize it to an empty success.
+    expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(2)
+    expect(child.killed).toBe(true)
+    expect(closes).toEqual([{ turnComplete: false, terminalStatus: 'rpc_error:session/prompt' }])
+  })
+
+  it('never retries a prompt failure that is not transient', async () => {
+    const child = new FakeAcpChild()
+    const closes: Array<{ turnComplete: boolean; terminalStatus?: string }> = []
+    baseOptions(child, {
+      transientPromptRetryDelayMs: 0,
+      onClose: (_code, turnComplete, terminalStatus) => {
+        closes.push({ turnComplete, terminalStatus })
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // Re-authentication is not a wait-and-retry condition; burning the budget
+    // on it only delays the actionable failure.
+    child.emit({
+      jsonrpc: '2.0',
+      id: 3,
+      error: { code: -32000, message: 'Transport channel closed, when Auth(AuthorizationRequired)' }
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
+    expect(child.killed).toBe(true)
+    expect(closes).toEqual([{ turnComplete: false, terminalStatus: 'rpc_error:session/prompt' }])
+  })
+
+  it('abandons a scheduled transient retry when the turn is cancelled', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child, { transientPromptRetryDelayMs: 5 })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 3,
+      error: { code: -32603, message: 'Internal error', data: { http_status: 500 } }
+    })
+    handle.cancel()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
+  })
+
   it('uses the provider formatProcessError for spawn failures', () => {
     const child = new FakeAcpChild()
     const { events } = baseOptions(child, {

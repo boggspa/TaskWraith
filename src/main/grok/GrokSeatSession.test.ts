@@ -155,6 +155,42 @@ describe('GrokSeatSession', () => {
     ])
   })
 
+  it('retries a transient upstream prompt failure without killing the seat', async () => {
+    const child = new FakeAcpChild()
+    const session = new GrokSeatSession({
+      cwd: '/repo',
+      spawnProcess: () => child,
+      transientPromptRetryDelayMs: 0
+    })
+    const first = makeTurn()
+    session.runTurn(first.turn)
+    completeHandshake(child)
+    child.emit({
+      jsonrpc: '2.0',
+      id: 3,
+      error: {
+        code: -32603,
+        message: 'Internal error',
+        data: '{"message":"API error (status 500 Internal Server Error): error: Service temporarily unavailable.","http_status":500}'
+      }
+    })
+    await new Promise((r) => setTimeout(r, 5))
+
+    // Killing the seat here throws away the whole point of a persistent
+    // session for a failure that is upstream of it and self-clearing.
+    expect(child.killed).toBe(false)
+    expect(session.isAlive()).toBe(true)
+    expect(first.ends).toEqual([])
+    const prompts = child.sent().filter((m) => m.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1].id).not.toBe(prompts[0].id)
+
+    child.emit({ jsonrpc: '2.0', id: prompts[1].id as number, result: { stopReason: 'end_turn' } })
+    expect(first.ends).toEqual([
+      { turnComplete: true, terminalStatus: 'end_turn', processExited: false }
+    ])
+  })
+
   it('rejects a concurrent turn without disturbing the in-flight one', () => {
     const child = new FakeAcpChild()
     const session = new GrokSeatSession({ cwd: '/repo', spawnProcess: () => child })

@@ -38,6 +38,7 @@ import {
   type AcpPermissionRequest,
   type AcpPermissionDecision
 } from './AcpProtocol'
+import { isTransientAcpPromptFailure } from './AcpTransientPromptFailure'
 
 /** Minimal child-process surface this client needs (subset of ChildProcess). */
 export interface AcpChildProcess {
@@ -181,6 +182,21 @@ export interface AcpTurnOptions {
   endProcess?: (child: AcpChildProcess) => void
   /** Grace period before the SIGKILL backstop force-kills (default 4000ms). */
   endProcessGraceMs?: number
+  /**
+   * How many times a TRANSIENT `session/prompt` RPC failure may be re-sent on
+   * the same live session before the turn terminalizes (default 2). A provider
+   * blip — xAI 500s are the observed case — leaves the agent process and its
+   * ACP session healthy, so killing the turn discards a recoverable run. Only
+   * failures `isTransientAcpPromptFailure` recognizes are retried; auth and
+   * quota walls terminalize immediately, unchanged.
+   */
+  transientPromptRetryLimit?: number
+  /**
+   * Backoff before each transient prompt retry. A number is used verbatim for
+   * every attempt; a function receives the 1-based attempt number. Default is
+   * 1s then 3s. Tests pass 0.
+   */
+  transientPromptRetryDelayMs?: number | ((attempt: number) => number)
   /**
    * Called once when the child exits. `turnComplete` is true when the prompt
    * reached a terminal stopReason before exit; `terminalStatus` is that raw
@@ -354,6 +370,12 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let lastObservedToolName: string | null = null
   const toolNamesById = new Map<string, string>()
   let cancelRequested = false
+  // Text of the prompt currently in flight — the recovery prompt, not the
+  // original, once recovery has taken over. A transient retry must re-send
+  // whatever actually failed.
+  let inFlightPromptText = ''
+  let transientPromptRetries = 0
+  let transientRetryTimer: ReturnType<typeof setTimeout> | null = null
 
   child.stdin?.on?.('error', (err) => {
     if (isTerminalStdinWriteError(err)) {
@@ -418,6 +440,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     // for trace compatibility; any recovery prompt continues at 5.
     if (nextPromptRpcId === ACP_ID.sessionResume) nextPromptRpcId += 1
     activePromptRpcId = promptRpcId
+    inFlightPromptText = text
     writeRpc(promptRpcId, 'session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text }]
@@ -440,6 +463,51 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     if (promptSent) return
     promptSent = true
     sendPrompt(promptForTurn)
+  }
+
+  const clearTransientRetryTimer = (): void => {
+    if (transientRetryTimer) {
+      clearTimeout(transientRetryTimer)
+      transientRetryTimer = null
+    }
+  }
+
+  /**
+   * Re-send the in-flight prompt on the same live session after a transient
+   * upstream failure. Returns false when the budget is spent or the turn is no
+   * longer eligible, in which case the caller terminalizes as before.
+   */
+  const scheduleTransientPromptRetry = (failureText: string): boolean => {
+    if (cancelRequested || closed || stdinClosed || !sessionId) return false
+    if (!inFlightPromptText) return false
+    const limit = options.transientPromptRetryLimit ?? 2
+    if (transientPromptRetries >= limit) return false
+    const attempt = ++transientPromptRetries
+    const configuredDelay = options.transientPromptRetryDelayMs
+    const delayMs =
+      typeof configuredDelay === 'function'
+        ? configuredDelay(attempt)
+        : typeof configuredDelay === 'number'
+          ? configuredDelay
+          : attempt === 1
+            ? 1000
+            : 3000
+    const retryText = inFlightPromptText
+    // The old rpc id already received its error response; sendPrompt allocates
+    // a fresh one against the same sessionId.
+    options.onEvent({
+      type: 'provider_warning',
+      text: `ACP session/prompt failed: ${failureText} — transient provider failure; retrying (${attempt}/${limit}) in ${Math.round(
+        delayMs / 100
+      ) / 10}s.`
+    })
+    clearTransientRetryTimer()
+    transientRetryTimer = setTimeout(() => {
+      transientRetryTimer = null
+      if (cancelRequested || closed || stdinClosed || turnComplete) return
+      sendPrompt(retryText)
+    }, Math.max(0, delayMs))
+    return true
   }
 
   const applyNextResumeConfig = (result: unknown): void => {
@@ -519,6 +587,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   const endProcess = (): void => {
     if (terminationRequested) return
     terminationRequested = true
+    // A retry that lands after teardown begins would write into a dying stdin.
+    clearTransientRetryTimer()
     try {
       if (options.endProcess) options.endProcess(child)
       else child.kill('SIGINT')
@@ -628,6 +698,18 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
               : message.id === ACP_ID.sessionResume
                 ? 'session/resume'
                 : 'session/prompt'
+        // A transient upstream failure (provider 5xx, transport blip) leaves
+        // this process and its ACP session healthy — only the model call died.
+        // Re-send on the same session rather than discarding a recoverable
+        // turn. Auth and quota walls are excluded by the classifier and fall
+        // straight through to the terminalize path below.
+        if (
+          step === 'session/prompt' &&
+          isTransientAcpPromptFailure(rpcError) &&
+          scheduleTransientPromptRetry(rpcError?.message || 'request error')
+        ) {
+          continue
+        }
         // Preserve the failed lifecycle step through child close. Without a
         // non-success status, provider adapters can normalize an unfinished
         // prompt to success and replace the real RPC failure with an unrelated
@@ -851,6 +933,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     terminalCloseDelivered = true
     closed = true
     clearKillBackstop()
+    clearTransientRetryTimer()
     activePromptRpcId = null
     deniedPromptRpcId = null
     deniedPermissionRequest = null
@@ -946,6 +1029,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     closed: closeSettled,
     cancel: () => {
       cancelRequested = true
+      clearTransientRetryTimer()
       activePromptRpcId = null
       deniedPromptRpcId = null
       deniedPermissionRequest = null

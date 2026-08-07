@@ -41,6 +41,7 @@ import {
   isGrokDeniedToolCancellation,
   type AcpChildProcess
 } from './GrokAcpClient'
+import { isTransientAcpPromptFailure } from '../acp/AcpTransientPromptFailure'
 
 export interface GrokSeatSessionOptions {
   cwd: string
@@ -48,6 +49,16 @@ export interface GrokSeatSessionOptions {
   spawnProcess: () => AcpChildProcess
   /** Raw frame tap (TASKWRAITH_GROK_DEBUG) — never affects behavior. */
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
+  /**
+   * How many times a TRANSIENT `session/prompt` failure may be re-sent on this
+   * live seat before the turn fails and the seat is disposed (default 2). See
+   * AcpTransientPromptFailure: a provider 5xx leaves the seat's process and ACP
+   * session healthy, so disposing it discards the persistence this class exists
+   * to provide. Auth and quota walls still dispose immediately.
+   */
+  transientPromptRetryLimit?: number
+  /** Backoff before each transient retry (default 1s then 3s). Tests pass 0. */
+  transientPromptRetryDelayMs?: number | ((attempt: number) => number)
 }
 
 export interface GrokSeatTurnOptions {
@@ -76,6 +87,9 @@ interface ActiveTurn extends GrokSeatTurnOptions {
   deniedPromptRpcId?: number
   deniedToolRecoveryAttempted: boolean
   cancelRequested: boolean
+  /** Text of the prompt in flight — the recovery prompt once recovery ran. */
+  inFlightPrompt: string
+  transientRetries: number
 }
 
 const INITIALIZE_RPC_ID = 1
@@ -103,6 +117,8 @@ export class GrokSeatSession {
   private activeTurn: ActiveTurn | null = null
   /** A turn accepted before session/new resolved, waiting to send its prompt. */
   private pendingPromptTurn: ActiveTurn | null = null
+  /** Pending transient-retry backoffs, cleared on cancel/dispose/death. */
+  private readonly transientRetryTimers = new Set<ReturnType<typeof setTimeout>>()
 
   constructor(options: GrokSeatSessionOptions) {
     this.options = options
@@ -141,6 +157,7 @@ export class GrokSeatSession {
 
   dispose(): void {
     if (!this.aliveFlag) return
+    this.clearTransientRetryTimers()
     this.child.kill('SIGINT')
   }
 
@@ -155,7 +172,9 @@ export class GrokSeatSession {
       promptRpcId: this.nextRpcId++,
       ended: false,
       deniedToolRecoveryAttempted: false,
-      cancelRequested: false
+      cancelRequested: false,
+      inFlightPrompt: turn.prompt,
+      transientRetries: 0
     }
     if (!this.aliveFlag) {
       // Callers acquire via the registry (which respawns dead sessions), so a
@@ -182,6 +201,7 @@ export class GrokSeatSession {
       cancel: () => {
         active.cancelRequested = true
         active.deniedPromptRpcId = undefined
+        this.clearTransientRetryTimers()
         if (this.sessionId && !active.ended) {
           this.writeRpc(null, 'session/cancel', { sessionId: this.sessionId })
         }
@@ -208,16 +228,62 @@ export class GrokSeatSession {
   private handleProcessGone(): void {
     if (!this.aliveFlag) return
     this.aliveFlag = false
+    this.clearTransientRetryTimers()
     const turn = this.activeTurn || this.pendingPromptTurn
     if (turn) this.endTurn(turn, false, 'seat-session-exited', true)
   }
 
   private sendPrompt(turn: ActiveTurn, prompt = turn.prompt): void {
     if (turn.cancelRequested || turn.ended || !this.aliveFlag || this.stdinClosed) return
+    turn.inFlightPrompt = prompt
     this.writeRpc(turn.promptRpcId, 'session/prompt', {
       sessionId: this.sessionId,
       prompt: [{ type: 'text', text: prompt }]
     })
+  }
+
+  /**
+   * Re-send the in-flight prompt on this same live seat after a transient
+   * upstream failure. Returns false when the budget is spent or the seat is no
+   * longer eligible, in which case the caller disposes as before.
+   */
+  private scheduleTransientPromptRetry(turn: ActiveTurn, failureText: string): boolean {
+    if (turn.cancelRequested || turn.ended || !this.aliveFlag || this.stdinClosed) return false
+    if (!this.sessionId || !turn.inFlightPrompt) return false
+    const limit = this.options.transientPromptRetryLimit ?? 2
+    if (turn.transientRetries >= limit) return false
+    const attempt = ++turn.transientRetries
+    const configuredDelay = this.options.transientPromptRetryDelayMs
+    const delayMs =
+      typeof configuredDelay === 'function'
+        ? configuredDelay(attempt)
+        : typeof configuredDelay === 'number'
+          ? configuredDelay
+          : attempt === 1
+            ? 1000
+            : 3000
+    const retryText = turn.inFlightPrompt
+    turn.onEvent({
+      type: 'provider_warning',
+      text: `Grok ACP session/prompt failed: ${failureText} — transient provider failure; retrying (${attempt}/${limit}) in ${
+        Math.round(delayMs / 100) / 10
+      }s.`
+    })
+    // The failed rpc id already got its error response; take a fresh one so a
+    // late duplicate of the old response cannot terminate the retried turn.
+    turn.promptRpcId = this.nextRpcId++
+    turn.deniedPromptRpcId = undefined
+    const timer = setTimeout(() => {
+      this.transientRetryTimers.delete(timer)
+      this.sendPrompt(turn, retryText)
+    }, Math.max(0, delayMs))
+    this.transientRetryTimers.add(timer)
+    return true
+  }
+
+  private clearTransientRetryTimers(): void {
+    for (const timer of this.transientRetryTimers) clearTimeout(timer)
+    this.transientRetryTimers.clear()
   }
 
   private handleStdout(chunkText: string): void {
@@ -249,6 +315,22 @@ export class GrokSeatSession {
               : 'session/prompt'
         const detail = typeof rpcError?.data === 'string' ? ` (${rpcError.data})` : ''
         const turn = this.activeTurn || this.pendingPromptTurn
+        // A transient upstream failure says nothing about THIS seat's state:
+        // the process and the ACP session are both intact, only the model call
+        // behind them failed. Retry on the same session rather than throwing
+        // away the persistence a seat exists to hold. Auth and quota walls are
+        // excluded by the classifier and still dispose immediately.
+        if (
+          step === 'session/prompt' &&
+          this.activeTurn &&
+          isTransientAcpPromptFailure(rpcError) &&
+          this.scheduleTransientPromptRetry(
+            this.activeTurn,
+            rpcError?.message || 'request error'
+          )
+        ) {
+          continue
+        }
         turn?.onEvent({
           type: 'provider_warning',
           text: `Grok ACP ${step} failed: ${rpcError?.message || 'request error'}${detail}`
