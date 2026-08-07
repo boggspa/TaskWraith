@@ -67,7 +67,8 @@ import type { ChatRecord, ChatRun } from './types'
 
 /* ── helpers ──────────────────────────────────────────────────────────── */
 
-const chatFilePath = (chatId: string): string => path.join(userDataPath, 'chats', `${chatId}.json`)
+const chatFilePath = (chatId: string): string =>
+  path.resolve(userDataPath, 'chats', `${chatId}.json`)
 
 /** A run that makes deriveSaveFlushReason return 'normal'. */
 function runningRun(runId: string): ChatRun {

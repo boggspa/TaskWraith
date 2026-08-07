@@ -48,7 +48,9 @@ describe('ExternalUsageSnapshot', () => {
     await persistExternalUsageSnapshot(snapshotPath, { scannedAt, records })
 
     await expect(loadExternalUsageSnapshot(snapshotPath)).resolves.toEqual({ scannedAt, records })
-    expect((await stat(snapshotPath)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect((await stat(snapshotPath)).mode & 0o777).toBe(0o600)
+    }
     expect(await readFile(snapshotPath, 'utf8')).not.toContain('/Users/')
   })
 

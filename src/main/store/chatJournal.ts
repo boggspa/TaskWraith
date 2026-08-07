@@ -272,7 +272,10 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
 
     try {
       fs.writeFileSync(tempPath, data, { encoding: 'utf-8', mode: 0o600 })
-      const fd = fs.openSync(tempPath, 'r')
+      // Windows does not allow fsync on a read-only descriptor. Opening the
+      // private temp file read/write preserves the durability barrier on every
+      // supported platform.
+      const fd = fs.openSync(tempPath, 'r+')
       fs.fsyncSync(fd)
       fs.closeSync(fd)
       fs.renameSync(tempPath, filePath)

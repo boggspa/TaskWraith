@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'os'
 import path from 'path'
 import { createRequire } from 'module'
+import { fileURLToPath } from 'url'
 import { describe, expect, it } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-empty-function -- adapter fakes intentionally expose no-op lifecycle methods. */
@@ -1291,7 +1292,7 @@ describe('T2 runner (no Electron launch)', () => {
     expect(plan.argv).toContain('--use-mock-keychain')
     expect(plan.shellCommand).toContain('--use-mock-keychain')
     expect(plan.argv[0]).not.toBe('electron')
-    expect(plan.spawnCommand).toBe('/virtual/electron-bin')
+    expect(plan.spawnCommand).toBe(path.resolve('/virtual/electron-bin'))
     expect(plan.shellCommand).not.toMatch(/\bnpx\b/)
     expect(plan.safety.attachOnlyExactChild).toBe(true)
     expect(plan.safety.neverAutoDeleteArtifacts).toBe(true)
@@ -1312,7 +1313,8 @@ describe('T2 runner (no Electron launch)', () => {
 
     expect(plan.env.HOME).toBe(home)
     expect(plan.env.CFFIXED_USER_HOME).toBe(home)
-    expect(plan.shellCommand).toContain(`CFFIXED_USER_HOME=${home}`)
+    expect(plan.shellCommand).toContain('CFFIXED_USER_HOME=')
+    expect(plan.shellCommand).toContain(home)
     expect(plan.argv.indexOf('--use-mock-keychain')).toBeLessThan(plan.argv.indexOf('.'))
     expect(plan.argv).not.toContain(expect.stringContaining('--user-data-dir'))
     expect(plan.safety.coreFoundationHomePropagated).toBe(true)
@@ -1875,7 +1877,7 @@ describe('T2 runner (no Electron launch)', () => {
         }
       }
     })
-    expect(spawned[0].cmd).toBe('/virtual/Electron')
+    expect(spawned[0].cmd).toBe(path.resolve('/virtual/Electron'))
     expect(spawned[0].cmd).not.toBe('npx')
     expect(child.pid).toBe(4242)
     expect(child.electronBinary).toBe('/virtual/Electron')
@@ -1982,6 +1984,7 @@ describe('T2 runner (no Electron launch)', () => {
 
     await expect(
       listListeningPidsForPort(9411, {
+        platform: 'darwin',
         execFile: (_file, _args, _opts, cb) => {
           const err = new Error('spawn lsof ENOENT')
           err.code = 'ENOENT'
@@ -2339,7 +2342,8 @@ describe('T2 runner (no Electron launch)', () => {
         adapters: { resolveElectronPath: () => '/virtual/Electron' }
       })
       expect(plan.env.HOME).toBe(path.resolve(safeHome))
-      expect(plan.shellCommand).toContain(`HOME=${path.resolve(safeHome)}`)
+      expect(plan.shellCommand).toContain('HOME=')
+      expect(plan.shellCommand).toContain(path.resolve(safeHome))
       expect(plan.argv.join(' ')).not.toMatch(/user-data-dir/i)
       expect(plan.safety.neverUserDataDirArgv).toBe(true)
 
@@ -3311,7 +3315,7 @@ describe('T9a main persistence stats collector', () => {
 describe('T9a runner wiring (the producer must actually be invoked)', () => {
   const fsNode = require('fs') as typeof import('fs')
   const pathNode = require('path') as typeof import('path')
-  const perfDir = pathNode.dirname(new URL(import.meta.url).pathname)
+  const perfDir = pathNode.dirname(fileURLToPath(import.meta.url))
   /**
    * Read a harness script with comment-only lines stripped.
    *

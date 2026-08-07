@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -45,9 +45,10 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
       toolPermission: 'request-review'
     })
     const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const workspacePath = resolve('/Users/test/Project')
     const lease = await coordinator.acquire({
       settingsPath,
-      workspacePath: '/Users/test/Project',
+      workspacePath,
       allowShell: true,
       allowWrite: true
     })
@@ -56,9 +57,9 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     expect(installed.permissions).toEqual({
       allow: [
         'command(git status)',
-        'read_file(/Users/test/Project)',
+        `read_file(${workspacePath})`,
         ...AGY_READ_ONLY_SHELL_PROJECTION_RULES.filter((rule) => rule !== 'command(git status)'),
-        'write_file(/Users/test/Project)',
+        `write_file(${workspacePath})`,
         'command(*)'
       ],
       ask: ['command(rm)'],
@@ -74,16 +75,17 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
   it('installs the read-only shell projection under a fully read-only posture without shell or write widening', async () => {
     const { settingsPath, original } = await makeSettings({ model: 'gemini-3.1-pro-high' })
     const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const workspacePath = resolve('/Users/test/Project')
     const lease = await coordinator.acquire({
       settingsPath,
-      workspacePath: '/Users/test/Project',
+      workspacePath,
       allowShell: false,
       allowWrite: false
     })
 
     const installed = JSON.parse(await readFile(settingsPath, 'utf8'))
     expect(installed.permissions.allow).toEqual([
-      'read_file(/Users/test/Project)',
+      `read_file(${workspacePath})`,
       ...AGY_READ_ONLY_SHELL_PROJECTION_RULES
     ])
     expect(installed.permissions.allow).toContain('command(git log)')
@@ -284,9 +286,11 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
   it('serializes incompatible global overlays and lets a queued cancellation leave cleanly', async () => {
     const { settingsPath } = await makeSettings({ model: 'gemini-3.1-pro-high' })
     const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const firstWorkspacePath = resolve('/Users/test/First')
+    const secondWorkspacePath = resolve('/Users/test/Second')
     const first = await coordinator.acquire({
       settingsPath,
-      workspacePath: '/Users/test/First',
+      workspacePath: firstWorkspacePath,
       allowShell: true,
       allowWrite: false
     })
@@ -305,7 +309,7 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     const secondPending = coordinator
       .acquire({
         settingsPath,
-        workspacePath: '/Users/test/Second',
+        workspacePath: secondWorkspacePath,
         allowShell: false,
         allowWrite: false
       })
@@ -319,8 +323,8 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     await first.release()
     const second = await secondPending
     const installed = JSON.parse(await readFile(settingsPath, 'utf8'))
-    expect(installed.permissions.allow).toContain('read_file(/Users/test/Second)')
-    expect(installed.permissions.allow).not.toContain('read_file(/Users/test/First)')
+    expect(installed.permissions.allow).toContain(`read_file(${secondWorkspacePath})`)
+    expect(installed.permissions.allow).not.toContain(`read_file(${firstWorkspacePath})`)
     expect(installed.permissions.allow).not.toContain('command(*)')
     expect(installed).not.toHaveProperty('toolPermission')
     await second.release()

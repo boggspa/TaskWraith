@@ -99,7 +99,6 @@ describe('GitWorkspaceStats', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.data).toMatchObject({
-      repoRoot: repo,
       coherent: true,
       totalCommits: 2,
       localBranchCount: 2,
@@ -110,6 +109,7 @@ describe('GitWorkspaceStats', () => {
       latestTag: 'v0.1.0',
       commitsSinceLatestTag: 1
     })
+    expect(realpathSync(result.data.repoRoot)).toBe(realpathSync(repo))
     expect(result.data.historySpanDays).toBeGreaterThanOrEqual(1)
     expect(result.data.commitsPerActiveDay).toBe(2)
     expect(result.data.latestCommit?.subject).toBe('Add code')

@@ -12,7 +12,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   HOST_PROTOCOL_VERSION,
@@ -660,9 +660,8 @@ describe('HostProjectionClient', () => {
         }
       }
     })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await vi.waitFor(() => expect(client.cachedSnapshot?.freshness).toBe('stale'))
     expect(deltasEmitted).toBe(false)
-    expect(client.cachedSnapshot?.freshness).toBe('stale')
     expect(client.connected).toBe(true)
   })
 })

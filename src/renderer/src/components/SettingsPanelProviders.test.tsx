@@ -227,7 +227,13 @@ describe('SettingsPanel provider cards', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps({})} />)
 
     expect(html).toContain('Run the Codex install command in Terminal')
-    expect(html).toContain('Run the GitHub CLI (macOS) install command in Terminal')
+    const expectedHostCliPlatform =
+      typeof navigator !== 'undefined' && /Win/i.test(navigator.platform || '')
+        ? 'Windows'
+        : 'macOS'
+    expect(html).toContain(
+      `Run the GitHub CLI (${expectedHostCliPlatform}) install command in Terminal`
+    )
     expect(html).toContain('Run the Qwen 3 (4B Param) pull command in Terminal')
     expect(html).toContain('>Install<')
   })

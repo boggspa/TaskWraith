@@ -267,7 +267,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(validateLaneWriteScope).toHaveBeenCalledWith('run-1', {
       toolName: 'write_file',
       workspacePath: resolve('/worktree'),
-      resourcePaths: [resourcePath],
+      resourcePaths: [resolve(resourcePath)],
       resourcePath
     })
     expect(markLaneBlocked).not.toHaveBeenCalled()
@@ -427,7 +427,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(validateLaneWriteScope).toHaveBeenCalledWith('run-1', {
       toolName: 'write_file',
       workspacePath: resolve('/worktree'),
-      resourcePaths: ['/worktree/file.txt'],
+      resourcePaths: [resolve('/worktree/file.txt')],
       resourcePath: '/worktree/file.txt'
     })
     expect(acquire).toHaveBeenCalledWith({

@@ -33,8 +33,8 @@ function readUtf8(bytes, label) {
 
 function normalizeArchivePath(value) {
   return String(value || '')
-    .replace(/^\/+/, '')
     .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
 }
 
 function safePackageRelativePath(value, label) {

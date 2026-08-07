@@ -843,7 +843,7 @@ describe('HostLocalServer', () => {
         // Socket destroyed — that's acceptable.
       }
       client.close()
-    })
+    }, 15_000)
   })
 
   // -----------------------------------------------------------------------

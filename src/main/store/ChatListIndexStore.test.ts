@@ -1,4 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const preservedIndexStat = vi.hoisted(() => ({
+  path: '',
+  value: null as unknown
+}))
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: (...args: Parameters<typeof actual.statSync>) => {
+      if (preservedIndexStat.value && args[0] === preservedIndexStat.path) {
+        return preservedIndexStat.value as never
+      }
+      return actual.statSync(...args)
+    }
+  }
+})
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -98,12 +116,18 @@ describe('ChatListIndexStore cache + projection', () => {
     const st = fs.statSync(indexPath)
     const corrupt = Buffer.alloc(st.size, 0x20) // spaces, same size, not valid JSONL
     fs.writeFileSync(indexPath, corrupt)
-    // Fractional seconds keep mtimeMs equality (Date-only utimes truncates).
-    fs.utimesSync(indexPath, st.atimeMs / 1000, st.mtimeMs / 1000)
-
-    expect(store.isCacheValid()).toBe(true)
-    const second = store.readAll()
-    expect(second['chat-a']?.title).toBe('First')
+    // Keep the filesystem timestamp contract under test without depending on
+    // the platform's mtime precision (Windows can round synthetic utimes).
+    preservedIndexStat.path = indexPath
+    preservedIndexStat.value = st
+    try {
+      expect(store.isCacheValid()).toBe(true)
+      const second = store.readAll()
+      expect(second['chat-a']?.title).toBe('First')
+    } finally {
+      preservedIndexStat.path = ''
+      preservedIndexStat.value = null
+    }
   })
 
   it('cache hit preserves summary fields without needing the summary side-file', () => {
@@ -136,16 +160,21 @@ describe('ChatListIndexStore cache + projection', () => {
     const indexPath = path.join(dir, 'chat-list-index.jsonl')
     const st = fs.statSync(indexPath)
     fs.writeFileSync(indexPath, Buffer.alloc(st.size, 0x20))
-    fs.utimesSync(indexPath, st.atimeMs / 1000, st.mtimeMs / 1000)
+    preservedIndexStat.path = indexPath
+    preservedIndexStat.value = st
+    try {
+      expect(store.isCacheValid()).toBe(true)
+      const entry = store.readEntry('chat-a')
+      expect(entry?.title).toBe('Alpha')
 
-    expect(store.isCacheValid()).toBe(true)
-    const entry = store.readEntry('chat-a')
-    expect(entry?.title).toBe('Alpha')
-
-    // Defensive copy: mutating the return must not poison the cache.
-    if (entry) entry.title = 'MUTATED'
-    expect(store.readEntry('chat-a')?.title).toBe('Alpha')
-    expect(store.readEntry('missing')).toBeUndefined()
+      // Defensive copy: mutating the return must not poison the cache.
+      if (entry) entry.title = 'MUTATED'
+      expect(store.readEntry('chat-a')?.title).toBe('Alpha')
+      expect(store.readEntry('missing')).toBeUndefined()
+    } finally {
+      preservedIndexStat.path = ''
+      preservedIndexStat.value = null
+    }
   })
 
   /**

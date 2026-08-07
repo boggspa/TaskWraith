@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalize } from 'node:path'
 import {
   decodeTaskWraithHostDiscovery,
   TASKWRAITH_HOST_DISCOVERY_FILE,
@@ -98,8 +99,8 @@ describe('TaskWraith Host v2 paths', () => {
     const userData = '/tmp/host-test'
     expect(taskWraithHostDiscoveryPath(userData)).toBe(taskWraithHostDiscoveryPath(userData))
     expect(taskWraithHostTokenPath(userData)).toBe(taskWraithHostTokenPath(userData))
-    expect(taskWraithHostDiscoveryPath(userData)).toContain(userData)
-    expect(taskWraithHostTokenPath(userData)).toContain(userData)
+    expect(taskWraithHostDiscoveryPath(userData)).toContain(normalize(userData))
+    expect(taskWraithHostTokenPath(userData)).toContain(normalize(userData))
   })
 
   // -----------------------------------------------------------------------

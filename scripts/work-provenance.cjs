@@ -789,11 +789,16 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
     }
     const adopter = currentMarkers.find((entry) => {
       const claimed = (entry.claimedDirty || []).find((candidate) => candidate.path === origin.path)
+      const baseline = (entry.baselineDirty || []).find(
+        (candidate) => candidate.path === origin.path
+      )
       const startedMs = Date.parse(entry.marker?.started || entry.firstObservedAt || '')
+      const changedSinceObservation =
+        baseline && !sameFingerprint(baseline.fingerprint, claimed?.fingerprint)
       return (
         claimed &&
         sameFingerprint(claimed.fingerprint, live.fingerprint) &&
-        Number(claimed.mtimeMs) > startedMs &&
+        (changedSinceObservation || Number(claimed.mtimeMs) > startedMs) &&
         actorIdentity(markerActor({ file: entry.file, ...entry.marker }, entry.observationId)) !==
           actorIdentity(origin.actor)
       )

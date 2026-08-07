@@ -14,7 +14,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -53,10 +53,11 @@ interface WorkerIpcMessage {
 }
 
 function workerModulePath(): string {
-  return path.resolve(
+  const resolved = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     'WorkspaceLockParallelMissionProcess.worker.ts'
   )
+  return process.platform === 'win32' ? pathToFileURL(resolved).href : resolved
 }
 
 function jitiRegisterSpecifier(): string {
