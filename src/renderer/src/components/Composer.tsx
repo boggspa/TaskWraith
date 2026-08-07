@@ -100,7 +100,6 @@ import {
   rebaseComposerParticipantMentionSelections,
   type ComposerParticipantMentionSelection
 } from '../lib/composerParticipantMentionSelection'
-import { withExplicitEnsembleDmTarget } from '../lib/runPromptDmScope'
 import { readPendingProviderChange } from '../../../main/providerChangeQueue'
 import {
   hasSlashCommandPlaceholders,
@@ -114,7 +113,7 @@ import type {
 } from '../lib/ComposerSlashCommands'
 import { parseSideSlashCommand } from '../lib/SideSlashCommand'
 import type { SideSlashCommand } from '../lib/SideSlashCommand'
-import { lastRetryableEnsembleUserPrompt } from '../lib/ensembleRetryPrompt'
+import { resolveEnsembleParticipantRetryDispatch } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
 import {
@@ -2740,38 +2739,34 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       void window.api.skipEnsembleReadFanout(currentChat.appChatId)
                     }}
                     onRetryParticipant={(participantId) => {
-                      // 1.0.4-AT7 — re-dispatch the named participant
-                      // as a DM with the chat's last user prompt.
-                      // The orchestrator already supports DM scoping
-                      // (`runEnsembleRound({ dmTargetParticipantId })`)
-                      // so this fires a brand-new round limited to
-                      // the failed participant — they get one more
-                      // try without rerunning the whole panel.
-                      // Fall back to a quiet info log when there's
-                      // no prior user prompt to retry against.
                       if (!currentChat) return
-                      const retryPrompt = lastRetryableEnsembleUserPrompt(currentChat.messages)
-                      if (!retryPrompt) {
-                        setRawLogs((prev) => [
-                          ...prev,
-                          {
-                            type: 'info',
-                            content: 'Retry: no prior user prompt on this chat to re-dispatch with.'
-                          }
-                        ])
+                      // A live round is JOINED, not replaced: the retry steers
+                      // and MAIN opens an additive User Fan-Out lane for the
+                      // tagged seat. Only an idle chat gets a fresh DM round.
+                      // See `resolveEnsembleParticipantRetryDispatch`.
+                      const dispatch = resolveEnsembleParticipantRetryDispatch({
+                        chat: currentChat,
+                        participantId
+                      })
+                      if (dispatch.kind === 'none') {
+                        setRawLogs((prev) => [...prev, { type: 'info', content: dispatch.reason }])
+                        return
+                      }
+                      if (dispatch.kind === 'steer') {
+                        void window.api.runEnsembleRound({
+                          chatId: currentChat.appChatId,
+                          prompt: dispatch.prompt,
+                          mode: 'steer'
+                        })
                         return
                       }
                       void window.api.runEnsembleRound({
                         chatId: currentChat.appChatId,
-                        prompt: withExplicitEnsembleDmTarget({
-                          prompt: retryPrompt,
-                          participantId,
-                          participants: currentChat.ensemble?.participants
-                        }),
+                        prompt: dispatch.prompt,
                         mode: 'normal',
                         concurrentMode: false,
                         fanoutPolicy: 'off',
-                        dmTargetParticipantId: participantId
+                        dmTargetParticipantId: dispatch.dmTargetParticipantId
                       })
                     }}
                     onWakeNowParticipant={(wakeupId) => {
