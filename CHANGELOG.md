@@ -6,6 +6,27 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## Unreleased
+
+Post-`v1.9.3` source-ahead. Ensemble Continuous routing landed here after the
+tagged tip; treat the Ensemble / lock floor as **done until real issues hit** —
+do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
+
+### Ensemble Continuous ownership (source-ahead)
+
+- **Continuous Boss ownership.** In Continuous mode, an acting Boss/Captain with remaining serial seats must make an explicit routing decision (`select_participants` / skip / summon, targeted yield, unique foreground `@mention`, or accepted fan-out) before ordinary writers advance; a quiet answer re-summons authority. Continuous pass 1 may select/skip; Turn-bound still preserves the full first pass.
+- **Goal-terminal queue pre-emption.** When a goal completes, blocks, or pauses mid-round, remaining ordinary serial seats are skipped in Continuous and Turn-bound alike, with the skipped status persisted on the durable round projection.
+- **Authority-directed Continuous auto-continue.** When `assign_work` was never used, Continuous continuation passes prefer directed seats (prior speakers, fan-out/yield-return targets) plus Boss/acting Captain instead of re-dispatching the full roster; an empty admit set fail-opens to the full roster.
+- **User Fan-Out steer / retry.** Composer steer and participant Retry open or continue a User Fan-Out lane instead of rewriting the active round or spawning a fresh round.
+- **Transcript / close-out polish.** Task Complete epic nesting, per-seat working rows, stream-reveal and paint fencing, iPad transcript/composer/fan-out fixes, ACP transient prompt retry, and history-deletion / reap performance.
+
+### Remaining focus for 1.9.4 (not feature construction)
+
+- **Host Arc** — Wave 4 client cutover still in flight (`docs/HOST_ARC_STATUS.md`); Waves 5–6 not started.
+- **Channels** — P1 product path still behind the two-real-Mac People transport proof; no P2 human Chat UI yet.
+- **Real-world QA** — soak the landed Ensemble / lock / Canvas / Host surfaces; fix only what breaks.
+- **App Store** — maintainer-owned submission / review loop (not an engineering reopen).
+
 ## 1.9.3 - 2026-08-07
 
 1.9.3 is a broad platform-integration and release-hardening cycle. The Host
@@ -24,9 +45,6 @@ command that requested them instead of relying on loose UI state.
 ### Ensemble scales without losing the thread
 
 - **50-seat rosters.** Ensemble capacity now reaches 50 participants across desktop, iOS, presets, bridge validation, agent schemas, and orchestration. The transcript's compact participant filter rail keeps that full roster to two 25-seat columns.
-- **Continuous Boss ownership.** In Continuous mode, an acting Boss/Captain with remaining serial seats must make an explicit routing decision (`select_participants` / skip / summon, targeted yield, unique foreground `@mention`, or accepted fan-out) before ordinary writers advance; a quiet answer re-summons authority. Continuous pass 1 may select/skip; Turn-bound still preserves the full first pass.
-- **Goal-terminal queue pre-emption.** When a goal completes, blocks, or pauses mid-round, remaining ordinary serial seats are skipped in Continuous and Turn-bound alike, with the skipped status persisted on the durable round projection.
-- **Authority-directed Continuous auto-continue.** When `assign_work` was never used, Continuous continuation passes prefer directed seats (prior speakers, fan-out/yield-return targets) plus Boss/acting Captain instead of re-dispatching the full roster; an empty admit set fail-opens to the full roster.
 - **Fan-out remains legible.** Two-column lane cards, bounded result viewports, agent-built roster rows, working-seat navigation, and settled question/answer preservation keep a busy round readable while it is still moving.
 - **Continuity survives change.** Mid-round steering and queue delivery now absorb late settlements without cancelling live work; seat controls, permissions, effort, and Fast carry across provider changes; and blackboard workflows recover cleanly across supported native tools.
 

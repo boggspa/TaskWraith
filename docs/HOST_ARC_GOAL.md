@@ -90,24 +90,18 @@ No version bump, release, publication, push or notarisation unless separately re
 
 ## CURRENT STATUS
 
-**As of 2026-08-04 (Wave 2E-2A/2E-2B sequencing):**
+**As of 2026-08-07 — live tracker is [`HOST_ARC_STATUS.md`](./HOST_ARC_STATUS.md).** Do not inherit the Wave 2E-era snapshot below this pointer; STATUS is authoritative for SHAs, AC partials, and remainders.
 
-- **Overall completeness:** ~45-50%
-- **Wave 0:** ✅ Complete (baseline captured)
-- **Wave 1:** ✅ Complete (architecture proposal)
-- **Wave 2A–2B:** ✅ Complete (protocol types, durable stores, bootstrap, receipts, projection, fingerprint, decision map)
-- **Wave 2D-1:** ✅ Complete (routing, identity, arguments)
-- **Wave 2D-2:** ✅ Complete (snapshot apply, deferred bridge, delta publisher)
-- **Wave 2E-1:** ✅ **PASS** (HostSession + HostBridgeCommandExecutor, 5-reviewer formal PASS)
-- **Wave 2E-2A:** ✅ **PASS** (commandId binding, session rebind refresh, read-alias pre-gate, receipt position semantics and recovery composition)
-- **Wave 2E-2B:** 🔄 **OPEN**
-  - ✅ 4/5 lane substrates and `HostCommandMutationPipeline` (`8e5c75677`) are landed and verified
-  - 🔄 Next sequence: `HostDeferredCommandEnvelopeResolver.verifyCommand` split → `HostDeferredAllowPipeline` → deferred branch in `AppStoreHostAuthority`
-- **Wave 3–6:** Not started
+- **Overall completeness:** ~55–65% of the Host arc (Waves 3–6); Wave 4 plumbing alone is further ahead (~75–85%).
+- **Wave 0–2E (incl. 2E-2B deferred allow):** ✅ **PASS / CLOSED**
+- **Wave 3** (dedicated Host + R4' + Electron publish): ✅ **CLOSED**
+- **Wave 4** (TUI → Desktop → iOS): 🔄 **ACTIVE** — TUI live round trip, Desktop Host leaves (providers / awaiting-approvals honesty), and command **capability** are landed. **Remainders:** AppStore metadata cutover (transcripts stay AppStore by ruling), source population of seven from-zero empty families, iOS Host-shaped path.
+- **Wave 5** (`.twmission` flight recorder) / **Wave 6** (adversarial closeout): ❌ **NOT STARTED**
+- **AC1–6:** stay **PARTIAL** — publish and leaves do not retire AppStore authority.
 
-**Current activity:** The open slice is the resolver verification split to prevent double execution before allow/complete composition. After that, the deferred-allow adapter and authority branch remain to be integrated, then Wave 3+ client cutover work begins.
+**Product context (1.9.3 → 1.9.4):** Ensemble orchestration and exact-lock contention admission are a **done floor** outside this arc — do not reopen them as Host work. Parallel remaining product exits are Channels (still proof-gated) and real-world QA; App Store submission is maintainer-owned.
 
-**See [`HOST_ARC_STATUS.md`](./HOST_ARC_STATUS.md) for detailed inventory, test coverage, gate status, commit links and active lane assignments.**
+**See [`HOST_ARC_STATUS.md`](./HOST_ARC_STATUS.md) for detailed inventory, test coverage, gate status, commit links and DONE-only Cap lands.**
 
 ---
 
