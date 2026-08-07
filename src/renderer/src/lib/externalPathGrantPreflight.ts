@@ -1,4 +1,5 @@
 import type { ChatRecord, ExternalPathGrant, ProviderId } from '../../../main/store/types'
+import { isChatBoundDurableExternalPathGrant } from '../../../main/ExternalPathGrantBinding'
 import {
   EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS,
   isExternalPathGrantDispatchProvider
@@ -65,11 +66,40 @@ function isPersistedDispatchGrant(grant: ExternalPathGrant): boolean {
   )
 }
 
+/** Prior consent exists for this path even if the primary-workspace binding is stale. */
+export function pathHasPriorConsentExternalPathGrant(
+  grants: ExternalPathGrant[],
+  path: string
+): boolean {
+  const normalized = path.trim()
+  if (!normalized) return false
+  return grants.some(
+    (grant) => isPersistedDispatchGrant(grant) && grant.path.trim() === normalized
+  )
+}
+
 function grantSatisfiesAccess(
   grant: ExternalPathGrant,
   requiredAccess: ExternalPathGrantGap['access']
 ): boolean {
   return requiredAccess === 'read' || grant.access === 'write'
+}
+
+function grantCoversProviderPath(input: {
+  chat: ChatRecord | null | undefined
+  grant: ExternalPathGrant
+  provider: ProviderId
+  path: string
+  access: ExternalPathGrantGap['access']
+}): boolean {
+  if (!input.chat) return false
+  if (!isPersistedDispatchGrant(input.grant)) return false
+  if (input.grant.provider !== input.provider) return false
+  if (input.grant.path.trim() !== input.path) return false
+  if (!grantSatisfiesAccess(input.grant, input.access)) return false
+  // Stale primary-workspace / chat binding must not count as coverage —
+  // remint or prompt instead of dispatching grants main will refuse.
+  return isChatBoundDurableExternalPathGrant(input.grant, input.chat)
 }
 
 export function missingExternalPathGrantProviders(input: {
@@ -84,12 +114,14 @@ export function missingExternalPathGrantProviders(input: {
   if (!path || targets.length === 0) return []
   return targets.filter(
     (provider) =>
-      !input.grants.some(
-        (grant) =>
-          isPersistedDispatchGrant(grant) &&
-          grant.provider === provider &&
-          grant.path.trim() === path &&
-          grantSatisfiesAccess(grant, requiredAccess)
+      !input.grants.some((grant) =>
+        grantCoversProviderPath({
+          chat: input.chat,
+          grant,
+          provider,
+          path,
+          access: requiredAccess
+        })
       )
   )
 }
@@ -111,15 +143,20 @@ export function findExternalPathGrantGaps(input: {
     const access = pathGrants.some((grant) => grant.access === 'write') ? 'write' : 'read'
     const missingProviders = targets.filter(
       (provider) =>
-        !input.grants.some(
-          (grant) =>
-            isPersistedDispatchGrant(grant) &&
-            grant.provider === provider &&
-            grant.path.trim() === path &&
-            grantSatisfiesAccess(grant, access)
+        !input.grants.some((grant) =>
+          grantCoversProviderPath({
+            chat: input.chat,
+            grant,
+            provider,
+            path,
+            access
+          })
         )
     )
     if (missingProviders.length === 0) continue
+    // pick-and-persist / repair always remints the full active provider set
+    // for the path (one consent → every seat). missingProviders names who
+    // still lacks executable coverage so the card can explain the gap.
     gaps.push({ path, access, missingProviders })
   }
 

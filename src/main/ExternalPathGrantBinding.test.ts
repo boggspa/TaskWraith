@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EXTERNAL_PATH_GRANT_BINDING_VERSION,
   hasCanonicalExternalPathGrantMembership,
+  isChatBoundDurableExternalPathGrant,
   isExecutableExternalPathGrantDuration,
   matchesExternalPathGrantExecutionAuthority,
   matchesExternalPathGrantRunBinding,
@@ -49,6 +50,16 @@ function boundGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPathGra
 }
 
 describe('external path grant v2 binding', () => {
+  it('treats durable grants as chat-bound only when primary workspace id still matches', () => {
+    const grant = boundGrant()
+    expect(
+      isChatBoundDurableExternalPathGrant(grant, { appChatId: 'chat-a', workspaceId: 'ws-a' })
+    ).toBe(true)
+    expect(
+      isChatBoundDurableExternalPathGrant(grant, { appChatId: 'chat-a', workspaceId: 'ws-readded' })
+    ).toBe(false)
+  })
+
   it('accepts the originating chat and rejects A-to-B cross-chat replay', () => {
     const grant = boundGrant()
     expect(verifyExternalPathGrantSignature(SECRET, grant, canonicalPath)).toBe(true)

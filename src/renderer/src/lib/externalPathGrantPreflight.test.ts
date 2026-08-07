@@ -3,7 +3,8 @@ import type { ChatRecord, ExternalPathGrant } from '../../../main/store/types'
 import {
   externalPathGrantTargetsForChat,
   findExternalPathGrantGaps,
-  missingExternalPathGrantProviders
+  missingExternalPathGrantProviders,
+  pathHasPriorConsentExternalPathGrant
 } from './externalPathGrantPreflight'
 
 function grant(partial: Partial<ExternalPathGrant> & Pick<ExternalPathGrant, 'provider' | 'path'>): ExternalPathGrant {
@@ -16,8 +17,22 @@ function grant(partial: Partial<ExternalPathGrant> & Pick<ExternalPathGrant, 'pr
     duration: partial.duration || 'thisThread',
     issuedBy: partial.issuedBy || 'main',
     signature: partial.signature || 'abc',
-    createdAt: partial.createdAt || new Date().toISOString()
+    createdAt: partial.createdAt || new Date().toISOString(),
+    ...(partial.bindingVersion !== undefined ? { bindingVersion: partial.bindingVersion } : {}),
+    ...(partial.chatId !== undefined ? { chatId: partial.chatId } : {}),
+    ...(partial.workspaceId !== undefined ? { workspaceId: partial.workspaceId } : {})
   }
+}
+
+function boundGrant(
+  partial: Partial<ExternalPathGrant> & Pick<ExternalPathGrant, 'provider' | 'path'>
+): ExternalPathGrant {
+  return grant({
+    bindingVersion: 2,
+    chatId: 'chat-1',
+    workspaceId: 'ws-primary',
+    ...partial
+  })
 }
 
 function ensembleChat(): ChatRecord {
@@ -27,6 +42,7 @@ function ensembleChat(): ChatRecord {
     chatKind: 'ensemble',
     provider: 'codex',
     title: 'Ensemble',
+    workspaceId: 'ws-primary',
     workspacePath: '/primary',
     createdAt: 1,
     updatedAt: 1,
@@ -58,7 +74,7 @@ describe('externalPathGrantPreflight', () => {
 
   it('reports gaps when an additional workspace lacks active-provider grants', () => {
     const chat = ensembleChat()
-    const grants = [grant({ provider: 'codex', path: '/extra/repo' })]
+    const grants = [boundGrant({ provider: 'codex', path: '/extra/repo' })]
     const result = findExternalPathGrantGaps({
       chat,
       grants,
@@ -86,9 +102,9 @@ describe('externalPathGrantPreflight', () => {
       missingExternalPathGrantProviders({
         chat,
         grants: [
-          grant({ provider: 'codex', path: '/new/workspace', access: 'read' }),
-          grant({ provider: 'ollama', path: '/new/workspace', access: 'write' }),
-          grant({ provider: 'claude', path: '/new/workspace', access: 'write' })
+          boundGrant({ provider: 'codex', path: '/new/workspace', access: 'read' }),
+          boundGrant({ provider: 'ollama', path: '/new/workspace', access: 'write' }),
+          boundGrant({ provider: 'claude', path: '/new/workspace', access: 'write' })
         ],
         path: '/new/workspace',
         access: 'write'
@@ -101,9 +117,9 @@ describe('externalPathGrantPreflight', () => {
     const result = findExternalPathGrantGaps({
       chat,
       grants: [
-        grant({ provider: 'codex', path: '/extra/repo', access: 'read' }),
-        grant({ provider: 'ollama', path: '/extra/repo', access: 'write' }),
-        grant({ provider: 'claude', path: '/extra/repo', access: 'write' })
+        boundGrant({ provider: 'codex', path: '/extra/repo', access: 'read' }),
+        boundGrant({ provider: 'ollama', path: '/extra/repo', access: 'write' }),
+        boundGrant({ provider: 'claude', path: '/extra/repo', access: 'write' })
       ],
       primaryWorkspacePath: '/primary'
     })
@@ -112,12 +128,12 @@ describe('externalPathGrantPreflight', () => {
     ])
   })
 
-  it('returns no gaps when every active live provider has a grant', () => {
+  it('returns no gaps when every active live provider has a chat-bound grant', () => {
     const chat = ensembleChat()
     const grants = [
-      grant({ provider: 'codex', path: '/extra/repo' }),
-      grant({ provider: 'claude', path: '/extra/repo' }),
-      grant({ provider: 'ollama', path: '/extra/repo' })
+      boundGrant({ provider: 'codex', path: '/extra/repo' }),
+      boundGrant({ provider: 'claude', path: '/extra/repo' }),
+      boundGrant({ provider: 'ollama', path: '/extra/repo' })
     ]
     const result = findExternalPathGrantGaps({
       chat,
@@ -125,5 +141,46 @@ describe('externalPathGrantPreflight', () => {
       primaryWorkspacePath: '/primary'
     })
     expect(result.gaps).toEqual([])
+  })
+
+  it('treats grants bound to a previous primary workspace id as gaps', () => {
+    const chat = ensembleChat()
+    chat.workspaceId = 'ws-readded'
+    const grants = [
+      grant({
+        provider: 'codex',
+        path: '/extra/repo',
+        bindingVersion: 2,
+        chatId: 'chat-1',
+        workspaceId: 'ws-original'
+      }),
+      grant({
+        provider: 'ollama',
+        path: '/extra/repo',
+        bindingVersion: 2,
+        chatId: 'chat-1',
+        workspaceId: 'ws-original'
+      }),
+      grant({
+        provider: 'claude',
+        path: '/extra/repo',
+        bindingVersion: 2,
+        chatId: 'chat-1',
+        workspaceId: 'ws-original'
+      })
+    ]
+    const result = findExternalPathGrantGaps({
+      chat,
+      grants,
+      primaryWorkspacePath: '/primary'
+    })
+    expect(result.gaps).toEqual([
+      {
+        path: '/extra/repo',
+        access: 'read',
+        missingProviders: ['codex', 'ollama', 'claude']
+      }
+    ])
+    expect(pathHasPriorConsentExternalPathGrant(grants, '/extra/repo')).toBe(true)
   })
 })

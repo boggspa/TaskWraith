@@ -152,6 +152,33 @@ export function matchesExternalPathGrantExecutionAuthority(
 }
 
 /**
+ * Structural chat/primary-workspace binding check for durable grants.
+ *
+ * Renderer preflight uses this (without HMAC) so a secondary workspace that
+ * was granted under primary workspace A, then the chat's primary was removed
+ * and re-added as B, is treated as a gap — not as satisfied coverage. Main
+ * still verifies the signature before reminting or executing.
+ *
+ * `thisRun` grants never satisfy durable secondary-workspace coverage.
+ */
+export function isChatBoundDurableExternalPathGrant(
+  grant: ExternalPathGrant,
+  chat: Pick<ChatRecord, 'appChatId' | 'workspaceId'>
+): boolean {
+  if (grant.bindingVersion !== EXTERNAL_PATH_GRANT_BINDING_VERSION) return false
+  if (grant.issuedBy !== 'main') return false
+  if (typeof grant.signature !== 'string' || grant.signature.length === 0) return false
+  if (grant.duration === 'thisRun') return false
+  if (!isExecutableExternalPathGrantDuration(grant.duration)) return false
+  const grantChatId = trimmed(grant.chatId)
+  const grantWorkspaceId = trimmed(grant.workspaceId)
+  const chatId = trimmed(chat.appChatId)
+  const workspaceId = trimmed(chat.workspaceId)
+  if (!grantChatId || !grantWorkspaceId || !chatId || !workspaceId) return false
+  return grantChatId === chatId && grantWorkspaceId === workspaceId
+}
+
+/**
  * Resolve a chat's primary workspace without consulting UI focus.
  *
  * An explicit workspace identity must resolve and, when a persisted path is
