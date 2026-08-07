@@ -52776,6 +52776,47 @@ if (isGeminiMcpBridgeProcess) {
           appRunId,
           attachments
         ),
+      repairStaleExternalPathGrants: async (chatId) => {
+        const { repairStaleExternalPathGrantsForChat } = await import('./ExternalPathGrantRepair')
+        const { grantProvidersForChat } = await import('./ipc/externalPathGrantHandlers')
+        const result = await repairStaleExternalPathGrantsForChat(chatId, {
+          getChat: (id) => AppStore.getChat(id),
+          saveChat: (chat) => AppStore.saveChat(chat),
+          broadcastChatUpdated,
+          collectExternalPathGrantsFromMetadata,
+          canonicalizeExternalPathGrantMetadata,
+          grantProvidersForChat: (chat) =>
+            grantProvidersForChat(chat, isExternalPathGrantDispatchProvider),
+          issueExternalPathGrant,
+          verifyExternalPathGrantSignatureForGrant: (grant) => isMainIssuedExternalPathGrant(grant),
+          realpath: (pathValue) => fs.realpath(pathValue),
+          stat: (pathValue) => fs.stat(pathValue),
+          primaryWorkspacePathForChat: (chat) => {
+            const primary = resolveChatPrimaryWorkspace(
+              chat,
+              AppStore.getWorkspaces(),
+              canonicalPath
+            )
+            return primary?.path || null
+          },
+          randomBytes
+        })
+        if ('ok' in result && result.ok === false) return false
+        return result.repairedPaths.length > 0
+      },
+      notifyExternalPathGrantRepairNeeded: ({ chatId, roundId, message }) => {
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('ensemble:external-path-grant-needed', {
+              chatId,
+              roundId,
+              message
+            })
+          }
+        } catch {
+          // Best-effort prompt nudge; cancelRound + transcript note already landed.
+        }
+      },
       dispatch: async (payload, event, observer, promptEvidence) => {
         // Mid-run steering delivery bookkeeping: the prompt builder reports
         // the exact durable message ids that survived its bounded projection.

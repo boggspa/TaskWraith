@@ -13797,13 +13797,52 @@ function App(): React.JSX.Element {
       }
       const runProvider = request.provider || currentProvider
       if (!isGlobalRun) {
-        const grantPreflight = findExternalPathGrantGaps({
+        let grantPreflight = findExternalPathGrantGaps({
           chat: runChat,
           grants: normalizeExternalPathGrants(
             collectExternalPathGrantsFromMetadata(runChat.providerMetadata)
           ),
           primaryWorkspacePath: runWorkspace?.path
         })
+        // Mate case: primary workspace removed/re-added leaves secondary grants
+        // signed but bound to the old workspace id. Remint from prior consent
+        // for every active provider (one consent → whole roster) before any
+        // seat can be skipped. Remaining gaps still open the grant prompt —
+        // never fail-closed into a dispatch skip.
+        if (grantPreflight.gaps.length > 0) {
+          try {
+            const repair = await window.api.repairStaleExternalPathGrants({
+              chatId: runChat.appChatId
+            })
+            if (repair.ok) {
+              const liveChat = chatByIdRef.current.get(runChat.appChatId) || runChat
+              runChat = liveChat
+              request = {
+                ...request,
+                chatRecord: liveChat,
+                scope: getChatScope(liveChat),
+                externalPathGrants: normalizeExternalPathGrants(
+                  collectExternalPathGrantsFromMetadata(liveChat.providerMetadata)
+                )
+              }
+              grantPreflight =
+                repair.remainingGaps.length > 0
+                  ? {
+                      ...grantPreflight,
+                      gaps: repair.remainingGaps
+                    }
+                  : findExternalPathGrantGaps({
+                      chat: liveChat,
+                      grants: normalizeExternalPathGrants(
+                        collectExternalPathGrantsFromMetadata(liveChat.providerMetadata)
+                      ),
+                      primaryWorkspacePath: runWorkspace?.path
+                    })
+            }
+          } catch (err) {
+            console.warn('[external-path:repair-stale] preflight repair failed', err)
+          }
+        }
         if (grantPreflight.gaps.length > 0) {
           updateRunQueueJobStatus(
             currentRunId,
