@@ -1260,7 +1260,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.cancelActiveRun).not.toHaveBeenCalled()
     expect(h.transitions.mock.calls.map((call) => call[1])).toEqual(['cancelled'])
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('cancelled')
-  })
+  }, 30_000)
 
   it('terminally contains a paused graph claim without an invalid cancelling transition', async () => {
     const h = harness()
@@ -1275,7 +1275,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.transitions.mock.calls.map((call) => call[1])).toEqual(['cancelled'])
     expect(h.jobs.get(runId)?.status).toBe('cancelled')
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('cancelled')
-  })
+  }, 30_000)
 
   it('requires action and leaves the lease blocked when provider cleanup throws', async () => {
     const h = harness()

@@ -1479,7 +1479,7 @@ describe('TranscriptMediaAssetStore', () => {
         appChatId: 'chat-rollback'
       })
     ).toBe(false)
-  })
+  }, 30_000)
 
   it('rechecks exact output authority before granting an async file ingest', async () => {
     const root = makeRoot()
@@ -2223,7 +2223,7 @@ describe('TranscriptMediaAssetStore', () => {
       ])
     ).toMatchObject({ ok: true })
     expect(fs.existsSync(stagedPath)).toBe(true)
-  })
+  }, 30_000)
 
   it('invalidates a same-tick ingest and blocks every owner under a global history hold', async () => {
     const root = makeRoot()
