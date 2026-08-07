@@ -12592,7 +12592,9 @@ button.diff-file-row {
   flex-shrink: 0;
 }
 .activity-compact-group-icon {
+  flex-shrink: 0;
   opacity: 0.85;
+  color: var(--tool-call-icon-accent, var(--accent));
 }
 .activity-compact-group-icon-overflow {
   font-size: 9px;
@@ -12635,7 +12637,9 @@ button.diff-file-row {
   flex-shrink: 0;
 }
 .collapsed-activity-stack-icon {
+  flex-shrink: 0;
   opacity: 0.85;
+  color: var(--tool-call-icon-accent, var(--accent));
 }
 /* System notices stay at the small caption size — they're noise being
  * tidied away, not messages the eye should land on. */

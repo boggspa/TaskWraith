@@ -158,7 +158,7 @@ export function CollapsedStackIconStrip({
         <ToolFamilyIcon
           key={family}
           family={COLLAPSED_STACK_FAMILY_ICON[family] ?? 'task'}
-          size={22}
+          size={25}
           className="collapsed-activity-stack-icon"
         />
       ))}

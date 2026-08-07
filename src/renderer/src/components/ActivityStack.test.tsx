@@ -755,6 +755,30 @@ describe('ActivityStack compact tool groups', () => {
     expect(groupCss).toContain('.activity-compact-group-title .activity-file-name')
   })
 
+  it('sizes compact-group icons like inline tool rows and lets the icon strip breathe', () => {
+    const groupCss = readFileSync(
+      join(process.cwd(), 'src/renderer/src/assets/css/06-component-panels-modals.css'),
+      'utf8'
+    )
+    const headerStart = groupCss.indexOf('.activity-compact-group-header {')
+    const header = groupCss.slice(headerStart, groupCss.indexOf('}', headerStart) + 1)
+    // A fixed 20px column crushed multi-family 22–25px strips into tiny glyphs.
+    expect(header).toContain('grid-template-columns: auto minmax(0, 1fr) auto auto')
+    expect(header).not.toContain('grid-template-columns: 20px')
+
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/ActivityStack.tsx'),
+      'utf8'
+    )
+    // Multi-family strip + single-family lead match the inline ActivityRow icon (25).
+    expect(source).toMatch(
+      /activity-compact-group-icons[\s\S]*?size=\{25\}[\s\S]*?activity-compact-group-icon/
+    )
+    expect(source).toMatch(
+      /family=\{visibleFamilies\[0\][\s\S]*?size=\{25\}[\s\S]*?activity-category-icon/
+    )
+  })
+
   it('debounces only same-id transitions from individual rows into a compact group', () => {
     const running = buildTimelineItems([
       makeReadActivity({ id: 'tool-read-1', status: 'running' }),

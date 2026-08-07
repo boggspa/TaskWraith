@@ -2241,10 +2241,10 @@ function ActivityCompactGroup({
               <ToolFamilyIcon
                 key={family}
                 family={family as Parameters<typeof ToolFamilyIcon>[0]['family']}
-                /* Phase L4 slice 1 — compact-group icon array grows
-                 * to 15px to match the body-text title beside it.
-                 * Slice 4 follow-up — 1.5× bump (15 → 22px). */
-                size={22}
+                /* Match the inline ActivityRow tool icon (25) so a
+                 * multi-family strip reads at the same scale as a
+                 * single-tool lead — not a caption under the title. */
+                size={25}
                 className="activity-compact-group-icon"
               />
             ))}
