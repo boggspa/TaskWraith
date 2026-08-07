@@ -6,7 +6,7 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## Unreleased
+## 1.9.3 - 2026-08-07
 
 ### Ensemble save-path performance
 
