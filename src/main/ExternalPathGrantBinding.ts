@@ -1,4 +1,11 @@
-import { createHmac, timingSafeEqual } from 'crypto'
+// Namespace import (not `{ createHmac, timingSafeEqual }`): this module is reachable
+// from the renderer bundle (externalPathGrantPreflight -> isChatBoundDurableExternalPathGrant).
+// A named `crypto` import makes the browser build fail on the missing export — vite
+// swaps the module for an empty `__vite-browser-external` stub and rollup errors at
+// bind time, before tree-shaking can drop the signing helpers. A namespace binding
+// resolves the member only at call time, which only ever happens in the main process.
+// Same fix as `936d3d89a` for CanvasEvalAudit. Keep this a namespace import.
+import * as nodeCrypto from 'node:crypto'
 import type { ChatRecord, ExternalPathGrant, ProviderId, WorkspaceRecord } from './store/types'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
 
@@ -72,7 +79,8 @@ export function signExternalPathGrantPayload(
   grant: GrantSigningFields,
   canonicalizePath: (value: string) => string
 ): string {
-  return createHmac('sha256', secret)
+  return nodeCrypto
+    .createHmac('sha256', secret)
     .update(externalPathGrantSigningPayload(grant, canonicalizePath))
     .digest('hex')
 }
@@ -87,7 +95,7 @@ export function verifyExternalPathGrantSignature(
   }
   const expected = Buffer.from(signExternalPathGrantPayload(secret, grant, canonicalizePath), 'hex')
   const actual = Buffer.from(grant.signature!, 'hex')
-  return expected.length === actual.length && timingSafeEqual(expected, actual)
+  return expected.length === actual.length && nodeCrypto.timingSafeEqual(expected, actual)
 }
 
 export function matchesExternalPathGrantRunBinding(
