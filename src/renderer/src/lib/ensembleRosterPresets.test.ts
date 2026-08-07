@@ -525,7 +525,7 @@ describe('ensembleRosterPresets — cross-surface subscription', () => {
 })
 
 describe('buildProviderChangeParticipantPatch', () => {
-  it('clears stale cross-provider grants + runtime profile (keys present for shallow-merge clear)', () => {
+  it('clears runtime/session hygiene and seeds Accept Edits when there is no previous seat', () => {
     const patch = buildProviderChangeParticipantPatch('claude')
     expect(patch.provider).toBe('claude')
     expect(patch.permissionPresetId).toBe('default') // claude default approval
@@ -533,6 +533,17 @@ describe('buildProviderChangeParticipantPatch', () => {
     expect(patch.runtimeProfileId).toBeUndefined()
     expect('permissionOverrides' in patch).toBe(true)
     expect('runtimeProfileId' in patch).toBe(true)
+    expect(patch.linkedProviderSessionId).toBeNull()
+  })
+
+  it('preserves permission preset and grant overrides from the previous seat', () => {
+    const patch = buildProviderChangeParticipantPatch('codex', {
+      permissionPresetId: 'workspace_write',
+      permissionOverrides: { approvalMode: 'full_access' }
+    })
+    expect(patch.permissionPresetId).toBe('workspace_write')
+    expect(patch.permissionOverrides).toEqual({ approvalMode: 'full_access' })
+    expect(patch.runtimeProfileId).toBeUndefined()
     expect(patch.linkedProviderSessionId).toBeNull()
   })
 })

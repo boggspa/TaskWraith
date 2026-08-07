@@ -540,19 +540,39 @@ export function getDefaultEnsembleRoleName(provider: ProviderId): string {
 }
 
 /**
+ * Fields a seat change may carry from the previous participant onto the next
+ * provider/model selection. Used by live composer + roster/Agent Pool pickers;
+ * omitted when seeding a brand-new participant or a solo-chat provider switch.
+ */
+export type ParticipantSeatCarryover = Pick<
+  EnsembleParticipant,
+  | 'permissionPresetId'
+  | 'permissionOverrides'
+  | 'reasoningEffort'
+  | 'fastModeEnabled'
+  | 'serviceTier'
+  | 'thinkingEnabled'
+  | 'provider'
+>
+
+/**
  * Patch to apply when a participant's PROVIDER changes in an editor. Resets
- * every provider-specific field to the new provider's defaults so a stale
- * cross-provider value can't survive (e.g. a Claude model id on a Codex
- * participant). Critically it also clears `permissionOverrides` and
- * `runtimeProfileId`: the composer's live-chat provider-change handler omits
- * `permissionOverrides`, which — because participant patches shallow-merge —
- * silently leaks the previous provider's tool grants onto the new provider.
- * Each field is present in the returned patch (with an explicit `undefined`
- * where it should clear) so a `{ ...participant, ...patch }` shallow merge
- * actually removes the old value rather than retaining it.
+ * provider-bound runtime/session fields so a stale cross-provider value can't
+ * survive (e.g. a Claude model id on a Codex participant, a linked session id,
+ * or a runtime profile). Permission preset + tool-grant overrides are carried
+ * from `previous` when provided — seat edits must not snap back to Accept
+ * Edits; only fresh seats (`getDefaultEnsembleParticipantConfig`) seed that
+ * default. Each clearable field is present in the returned patch (with an
+ * explicit `undefined` where it should clear) so a
+ * `{ ...participant, ...patch }` shallow merge actually removes the old value
+ * rather than retaining it.
  */
 export function buildProviderChangeParticipantPatch(
-  provider: ProviderId
+  provider: ProviderId,
+  previous?: Pick<
+    EnsembleParticipant,
+    'permissionPresetId' | 'permissionOverrides'
+  > | null
 ): Partial<EnsembleParticipant> {
   const defaults = getDefaultEnsembleParticipantConfig(provider)
   return {
@@ -560,8 +580,8 @@ export function buildProviderChangeParticipantPatch(
     model: defaults.model,
     runtimeProfileId: undefined,
     geminiAuthProfileId: null,
-    permissionPresetId: defaults.permissionPresetId,
-    permissionOverrides: undefined,
+    permissionPresetId: previous?.permissionPresetId ?? defaults.permissionPresetId,
+    permissionOverrides: previous ? previous.permissionOverrides : undefined,
     reasoningEffort: defaults.reasoningEffort,
     fastModeEnabled: defaults.fastModeEnabled,
     thinkingEnabled: defaults.thinkingEnabled,
@@ -655,20 +675,116 @@ function defaultReasoningEffortForModel(
 }
 
 /**
+ * Ladder ranks matching CombinedModelPicker's LADDER_STOPS / iOS nearest-higher
+ * tie-break. Used to persist effort across model/provider seat changes when the
+ * exact token is no longer enabled.
+ */
+const EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
+  off: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  xhigh: 4,
+  max: 5,
+  ultracode: 6,
+  // Kimi binary thinking rides Light when mapping onto the shared ladder.
+  on: 1
+}
+
+function effortLadderRank(value?: string | null): number | null {
+  const token = normalizeReasoningEffortToken(value)
+  if (!token) return null
+  return Object.prototype.hasOwnProperty.call(EFFORT_LADDER_RANK, token)
+    ? EFFORT_LADDER_RANK[token]!
+    : null
+}
+
+/**
+ * Keep the previous effort when still enabled; otherwise snap to the nearest
+ * enabled ladder stop (ties → higher), else the model/provider default.
+ */
+export function resolveReasoningEffortForSeatChange(options: {
+  provider: ProviderId
+  model: string
+  previousEffort?: string | null
+  modelMetadata?: ProviderModelSelectionMetadata | null
+}): string | undefined {
+  const { provider, model, previousEffort, modelMetadata } = options
+  const fallbackMetadata = fallbackModelSelectionMetadata(provider, model)
+  const metadata = modelMetadata ? { ...fallbackMetadata, ...modelMetadata } : fallbackMetadata
+  const enabled = enabledReasoningEffortsForModel(provider, model, metadata)
+  if (enabled.length === 0) return undefined
+
+  const normalizedPrevious = normalizeReasoningEffortToken(previousEffort)
+  if (normalizedPrevious && enabled.includes(normalizedPrevious)) {
+    return normalizedPrevious
+  }
+
+  const previousRank = effortLadderRank(normalizedPrevious)
+  if (previousRank != null) {
+    let best: string | undefined
+    let bestDistance = Infinity
+    let bestRank = -1
+    for (const effort of enabled) {
+      const rank = effortLadderRank(effort)
+      if (rank == null) continue
+      const distance = Math.abs(rank - previousRank)
+      // Match CombinedModelPicker.nearestEnabledLadderIndex: ties → higher stop.
+      if (distance < bestDistance || (distance === bestDistance && rank > bestRank)) {
+        bestDistance = distance
+        bestRank = rank
+        best = effort
+      }
+    }
+    if (best) return best
+  }
+
+  // Fresh Grok 4.5 (native or Cursor) seeds High even though Medium is enabled.
+  if (
+    !normalizedPrevious &&
+    (isGrok45ReasoningModelId(model) || model === CURSOR_GROK_45_BASE_MODEL_ID)
+  ) {
+    const grokDefault = normalizeReasoningEffortToken(GROK_45_DEFAULT_REASONING_EFFORT)
+    if (grokDefault && enabled.includes(grokDefault)) return grokDefault
+  }
+
+  return defaultReasoningEffortForModel(provider, model, modelMetadata)
+}
+
+function previousSeatHadFastEnabled(
+  previous?: Pick<EnsembleParticipant, 'fastModeEnabled' | 'serviceTier'> | null
+): boolean {
+  if (!previous) return false
+  if (previous.serviceTier === 'fast') return true
+  if (previous.serviceTier == null && previous.fastModeEnabled === true) return true
+  return previous.fastModeEnabled === true
+}
+
+function modelSupportsFastTier(
+  provider: ProviderId,
+  model: string,
+  modelMetadata?: ProviderModelSelectionMetadata | null
+): boolean {
+  if (modelMetadata?.additionalSpeedTiers?.includes('fast')) return true
+  return getEnsembleModelDefaults(provider).fastModeCapableModelIds.has(model)
+}
+
+/**
  * Canonical fresh/provider-switch state for an explicit provider + model pair.
- * This encodes the same model-sensitive rules as the composer:
  *
- * - Codex/Claude start with Fast off and the model's enabled default reasoning.
- * - Kimi starts with thinking on and its Standard speed tier selected.
- * - Grok's Fast posture is encoded by its provider/model route, not a toggle;
- *   only Grok 4.5 carries a reasoning effort.
- * - Cursor Composer 2.5 expresses Fast through the model id, while Cursor Grok
- *   starts with its reasoning default and the optional Fast toggle off.
+ * When `previous` is omitted (new seat, solo-chat provider change), this seeds
+ * Fast off and the model's default reasoning. When `previous` is a seat being
+ * edited, reasoning snaps to the closest enabled ladder stop and Fast stays on
+ * when the destination model still supports it.
  */
 export function normalizeProviderModelSelection(
   provider: ProviderId,
   model: string,
-  modelMetadata?: ProviderModelSelectionMetadata | null
+  modelMetadata?: ProviderModelSelectionMetadata | null,
+  previous?: Pick<
+    EnsembleParticipant,
+    'reasoningEffort' | 'fastModeEnabled' | 'serviceTier' | 'thinkingEnabled'
+  > | null
 ): ProviderModelSelectionFields {
   const cleared: ProviderModelSelectionFields = {
     model,
@@ -677,47 +793,67 @@ export function normalizeProviderModelSelection(
     thinkingEnabled: undefined,
     serviceTier: undefined
   }
+  const reasoningEffort = resolveReasoningEffortForSeatChange({
+    provider,
+    model,
+    previousEffort: previous?.reasoningEffort,
+    modelMetadata
+  })
+  const carryFast = previousSeatHadFastEnabled(previous)
 
   switch (provider) {
-    case 'codex':
+    case 'codex': {
+      const nextFast = carryFast && modelSupportsFastTier(provider, model, modelMetadata)
       return {
         ...cleared,
-        reasoningEffort: defaultReasoningEffortForModel(provider, model, modelMetadata),
-        fastModeEnabled: false,
-        serviceTier: ''
+        reasoningEffort,
+        fastModeEnabled: nextFast,
+        serviceTier: nextFast ? 'fast' : ''
       }
+    }
     case 'claude':
       return {
         ...cleared,
-        reasoningEffort: defaultReasoningEffortForModel(provider, model, modelMetadata),
-        fastModeEnabled: false
+        reasoningEffort,
+        fastModeEnabled: carryFast && modelSupportsFastTier(provider, model, modelMetadata)
       }
-    case 'kimi':
+    case 'kimi': {
+      const nextFast = carryFast && modelSupportsFastTier(provider, model, modelMetadata)
       return {
         ...cleared,
-        reasoningEffort: defaultReasoningEffortForModel(provider, model, modelMetadata),
-        fastModeEnabled: false,
-        thinkingEnabled: true,
-        serviceTier: 'standard'
+        reasoningEffort,
+        fastModeEnabled: nextFast,
+        thinkingEnabled: previous?.thinkingEnabled ?? true,
+        serviceTier: nextFast ? 'fast' : 'standard'
       }
+    }
     case 'grok':
       return {
         ...cleared,
         reasoningEffort: isGrok45ReasoningModelId(model)
-          ? GROK_45_DEFAULT_REASONING_EFFORT
+          ? reasoningEffort ?? GROK_45_DEFAULT_REASONING_EFFORT
           : undefined
       }
     case 'cursor':
       if (model === CURSOR_GROK_45_BASE_MODEL_ID) {
         return {
           ...cleared,
-          reasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-          fastModeEnabled: false
+          reasoningEffort: reasoningEffort ?? GROK_45_DEFAULT_REASONING_EFFORT,
+          fastModeEnabled: carryFast && modelSupportsFastTier(provider, model, modelMetadata)
         }
       }
-      return { ...cleared, fastModeEnabled: model === 'composer-2.5-fast' }
+      if (model === 'composer-2.5-fast') {
+        return { ...cleared, fastModeEnabled: true }
+      }
+      if (model === 'composer-2.5') {
+        return { ...cleared, fastModeEnabled: false }
+      }
+      return {
+        ...cleared,
+        fastModeEnabled: carryFast && modelSupportsFastTier(provider, model, modelMetadata)
+      }
     default:
-      return cleared
+      return { ...cleared, reasoningEffort }
   }
 }
 
@@ -726,16 +862,19 @@ export function normalizeProviderModelSelection(
  *
  * `reasoningEffort` is deliberately present even when the live model row has
  * no explicit default. Composer state is shallow-merged, so omitting this key
- * would let the previous model's effort (for example Sol's `max`) survive a
- * switch to GPT-5.5. Fast fields stay out of this patch: same-provider model
- * changes preserve Fast when the destination supports it and clear it when it
- * does not, which remains the composer's separate responsibility.
+ * would leave a previous effort unexamined. With `previous`, effort maps to the
+ * closest enabled ladder stop; without it, the model/provider default is used
+ * (so Sol `max` does not silently stick on GPT-5.5 when no carryover is
+ * supplied). Fast fields stay out of this patch: same-provider model changes
+ * preserve Fast via `buildSameProviderModelChangeParticipantPatch` / the
+ * composer when the destination supports it.
  */
 export function buildCodexModelChangeParticipantPatch(
   model: string,
-  modelMetadata?: ProviderModelSelectionMetadata | null
+  modelMetadata?: ProviderModelSelectionMetadata | null,
+  previous?: Pick<EnsembleParticipant, 'reasoningEffort'> | null
 ): Pick<Partial<EnsembleParticipant>, 'model' | 'reasoningEffort'> {
-  const normalized = normalizeProviderModelSelection('codex', model, modelMetadata)
+  const normalized = normalizeProviderModelSelection('codex', model, modelMetadata, previous)
   return {
     model,
     reasoningEffort: normalized.reasoningEffort
@@ -743,18 +882,49 @@ export function buildCodexModelChangeParticipantPatch(
 }
 
 /**
- * One atomic participant patch for selecting a model from any provider group.
- * Provider/session/grant hygiene comes from `buildProviderChangeParticipantPatch`;
- * the explicit model fields then override that provider's generic seed values.
+ * Same-provider model change for an existing ensemble seat: carry reasoning
+ * (closest ladder) and Fast when still applicable; leave permission/runtime
+ * fields absent so shallow merge preserves them.
  */
-export function buildProviderModelChangeParticipantPatch(
-  provider: ProviderId,
+export function buildSameProviderModelChangeParticipantPatch(
+  participant: Pick<
+    EnsembleParticipant,
+    | 'provider'
+    | 'reasoningEffort'
+    | 'fastModeEnabled'
+    | 'serviceTier'
+    | 'thinkingEnabled'
+  >,
   model: string,
   modelMetadata?: ProviderModelSelectionMetadata | null
 ): Partial<EnsembleParticipant> {
   return {
-    ...buildProviderChangeParticipantPatch(provider),
-    ...normalizeProviderModelSelection(provider, model, modelMetadata)
+    provider: participant.provider,
+    ...normalizeProviderModelSelection(
+      participant.provider,
+      model,
+      modelMetadata,
+      participant
+    )
+  }
+}
+
+/**
+ * One atomic participant patch for selecting a model from any provider group.
+ * Provider/session hygiene comes from `buildProviderChangeParticipantPatch`;
+ * the explicit model fields then override that provider's generic seed values.
+ * Pass `previous` for seat edits so permissions, grants, effort, and Fast
+ * carry across; omit it for fresh seeds.
+ */
+export function buildProviderModelChangeParticipantPatch(
+  provider: ProviderId,
+  model: string,
+  modelMetadata?: ProviderModelSelectionMetadata | null,
+  previous?: ParticipantSeatCarryover | null
+): Partial<EnsembleParticipant> {
+  return {
+    ...buildProviderChangeParticipantPatch(provider, previous),
+    ...normalizeProviderModelSelection(provider, model, modelMetadata, previous)
   }
 }
 

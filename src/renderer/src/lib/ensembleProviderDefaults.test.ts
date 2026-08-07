@@ -10,7 +10,8 @@ import {
   getEnsembleModelDefaults,
   getEnsembleReasoningOptions,
   normalizeProviderModelSelection,
-  resolveEnsembleParticipantSettings
+  resolveEnsembleParticipantSettings,
+  resolveReasoningEffortForSeatChange
 } from './ensembleProviderDefaults'
 
 // F2 (1.0.3) — these defaults are the canonical seed values used both
@@ -259,6 +260,54 @@ describe('buildProviderModelChangeParticipantPatch', () => {
       serviceTier: undefined,
       linkedProviderSessionId: null
     })
+  })
+
+  it('carries seat permissions, closest effort, and Fast across a provider change', () => {
+    const previous = participant({
+      provider: 'claude',
+      permissionPresetId: 'workspace_write',
+      permissionOverrides: { approvalMode: 'full_access' },
+      reasoningEffort: 'max',
+      fastModeEnabled: true
+    })
+    expect(
+      buildProviderModelChangeParticipantPatch('codex', 'gpt-5.5', undefined, previous)
+    ).toMatchObject({
+      provider: 'codex',
+      model: 'gpt-5.5',
+      permissionPresetId: 'workspace_write',
+      permissionOverrides: { approvalMode: 'full_access' },
+      reasoningEffort: 'xhigh',
+      fastModeEnabled: true,
+      serviceTier: 'fast',
+      linkedProviderSessionId: null
+    })
+  })
+})
+
+describe('resolveReasoningEffortForSeatChange', () => {
+  it('keeps an effort that remains enabled and otherwise snaps to the nearest ladder stop', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        previousEffort: 'high'
+      })
+    ).toBe('high')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        previousEffort: 'max'
+      })
+    ).toBe('xhigh')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        previousEffort: 'ultracode'
+      })
+    ).toBe('ultracode')
   })
 })
 
