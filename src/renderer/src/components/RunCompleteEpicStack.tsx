@@ -5,6 +5,7 @@ import {
   type CloseoutCommit,
   type CloseoutParticipantTable
 } from '../lib/taskWraithCloseoutMessage'
+import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SeatChangeInlineStrip } from './SeatChangeRow'
 
 function asSeatLink(value: unknown): SeatChangeLink | null {
@@ -23,16 +24,18 @@ function asSeatLink(value: unknown): SeatChangeLink | null {
   return link
 }
 
-function ParticipantStatusMark({ status }: { status: string }): ReactNode {
-  const normalized = status.trim().toLowerCase()
-  const label = normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Unknown'
+/** Same glyph vocabulary as the old close-out markdown table / roster chips. */
+function CloseoutStatusGlyph({ status }: { status: string }): ReactNode {
+  const label = status.trim() || 'Unknown'
+  const slug = label.toLowerCase().replace(/\s+/g, '-')
   return (
     <span
-      className={`run-complete-epic-status status-${normalized || 'unknown'}`}
-      title={label}
+      className={`ensemble-above-chip-status status-${slug} closeout-status-glyph`}
+      role="img"
       aria-label={label}
+      title={label}
     >
-      {label.charAt(0)}
+      <ParticipantStatusIcon status={label} />
     </span>
   )
 }
@@ -70,7 +73,9 @@ export function RunCompleteEpicStack({
           <div className="file-change-summary-list run-complete-epic-list" role="table">
             <div className="run-complete-epic-row is-header" role="row">
               <span role="columnheader">Seat</span>
-              <span role="columnheader">Turns & Tokens</span>
+              <span className="run-complete-epic-work" role="columnheader">
+                Turns & Tokens
+              </span>
             </div>
             {rows.map((row) => {
               const seatLink = asSeatLink(row.seatLink)
@@ -85,7 +90,7 @@ export function RunCompleteEpicStack({
                   </span>
                   <span className="run-complete-epic-work" role="cell">
                     <span>{row.workLabel}</span>
-                    <ParticipantStatusMark status={row.status} />
+                    <CloseoutStatusGlyph status={row.status} />
                   </span>
                 </div>
               )
@@ -95,7 +100,7 @@ export function RunCompleteEpicStack({
                 <span role="cell">
                   <strong>Round Total</strong>
                 </span>
-                <span role="cell">
+                <span className="run-complete-epic-work" role="cell">
                   <strong>{participantTable.totalWorkLabel}</strong>
                 </span>
               </div>

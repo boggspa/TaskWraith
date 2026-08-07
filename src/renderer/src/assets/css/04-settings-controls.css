@@ -4693,7 +4693,22 @@ input:disabled, select:disabled, textarea:disabled {
   font-style: italic;
 }
 
-.run-complete-epic-work,
+.run-complete-epic-work {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.run-complete-epic-work .closeout-status-glyph,
+.run-complete-epic-work .ensemble-above-chip-status {
+  margin-left: 0;
+  flex: 0 0 auto;
+}
+
 .run-complete-epic-subject,
 .run-complete-epic-stats,
 .run-complete-epic-hash {
@@ -4712,32 +4727,6 @@ input:disabled, select:disabled, textarea:disabled {
 
 .run-complete-epic-hash code {
   font-size: 0.92em;
-}
-
-.run-complete-epic-status {
-  flex: 0 0 auto;
-  width: 1.15rem;
-  height: 1.15rem;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.68rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
-}
-
-.run-complete-epic-status.status-answered,
-.run-complete-epic-status.status-yielded,
-.run-complete-epic-status.status-completed {
-  background: color-mix(in srgb, #3dd68c 28%, transparent);
-}
-
-.run-complete-epic-status.status-failed,
-.run-complete-epic-status.status-unreachable,
-.run-complete-epic-status.status-cancelled {
-  background: color-mix(in srgb, #ff6b6b 28%, transparent);
 }
 
 .file-change-summary-header {

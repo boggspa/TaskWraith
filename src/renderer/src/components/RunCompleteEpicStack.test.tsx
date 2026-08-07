@@ -67,9 +67,11 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('File changes')
     expect(html).toContain('Commits')
     expect(html).toContain('seat-change-message is-inline')
+    expect(html).toContain('ensemble-above-chip-status status-answered closeout-status-glyph')
     expect(html).toContain('18003ca96')
     expect(html).toContain('Add TaskWraith transcript closeouts')
     expect(html).toContain('Round Total')
+    expect(html).not.toContain('run-complete-epic-status')
   })
 
   it('caps visible commits and notes the overflow', () => {
