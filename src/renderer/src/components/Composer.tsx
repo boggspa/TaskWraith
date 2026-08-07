@@ -130,6 +130,7 @@ import { isEnsembleParticipantSeatRuntimeLocked } from '../lib/ensembleParticipa
 import {
   buildCodexModelChangeParticipantPatch,
   buildProviderModelChangeParticipantPatch,
+  buildSameProviderModelChangeParticipantPatch,
   getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
 } from '../lib/ensembleProviderDefaults'
@@ -3945,59 +3946,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   ?.label
                               )
                             }
-                            if (ensembleBinding) {
-                              const patch: Partial<EnsembleParticipant> = { model: nextModel }
-                              // Drop fast-mode if the new model can't support
-                              // it, mirroring the chat-level handler below.
-                              if (effectiveProvider === 'codex') {
-                                const modelOption = codexModels.find((m) => m.id === nextModel)
-                                Object.assign(
-                                  patch,
-                                  buildCodexModelChangeParticipantPatch(nextModel, modelOption)
+                            if (ensembleBinding && selectedParticipant) {
+                              // Seat edits carry reasoning (closest ladder) and
+                              // Fast when the destination still supports them;
+                              // permissions stay out of the patch.
+                              const modelOption = getProviderModelOptions(effectiveProvider).find(
+                                (model: CodexModelOption) => model.id === nextModel
+                              )
+                              updateSelectedParticipant(
+                                buildSameProviderModelChangeParticipantPatch(
+                                  selectedParticipant,
+                                  nextModel,
+                                  modelOption
                                 )
-                                if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
-                                  patch.fastModeEnabled = false
-                                  patch.serviceTier = ''
-                                }
-                              }
-                              if (effectiveProvider === 'claude') {
-                                const claudeModelOption = (
-                                  agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
-                                ).find((m) => m.id === nextModel)
-                                patch.reasoningEffort =
-                                  resolveClaudeDefaultReasoningEffort(claudeModelOption)
-                                if (!claudeModelOption?.additionalSpeedTiers?.includes('fast')) {
-                                  patch.fastModeEnabled = false
-                                }
-                              }
-                              if (effectiveProvider === 'kimi') {
-                                const kimiModelOption = effectiveModelOptionsRaw.find(
-                                  (model) => model.id === nextModel
-                                )
-                                patch.reasoningEffort =
-                                  kimiModelOption?.defaultReasoningEffort ||
-                                  kimiModelOption?.supportedReasoningEfforts?.find(
-                                    (option) => !option.disabled
-                                  )?.reasoningEffort ||
-                                  'on'
-                                patch.thinkingEnabled = true
-                              }
-                              if (effectiveProvider === 'grok') {
-                                patch.reasoningEffort = isGrok45ReasoningModelId(nextModel)
-                                  ? GROK_45_DEFAULT_REASONING_EFFORT
-                                  : undefined
-                              }
-                              if (effectiveProvider === 'cursor') {
-                                if (isCursorGrok45ModelId(nextModel)) {
-                                  patch.reasoningEffort = GROK_45_DEFAULT_REASONING_EFFORT
-                                } else {
-                                  patch.reasoningEffort = undefined
-                                }
-                                if (!isCursorGrok45ModelId(nextModel) && nextModel !== 'composer-2.5-fast') {
-                                  patch.fastModeEnabled = false
-                                }
-                              }
-                              updateSelectedParticipant(patch)
+                              )
                               return
                             }
                             if (shouldUpdateLiveComposerState && nextModel !== 'custom') {
@@ -4114,7 +4076,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               handleCombinedModelChange(nextModel)
                               return
                             }
-                            if (ensembleBinding) {
+                            if (ensembleBinding && selectedParticipant) {
                               const nextModelMetadata = getProviderModelOptions(nextProvider).find(
                                 (model: CodexModelOption) => model.id === nextModel
                               )
@@ -4122,7 +4084,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 buildProviderModelChangeParticipantPatch(
                                   nextProvider,
                                   nextModel,
-                                  nextModelMetadata
+                                  nextModelMetadata,
+                                  selectedParticipant
                                 )
                               )
                               return
