@@ -456,6 +456,90 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     })
   })
 
+  // A directed absorb carries routing intent for the seats still to speak. It
+  // must not retroactively rewrite the round that is already running: the other
+  // seats are live members of it, and dropping them from `participants` loses
+  // their status pills, their token tallies, and every working row and lane
+  // shimmer derived from the round projection.
+  it('keeps every seat on the live round when a directed steer lands', async () => {
+    const roster = [
+      participant('codex', 'codex', 1, { role: 'Worker' }),
+      participant('claude', 'claude', 2, { role: 'Reviewer' }),
+      participant('observer', 'kimi', 3, { role: 'Observer' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const prompt = '@Reviewer try your slice again.'
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt,
+        dmTargetParticipantId: 'claude',
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      }).status
+    ).toBe('queued')
+    expect(
+      harness.orchestrator.steerQueuedPrompt({
+        chatId: CHAT_ID,
+        index: 0,
+        textPrefix: prompt,
+        event: { sender: {} as Electron.WebContents }
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.map((entry) => entry.participantId)
+    ).toEqual(['codex', 'claude', 'observer'])
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('claude')
+  })
+
+  it('keeps a live round concurrent when a directed steer lands mid fan-out', async () => {
+    const roster = [
+      participant('codex', 'codex', 1, { role: 'Worker' }),
+      participant('claude', 'claude', 2, { role: 'Reviewer' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents },
+      fanoutPolicy: 'read_only'
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(0))
+    expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBe(true)
+
+    const prompt = '@Reviewer try your slice again.'
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt,
+        dmTargetParticipantId: 'claude',
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      }).status
+    ).toBe('queued')
+    expect(
+      harness.orchestrator.steerQueuedPrompt({
+        chatId: CHAT_ID,
+        index: 0,
+        textPrefix: prompt,
+        event: { sender: {} as Electron.WebContents }
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+  })
+
   it('preserves a rejected User Fan-Out target for its original serial turn', async () => {
     const harness = makeHarness({ rejectFirstParticipantDispatchIds: ['claude'] })
     harness.orchestrator.startRound({

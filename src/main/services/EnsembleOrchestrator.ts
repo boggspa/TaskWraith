@@ -4312,34 +4312,27 @@ export class EnsembleOrchestrator {
     }
     if (input.dmTargetParticipantId) {
       runtime.dmTargetParticipantId = input.dmTargetParticipantId
-      // Directed absorb is a hard routing boundary: clamp fan-out and narrow the
-      // persisted participant list so later seats / UI match beginRound DM scope.
+      // Directed absorb is a hard routing boundary for the seats still to
+      // SPEAK: `runtime.dmTargetParticipantId` is what every dispatch gate
+      // actually reads, so clamping fan-out here is enough to hold the scope,
+      // and restart recovery rebuilds it from the persisted target alone.
+      //
+      // It is NOT a licence to rewrite the round that is already running. This
+      // used to also stamp `fanoutPolicy: 'off'`, `concurrentMode: undefined`
+      // and a one-seat `participants` list onto the persisted record so the UI
+      // would "match beginRound DM scope" — but a live round's other seats are
+      // real members with lanes in flight, and dropping them took their status
+      // pills, token tallies, working rows and lane shimmer with them, for the
+      // whole remaining life of the round. The composer infers a DM target from
+      // any structured @mention, so a single "@Seat try again" silently
+      // converted a running fan-out round into a one-seat serial one.
       runtime.fanoutPolicy = 'off'
       runtime.concurrentMode = undefined
-      const chat = this.deps.getChat(runtime.chatId)
-      const dmTarget = chat?.ensemble?.participants.find(
-        (participant) => participant.id === input.dmTargetParticipantId
+      this.updateChatRound(runtime.chatId, (round) =>
+        round?.roundId === runtime.roundId
+          ? { ...round, dmTargetParticipantId: input.dmTargetParticipantId }
+          : round
       )
-      this.updateChatRound(runtime.chatId, (round) => {
-        if (!round || round.roundId !== runtime.roundId) return round
-        return {
-          ...round,
-          dmTargetParticipantId: input.dmTargetParticipantId,
-          fanoutPolicy: 'off',
-          concurrentMode: undefined,
-          ...(dmTarget
-            ? {
-                participants: [
-                  roundParticipantStateFromParticipant(
-                    dmTarget,
-                    round.participants.find((entry) => entry.participantId === dmTarget.id)
-                      ?.status || 'idle'
-                  )
-                ]
-              }
-            : {})
-        }
-      })
     } else if (input.fanoutPolicy && isEnsembleFanoutPolicy(input.fanoutPolicy)) {
       runtime.fanoutPolicy = input.fanoutPolicy
       runtime.concurrentMode = fanoutPolicyEnablesConcurrent(input.fanoutPolicy) || undefined

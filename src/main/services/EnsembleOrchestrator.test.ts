@@ -4613,12 +4613,17 @@ Next action:
     expect(steered.roundId).toBe(firstRoundId)
     expect(harness.dispatched).toHaveLength(1)
     expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
-    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('off')
+    // The directed scope is held by the routing target — which every dispatch
+    // gate reads, and which the boundary dispatch below actually proves. The
+    // round it landed in keeps its own shape: narrowing the persisted record to
+    // the target alone dropped seats that were still live members of the round,
+    // taking their status pills, working rows and lane shimmer with them.
+    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
     expect(
       harness.chat.ensemble?.activeRound?.participants.map(
         (participant) => participant.participantId
       )
-    ).toEqual(['codex'])
+    ).toEqual(['claude', 'codex'])
 
     harness.orchestrator.handleProviderOutput(
       'claude',
