@@ -43,6 +43,7 @@ import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
 import {
   buildRunCompleteBlockers,
+  formatWorkDurationMs,
   resolveRunCompleteStatus,
   runCompleteProducedWork
 } from '../lib/runCompleteSummary'
@@ -2425,14 +2426,15 @@ export const TranscriptPanel = memo(
     const shouldShowRunCompleteNotice =
       Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
     // Latest TaskWraith close-out carries tombstoned Participants/Commits/File
-    // changes. Prefer the in-transcript stack under that message; the footer
-    // keeps title/actions and only falls back to an epic stack when the latest
-    // close-out does not already render one.
+    // changes. Those sections mount inside a persisted Task Complete card under
+    // that message; the ephemeral footer only remains when the latest close-out
+    // has no epic tables to host (legacy / empty harvest).
     const runCompleteCloseoutTables = useMemo(() => {
       for (let index = resolvedMessages.length - 1; index >= 0; index -= 1) {
         const message = resolvedMessages[index]
         if (message.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND) continue
         return {
+          messageId: message.id,
           participantTable: (message.metadata.closeoutParticipantTable ||
             null) as CloseoutParticipantTable | null,
           commits: (Array.isArray(message.metadata.closeoutCommits)
@@ -2443,21 +2445,34 @@ export const TranscriptPanel = memo(
             : null) as CloseoutFileChange[] | null
         }
       }
-      return { participantTable: null, commits: null, fileChanges: null }
+      return {
+        messageId: null as string | null,
+        participantTable: null,
+        commits: null,
+        fileChanges: null
+      }
     }, [resolvedMessages])
-    // Prefer in-transcript epic sections under the latest close-out. Keep the
-    // footer's live File changes when the close-out has no tombstoned file
-    // list (legacy rows / empty harvest) so Workbench rows are not dropped.
+    const latestCloseoutMessageId = runCompleteCloseoutTables.messageId
     const latestCloseoutHasParticipants = Boolean(
       runCompleteCloseoutTables.participantTable?.rows?.length
     )
     const latestCloseoutHasCommits = Boolean(runCompleteCloseoutTables.commits?.length)
     const latestCloseoutHasFileChanges = Boolean(runCompleteCloseoutTables.fileChanges?.length)
-    const footerParticipantTable = latestCloseoutHasParticipants
+    // Any epic tombstone on the latest close-out means that message owns the
+    // Task Complete outer card (Participants / File changes / Commits nested
+    // inside). Suppress the sibling footer card in that case.
+    const latestCloseoutHostsTaskComplete =
+      latestCloseoutHasParticipants ||
+      latestCloseoutHasCommits ||
+      latestCloseoutHasFileChanges
+    const footerParticipantTable = latestCloseoutHostsTaskComplete
       ? null
       : runCompleteCloseoutTables.participantTable
-    const footerCommits = latestCloseoutHasCommits ? null : runCompleteCloseoutTables.commits
+    const footerCommits = latestCloseoutHostsTaskComplete
+      ? null
+      : runCompleteCloseoutTables.commits
     const footerShowsLiveFileChanges =
+      !latestCloseoutHostsTaskComplete &&
       (!isGlobal || displayFileChangeSummaries.length > 0) &&
       displayFileChangeSummaries.length > 0 &&
       !latestCloseoutHasFileChanges
@@ -2465,6 +2480,13 @@ export const TranscriptPanel = memo(
       Boolean(footerParticipantTable?.rows?.length) ||
       Boolean(footerCommits?.length) ||
       footerShowsLiveFileChanges
+    // Live Workbench file rows fold into the latest close-out Task Complete
+    // card when that close-out has epic tables but no file tombstone.
+    const latestCloseoutShowsLiveFileChanges =
+      latestCloseoutHostsTaskComplete &&
+      !latestCloseoutHasFileChanges &&
+      (!isGlobal || displayFileChangeSummaries.length > 0) &&
+      displayFileChangeSummaries.length > 0
     // The run-complete card's title is a dynamic status, not a fixed "Task
     // complete": blockers the orchestrator flagged for the round REPLACE the
     // title (and tint it) instead of contradicting it from an advisory banner
@@ -5078,19 +5100,136 @@ export const TranscriptPanel = memo(
                         const fileChanges = (Array.isArray(msg.metadata?.closeoutFileChanges)
                           ? msg.metadata.closeoutFileChanges
                           : null) as CloseoutFileChange[] | null
+                        const hasEpic =
+                          Boolean(participantTable?.rows?.length) ||
+                          Boolean(commits?.length) ||
+                          Boolean(fileChanges?.length)
+                        if (!hasEpic) return null
+                        const isLatestCloseout = msg.id === latestCloseoutMessageId
+                        const closeoutDurationMs =
+                          typeof msg.metadata?.closeoutDurationMs === 'number'
+                            ? msg.metadata.closeoutDurationMs
+                            : null
+                        const durationText =
+                          isLatestCloseout && runCompleteDurationText
+                            ? runCompleteDurationText
+                            : closeoutDurationMs != null
+                              ? formatWorkDurationMs(closeoutDurationMs)
+                              : null
+                        const timeLabel = new Date(msg.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit'
+                        })
+                        // Latest close-out inherits the footer's dynamic status
+                        // title + Copy/Side chat so we can suppress the sibling
+                        // footer card entirely when this card hosts the epic.
+                        const showLatestActions =
+                          isLatestCloseout && shouldShowRunCompleteNotice && !isGlobal
+                        const titleLabel =
+                          showLatestActions && runCompleteStatus?.label
+                            ? runCompleteStatus.label
+                            : 'Task complete'
+                        const titleTone =
+                          showLatestActions &&
+                          runCompleteStatus &&
+                          runCompleteStatus.tone !== 'neutral'
+                            ? `tone-${runCompleteStatus.tone}`
+                            : undefined
+                        const liveFallbackFileChanges =
+                          isLatestCloseout &&
+                          latestCloseoutShowsLiveFileChanges &&
+                          !(fileChanges && fileChanges.length > 0)
+                            ? displayFileChangeSummaries.map((item) => ({
+                                path: item.path,
+                                status: item.status,
+                                additions: item.additions,
+                                deletions: item.deletions
+                              }))
+                            : null
+                        const fileChangesNode =
+                          fileChanges && fileChanges.length > 0 ? (
+                            <CloseoutFileChangesSection
+                              changes={fileChanges}
+                              workspacePath={currentWorkspacePath}
+                            />
+                          ) : liveFallbackFileChanges && liveFallbackFileChanges.length > 0 ? (
+                            <CloseoutFileChangesSection
+                              changes={liveFallbackFileChanges}
+                              workspacePath={currentWorkspacePath}
+                            />
+                          ) : undefined
+                        const latestAssistantMessage = showLatestActions
+                          ? [...resolvedMessages].reverse().find((m) => m.role === 'assistant')
+                          : null
+                        const latestCopyId = latestAssistantMessage
+                          ? `run-complete-copy-${latestAssistantMessage.id}`
+                          : null
+                        const isCopied = latestCopyId !== null && copiedId === latestCopyId
                         return (
-                          <RunCompleteEpicStack
-                            participantTable={participantTable}
-                            commits={commits}
-                            fileChanges={
-                              fileChanges && fileChanges.length > 0 ? (
-                                <CloseoutFileChangesSection
-                                  changes={fileChanges}
-                                  workspacePath={currentWorkspacePath}
-                                />
-                              ) : undefined
-                            }
-                          />
+                          <div
+                            className="run-complete-card"
+                            role="status"
+                            aria-label={titleLabel}
+                          >
+                            <div className="run-complete-main">
+                              <div className="run-complete-metadata">
+                                <strong
+                                  className={titleTone}
+                                  title={
+                                    showLatestActions
+                                      ? runCompleteStatus?.detail || undefined
+                                      : undefined
+                                  }
+                                >
+                                  {titleLabel}
+                                </strong>
+                                <span className="run-complete-time-row">
+                                  <span>{timeLabel}</span>
+                                  {durationText && <span>{durationText}</span>}
+                                </span>
+                              </div>
+                              {showLatestActions && (
+                                <div className="run-complete-actions">
+                                  <PillButton
+                                    size="compact"
+                                    className={`run-copy-btn${isCopied ? ' is-copied' : ''}`}
+                                    onClick={() => {
+                                      if (latestAssistantMessage?.content && latestCopyId) {
+                                        copy(latestCopyId, latestAssistantMessage.content)
+                                      }
+                                    }}
+                                    disabled={!latestAssistantMessage?.content}
+                                    title={
+                                      isCopied ? 'Copied' : 'Copy latest assistant response'
+                                    }
+                                    aria-label={
+                                      isCopied
+                                        ? 'Latest response copied'
+                                        : 'Copy latest assistant response'
+                                    }
+                                  >
+                                    {isCopied ? 'Copied' : 'Copy'}
+                                  </PillButton>
+                                  {currentRun?.runId && onOpenSideChatFromRun && (
+                                    <PillButton
+                                      size="compact"
+                                      onClick={() => onOpenSideChatFromRun(currentRun.runId)}
+                                      title="Open side chat seeded from this run result"
+                                      aria-label="Open side chat from run result"
+                                    >
+                                      Side chat
+                                    </PillButton>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <RunCompleteEpicStack
+                              participantTable={participantTable}
+                              commits={commits}
+                              fileChanges={fileChangesNode}
+                            />
+                          </div>
                         )
                       })()}
                     {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
@@ -5335,7 +5474,12 @@ export const TranscriptPanel = memo(
               })}
             </div>
           )}
-          {showRunCompleteSummary !== false && shouldShowRunCompleteNotice && runCompleteNotice && (
+          {/* When the latest close-out already hosts a Task Complete card with
+              the epic stack nested inside, skip this ephemeral footer sibling. */}
+          {showRunCompleteSummary !== false &&
+            shouldShowRunCompleteNotice &&
+            runCompleteNotice &&
+            !latestCloseoutHostsTaskComplete && (
             <div
               className={`run-complete-card${isGlobal ? ' is-global-stripped' : ''}`}
               role="status"
@@ -5366,11 +5510,6 @@ export const TranscriptPanel = memo(
                       </span>
                       {runCompleteDurationText && <span>{runCompleteDurationText}</span>}
                     </span>
-                  )}
-                  {/* Only a clean finish is "awaiting your next prompt" — a blocked
-                      or paused round would contradict its own title. */}
-                  {!isGlobal && runCompleteStatus?.kind === 'complete' && (
-                    <span>Awaiting your next prompt.</span>
                   )}
                 </div>
                 <div className="run-complete-actions">

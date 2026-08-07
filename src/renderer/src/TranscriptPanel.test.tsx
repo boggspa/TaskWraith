@@ -524,6 +524,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
+    expect(html).toContain('run-complete-card')
+    expect(html).toContain('Task complete')
     expect(html).toContain('run-complete-epic-stack')
     expect(html).toContain('Participants')
     expect(html).toContain('Commits')
@@ -532,10 +534,12 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('src/foo.ts')
     expect(html).toContain('+3')
     expect(html).toContain('-1')
-    expect(html).not.toContain('run-complete-card')
+    // Epic is nested inside the Task Complete card — one outer card, one stack.
+    expect((html.match(/run-complete-card/g) || []).length).toBe(1)
+    expect((html.match(/run-complete-epic-stack/g) || []).length).toBe(1)
   })
 
-  it('omits duplicate footer participants when latest closeout already renders them', () => {
+  it('keeps a single Task Complete card when latest closeout already hosts epic', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -572,10 +576,12 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
 
     expect(html).toContain('run-complete-card')
     expect(html).toContain('Task complete')
+    expect((html.match(/run-complete-card/g) || []).length).toBe(1)
     expect((html.match(/run-complete-epic-stack/g) || []).length).toBe(1)
+    expect(html).not.toContain('Awaiting your next prompt.')
   })
 
-  it('keeps footer live file changes when closeout has participants but no file tombstone', () => {
+  it('folds live file changes into the closeout Task Complete when no file tombstone', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -620,7 +626,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect((html.match(/run-complete-epic-stack/g) || []).length).toBe(2)
+    expect((html.match(/run-complete-card/g) || []).length).toBe(1)
+    expect((html.match(/run-complete-epic-stack/g) || []).length).toBe(1)
     expect(html).toContain('src/main.ts')
   })
 
@@ -1371,7 +1378,6 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
 
     expect(html).not.toContain('Task complete')
-    expect(html).not.toContain('Awaiting your next prompt.')
   })
 
   // The run-complete card's title is the run's status. Blockers retitle and
@@ -1410,7 +1416,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
         <TranscriptPanel {...makeProps({ virtualize: false, runCompleteNotice: notice })} />
       )
       expect(html).toContain('Task complete')
-      expect(html).toContain('Awaiting your next prompt.')
+      expect(html).not.toContain('Awaiting your next prompt.')
       expect(html).not.toContain('tone-warning')
       expect(html).not.toContain('tone-danger')
     })
