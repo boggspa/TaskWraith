@@ -220,6 +220,43 @@
   margin-top: 12px;
 }
 
+.simulator-canvas-banner {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(230, 168, 60, 0.35);
+  background: rgba(230, 168, 60, 0.12);
+  color: var(--text-primary);
+  font:
+    600 11px/1.35 system-ui,
+    sans-serif;
+}
+
+.simulator-canvas-bezel.is-interactive .simulator-canvas-bezel-screen {
+  cursor: crosshair;
+}
+
+.simulator-canvas-typebar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 12px 10px;
+}
+
+.simulator-canvas-type-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 7px;
+  background: var(--panel-bg, rgba(20, 22, 28, 0.55));
+  color: inherit;
+  font:
+    11px/1.2 system-ui,
+    sans-serif;
+}
+
 .simulator-canvas-empty,
 .simulator-canvas-issue {
   margin: 0 12px 12px;

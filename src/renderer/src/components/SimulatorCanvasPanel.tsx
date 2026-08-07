@@ -1,7 +1,7 @@
 /**
  * Simulator Canvas dock surface — chat-owned live preview of Apple's iOS
- * Simulator. The bridge (window.api.simulatorCanvas) may be absent until a
- * restart loads the preload; the UI stays defensive and never invents grants.
+ * Simulator. Human bezel gestures are gated on View & Control; without a lease
+ * this stays preview-only and never invents desktop control.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -10,29 +10,64 @@ import {
   type SimulatorCapabilityStatus,
   type SimulatorDeviceInfo,
   type SimulatorFormFactor,
+  type SimulatorGestureResult,
   type SimulatorHostActionResult,
-  type SimulatorScreenshotFrame
+  type SimulatorInteractionStatus,
+  type SimulatorScreenshotFrame,
+  type SimulatorScrollGesture,
+  type SimulatorTapGesture,
+  type SimulatorTypeGesture
 } from '../../../shared/simulatorCanvas'
-import { unwrapSimulatorCapabilityStatus } from '../lib/simulatorCanvasStatus'
+import {
+  buildScrollGesture,
+  buildTapGesture,
+  buildTypeGesture,
+  canSendSimulatorGestures,
+  mapPointerToBezelNorm,
+  previewOnlyBannerText
+} from '../lib/simulatorCanvasGestures'
 
 export interface SimulatorCanvasPanelProps {
   chatId: string
 }
 
 type SimulatorCanvasBridge = {
-  status: () => Promise<unknown>
+  status: () => Promise<SimulatorCapabilityStatus | { ok: true; status: SimulatorCapabilityStatus }>
   openApp: () => Promise<SimulatorHostActionResult>
   boot: (udid: string) => Promise<SimulatorHostActionResult>
   screenshot: (udid: string) => Promise<SimulatorHostActionResult | SimulatorScreenshotFrame>
-  listDevices?: () => Promise<unknown>
+  listDevices?: () => Promise<SimulatorDeviceInfo[] | SimulatorCapabilityStatus>
+  interactionStatus?: (chatId: string) => Promise<SimulatorInteractionStatus>
+  tap?: (payload: SimulatorTapGesture) => Promise<SimulatorGestureResult>
+  type?: (payload: SimulatorTypeGesture) => Promise<SimulatorGestureResult>
+  scroll?: (payload: SimulatorScrollGesture) => Promise<SimulatorGestureResult>
 }
 
 const SCREENSHOT_POLL_MS = 1500
+const INTERACTION_POLL_MS = 2000
 const BRIDGE_MISSING_HINT = 'Restart TaskWraith to load the Simulator Canvas bridge.'
 
 function getSimulatorCanvasBridge(): SimulatorCanvasBridge | undefined {
   const api = (window as unknown as { api?: { simulatorCanvas?: SimulatorCanvasBridge } }).api
   return api?.simulatorCanvas
+}
+
+function isCapabilityStatus(value: unknown): value is SimulatorCapabilityStatus {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return typeof record.installed === 'boolean' && typeof record.docsUrl === 'string'
+}
+
+function unwrapCapabilityStatus(value: unknown): SimulatorCapabilityStatus | null {
+  if (isCapabilityStatus(value)) return value
+  if (
+    value &&
+    typeof value === 'object' &&
+    isCapabilityStatus((value as { status?: unknown }).status)
+  ) {
+    return (value as { status: SimulatorCapabilityStatus }).status
+  }
+  return null
 }
 
 function isScreenshotFrame(value: unknown): value is SimulatorScreenshotFrame {
@@ -83,6 +118,9 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   const [frame, setFrame] = useState<SimulatorScreenshotFrame | null>(null)
   const [issue, setIssue] = useState<string | null>(null)
   const [busy, setBusy] = useState<'refresh' | 'open' | 'boot' | null>(null)
+  const [interaction, setInteraction] = useState<SimulatorInteractionStatus | null>(null)
+  const [typeBuffer, setTypeBuffer] = useState('')
+  const screenRef = useRef<HTMLDivElement | null>(null)
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
 
@@ -94,7 +132,7 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     }
     setBusy((current) => current ?? 'refresh')
     try {
-      const next = unwrapSimulatorCapabilityStatus(await api.status())
+      const next = unwrapCapabilityStatus(await api.status())
       if (chatIdRef.current !== chatId) return null
       if (!next) {
         setIssue('Simulator Canvas status was unavailable.')
@@ -124,9 +162,32 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     }
   }, [chatId])
 
+  const refreshInteraction = useCallback(async (): Promise<void> => {
+    const api = getSimulatorCanvasBridge()
+    if (!api?.interactionStatus) {
+      setInteraction(null)
+      return
+    }
+    try {
+      const next = await api.interactionStatus(chatId)
+      if (chatIdRef.current !== chatId) return
+      setInteraction(next)
+    } catch {
+      if (chatIdRef.current === chatId) setInteraction(null)
+    }
+  }, [chatId])
+
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
+
+  useEffect(() => {
+    void refreshInteraction()
+    const timer = window.setInterval(() => {
+      void refreshInteraction()
+    }, INTERACTION_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [refreshInteraction])
 
   const selectedDevice = useMemo(() => {
     return deviceOptions(status).find((device) => device.udid === selectedUdid) ?? null
@@ -139,6 +200,8 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   )
 
   const formFactor = resolveSimulatorFormFactor(selectedDevice?.name)
+  const gesturesEnabled = canSendSimulatorGestures(interaction)
+  const banner = previewOnlyBannerText(interaction)
 
   useEffect(() => {
     const api = getSimulatorCanvasBridge()
@@ -225,6 +288,66 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     }
   }
 
+  const pointFromEvent = (event: {
+    clientX: number
+    clientY: number
+  }): {
+    x: number
+    y: number
+  } | null => {
+    const el = screenRef.current
+    if (!el) return null
+    return mapPointerToBezelNorm(event.clientX, event.clientY, el.getBoundingClientRect())
+  }
+
+  const handleBezelPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (!gesturesEnabled) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.tap) return
+    const point = pointFromEvent(event)
+    if (!point) return
+    event.preventDefault()
+    void api.tap(buildTapGesture(chatId, point)).then((result) => {
+      if (chatIdRef.current !== chatId) return
+      if (result && result.ok === false && !result.recorded) {
+        setIssue(result.error || 'Tap was refused.')
+      }
+    })
+  }
+
+  const handleBezelWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    if (!gesturesEnabled) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.scroll) return
+    const point = pointFromEvent(event)
+    if (!point) return
+    event.preventDefault()
+    void api
+      .scroll(buildScrollGesture(chatId, point, event.deltaX, event.deltaY))
+      .then((result) => {
+        if (chatIdRef.current !== chatId) return
+        if (result && result.ok === false && !result.recorded) {
+          setIssue(result.error || 'Scroll was refused.')
+        }
+      })
+  }
+
+  const submitTypeBuffer = (): void => {
+    if (!gesturesEnabled) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.type) return
+    const text = typeBuffer
+    if (!text) return
+    void api.type(buildTypeGesture(chatId, text)).then((result) => {
+      if (chatIdRef.current !== chatId) return
+      if (result && result.ok === false && !result.recorded) {
+        setIssue(result.error || 'Type was refused.')
+        return
+      }
+      setTypeBuffer('')
+    })
+  }
+
   if (!bridge?.status) {
     return (
       <section className="simulator-canvas-panel" aria-label="Simulator Canvas">
@@ -243,47 +366,7 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     )
   }
 
-  if (!status) {
-    return (
-      <section
-        className="simulator-canvas-panel"
-        aria-label="Simulator Canvas"
-        aria-busy={busy !== null}
-      >
-        <div className="simulator-canvas-toolbar">
-          <div>
-            <div className="simulator-canvas-title">Simulator Canvas</div>
-            <div className="simulator-canvas-subtitle">
-              Preview and drive an iOS Simulator in this chat.
-            </div>
-          </div>
-          <button
-            type="button"
-            className="simulator-canvas-action"
-            onClick={() => void refreshStatus()}
-            disabled={busy !== null}
-          >
-            {busy === 'refresh' ? 'Checking…' : 'Refresh'}
-          </button>
-        </div>
-        <div
-          className={`simulator-canvas-empty${busy === 'refresh' ? ' is-busy' : ''}`}
-          role="status"
-        >
-          {busy === 'refresh' || !issue
-            ? 'Checking Simulator availability…'
-            : 'Simulator status unavailable. Try Refresh.'}
-        </div>
-        {issue && (
-          <div className="simulator-canvas-issue" role="alert">
-            {issue}
-          </div>
-        )}
-      </section>
-    )
-  }
-
-  if (!status.installed) {
+  if (status && !status.installed) {
     const docsUrl = status.docsUrl || SIMULATOR_INSTALL_DOCS_URL
     return (
       <section className="simulator-canvas-panel" aria-label="Simulator Canvas">
@@ -322,11 +405,7 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   const frameSrc = frame ? `data:image/png;base64,${frame.pngBase64}` : null
 
   return (
-    <section
-      className="simulator-canvas-panel"
-      aria-label="Simulator Canvas"
-      aria-busy={busy !== null}
-    >
+    <section className="simulator-canvas-panel" aria-label="Simulator Canvas">
       <div className="simulator-canvas-toolbar">
         <div>
           <div className="simulator-canvas-title">Simulator Canvas</div>
@@ -382,14 +461,25 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         </div>
       </div>
 
+      {banner ? (
+        <div className="simulator-canvas-banner" role="status">
+          {banner}
+        </div>
+      ) : null}
+
       <div className="simulator-canvas-stage">
         <div
-          className={`simulator-canvas-bezel is-${formFactor}`}
+          className={`simulator-canvas-bezel is-${formFactor}${gesturesEnabled ? ' is-interactive' : ''}`}
           data-form-factor={formFactor}
           aria-label={`${formFactor === 'tablet' ? 'iPad' : 'iPhone'} simulator preview`}
         >
           <div className="simulator-canvas-bezel-notch" aria-hidden="true" />
-          <div className="simulator-canvas-bezel-screen">
+          <div
+            ref={screenRef}
+            className="simulator-canvas-bezel-screen"
+            onPointerDown={handleBezelPointerDown}
+            onWheel={handleBezelWheel}
+          >
             {frameSrc ? (
               <img
                 className="simulator-canvas-frame"
@@ -398,20 +488,43 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
                 draggable={false}
               />
             ) : (
-              <div
-                className={`simulator-canvas-frame-placeholder${busy === 'boot' ? ' is-busy' : ''}`}
-              >
-                {busy === 'boot'
-                  ? 'Booting simulator…'
-                  : selectedBooted
-                    ? 'Waiting for the next simulator frame…'
-                    : 'Boot a device to start the live preview.'}
+              <div className="simulator-canvas-frame-placeholder">
+                {selectedBooted
+                  ? 'Waiting for the next simulator frame…'
+                  : 'Boot a device to start the live preview.'}
               </div>
             )}
           </div>
           <div className="simulator-canvas-bezel-home" aria-hidden="true" />
         </div>
       </div>
+
+      {gesturesEnabled ? (
+        <div className="simulator-canvas-typebar">
+          <input
+            className="simulator-canvas-type-input"
+            type="text"
+            value={typeBuffer}
+            onChange={(event) => setTypeBuffer(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                submitTypeBuffer()
+              }
+            }}
+            placeholder="Type into Simulator…"
+            aria-label="Type into Simulator"
+          />
+          <button
+            type="button"
+            className="simulator-canvas-action"
+            onClick={submitTypeBuffer}
+            disabled={!typeBuffer}
+          >
+            Send
+          </button>
+        </div>
+      ) : null}
 
       {issue && (
         <div className="simulator-canvas-issue" role="alert">
