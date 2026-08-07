@@ -483,18 +483,117 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     ])
   })
 
-  it('does not return a stacked participant list for serial rounds', () => {
-    const chat = ensembleChat([participant()])
+  // A serial round never sets `concurrentMode` — it is stamped once at
+  // `beginRound` from the requested fan-out policy and never flipped later. But
+  // waves DO open mid-round (a Boss review wave, a scout pass, a user
+  // @mention's User Fan-Out), and each one runs a real lane alongside the
+  // serial speaker. Gating the stack on `concurrentMode` therefore collapsed
+  // every one of those to the single fallback row for `activeParticipantId`,
+  // hiding every seat the wave had just started. Live lanes are the signal.
+  it('stacks a mid-round fan-out wave alongside the serial speaker', () => {
+    const chat = ensembleChat(
+      [
+        participant({ id: 'grok-work', provider: 'grok', role: 'Work', order: 0 }),
+        participant({ id: 'luna-review', provider: 'codex', role: 'LunaReview', order: 1 }),
+        participant({ id: 'mistral-review', provider: 'mistral', role: 'MistralReview', order: 2 })
+      ],
+      'grok-work'
+    )
+    // Continuous serial round: no `concurrentMode`, and the round's own policy
+    // is off — a User Fan-Out dispatches on `concurrentLanesEnabled()` alone,
+    // so it can and does land in a round whose policy forbids a fan-out pass.
+    chat.ensemble!.activeRound!.fanoutPolicy = 'off'
     chat.ensemble!.activeRound!.lanes = {
-      lane1: {
-        laneId: 'lane1',
-        participantId: 'codex-builder',
+      luna: {
+        laneId: 'luna',
+        participantId: 'luna-review',
         provider: 'codex',
         status: 'running',
         intent: 'read',
-        startedAt: '2026-07-01T00:00:01.000Z'
+        startedAt: '2026-07-01T00:06:00.000Z'
+      },
+      mistral: {
+        laneId: 'mistral',
+        participantId: 'mistral-review',
+        provider: 'mistral',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:06:01.000Z'
       }
     }
+
+    expect(deriveActiveEnsembleWorkingPresentations(chat).map((item) => item.roleLabel)).toEqual([
+      'Work',
+      'LunaReview',
+      'MistralReview'
+    ])
+  })
+
+  it('drops a settled fan-out lane from the stack while its wave peer runs on', () => {
+    const chat = ensembleChat(
+      [
+        participant({ id: 'grok-work', provider: 'grok', role: 'Work', order: 0 }),
+        participant({ id: 'luna-review', provider: 'codex', role: 'LunaReview', order: 1 }),
+        participant({ id: 'mistral-review', provider: 'mistral', role: 'MistralReview', order: 2 })
+      ],
+      'grok-work'
+    )
+    chat.ensemble!.activeRound!.fanoutPolicy = 'off'
+    chat.ensemble!.activeRound!.lanes = {
+      luna: {
+        laneId: 'luna',
+        participantId: 'luna-review',
+        provider: 'codex',
+        status: 'completed',
+        intent: 'read',
+        startedAt: '2026-07-01T00:06:00.000Z',
+        endedAt: '2026-07-01T00:06:30.000Z'
+      },
+      mistral: {
+        laneId: 'mistral',
+        participantId: 'mistral-review',
+        provider: 'mistral',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:06:01.000Z'
+      }
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentations(chat).map((item) => item.roleLabel)).toEqual([
+      'Work',
+      'MistralReview'
+    ])
+  })
+
+  // The wave has fully settled: the plural derivation stands down and the
+  // caller's single fallback row takes over for the serial speaker, exactly as
+  // it does for a round that never opened a lane at all.
+  it('stands down once every fan-out lane in a serial round has settled', () => {
+    const chat = ensembleChat(
+      [
+        participant({ id: 'grok-work', provider: 'grok', role: 'Work', order: 0 }),
+        participant({ id: 'luna-review', provider: 'codex', role: 'LunaReview', order: 1 })
+      ],
+      'grok-work'
+    )
+    chat.ensemble!.activeRound!.fanoutPolicy = 'off'
+    chat.ensemble!.activeRound!.lanes = {
+      luna: {
+        laneId: 'luna',
+        participantId: 'luna-review',
+        provider: 'codex',
+        status: 'completed',
+        intent: 'read',
+        startedAt: '2026-07-01T00:06:00.000Z',
+        endedAt: '2026-07-01T00:06:30.000Z'
+      }
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentations(chat)).toEqual([])
+  })
+
+  it('does not return a stacked participant list for a serial round with no lanes', () => {
+    const chat = ensembleChat([participant()])
 
     expect(deriveActiveEnsembleWorkingPresentations(chat)).toEqual([])
   })

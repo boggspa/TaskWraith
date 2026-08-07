@@ -8,6 +8,7 @@ import type {
   ProviderId
 } from '../../../main/store/types'
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
+import { LIVE_ENSEMBLE_LANE_STATUSES } from '../../../shared/ensembleRoundLifecycle'
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
 import { resolveOllamaDisplayBrand, resolveProviderHueClass } from './ollamaDisplayBrand'
@@ -60,7 +61,12 @@ export function resolveWorkingIndicatorProviderPresentation(
 }
 
 const LIVE_ROUND_PARTICIPANT_STATUSES = new Set(['idle', 'running', 'sleeping'])
-const LIVE_LANE_STATUSES = new Set(['pending', 'running', 'blocked', 'awaiting-approval'])
+// The shared predicate, not a private copy. Three surfaces must agree on which
+// lane states mean "this seat has not finished" — round liveness, these
+// presentations, and the remote projection that tells the phone which lane
+// cards to shimmer — and a copy that drifts leaves a card marked busy after its
+// seat finished.
+const LIVE_LANE_STATUSES = LIVE_ENSEMBLE_LANE_STATUSES
 
 type ParticipantModelDisplay = Pick<
   EnsembleParticipant,
@@ -302,20 +308,32 @@ export function deriveActiveEnsembleWorkingPresentations(
     round.concurrentMode === true &&
     lanes.length > 0 &&
     round.fanoutPolicy !== 'off'
-  if (!isConcurrentFanout && compactingIds.length === 0) return []
+  // `concurrentMode` is stamped once at `beginRound` from the requested fan-out
+  // policy and never flipped afterwards, but waves DO open mid-round: a Boss
+  // review wave, a scout pass, or a user @mention's additive User Fan-Out —
+  // which dispatches on `concurrentLanesEnabled()` alone and so lands even in a
+  // round whose own policy is `off`. Gating on the round's DECLARED mode
+  // therefore hid every seat those waves had just started, collapsing the stack
+  // to the caller's single fallback row for `activeParticipantId`. A live lane
+  // is the seat running right now, whatever the round once declared, and it is
+  // the same signal `workingParticipantIdsForRound` already projects to iOS.
+  const hasLiveFanoutLane =
+    round?.status === 'running' && lanes.some((lane) => LIVE_LANE_STATUSES.has(lane.status))
+  const isFanoutActive = isConcurrentFanout || hasLiveFanoutLane
+  if (!isFanoutActive && compactingIds.length === 0) return []
 
   const liveParticipantIds = new Set<string>()
   if (compactingIds.length > 0) {
     const activeId = activeParticipantId(chat)
     if (activeId) liveParticipantIds.add(activeId)
   }
-  if (isConcurrentFanout && round?.activeParticipantId) {
+  if (isFanoutActive && round?.activeParticipantId) {
     const activeParticipant = roundParticipantForId(chat, round.activeParticipantId)
     if (!activeParticipant || isLiveRoundParticipantStatus(activeParticipant.status)) {
       liveParticipantIds.add(round.activeParticipantId)
     }
   }
-  if (isConcurrentFanout) {
+  if (isFanoutActive) {
     for (const lane of lanes) {
       if (LIVE_LANE_STATUSES.has(lane.status)) {
         liveParticipantIds.add(lane.participantId)
