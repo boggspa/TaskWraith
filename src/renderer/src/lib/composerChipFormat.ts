@@ -310,6 +310,13 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     return effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : ''
   }
 
+  // Mistral Medium 3.5 (Vibe seat + Pi BYOK mirror) is fixed at High thinking
+  // — vibe-acp schema pin / known upstream default. Not user-adjustable, but
+  // the compact chip still names the level so it matches the locked ladder.
+  const modelId = ctx.modelId.trim().toLowerCase()
+  if (provider === 'mistral' && modelId === 'mistral-medium-3.5') return 'High'
+  if (provider === 'pi' && modelId === 'mistral/mistral-medium-3.5') return 'High'
+
   return ''
 }
 

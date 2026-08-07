@@ -161,9 +161,14 @@ describe('unavailable reasoning presentation', () => {
       { value: 'max', label: 'Max' }
     ])
 
-    expect(resolveReasoningLadderAvailability('codex', 'fixed-live-model', fixed).mutable).toBe(
-      false
-    )
+    expect(resolveReasoningLadderAvailability('codex', 'fixed-live-model', fixed)).toEqual({
+      mutable: false,
+      unavailablePresentation: {
+        index: 2,
+        label: 'Medium',
+        disabledReason: 'Reasoning is fixed for this model'
+      }
+    })
     expect(resolveReasoningLadderAvailability('kimi', 'kimi-k2.7-code', kimiFixed)).toEqual({
       mutable: false,
       unavailablePresentation: {
@@ -175,6 +180,64 @@ describe('unavailable reasoning presentation', () => {
     expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3', kimiMutable)).toEqual({
       mutable: true
     })
+  })
+
+  it('pins Mistral Medium 3.5 at locked High (vibe schema thinking=high), not the generic dash', () => {
+    const mistralHigh = buildLadderModel('mistral', [
+      {
+        value: 'high',
+        label: 'High',
+        disabledReason: 'Mistral Medium 3.5 always thinks at High.'
+      }
+    ])
+    const piHigh = buildLadderModel('pi', [
+      {
+        value: 'high',
+        label: 'High',
+        disabledReason: 'Mistral Medium 3.5 always thinks at High.'
+      }
+    ])
+
+    expect(mistralHigh.disabledReason).toBe('Mistral Medium 3.5 always thinks at High.')
+    expect(resolveReasoningLadderAvailability('mistral', 'mistral-medium-3.5', mistralHigh)).toEqual(
+      {
+        mutable: false,
+        unavailablePresentation: {
+          index: 3,
+          label: 'High',
+          disabledReason: 'Mistral Medium 3.5 always thinks at High.'
+        }
+      }
+    )
+    expect(
+      resolveReasoningLadderAvailability('pi', 'mistral/mistral-medium-3.5', piHigh)
+    ).toEqual({
+      mutable: false,
+      unavailablePresentation: {
+        index: 3,
+        label: 'High',
+        disabledReason: 'Mistral Medium 3.5 always thinks at High.'
+      }
+    })
+
+    const markup = renderToStaticMarkup(
+      createElement(ReasoningLadderSlider, {
+        provider: 'mistral',
+        ladder: mistralHigh,
+        selectedReasoning: 'high',
+        onSelectReasoning: () => undefined,
+        unavailablePresentation: resolveReasoningLadderAvailability(
+          'mistral',
+          'mistral-medium-3.5',
+          mistralHigh
+        ).unavailablePresentation,
+        onInteract: () => undefined
+      })
+    )
+    expect(markup).toContain('aria-valuenow="3"')
+    expect(markup).toContain('aria-valuetext="High"')
+    expect(markup).toContain('data-disabled="true"')
+    expect(markup).toContain('title="Mistral Medium 3.5 always thinks at High."')
   })
 
   it('renders inert generic zero and Cursor Medium ladders without active FX', () => {

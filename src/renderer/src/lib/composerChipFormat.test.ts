@@ -299,6 +299,33 @@ describe('reasoningDisplayLabel', () => {
       })
     ).toBe('')
   })
+
+  it('Mistral Medium 3.5 (and Pi BYOK mirror) show locked High; Devstral stays blank', () => {
+    expect(
+      reasoningDisplayLabel({
+        provider: 'mistral',
+        composerStyle: 'claude',
+        modelId: 'mistral-medium-3.5',
+        modelLabel: 'Mistral Medium 3.5'
+      })
+    ).toBe('High')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'pi',
+        composerStyle: 'claude',
+        modelId: 'mistral/mistral-medium-3.5',
+        modelLabel: 'Mistral Medium 3.5'
+      })
+    ).toBe('High')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'mistral',
+        composerStyle: 'claude',
+        modelId: 'devstral-small',
+        modelLabel: 'Devstral Small'
+      })
+    ).toBe('')
+  })
 })
 
 describe('formatComposerModelChip', () => {

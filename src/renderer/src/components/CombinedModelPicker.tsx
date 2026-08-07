@@ -633,15 +633,23 @@ export function resolveReasoningLadderAvailability(
   ladder: LadderModel
 ): ReasoningLadderAvailability {
   if (ladder.enabledIndices.length > 1) return { mutable: true }
-  if (provider === 'kimi' && ladder.enabledIndices.length === 1) {
+  // A single enabled stop is the locked aesthetic (Kimi always-On, Mistral
+  // Medium High, live catalogs that expose exactly one effort, …). Pin the
+  // thumb + label at that stop rather than collapsing to the empty-rail dash.
+  if (ladder.enabledIndices.length === 1) {
     const index = ladder.enabledIndices[0]
+    const fallbackLabel =
+      provider === 'kimi' ? 'On' : LADDER_STOPS[index]?.label || '—'
+    const fallbackReason =
+      provider === 'kimi'
+        ? 'Thinking is always on and cannot be disabled for this model.'
+        : 'Reasoning is fixed for this model'
     return {
       mutable: false,
       unavailablePresentation: {
         index,
-        label: ladder.labelByIndex[index] || 'On',
-        disabledReason:
-          ladder.disabledReason || 'Thinking is always on and cannot be disabled for this model.'
+        label: ladder.labelByIndex[index] || fallbackLabel,
+        disabledReason: ladder.disabledReason || fallbackReason
       }
     }
   }
@@ -711,6 +719,10 @@ export function buildLadderModel(
       enabledIndices.push(index)
       valueByIndex[index] = option.value
       labelByIndex[index] = option.label
+      // Locked single-stop catalogs (e.g. Mistral Medium High) carry the
+      // fixed-reason tooltip on the enabled option itself — keep it for the
+      // inert ladder presentation.
+      if (!disabledReason && option.disabledReason) disabledReason = option.disabledReason
     }
   }
   enabledIndices.sort((a, b) => a - b)
