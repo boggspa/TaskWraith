@@ -159,18 +159,13 @@ export const buildEnsembleRoundCostRow = (
   }
 }
 
-export const formatWorkDuration = (startedAt?: string, completedAt?: string): string | null => {
-  if (!startedAt || !completedAt) {
+/** Long-form "Worked for …" from a millisecond duration (close-out metadata). */
+export const formatWorkDurationMs = (durationMs: number): string | null => {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
     return null
   }
 
-  const started = new Date(startedAt).getTime()
-  const completed = new Date(completedAt).getTime()
-  if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started) {
-    return null
-  }
-
-  let remainingSeconds = Math.max(1, Math.round((completed - started) / 1000))
+  let remainingSeconds = Math.max(1, Math.round(durationMs / 1000))
   const hours = Math.floor(remainingSeconds / 3600)
   remainingSeconds -= hours * 3600
   const minutes = Math.floor(remainingSeconds / 60)
@@ -182,6 +177,20 @@ export const formatWorkDuration = (startedAt?: string, completedAt?: string): st
   if (seconds > 0 || parts.length === 0) parts.push(`${seconds} second${seconds === 1 ? '' : 's'}`)
 
   return `Worked for ${parts.slice(0, 2).join(' ')}`
+}
+
+export const formatWorkDuration = (startedAt?: string, completedAt?: string): string | null => {
+  if (!startedAt || !completedAt) {
+    return null
+  }
+
+  const started = new Date(startedAt).getTime()
+  const completed = new Date(completedAt).getTime()
+  if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started) {
+    return null
+  }
+
+  return formatWorkDurationMs(completed - started)
 }
 
 const formatCompactDurationMs = (durationMs: number): string => {
