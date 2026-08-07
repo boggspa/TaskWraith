@@ -1254,6 +1254,10 @@ import {
 } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
 import { createMeshToolExecutors, isMeshMcpToolName } from './mcp/MeshToolExecutors'
+import {
+  createSimulatorToolExecutors,
+  isSimulatorMcpToolName
+} from './mcp/SimulatorToolExecutors'
 import { MeshAssetStore } from './mesh/MeshAssetStore'
 import { registerMeshAssetProtocol, MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
 import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
@@ -4065,6 +4069,7 @@ const meshSceneService = new MeshSceneService({
 })
 const meshToolExecutors = createMeshToolExecutors(meshSceneService)
 const simulatorHostService = new SimulatorHostService()
+const simulatorToolExecutors = createSimulatorToolExecutors(simulatorHostService)
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
   getControlStatus: (chatId) => {
     const status = nativeWindowCoordinatorRef?.statusForChat(chatId)
@@ -36481,6 +36486,16 @@ async function executeGeminiMcpTool(
         return staleProviderMcpResult(toolName)
       }
       applyRichResult(meshResult)
+    } else if (isSimulatorMcpToolName(toolName)) {
+      markDispatchHandled('simulator-canvas')
+      applyRichResult(
+        await simulatorToolExecutors.executeSimulatorTool(
+          toolName,
+          args,
+          context,
+          parentProvider
+        )
+      )
     } else if (isLaunchMcpToolName(toolName)) {
       markDispatchHandled('launch-control')
       if (!launchMcpExecutors) {

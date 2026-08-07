@@ -19,6 +19,27 @@ export const MESH_SCENE_MCP_TOOL_NAMES = [
   'mesh_scene_delete'
 ] as const
 
+/** Simulator Canvas MCP surface — status is auto-allowed; the rest gate on simulatorCanvas. */
+export const SIMULATOR_MCP_TOOL_NAMES = [
+  'simulator_status',
+  'simulator_open',
+  'simulator_boot',
+  'simulator_install',
+  'simulator_launch',
+  'simulator_screenshot',
+  'simulator_terminate'
+] as const
+
+/** Mutating simulator control tools (approval-gated via simulatorCanvas). */
+export const SIMULATOR_MUTATING_MCP_TOOL_NAMES = [
+  'simulator_open',
+  'simulator_boot',
+  'simulator_install',
+  'simulator_launch',
+  'simulator_screenshot',
+  'simulator_terminate'
+] as const
+
 export const TASKWRAITH_MCP_TOOLS = [
   'run_shell_command',
   'write_file',
@@ -259,6 +280,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // capability_search; a fresh mesh-authorised participant can receive it
   // directly. Catalog visibility is never itself a grant.
   ...MESH_SCENE_MCP_TOOL_NAMES,
+  // Simulator Canvas — TaskWraith-owned Simulator.app / simctl host. Status is
+  // auto-allowed capability probe; open/boot/install/launch/screenshot/terminate
+  // gate on the dedicated simulatorCanvas service (Accept Edits allow; Ask/Plan
+  // ask with grant-immunity under Plan). Catalog visibility is never itself a
+  // grant.
+  ...SIMULATOR_MCP_TOOL_NAMES,
   // Agent-accessed appearance. A DATA channel over an allowlist of typed theme
   // tokens (see shared/agentThemeTokens) — never CSS text, never a selector, and
   // never a token that could move the approval chrome or restyle a provider's
@@ -380,6 +407,8 @@ export const TASKWRAITH_MCP_TOOLS = [
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
 
 export type MeshSceneMcpToolName = (typeof MESH_SCENE_MCP_TOOL_NAMES)[number]
+export type SimulatorMcpToolName = (typeof SIMULATOR_MCP_TOOL_NAMES)[number]
+export type SimulatorMutatingMcpToolName = (typeof SIMULATOR_MUTATING_MCP_TOOL_NAMES)[number]
 
 export const TASKWRAITH_MCP_TOOL_LIST = TASKWRAITH_MCP_TOOLS.join(', ')
 

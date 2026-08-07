@@ -1,6 +1,7 @@
 import {
   MEDIA_EDITING_TOOLS,
   MESH_SCENE_MCP_TOOL_NAMES,
+  SIMULATOR_MUTATING_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
@@ -173,6 +174,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'canvas_sketch_get',
   'canvas_network',
   'canvas_console',
+  // Simulator Canvas capability probe — installed/simctl/booted metadata only.
+  // Mutating simulator_* verbs stay gated on simulatorCanvas.
+  'simulator_status',
   // Thread Introspection read-only verbs — bounded pack metadata / full pack read.
   'tw_introspection_list',
   'tw_introspection_read',
@@ -229,22 +233,24 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
 /**
  * Recon-tier instrument tools: the approval-gated instruments a `read_only`
  * (Recon) seat may REACH that remain outside MCP_AUTO_ALLOWED_TOOLS. Today this
- * is Canvas Browser navigation (user decision 2026-08-04) plus sub-thread
- * delegation/cancel (user decision 2026-08-08): reachable on Ask/Plan as a
- * per-invocation ASK instead of silent unavailability. CRITICAL INVARIANT
- * (mirrors the plan-instrument tier below): nothing here is auto-allowed, so
- * every call still hits the host approval gate; advertising makes it REACHABLE
- * and approval-queued, NEVER auto-run. `webBrowsing` / `subThreadDelegation`
- * resolve to ASK under read_only (and Plan for subThreadDelegation) with
- * grant-immunity (isPlanInstrumentGrantHold); the global kill switch still
- * forces deny. DERIVED, never hand-listed.
+ * is Canvas Browser navigation (user decision 2026-08-04), sub-thread
+ * delegation/cancel (user decision 2026-08-08), and Simulator Canvas control
+ * verbs (user decision 2026-08-08): reachable on Ask/Plan as a per-invocation
+ * ASK instead of silent unavailability. CRITICAL INVARIANT (mirrors the
+ * plan-instrument tier below): nothing here is auto-allowed, so every call
+ * still hits the host approval gate; advertising makes it REACHABLE and
+ * approval-queued, NEVER auto-run. `webBrowsing` / `subThreadDelegation` /
+ * `simulatorCanvas` resolve to ASK under read_only (and Plan) with
+ * grant-immunity where configured (isPlanInstrumentGrantHold); the global kill
+ * switch still forces deny. DERIVED, never hand-listed.
  */
 export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter(
     (tool) =>
       tool === 'canvas_navigate' ||
       tool === 'delegate_to_subthread' ||
-      tool === 'cancel_subthread'
+      tool === 'cancel_subthread' ||
+      (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool)
   )
 )
 
@@ -281,14 +287,17 @@ export function isReadOnlyAdvertisedTool(name: string): boolean {
  * Plan-tier instrument tools: the approval-gated instruments a `plan` seat may
  * reach that a `read_only` seat may not — canvas actuation (canvas_click /
  * canvas_fill), structured Sketch edits (canvas_sketch_update), Mesh scene
- * authoring (the meshCanvas-service tools), and media compute (the
- * mediaEditing-service tools). CRITICAL INVARIANT: none of these are in
- * MCP_AUTO_ALLOWED_TOOLS, so every one still hits the host approval gate
- * (requestAgenticServiceApproval) when invoked. Advertising them to a plan
- * bridge seat makes them REACHABLE and approval-queued, NEVER auto-run — the
- * enforcement stays the main-side gate (canvasInteraction / sketchCanvas /
- * meshCanvas / mediaEditing = 'ask' under the plan preset). A read_only seat
- * never sees them.
+ * authoring (the meshCanvas-service tools), media compute (the
+ * mediaEditing-service tools), and Simulator Canvas control (also advertised
+ * on Ask via RECON_INSTRUMENT; listed here so Plan seats keep an explicit
+ * instrument membership even if the recon set changes). CRITICAL INVARIANT:
+ * none of these are in MCP_AUTO_ALLOWED_TOOLS, so every one still hits the host
+ * approval gate (requestAgenticServiceApproval) when invoked. Advertising them
+ * to a plan bridge seat makes them REACHABLE and approval-queued, NEVER
+ * auto-run — the enforcement stays the main-side gate (canvasInteraction /
+ * sketchCanvas / meshCanvas / mediaEditing / simulatorCanvas = 'ask' under the
+ * plan preset). A read_only seat never sees the plan-only members (canvas
+ * actuation / mesh / media); simulator controls remain on the recon tier too.
  */
 export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter(
@@ -297,6 +306,7 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
       tool === 'canvas_fill' ||
       tool === 'canvas_sketch_update' ||
       (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
+      (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       MEDIA_EDITING_TOOLS.has(tool)
   )
 )

@@ -60,6 +60,7 @@ export const CANONICAL_DISPATCH_OWNERS = [
   'launch-control',
   'canvas',
   'mesh-canvas',
+  'simulator-canvas',
   'theme-control',
   'cross-thread-recall',
   'introspection',
@@ -1842,6 +1843,66 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'meshCanvas',
     'application.mutate',
     'mesh-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  // Simulator Canvas — status is a safe capability probe (auto-allowed). The
+  // mutating verbs stay orchestration-class so Ask/Plan seats are not
+  // read-only-floor denied before the simulatorCanvas modal; they still never
+  // auto-run.
+  simulator_status: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'simulator-canvas',
+    'none',
+    'none'
+  ),
+  simulator_open: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_boot: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_install: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_launch: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_screenshot: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.read',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_terminate: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
     'host-state',
     'application-resource'
   ),

@@ -207,17 +207,56 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
-  it('RECON INSTRUMENT INVARIANT: canvas_navigate + sub-thread controls, never auto-allowed', () => {
+  it('RECON INSTRUMENT INVARIANT: canvas_navigate + sub-thread + simulator controls, never auto-allowed', () => {
     // Growing this tier is a capability-governance decision, not a convenience.
     expect([...RECON_INSTRUMENT_ADVERTISE_TOOLS].sort()).toEqual(
-      ['cancel_subthread', 'canvas_navigate', 'delegate_to_subthread'].sort()
+      [
+        'cancel_subthread',
+        'canvas_navigate',
+        'delegate_to_subthread',
+        'simulator_boot',
+        'simulator_install',
+        'simulator_launch',
+        'simulator_open',
+        'simulator_screenshot',
+        'simulator_terminate'
+      ].sort()
     )
     const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_navigate.service).toBe('webBrowsing')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_to_subthread.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.cancel_subthread.service).toBe('subThreadDelegation')
+    for (const tool of [
+      'simulator_open',
+      'simulator_boot',
+      'simulator_install',
+      'simulator_launch',
+      'simulator_screenshot',
+      'simulator_terminate'
+    ] as const) {
+      expect(TASKWRAITH_TOOL_ACTIONS[tool].service).toBe('simulatorCanvas')
+    }
     for (const tool of RECON_INSTRUMENT_ADVERTISE_TOOLS) {
       expect(autoAllowedTools.has(tool)).toBe(false)
+    }
+  })
+
+  it('auto-allows simulator_status and keeps mutating simulator tools gated', () => {
+    const autoAllowed = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
+    expect(autoAllowed.has('simulator_status')).toBe(true)
+    expect(TASKWRAITH_TOOL_ACTIONS.simulator_status.service).toBe('mcpTools')
+    for (const tool of [
+      'simulator_open',
+      'simulator_boot',
+      'simulator_install',
+      'simulator_launch',
+      'simulator_screenshot',
+      'simulator_terminate'
+    ] as const) {
+      expect(autoAllowed.has(tool)).toBe(false)
+      expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
+      expect(isPlanAdvertisedTool(tool)).toBe(true)
+      expect(PLAN_INSTRUMENT_ADVERTISE_TOOLS).toContain(tool)
     }
   })
 })
@@ -293,9 +332,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
   it('advertises sub-thread delegation as an approval-queued Ask instrument', () => {
     expect(isReadOnlyAdvertisedTool('delegate_to_subthread')).toBe(true)
     expect(isReadOnlyAdvertisedTool('cancel_subthread')).toBe(true)
-    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_to_subthread')).toBe(
-      false
-    )
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_to_subthread')).toBe(false)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('cancel_subthread')).toBe(false)
     expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toEqual(
       expect.arrayContaining(['delegate_to_subthread', 'cancel_subthread', 'canvas_navigate'])

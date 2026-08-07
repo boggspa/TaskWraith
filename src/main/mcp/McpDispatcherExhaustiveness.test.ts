@@ -21,6 +21,7 @@ import { IMAGE_MCP_TOOL_NAMES } from './ImageToolExecutors'
 import { INTROSPECTION_MCP_TOOL_NAMES } from './IntrospectionToolExecutors'
 import { LAUNCH_MCP_TOOL_NAMES } from './LaunchToolExecutors'
 import { MESH_MCP_TOOL_NAMES } from './MeshToolExecutors'
+import { SIMULATOR_MCP_TOOL_NAMES } from './SimulatorToolExecutors'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from './McpToolGateway'
 import { OUTLOOK_MCP_TOOL_NAMES } from './OutlookToolExecutors'
 import { PROJECT_REFERENCE_MCP_TOOL_NAMES } from './ProjectReferenceToolExecutors'
@@ -84,6 +85,7 @@ const DISPATCHER_BRANCH_CONTRACTS = [
   ),
   branch('isCanvasMcpToolName(toolName)', CANVAS_MCP_TOOL_NAMES, 'canvas'),
   branch('isMeshMcpToolName(toolName)', MESH_MCP_TOOL_NAMES, 'mesh-canvas'),
+  branch('isSimulatorMcpToolName(toolName)', SIMULATOR_MCP_TOOL_NAMES, 'simulator-canvas'),
   branch('isLaunchMcpToolName(toolName)', LAUNCH_MCP_TOOL_NAMES, 'launch-control'),
   branch('isRecallMcpToolName(toolName)', RECALL_MCP_TOOL_NAMES, 'cross-thread-recall'),
   branch('isThreadMessageMcpToolName(toolName)', THREAD_MESSAGE_MCP_TOOL_NAMES, 'ensemble-control'),

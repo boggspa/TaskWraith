@@ -14,11 +14,15 @@ export {
   isPortableEnsembleControlToolName,
   normalizePortableEnsembleControlArguments,
   MESH_SCENE_MCP_TOOL_NAMES,
+  SIMULATOR_MCP_TOOL_NAMES,
+  SIMULATOR_MUTATING_MCP_TOOL_NAMES,
   MEDIA_EDITING_TOOL_NAMES,
   MEDIA_EDITING_TOOLS
 } from '../shared/taskWraithMcpCatalog'
 export type {
   TaskWraithMcpToolName,
   MediaEditingToolName,
-  MeshSceneMcpToolName
+  MeshSceneMcpToolName,
+  SimulatorMcpToolName,
+  SimulatorMutatingMcpToolName
 } from '../shared/taskWraithMcpCatalog'

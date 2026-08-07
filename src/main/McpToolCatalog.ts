@@ -4507,6 +4507,129 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'simulator_status',
+      description:
+        'Probe Simulator Canvas capability on this Mac: whether Simulator.app / simctl are available, Xcode paths, and booted/available devices. Read-only; auto-allowed.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'simulator_open',
+      description:
+        'Open Xcode’s Simulator.app (TaskWraith-owned spawn). Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'simulator_boot',
+      description:
+        'Boot an iOS Simulator device by UDID (or "booted"). Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: {
+            type: 'string',
+            description: 'Simulator device UDID, or the literal "booted".'
+          }
+        },
+        required: ['udid']
+      }
+    },
+    {
+      name: 'simulator_install',
+      description:
+        'Install a .app bundle onto a simulator via simctl. `appPath` must be an absolute path to a .app. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID, or "booted".' },
+          appPath: {
+            type: 'string',
+            description: 'Absolute path to a .app bundle to install.'
+          }
+        },
+        required: ['udid', 'appPath']
+      }
+    },
+    {
+      name: 'simulator_launch',
+      description:
+        'Launch an installed app on a simulator by bundle id. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID, or "booted".' },
+          bundleId: { type: 'string', description: 'App bundle identifier to launch.' }
+        },
+        required: ['udid', 'bundleId']
+      }
+    },
+    {
+      name: 'simulator_screenshot',
+      description:
+        'Capture a PNG screenshot of a simulator via simctl. Returns an image content block; structured metadata omits base64. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID, or "booted".' }
+        },
+        required: ['udid']
+      }
+    },
+    {
+      name: 'simulator_terminate',
+      description:
+        'Terminate a running app on a simulator by bundle id. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID, or "booted".' },
+          bundleId: { type: 'string', description: 'App bundle identifier to terminate.' }
+        },
+        required: ['udid', 'bundleId']
+      }
+    },
+    {
       name: 'tw_recall_find',
       description:
         'Find past runs on OTHER threads to answer "how far did <provider> get with <task> <when> in <workspace>?". Resolves deliberately-vague references (a provider alias, an approximate time like "yesterday ~6pm", a workspace name, a task description) to a ranked, bounded set of candidate runs. Returns the host interpretation, a verdict (one|many|none), and STRUCTURAL candidate metadata only — never prompt or transcript text. Call tw_recall_read with a candidate runId to read how far it got. Read-only. Discovery in your OWN workspace is allowed; other workspaces require user approval. On "many" disambiguate from the metadata or ask the user; on "none" say you could not find it — never guess.',

@@ -164,6 +164,13 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     // sub-thread + cross-thread recall
     expect(catalogToolAgenticService('delegate_to_subthread')).toBe('subThreadDelegation')
     expect(catalogToolAgenticService('cancel_subthread')).toBe('subThreadDelegation')
+    expect(catalogToolAgenticService('simulator_status')).toBe('mcpTools')
+    expect(catalogToolAgenticService('simulator_open')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_boot')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_install')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_launch')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_screenshot')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_terminate')).toBe('simulatorCanvas')
     for (const tool of ['tw_recall_find', 'tw_recall_read', 'tw_recall_read_events']) {
       expect(catalogToolAgenticService(tool)).toBe('crossThreadRead')
     }

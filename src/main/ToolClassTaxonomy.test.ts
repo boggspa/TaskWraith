@@ -482,6 +482,10 @@ describe('isReadOnlyBlockedTool', () => {
     // modal-approve it rather than hard-deny before the gate.
     expect(isReadOnlyBlockedTool('delegate_to_subthread', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('cancel_subthread', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('simulator_status', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('simulator_open', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('simulator_boot', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('simulator_screenshot', ro)).toBe(false)
     expect(classifyTool('canvas_sketch_open')).toBe('orchestration')
     expect(isReadOnlyBlockedTool('canvas_sketch_open', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('canvas_sketch_get', ro)).toBe(false)

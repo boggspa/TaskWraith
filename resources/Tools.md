@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 183 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 192 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -598,16 +598,16 @@ Return a chronological batch of recent Appwatch frames from the attached-window 
 
 ## appshots
 
-Capture one or more screenshots of a process window for this chat. Omit `pid` to use the currently attached Screen Watch window. Otherwise pass a TaskWraith-spawned, launch, or workspace-artifact pid. Owned/attached targets auto-allow outside Plan and Ask; foreign pids require approval (Full Access auto-allows via mcpTools). Optional `interval_ms` + `count` capture a short burst (max 8 frames; 5 with OCR). PNG image blocks land as transcript thumbnails (click to expand; right-click Copy image / Save image).
+Capture one or more screenshots of a process window for this chat. Prefer omitting pid when Screen Watch is already attached. Otherwise pass a TaskWraith-spawned / launch / workspace-artifact pid. Owned/attached targets auto-allow outside Plan and Ask; foreign pids require approval (Full Access auto-allows via mcpTools). Optional interval_ms + count capture a short burst (max 8 frames, 5 with OCR). Returns PNG image content blocks that land as transcript thumbnails.
 
-- Access: read-only (owned/attached auto-allow except Plan/Ask; otherwise approval-gated)
-- Required args: none (pid optional when a window is attached)
+- Access: read-only (no approval needed)
+- Required args: none
 - Optional args: pid, interval_ms, count, max_dimension_px, include_ocr, window_id
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appshots","arguments":{"pid":12345,"count":3,"interval_ms":1000}}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appshots","arguments":{"pid":0}}}}`
 
 ## appshots_status
 
-List AppShots capture targets for this chat: the attached Screen Watch window (if any) plus TaskWraith-spawned / launch / workspace-artifact processes. No pixel data.
+List AppShots capture targets available to this chat: the attached Screen Watch window (if any) plus TaskWraith-spawned / launch / workspace-artifact processes. No pixel data. Auto-approved.
 
 - Access: read-only (no approval needed)
 - Required args: none
@@ -904,7 +904,7 @@ Portable Boss/Captain Ensemble control. Set action plus its fields in params (or
 
 ## ensemble_bossman_control
 
-In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly select the later-pass queue (or preserve it with skip_intervention), explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. The initial pass always preserves each participant. Non-authority callers and stale round/run/participant ids are rejected and audited.
+In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly select the Continuous-pass queue including Continuous pass 1 (or preserve it with skip_intervention), explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Turn-bound first pass still preserves every participant; Continuous acting Boss/Captain may select/skip on pass 1. Non-authority callers and stale round/run/participant ids are rejected and audited.
 
 - Access: governed by your run permission role
 - Required args: action
@@ -1387,6 +1387,62 @@ Delete a chat-owned Mesh Canvas scene and remove any private imported assets no 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: sceneId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_delete","arguments":{"sceneId":"text"}}}}`
+
+## simulator_status
+
+Probe Simulator Canvas capability on this Mac: whether Simulator.app / simctl are available, Xcode paths, and booted/available devices. Read-only; auto-allowed.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_status","arguments":{}}}}`
+
+## simulator_open
+
+Open Xcode’s Simulator.app (TaskWraith-owned spawn). Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_open","arguments":{}}}}`
+
+## simulator_boot
+
+Boot an iOS Simulator device by UDID (or "booted"). Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_boot","arguments":{"udid":"text"}}}}`
+
+## simulator_install
+
+Install a .app bundle onto a simulator via simctl. `appPath` must be an absolute path to a .app. Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid, appPath
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_install","arguments":{"udid":"text","appPath":"text"}}}}`
+
+## simulator_launch
+
+Launch an installed app on a simulator by bundle id. Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid, bundleId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_launch","arguments":{"udid":"text","bundleId":"text"}}}}`
+
+## simulator_screenshot
+
+Capture a PNG screenshot of a simulator via simctl. Returns an image content block; structured metadata omits base64. Gated via the Simulator Canvas service.
+
+- Access: read-only (no approval needed)
+- Required args: udid
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_screenshot","arguments":{"udid":"text"}}}}`
+
+## simulator_terminate
+
+Terminate a running app on a simulator by bundle id. Gated via the Simulator Canvas service.
+
+- Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
+- Required args: udid, bundleId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_terminate","arguments":{"udid":"text","bundleId":"text"}}}}`
 
 ## theme_tokens_get
 
