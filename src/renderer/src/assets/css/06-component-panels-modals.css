@@ -271,14 +271,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* One voice with the settled-row one-liner (.collapsed-activity-stack-
-   * summary): same transcript typeface, same demi-bold, same body scale —
-   * both are a folded run of tool calls, so they must not read as two
-   * different kinds of row. */
-  font-family: var(--transcript-font-family);
-  font-size: var(--font-size-md);
+  /* Youngest-child ActivityRow voice: same scale/weight as a single
+   * inline tool row (.activity-row-inline .activity-label), not the
+   * larger transcript-font folded-stack message. Verbs inside the
+   * title pick up .activity-summary-verb accent separately. */
+  font-size: var(--font-size-sm);
   font-weight: 600;
-  color: color-mix(in srgb, var(--text-primary) 86%, transparent);
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--text-primary) 88%, transparent);
 }
 
 .activity-compact-group-duration,

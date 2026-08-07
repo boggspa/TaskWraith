@@ -46,8 +46,8 @@ import {
   resolveYieldTargetParticipant,
   yieldTargetDisplayLabel
 } from '../../../shared/ensembleYieldTarget'
-import { CollapsedDiffStats } from './CollapsedTranscriptRow'
 import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
+import { renderActivitySummaryLabel } from '../lib/activitySummaryLabel'
 import { FileTypeIcon } from './FileTypeIcon'
 import { DigitOdometer } from './DigitOdometer'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
@@ -400,6 +400,13 @@ export interface CompactGroupTargetSummary {
   chips: CompactGroupTargetChip[]
   hasRepeatTargets: boolean
   overflowCount: number
+  /** When the group coalesces onto one file, render verb + file target like a
+   * single ActivityRow instead of a plain text title. */
+  fileTarget?: {
+    verb: string
+    filePath: string
+    basename: string
+  }
 }
 
 interface SanitizedDetail {
@@ -1544,7 +1551,7 @@ function truncateTargetChipLabel(value: string): string {
 }
 
 function coalescibleActivityTarget(activity: ToolActivity):
-  | { key: string; label: string; kind: CompactGroupTargetKind }
+  | { key: string; label: string; kind: CompactGroupTargetKind; filePath?: string }
   | undefined {
   const actor = activity.metadata?.ensembleProvider ?? activity.metadata?.provider ?? ''
   if (activity.category === 'read' && !isSearchActivity(activity)) {
@@ -1553,7 +1560,8 @@ function coalescibleActivityTarget(activity: ToolActivity):
     return {
       key: `${actor}|read-file|${filePath}`,
       label: getBaseName(filePath),
-      kind: 'read-file'
+      kind: 'read-file',
+      filePath
     }
   }
 
@@ -1563,7 +1571,8 @@ function coalescibleActivityTarget(activity: ToolActivity):
     return {
       key: `${actor}|write-file|${filePath}`,
       label: getBaseName(filePath),
-      kind: 'write-file'
+      kind: 'write-file',
+      filePath
     }
   }
 
@@ -1618,8 +1627,13 @@ export function buildCompactGroupTargetSummary(
     overflowCount: Math.max(0, activities.length - fallbackChips.length)
   }
 
-  const targets: Array<CompactGroupTargetChip & { kind: CompactGroupTargetKind }> = []
-  const byKey = new Map<string, CompactGroupTargetChip & { kind: CompactGroupTargetKind }>()
+  const targets: Array<
+    CompactGroupTargetChip & { kind: CompactGroupTargetKind; filePath?: string }
+  > = []
+  const byKey = new Map<
+    string,
+    CompactGroupTargetChip & { kind: CompactGroupTargetKind; filePath?: string }
+  >()
   let targetedActivityCount = 0
 
   for (const activity of activities) {
@@ -1634,7 +1648,8 @@ export function buildCompactGroupTargetSummary(
         key: target.key,
         label: target.label,
         repeatCount: 1,
-        kind: target.kind
+        kind: target.kind,
+        ...(target.filePath ? { filePath: target.filePath } : {})
       }
       byKey.set(target.key, entry)
       targets.push(entry)
@@ -1651,8 +1666,17 @@ export function buildCompactGroupTargetSummary(
   const total = activities.length
   const unique = targets.length
   let label = fallback.label
+  let fileTarget: CompactGroupTargetSummary['fileTarget']
   if (unique === 1 && targets[0].repeatCount === total) {
-    label = `${targetVerb(firstKind)} ${targets[0].label}`
+    const verb = targetVerb(firstKind)
+    label = `${verb} ${targets[0].label}`
+    if (targets[0].filePath && (firstKind === 'read-file' || firstKind === 'write-file')) {
+      fileTarget = {
+        verb,
+        filePath: targets[0].filePath,
+        basename: targets[0].label
+      }
+    }
   } else if (firstKind === 'shell-command') {
     label = `Ran ${total} ${total === 1 ? 'command' : 'commands'}`
   } else if (firstKind === 'read-file') {
@@ -1668,7 +1692,8 @@ export function buildCompactGroupTargetSummary(
     label,
     chips: targets.slice(0, 6),
     hasRepeatTargets: true,
-    overflowCount: Math.max(0, targets.length - 6)
+    overflowCount: Math.max(0, targets.length - 6),
+    ...(fileTarget ? { fileTarget } : {})
   }
 }
 
@@ -2162,7 +2187,7 @@ function ActivityCompactGroup({
         ) : visibleFamilies.length === 1 ? (
           <ToolFamilyIcon
             family={visibleFamilies[0] as Parameters<typeof ToolFamilyIcon>[0]['family']}
-            size={27.2}
+            size={25}
             className="activity-category-icon"
           />
         ) : (
@@ -2184,8 +2209,38 @@ function ActivityCompactGroup({
           </span>
         )}
         <span className="activity-compact-group-title-wrap">
-          <span className="activity-compact-group-title">{label}</span>
-          <CollapsedDiffStats totals={diffTotals} />
+          <span className="activity-compact-group-title">
+            {targetSummary.fileTarget ? (
+              <>
+                <span className="activity-summary-verb">{targetSummary.fileTarget.verb}</span>{' '}
+                <TranscriptFileTarget
+                  filePath={targetSummary.fileTarget.filePath}
+                  label={targetSummary.fileTarget.basename}
+                  workspacePath={workspacePath}
+                  className="activity-file-name"
+                />
+              </>
+            ) : (
+              renderActivitySummaryLabel(label)
+            )}
+          </span>
+          {diffTotals ? (
+            <span className="activity-line-stats">
+              <DigitOdometer
+                value={diffTotals.additions}
+                sign="+"
+                className="activity-line-stat activity-line-stat-add"
+              />
+              <DigitOdometer
+                value={diffTotals.deletions}
+                sign="-"
+                className="activity-line-stat activity-line-stat-delete"
+              />
+              {diffTotals.estimated ? (
+                <span className="activity-line-stat-estimated">~</span>
+              ) : null}
+            </span>
+          ) : null}
         </span>
         <span className="activity-compact-group-meta">
           {durationLabel(durationMs) && (

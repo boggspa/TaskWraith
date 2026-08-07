@@ -657,8 +657,8 @@ describe('ActivityStack compact tool groups', () => {
     )
 
     expect(html).toContain('activity-compact-group')
-    expect(html).toContain('Read 2 files')
-    expect(html).toContain('class="activity-category-icon" width="27.2" height="27.2"')
+    expect(html).toContain('class="activity-summary-verb">Read</span> 2 files')
+    expect(html).toContain('class="activity-category-icon" width="25" height="25"')
   })
 
   it('summarizes repeated file targets with repeat chips and an odometer count badge', () => {
@@ -672,7 +672,9 @@ describe('ActivityStack compact tool groups', () => {
       />
     )
 
-    expect(html).toContain('Read foo.ts')
+    expect(html).toContain('class="activity-summary-verb">Read</span>')
+    expect(html).toContain('transcript-file-target activity-file-name')
+    expect(html).toContain('>foo.ts</button>')
     expect(html).toContain('activity-compact-chip-repeat')
     expect(html).toContain('×2')
     expect(html).toContain('activity-count-badge')
@@ -694,7 +696,7 @@ describe('ActivityStack compact tool groups', () => {
       />
     )
 
-    expect(html).toContain('Read 2 files')
+    expect(html).toContain('class="activity-summary-verb">Read</span> 2 files')
     expect(html).not.toContain('times across')
     // The call counts survive where they belong — on the per-file chips.
     expect(html).toContain('activity-compact-chip-repeat')
@@ -718,28 +720,34 @@ describe('ActivityStack compact tool groups', () => {
     )
 
     expect(html).toContain('activity-compact-group')
-    expect(html).toContain('collapsed-activity-stack-diff-stat is-add')
+    // Youngest-child parity: rolling DigitOdometer + activity-line-stat accents,
+    // not the static collapsed-stack diff spans.
+    expect(html).toContain('activity-line-stat activity-line-stat-add')
+    expect(html).toContain('activity-line-stat activity-line-stat-delete')
+    expect(html).toContain('digit-odometer')
     // 3 + 2 added, 2 + 1 removed across the two folded edits.
-    expect(html).toContain('+5')
-    expect(html).toContain('-3')
+    expect(html).toContain('>+</span>')
+    expect(html).toMatch(/aria-label="\+5"|sr-only">\+5</)
+    expect(html).toMatch(/aria-label="-3"|sr-only">-3</)
+    expect(html).toContain('class="activity-summary-verb">Edited</span>')
 
     // Fan-out lane and sub-agent viewports never opt in.
     const bare = renderToStaticMarkup(<ActivityStack activities={edits} provider="codex" />)
     expect(bare).toContain('activity-compact-group')
-    expect(bare).not.toContain('collapsed-activity-stack-diff')
+    expect(bare).not.toContain('activity-line-stats')
   })
 
-  it('speaks in the settled-row one-liner voice, typography included', () => {
+  it('speaks in the youngest-child ActivityRow voice, typography included', () => {
     const groupCss = readFileSync(
       join(process.cwd(), 'src/renderer/src/assets/css/06-component-panels-modals.css'),
       'utf8'
     )
     const start = groupCss.indexOf('.activity-compact-group-title {')
     const title = groupCss.slice(start, groupCss.indexOf('}', start) + 1)
-    // Byte-identical typography to .collapsed-activity-stack-summary — both
-    // are a folded run of tool calls and must not read as two kinds of row.
-    expect(title).toContain('font-family: var(--transcript-font-family)')
-    expect(title).toContain('font-size: var(--font-size-md)')
+    // Parent compact groups prioritize the single-row ActivityRow scale —
+    // not the larger transcript-font folded-stack message voice.
+    expect(title).not.toContain('font-family: var(--transcript-font-family)')
+    expect(title).toContain('font-size: var(--font-size-sm)')
     expect(title).toContain('font-weight: 600')
   })
 
