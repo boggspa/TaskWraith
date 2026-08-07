@@ -22429,9 +22429,78 @@ describe('assignment-aware continuation roster narrowing', () => {
 
   const stamp = { createdAt: '2026-05-24T00:00:00.000Z', updatedAt: '2026-05-24T00:00:00.000Z' }
 
-  it('keeps the full roster when assign_work was never used', () => {
+  it('keeps the full roster when assign_work was never used and no Continuous runtime is supplied', () => {
     const chat = makeNarrowingChat()
     expect(narrow()(chat, fullRoster)).toHaveLength(fullRoster.length)
+  })
+
+  it('authority-directed Continuous auto-continue prefers directed seats over full-roster churn', async () => {
+    const harness = makeHarness()
+    const roster = [...fullRoster]
+    harness.chat.ensemble!.participants = roster
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.secondInCommandParticipantId = 'captain'
+    harness.chat.activeGoal = buildActiveGoal('goal-directed')
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep going without assign_work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const io = internals(harness.orchestrator)
+    const runtime = io.roundsByChatId.get('ensemble-chat') as {
+      orchestrationMode: string
+      fannedOutParticipantIds?: Set<string>
+    }
+    runtime.fannedOutParticipantIds = new Set(['worker1'])
+    harness.chat.ensemble!.activeRound!.participants =
+      harness.chat.ensemble!.activeRound!.participants.map((participant) => ({
+        ...participant,
+        status:
+          participant.participantId === 'boss' || participant.participantId === 'worker1'
+            ? ('answered' as const)
+            : ('idle' as const)
+      }))
+
+    const narrowed = io.narrowContinuationRosterToOpenWork.call(
+      harness.orchestrator,
+      harness.chat,
+      roster,
+      runtime
+    )
+    expect(narrowed.map((participant) => participant.id)).toEqual(['boss', 'worker1'])
+  })
+
+  it('authority-directed Continuous narrowing fail-opens to the full roster when the admit set is empty', async () => {
+    const harness = makeHarness()
+    const roster = [...fullRoster]
+    harness.chat.ensemble!.participants = roster
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = undefined
+    harness.chat.ensemble!.secondInCommandParticipantId = undefined
+    harness.chat.ensemble!.captainParticipantIds = []
+    harness.chat.activeGoal = buildActiveGoal('goal-failopen')
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'No directed seats.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const io = internals(harness.orchestrator)
+    const runtime = io.roundsByChatId.get('ensemble-chat')!
+    harness.chat.ensemble!.activeRound!.participants =
+      harness.chat.ensemble!.activeRound!.participants.map((participant) => ({
+        ...participant,
+        status: 'idle' as const
+      }))
+    const narrowed = io.narrowContinuationRosterToOpenWork.call(
+      harness.orchestrator,
+      harness.chat,
+      roster,
+      runtime
+    )
+    expect(narrowed).toHaveLength(fullRoster.length)
   })
 
   it('admits open-assignment owners plus the Boss; idle scouts/reviewers/captain are dropped', () => {
@@ -22651,7 +22720,7 @@ describe('assignment-aware continuation roster narrowing', () => {
     expect(harness.chat.ensemble?.activeRound?.continuationPass).toBe(2)
     expect(
       harness.chat.messages.some((message) =>
-        /Assignment-aware pass: 1 of 2 seats/.test(message.content || '')
+        /Focused continuation pass: 1 of 2 seats/.test(message.content || '')
       )
     ).toBe(true)
   })

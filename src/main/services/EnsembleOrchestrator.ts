@@ -94,6 +94,7 @@ import {
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
 import {
+  collectAuthorityDirectedContinuationCandidateIds,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -18277,7 +18278,7 @@ export class EnsembleOrchestrator {
     )
     const narrowingNote =
       roster.length < fullRoster.length
-        ? ` Assignment-aware pass: ${fresh.length} of ${fullRoster.length} seats have open work, a pending gate, or authority.`
+        ? ` Focused continuation pass: ${fresh.length} of ${fullRoster.length} seats have open work, directed routing, or authority.`
         : ''
     this.appendRoundStatus(
       runtime.chatId,
@@ -18288,7 +18289,8 @@ export class EnsembleOrchestrator {
   }
 
   /**
-   * Efficiency audit 2026-07 — assignment-aware continuation rosters.
+   * Efficiency audit 2026-07 — assignment-aware + authority-directed
+   * continuation rosters.
    *
    * Structured Boss assignments used to affect ordering only: the next
    * continuous pass still re-dispatched EVERY enabled foreground seat, so
@@ -18307,11 +18309,16 @@ export class EnsembleOrchestrator {
    *    acting Captain when the Boss is unavailable (standby Captain
    *    confirmation turns were a measured waste pattern).
    *
-   * Fail-open: rounds that never used assign_work keep full-roster passes; an
-   * open poll keeps the full roster (voting is the whole roster's job, and
-   * polls always close/expire so this cannot pin forever); a narrowing that
-   * would admit nobody falls back to the full roster instead of stranding the
-   * goal.
+   * When assign_work was never used, Continuous still avoids full-roster
+   * churn by admitting directed seats from the just-finished pass
+   * (answered/yielded/sleeping, fan-out targets, yield-return stack) plus
+   * Boss/acting Captain.
+   *
+   * Fail-open: missing Continuous runtime / empty directed admit set keeps
+   * the full roster; an open poll keeps the full roster (voting is the whole
+   * roster's job, and polls always close/expire so this cannot pin forever);
+   * a narrowing that would admit nobody falls back to the full roster instead
+   * of stranding the goal.
    */
   private narrowContinuationRosterToOpenWork(
     chat: ChatRecord,
@@ -18320,25 +18327,42 @@ export class EnsembleOrchestrator {
   ): EnsembleParticipant[] {
     const control = chat.ensemble?.bossmanControlState
     const assignments = control?.assignments || []
-    if (assignments.length === 0) return fullRoster
     if ((control?.polls || []).some((poll) => poll.status === 'open')) return fullRoster
+
     const admitted = new Set<string>()
-    for (const assignment of assignments) {
-      if (assignment.status === 'open' || assignment.status === 'in_progress') {
-        admitted.add(assignment.participantId)
+    if (assignments.length > 0) {
+      for (const assignment of assignments) {
+        if (assignment.status === 'open' || assignment.status === 'in_progress') {
+          admitted.add(assignment.participantId)
+        }
       }
-    }
-    for (const gate of control?.reviewGates || []) {
-      if (gate.status === 'required' && gateBlocksActiveGoal(gate, chat.activeGoal)) {
-        admitted.add(gate.reviewerParticipantId)
+      for (const gate of control?.reviewGates || []) {
+        if (gate.status === 'required' && gateBlocksActiveGoal(gate, chat.activeGoal)) {
+          admitted.add(gate.reviewerParticipantId)
+        }
       }
-    }
-    for (const request of control?.statusRequests || []) {
-      if (request.status !== 'open') continue
-      for (const participantId of request.targetParticipantIds || []) {
+      for (const request of control?.statusRequests || []) {
+        if (request.status !== 'open') continue
+        for (const participantId of request.targetParticipantIds || []) {
+          admitted.add(participantId)
+        }
+      }
+    } else if (runtime?.orchestrationMode === 'continuous') {
+      for (const participantId of collectAuthorityDirectedContinuationCandidateIds({
+        roundParticipantStatuses: chat.ensemble?.activeRound?.participants,
+        fannedOutParticipantIds: runtime.fannedOutParticipantIds,
+        fanoutReservedParticipantIds: runtime.fanoutReservedParticipantIds,
+        yieldReturnParticipantIds: (runtime.yieldReturnStack || []).flatMap((frame) => [
+          frame.returnParticipantId,
+          frame.targetParticipantId
+        ])
+      })) {
         admitted.add(participantId)
       }
+    } else {
+      return fullRoster
     }
+
     const bossId = chat.ensemble?.bossmanParticipantId
     const bossEligible = runtime
       ? !this.primaryBossUnavailable(chat, runtime, bossId).unavailable &&

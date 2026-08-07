@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  collectAuthorityDirectedContinuationCandidateIds,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -171,5 +172,21 @@ describe('Continuous Boss ownership helpers', () => {
         decision: undefined
       })
     ).toBe(false)
+  })
+
+  it('collects directed speakers, fan-out, and yield-return seats for auto-continue', () => {
+    expect(
+      collectAuthorityDirectedContinuationCandidateIds({
+        roundParticipantStatuses: [
+          { participantId: 'boss', status: 'answered' },
+          { participantId: 'worker', status: 'yielded' },
+          { participantId: 'scout', status: 'idle' },
+          { participantId: 'skipped', status: 'skipped' }
+        ],
+        fannedOutParticipantIds: ['reviewer'],
+        fanoutReservedParticipantIds: ['builder'],
+        yieldReturnParticipantIds: ['boss', 'worker']
+      }).sort()
+    ).toEqual(['boss', 'builder', 'reviewer', 'worker'])
   })
 })

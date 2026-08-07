@@ -61,6 +61,40 @@ export function shouldResummonAuthorityForUnresolvedRouting(input: {
   )
 }
 
+/**
+ * Candidate seat ids for Continuous auto-continue when assign_work was never
+ * used: prior directed speakers (answered/yielded/sleeping), fan-out targets,
+ * and yield-return stack participants. Callers still add Boss/acting Captain
+ * and fail-open to the full roster when the filtered admit set is empty.
+ */
+export function collectAuthorityDirectedContinuationCandidateIds(input: {
+  roundParticipantStatuses?: ReadonlyArray<{ participantId: string; status: string }>
+  fannedOutParticipantIds?: Iterable<string>
+  fanoutReservedParticipantIds?: Iterable<string>
+  yieldReturnParticipantIds?: Iterable<string>
+}): string[] {
+  const admitted = new Set<string>()
+  for (const entry of input.roundParticipantStatuses || []) {
+    if (
+      entry.status === 'answered' ||
+      entry.status === 'yielded' ||
+      entry.status === 'sleeping'
+    ) {
+      admitted.add(entry.participantId)
+    }
+  }
+  for (const id of input.fannedOutParticipantIds || []) {
+    if (id) admitted.add(id)
+  }
+  for (const id of input.fanoutReservedParticipantIds || []) {
+    if (id) admitted.add(id)
+  }
+  for (const id of input.yieldReturnParticipantIds || []) {
+    if (id) admitted.add(id)
+  }
+  return [...admitted]
+}
+
 export interface ResolveAuthoritySelectionInput {
   /**
    * Exact ids are preferred, but unique role/model aliases are accepted so a
