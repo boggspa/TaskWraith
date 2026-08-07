@@ -15,6 +15,8 @@ import {
   taskWraithControlSocketPath
 } from './taskWraithControlPaths.node'
 
+/* eslint-disable @typescript-eslint/no-require-imports -- the design-intent probe loads Node modules dynamically. */
+
 describe('TaskWraith Host v2 paths', () => {
   // -----------------------------------------------------------------------
   // File-name constants — distinct v2 namespace

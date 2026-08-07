@@ -10,7 +10,6 @@
  */
 
 const assert = require('assert')
-const path = require('path')
 
 const harness = require('./frameCadenceTriage.cjs')
 
@@ -30,13 +29,6 @@ function test(name, fn) {
     failed++
     console.log(`  ✗ ${name}`)
     console.log(`    ${e.message}`)
-  }
-}
-
-function assertApprox(actual, expected, tolerance, label) {
-  const diff = Math.abs(actual - expected)
-  if (diff > tolerance) {
-    throw new Error(`${label || 'value'}: expected ~${expected}, got ${actual} (diff ${diff})`)
   }
 }
 

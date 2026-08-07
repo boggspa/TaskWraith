@@ -19,7 +19,6 @@
  */
 function defaultWebSocketCtor() {
   try {
-    // eslint-disable-next-line import/no-extraneous-dependencies
     return require('ws')
   } catch (error) {
     const err = new Error(
@@ -278,7 +277,9 @@ async function attachMainInspectorSession(options) {
         if (msg.method === event || msg.method === `Node.${event}`) handler(msg.params || msg)
       })
     },
-    connect() {},
+    connect() {
+      // Node inspector sessions are already connected when returned.
+    },
     disconnect() {
       session.close()
     },

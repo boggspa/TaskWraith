@@ -60,7 +60,6 @@ function resolveElectronBinary(options = {}) {
   const requireElectron =
     (options.adapters && options.adapters.requireElectron) ||
     (() => {
-      // eslint-disable-next-line import/no-extraneous-dependencies
       return require('electron')
     })
   let electronPath

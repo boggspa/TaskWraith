@@ -146,7 +146,9 @@ export async function repairStaleExternalPathGrantsForChat(
 
     let selectedPath: string
     let kind: ExternalPathGrant['kind'] = 'directory'
-    let bookmark: string | undefined
+    const bookmark: string | undefined = priorConsent.find(
+      (grant) => grant.securityScopedBookmark
+    )?.securityScopedBookmark
     try {
       selectedPath = await deps.realpath(path)
       const stat = await deps.stat(selectedPath)
@@ -155,8 +157,6 @@ export async function repairStaleExternalPathGrantsForChat(
       remainingGaps.push({ path, access, missingProviders: targets })
       continue
     }
-    bookmark = priorConsent.find((grant) => grant.securityScopedBookmark)?.securityScopedBookmark
-
     const newGrants: ExternalPathGrant[] = targets.map((provider) =>
       deps.issueExternalPathGrant(
         {

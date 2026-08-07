@@ -34,6 +34,7 @@ const ALLOWED_INSTALL_SCRIPTS = new Map([
   ['@google/genai@2.4.0', { preinstall: "echo 'preinstall: no-op'" }],
   ['@google/genai@2.13.0', { preinstall: "echo 'preinstall: no-op'" }],
   ['electron@39.8.9', { postinstall: 'node install.js' }],
+  ['electron@39.8.10', { postinstall: 'node install.js' }],
   ['electron-winstaller@5.4.0', { install: 'node ./script/select-7z-arch.js' }],
   ['esbuild@0.25.12', { postinstall: 'node install.js' }],
   ['esbuild@0.27.7', { postinstall: 'node install.js' }],

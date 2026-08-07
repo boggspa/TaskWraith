@@ -13,6 +13,8 @@
  *        in production — the test below PROVES denial on unknowns.
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports -- source-isolation probes intentionally load Node modules dynamically. */
+
 import { describe, expect, it } from 'vitest'
 
 import type {

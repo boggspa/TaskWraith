@@ -13,6 +13,8 @@ import path from 'path'
 import { createRequire } from 'module'
 import { describe, expect, it } from 'vitest'
 
+/* eslint-disable @typescript-eslint/no-empty-function -- adapter fakes intentionally expose no-op lifecycle methods. */
+
 const require = createRequire(import.meta.url)
 const {
   SCHEMA_VERSION,
@@ -550,22 +552,6 @@ describe('T1b numeric gPerf + profile digests', () => {
 
   function authEnv(overrides = {}) {
     return baseEnv({ authoritativeBaseline: true, ...overrides })
-  }
-
-  function profileDigests() {
-    return {
-      mainCpuProfilePath: '/virtual/main.cpuprofile',
-      rendererCpuProfilePath: '/virtual/renderer.cpuprofile',
-      heapSnapshotPaths: ['/virtual/heap.heapsnapshot'],
-      digests: {
-        mainCpuSha256: 'aa'.repeat(32),
-        mainCpuBytes: 1024,
-        rendererCpuSha256: 'bb'.repeat(32),
-        rendererCpuBytes: 2048,
-        heapSha256: ['cc'.repeat(32)],
-        heapBytes: [4096]
-      }
-    }
   }
 
   it('stats + hashes profile artifacts via fs adapter (rejects tiny files)', () => {
@@ -1413,7 +1399,7 @@ describe('T2 runner (no Electron launch)', () => {
       constructor(url) {
         this.url = url
         this.handlers = {}
-        lastSocket = this
+        lastSocket = { handlers: this.handlers }
         queueMicrotask(() => this.handlers.open && this.handlers.open())
       }
       on(event, handler) {
@@ -2954,9 +2940,7 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
   const {
     checkDiskHeadroom,
     createWindowedRateTracker,
-    DEFAULT_MIN_FREE_DISK_BYTES,
     DEFAULT_MAX_CAPTURE_PHASE_MS,
-    DEFAULT_WINDOWED_RATE_WINDOW_MS,
     runT2BaselineCli
   } = require('./runT2Baseline.cjs')
   const { PERF_GATE_THRESHOLDS } = require('./perfGateThresholds.cjs')
@@ -3126,8 +3110,7 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
     // integration harness; here we validate report schema.
     const {
       createPerfReport,
-      createEmptyPerfMetrics,
-      validatePerfMetrics
+      createEmptyPerfMetrics
     } = require('./schema.cjs')
 
     const env = {

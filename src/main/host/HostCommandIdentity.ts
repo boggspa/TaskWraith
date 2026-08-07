@@ -57,6 +57,7 @@ const HOST_CLIENT_CLASSES: ReadonlySet<HostClientClass> = new Set(['desktop', 't
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 /** ASCII C0 controls + DEL — never allowed inside Host identity material. */
+// eslint-disable-next-line no-control-regex -- this guard deliberately matches the rejected C0 range.
 const UNSAFE_CONTROL_RE = /[\u0000-\u001f\u007f]/
 
 export type HostUuidFactory = () => string

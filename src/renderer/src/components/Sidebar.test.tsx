@@ -216,7 +216,6 @@ function renderSidebar(
     runningChatIds?: string[]
     updateSnapshot?: UpdateStateSnapshot | null
     onQuickUpdate?: () => void
-    activeChatIdentityTicker?: string | null
     activeChatIdentityGitIndicators?: string | null
     onSetChatHiddenFromMainList?: (chatId: string, hidden: boolean) => void
     onClearChatGitWorkflow?: (chatId: string) => void
@@ -271,7 +270,6 @@ function renderSidebar(
       onOpenInMultiview={options.onOpenInMultiview}
       updateSnapshot={options.updateSnapshot}
       onQuickUpdate={options.onQuickUpdate}
-      activeChatIdentityTicker={options.activeChatIdentityTicker}
       activeChatIdentityGitIndicators={options.activeChatIdentityGitIndicators}
       onSetChatHiddenFromMainList={options.onSetChatHiddenFromMainList}
       onClearChatGitWorkflow={options.onClearChatGitWorkflow}

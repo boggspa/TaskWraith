@@ -524,7 +524,7 @@ function validateProfileEvidenceArtifacts(profiles, fsAdapter = {}) {
     let st
     try {
       st = statSync(filePath)
-    } catch (err) {
+    } catch (_err) {
       errors.push(`${label} missing or unreadable: ${filePath}`)
       return null
     }
@@ -536,7 +536,7 @@ function validateProfileEvidenceArtifacts(profiles, fsAdapter = {}) {
     let buf
     try {
       buf = readFileSync(filePath)
-    } catch (err) {
+    } catch (_err) {
       errors.push(`${label} read failed: ${filePath}`)
       return null
     }

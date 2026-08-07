@@ -778,7 +778,7 @@ export class HostDeltaStore {
 
   private writeCheckpointAndResetJournal(): void {
     // Retain newest records within bounds (by cursor descending).
-    let cursors = [...this.orderedCursors].sort((a, b) => b - a)
+    const cursors = [...this.orderedCursors].sort((a, b) => b - a)
     let bytes = 0
     const retained: HostCursor[] = []
     for (const cursor of cursors) {

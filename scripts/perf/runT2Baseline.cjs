@@ -1205,6 +1205,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
               progressError && progressError.message ? progressError.message : progressError
             )
           } else {
+            // Preserve cleanup failures when there is no earlier launch error.
+            // eslint-disable-next-line no-unsafe-finally
             throw progressError
           }
         }

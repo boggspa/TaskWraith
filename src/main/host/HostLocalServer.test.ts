@@ -10,6 +10,8 @@
  * Body-free everywhere; born Prettier-clean; all existing tests unchanged.
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports -- source-isolation probes intentionally load Node modules dynamically. */
+
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

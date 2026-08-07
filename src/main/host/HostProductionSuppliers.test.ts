@@ -10,6 +10,8 @@
  * - honesty: usage always unavailable, no fabricated counts
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports -- source-isolation probes intentionally load Node modules dynamically. */
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { projectHostSnapshot } from './HostSnapshotProjector'

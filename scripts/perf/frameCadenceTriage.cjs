@@ -1,4 +1,5 @@
 'use strict'
+/* eslint-disable no-irregular-whitespace -- preserve the diagnostic prose's typography. */
 
 /**
  * Frame-cadence triage harness — correlates renderer frame misses with
@@ -26,8 +27,6 @@
  *   2. Report the INSTRUMENT'S OWN overhead separately. A rAF logger that
  *      costs 3 ms a frame invents the very jank it claims to find.
  */
-
-const { ingestPerfUiEvents, summarizeIngestedUiEvents } = require('./collectors/eventIngestion.cjs')
 
 // ---------------------------------------------------------------------------
 // Gate: disabled by default so CI never runs this (and never accidentally
@@ -67,9 +66,6 @@ const DEFAULT_LONG_TASK_THRESHOLD_MS = 50
 
 /** Default collection window (seconds). */
 const DEFAULT_COLLECTION_WINDOW_S = 30
-
-/** Main probe polling interval (ms). */
-const MAIN_POLL_INTERVAL_MS = 500
 
 /** Maximum ring-buffer entries per probe before culling oldest. */
 const MAX_RING_ENTRIES = 20_000

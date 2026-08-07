@@ -494,7 +494,7 @@ describe('ChatJournal', () => {
     journal.compact('g3')
 
     // Verify clean state after normal compaction
-    let result = journal.read('g3')
+    const result = journal.read('g3')
     expect(result.snapshot).not.toBeNull()
     const cleanSnap = result.snapshot as ChatJournalEntry[]
     // Collapsed to the newest whole record across both batches.
