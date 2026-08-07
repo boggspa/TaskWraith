@@ -27,7 +27,12 @@ vi.mock('../lib/featureFlags', () => ({
 
 import { ApprovalsFooterPopover, DevicesFooterPopover } from './Sidebar'
 import { HostProjectionProvider } from './HostProjectionProvider'
-import { HostStatusRow, describeHostConnection, describeHostProviders } from './HostStatusRow'
+import {
+  HostStatusRow,
+  describeHostConnection,
+  describeHostProviders,
+  describeHostAwaitingApprovals
+} from './HostStatusRow'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
@@ -422,5 +427,102 @@ describe('describeHostProviders · Wave 5e configured wording', () => {
     expect(view.known).toBe(true)
     expect(view.label).toBe('2 of 3 configured')
     expect(view.label).not.toMatch(/\bavailable\b/)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5f — Host knows AWAITING approvals only, and must say so     */
+/* ------------------------------------------------------------------ */
+
+const projectionWithApprovals = (approvals: Array<{ status: string }>): never =>
+  ({ freshness: 'live', providers: [], warningCodes: [], approvals }) as never
+
+describe('describeHostAwaitingApprovals · the subset boundary is the whole point', () => {
+  it('reports the number of AWAITING rows', () => {
+    const view = describeHostAwaitingApprovals(
+      state({
+        status: 'live',
+        projection: projectionWithApprovals([{ status: 'pending' }, { status: 'pending' }])
+      })
+    )
+    expect(view.known).toBe(true)
+    expect(view.awaiting).toBe(2)
+    expect(view.label).toBe('2 awaiting')
+  })
+
+  it('counts status "pending" — the wire has NO "awaiting" status value', () => {
+    // HostMainComposition L216 mints awaiting bridge cards as status:'pending'.
+    // Counting a literal 'awaiting' would read zero forever, silently.
+    const view = describeHostAwaitingApprovals(
+      state({ status: 'live', projection: projectionWithApprovals([{ status: 'pending' }]) })
+    )
+    expect(view.awaiting).toBe(1)
+  })
+
+  it('does NOT count decided rows as awaiting', () => {
+    // Base suppliers could publish decided rows later. Counting rows blindly
+    // would then overstate what is still waiting on the user.
+    const view = describeHostAwaitingApprovals(
+      state({
+        status: 'live',
+        projection: projectionWithApprovals([
+          { status: 'pending' },
+          { status: 'approved' },
+          { status: 'denied' },
+          { status: 'expired' },
+          { status: 'cancelled' }
+        ])
+      })
+    )
+    expect(view.awaiting).toBe(1)
+    expect(view.label).toBe('1 awaiting')
+  })
+
+  it('words a real zero so it cannot read as "no approvals exist anywhere"', () => {
+    const view = describeHostAwaitingApprovals(
+      state({ status: 'live', projection: projectionWithApprovals([]) })
+    )
+    // Host carries the AWAITING subset only — decided/rejected/ledger approvals
+    // never reach the wire. "None" alone would overstate what Host knows.
+    expect(view.known).toBe(true)
+    expect(view.awaiting).toBe(0)
+    expect(view.label).toBe('None awaiting')
+    expect(view.label).not.toBe('None')
+    expect(view.label).not.toContain('No approvals')
+  })
+
+  it('reuses the EXISTING unknown path when the projection is stale or absent', () => {
+    expect(describeHostAwaitingApprovals(state({ status: 'unavailable' })).label).toBe('Unknown')
+    expect(
+      describeHostAwaitingApprovals(
+        state({ status: 'live', projection: { freshness: 'cached', approvals: [] } as never })
+      ).label
+    ).toBe('Unknown')
+    expect(describeHostAwaitingApprovals(state({ status: 'idle' })).known).toBe(false)
+  })
+})
+
+describe('HostStatusRow · Desktop paints awaiting approvals from Host', () => {
+  it('renders the awaiting row from a live snapshot', async () => {
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () =>
+        snapshot({
+          approvals: [
+            {
+              approvalId: 'c1',
+              commandId: 'm1',
+              status: 'pending',
+              actionKind: 'agent.run',
+              createdAt: 1,
+              summary: 's'
+            }
+          ]
+        } as Partial<HostSnapshot>)
+    })
+    await store.refresh()
+
+    const markup = renderRow(store)
+    expect(markup).toContain('Host approvals')
+    expect(markup).toContain('1 awaiting')
   })
 })

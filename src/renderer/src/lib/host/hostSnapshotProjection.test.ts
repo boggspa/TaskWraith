@@ -343,3 +343,72 @@ describe('projectHostSnapshot · warning codes', () => {
     expect(projected.warningCodes).toEqual(['a', 'b'])
   })
 })
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5f — approval ROWS, not just a count                         */
+/* ------------------------------------------------------------------ */
+
+const approvalRow = (overrides: Record<string, unknown> = {}): never =>
+  ({
+    approvalId: 'chal-1',
+    commandId: 'cmd-1',
+    status: 'pending',
+    actionKind: 'agent.run',
+    createdAt: 10,
+    summary: 'Deferred agent.run',
+    ...overrides
+  }) as never
+
+describe('projectHostSnapshot · approvals', () => {
+  it('projects the approval rows Host already sends, not only their count', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        approvals: [approvalRow(), approvalRow({ approvalId: 'chal-2', commandId: 'cmd-2' })]
+      } as never),
+      'live'
+    )
+
+    expect(projected.approvals).toHaveLength(2)
+    expect(projected.approvals[0]).toMatchObject({
+      approvalId: 'chal-1',
+      commandId: 'cmd-1',
+      status: 'pending',
+      actionKind: 'agent.run',
+      createdAt: 10
+    })
+  })
+
+  it('keeps the existing count alongside the rows — additive, nothing removed', () => {
+    const projected = projectHostSnapshot(snapshot({ approvals: [approvalRow()] } as never), 'live')
+    expect(projected.counts.approvals).toBe(1)
+    expect(projected.approvals).toHaveLength(1)
+  })
+
+  it('allowlists fields and does NOT carry the summary prose across the boundary', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        approvals: [
+          approvalRow({
+            summary: 'Deferred write to /Users/someone/secrets.txt',
+            decisionSource: 'user',
+            decidedAt: 99
+          })
+        ]
+      } as never),
+      'live'
+    )
+    const row = projected.approvals[0] as unknown as Record<string, unknown>
+    // The leaf needs identity + kind + status. It does not render prose, so
+    // prose does not cross. Same discipline as projectProvider in 5a.
+    expect(row.summary).toBeUndefined()
+    // Decided rows never reach the wire today, so projecting decision fields
+    // would imply a capability Host does not have.
+    expect(row.decidedAt).toBeUndefined()
+    expect(row.decisionSource).toBeUndefined()
+  })
+
+  it('projects an empty approvals family as a real empty list', () => {
+    const projected = projectHostSnapshot(snapshot({ approvals: [] }), 'live')
+    expect(projected.approvals).toEqual([])
+  })
+})

@@ -152,6 +152,53 @@ export function describeHostProviders(state: HostProjectionState): HostProviders
   }
 }
 
+/** Awaiting approvals as Host reports them, or an honest absence. */
+export interface HostAwaitingApprovalsView {
+  readonly known: boolean
+  /** Count of rows still waiting on a decision. Never a total of all approvals. */
+  readonly awaiting?: number
+  readonly label: string
+}
+
+/**
+ * Wave 5f — the first family Desktop reads that actually has rows behind it.
+ *
+ * TWO honesty constraints, both known BEFORE this was written:
+ *
+ * 1. SUBSET. Host carries AWAITING approval cards only — base suppliers return
+ *    `[]` and the composition merges nothing else. Decided/rejected/ledger
+ *    approvals never reach the wire, so the label says "awaiting" and never
+ *    "approvals". An empty list is a real answer — "nothing is waiting" — not
+ *    a claim that no approval has ever existed.
+ *
+ * 2. STATUS VALUE. The wire enum is pending|approved|denied|expired|cancelled.
+ *    There is NO 'awaiting' status: `HostMainComposition` mints awaiting cards
+ *    as `status: 'pending'`. Counting a literal 'awaiting' would read zero
+ *    forever and look perfectly healthy while doing it.
+ *
+ * Staleness reuses the SAME unknown path as the providers row — one unknown
+ * mechanism, not two.
+ */
+export function describeHostAwaitingApprovals(
+  state: HostProjectionState
+): HostAwaitingApprovalsView {
+  const projection = state.projection
+  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+    return { known: false, label: 'Unknown' }
+  }
+
+  const awaiting = (projection.approvals ?? []).filter(
+    (approval) => approval.status === 'pending'
+  ).length
+
+  return {
+    known: true,
+    awaiting,
+    // "None awaiting" — not "None". Host only ever knew the awaiting subset.
+    label: awaiting === 0 ? 'None awaiting' : `${awaiting} awaiting`
+  }
+}
+
 /**
  * Host connection row for the Devices popover.
  *
@@ -164,6 +211,7 @@ export function HostStatusRow() {
   const state = useHostProjection(store)
   const view = describeHostConnection(state)
   const providers = describeHostProviders(state)
+  const approvals = describeHostAwaitingApprovals(state)
 
   return (
     <>
@@ -179,6 +227,14 @@ export function HostStatusRow() {
         <span className="sidebar-footer-led" aria-hidden />
         <span className="sidebar-footer-device-name">Host providers</span>
         <span className="sidebar-footer-device-status">{providers.label}</span>
+      </div>
+      {/* Wave 5f. Same row markup again, so still ZERO new CSS. The value
+          carries the word "awaiting" because that is the only subset Host
+          holds — the decided history lives in AppStore and is not projected. */}
+      <div className="sidebar-footer-device-row">
+        <span className="sidebar-footer-led" aria-hidden />
+        <span className="sidebar-footer-device-name">Host approvals</span>
+        <span className="sidebar-footer-device-status">{approvals.label}</span>
       </div>
     </>
   )

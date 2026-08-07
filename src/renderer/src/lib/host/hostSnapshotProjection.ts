@@ -35,6 +35,7 @@
 import type {
   HostHealthProjection,
   HostSnapshot,
+  HostApprovalProjection,
   HostProviderModelProjection,
   HostThreadProjection,
   HostUsageObservation,
@@ -91,6 +92,30 @@ export interface HostProjectedProvider {
   readonly note?: string
 }
 
+/**
+ * A pending-approval row exactly as Host reports it.
+ *
+ * Wave 5f. SUBSET, NOT LEDGER. `HostProductionSuppliers` supplies base
+ * `approvals: []`; the only rows on the wire are AWAITING approval-kind cards
+ * merged by `HostMainComposition` (PIN S4-Q keeps question-kind out). Decided,
+ * rejected and ledger approvals NEVER reach a client. Any view over this must
+ * say "awaiting" and never "approvals", or it overstates what Host knows.
+ *
+ * Allowlisted on purpose — identity, kind, status and time only. `summary` is
+ * human prose the leaf never renders, so it does not cross; `decidedAt` and
+ * `decisionSource` describe a lifecycle stage the wire cannot carry today, so
+ * projecting them would imply a capability Host does not have.
+ */
+export interface HostProjectedApproval {
+  readonly approvalId: string
+  /** Exact command this approval governs — the Wave 4.2c join key. */
+  readonly commandId: string
+  readonly status: HostApprovalProjection['status']
+  readonly actionKind: string
+  readonly createdAt: number
+  readonly threadId?: string
+}
+
 export interface HostProjectedWorkspace {
   readonly id: string
   readonly name: string
@@ -134,6 +159,8 @@ export interface HostProjectedSnapshot {
   readonly workspaces: readonly HostProjectedWorkspace[]
   readonly threads: readonly HostProjectedThread[]
   readonly providers: readonly HostProjectedProvider[]
+  /** AWAITING approval cards only — never the decided/ledger history. */
+  readonly approvals: readonly HostProjectedApproval[]
   readonly usage: HostProjectedUsage
   /**
    * Wave 5d — the typed `code` of every Host warning, in wire order.
@@ -215,6 +242,20 @@ function projectThread(thread: HostThreadProjection): HostProjectedThread {
   }
 }
 
+function projectApproval(approval: HostApprovalProjection): HostProjectedApproval {
+  // Field-by-field, same reason as projectProvider: a spread would forward
+  // whatever Host adds to this record later, including `summary`, which is
+  // prose. An allowlist keeps the boundary something this layer ENFORCES.
+  return {
+    approvalId: approval.approvalId,
+    commandId: approval.commandId,
+    status: approval.status,
+    actionKind: approval.actionKind,
+    createdAt: approval.createdAt,
+    ...(approval.threadId ? { threadId: approval.threadId } : {})
+  }
+}
+
 function projectProvider(provider: HostProviderModelProjection): HostProjectedProvider {
   // Field-by-field on purpose. A spread would forward whatever Host adds to
   // this record later, and the wire type explicitly promises it never carries
@@ -274,6 +315,7 @@ export function projectHostSnapshot(
     workspaces: snapshot.workspaces.map(projectWorkspace),
     threads: snapshot.threads.map(projectThread),
     providers: snapshot.providers.map(projectProvider),
+    approvals: snapshot.approvals.map(projectApproval),
     usage: projectUsage(snapshot.usage),
     warningCodes: snapshot.warnings.map((warning) => warning.code),
     counts: {
