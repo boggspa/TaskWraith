@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const asar = require('@electron/asar') as {
   createPackage: (source: string, destination: string) => Promise<Writable | void>
+  listPackage: (archivePath: string, options?: { isPack?: boolean }) => string[]
 }
 const {
   NOTICE_FILES,
@@ -235,6 +236,18 @@ describe('packaged third-party notices', () => {
     expect(notice).toContain('Electron 39.8.9')
     expect(notice).toContain('Node.js standalone TUI runtime 22.23.2')
     expect(validatePackagedNotices(resourcesDir)).toBeTruthy()
+  })
+
+  it('does not mutate the cached ASAR header while reading notices', async () => {
+    const { repoRoot, resourcesDir } = await fixture((appDir) => {
+      addPackage(appDir, 'good', '1.0.0', { legalFile: 'LICENSE' })
+    })
+    const archivePath = path.join(resourcesDir, 'app.asar')
+    const before = asar.listPackage(archivePath, { isPack: false })
+
+    generateThirdPartyNotices({ resourcesDir, repoRoot })
+
+    expect(asar.listPackage(archivePath, { isPack: false })).toEqual(before)
   })
 
   it('fails packaging when a dependency has neither legal text nor a reviewed mapping', async () => {

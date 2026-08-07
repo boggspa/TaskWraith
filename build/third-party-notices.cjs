@@ -138,8 +138,12 @@ function archiveReader(asarPath, asarApi) {
         throw new Error(`Packaged file is missing from app.asar: ${normalized}`)
       }
       const rawEntry = rawByNormalized.get(normalized)
+      // @electron/asar treats a leading slash as a host filesystem path. Trying
+      // that spelling first mutates its cached archive header while it walks
+      // outside the archive, which can add synthetic `..`/empty entries and
+      // later break the universal ASAR merge. Archive-root separators are
+      // presentation syntax, not part of the extractFile lookup.
       const candidates = [
-        rawEntry,
         typeof rawEntry === 'string' ? rawEntry.replace(/^[/\\]+/, '') : null,
         normalized,
         normalized.split('/').join(path.sep)
