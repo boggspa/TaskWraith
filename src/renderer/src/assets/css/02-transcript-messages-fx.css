@@ -5631,6 +5631,26 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   align-items: center;
   gap: 8px;
   padding-block: calc(var(--space-sm) + 1px);
+  /* This bubble animates continuously — the label runs a background-position
+   * shimmer and the ghost pulses — and it sits directly beside the transcript
+   * region that repaints on every streamed token. Fence it into its own
+   * stacking context so those two invalidation sources stop merging, the same
+   * treatment the fan-out lane card got in 3c99acbe0 for the same reason
+   * ("only paint invalidation is fenced here").
+   *
+   * Applied to the SHARED base deliberately. The jump variant is a <button>
+   * and the static one a <div>, and a button carries paint/stacking behaviour
+   * from the UA stylesheet that a div does not — which left the two variants
+   * of one bubble behaving differently for a reason nothing in this file
+   * expressed. `.message-working-jump` adds only a UA reset and a hover rim;
+   * it never carried this. Stating it here makes both variants equal and stops
+   * the smoother one depending on an accident of its tag name.
+   *
+   * `isolation`, not `contain: paint`: the ghost's glow is 28px wide inside a
+   * 26px box and `.message-working-ghost` sets `overflow: visible` on purpose,
+   * so a paint-clipping fence would shave it. Isolation fences compositing
+   * without clipping, and nothing inside blends across the boundary. */
+  isolation: isolate;
 }
 
 /* ============================================================
