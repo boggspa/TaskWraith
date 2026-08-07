@@ -46,7 +46,9 @@ function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   }
 }
 
-function grant(partial: Partial<ExternalPathGrant> & Pick<ExternalPathGrant, 'provider'>): ExternalPathGrant {
+function grant(
+  partial: Partial<ExternalPathGrant> & Pick<ExternalPathGrant, 'provider'>
+): ExternalPathGrant {
   return {
     id: `g-${partial.provider}`,
     path: '/extra',

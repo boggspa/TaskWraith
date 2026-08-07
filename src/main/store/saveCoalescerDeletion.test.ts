@@ -77,8 +77,7 @@ function leavePendingSave(chatId: string): void {
 }
 
 /** Longer than the coalescing window, so any pending timer has fired. */
-const settleTimers = (): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, 400))
+const settleTimers = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 400))
 
 describe('save coalescing vs history deletion', () => {
   beforeEach(() => {

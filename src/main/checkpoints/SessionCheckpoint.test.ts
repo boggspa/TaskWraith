@@ -521,10 +521,7 @@ describe('SessionCheckpoint hot/archive split (T3b)', () => {
       })
       store.upsertFromChat(makeCheckpointChat(), 'round-started')
       // Add a second chat so purge doesn't empty everything.
-      store.upsertFromChat(
-        { ...makeCheckpointChat(), appChatId: 'chat-2' },
-        'round-started'
-      )
+      store.upsertFromChat({ ...makeCheckpointChat(), appChatId: 'chat-2' }, 'round-started')
 
       // Supersede chat-1 by starting a new round.
       const chat1b = makeCheckpointChat()
@@ -617,20 +614,12 @@ describe('SessionCheckpoint hot/archive split (T3b)', () => {
 
       // Legacy hot file still has both records (simulating crash before
       // the hot rename completed the migration).
-      writeFileSync(
-        storagePath,
-        JSON.stringify([legacyRecord, availableRecord]),
-        'utf-8'
-      )
+      writeFileSync(storagePath, JSON.stringify([legacyRecord, availableRecord]), 'utf-8')
 
       // Archive was written but hot rename did not complete —
       // the archive has the terminal record (written FIRST in the
       // amended ordering).
-      writeFileSync(
-        archivePath,
-        JSON.stringify(legacyRecord) + '\n',
-        'utf-8'
-      )
+      writeFileSync(archivePath, JSON.stringify(legacyRecord) + '\n', 'utf-8')
 
       // On reload, dedupe-by-id should merge without duplicates.
       const store = new SessionCheckpointStore({ storagePath })
@@ -692,11 +681,7 @@ describe('SessionCheckpoint hot/archive split (T3b)', () => {
       )
 
       // Archive has the terminal record.
-      writeFileSync(
-        archivePath,
-        JSON.stringify(terminalRecord) + '\n',
-        'utf-8'
-      )
+      writeFileSync(archivePath, JSON.stringify(terminalRecord) + '\n', 'utf-8')
 
       // Simulate a crash that left the terminal record ALSO in the hot file
       // (pre-amendment hot-first ordering: hot was written before archive,

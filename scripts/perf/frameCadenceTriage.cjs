@@ -319,7 +319,9 @@ async function evaluateInRenderer(rendererSession, expression) {
           (details.exception.value != null ? String(details.exception.value) : ''))) ||
       details.text ||
       'unknown renderer exception'
-    const error = new Error(`Frame-cadence triage — renderer evaluation failed: ${String(desc).slice(0, 500)}`)
+    const error = new Error(
+      `Frame-cadence triage — renderer evaluation failed: ${String(desc).slice(0, 500)}`
+    )
     error.code = 'FRAME_CADENCE_RENDERER_EXCEPTION'
     throw error
   }
@@ -350,7 +352,9 @@ async function evaluateInMain(mainInspector, expression) {
           (details.exception.value != null ? String(details.exception.value) : ''))) ||
       details.text ||
       'unknown main exception'
-    const error = new Error(`Frame-cadence triage — main evaluation failed: ${String(desc).slice(0, 500)}`)
+    const error = new Error(
+      `Frame-cadence triage — main evaluation failed: ${String(desc).slice(0, 500)}`
+    )
     error.code = 'FRAME_CADENCE_MAIN_EXCEPTION'
     throw error
   }
@@ -550,12 +554,30 @@ function correlateFrameMissesToMainLag(options) {
       totalFrameMisses: 0,
       overlappingMisses: 0,
       frameMisses: [],
-      frameDeltasP50: percentile(frameDeltas.map((f) => f.deltaMs), 50),
-      frameDeltasP95: percentile(frameDeltas.map((f) => f.deltaMs), 95),
-      frameDeltasP99: percentile(frameDeltas.map((f) => f.deltaMs), 99),
-      mainLagP50: percentile((mainLagSamples || []).map((s) => s.lagMs), 50),
-      mainLagP95: percentile((mainLagSamples || []).map((s) => s.lagMs), 95),
-      mainLagP99: percentile((mainLagSamples || []).map((s) => s.lagMs), 99),
+      frameDeltasP50: percentile(
+        frameDeltas.map((f) => f.deltaMs),
+        50
+      ),
+      frameDeltasP95: percentile(
+        frameDeltas.map((f) => f.deltaMs),
+        95
+      ),
+      frameDeltasP99: percentile(
+        frameDeltas.map((f) => f.deltaMs),
+        99
+      ),
+      mainLagP50: percentile(
+        (mainLagSamples || []).map((s) => s.lagMs),
+        50
+      ),
+      mainLagP95: percentile(
+        (mainLagSamples || []).map((s) => s.lagMs),
+        95
+      ),
+      mainLagP99: percentile(
+        (mainLagSamples || []).map((s) => s.lagMs),
+        99
+      ),
       rendererLongTaskCount: Array.isArray(longTasks) ? longTasks.length : 0,
       note: 'zero frame misses — no jank detected during collection window; re-run under active fan-out load'
     }
@@ -615,9 +637,7 @@ function correlateFrameMissesToMainLag(options) {
     }
   }
 
-  const overlapPercent = totalFrameMisses > 0
-    ? (overlappingMisses / totalFrameMisses) * 100
-    : 0
+  const overlapPercent = totalFrameMisses > 0 ? (overlappingMisses / totalFrameMisses) * 100 : 0
 
   const frameDeltaValues = frameDeltas.map((f) => f.deltaMs)
   const mainLagValues = (mainLagSamples || []).map((s) => s.lagMs)
@@ -714,10 +734,18 @@ async function runTriageWindow(options) {
   const nowMs = typeof nowMsOpt === 'function' ? nowMsOpt : Date.now
 
   if (!rendererSession || typeof rendererSession.send !== 'function') {
-    return { ok: false, reason: 'rendererSession with send() required', decision: 'insufficient-data' }
+    return {
+      ok: false,
+      reason: 'rendererSession with send() required',
+      decision: 'insufficient-data'
+    }
   }
   if (!mainInspector || typeof mainInspector.post !== 'function') {
-    return { ok: false, reason: 'mainInspector with post() required', decision: 'insufficient-data' }
+    return {
+      ok: false,
+      reason: 'mainInspector with post() required',
+      decision: 'insufficient-data'
+    }
   }
 
   const startedAt = nowMs()
@@ -730,12 +758,20 @@ async function runTriageWindow(options) {
   // Install probes (idempotent — starts fresh collection).
   const rendererInstall = await installRendererProbe(rendererSession)
   if (!rendererInstall.ok) {
-    return { ok: false, reason: `renderer probe install failed: ${rendererInstall.reason}`, decision: 'insufficient-data' }
+    return {
+      ok: false,
+      reason: `renderer probe install failed: ${rendererInstall.reason}`,
+      decision: 'insufficient-data'
+    }
   }
 
   const mainInstall = await installMainProbe(mainInspector)
   if (!mainInstall.ok) {
-    return { ok: false, reason: `main probe install failed: ${mainInstall.reason}`, decision: 'insufficient-data' }
+    return {
+      ok: false,
+      reason: `main probe install failed: ${mainInstall.reason}`,
+      decision: 'insufficient-data'
+    }
   }
 
   if (typeof onProgress === 'function') {
@@ -790,9 +826,7 @@ async function runTriageWindow(options) {
       overheadNs: typeof mainSnapshot.overheadNs === 'number' ? mainSnapshot.overheadNs : 0,
       sampleCount: typeof mainSnapshot.count === 'number' ? mainSnapshot.count : 0,
       overheadNsPerSample:
-        mainSnapshot.count > 0
-          ? (mainSnapshot.overheadNs || 0) / mainSnapshot.count
-          : 0
+        mainSnapshot.count > 0 ? (mainSnapshot.overheadNs || 0) / mainSnapshot.count : 0
     }
   }
 

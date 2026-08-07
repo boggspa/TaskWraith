@@ -135,7 +135,7 @@ function buildDryRunPlan(args) {
       note: `--attach sets ${TRIAGE_ENV_FLAG}=1 for this process before runTriageWindow`
     },
     spawnHint:
-      'Spawn via scripts/perf/runT2Baseline.cjs --launch --i-accept-isolated-launch (same dual-flag gate), then --attach to that child\'s ports. This runner does not spawn.',
+      "Spawn via scripts/perf/runT2Baseline.cjs --launch --i-accept-isolated-launch (same dual-flag gate), then --attach to that child's ports. This runner does not spawn.",
     loadCaveat:
       'Idle/clean windows return decision=insufficient-data after the zero-miss fix. Drive fan-out load in the target instance.'
   }

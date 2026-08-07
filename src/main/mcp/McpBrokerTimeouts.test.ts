@@ -24,9 +24,9 @@ describe('mcpBrokerRequestTimeoutMsFor', () => {
         params: { name: 'ensemble_lane_result' }
       })
     ).toBe(MCP_BROKER_REQUEST_TIMEOUT_MS)
-    expect(
-      mcpBrokerRequestTimeoutMsFor({ method: 'tools/list' })
-    ).toBe(MCP_BROKER_REQUEST_TIMEOUT_MS)
+    expect(mcpBrokerRequestTimeoutMsFor({ method: 'tools/list' })).toBe(
+      MCP_BROKER_REQUEST_TIMEOUT_MS
+    )
     // A hostile/malformed shape must fail toward the CONSERVATIVE budget.
     expect(mcpBrokerRequestTimeoutMsFor({ method: 'tools/call', params: { name: 42 } })).toBe(
       MCP_BROKER_REQUEST_TIMEOUT_MS

@@ -194,15 +194,13 @@ describe('close-out seat links', () => {
 
 describe('resolveSeatAuthority', () => {
   it('marks the boss', () => {
-    expect(
-      resolveSeatAuthority({ participantId: 'p1', bossmanParticipantId: 'p1' })
-    ).toBe('boss')
+    expect(resolveSeatAuthority({ participantId: 'p1', bossmanParticipantId: 'p1' })).toBe('boss')
   })
 
   it('marks a captain', () => {
-    expect(
-      resolveSeatAuthority({ participantId: 'p2', captainParticipantIds: ['p2', 'p3'] })
-    ).toBe('captain')
+    expect(resolveSeatAuthority({ participantId: 'p2', captainParticipantIds: ['p2', 'p3'] })).toBe(
+      'captain'
+    )
   })
 
   it('never shows the boss as a captain too', () => {
@@ -230,7 +228,9 @@ describe('resolveSeatAuthority', () => {
   })
 
   it('is undefined for an ordinary seat', () => {
-    expect(resolveSeatAuthority({ participantId: 'p9', captainParticipantIds: ['p2'] })).toBeUndefined()
+    expect(
+      resolveSeatAuthority({ participantId: 'p9', captainParticipantIds: ['p2'] })
+    ).toBeUndefined()
     expect(resolveSeatAuthority({ participantId: '' })).toBeUndefined()
   })
 })
@@ -242,7 +242,12 @@ describe('seat link carries the glyph fields', () => {
     const link = {
       participantId: 'p1',
       before: { provider: 'claude', model: 'm', stageRole: 'scout' as const },
-      after: { provider: 'claude', model: 'm', stageRole: 'reviewer' as const, authority: 'boss' as const }
+      after: {
+        provider: 'claude',
+        model: 'm',
+        stageRole: 'reviewer' as const,
+        authority: 'boss' as const
+      }
     }
     const decoded = decodeSeatChangeLink(encodeSeatChangeLink(link))
     expect(decoded?.after.stageRole).toBe('reviewer')
@@ -254,7 +259,12 @@ describe('seat link carries the glyph fields', () => {
     const bad = encodeSeatChangeLink({
       participantId: 'p1',
       before: { provider: 'claude', model: 'm' },
-      after: { provider: 'claude', model: 'm', stageRole: 'overlord' as never, authority: 'king' as never }
+      after: {
+        provider: 'claude',
+        model: 'm',
+        stageRole: 'overlord' as never,
+        authority: 'king' as never
+      }
     })
     const decoded = decodeSeatChangeLink(bad)
     expect(decoded?.after).not.toHaveProperty('stageRole')
@@ -268,14 +278,22 @@ function rosterSeat(participantId: string, provider: string, model: string, role
   return { participantId, provider, model, role, permissionPresetId: 'default' }
 }
 
-function rosterMessage(id: string, appliedAtMs: number, seats = [rosterSeat('a', 'claude', 'claude-opus-5', 'Boss')]) {
+function rosterMessage(
+  id: string,
+  appliedAtMs: number,
+  seats = [rosterSeat('a', 'claude', 'claude-opus-5', 'Boss')]
+) {
   return {
     id,
     role: 'system',
     content: 'Ensemble roster created.',
     timestamp: new Date(appliedAtMs).toISOString(),
     metadata: {
-      seatChange: { seats, label: 'Ensemble roster created', appliedAt: new Date(appliedAtMs).toISOString() }
+      seatChange: {
+        seats,
+        label: 'Ensemble roster created',
+        appliedAt: new Date(appliedAtMs).toISOString()
+      }
     }
   } as unknown as SeatChangeCarrierMessage
 }

@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
-import {
-  ChatTranscriptStore,
-  EMPTY_CHAT_TRANSCRIPT_PAYLOAD
-} from './chatTranscriptStore'
+import { ChatTranscriptStore, EMPTY_CHAT_TRANSCRIPT_PAYLOAD } from './chatTranscriptStore'
 import { isChatSummaryRecord } from './chatRecordMerge'
 
 function message(id: string, content: string): ChatMessage {

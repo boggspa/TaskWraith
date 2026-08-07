@@ -270,9 +270,7 @@ describe('PersistenceWriteQueue', () => {
       queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(n) })
     )
     // 4 arrives against a full queue and must not jump the line.
-    writes.push(
-      queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(4) })
-    )
+    writes.push(queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(4) }))
 
     await Promise.all(writes)
     expect(readRevision()).toBe(4)

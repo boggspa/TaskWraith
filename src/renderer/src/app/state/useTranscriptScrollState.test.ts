@@ -130,9 +130,9 @@ describe('useTranscriptScrollState', () => {
     expect(hookHarness.listeners.has('wheel')).toBe(true)
     expect(hookHarness.windowListeners.has('keydown')).toBe(true)
     // Phase E: outer CODE_BLOCK_RESIZE_EVENT listener is retired.
-    expect(
-      [...hookHarness.listeners.keys()].some((name) => name.includes('code-block'))
-    ).toBe(false)
+    expect([...hookHarness.listeners.keys()].some((name) => name.includes('code-block'))).toBe(
+      false
+    )
   })
 
   it('publishes document-root PageUp intent when transcript prose owns the visible scroll', () => {

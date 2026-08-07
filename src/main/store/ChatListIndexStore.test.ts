@@ -194,7 +194,11 @@ describe('ChatListIndexStore cache + projection', () => {
       ensemble: fatEnsemble()
     }
     // runsSummary/lastRun belong in side files, not JSONL — drop them like the old writer.
-    const { runsSummary: _rs, lastRun: _lr, ...jsonlShape } = fatEntry as unknown as ChatListItem & {
+    const {
+      runsSummary: _rs,
+      lastRun: _lr,
+      ...jsonlShape
+    } = fatEntry as unknown as ChatListItem & {
       runsSummary?: unknown
       lastRun?: unknown
     }
@@ -251,7 +255,11 @@ describe('ChatListIndexStore cache + projection', () => {
     // External writer: rewrite file with a different entry (simulates another process).
     const external = {
       chatId: 'chat-a',
-      entry: { ...makeItem('chat-a', { title: 'External' }), runsSummary: undefined, lastRun: undefined }
+      entry: {
+        ...makeItem('chat-a', { title: 'External' }),
+        runsSummary: undefined,
+        lastRun: undefined
+      }
     }
     // Ensure size and content change; bump mtime if needed.
     fs.writeFileSync(indexPath, JSON.stringify(external) + '\n', 'utf-8')

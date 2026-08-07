@@ -237,8 +237,9 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
  * read_only/plan with grant-immunity (isPlanInstrumentGrantHold), and the
  * global kill switch still forces deny. DERIVED, never hand-listed.
  */
-export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> =
-  Object.freeze(TASKWRAITH_MCP_TOOLS.filter((tool) => tool === 'canvas_navigate'))
+export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
+  TASKWRAITH_MCP_TOOLS.filter((tool) => tool === 'canvas_navigate')
+)
 
 /**
  * Tools advertised to a READ-ONLY / plan seat: (TASKWRAITH_MCP_TOOLS ∩

@@ -55,10 +55,7 @@ export interface ChatListSummaryFields {
  * roster, and never the fat blob. Omitting it outright made this type lie
  * about what `stripSummaries` now emits.
  */
-type ChatListIndexLineEntry = Omit<
-  ChatListItem,
-  'runsSummary' | 'lastRun' | 'ensemble'
-> &
+type ChatListIndexLineEntry = Omit<ChatListItem, 'runsSummary' | 'lastRun' | 'ensemble'> &
   Partial<Pick<ChatListItem, 'ensemble'>>
 
 /** A single line in the JSONL index. */
@@ -155,12 +152,7 @@ function toLeanEnsembleProjection(ensemble: Record<string, unknown>): Record<str
  * lean copy is ~3 KB against the ~229 KB blob it replaces.
  */
 function stripSummaries(item: ChatListItem): ChatListIndexLineEntry {
-  const {
-    runsSummary: _runsSummary,
-    lastRun: _lastRun,
-    ensemble,
-    ...rest
-  } = item
+  const { runsSummary: _runsSummary, lastRun: _lastRun, ensemble, ...rest } = item
   if (!ensemble || typeof ensemble !== 'object') return rest
   if (isLeanEnsembleProjection(ensemble)) return { ...rest, ensemble }
   return {
@@ -205,14 +197,11 @@ function extractSummaries(item: ChatListItem): ChatListSummaryFields {
 }
 
 /** Merge a stripped index line with optional side-file summaries. */
-function mergeEntry(
-  entry: ChatListIndexLineEntry,
-  summaries: ChatListSummaryFields
-): ChatListItem {
+function mergeEntry(entry: ChatListIndexLineEntry, summaries: ChatListSummaryFields): ChatListItem {
   return {
     ...entry,
     ...(summaries.runsSummary ? { runsSummary: summaries.runsSummary } : {}),
-    ...(summaries.lastRun ? { lastRun: summaries.lastRun } : {}),
+    ...(summaries.lastRun ? { lastRun: summaries.lastRun } : {})
   } as ChatListItem
 }
 
@@ -379,9 +368,7 @@ export class ChatListIndexStore {
     ensureDir(path.dirname(this.indexPath))
 
     // Append tombstones.
-    const lines = chatIds
-      .map((id) => JSON.stringify({ chatId: id, entry: null }) + '\n')
-      .join('')
+    const lines = chatIds.map((id) => JSON.stringify({ chatId: id, entry: null }) + '\n').join('')
     fs.appendFileSync(this.indexPath, lines, { encoding: 'utf-8' })
 
     // Remove per-chat summary files.

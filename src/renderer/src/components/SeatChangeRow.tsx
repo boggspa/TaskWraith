@@ -7,10 +7,7 @@ import {
 } from './CombinedModelPicker'
 import { CharOdometer } from './CharOdometer'
 import { SeatChairIcon } from './icons/SeatChairIcon'
-import {
-  ParticipantRoleIcon,
-  participantRoleIconTitle
-} from './icons/ParticipantRoleIcon'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { getProviderName } from './Sidebar'
 import { resolveProviderBrandLabel } from '../lib/ollamaDisplayBrand'
@@ -61,22 +58,21 @@ interface SeatSideView {
 function seatSideView(state: SeatChangeSeatState): SeatSideView {
   const provider = state.provider as ProviderId
   const modelLabel = humaniseModelId(provider, state.model) || state.model
-  const reasoningLabel = (
+  const reasoningLabel =
     state.reasoningEffort || state.thinkingEnabled !== undefined
-  )
-    ? reasoningDisplayLabel({
-        provider,
-        composerStyle: 'default',
-        modelId: state.model,
-        modelLabel,
-        codexReasoningEffort: state.reasoningEffort,
-        claudeReasoningEffort: state.reasoningEffort,
-        grokReasoningEffort: state.reasoningEffort,
-        cursorReasoningEffort: state.reasoningEffort,
-        kimiReasoningEffort: state.reasoningEffort,
-        kimiThinkingEnabled: state.thinkingEnabled
-      })
-    : ''
+      ? reasoningDisplayLabel({
+          provider,
+          composerStyle: 'default',
+          modelId: state.model,
+          modelLabel,
+          codexReasoningEffort: state.reasoningEffort,
+          claudeReasoningEffort: state.reasoningEffort,
+          grokReasoningEffort: state.reasoningEffort,
+          cursorReasoningEffort: state.reasoningEffort,
+          kimiReasoningEffort: state.reasoningEffort,
+          kimiThinkingEnabled: state.thinkingEnabled
+        })
+      : ''
   // An ABSENT preset is not the default preset. Rows written before the seat
   // snapshot existed carry provider/model/role but no tier, and defaulting
   // there would have the chip claim "Accept Edits" for a lane that may have run
@@ -96,11 +92,7 @@ function seatSideView(state: SeatChangeSeatState): SeatSideView {
     presetId,
     tierLabel,
     grantsLabel: grantsCount > 0 ? `${grantsCount} grant${grantsCount === 1 ? '' : 's'}` : '',
-    role: state.role
-      ? state.seatNumber
-        ? `#${state.seatNumber} ${state.role}`
-        : state.role
-      : '',
+    role: state.role ? (state.seatNumber ? `#${state.seatNumber} ${state.role}` : state.role) : '',
     // Carried per SIDE so a change that moves a seat between stages, or in or
     // out of authority, is visible in the row — it was previously invisible.
     ...(state.stageRole ? { stageRole: state.stageRole } : {}),
@@ -447,7 +439,9 @@ function SeatRosterStack({
   )
   const time = formatSeatChangeTime(timestamp)
   return (
-    <div className={`message-group seat-change-message seat-roster-message${fresh ? ' is-fresh' : ''}`}>
+    <div
+      className={`message-group seat-change-message seat-roster-message${fresh ? ' is-fresh' : ''}`}
+    >
       <div className="seat-roster-head">
         <span className="seat-change-icon" aria-hidden>
           <SeatChairIcon />

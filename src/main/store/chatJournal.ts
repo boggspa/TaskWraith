@@ -196,10 +196,7 @@ interface ChatState {
   tombstoned: boolean
 }
 
-export function createChatJournal(
-  baseDir: string,
-  options: ChatJournalOptions = {}
-): ChatJournal {
+export function createChatJournal(baseDir: string, options: ChatJournalOptions = {}): ChatJournal {
   const maxJournalParseBytes = options.maxJournalParseBytes ?? MAX_JOURNAL_PARSE_BYTES
 
   /**

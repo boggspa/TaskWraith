@@ -115,8 +115,7 @@ export function threadMessageCardModel(input: ThreadMessageCardInput): ThreadMes
   // direct instruction in this thread. An agent seat leads with its role; with
   // no role (a solo sender has no roster) it falls back to a generic rather
   // than inventing an identity.
-  const leadLabel =
-    input.origin === 'user' ? 'You' : (input.seat?.role || '').trim() || 'An agent'
+  const leadLabel = input.origin === 'user' ? 'You' : (input.seat?.role || '').trim() || 'An agent'
   return {
     id: input.id,
     senderLabel,

@@ -86,7 +86,10 @@ describe('transcriptPanelMemoProps', () => {
   })
 
   it('guards TranscriptPanel against currentChat === memo keying', () => {
-    const source = readFileSync(new URL('../components/TranscriptPanel.tsx', import.meta.url), 'utf8')
+    const source = readFileSync(
+      new URL('../components/TranscriptPanel.tsx', import.meta.url),
+      'utf8'
+    )
     expect(source).toContain('transcriptPanelPropsEqual')
     expect(source).not.toMatch(/previous\.currentChat === next\.currentChat/)
   })

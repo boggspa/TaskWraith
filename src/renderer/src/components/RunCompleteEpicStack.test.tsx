@@ -81,9 +81,7 @@ describe('RunCompleteEpicStack', () => {
       subject: `Commit ${index + 1}`,
       stats: '1 file'
     }))
-    const html = renderToStaticMarkup(
-      <RunCompleteEpicStack commits={commits} />
-    )
+    const html = renderToStaticMarkup(<RunCompleteEpicStack commits={commits} />)
     expect(html).toContain('Commit 1')
     expect(html).toContain('Commit 8')
     expect(html).not.toContain('Commit 9')

@@ -20,7 +20,7 @@ you need before your first edit.
    ```
    Never write this as a bare `ls A-* B-*`: under zsh one missing glob triggers
    `nomatch`, aborts the whole command, and prints nothing — which reads exactly
-   like "no markers". A *decayed* marker (expired, or its pid dead) is not
+   like "no markers". A _decayed_ marker (expired, or its pid dead) is not
    noise; it is work to adopt. See AGENTS.md.
 3. **Raise your own marker before your first edit to a clean file** — not "when
    you start", which is fuzzy and skippable. First write is the trigger.
@@ -48,20 +48,20 @@ only for its first 15 minutes from `started`, so it is clamped rather than
 voided. Renew by re-stamping **both** `started` and `expires` — bumping
 `expires` alone does nothing, since the ceiling anchors to the start. Expect it
 to lapse during long thinking, test runs or reviews, and remember a lapsed claim
-is **adoptable**: re-stamp *before* a long operation, and again before your
+is **adoptable**: re-stamp _before_ a long operation, and again before your
 final commit if the work ran long. **If your claim uses `lockOwnerId:`, re-read
 that value and re-stamp it at every renewal too** — it is scoped per run, so it
 changes every turn, and renewing only the clock fields blocks your own commit on
 your own claim for as long as you keep renewing.
 
 **Without the opening and closing `---`, every field parses empty** — pid,
-expires, and the whole `paths` list — so the marker claims *nothing*. Two live
+expires, and the whole `paths` list — so the marker claims _nothing_. Two live
 markers were in exactly that shape on 2026-08-06, one of them otherwise
 perfect. A marker also claims nothing if its pid is dead, its `expires` has
 passed or cannot be parsed, or a path does not match **exactly**.
 
 **If you are a TaskWraith seat, a pid will not hold your claim.** Not because
-you cannot read one — you can — but because you have no *stable* one: each shell
+you cannot read one — you can — but because you have no _stable_ one: each shell
 invocation is a fresh process, and a provider host pid can rotate mid-session,
 silently decaying your marker while you are still working. Use
 `lockOwnerId: <$TASKWRAITH_LOCK_OWNER_ID>` in place of `pid:` — main stamps that
@@ -92,7 +92,7 @@ then start something else, re-raise it before the next edit.
 - **Stage by explicit path. Never `git add -A`, `git add .`, or `-u`.**
 - **Commit with a pathspec:** `git commit -F msg -- <your exact paths>`. The
   `--only` default ignores whatever else is staged, and is structurally immune
-  to sweeping another session's work in *or* reverting it.
+  to sweeping another session's work in _or_ reverting it.
 - **Never bare-`git commit`** while another session may be active — it takes the
   whole shared index, including files a peer has staged.
 - **`git diff --cached --stat` immediately before every commit.** An unexpected

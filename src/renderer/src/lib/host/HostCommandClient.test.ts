@@ -52,9 +52,7 @@ function bridgeOf(handlers: {
 }): HostCommandBridge {
   return {
     hostProjectionCommandSubmit: async (command) => {
-      const next =
-        (await handlers.submit?.(command)) ??
-        receipt()
+      const next = (await handlers.submit?.(command)) ?? receipt()
       return { ok: true, receipt: next }
     },
     hostProjectionReceiptLookup: async ({ commandId }) => {

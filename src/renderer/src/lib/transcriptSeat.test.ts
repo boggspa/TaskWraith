@@ -56,7 +56,9 @@ describe('seatFromEnsembleMetadata', () => {
   })
 
   it('omits a non-positive or missing order rather than rendering #0', () => {
-    expect(seatFromEnsembleMetadata(metadata({ ensembleOrder: 0 }))).not.toHaveProperty('seatNumber')
+    expect(seatFromEnsembleMetadata(metadata({ ensembleOrder: 0 }))).not.toHaveProperty(
+      'seatNumber'
+    )
     expect(seatFromEnsembleMetadata(metadata({ ensembleOrder: undefined }))).not.toHaveProperty(
       'seatNumber'
     )

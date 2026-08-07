@@ -52,10 +52,19 @@ function makeLeanEnsemble(chatIndex: number): Record<string, unknown> {
   for (let p = 0; p < 15; p++) {
     participants.push({
       id: `ensemble-participant-${p}`,
-      provider: p % 5 === 0 ? 'anthropic' : p % 5 === 1 ? 'openai' : p % 5 === 2 ? 'google' : p % 5 === 3 ? 'mistral' : 'xai',
+      provider:
+        p % 5 === 0
+          ? 'anthropic'
+          : p % 5 === 1
+            ? 'openai'
+            : p % 5 === 2
+              ? 'google'
+              : p % 5 === 3
+                ? 'mistral'
+                : 'xai',
       model: `model-${p}`,
       role: `Worker ${p}`,
-      instructions: '',          // blanked — largest saver
+      instructions: '', // blanked — largest saver
       enabled: true,
       order: p,
       permissionPresetId: 'default',
@@ -65,10 +74,10 @@ function makeLeanEnsemble(chatIndex: number): Record<string, unknown> {
               file: `src/lane-${p}/work.ts`,
               reason: `Implement feature block ${p} for chat ${chatIndex}`,
               status: 'in_progress',
-              startedAt: Date.now() - 300_000,
-            },
+              startedAt: Date.now() - 300_000
+            }
           }
-        : {}),
+        : {})
     })
   }
 
@@ -85,13 +94,13 @@ function makeLeanEnsemble(chatIndex: number): Record<string, unknown> {
       participants: participants.map((p) => ({
         participantId: p.id,
         order: p.order,
-        status: 'active' as const,
+        status: 'active' as const
       })),
       bossmanParticipantId: 'ensemble-participant-0',
-      captainParticipantIds: ['ensemble-participant-14', 'ensemble-participant-13'],
+      captainParticipantIds: ['ensemble-participant-14', 'ensemble-participant-13']
     },
     escalationSignals: [],
-    [CHAT_LIST_ENSEMBLE_PROJECTION_FLAG]: true,
+    [CHAT_LIST_ENSEMBLE_PROJECTION_FLAG]: true
   }
 }
 
@@ -104,10 +113,19 @@ function makeFatEnsemble(chatIndex: number): Record<string, unknown> {
   for (let p = 0; p < 15; p++) {
     participants.push({
       id: `ensemble-participant-${p}`,
-      provider: p % 5 === 0 ? 'anthropic' : p % 5 === 1 ? 'openai' : p % 5 === 2 ? 'google' : p % 5 === 3 ? 'mistral' : 'xai',
+      provider:
+        p % 5 === 0
+          ? 'anthropic'
+          : p % 5 === 1
+            ? 'openai'
+            : p % 5 === 2
+              ? 'google'
+              : p % 5 === 3
+                ? 'mistral'
+                : 'xai',
       model: `model-${p}-${'x'.repeat(40)}`,
       role: `Worker ${p}`,
-      instructions: `SEAT-BRIEF-MARKER ${'brief text '.repeat(400)}`,  // fat
+      instructions: `SEAT-BRIEF-MARKER ${'brief text '.repeat(400)}`, // fat
       enabled: true,
       order: p,
       permissionPresetId: 'default',
@@ -117,23 +135,23 @@ function makeFatEnsemble(chatIndex: number): Record<string, unknown> {
               file: `src/lane-${p}/work.ts`,
               reason: `Implement feature block ${p} for chat ${chatIndex}`,
               status: 'in_progress',
-              startedAt: Date.now() - 300_000,
-            },
+              startedAt: Date.now() - 300_000
+            }
           }
-        : {}),
+        : {})
     })
   }
 
   const roundSummaries: Record<string, unknown>[] = Array.from({ length: 4 }, (_, r) => ({
     roundId: `ensemble-${chatIndex}${r}-${'z'.repeat(24)}`,
     summary: `Round ${r} summary `.padEnd(3000, 'x'),
-    participantCount: 15,
+    participantCount: 15
   }))
 
   const blackboardEntries: Record<string, unknown>[] = Array.from({ length: 8 }, (_, b) => ({
     id: `bb-${chatIndex}-${b}`,
     key: `note-${b}`,
-    value: `Entry ${b} `.padEnd(600, 'y'),
+    value: `Entry ${b} `.padEnd(600, 'y')
   }))
 
   // NOTE: no __chatListProjection flag — this is a legacy fat blob.
@@ -150,22 +168,19 @@ function makeFatEnsemble(chatIndex: number): Record<string, unknown> {
       participants: participants.map((p) => ({
         participantId: p.id,
         order: p.order,
-        status: 'active' as const,
+        status: 'active' as const
       })),
       bossmanParticipantId: 'ensemble-participant-0',
-      captainParticipantIds: ['ensemble-participant-14', 'ensemble-participant-13'],
+      captainParticipantIds: ['ensemble-participant-14', 'ensemble-participant-13']
     },
     roundSummaries,
     blackboard: blackboardEntries,
     sessionActivityLedger: [{ id: 'sa-1', note: 'ledger '.repeat(200) }],
-    escalationSignals: [],
+    escalationSignals: []
   }
 }
 
-function makeChatListItem(
-  chatIndex: number,
-  ensemble: Record<string, unknown>,
-): ChatListItem {
+function makeChatListItem(chatIndex: number, ensemble: Record<string, unknown>): ChatListItem {
   const now = Date.now()
   return {
     appChatId: `lean-chat-${String(chatIndex).padStart(6, '0')}`,
@@ -193,8 +208,8 @@ function makeChatListItem(
         startedAt: now - 300_000,
         completedAt: now - 120_000,
         totalTokens: 45_000,
-        diffStat: { files: 3, insertions: 120, deletions: 45 },
-      },
+        diffStat: { files: 3, insertions: 120, deletions: 45 }
+      }
     ],
     lastRun: {
       runId: `run-${chatIndex}-1`,
@@ -204,13 +219,13 @@ function makeChatListItem(
       startedAt: now - 300_000,
       completedAt: now - 120_000,
       totalTokens: 45_000,
-      diffStat: { files: 3, insertions: 120, deletions: 45 },
+      diffStat: { files: 3, insertions: 120, deletions: 45 }
     } as any,
     searchText: `lean benchmark chat ${chatIndex}`,
     searchPreview: `Preview ${chatIndex}`,
     sourceChatMtimeMs: now,
     sourceChatSize: 10_000_000 + chatIndex * 500_000,
-    ensemble,
+    ensemble
   } as unknown as ChatListItem
 }
 
@@ -230,7 +245,7 @@ class BenchmarkClock {
   stop(): { label: string; wallMs: number } {
     return {
       label: this.label,
-      wallMs: Number(process.hrtime.bigint() - this.startNs) / 1_000_000,
+      wallMs: Number(process.hrtime.bigint() - this.startNs) / 1_000_000
     }
   }
 }
@@ -290,8 +305,7 @@ benchDescribe('ChatListIndexStore lean-ensemble benchmark (post-fix)', () => {
       const leanRaw = fs.readFileSync(leanIndexPath, 'utf-8')
       const leanLines = leanRaw.split('\n').filter((l) => l.trim())
       const leanLineBytes = leanLines.map((l) => Buffer.byteLength(l, 'utf-8'))
-      const avgLeanLineBytes =
-        leanLineBytes.reduce((a, b) => a + b, 0) / leanLineBytes.length
+      const avgLeanLineBytes = leanLineBytes.reduce((a, b) => a + b, 0) / leanLineBytes.length
 
       // ------------------------------------------------------------------
       // FAT: write equivalent entries WITHOUT the flag so the store strips
@@ -306,15 +320,13 @@ benchDescribe('ChatListIndexStore lean-ensemble benchmark (post-fix)', () => {
         const { runsSummary: _, lastRun: __, ...stripped } = fatItem
         fatTotalBytes += Buffer.byteLength(
           JSON.stringify({ chatId: fatItem.appChatId, entry: stripped }) + '\n',
-          'utf-8',
+          'utf-8'
         )
       }
       const avgFatLineBytes = fatTotalBytes / entryCount
 
       const leanPctSaved =
-        avgFatLineBytes > 0
-          ? ((avgFatLineBytes - avgLeanLineBytes) / avgFatLineBytes) * 100
-          : 0
+        avgFatLineBytes > 0 ? ((avgFatLineBytes - avgLeanLineBytes) / avgFatLineBytes) * 100 : 0
 
       // ------------------------------------------------------------------
       // COMPACTION SHRINK: write fat entries directly to the JSONL
@@ -335,9 +347,7 @@ benchDescribe('ChatListIndexStore lean-ensemble benchmark (post-fix)', () => {
       for (let i = 0; i < entryCount; i++) {
         const fatItem = makeChatListItem(i, makeFatEnsemble(i))
         const { runsSummary: _, lastRun: __, ...withEnsemble } = fatItem
-        fatLines.push(
-          JSON.stringify({ chatId: fatItem.appChatId, entry: withEnsemble }) + '\n',
-        )
+        fatLines.push(JSON.stringify({ chatId: fatItem.appChatId, entry: withEnsemble }) + '\n')
       }
       fs.writeFileSync(compactIndexPath, fatLines.join(''), 'utf-8')
 
@@ -370,7 +380,7 @@ benchDescribe('ChatListIndexStore lean-ensemble benchmark (post-fix)', () => {
         leanPctSaved,
         compactBeforeBytes,
         compactAfterBytes,
-        compactPctShrink,
+        compactPctShrink
       })
 
       // Emit the numbers immediately so they appear even if an assertion fails
@@ -381,7 +391,7 @@ benchDescribe('ChatListIndexStore lean-ensemble benchmark (post-fix)', () => {
           `\n  │ Saved:      ${leanPctSaved.toFixed(1)}%` +
           `\n  │ Total JSONL: ${(leanRaw.length / 1024).toFixed(2)} KB` +
           `\n  │ Compact:    ${(compactBeforeBytes / 1024).toFixed(2)} KB → ${(compactAfterBytes / 1024).toFixed(2)} KB ` +
-          `(${compactPctShrink.toFixed(1)}% shrink, ${compactBeforeLines} → ${compactAfterLines} lines)`,
+          `(${compactPctShrink.toFixed(1)}% shrink, ${compactBeforeLines} → ${compactAfterLines} lines)`
       )
     }
 
@@ -485,9 +495,15 @@ benchDescribe('ChatListIndexStore lean-ensemble benchmark (post-fix)', () => {
     store.readAll()
     const warmMs = warmClock.stop().wallMs
 
-    console.log(`  │ Harness re-verify (50 entries): cold=${wallMs.toFixed(2)} ms, warm=${warmMs.toFixed(2)} ms`)
-    console.log(`  │ D8 FIGURE — lean line avg: ${(leanResults.get(50)!.avgLineBytes / 1024).toFixed(2)} KB × 50 = ${(leanResults.get(50)!.jsonlBytes / 1024).toFixed(2)} KB total JSONL`)
-    console.log(`  │ D8 FIGURE — lean line avg: ${(leanResults.get(200)!.avgLineBytes / 1024).toFixed(2)} KB × 200 = ${(leanResults.get(200)!.jsonlBytes / 1024).toFixed(2)} KB total JSONL`)
+    console.log(
+      `  │ Harness re-verify (50 entries): cold=${wallMs.toFixed(2)} ms, warm=${warmMs.toFixed(2)} ms`
+    )
+    console.log(
+      `  │ D8 FIGURE — lean line avg: ${(leanResults.get(50)!.avgLineBytes / 1024).toFixed(2)} KB × 50 = ${(leanResults.get(50)!.jsonlBytes / 1024).toFixed(2)} KB total JSONL`
+    )
+    console.log(
+      `  │ D8 FIGURE — lean line avg: ${(leanResults.get(200)!.avgLineBytes / 1024).toFixed(2)} KB × 200 = ${(leanResults.get(200)!.jsonlBytes / 1024).toFixed(2)} KB total JSONL`
+    )
 
     // Warm cache should be effectively instant (sub-ms range).
     // This proves item 1 (mtime+size cache) is working.
@@ -516,7 +532,7 @@ benchDescribe('ChatListIndexStore lean-ensemble benchmark (post-fix)', () => {
 
       console.log(
         `  │ ${entryCount} entries: cold=${coldMs.toFixed(2)} ms, warm=${warmMs.toFixed(4)} ms ` +
-          `(${coldMs > 0 ? (coldMs / Math.max(warmMs, 0.0001)).toFixed(0) : '∞'}× speedup)`,
+          `(${coldMs > 0 ? (coldMs / Math.max(warmMs, 0.0001)).toFixed(0) : '∞'}× speedup)`
       )
 
       // Warm must be dramatically faster than cold.

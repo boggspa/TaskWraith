@@ -54,20 +54,19 @@ function makeFatEnsembleBlob(chatIndex: number): Record<string, unknown> {
                 : 'xai',
       modelId: `model-${p}-${'x'.repeat(40)}`,
       role: `Worker ${p}`,
-      stageRole:
-        p === 0 ? 'boss' : p < 5 ? 'scout' : p < 12 ? 'worker' : 'reviewer',
+      stageRole: p === 0 ? 'boss' : p < 5 ? 'scout' : p < 12 ? 'worker' : 'reviewer',
       order: p,
       permissionPresetId: 'default',
       providerMetadata: {
         sessionId: `sess-${chatIndex}-${p}-${'y'.repeat(80)}`,
         contextWindow: 200_000,
-        capabilities: ['tools', 'vision', 'streaming', 'parallel'],
+        capabilities: ['tools', 'vision', 'streaming', 'parallel']
       },
       seatState: {
         connected: true,
         lastSeen: Date.now(),
         health: 'ok',
-        latency: Math.floor(Math.random() * 200) + 20,
+        latency: Math.floor(Math.random() * 200) + 20
       },
       ...(p > 3 && p < 10
         ? {
@@ -75,10 +74,10 @@ function makeFatEnsembleBlob(chatIndex: number): Record<string, unknown> {
               file: `src/lane-${p}/work.ts`,
               reason: `Implement feature block ${p} for chat ${chatIndex}`,
               status: 'in_progress',
-              startedAt: Date.now() - 300_000,
-            },
+              startedAt: Date.now() - 300_000
+            }
           }
-        : {}),
+        : {})
     })
   }
 
@@ -96,7 +95,7 @@ function makeFatEnsembleBlob(chatIndex: number): Record<string, unknown> {
         )
         .join('\n'),
       participantCount: 15,
-      laneCount: 8,
+      laneCount: 8
     })
   }
 
@@ -107,7 +106,7 @@ function makeFatEnsembleBlob(chatIndex: number): Record<string, unknown> {
       key: `note-${b % 4 === 0 ? 'decision' : b % 4 === 1 ? 'fact' : b % 4 === 2 ? 'risk' : 'scout-finding'}`,
       value: `Entry ${b} for chat ${chatIndex}: `.padEnd(800, 'x'),
       category: b % 3 === 0 ? 'decision' : 'note',
-      createdAt: new Date(Date.now() - b * 120_000).toISOString(),
+      createdAt: new Date(Date.now() - b * 120_000).toISOString()
     })
   }
 
@@ -132,9 +131,9 @@ function makeFatEnsembleBlob(chatIndex: number): Record<string, unknown> {
           { id: '1', description: 'Cache readAll on mtime+size', status: 'complete' },
           { id: '2', description: 'readEntry O(1)', status: 'in_progress' },
           { id: '3', description: 'Strip ensemble from index', status: 'pending' },
-          { id: '4', description: 'Per-chat flush scheduler', status: 'pending' },
-        ],
-      },
+          { id: '4', description: 'Per-chat flush scheduler', status: 'pending' }
+        ]
+      }
     },
     activeRound: {
       roundId: `ensemble-${chatIndex}-${'a'.repeat(24)}`,
@@ -143,12 +142,12 @@ function makeFatEnsembleBlob(chatIndex: number): Record<string, unknown> {
       participants: participants.map((p) => ({
         participantId: p.participantId,
         order: p.order,
-        status: 'active' as const,
-      })),
+        status: 'active' as const
+      }))
     },
     blackboard: blackboardEntries,
     roundSummaries,
-    updatedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   }
 }
 
@@ -180,7 +179,7 @@ function makeFatChatListItem(chatIndex: number): ChatListItem {
         startedAt: now - 300_000,
         completedAt: now - 120_000,
         totalTokens: 45_000,
-        diffStat: { files: 3, insertions: 120, deletions: 45 },
+        diffStat: { files: 3, insertions: 120, deletions: 45 }
       },
       {
         runId: `run-${chatIndex}-2`,
@@ -190,14 +189,14 @@ function makeFatChatListItem(chatIndex: number): ChatListItem {
         startedAt: now - 290_000,
         completedAt: now - 110_000,
         totalTokens: 38_000,
-        diffStat: { files: 1, insertions: 80, deletions: 20 },
-      },
+        diffStat: { files: 1, insertions: 80, deletions: 20 }
+      }
     ],
     searchText: `ensemble chat ${chatIndex} performance optimization ${'keyword '.repeat(10)}`,
     searchPreview: `Latest message preview for chat ${chatIndex}...`,
     sourceChatMtimeMs: now,
     sourceChatSize: 10_000_000 + chatIndex * 500_000,
-    ensemble: makeFatEnsembleBlob(chatIndex),
+    ensemble: makeFatEnsembleBlob(chatIndex)
   } as unknown as ChatListItem
 }
 
@@ -334,7 +333,7 @@ benchDescribe('ChatListIndexStore performance benchmark', () => {
         ensemblePct,
         readAllColdMs,
         readAllWarmMs,
-        summaryFileCount,
+        summaryFileCount
       })
     }
   })

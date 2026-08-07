@@ -172,11 +172,13 @@ describe('NativeWindowLeaseRegistry', () => {
   it('grants a descendant window whose ownership was proved upstream', () => {
     const { registry } = createRegistry()
 
-    const result = registry.grantOrReplace(
-      grant({ selectedPid: 199, ownership: 'descendant' })
-    )
+    const result = registry.grantOrReplace(grant({ selectedPid: 199, ownership: 'descendant' }))
 
-    expect(result.lease).toMatchObject({ expectedPid: 101, selectedPid: 199, ownership: 'descendant' })
+    expect(result.lease).toMatchObject({
+      expectedPid: 101,
+      selectedPid: 199,
+      ownership: 'descendant'
+    })
   })
 
   it('refuses a descendant claim that names the launch process itself', () => {

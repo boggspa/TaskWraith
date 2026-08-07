@@ -41,11 +41,7 @@ describe('applyRemoteMessageFeedback', () => {
 
   it('rejects non-assistant and channel-inbound rows', () => {
     expect(
-      applyRemoteMessageFeedback(
-        { ...assistant(), role: 'user' },
-        { vote: 'up' },
-        10
-      )
+      applyRemoteMessageFeedback({ ...assistant(), role: 'user' }, { vote: 'up' }, 10)
     ).toBeNull()
     expect(
       applyRemoteMessageFeedback(

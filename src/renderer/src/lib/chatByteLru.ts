@@ -13,13 +13,7 @@ export type ChatPinReason = 'focused' | 'side' | 'popout' | 'approval' | 'manual
 
 export const DEFAULT_MAX_HYDRATED_CHAT_BYTES = 384 * 1024 * 1024
 
-const PIN_REASONS: readonly ChatPinReason[] = [
-  'focused',
-  'side',
-  'popout',
-  'approval',
-  'manual'
-]
+const PIN_REASONS: readonly ChatPinReason[] = ['focused', 'side', 'popout', 'approval', 'manual']
 
 export function estimateJsonishBytes(value: unknown): number {
   if (value == null) return 0
@@ -65,13 +59,8 @@ export function demoteChatToSummary(chat: ChatRecord): ChatListItem {
   if (isChatSummaryRecord(chat)) return chat
   const messageCount = Array.isArray(chat.messages) ? chat.messages.length : 0
   const runCount = Array.isArray(chat.runs) ? chat.runs.length : 0
-  const lastRun =
-    runCount > 0 ? (chat.runs as ChatRun[])[runCount - 1] : undefined
-  const {
-    messages: _messages,
-    runs: _runs,
-    ...chrome
-  } = chat
+  const lastRun = runCount > 0 ? (chat.runs as ChatRun[])[runCount - 1] : undefined
+  const { messages: _messages, runs: _runs, ...chrome } = chat
   return {
     ...chrome,
     messages: [],
@@ -186,10 +175,7 @@ export class ChatByteLru {
   private readonly pins = new Map<string, Set<ChatPinReason>>()
   private readonly touchOrder: string[] = []
 
-  constructor(options?: {
-    maxBytes?: number
-    estimateBytes?: (chat: ChatRecord) => number
-  }) {
+  constructor(options?: { maxBytes?: number; estimateBytes?: (chat: ChatRecord) => number }) {
     this.maxBytes = options?.maxBytes ?? DEFAULT_MAX_HYDRATED_CHAT_BYTES
     this.estimateBytes = options?.estimateBytes ?? estimateChatRecordBytes
   }

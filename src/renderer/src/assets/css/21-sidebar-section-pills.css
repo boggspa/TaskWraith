@@ -49,7 +49,10 @@
 
 /* The pane thins its blur under the glass appearances; the pill follows, or the
  * two sit side by side sampling the sidebar at different strengths. */
-:is([data-appearance='soft_glass'], [data-appearance='native_glass'])[data-reduce-transparency='false']
+:is(
+    [data-appearance='soft_glass'],
+    [data-appearance='native_glass']
+  )[data-reduce-transparency='false']
   .app-sidebar
   .sidebar-section-header-toggle {
   backdrop-filter: blur(16px) saturate(0%) brightness(0.96);

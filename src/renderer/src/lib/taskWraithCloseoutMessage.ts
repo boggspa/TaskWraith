@@ -281,10 +281,7 @@ export function upsertTaskWraithCloseoutMessage(
     ) {
       nextMeta.closeoutCommits = previous.metadata.closeoutCommits
     }
-    if (
-      !nextMeta.closeoutParticipantTable &&
-      previous.metadata?.closeoutParticipantTable
-    ) {
+    if (!nextMeta.closeoutParticipantTable && previous.metadata?.closeoutParticipantTable) {
       nextMeta.closeoutParticipantTable = previous.metadata.closeoutParticipantTable
     }
     const next = [...messages]
@@ -1259,7 +1256,13 @@ export function buildCloseoutParticipantTable(
     )
     // Link TEXT keeps every field the five culled columns used to carry, so
     // surfaces that don't intercept the scheme lose nothing but the motion.
-    const seatText = [`@${label}`, providerSeq.text, modelSeq.text, reasoningSeq.text, permissionSeq.text]
+    const seatText = [
+      `@${label}`,
+      providerSeq.text,
+      modelSeq.text,
+      reasoningSeq.text,
+      permissionSeq.text
+    ]
       .filter((part) => part && part !== '—')
       .join(' · ')
     const seatLink = participantSeatChangeLink(participant, label, {
@@ -1607,8 +1610,7 @@ function seatLinkForCommitMessage(chat: ChatRecord, message: ChatMessage): SeatC
   const provider =
     (typeof message.metadata?.ensembleProvider === 'string'
       ? (message.metadata.ensembleProvider as ProviderId)
-      : undefined) ||
-    rosterSeat?.provider
+      : undefined) || rosterSeat?.provider
   if (!provider) return null
   const model =
     (typeof message.metadata?.ensembleModel === 'string' ? message.metadata.ensembleModel : '') ||

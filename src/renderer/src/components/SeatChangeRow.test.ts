@@ -202,16 +202,20 @@ describe('seat-change chrome strip CSS', () => {
     // CELLS; a tier present in the composer rules but missing here is a
     // silently blank reasoning label (xhigh was exactly that).
     const sweptTiers = new Set(
-      [...cssSource.matchAll(
-        /\.composer-combined-picker-trigger\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix[^{]*\{([^}]*)\}/g
-      )]
+      [
+        ...cssSource.matchAll(
+          /\.composer-combined-picker-trigger\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix[^{]*\{([^}]*)\}/g
+        )
+      ]
         .filter(([, , body]) => body.includes('background-clip'))
         .map(([, tier]) => tier)
     )
     const repainted = new Set(
-      [...cssSource.matchAll(
-        /\.composer-combined-picker-trigger\.seat-change-chip\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix\s*\n\s*\.digit-odometer__cell/g
-      )].map(([, tier]) => tier)
+      [
+        ...cssSource.matchAll(
+          /\.composer-combined-picker-trigger\.seat-change-chip\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix\s*\n\s*\.digit-odometer__cell/g
+        )
+      ].map(([, tier]) => tier)
     )
     expect(sweptTiers.size).toBeGreaterThan(0)
     for (const tier of sweptTiers) expect(repainted).toContain(tier)
@@ -230,10 +234,7 @@ describe('close-out table reuses the seat element', () => {
     new URL('../lib/taskWraithCloseoutMessage.ts', import.meta.url),
     'utf8'
   )
-  const markdownSource = readFileSync(
-    new URL('./StableMarkdownBlock.tsx', import.meta.url),
-    'utf8'
-  )
+  const markdownSource = readFileSync(new URL('./StableMarkdownBlock.tsx', import.meta.url), 'utf8')
 
   it('drops the chair glyph in the table but keeps it in the transcript', () => {
     // The chair marks a seat CHANGE. Every close-out row is a seat, so there it
@@ -310,8 +311,8 @@ describe('close-out table reuses the seat element', () => {
     expect(closeoutSource).toContain('function seatFieldSequence<T>(')
     const start = closeoutSource.indexOf('function participantSeatChangeLink(')
     const region = closeoutSource.slice(start, start + 900)
-    expect(region).toContain("fields.provider[which]")
-    expect(region).toContain("fields.model[which]")
+    expect(region).toContain('fields.provider[which]')
+    expect(region).toContain('fields.model[which]')
     expect(region).toContain('fields.permission[which]')
   })
 })
@@ -320,7 +321,10 @@ describe('SeatStateChips — a seat as a state, for third-party hosts', () => {
   it('omits the chair glyph, the roll, and the role', () => {
     const start = rowSource.indexOf('export function SeatStateChips')
     expect(start).toBeGreaterThanOrEqual(0)
-    const region = rowSource.slice(start, rowSource.indexOf('export function SeatChangeInlineStrip'))
+    const region = rowSource.slice(
+      start,
+      rowSource.indexOf('export function SeatChangeInlineStrip')
+    )
     // The chair glyph CLAIMS a seat was reconfigured — rendering it where
     // nothing changed asserts something false to a reader who has learned it.
     expect(region).not.toContain('SeatChairIcon')
@@ -332,7 +336,10 @@ describe('SeatStateChips — a seat as a state, for third-party hosts', () => {
 
   it('still rides the composer chips, so tints and hues match the change variants', () => {
     const start = rowSource.indexOf('export function SeatStateChips')
-    const region = rowSource.slice(start, rowSource.indexOf('export function SeatChangeInlineStrip'))
+    const region = rowSource.slice(
+      start,
+      rowSource.indexOf('export function SeatChangeInlineStrip')
+    )
     expect(region).toContain('<SeatClusterChip')
     expect(region).toContain('<SeatPermissionChip')
   })

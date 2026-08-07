@@ -46,9 +46,9 @@ describe('seatFromParticipant', () => {
     expect(seatFromParticipant({ ...PARTICIPANT, thinkingEnabled: true })?.thinkingEnabled).toBe(
       true
     )
-    expect(
-      seatFromParticipant({ ...PARTICIPANT, thinkingEnabled: undefined })
-    ).not.toHaveProperty('thinkingEnabled')
+    expect(seatFromParticipant({ ...PARTICIPANT, thinkingEnabled: undefined })).not.toHaveProperty(
+      'thinkingEnabled'
+    )
   })
 
   it('refuses a participant with no model rather than emitting an empty one', () => {

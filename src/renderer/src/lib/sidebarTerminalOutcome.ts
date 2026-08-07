@@ -265,7 +265,10 @@ export function projectSidebarTerminalOutcome(
       ].join(':'),
       source: 'goal',
       tone: goal.status === 'completed' ? 'success' : 'failure',
-      settledAtMs: settledAtMsFor(chat, parseTimestamp(goalTimestamp) ?? parseTimestamp(evidence?.endedAt))
+      settledAtMs: settledAtMsFor(
+        chat,
+        parseTimestamp(goalTimestamp) ?? parseTimestamp(evidence?.endedAt)
+      )
     }
   }
 

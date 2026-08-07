@@ -76,11 +76,11 @@ function buildChatRecord(targetBytes: number): {
         id: 'tool-cal-0',
         name: 'write_file',
         success: true,
-        output: Array(100).fill('x'.repeat(200)).join('\n'),
-      },
+        output: Array(100).fill('x'.repeat(200)).join('\n')
+      }
     ],
     createdAt: Date.now(),
-    tokens: { input: 45000, output: 12000 },
+    tokens: { input: 45000, output: 12000 }
   }
 
   const calibrationRuns = [
@@ -93,7 +93,7 @@ function buildChatRecord(targetBytes: number): {
       startedAt: Date.now() - 300_000,
       completedAt: Date.now() - 120_000,
       totalTokens: 45000,
-      diffStat: { files: 3, insertions: 120, deletions: 45 },
+      diffStat: { files: 3, insertions: 120, deletions: 45 }
     },
     {
       runId: 'run-cal-1',
@@ -104,8 +104,8 @@ function buildChatRecord(targetBytes: number): {
       startedAt: Date.now() - 290_000,
       completedAt: Date.now() - 110_000,
       totalTokens: 38000,
-      diffStat: { files: 1, insertions: 80, deletions: 20 },
-    },
+      diffStat: { files: 1, insertions: 80, deletions: 20 }
+    }
   ]
 
   // Measure per-message byte cost
@@ -133,7 +133,7 @@ function buildChatRecord(targetBytes: number): {
     sourceChatSize: targetBytes,
     ensemble: buildLeanEnsemble(),
     messages: [],
-    runs: calibrationRuns,
+    runs: calibrationRuns
   }
   const skeletonBytes = Buffer.byteLength(JSON.stringify(skeleton), 'utf-8')
   // skeletonBytes includes the empty messages[] and 2 runs — subtract those
@@ -147,14 +147,14 @@ function buildChatRecord(targetBytes: number): {
   for (let i = 0; i < messageCount; i++) {
     messages.push({
       ...calibrationMessage,
-      messageId: `msg-bench-${String(i).padStart(4, '0')}`,
+      messageId: `msg-bench-${String(i).padStart(4, '0')}`
     })
   }
 
   const record = {
     ...skeleton,
     messageCount,
-    messages,
+    messages
   }
 
   return { record, messageCount, runCount: calibrationRuns.length }
@@ -172,15 +172,15 @@ function buildLeanEnsemble(): Record<string, unknown> {
             ? 'openai'
             : p % 5 === 2
               ? 'google'
-            : p % 5 === 3
-              ? 'mistral'
-            : 'xai',
+              : p % 5 === 3
+                ? 'mistral'
+                : 'xai',
       model: `model-${p}`,
       role: `Worker ${p}`,
       instructions: '',
       enabled: true,
       order: p,
-      permissionPresetId: 'default',
+      permissionPresetId: 'default'
     })
   }
 
@@ -201,10 +201,10 @@ function buildLeanEnsemble(): Record<string, unknown> {
         role: p.role,
         order: i,
         status: 'active',
-        runId: `run-bench-${i}`,
-      })),
+        runId: `run-bench-${i}`
+      }))
     },
-    updatedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   }
 }
 
@@ -305,7 +305,7 @@ function measureWriteJsonSyscall(
     renameMs,
     dirFsyncMs,
     remainderMs,
-    totalBlockedMs,
+    totalBlockedMs
   }
 }
 
@@ -341,7 +341,7 @@ benchDescribe('writeJson syscall-sequence baseline benchmark', () => {
   const SIZES: { label: string; targetBytes: number }[] = [
     { label: 'small', targetBytes: 1_000_000 }, // ~1 MB
     { label: 'medium', targetBytes: 4_000_000 }, // ~4 MB
-    { label: 'large', targetBytes: 16_000_000 }, // ~16 MB
+    { label: 'large', targetBytes: 16_000_000 } // ~16 MB
   ]
 
   const MEASURE_RUNS = 3 // warm-up excluded; median reported
@@ -413,7 +413,7 @@ benchDescribe('writeJson syscall-sequence baseline benchmark', () => {
         totalBlockedMs: sumTotal / MEASURE_RUNS,
         runs: MEASURE_RUNS,
         worstTotalBlockedMs: worstTotal,
-        perRunTotalMs,
+        perRunTotalMs
       })
     }
   })
@@ -443,8 +443,7 @@ benchDescribe('writeJson syscall-sequence baseline benchmark', () => {
       )
 
       // Sanity: total should be >= sum of named phases
-      const namedSum =
-        r.serializeMs + r.writeMs + r.fsyncMs + r.renameMs + r.dirFsyncMs
+      const namedSum = r.serializeMs + r.writeMs + r.fsyncMs + r.renameMs + r.dirFsyncMs
       expect(r.totalBlockedMs).toBeGreaterThanOrEqual(namedSum * 0.99) // allow fp rounding
 
       // Sanity: every phase should be measurable (even if sub-ms)
@@ -466,7 +465,7 @@ benchDescribe('writeJson syscall-sequence baseline benchmark', () => {
         { name: 'write', ms: r.writeMs },
         { name: 'fsync', ms: r.fsyncMs },
         { name: 'dir-fsync', ms: r.dirFsyncMs },
-        { name: 'rename', ms: r.renameMs },
+        { name: 'rename', ms: r.renameMs }
       ]
       phases.sort((a, b) => b.ms - a.ms)
       const [top1, top2] = phases

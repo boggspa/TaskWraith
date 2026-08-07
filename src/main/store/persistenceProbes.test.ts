@@ -100,7 +100,9 @@ describe('persistenceProbes', () => {
 
     it('handles Windows-style separators', () => {
       expect(classifyPersistenceTarget('C:\\Users\\x\\chats\\abc.json')).toBe('chat')
-      expect(classifyPersistenceTarget('C:\\Users\\x\\chat-list-index.json')).toBe('chat-list-index')
+      expect(classifyPersistenceTarget('C:\\Users\\x\\chat-list-index.json')).toBe(
+        'chat-list-index'
+      )
     })
   })
 
@@ -170,7 +172,10 @@ describe('persistenceProbes', () => {
     })
 
     it('never emits negative durations if the clock steps backwards', () => {
-      __setPersistenceProbeTestHooks({ enabled: true, now: scriptedClock([100, 50, 40, 30, 20, 10]) })
+      __setPersistenceProbeTestHooks({
+        enabled: true,
+        now: scriptedClock([100, 50, 40, 30, 20, 10])
+      })
       const probe = beginPersistenceWrite('/u/chats/abc.json')!
       probe.afterSerialize(10)
       probe.afterWrite()

@@ -74,10 +74,9 @@ describe('chat journal state rebuilt by the startup directory scan', () => {
     // the journal grows without bound — the 42.67 GB failure mode.
     const journalPath = path.join(baseDir, `${chatId}.jsonl`)
     const onDisk = fs.existsSync(journalPath) ? fs.statSync(journalPath).size : 0
-    expect(
-      onDisk,
-      'a pre-existing chat must still honour the 16MB journal ceiling'
-    ).toBeLessThan(16 * 1024 * 1024)
+    expect(onDisk, 'a pre-existing chat must still honour the 16MB journal ceiling').toBeLessThan(
+      16 * 1024 * 1024
+    )
   })
 
   it('keeps an age baseline for a never-snapshotted pre-existing chat', () => {

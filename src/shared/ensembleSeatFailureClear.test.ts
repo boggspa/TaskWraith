@@ -144,7 +144,7 @@ describe('clearEnsembleRoundFailureForSeatChange', () => {
     expect(clearEnsembleRoundFailureForSeatChange(undefined, 'p-gemini', NOW)).toBeUndefined()
   })
 
-  it('stamps the seat\'s terminal-failure lanes as superseded without rewriting history', () => {
+  it("stamps the seat's terminal-failure lanes as superseded without rewriting history", () => {
     const failedLane = lane()
     const blockedLane = lane({ laneId: 'lane-r1-p-gemini-2', status: 'blocked' })
     const completedLane = lane({ laneId: 'lane-r1-p-gemini-0', status: 'completed' })
@@ -154,7 +154,9 @@ describe('clearEnsembleRoundFailureForSeatChange', () => {
       status: 'failed'
     })
     const source = round({
-      participants: [roundState({ status: 'idle', reason: undefined, lastFailureReason: undefined })],
+      participants: [
+        roundState({ status: 'idle', reason: undefined, lastFailureReason: undefined })
+      ],
       lanes: {
         [failedLane.laneId]: failedLane,
         [blockedLane.laneId]: blockedLane,
@@ -176,7 +178,9 @@ describe('clearEnsembleRoundFailureForSeatChange', () => {
   it('keeps an existing supersede stamp and stays identity when only stamped lanes remain', () => {
     const stamped = lane({ failureSupersededBySeatChangeAt: '2026-08-05T00:30:00.000Z' })
     const source = round({
-      participants: [roundState({ status: 'idle', reason: undefined, lastFailureReason: undefined })],
+      participants: [
+        roundState({ status: 'idle', reason: undefined, lastFailureReason: undefined })
+      ],
       lanes: { [stamped.laneId]: stamped }
     })
     expect(clearEnsembleRoundFailureForSeatChange(source, 'p-gemini', NOW)).toBe(source)

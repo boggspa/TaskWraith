@@ -114,7 +114,8 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function asPositiveInteger(value: unknown): number | undefined {
-  const n = typeof value === 'number' ? value : Number(typeof value === 'string' ? value : Number.NaN)
+  const n =
+    typeof value === 'number' ? value : Number(typeof value === 'string' ? value : Number.NaN)
   return Number.isSafeInteger(n) && n > 1 ? n : undefined
 }
 

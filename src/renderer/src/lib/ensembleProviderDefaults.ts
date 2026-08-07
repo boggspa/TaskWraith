@@ -569,10 +569,7 @@ export type ParticipantSeatCarryover = Pick<
  */
 export function buildProviderChangeParticipantPatch(
   provider: ProviderId,
-  previous?: Pick<
-    EnsembleParticipant,
-    'permissionPresetId' | 'permissionOverrides'
-  > | null
+  previous?: Pick<EnsembleParticipant, 'permissionPresetId' | 'permissionOverrides'> | null
 ): Partial<EnsembleParticipant> {
   const defaults = getDefaultEnsembleParticipantConfig(provider)
   return {
@@ -831,7 +828,7 @@ export function normalizeProviderModelSelection(
       return {
         ...cleared,
         reasoningEffort: isGrok45ReasoningModelId(model)
-          ? reasoningEffort ?? GROK_45_DEFAULT_REASONING_EFFORT
+          ? (reasoningEffort ?? GROK_45_DEFAULT_REASONING_EFFORT)
           : undefined
       }
     case 'cursor':
@@ -889,23 +886,14 @@ export function buildCodexModelChangeParticipantPatch(
 export function buildSameProviderModelChangeParticipantPatch(
   participant: Pick<
     EnsembleParticipant,
-    | 'provider'
-    | 'reasoningEffort'
-    | 'fastModeEnabled'
-    | 'serviceTier'
-    | 'thinkingEnabled'
+    'provider' | 'reasoningEffort' | 'fastModeEnabled' | 'serviceTier' | 'thinkingEnabled'
   >,
   model: string,
   modelMetadata?: ProviderModelSelectionMetadata | null
 ): Partial<EnsembleParticipant> {
   return {
     provider: participant.provider,
-    ...normalizeProviderModelSelection(
-      participant.provider,
-      model,
-      modelMetadata,
-      participant
-    )
+    ...normalizeProviderModelSelection(participant.provider, model, modelMetadata, participant)
   }
 }
 

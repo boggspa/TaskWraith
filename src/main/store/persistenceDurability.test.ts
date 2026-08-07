@@ -34,20 +34,21 @@ import path from 'node:path'
 
 /* ── shared test harness ──────────────────────────────────────────────── */
 
-const userDataPath = vi.hoisted(() =>
-  `/tmp/taskwraith-durability-test-${process.pid}`
-)
+const userDataPath = vi.hoisted(() => `/tmp/taskwraith-durability-test-${process.pid}`)
 
 /**
  * Call log exposed so integration-seam tests can assert the worker was used.
  * Each entry records the envelope that was passed to the persistence enqueue.
  */
-const workerCallLog = vi.hoisted(() => [] as Array<{
-  chatId: string
-  filePath: string
-  dataBytes: number
-  revision: number
-}>)
+const workerCallLog = vi.hoisted(
+  () =>
+    [] as Array<{
+      chatId: string
+      filePath: string
+      dataBytes: number
+      revision: number
+    }>
+)
 
 /** When set, the next enqueue call will reject with this error. */
 let nextEnqueueRejection: Error | null = null
@@ -57,23 +58,23 @@ vi.mock('electron', () => ({
 }))
 
 // These imports must come AFTER the vi.mock calls so vitest hoists them.
-import { AppStore, registerPersistenceWriteEnqueue, resetPersistenceWriteSeamForTests } from './index'
+import {
+  AppStore,
+  registerPersistenceWriteEnqueue,
+  resetPersistenceWriteSeamForTests
+} from './index'
 import type { ChatRecord, ChatRun } from './types'
 
 /* ── helpers ──────────────────────────────────────────────────────────── */
 
-const chatFilePath = (chatId: string): string =>
-  path.join(userDataPath, 'chats', `${chatId}.json`)
+const chatFilePath = (chatId: string): string => path.join(userDataPath, 'chats', `${chatId}.json`)
 
 /** A run that makes deriveSaveFlushReason return 'normal'. */
 function runningRun(runId: string): ChatRun {
   return { runId, startedAt: '2026-05-08T00:00:00.000Z', status: 'running' }
 }
 
-function baseChat(
-  appChatId: string,
-  runs: ChatRun[] = []
-): ChatRecord {
+function baseChat(appChatId: string, runs: ChatRun[] = []): ChatRecord {
   return {
     appChatId,
     scope: 'workspace',
@@ -296,8 +297,14 @@ describe('persistenceDurability', () => {
       // Simulate race: write "stale" AFTER "latest" — if ordering is
       // unconstrained this can happen because the worker dispatch order
       // is not guaranteed to match the callback execution order.
-      fs.writeFileSync(chatFilePath('chat-race'), JSON.stringify({ ...chat, title: 'latest' }, null, 2))
-      fs.writeFileSync(chatFilePath('chat-race'), JSON.stringify({ ...chat, title: 'stale' }, null, 2))
+      fs.writeFileSync(
+        chatFilePath('chat-race'),
+        JSON.stringify({ ...chat, title: 'latest' }, null, 2)
+      )
+      fs.writeFileSync(
+        chatFilePath('chat-race'),
+        JSON.stringify({ ...chat, title: 'stale' }, null, 2)
+      )
 
       // 'stale' won — it was written last even though it was issued first.
       // The real worker's single-flight queue prevents exactly this.
@@ -539,7 +546,9 @@ describe('persistenceDurability', () => {
       // The worker must not change the serialisation shape — keys, nesting,
       // whitespace rules, and field types must be identical.
       const stripVolatile = (r: ChatRecord) => {
-        const { updatedAt, persistenceRevision, ...rest } = r as ChatRecord & { persistenceRevision?: number }
+        const { updatedAt, persistenceRevision, ...rest } = r as ChatRecord & {
+          persistenceRevision?: number
+        }
         return rest
       }
 

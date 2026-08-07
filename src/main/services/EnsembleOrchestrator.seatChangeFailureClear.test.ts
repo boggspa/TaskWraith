@@ -152,9 +152,9 @@ describe('authoritative seat change clears a stale participant failure', () => {
     expect(geminiState?.reason).toBeUndefined()
     expect(geminiState?.lastFailureReason).toBeUndefined()
     // The roster seat itself carries the new model.
-    expect(
-      harness.chat.ensemble?.participants.find((seat) => seat.id === 'gemini')?.model
-    ).toBe('gemini-3-flash')
+    expect(harness.chat.ensemble?.participants.find((seat) => seat.id === 'gemini')?.model).toBe(
+      'gemini-3-flash'
+    )
     // Bystander state untouched.
     expect(
       harness.chat.ensemble?.activeRound?.participants.find(

@@ -796,13 +796,7 @@ export function ThinkingIndicator({
   )
 }
 
-function ThinkingIndicatorBody({
-  label,
-  telemetry
-}: {
-  label: string
-  telemetry?: ReactNode
-}) {
+function ThinkingIndicatorBody({ label, telemetry }: { label: string; telemetry?: ReactNode }) {
   return (
     <>
       <span className="message-working-ghost" aria-hidden>

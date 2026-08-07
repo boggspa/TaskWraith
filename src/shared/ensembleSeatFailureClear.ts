@@ -25,11 +25,7 @@
  * (`failureSupersededBySeatChangeAt`) and presentation surfaces suppress the
  * paint instead.
  */
-import type {
-  ConcurrentLane,
-  EnsembleParticipant,
-  EnsembleRoundState
-} from '../main/store/types'
+import type { ConcurrentLane, EnsembleParticipant, EnsembleRoundState } from '../main/store/types'
 
 /**
  * The seat fields that change what a dispatch actually runs. Identity and
@@ -70,9 +66,7 @@ const CLEARABLE_LANE_STATUSES: ReadonlySet<ConcurrentLane['status']> = new Set([
 ])
 
 export function isLaneFailureSupersededBySeatChange(lane: ConcurrentLane): boolean {
-  return Boolean(
-    lane.failureSupersededBySeatChangeAt && CLEARABLE_LANE_STATUSES.has(lane.status)
-  )
+  return Boolean(lane.failureSupersededBySeatChangeAt && CLEARABLE_LANE_STATUSES.has(lane.status))
 }
 
 /**

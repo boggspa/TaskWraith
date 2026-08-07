@@ -168,8 +168,10 @@ test('mixed: moderate overlap', () => {
     mainLagSamples
   })
   assert.strictEqual(result.decision, 'mixed')
-  assert.ok(result.overlapPercent >= 30 && result.overlapPercent <= 60,
-    `expected 30–60%, got ${result.overlapPercent}`)
+  assert.ok(
+    result.overlapPercent >= 30 && result.overlapPercent <= 60,
+    `expected 30–60%, got ${result.overlapPercent}`
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -253,9 +255,7 @@ test('threshold: sub-threshold long task does not count', () => {
 })
 
 test('threshold: long task above threshold DOES count', () => {
-  const frameDeltas = [
-    { ts: 100, deltaMs: 25 }
-  ]
+  const frameDeltas = [{ ts: 100, deltaMs: 25 }]
   const longTasks = [
     { ts: 100, durationMs: 60 } // above 50ms threshold
   ]
@@ -290,9 +290,7 @@ test('threshold: sub-threshold frame delta does NOT count as miss', () => {
 // ---------------------------------------------------------------------------
 
 test('edge: single miss with no bad events', () => {
-  const frameDeltas = [
-    { ts: 100, deltaMs: 25 }
-  ]
+  const frameDeltas = [{ ts: 100, deltaMs: 25 }]
   const result = harness.correlateFrameMissesToMainLag({
     frameDeltas,
     startedAtWallMs: 10000,
@@ -306,9 +304,7 @@ test('edge: single miss with no bad events', () => {
 })
 
 test('edge: null/undefined optional arrays handled', () => {
-  const frameDeltas = [
-    { ts: 100, deltaMs: 25 }
-  ]
+  const frameDeltas = [{ ts: 100, deltaMs: 25 }]
   // longTasks undefined, mainLagSamples null — should not throw.
   const result = harness.correlateFrameMissesToMainLag({
     frameDeltas,
@@ -392,7 +388,12 @@ test('runTriageWindow: returns insufficient-data when gate off', async () => {
 const runner = require('./runFrameCadenceTriage.cjs')
 
 test('runner parseArgs: defaults + attach flags', () => {
-  const args = runner.parseArgs(['--attach', '--cdp-port=9315', '--inspect-port=9320', '--window-seconds=15'])
+  const args = runner.parseArgs([
+    '--attach',
+    '--cdp-port=9315',
+    '--inspect-port=9320',
+    '--window-seconds=15'
+  ])
   assert.strictEqual(args.attach, true)
   assert.strictEqual(args.cdpPort, 9315)
   assert.strictEqual(args.inspectPort, 9320)

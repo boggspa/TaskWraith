@@ -5201,9 +5201,7 @@ function appDriveEnsembleAuthorityForRun(
   if (!ensemble) return { ok: true }
   const session = appRunId ? runManager.get(appRunId) : null
   const state = session?.state as { ensembleRun?: { participantId?: string } } | undefined
-  const persisted = appRunId
-    ? (chat?.runs || []).find((run) => run.runId === appRunId)
-    : undefined
+  const persisted = appRunId ? (chat?.runs || []).find((run) => run.runId === appRunId) : undefined
   return resolveAppDriveEnsembleAuthority({
     ensemble,
     callerParticipantId: state?.ensembleRun?.participantId || persisted?.ensembleParticipantId
@@ -48319,12 +48317,23 @@ if (isGeminiMcpBridgeProcess) {
           runId,
           ...(assertMutationAuthorized ? { assertMutationAuthorized } : {})
         }),
-      adopt: ({ provider, pid, workspacePath, chatId, runId, label, sender, assertMutationAuthorized }) =>
+      adopt: ({
+        provider,
+        pid,
+        workspacePath,
+        chatId,
+        runId,
+        label,
+        sender,
+        assertMutationAuthorized
+      }) =>
         launchManager.adoptProcess({
           sender: (sender as Electron.WebContents | null | undefined) ?? null,
           provider: assertLiveProviderId(provider),
           pid,
-          workspacePath: workspacePath ? requireRegisteredWorkspace(workspacePath, 'Workspace') : '',
+          workspacePath: workspacePath
+            ? requireRegisteredWorkspace(workspacePath, 'Workspace')
+            : '',
           chatId,
           runId,
           ...(label ? { label } : {}),

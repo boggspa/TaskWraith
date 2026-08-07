@@ -240,7 +240,9 @@ describe('chatIsAwaitingUserResponse', () => {
         questionsByChatId: { 'chat-1': [] }
       })
     ).toBe(false)
-    expect(chatIsAwaitingUserResponse('', { approvalHeadByChatId: { '': { id: 'a' } } })).toBe(false)
+    expect(chatIsAwaitingUserResponse('', { approvalHeadByChatId: { '': { id: 'a' } } })).toBe(
+      false
+    )
   })
 
   it('reads the FILING key, never another thread pending work', () => {
@@ -330,4 +332,3 @@ describe('projectSidebarTerminalOutcome settle timestamps', () => {
     expect(projectSidebarTerminalOutcome(undated)?.settledAtMs).toBe(4_242)
   })
 })
-

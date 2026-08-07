@@ -952,8 +952,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           const etaMs =
             eventsPerSecond > 0 ? Math.round((remainingEvents / eventsPerSecond) * 1000) : null
           // Windowed ETA uses the short-window rate for a more realistic projection
-          const windowedEtaMs =
-            win > 0 ? Math.round((remainingEvents / win) * 1000) : null
+          const windowedEtaMs = win > 0 ? Math.round((remainingEvents / win) * 1000) : null
           lastPublishedAtMs = now
           updateProgress(
             {
@@ -1004,9 +1003,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
       // Capture-phase deadline: abort further capture steps if total exceeds maxCapturePhaseMs
       const maxCapturePhaseMs =
-        options.maxCapturePhaseMs == null
-          ? DEFAULT_MAX_CAPTURE_PHASE_MS
-          : options.maxCapturePhaseMs
+        options.maxCapturePhaseMs == null ? DEFAULT_MAX_CAPTURE_PHASE_MS : options.maxCapturePhaseMs
       const captureStartedAtMs = replayNowMs()
       let captureDeadlineExceeded = false
       /** @type {string[]} */

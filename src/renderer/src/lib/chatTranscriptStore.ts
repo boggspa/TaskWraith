@@ -89,10 +89,7 @@ export class ChatTranscriptStore {
    * Subscribe to one chat's transcript changes. Returns unsubscribe.
    * Empty / missing chatId is a no-op subscription.
    */
-  subscribe(
-    chatId: string | null | undefined,
-    listener: ChatTranscriptStoreListener
-  ): () => void {
+  subscribe(chatId: string | null | undefined, listener: ChatTranscriptStoreListener): () => void {
     if (!chatId) return () => {}
     const listeners = this.listenersById.get(chatId) ?? new Set<ChatTranscriptStoreListener>()
     listeners.add(listener)

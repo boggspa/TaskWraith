@@ -3108,10 +3108,7 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
     // Unit-level: verify the capture deadline fields exist and the
     // struct shape is correct. Full Electron launch path tested by
     // integration harness; here we validate report schema.
-    const {
-      createPerfReport,
-      createEmptyPerfMetrics
-    } = require('./schema.cjs')
+    const { createPerfReport, createEmptyPerfMetrics } = require('./schema.cjs')
 
     const env = {
       schemaVersion: 1,

@@ -60,7 +60,10 @@ export function RunCompleteEpicStack({
   return (
     <div className="run-complete-epic-stack">
       {hasParticipants && (
-        <section className="file-change-summary-card run-complete-epic-card" aria-label="Participants">
+        <section
+          className="file-change-summary-card run-complete-epic-card"
+          aria-label="Participants"
+        >
           <div className="file-change-summary-header">
             <strong>Participants</strong>
             <div className="file-change-summary-meta">
@@ -131,11 +134,7 @@ export function RunCompleteEpicStack({
             {commitRows.map((commit) => {
               const seatLink = asSeatLink(commit.seatLink)
               return (
-                <div
-                  className="run-complete-epic-row is-commits"
-                  role="row"
-                  key={commit.hash}
-                >
+                <div className="run-complete-epic-row is-commits" role="row" key={commit.hash}>
                   <span className="run-complete-epic-hash" role="cell">
                     <code>{commit.hash.slice(0, 9)}</code>
                   </span>

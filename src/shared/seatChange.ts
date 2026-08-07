@@ -361,7 +361,9 @@ function readSeat(params: Map<string, string>, prefix: string): SeatChangeSeatSt
   // Closed unions, validated on decode: this comes off persisted message
   // CONTENT, so an unknown value must drop rather than reach the icon resolver.
   const stage =
-    stageRole === 'scout' || stageRole === 'worker' || stageRole === 'reviewer' ||
+    stageRole === 'scout' ||
+    stageRole === 'worker' ||
+    stageRole === 'reviewer' ||
     stageRole === 'background'
       ? stageRole
       : undefined

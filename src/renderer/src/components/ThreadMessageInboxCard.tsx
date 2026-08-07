@@ -85,7 +85,8 @@ export function ThreadMessageInboxCard({
                 className="thread-message-card-lead"
                 style={{ color: leadAccent }}
                 title={
-                  participantRoleIconTitle(model.seat?.authority, model.seat?.stageRole) || undefined
+                  participantRoleIconTitle(model.seat?.authority, model.seat?.stageRole) ||
+                  undefined
                 }
               >
                 <ParticipantRoleIcon

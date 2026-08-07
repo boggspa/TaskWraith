@@ -86,7 +86,9 @@ describe('codexNativeAutoApprovalFromPosture (slice D — posture-honoring nativ
     ({ presetId, agenticServices: { shellCommands: shell, fileChanges: file } }) as never
 
   it('auto-approves native codex tools when the SIGNED posture is a write tier with shell+file allow', () => {
-    expect(codexNativeAutoApprovalFromPosture(posture('workspace_write', 'allow', 'allow'))).toBe(true)
+    expect(codexNativeAutoApprovalFromPosture(posture('workspace_write', 'allow', 'allow'))).toBe(
+      true
+    )
     expect(codexNativeAutoApprovalFromPosture(posture('full_access', 'allow', 'allow'))).toBe(true)
   })
 
@@ -96,7 +98,9 @@ describe('codexNativeAutoApprovalFromPosture (slice D — posture-honoring nativ
     expect(codexNativeAutoApprovalFromPosture(posture('plan', 'allow', 'allow'))).toBe(false)
     // A global deny is preserved into the resolved services (preserveExplicitDeny):
     // the posture path must respect it exactly like the settings path did.
-    expect(codexNativeAutoApprovalFromPosture(posture('workspace_write', 'deny', 'allow'))).toBe(false)
+    expect(codexNativeAutoApprovalFromPosture(posture('workspace_write', 'deny', 'allow'))).toBe(
+      false
+    )
     expect(codexNativeAutoApprovalFromPosture(posture('full_access', 'allow', 'ask'))).toBe(false)
     expect(codexNativeAutoApprovalFromPosture(undefined)).toBe(false)
     expect(codexNativeAutoApprovalFromPosture(null)).toBe(false)

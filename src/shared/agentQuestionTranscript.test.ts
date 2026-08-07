@@ -60,9 +60,9 @@ describe('buildAgentQuestionMarkerMessage', () => {
     expect(buildAgentQuestionMarkerMessage({ record: RECORD }).content).toBe(
       'Pi asked you to pick an option:'
     )
-    expect(
-      buildAgentQuestionMarkerMessage({ record: { ...RECORD, options: [] } }).content
-    ).toBe('Pi asked you a question:')
+    expect(buildAgentQuestionMarkerMessage({ record: { ...RECORD, options: [] } }).content).toBe(
+      'Pi asked you a question:'
+    )
     expect(
       buildAgentQuestionMarkerMessage({ record: { ...RECORD, provider: undefined } }).content
     ).toBe('Agent asked you to pick an option:')
