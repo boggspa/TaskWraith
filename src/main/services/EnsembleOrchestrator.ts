@@ -3377,6 +3377,13 @@ interface ActiveRoundRuntime {
    */
   continuationLimitPending?: boolean
   /**
+   * Set when the closing Review wave settles. The next Continuous drain may
+   * soft-fail `tryAutoContinueRound`'s no-progress predicate (empty/skipped
+   * lane output) even though hops remain — suppress that one guard so the
+   * round returns to authority / the next pass instead of Task-Complete.
+   */
+  suppressNoProgressAfterReviewWave?: boolean
+  /**
    * C4 — one-shot guard for the administrative-idle-consensus escalation
    * (`detectAdministrativeIdleConsensus`). Set when the deadlock stop fires so a
    * single idle streak escalates at most once; re-armed by a productive
@@ -14887,6 +14894,29 @@ export class EnsembleOrchestrator {
             forceReadOnlyDispatch: true,
             label: 'Review wave'
           })
+          // Closing Review wave ends ordinary serial work for this pass.
+          // Drop already-handled leftovers (prior MCP fan-out) so Continuous
+          // drain sees an empty queue. Suppress one no-progress soft-stop:
+          // empty/skipped review lanes must not Task-Complete while hops
+          // remain (return to authority / next pass instead). Do NOT mark
+          // wave members in fannedOutParticipantIds — that would re-admit
+          // them on the next Continuous pass only for serial to skip them
+          // as 'handled' and finalize with hops left.
+          remaining.splice(
+            0,
+            remaining.length,
+            ...remaining.filter(
+              (entry) => this.participantFanoutDispatchState(runtime, entry.id) !== 'handled'
+            )
+          )
+          if (
+            remaining.length === 0 &&
+            runtime.orchestrationMode === 'continuous' &&
+            !runtime.cancelled &&
+            !runtime.returnedControlToUser
+          ) {
+            runtime.suppressNoProgressAfterReviewWave = true
+          }
           continue
         }
       }
@@ -17616,9 +17646,13 @@ export class EnsembleOrchestrator {
             if (options.completionDisposition === 'background') {
               return `${label} complete · ${laneRuns.length} lane(s) returned.`
             }
-            return options.completionDisposition === 'caller' || options.sourceRunId
-              ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
-              : `${label} complete · returning to serial writer step.`
+            if (options.completionDisposition === 'caller' || options.sourceRunId) {
+              return `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
+            }
+            if (label === 'Review wave' && runtime.orchestrationMode === 'continuous') {
+              return `${label} complete · continuing Continuous while hops remain.`
+            }
+            return `${label} complete · returning to serial writer step.`
           })()
         )
       } finally {
@@ -18213,7 +18247,19 @@ export class EnsembleOrchestrator {
         // intercepted before this drain hook, but keep the predicate honest.
         participant.status === 'sleeping'
     )
-    if (!anyProducedContent) return null
+    if (!anyProducedContent) {
+      // Closing Review wave may settle with only skipped/empty lane output.
+      // That is soft no-progress for a normal drain, but Continuous still has
+      // hop budget and must return to authority / another pass rather than
+      // Task-Complete on the "Review wave complete" boundary.
+      if (runtime.suppressNoProgressAfterReviewWave) {
+        runtime.suppressNoProgressAfterReviewWave = false
+      } else {
+        return null
+      }
+    } else {
+      runtime.suppressNoProgressAfterReviewWave = false
+    }
     // C4 — administrative-idle-consensus terminal condition. `anyProducedContent`
     // is true here (a `'yielded'` seat counts as content), but a whole-panel idle
     // consensus with no pending work and unreachable completion authority is a
@@ -18261,6 +18307,11 @@ export class EnsembleOrchestrator {
     }
     if (fresh.length === 0) return null
     runtime.continuationPass += 1
+    // A fresh Continuous pass may re-dispatch seats that already spoke via
+    // fan-out in the prior pass. Clear the completed-fanout marker so serial
+    // skip does not treat those seats as permanently 'handled' for the rest
+    // of the round (which would empty the queue and Task-Complete early).
+    runtime.fannedOutParticipantIds = undefined
     this.incrementBossmanBudgetUsage(
       runtime,
       fresh.map((participant) => participant.id),

@@ -20093,6 +20093,299 @@ describe('staged fan-out (stageRole)', () => {
     expect(waveNote).toBeTruthy()
   })
 
+  it('auto-continues Continuous mode after Review wave when hops remain', async () => {
+    // Regression: after "Review wave complete · returning to serial writer
+    // step." Continuous must keep going while hop budget remains — the
+    // closing wave ends the serial queue for that pass, not the round.
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude-rev',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer A',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'kimi-rev',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer B',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      }
+    ]
+    const completeWithProgress = (index: number, text: string): void => {
+      const payload = harness.dispatched[index]
+      harness.orchestrator.handleProviderOutput(
+        payload.provider as EnsembleParticipant['provider'],
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text }
+      )
+      harness.orchestrator.handleProviderOutput(
+        payload.provider as EnsembleParticipant['provider'],
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Build, review, keep going.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+    completeWithProgress(0, 'Built the feature.')
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(new Set(harness.dispatched.slice(1).map((payload) => payload.provider))).toEqual(
+      new Set(['claude', 'kimi'])
+    )
+    expect(
+      harness.chat.messages.some((message) => (message.content || '').includes('Review wave'))
+    ).toBe(true)
+
+    completeWithProgress(1, 'Looks good from A.')
+    completeWithProgress(2, 'Looks good from B.')
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('Review wave complete · returning to serial writer step.') ||
+          (message.content || '').includes('Review wave complete · continuing Continuous while hops remain.')
+        )
+      ).toBe(true)
+    )
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(3))
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' && message.content.includes('auto-continuing for pass')
+      )
+    ).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
+  })
+
+  it('auto-continues Continuous mode after Review wave when Boss routed the writer', async () => {
+    // Same closing-wave drain as above, but with Continuous authority
+    // selection on pass 1 (Boss must route before ordinary seats).
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex-boss'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex-boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude-worker',
+        provider: 'claude',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Do the work.',
+        order: 2,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'worker'
+      },
+      {
+        id: 'kimi-rev',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer A',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'grok-rev',
+        provider: 'grok',
+        enabled: true,
+        role: 'Reviewer B',
+        instructions: 'Review.',
+        order: 4,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      }
+    ]
+    const completeWithProgress = (index: number, text: string): void => {
+      const payload = harness.dispatched[index]
+      harness.orchestrator.handleProviderOutput(
+        payload.provider as EnsembleParticipant['provider'],
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text }
+      )
+      harness.orchestrator.handleProviderOutput(
+        payload.provider as EnsembleParticipant['provider'],
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Boss directs, then review, keep going.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex-boss')
+    expect(harness.dispatched[0].prompt).toContain('Authority routing checkpoint')
+
+    const selection = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker', 'Reviewer A', 'Reviewer B'],
+        reason: 'Keep the worker and both reviewers.'
+      }
+    )
+    expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
+    // End without yield so the selected serial queue (Worker → Review wave)
+    // advances instead of a yield-return re-summoning Boss.
+    completeWithProgress(0, 'Selected the worker and reviewers; proceed.')
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude-worker')
+    completeWithProgress(1, 'Built.')
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(new Set(harness.dispatched.slice(2).map((payload) => payload.provider))).toEqual(
+      new Set(['kimi', 'grok'])
+    )
+    completeWithProgress(2, 'Review A ok.')
+    completeWithProgress(3, 'Review B ok.')
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('Review wave complete · returning to serial writer step.') ||
+          (message.content || '').includes('Review wave complete · continuing Continuous while hops remain.')
+        )
+      ).toBe(true)
+    )
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(4))
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' && message.content.includes('auto-continuing for pass')
+      )
+    ).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
+  })
+
+  it('keeps Continuous going after Review wave when the pass produced only skipped output', async () => {
+    // Regression: tryAutoContinueRound's no-progress guard treats an all-skipped
+    // pass as terminal. A closing Review wave with empty lane output (and a
+    // quiet Boss) used to Task-Complete while hops remained.
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex-boss'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex-boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude-rev',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer A',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'kimi-rev',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer B',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      }
+    ]
+    const completeEmpty = (index: number): void => {
+      const payload = harness.dispatched[index]
+      harness.orchestrator.handleProviderOutput(
+        payload.provider as EnsembleParticipant['provider'],
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review quietly and keep the round alive.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex-boss')
+    const selection = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Reviewer A', 'Reviewer B'],
+        reason: 'Only reviewers this pass.'
+      }
+    )
+    expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
+    completeEmpty(0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(new Set(harness.dispatched.slice(1).map((payload) => payload.provider))).toEqual(
+      new Set(['claude', 'kimi'])
+    )
+    completeEmpty(1)
+    completeEmpty(2)
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('Review wave complete')
+        )
+      ).toBe(true)
+    )
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(3))
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
+  })
+
   it('broad ensemble_fanout discovery includes write-postured idle seats as clamped lanes', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
