@@ -2917,7 +2917,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               path={file.path}
                               size={18}
                               className="composer-attachment-icon-inner"
-                              workspacePath={currentWorkspace?.path}
+                              workspacePath={composerGitActionBasePath || currentWorkspace?.path}
                             />
                           )}
                         </span>
@@ -3362,7 +3362,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   chat={currentChat || undefined}
                   provider={currentProvider}
                   composerStyle={appearance.composerStyle}
-                  workspacePath={currentWorkspace?.path}
+                  workspacePath={composerGitActionBasePath || currentWorkspace?.path}
                   externalPathGrants={externalPathGrants}
                   /*
                     1.0.5-EW53 — Dropped `prompt={prompt}` from this
@@ -4525,8 +4525,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               return option
                             })
-                          const normalizedWorkspacePath = currentWorkspace?.path
-                            ? pathComparisonKey(currentWorkspace.path)
+                          const normalizedWorkspacePath = composerGitActionBasePath
+                            ? pathComparisonKey(composerGitActionBasePath)
                             : ''
                           const enabledGrantIds = ensembleBinding
                             ? getParticipantToolGrantIds(ensembleBinding)
@@ -4558,7 +4558,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // routes tool calls through the central approval gate where
                           // workspace grants apply, so there is no per-provider gate.
                           const grantServicesForPicker =
-                            currentWorkspace && !isCurrentGlobalChat
+                            (composerGitActionBasePath || currentWorkspace) && !isCurrentGlobalChat
                               ? WORKSPACE_POLICY_SERVICES
                               : []
                           const grantTimingNote =
@@ -5014,7 +5014,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           Workspace trust is not established.
                           {geminiTrustWriteError ? ` ${geminiTrustWriteError}` : ''}
                         </span>
-                        {currentWorkspace?.path &&
+                        {composerGitActionBasePath &&
                           typeof window.api.trustWorkspace === 'function' && (
                             <button
                               type="button"
@@ -5026,7 +5026,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               title={
                                 workspaceTrustMutationDisabledReason ||
-                                `Trust ${currentWorkspace.path} for Gemini — writes ~/.gemini/trustedFolders.json`
+                                `Trust ${composerGitActionBasePath} for Gemini — writes ~/.gemini/trustedFolders.json`
                               }
                               style={{
                                 display: 'inline-flex',

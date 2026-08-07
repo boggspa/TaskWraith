@@ -259,7 +259,7 @@ import {
   getUsageWorkspaceIdForChat
 } from './lib/chatScope'
 import { resolvePaneWorkspace, resolvePaneWorkspacePath } from './lib/mainPaneWorkspaceHeader'
-import { resolveComposerFocusedWorkspace } from './lib/composerFocusedWorkspace'
+import { resolveComposerFocusedWorkspace, resolveAppChatChromeWorkspacePath } from './lib/composerFocusedWorkspace'
 import { resolveRemoveWorkspaceFocusTeardown } from './lib/removeWorkspaceFocusTeardown'
 import { updatePathKeyedWorkspaceSnapshot } from './lib/multiviewWorkspacePresentation'
 import {
@@ -3965,9 +3965,20 @@ function App(): React.JSX.Element {
     const mode = ensemble.orchestrationMode || 'turn'
     return `${enabled.length} participants · ${mode} · ${labels}`
   }, [currentChat?.ensemble])
-  const hasWorkspaceContext = Boolean(currentWorkspace && currentChat && !isCurrentGlobalChat)
-  const currentWorkspacePopoutPath = currentWorkspace?.path || currentChat?.workspacePath || ''
-  const auditRunWorkspaceId = currentWorkspace?.id || currentChat?.workspaceId
+  const hasWorkspaceContext = Boolean(
+    (currentChatWorkspace || currentWorkspacePath || currentWorkspace) &&
+      currentChat &&
+      !isCurrentGlobalChat
+  )
+  const currentWorkspacePopoutPath = resolveAppChatChromeWorkspacePath({
+    currentWorkspacePath,
+    chatWorkspacePath: currentChat?.workspacePath,
+    currentWorkspace
+  })
+  const auditRunWorkspaceId =
+    currentChatWorkspace?.id || currentChat?.workspaceId || currentWorkspace?.id
+  const chromeWorkspacePath = currentWorkspacePopoutPath
+  const chromeWorkspace = currentChatWorkspace || currentWorkspace
   const visibleAuditRun = useMemo(() => {
     return selectVisibleAuditRun(auditRuns, currentChat?.appChatId, dismissedAuditRunIds)
   }, [auditRuns, currentChat?.appChatId, dismissedAuditRunIds])
@@ -7545,7 +7556,12 @@ function App(): React.JSX.Element {
     enabled: boolean,
     providerOverride?: ProviderId
   ): Promise<boolean> => {
-    if (!currentWorkspace?.path || isCurrentGlobalChat) return false
+    const grantWorkspacePath = resolveAppChatChromeWorkspacePath({
+      currentWorkspacePath,
+      chatWorkspacePath: currentChat?.workspacePath,
+      currentWorkspace
+    })
+    if (!grantWorkspacePath || isCurrentGlobalChat) return false
     // Slice F v2 (1.0.3) — when toggling grants from the composer
     // pickers on an ensemble chat with a participant selected, the
     // grant should target THAT participant's provider, not the chat's
@@ -7569,12 +7585,12 @@ function App(): React.JSX.Element {
       const nextSettings = enabled
         ? await window.api.upsertAgenticWorkspaceGrant(
             targetProvider,
-            currentWorkspace.path,
+            grantWorkspacePath,
             service
           )
         : await window.api.removeAgenticWorkspaceGrant(
             targetProvider,
-            currentWorkspace.path,
+            grantWorkspacePath,
             service
           )
       applyAgenticWorkspaceGrantSettings(nextSettings)
@@ -10597,17 +10613,24 @@ function App(): React.JSX.Element {
   // Main transcript scroll ownership lives in useTranscriptScrollState.
 
   useEffect(() => {
-    if (showTerminal || !currentWorkspace) {
-      if (!currentWorkspace) clearWorkspaceTrust()
+    const trustWorkspace = currentChatWorkspace || currentWorkspace
+    if (showTerminal || !trustWorkspace) {
+      if (!trustWorkspace) clearWorkspaceTrust()
       return undefined
     }
-    currentWorkspaceIdRef.current = currentWorkspace.id
-    currentWorkspacePathRef.current = currentWorkspace.path
-    void refreshWorkspaceTrust(currentWorkspace)
+    currentWorkspaceIdRef.current = trustWorkspace.id
+    currentWorkspacePathRef.current = trustWorkspace.path
+    void refreshWorkspaceTrust(trustWorkspace)
     return () => {
       workspaceTrustGenerationRef.current += 1
     }
-  }, [clearWorkspaceTrust, refreshWorkspaceTrust, showTerminal, currentWorkspace])
+  }, [
+    clearWorkspaceTrust,
+    refreshWorkspaceTrust,
+    showTerminal,
+    currentChatWorkspace,
+    currentWorkspace
+  ])
 
   useEffect(() => {
     if (!appearance.showInspector && showTerminal) {
@@ -11089,24 +11112,28 @@ function App(): React.JSX.Element {
   }, [isPersistentSessionEnabled])
 
   const refreshDiff = async () => {
-    if (currentWorkspace) {
-      const worktree =
-        currentProvider === 'gemini' ? resolveGeminiWorktreeConfig(currentWorkspace) : undefined
-      if (isGeminiWorktreeDiffUnavailable(worktree)) {
-        setDiff(createWorktreeDiffUnavailable())
-        setRunDiff(null)
-        setDiffView('workspace')
-        setDiffRefreshStatus('Diff disabled: worktree path unknown.')
-        return
-      }
-
-      const diffWorkspacePath = currentComposerWorktreeSelection
-        ? currentGitPresentationPath
-        : getDiffWorkspacePath(currentWorkspace, worktree)
-      if (!diffWorkspacePath) return
-      const diffObj = await window.api.getDiff(diffWorkspacePath)
-      setDiff(diffObj)
+    const workspaceForDiff = currentChatWorkspace || currentWorkspace
+    const presentationPath = currentGitPresentationPath || chromeWorkspacePath
+    if (!workspaceForDiff && !presentationPath) return
+    const worktree =
+      workspaceForDiff && currentProvider === 'gemini'
+        ? resolveGeminiWorktreeConfig(workspaceForDiff)
+        : undefined
+    if (isGeminiWorktreeDiffUnavailable(worktree)) {
+      setDiff(createWorktreeDiffUnavailable())
+      setRunDiff(null)
+      setDiffView('workspace')
+      setDiffRefreshStatus('Diff disabled: worktree path unknown.')
+      return
     }
+
+    const diffWorkspacePath = currentComposerWorktreeSelection
+      ? currentGitPresentationPath
+      : presentationPath ||
+        (workspaceForDiff ? getDiffWorkspacePath(workspaceForDiff, worktree) : undefined)
+    if (!diffWorkspacePath) return
+    const diffObj = await window.api.getDiff(diffWorkspacePath)
+    setDiff(diffObj)
   }
 
   // ── Host-side fallback compaction (legacy/unmarked Kimi) ──────────────────
@@ -15471,7 +15498,12 @@ function App(): React.JSX.Element {
   }
 
   const handleReviewCurrentDiff = async () => {
-    if (!currentWorkspace || !currentGitPresentationPath || !currentChat || isPreparingDiffReview) {
+    if (
+      !(currentChatWorkspace || currentWorkspace) ||
+      !currentGitPresentationPath ||
+      !currentChat ||
+      isPreparingDiffReview
+    ) {
       return
     }
 
@@ -15528,7 +15560,7 @@ function App(): React.JSX.Element {
           currentProvider === 'codex' &&
           !isCurrentEnsembleChat &&
           Boolean(currentChat?.linkedProviderSessionId),
-        workspaceRecord: currentWorkspace,
+        workspaceRecord: currentChatWorkspace || currentWorkspace,
         chatRecord: currentChat
       }
 
@@ -23996,7 +24028,12 @@ function App(): React.JSX.Element {
     () => buildLiveToolFileSummarySignature(liveToolFileSummaryMessages),
     [liveToolFileSummaryMessages]
   )
-  const liveToolFileSummaryWorkspacePath = currentWorkspace?.path || currentChat?.workspacePath || null
+  const liveToolFileSummaryWorkspacePath =
+    resolveAppChatChromeWorkspacePath({
+      currentWorkspacePath,
+      chatWorkspacePath: currentChat?.workspacePath,
+      currentWorkspace
+    }) || null
   useEffect(() => {
     if (!liveToolFileSummaryChatId || liveToolFileSummaryMessages.length === 0) {
       setLiveToolFileSummaryState(null)
@@ -24460,7 +24497,11 @@ function App(): React.JSX.Element {
     settings?.welcomeHeatmapPrefs?.externalActivityEnabled !== false
   const welcomeWorkspaceActivityPath =
     isWelcomeChat && !isCurrentGlobalChat && welcomeWorkspaceHeatmapEnabled
-      ? currentWorkspace?.path || currentChat?.workspacePath
+      ? resolveAppChatChromeWorkspacePath({
+          currentWorkspacePath,
+          chatWorkspacePath: currentChat?.workspacePath,
+          currentWorkspace
+        })
       : ''
   const shouldShowWelcomeStandaloneHeatmaps =
     !isMultiviewSplit &&
@@ -25597,7 +25638,7 @@ function App(): React.JSX.Element {
           currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble'
         )
       }
-      disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat}
+      disabled={!hasWorkspaceContext || !(chromeWorkspace || currentWorkspace) || !currentChat}
       disabledReason={scheduleDisabledReason}
     />
   ) : null
@@ -25610,7 +25651,7 @@ function App(): React.JSX.Element {
   // Gated behind a confirmation dialog because trusting a folder lets
   // Gemini act on its files without re-prompting.
   const handleTrustWorkspaceClick = async () => {
-    const ws = currentWorkspace
+    const ws = currentChatWorkspace || currentWorkspace
     if (!ws?.path || typeof window.api.trustWorkspace !== 'function') return
     const confirmed = window.confirm(
       `Trust this workspace for Gemini?\n\n${ws.path}\n\n` +
@@ -25758,10 +25799,16 @@ function App(): React.JSX.Element {
   // pure per-path parameterization. State is tracked per path so
   // each row's button reflects only its own PR progress.
   const handleCreateGithubPr = async (targetPath?: string, externalChatId?: string) => {
-    const workspacePath = targetPath || currentWorkspace?.path
+    const workspacePath =
+      targetPath ||
+      resolveAppChatChromeWorkspacePath({
+        currentWorkspacePath,
+        chatWorkspacePath: currentChat?.workspacePath,
+        currentWorkspace
+      })
     if (!workspacePath) {
       // No path to key state by; surface against the primary slot.
-      const fallbackKey = currentWorkspace?.path || ''
+      const fallbackKey = ''
       setCreatePrStateFor(fallbackKey, {
         status: 'error',
         message: 'Open a workspace to create a PR.'
@@ -28576,7 +28623,7 @@ function App(): React.JSX.Element {
         return false
       },
       currentWorkspace: viewerWorkspace,
-      currentWorkspacePath: viewerWorkspace?.path,
+      currentWorkspacePath: viewerWorkspace?.path || viewerChat.workspacePath || undefined,
       pendingWorkspaceRebind: readPendingWorkspaceRebind(viewerChat),
       externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
       externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,
@@ -29798,7 +29845,7 @@ function App(): React.JSX.Element {
           return false
         },
         currentWorkspace: viewerWorkspace,
-        currentWorkspacePath: viewerWorkspace?.path,
+        currentWorkspacePath: viewerWorkspace?.path || viewerChat.workspacePath || undefined,
         pendingWorkspaceRebind: readPendingWorkspaceRebind(viewerChat),
         externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
         externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,
@@ -30423,7 +30470,7 @@ function App(): React.JSX.Element {
     currentProviderLabel,
     currentProviderModelOptions,
     currentRun,
-    currentWorkspace,
+    currentWorkspace: focusedCurrentWorkspace || currentWorkspace,
     currentWorkspacePath,
     cursorProviderAvailable,
     customModel,

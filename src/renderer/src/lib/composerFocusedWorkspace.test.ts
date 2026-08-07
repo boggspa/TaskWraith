@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  resolveAppChatChromeWorkspacePath,
   resolveComposerFocusedWorkspace,
   resolveComposerGitActionBasePath
 } from './composerFocusedWorkspace'
@@ -81,5 +82,39 @@ describe('resolveComposerGitActionBasePath', () => {
         currentWorkspace: null
       })
     ).toBeUndefined()
+  })
+})
+
+describe('resolveAppChatChromeWorkspacePath', () => {
+  it('prefers chat-resolved path over stale app-global for Inspector/popout/trust', () => {
+    // Regression: Diff Studio Refresh, /diff-window, Create PR fallback, and
+    // Gemini trust preferred currentWorkspace.path after a thread switch.
+    expect(
+      resolveAppChatChromeWorkspacePath({
+        currentWorkspacePath: test1.path,
+        chatWorkspacePath: test1.path,
+        currentWorkspace: agBench
+      })
+    ).toBe(test1.path)
+  })
+
+  it('falls back to durable chat.workspacePath when presentation path is empty', () => {
+    expect(
+      resolveAppChatChromeWorkspacePath({
+        currentWorkspacePath: null,
+        chatWorkspacePath: test1.path,
+        currentWorkspace: agBench
+      })
+    ).toBe(test1.path)
+  })
+
+  it('falls back to app-global only when no chat path exists', () => {
+    expect(
+      resolveAppChatChromeWorkspacePath({
+        currentWorkspacePath: null,
+        chatWorkspacePath: null,
+        currentWorkspace: agBench
+      })
+    ).toBe(agBench.path)
   })
 })

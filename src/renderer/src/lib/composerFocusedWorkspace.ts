@@ -37,3 +37,20 @@ export function resolveComposerGitActionBasePath(input: {
   const fromRecord = String(input.currentWorkspace?.path || '').trim()
   return fromRecord || undefined
 }
+
+/**
+ * App chrome / Inspector / popout / grant / trust path — prefer chat-resolved
+ * path, then durable chat.workspacePath, then app-global primary.
+ */
+export function resolveAppChatChromeWorkspacePath(input: {
+  currentWorkspacePath?: string | null
+  chatWorkspacePath?: string | null
+  currentWorkspace?: { path?: string | null } | null
+}): string {
+  return (
+    String(input.currentWorkspacePath || '').trim() ||
+    String(input.chatWorkspacePath || '').trim() ||
+    String(input.currentWorkspace?.path || '').trim() ||
+    ''
+  )
+}
