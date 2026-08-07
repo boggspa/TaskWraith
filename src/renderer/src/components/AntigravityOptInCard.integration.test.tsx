@@ -1,7 +1,13 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  HOST_PROTOCOL_VERSION,
+  type HostSnapshot
+} from '../../../shared/hostProtocol'
+import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
+import { HostProjectionProvider } from './HostProjectionProvider'
 import {
   useAntigravityGeminiApiSecretRefreshIdentity,
   useConfiguredProviderSnapshot,
@@ -202,8 +208,55 @@ describe('AntigravityOptInCard successful mutation integration', () => {
     const { document, container } = installDom()
     document.body.appendChild(container)
     const mutationEvents: Event[] = []
-    const pendingReloads: Array<(value: unknown) => void> = []
+    const pendingReloads: Array<(value: HostSnapshot) => void> = []
     let renderedSnapshot: ConfiguredProviderSnapshot = { ready: false, providerIds: [] }
+    const antigravityHostSnapshot = {
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      projectionVersion: 1,
+      generatedAt: '2026-08-07T12:00:00.000Z',
+      generation: 1,
+      cursor: 1,
+      freshness: 'live',
+      health: {
+        hostStatus: 'ok',
+        connectionPhase: 'live',
+        supervised: true,
+        freshness: 'live'
+      },
+      workspaces: [],
+      threads: [],
+      runs: [],
+      missions: [],
+      rounds: [],
+      participants: [],
+      providers: [
+        {
+          providerId: 'antigravity',
+          displayProvider: 'AntiGravity',
+          shortCode: 'AG',
+          available: true,
+          modelId: 'agy-model',
+          modelLabel: 'AGY model'
+        }
+      ],
+      questions: [],
+      approvals: [],
+      schedules: [],
+      usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
+      artifacts: [],
+      warnings: [],
+      recovery: {}
+    } as unknown as HostSnapshot
+    const store = new HostProjectionStore({
+      fetchSnapshot: () => {
+        // Pre-mutation: always resolve live Host providers. Post-mutation:
+        // pend so the leaf withdraws until Cap/Host refresh settles.
+        if (mutationEvents.length === 0) {
+          return Promise.resolve(antigravityHostSnapshot)
+        }
+        return new Promise((resolve) => pendingReloads.push(resolve))
+      }
+    })
     const api = {
       getAntigravityGeminiApiSecretStatus: async () => ({
         configured: false,
@@ -216,17 +269,7 @@ describe('AntigravityOptInCard successful mutation integration', () => {
       clearAntigravityGeminiApiSecret: vi.fn(async () => ({
         ok: true as const,
         status: { configured: false, encryptionAvailable: true }
-      })),
-      getConfiguredProviderSnapshot: () => {
-        if (mutationEvents.length === 0) {
-          return Promise.resolve({
-            ready: true,
-            providerIds: ['antigravity'],
-            modelsByProvider: { antigravity: [{ id: 'agy-model', label: 'AGY model' }] }
-          })
-        }
-        return new Promise((resolve) => pendingReloads.push(resolve))
-      }
+      }))
     }
     Object.assign(window, { api })
     window.addEventListener('taskwraith-antigravity-gemini-api-secret-mutated', (event) =>
@@ -246,9 +289,17 @@ describe('AntigravityOptInCard successful mutation integration', () => {
 
     await act(async () => {
       mountedRoot = createRoot(container as unknown as Element)
-      mountedRoot.render(createElement(Harness))
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      mountedRoot.render(
+        createElement(HostProjectionProvider, {
+          store,
+          children: createElement(Harness)
+        })
+      )
+    })
+    // useHostProjection refreshes on mount; settle the Host fetch.
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
     })
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
 
@@ -271,11 +322,8 @@ describe('AntigravityOptInCard successful mutation integration', () => {
     expect(mutationEvents).toHaveLength(1)
     expect(renderedSnapshot.providerIds).toEqual([])
     await act(async () => {
-      pendingReloads.shift()?.({
-        ready: true,
-        providerIds: ['antigravity'],
-        modelsByProvider: { antigravity: [{ id: 'agy-model', label: 'AGY model' }] }
-      })
+      pendingReloads.shift()?.(antigravityHostSnapshot)
+      await Promise.resolve()
     })
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
 
@@ -289,11 +337,8 @@ describe('AntigravityOptInCard successful mutation integration', () => {
     expect(mutationEvents).toHaveLength(2)
     expect(renderedSnapshot.providerIds).toEqual([])
     await act(async () => {
-      pendingReloads.shift()?.({
-        ready: true,
-        providerIds: ['antigravity'],
-        modelsByProvider: { antigravity: [{ id: 'agy-model', label: 'AGY model' }] }
-      })
+      pendingReloads.shift()?.(antigravityHostSnapshot)
+      await Promise.resolve()
     })
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
   })

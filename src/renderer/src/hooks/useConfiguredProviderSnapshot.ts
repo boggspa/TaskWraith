@@ -1,9 +1,14 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId } from '../../../main/store/types'
 import {
   ANTIGRAVITY_PROVIDER_ID,
   isLiveSelectableProvider
 } from '../../../shared/retiredProviders'
+import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
+import { useHostProjectionStore } from '../components/HostProjectionProvider'
+import { useHostProjection } from './useHostProjection'
+import type { HostProjectionState } from '../lib/host/HostProjectionStore'
+import type { HostProjectedProvider } from '../lib/host/hostSnapshotProjection'
 
 export interface ConfiguredProviderModel {
   id: string
@@ -128,55 +133,121 @@ export function sanitizeConfiguredProviderSnapshot(value: unknown): ConfiguredPr
   }
 }
 
+const PENDING_CONFIGURED_PROVIDER_SNAPSHOT: ConfiguredProviderSnapshot = {
+  ready: false,
+  providerIds: []
+}
+
 /**
- * Reads the main process's post-paint provider-discovery cache. This hook never
- * starts provider probes: it only polls the already-running discovery pass
- * until its current settings generation completes.
+ * Host Arc Wave 5c Phase 1 — pure map from Desktop Host projection state to
+ * the configured-provider snapshot leaf consumers already understand.
+ *
+ * Honesty (same rules as `describeHostProviders` / Waves 5d–5e):
+ * - Host not live, projection missing, or freshness not live → not ready
+ *   (never a confident empty ready panel).
+ * - `provider_source_not_ready` warning code → not ready (empty array is not
+ *   a measured zero until the source settles).
+ * - Live + ready + empty rows → ready with empty ids (genuine measured none).
+ * - Wire `available` means admitted/configured, not runtime-healthy; only
+ *   available rows contribute provider ids and models.
+ *
+ * Exported so honesty pins do not need a DOM (renderer tests have no jsdom).
+ */
+export function configuredProviderSnapshotFromHostProjection(
+  state: HostProjectionState
+): ConfiguredProviderSnapshot {
+  const projection = state.projection
+  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+    return PENDING_CONFIGURED_PROVIDER_SNAPSHOT
+  }
+
+  if ((projection.warningCodes ?? []).includes(HOST_WARNING_PROVIDER_SOURCE_NOT_READY)) {
+    return PENDING_CONFIGURED_PROVIDER_SNAPSHOT
+  }
+
+  const providerIds: string[] = []
+  const seen = new Set<string>()
+  const modelsByProvider: Partial<Record<string, ConfiguredProviderModel[]>> = {}
+
+  for (const row of projection.providers as readonly HostProjectedProvider[]) {
+    // Wire available === admitted in the configured snapshot (Wave 5e).
+    if (!row || row.available !== true) continue
+    const providerId = typeof row.providerId === 'string' ? row.providerId.trim() : ''
+    if (!providerId) continue
+    if (!seen.has(providerId)) {
+      seen.add(providerId)
+      providerIds.push(providerId)
+    }
+    const modelId = typeof row.modelId === 'string' ? row.modelId.trim() : ''
+    if (!modelId) continue
+    const label =
+      typeof row.modelLabel === 'string' && row.modelLabel.trim()
+        ? row.modelLabel.trim()
+        : modelId
+    const list = modelsByProvider[providerId] ?? []
+    if (!list.some((model) => model.id === modelId)) {
+      list.push({ id: modelId, label })
+      modelsByProvider[providerId] = list
+    }
+  }
+
+  return sanitizeConfiguredProviderSnapshot({
+    ready: true,
+    providerIds,
+    ...(Object.keys(modelsByProvider).length > 0 ? { modelsByProvider } : {})
+  })
+}
+
+/**
+ * Host Arc Wave 5c Phase 1 — configured provider roster from Host projection.
+ *
+ * Authority is the Host `providers` family (already projected by Host from the
+ * main-process discovery cache). This hook does not call
+ * `window.api.getConfiguredProviderSnapshot` and does not invent a second
+ * socket: it reads the app-scope `HostProjectionStore` via context.
+ *
+ * When Host is idle/loading/unavailable/cached, or the provider source is not
+ * ready, returns `{ ready: false, providerIds: [] }` so consumers keep cold-
+ * start / unknown behaviour (no fabricated recommended panel, no confident
+ * empty ready). AntiGravity secret mutations still force a pending empty until
+ * the next Host refresh settles, so stale models never flash.
  */
 export function useConfiguredProviderSnapshot(refreshKey = ''): ConfiguredProviderSnapshot {
-  const [snapshot, setSnapshot] = useState<ConfiguredProviderSnapshot>({
-    ready: false,
-    providerIds: []
-  })
+  const store = useHostProjectionStore()
+  const state = useHostProjection(store)
+  const prevRefreshKey = useRef(refreshKey)
+  const [blockedForRefreshKey, setBlockedForRefreshKey] = useState(false)
 
   // Clear a prior settings generation before paint. In particular, enabling
   // AntiGravity again must not briefly reuse models cached before a fresh
-  // authenticated `agy models` probe finishes.
+  // Host projection refresh finishes.
   useLayoutEffect(() => {
-    setSnapshot({ ready: false, providerIds: [] })
+    if (prevRefreshKey.current === refreshKey) return
+    prevRefreshKey.current = refreshKey
+    setBlockedForRefreshKey(true)
   }, [refreshKey])
 
   useEffect(() => {
-    if (typeof window.api.getConfiguredProviderSnapshot !== 'function') return
-    let cancelled = false
-    let retryTimer: number | null = null
-    let attemptsRemaining = 40
-
-    const refresh = async (): Promise<void> => {
-      let ready = false
-      try {
-        const next = sanitizeConfiguredProviderSnapshot(
-          await window.api.getConfiguredProviderSnapshot()
-        )
-        if (cancelled) return
-        ready = next.ready
-        setSnapshot(next)
-      } catch {
-        // The pending fallback keeps the current provider visible; no picker
-        // interaction ever starts or waits for provider discovery.
-      }
-      attemptsRemaining -= 1
-      if (!cancelled && !ready && attemptsRemaining > 0) {
-        retryTimer = window.setTimeout(() => void refresh(), 250)
-      }
+    if (!blockedForRefreshKey) return
+    if (!store) {
+      setBlockedForRefreshKey(false)
+      return
     }
-
-    void refresh()
+    let cancelled = false
+    void store
+      .refresh()
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setBlockedForRefreshKey(false)
+      })
     return () => {
       cancelled = true
-      if (retryTimer !== null) window.clearTimeout(retryTimer)
     }
-  }, [refreshKey])
+  }, [store, blockedForRefreshKey, refreshKey])
 
-  return snapshot
+  if (blockedForRefreshKey) {
+    return PENDING_CONFIGURED_PROVIDER_SNAPSHOT
+  }
+
+  return configuredProviderSnapshotFromHostProjection(state)
 }

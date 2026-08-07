@@ -2,8 +2,18 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  HOST_WARNING_PROVIDER_SOURCE_NOT_READY,
+  type HostSnapshot
+} from '../../../shared/hostProtocol'
+import { HostProjectionProvider } from '../components/HostProjectionProvider'
+import {
+  HostProjectionStore,
+  type HostProjectionState
+} from '../lib/host/HostProjectionStore'
+import {
   antigravityGeminiApiSecretIdentityIsConfigured,
   antigravityGeminiApiSecretRefreshIdentity,
+  configuredProviderSnapshotFromHostProjection,
   isDispatchableProviderForRun,
   ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT,
   notifyAntigravityGeminiApiSecretMutation,
@@ -12,6 +22,42 @@ import {
   useAntigravityGeminiApiSecretRefreshIdentity,
   type ConfiguredProviderSnapshot
 } from './useConfiguredProviderSnapshot'
+
+function hostSnapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
+  return {
+    protocolVersion: 1,
+    projectionVersion: 1,
+    generatedAt: '2026-08-07T12:00:00.000Z',
+    generation: 1,
+    cursor: 1,
+    freshness: 'live',
+    health: {
+      hostStatus: 'ok',
+      connectionPhase: 'live',
+      supervised: true,
+      freshness: 'live'
+    },
+    workspaces: [],
+    threads: [],
+    runs: [],
+    missions: [],
+    rounds: [],
+    participants: [],
+    providers: [],
+    questions: [],
+    approvals: [],
+    schedules: [],
+    usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
+    artifacts: [],
+    warnings: [],
+    recovery: {},
+    ...overrides
+  } as unknown as HostSnapshot
+}
+
+function hostState(overrides: Partial<HostProjectionState> = {}): HostProjectionState {
+  return { status: 'idle', ...overrides }
+}
 
 let mountedRoot: Root | null = null
 let savedWindow: PropertyDescriptor | undefined
@@ -134,11 +180,32 @@ describe('successful Gemini API mutation refresh signal', () => {
     expect(renderedIdentity).toBe(':mutation-2')
   })
 
-  it('withdraws and reloads mounted provider rows immediately for both mutations', async () => {
+  it('withdraws and reloads mounted provider rows from Host on both mutations', async () => {
     const container = installMinimalRendererDom()
     let renderedSnapshot: ConfiguredProviderSnapshot = { ready: false, providerIds: [] }
-    const pendingReloads: Array<(value: unknown) => void> = []
+    const pendingReloads: Array<(value: HostSnapshot) => void> = []
     let snapshotCalls = 0
+    const antigravitySnapshot = hostSnapshot({
+      providers: [
+        {
+          providerId: 'antigravity',
+          displayProvider: 'AntiGravity',
+          shortCode: 'AG',
+          available: true,
+          modelId: 'agy-model',
+          modelLabel: 'AGY model'
+        }
+      ]
+    })
+    const store = new HostProjectionStore({
+      fetchSnapshot: () => {
+        snapshotCalls += 1
+        if (snapshotCalls === 1) {
+          return Promise.resolve(antigravitySnapshot)
+        }
+        return new Promise((resolve) => pendingReloads.push(resolve))
+      }
+    })
     function Harness(): null {
       const identity = useAntigravityGeminiApiSecretRefreshIdentity()
       const snapshot = useConfiguredProviderSnapshot(identity)
@@ -148,45 +215,38 @@ describe('successful Gemini API mutation refresh signal', () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
-        getAntigravityGeminiApiSecretStatus: () => new Promise(() => undefined),
-        getConfiguredProviderSnapshot: () => {
-          snapshotCalls += 1
-          if (snapshotCalls === 1) {
-            return Promise.resolve({
-              ready: true,
-              providerIds: ['antigravity'],
-              modelsByProvider: { antigravity: [{ id: 'agy-model', label: 'AGY model' }] }
-            })
-          }
-          return new Promise((resolve) => pendingReloads.push(resolve))
-        }
+        getAntigravityGeminiApiSecretStatus: () => new Promise(() => undefined)
       }
     })
     await act(async () => {
       mountedRoot = createRoot(container)
-      mountedRoot.render(createElement(Harness))
+      mountedRoot.render(
+        createElement(HostProjectionProvider, {
+          store,
+          children: createElement(Harness)
+        })
+      )
+    })
+    // useHostProjection refreshes on mount; settle the first Host fetch.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
+    expect(renderedSnapshot.modelsByProvider?.antigravity?.[0]?.id).toBe('agy-model')
+
+    act(() => notifyAntigravityGeminiApiSecretMutation())
+    expect(renderedSnapshot.providerIds).toEqual([])
+    await act(async () => {
+      pendingReloads.shift()?.(antigravitySnapshot)
+      await Promise.resolve()
     })
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
 
     act(() => notifyAntigravityGeminiApiSecretMutation())
     expect(renderedSnapshot.providerIds).toEqual([])
     await act(async () => {
-      pendingReloads.shift()?.({
-        ready: true,
-        providerIds: ['antigravity'],
-        modelsByProvider: { antigravity: [{ id: 'agy-model', label: 'AGY model' }] }
-      })
-    })
-    expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
-
-    act(() => notifyAntigravityGeminiApiSecretMutation())
-    expect(renderedSnapshot.providerIds).toEqual([])
-    await act(async () => {
-      pendingReloads.shift()?.({
-        ready: true,
-        providerIds: ['antigravity'],
-        modelsByProvider: { antigravity: [{ id: 'agy-model', label: 'AGY model' }] }
-      })
+      pendingReloads.shift()?.(antigravitySnapshot)
+      await Promise.resolve()
     })
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
   })
@@ -295,5 +355,191 @@ describe('sanitizeConfiguredProviderSnapshot', () => {
         antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
       }
     })
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Wave 5c Phase 1 — Host projection → configured snapshot honesty  */
+/* ------------------------------------------------------------------ */
+
+describe('configuredProviderSnapshotFromHostProjection · honesty pins', () => {
+  it('RED: Host not live → not ready (never a confident empty ready panel)', () => {
+    for (const status of ['idle', 'loading', 'unavailable'] as const) {
+      expect(
+        configuredProviderSnapshotFromHostProjection(
+          hostState({
+            status,
+            projection: {
+              freshness: 'live',
+              providers: [
+                {
+                  providerId: 'claude',
+                  displayProvider: 'Claude',
+                  shortCode: 'CL',
+                  available: true
+                }
+              ],
+              warningCodes: []
+            } as never
+          })
+        )
+      ).toEqual({ ready: false, providerIds: [] })
+    }
+  })
+
+  it('RED: cached projection is not live authority', () => {
+    expect(
+      configuredProviderSnapshotFromHostProjection(
+        hostState({
+          status: 'live',
+          projection: {
+            freshness: 'cached',
+            providers: [
+              {
+                providerId: 'codex',
+                displayProvider: 'Codex',
+                shortCode: 'CX',
+                available: true
+              }
+            ],
+            warningCodes: []
+          } as never
+        })
+      )
+    ).toEqual({ ready: false, providerIds: [] })
+  })
+
+  it('RED: provider_source_not_ready → not ready (empty is not a measured zero)', () => {
+    expect(
+      configuredProviderSnapshotFromHostProjection(
+        hostState({
+          status: 'live',
+          projection: {
+            freshness: 'live',
+            providers: [],
+            warningCodes: [HOST_WARNING_PROVIDER_SOURCE_NOT_READY]
+          } as never
+        })
+      )
+    ).toEqual({ ready: false, providerIds: [] })
+  })
+
+  it('genuine empty after ready → ready with empty providerIds', () => {
+    expect(
+      configuredProviderSnapshotFromHostProjection(
+        hostState({
+          status: 'live',
+          projection: {
+            freshness: 'live',
+            providers: [],
+            warningCodes: []
+          } as never
+        })
+      )
+    ).toEqual({ ready: true, providerIds: [] })
+  })
+
+  it('maps admitted Host rows to providerIds; wire available means configured', () => {
+    expect(
+      configuredProviderSnapshotFromHostProjection(
+        hostState({
+          status: 'live',
+          projection: {
+            freshness: 'live',
+            providers: [
+              {
+                providerId: 'claude',
+                displayProvider: 'Claude',
+                shortCode: 'CL',
+                available: true
+              },
+              {
+                providerId: 'codex',
+                displayProvider: 'Codex',
+                shortCode: 'CX',
+                available: false
+              },
+              {
+                providerId: 'claude',
+                displayProvider: 'Claude',
+                shortCode: 'CL',
+                available: true,
+                modelId: 'sonnet'
+              }
+            ],
+            warningCodes: []
+          } as never
+        })
+      )
+    ).toEqual({ ready: true, providerIds: ['claude'] })
+  })
+
+  it('collapses multi-model Host rows into modelsByProvider for AntiGravity', () => {
+    expect(
+      configuredProviderSnapshotFromHostProjection(
+        hostState({
+          status: 'live',
+          projection: {
+            freshness: 'live',
+            providers: [
+              {
+                providerId: 'antigravity',
+                displayProvider: 'AntiGravity',
+                shortCode: 'AG',
+                available: true,
+                modelId: 'gemini-3.5-pro',
+                modelLabel: 'Gemini 3.5 Pro'
+              },
+              {
+                providerId: 'antigravity',
+                displayProvider: 'AntiGravity',
+                shortCode: 'AG',
+                available: true,
+                modelId: 'gemini-flash',
+                modelLabel: 'Flash'
+              }
+            ],
+            warningCodes: []
+          } as never
+        })
+      )
+    ).toEqual({
+      ready: true,
+      providerIds: ['antigravity'],
+      modelsByProvider: {
+        antigravity: [
+          { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' },
+          { id: 'gemini-flash', label: 'Flash' }
+        ]
+      }
+    })
+  })
+
+  it('strips retired/unknown provider ids even if Host projected them', () => {
+    expect(
+      configuredProviderSnapshotFromHostProjection(
+        hostState({
+          status: 'live',
+          projection: {
+            freshness: 'live',
+            providers: [
+              {
+                providerId: 'gemini',
+                displayProvider: 'Gemini',
+                shortCode: 'GE',
+                available: true
+              },
+              {
+                providerId: 'cursor',
+                displayProvider: 'Cursor',
+                shortCode: 'CU',
+                available: true
+              }
+            ],
+            warningCodes: []
+          } as never
+        })
+      )
+    ).toEqual({ ready: true, providerIds: ['cursor'] })
   })
 })
