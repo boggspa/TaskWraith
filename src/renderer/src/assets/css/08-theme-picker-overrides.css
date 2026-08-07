@@ -4869,8 +4869,17 @@
  * replaces the dark-oriented translucent zebra with one quiet surface. */
 :is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
   .run-complete-card
-  .file-change-summary-item {
+  .file-change-summary-item,
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .run-complete-card
+  .run-complete-epic-row {
   background: color-mix(in srgb, var(--surface-1) 88%, var(--unified-soft-surface-bg));
+}
+
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .run-complete-card
+  .run-complete-epic-row {
+  border-top-color: var(--unified-soft-surface-border);
 }
 
 :is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])

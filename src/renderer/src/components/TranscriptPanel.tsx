@@ -46,6 +46,11 @@ import {
   resolveRunCompleteStatus,
   runCompleteProducedWork
 } from '../lib/runCompleteSummary'
+import type {
+  CloseoutCommit,
+  CloseoutParticipantTable
+} from '../lib/taskWraithCloseoutMessage'
+import { RunCompleteEpicStack } from './RunCompleteEpicStack'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import {
   getChatTranscriptStore,
@@ -2417,6 +2422,23 @@ export const TranscriptPanel = memo(
     }, [messageContextMenu, visibleMessages])
     const shouldShowRunCompleteNotice =
       Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
+    // Latest TaskWraith close-out carries tombstoned Participants/Commits for
+    // the Task-complete epic stack. The close-out bubble above keeps Worked-for
+    // + Foundation Models prose; the tables live here.
+    const runCompleteCloseoutTables = useMemo(() => {
+      for (let index = resolvedMessages.length - 1; index >= 0; index -= 1) {
+        const message = resolvedMessages[index]
+        if (message.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND) continue
+        return {
+          participantTable: (message.metadata.closeoutParticipantTable ||
+            null) as CloseoutParticipantTable | null,
+          commits: (Array.isArray(message.metadata.closeoutCommits)
+            ? message.metadata.closeoutCommits
+            : null) as CloseoutCommit[] | null
+        }
+      }
+      return { participantTable: null, commits: null }
+    }, [resolvedMessages])
     // The run-complete card's title is a dynamic status, not a fixed "Task
     // complete": blockers the orchestrator flagged for the round REPLACE the
     // title (and tint it) instead of contradicting it from an advisory banner
@@ -5349,7 +5371,15 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
-              {(!isGlobal || displayFileChangeSummaries.length > 0) && (
+              {(!isGlobal ||
+                displayFileChangeSummaries.length > 0 ||
+                Boolean(runCompleteCloseoutTables.participantTable?.rows?.length) ||
+                Boolean(runCompleteCloseoutTables.commits?.length)) && (
+              <RunCompleteEpicStack
+                participantTable={runCompleteCloseoutTables.participantTable}
+                commits={runCompleteCloseoutTables.commits}
+                fileChanges={
+                  (!isGlobal || displayFileChangeSummaries.length > 0) ? (
               <div className="file-change-summary-card">
                 <div className="file-change-summary-header">
                   <strong>File changes</strong>
@@ -5572,6 +5602,9 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
+                  ) : null
+                }
+              />
               )}
             </div>
           )}
