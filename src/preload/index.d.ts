@@ -648,6 +648,18 @@ declare global {
         | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
         | { ok: false; reason: 'missing-path'; path: string }
       >
+      repairStaleExternalPathGrants: (payload: { chatId: string }) => Promise<
+        | {
+            ok: true
+            repairedPaths: string[]
+            remainingGaps: Array<{
+              path: string
+              access: 'read' | 'write'
+              missingProviders: ProviderId[]
+            }>
+          }
+        | { ok: false; reason: 'no-chat' | 'no-provider' }
+      >
       revokeExternalPathGrants: (payload: {
         chatId: string
         grantIds: string[]

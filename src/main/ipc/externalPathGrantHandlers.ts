@@ -114,7 +114,7 @@ interface ExternalPathSelectionReceipt {
 
 const EXTERNAL_PATH_SELECTION_RECEIPT_TTL_MS = 5 * 60 * 1000
 
-function grantProvidersForChat(
+export function grantProvidersForChat(
   chat: ChatRecord,
   isDispatchProvider: ExternalPathGrantHandlersDeps['isExternalPathGrantDispatchProvider']
 ): ProviderId[] {
@@ -500,4 +500,63 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
     deps.assertSenderCanProbeExternalPath(event)
     return deps.probeExternalPath(absolutePath)
   })
+
+  /**
+   * Silent remint for secondary workspaces the user already consented to,
+   * rebound onto the chat's current primary workspace id. Used when the
+   * primary was removed/re-added and old grant rows still look signed but
+   * fail main's chat/workspace binding check. Paths without prior consent
+   * remain as gaps for the grant prompt — never fail-closed into a skip.
+   */
+  ipcMain.handle(
+    'external-path:repair-stale',
+    async (
+      event,
+      payload: { chatId?: string }
+    ): Promise<
+      | {
+          ok: true
+          repairedPaths: string[]
+          remainingGaps: Array<{
+            path: string
+            access: 'read' | 'write'
+            missingProviders: ProviderId[]
+          }>
+        }
+      | { ok: false; reason: 'no-chat' | 'no-provider' }
+    > => {
+      const chatId = deps.optionalString(payload?.chatId)
+      if (!chatId) return { ok: false, reason: 'no-chat' }
+      assertSafeChatId(chatId)
+      deps.assertSenderScope(event, { capability: 'external-grant', chatId })
+      const { repairStaleExternalPathGrantsForChat } = await import('../ExternalPathGrantRepair')
+      const result = await repairStaleExternalPathGrantsForChat(chatId, {
+        getChat: deps.getChat,
+        saveChat: deps.saveChat,
+        broadcastChatUpdated: deps.broadcastChatUpdated,
+        collectExternalPathGrantsFromMetadata: deps.collectExternalPathGrantsFromMetadata,
+        canonicalizeExternalPathGrantMetadata: deps.canonicalizeExternalPathGrantMetadata,
+        grantProvidersForChat: (chat) =>
+          grantProvidersForChat(chat, deps.isExternalPathGrantDispatchProvider),
+        issueExternalPathGrant: deps.issueExternalPathGrant,
+        verifyExternalPathGrantSignatureForGrant: deps.verifyExternalPathGrantSignatureForGrant,
+        realpath: deps.realpath,
+        stat: deps.stat,
+        primaryWorkspacePathForChat: (chat) => {
+          // Handlers don't own the workspace registry — resolve via path on the
+          // chat record when present; repair still remints using issueExternalPathGrant's
+          // canonical primary workspace id binding.
+          const path = typeof chat.workspacePath === 'string' ? chat.workspacePath.trim() : ''
+          return path || null
+        },
+        randomBytes: deps.randomBytes
+      })
+      if ('ok' in result && result.ok === false) return result
+      return {
+        ok: true,
+        repairedPaths: result.repairedPaths,
+        remainingGaps: result.remainingGaps
+      }
+    }
+  )
 }

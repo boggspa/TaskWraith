@@ -574,12 +574,29 @@ const api = {
     | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
     | { ok: false; reason: 'missing-path'; path: string }
   > => ipcRenderer.invoke('external-path:pick-and-persist', payload),
+  /**
+   * Remint secondary-workspace grants already consented on this chat onto the
+   * current primary workspace binding (all active providers). Remaining gaps
+   * still need the grant prompt — never silently skip a seat.
+   */
+  repairStaleExternalPathGrants: (payload: { chatId: string }): Promise<
+    | {
+        ok: true
+        repairedPaths: string[]
+        remainingGaps: Array<{
+          path: string
+          access: 'read' | 'write'
+          missingProviders: string[]
+        }>
+      }
+    | { ok: false; reason: 'no-chat' | 'no-provider' }
+  > => ipcRenderer.invoke('external-path:repair-stale', payload),
   revokeExternalPathGrants: (payload: {
     chatId: string
     grantIds: string[]
   }): Promise<
     | { ok: true; grants: unknown[]; revokedGrantIds: string[] }
-    | { ok: false; reason: 'no-chat' | 'no-grants' }
+    | { ok: false; reason: 'no-grants' | 'no-chat' }
   > => ipcRenderer.invoke('external-path:revoke', payload),
   /**
    * Slice 1 of the external-path-redesign arc. Renderer asks main to

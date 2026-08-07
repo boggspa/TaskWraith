@@ -491,6 +491,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'thread-message:send': ['object'],
   'external-path:pick-and-persist': ['object'],
   'external-path:revoke': ['object'],
+  'external-path:repair-stale': ['object'],
   'probe-external-path': ['nonEmptyString'],
   'list-workspace-files': ['workspacePath'],
   'list-workspace-files-for-editor': ['workspacePath', 'optionalObject'],
