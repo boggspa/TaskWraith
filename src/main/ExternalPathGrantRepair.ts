@@ -19,6 +19,7 @@ export type ExternalPathGrantRepairGap = {
 }
 
 export type ExternalPathGrantRepairResult = {
+  ok: true
   repairedPaths: string[]
   remainingGaps: ExternalPathGrantRepairGap[]
   chat: ChatRecord
@@ -223,6 +224,7 @@ export async function repairStaleExternalPathGrantsForChat(
   }
 
   return {
+    ok: true,
     repairedPaths,
     remainingGaps: finalGaps,
     chat: workingChat

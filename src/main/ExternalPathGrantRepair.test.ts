@@ -48,18 +48,17 @@ function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
 
 function grant(partial: Partial<ExternalPathGrant> & Pick<ExternalPathGrant, 'provider'>): ExternalPathGrant {
   return {
-    id: partial.id || `g-${partial.provider}`,
-    provider: partial.provider,
-    path: partial.path || '/extra',
+    id: `g-${partial.provider}`,
+    path: '/extra',
     kind: 'directory',
-    access: partial.access || 'write',
+    access: 'write',
     duration: 'thisThread',
     issuedBy: 'main',
     signature: 'a'.repeat(64),
     createdAt: '2026-08-07T00:00:00.000Z',
     bindingVersion: EXTERNAL_PATH_GRANT_BINDING_VERSION,
     chatId: 'chat-1',
-    workspaceId: partial.workspaceId || 'ws-old',
+    workspaceId: 'ws-old',
     ...partial
   }
 }
@@ -108,8 +107,7 @@ describe('repairStaleExternalPathGrantsForChat', () => {
       primaryWorkspacePathForChat: () => '/primary'
     })
 
-    expect('ok' in result && result.ok === false).toBe(false)
-    if ('ok' in result) throw new Error('expected repair result')
+    if (!result.ok) throw new Error('expected repair result')
     expect(result.repairedPaths).toEqual(['/extra'])
     expect(result.remainingGaps).toEqual([])
     expect(issued.map((entry) => entry.provider).sort()).toEqual(['codex', 'ollama'])
@@ -151,8 +149,7 @@ describe('repairStaleExternalPathGrantsForChat', () => {
       primaryWorkspacePathForChat: () => '/primary'
     })
 
-    expect('ok' in result && result.ok === false).toBe(false)
-    if ('ok' in result) throw new Error('expected repair result')
+    if (!result.ok) throw new Error('expected repair result')
     expect(result.repairedPaths).toEqual([])
     expect(result.remainingGaps).toEqual([
       {

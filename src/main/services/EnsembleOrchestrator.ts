@@ -122,7 +122,6 @@ import {
   formatDispatchFailureNote,
   formatYieldTargetUnreachableNote,
   PARTICIPANT_HEALTH_TAG,
-  participantNoteLabel,
   type DispatchFailureReason
 } from '../EnsembleErrors'
 import { collectExternalPathGrantsFromMetadata } from '../store/ExternalPathGrants'

@@ -551,7 +551,7 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
         },
         randomBytes: deps.randomBytes
       })
-      if ('ok' in result && result.ok === false) return result
+      if (!result.ok) return result
       return {
         ok: true,
         repairedPaths: result.repairedPaths,

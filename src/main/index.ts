@@ -52801,7 +52801,7 @@ if (isGeminiMcpBridgeProcess) {
           },
           randomBytes
         })
-        if ('ok' in result && result.ok === false) return false
+        if (!result.ok) return false
         return result.repairedPaths.length > 0
       },
       notifyExternalPathGrantRepairNeeded: ({ chatId, roundId, message }) => {
