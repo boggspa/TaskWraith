@@ -260,6 +260,7 @@ import {
 } from './lib/chatScope'
 import { resolvePaneWorkspace, resolvePaneWorkspacePath } from './lib/mainPaneWorkspaceHeader'
 import { resolveComposerFocusedWorkspace } from './lib/composerFocusedWorkspace'
+import { resolveRemoveWorkspaceFocusTeardown } from './lib/removeWorkspaceFocusTeardown'
 import { updatePathKeyedWorkspaceSnapshot } from './lib/multiviewWorkspacePresentation'
 import {
   SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY,
@@ -9346,11 +9347,32 @@ function App(): React.JSX.Element {
     await window.api.removeWorkspace(id)
     const wsList = await window.api.getWorkspaces()
     setWorkspaces(wsList)
-    if (currentWorkspace?.id === id) {
-      setCurrentWorkspace(null)
-      currentWorkspaceIdRef.current = null
-      currentWorkspacePathRef.current = null
-      clearWorkspaceTrust()
+    // App-global currentWorkspace can lag the open chat's primary after a
+    // thread switch — tear down chat vs global independently.
+    const chatWorkspaceId =
+      currentChatWorkspace?.id ||
+      currentChat?.workspaceId ||
+      null
+    const teardown = resolveRemoveWorkspaceFocusTeardown({
+      removedWorkspaceId: id,
+      currentWorkspaceId: currentWorkspace?.id,
+      currentChatWorkspaceId: chatWorkspaceId
+    })
+    if (teardown.clearAppGlobalWorkspace) {
+      if (teardown.resyncAppGlobalFromChat && currentChat) {
+        const next = wsList.find((workspace) => workspace.id === chatWorkspaceId) || null
+        setCurrentWorkspace(next)
+        currentWorkspaceIdRef.current = next?.id ?? null
+        currentWorkspacePathRef.current = next?.path ?? null
+        if (!next) clearWorkspaceTrust()
+      } else {
+        setCurrentWorkspace(null)
+        currentWorkspaceIdRef.current = null
+        currentWorkspacePathRef.current = null
+        clearWorkspaceTrust()
+      }
+    }
+    if (teardown.clearFocusedChat) {
       setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
       await refreshChatList()
