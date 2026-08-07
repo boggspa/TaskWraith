@@ -1500,6 +1500,104 @@ dispatcher.register("attachedWindow.capture") { params in
     return response
 }
 
+// Agent AppShots: one-shot capture by PID without SCContentSharingPicker.
+// Electron main must authorize ownership before calling; the daemon still
+// refuses protected host windows and requires a live process identity.
+dispatcher.register("attachedWindow.captureByPid") { params in
+    let dict = try requestDictionary(params, method: "attachedWindow.captureByPid")
+    guard let pid = dict["pid"] as? Int, pid > 0 else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "attachedWindow.captureByPid requires a positive pid"
+        )
+    }
+    let windowIDValue = dict["windowID"] as? Int
+    let windowID: UInt32? = {
+        guard let value = windowIDValue, value > 0 else { return nil }
+        return UInt32(value)
+    }()
+    let maxDimension = dict["maxDimensionPx"] as? Int ?? 1600
+    let includeOCR = dict["includeOCR"] as? Bool ?? false
+
+    var protectedOwners: ResolvedProtectedWindowOwners?
+    if let rawOwners = dict["protectedOwners"] {
+        do {
+            let data = try JSONSerialization.data(withJSONObject: rawOwners)
+            let decoded = try JSONDecoder().decode(ProtectedWindowOwners.self, from: data)
+            protectedOwners = try decoded.resolve()
+        } catch let error as AttachmentParameterError {
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.invalidParams,
+                message: error.localizedDescription
+            )
+        } catch {
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.invalidParams,
+                message: "protectedOwners must be { pids: number[], windowIDs?: number[] }"
+            )
+        }
+    }
+
+    let captured: (frame: CapturedWindowFrame, meta: AttachedWindowMeta, filter: SCContentFilter)
+    do {
+        captured = try runBlocking { @Sendable [pid, windowID, maxDimension, protectedOwners] in
+            try await AttachedWindowPidCapture.capture(
+                pid: pid,
+                windowID: windowID,
+                maxDimensionPx: maxDimension,
+                protectedOwners: protectedOwners
+            )
+        }
+    } catch let error as JSONRPCError {
+        throw error
+    } catch let error as AttachmentAuthorizationError {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidRequest,
+            message: error.localizedDescription
+        )
+    } catch let error as AttachmentParameterError {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: error.localizedDescription
+        )
+    } catch let error as AttachedWindowError {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.bridgeUnavailable,
+            message: error.localizedDescription
+        )
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.internalError,
+            message: error.localizedDescription
+        )
+    }
+
+    var response: [String: Any] = [
+        "ok": true,
+        "captureMode": "byPid",
+        "pid": pid,
+        "pngBase64": captured.frame.pngData.base64EncodedString(),
+        "byteLength": captured.frame.pngData.count,
+        "width": captured.frame.width,
+        "height": captured.frame.height,
+        "windowMeta": captured.meta.toJSONObject(),
+        "capturedAt": ISO8601DateFormatter().string(from: Date())
+    ]
+
+    if includeOCR {
+        do {
+            let ocr = try runBlocking { @Sendable [pngData = captured.frame.pngData] in
+                try await AttachedWindowOCR.recognize(pngData: pngData)
+            }
+            response["ocr"] = ocr.toJSONObject()
+        } catch {
+            response["ocrError"] = error.localizedDescription
+        }
+    }
+
+    return response
+}
+
 // attachedWindow.detach requires the exact live scope/generation and stops
 // Appwatch before returning. A stale call gets attachmentRevoked.
 dispatcher.register("attachedWindow.detach") { params in

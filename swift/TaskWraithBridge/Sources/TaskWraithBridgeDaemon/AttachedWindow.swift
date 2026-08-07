@@ -804,6 +804,8 @@ enum AttachedWindowError: LocalizedError {
     case noWindowSelected
     case protectedWindowSelected
     case windowGone
+    case noWindowForPid(Int)
+    case windowIdNotFound(Int)
     case pickerFailed(String)
     case pngEncodingFailed
 
@@ -817,6 +819,10 @@ enum AttachedWindowError: LocalizedError {
             return "The selected window belongs to the protected TaskWraith host."
         case .windowGone:
             return "Attached window is no longer available (likely closed)."
+        case .noWindowForPid(let pid):
+            return "No on-screen window found for pid \(pid)."
+        case .windowIdNotFound(let windowID):
+            return "Window ID \(windowID) is not owned by the requested process."
         case .pickerFailed(let reason):
             return "Window picker failed: \(reason)"
         case .pngEncodingFailed:
@@ -973,7 +979,7 @@ enum AttachedWindowMetaResolver {
         return try meta(from: window, identityQuality: .bestEffort)
     }
 
-    private static func meta(
+    static func meta(
         from window: SCWindow,
         identityQuality: AttachedWindowIdentityQuality
     ) throws -> AttachedWindowMeta {
@@ -1024,6 +1030,80 @@ enum AttachedWindowMetaResolver {
         // probably don't have the right window — better to surface as "gone"
         // than to silently describe the wrong one.
         return bestScore < 8 ? bestWindow : nil
+    }
+}
+
+// MARK: - PID capture (agent AppShots)
+
+/// Programmatic capture of windows owned by a TaskWraith-authorized PID.
+/// Requires Screen Recording TCC. Unlike Screen Watch attach, this path does
+/// not use `SCContentSharingPicker` — ownership is enforced by Electron main
+/// before the RPC is issued, and protected host identities are re-checked here.
+enum AttachedWindowPidCapture {
+    /// Pure selection helper (testable without ScreenCaptureKit capture).
+    static func selectWindow(
+        from windows: [SCWindow],
+        pid: Int,
+        windowID: UInt32?
+    ) throws -> SCWindow {
+        let owned = windows.filter { Int($0.owningApplication?.processID ?? 0) == pid }
+        guard !owned.isEmpty else {
+            throw AttachedWindowError.noWindowForPid(pid)
+        }
+        if let windowID {
+            guard let match = owned.first(where: { $0.windowID == windowID }) else {
+                throw AttachedWindowError.windowIdNotFound(Int(windowID))
+            }
+            return match
+        }
+        if owned.count == 1, let only = owned.first {
+            return only
+        }
+        // Largest on-screen area wins when a process owns multiple windows.
+        return owned.max { lhs, rhs in
+            let left = Double(lhs.frame.width) * Double(lhs.frame.height)
+            let right = Double(rhs.frame.width) * Double(rhs.frame.height)
+            return left < right
+        }!
+    }
+
+    static func capture(
+        pid: Int,
+        windowID: UInt32?,
+        maxDimensionPx: Int,
+        protectedOwners: ResolvedProtectedWindowOwners?
+    ) async throws -> (frame: CapturedWindowFrame, meta: AttachedWindowMeta, filter: SCContentFilter) {
+        guard pid > 0 else {
+            throw AttachmentParameterError.invalidScope("pid must be positive")
+        }
+        guard ProcessIdentityReceipt.resolve(pid: pid) != nil else {
+            throw AttachedWindowError.pickerFailed(
+                "target process identity could not be resolved for pid \(pid)"
+            )
+        }
+        if let protectedOwners, !protectedOwners.hasLiveExactProcessIdentities {
+            throw AttachmentParameterError.invalidProtectedOwners(
+                "a protected process identity no longer resolves exactly"
+            )
+        }
+
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
+        let window = try selectWindow(from: content.windows, pid: pid, windowID: windowID)
+        let meta = try AttachedWindowMetaResolver.meta(from: window, identityQuality: .exact)
+        if let protectedOwners, protectedOwners.matches(meta) {
+            throw AttachmentAuthorizationError.denied(
+                "target window belongs to the protected TaskWraith host"
+            )
+        }
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let frame = try await AttachedWindowCapture.captureWindow(
+            filter: filter,
+            maxDimensionPx: maxDimensionPx
+        )
+        return (frame: frame, meta: meta, filter: filter)
     }
 }
 
