@@ -142,6 +142,16 @@ describe('ollamaModelFamilyPromptLines', () => {
 })
 
 describe('ollamaLocalToolSystemPrompt', () => {
+  it('gives local models an explicit workspace-relative path contract', () => {
+    const prompt = ollamaLocalToolSystemPrompt('approved_edits', 'ministral-3:3b')
+
+    expect(prompt).toContain('tool paths are workspace-relative')
+    expect(prompt).toContain('Copy paths exactly from search/list results')
+    expect(prompt).toContain('do not prepend the absolute workspace path')
+  })
+})
+
+describe('ollamaLocalToolSystemPrompt', () => {
   it('includes family profile lines when a model id is provided', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
     expect(prompt).toContain('Model profile (Qwen 3.5 9B)')

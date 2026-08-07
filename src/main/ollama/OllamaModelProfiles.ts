@@ -407,6 +407,7 @@ export function ollamaLocalToolSystemPrompt(
   lines.push(
     'More TaskWraith tools exist beyond these. Use capability_search with a short task query to get the best exact schemas, then capability_invoke with the returned tool name and arguments. Legacy tool_help can still fetch one exact schema (or list names) with {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool or empty to list>"}}}, but hidden tools must be executed through capability_invoke.',
     'Paths must stay inside the active workspace.',
+    'Path contract: tool paths are workspace-relative. Copy paths exactly from search/list results; do not prepend the absolute workspace path. Use "." only when a directory or search tool explicitly needs the workspace root.',
     options.readOnly
       ? options.plan
         ? 'This run is PLAN-scoped: general file edits, shell, and publishing are unavailable. Listed visual/media instruments may pause for a user approval modal; request them only when they advance the plan.'
