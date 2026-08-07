@@ -1469,55 +1469,92 @@ function getBaseName(path: string): string {
   return path.split(/[/\\]/).filter(Boolean).pop() || path
 }
 
+/** Compact-group summary buckets — mirror the settled-stack one-liner voice. */
+type CompactLabelFamily = 'read' | 'write' | 'search' | 'shell' | 'task' | 'other'
+
+const COMPACT_LABEL_MAX_PARTS = 4
+
+function pluralizeCompact(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
 /**
- * 1.0.4-AS2b — extracted so the label-generation logic can be
- * unit-tested without instantiating the full
- * `ActivityCompactGroup` React component. Returns the header
- * string the group's button shows when collapsed.
- *
- * Pure read/search groups get the legacy descriptive phrasing
- * ("Read 5 files and searched 2 times"). Heterogeneous /
- * Ensemble-mode groups pick the dominant category and emit
- * category-specific phrasing ("Edited 3 files", "Ran 2
- * commands"), with a "+N more" suffix when other categories
- * are present. Groups with NO categorisable activities fall
- * back to "Used N tools" — slightly less opaque than the
- * pre-AS2b "N activities".
+ * Prefer the durable activity category; when it is missing/unknown, recover
+ * the same family the icon strip already uses (`toolNameToFamily`) so a
+ * shell+task group never collapses to a bare "Used N tools" while showing
+ * shell and task glyphs.
+ */
+function resolveCompactLabelFamily(activity: ToolActivity): CompactLabelFamily {
+  if (isSearchActivity(activity) || activity.category === 'search') return 'search'
+  if (activity.category === 'read') return 'read'
+  if (activity.category === 'write' || isWriteLikeToolName(activity.toolName || '')) return 'write'
+  if (activity.category === 'shell' || isShellActivity(activity)) return 'shell'
+  if (activity.category === 'task') return 'task'
+
+  const family = toolNameToFamily(activity.toolName)
+  if (!family) return 'other'
+  switch (family) {
+    case 'search':
+      return 'search'
+    case 'file':
+      return 'read'
+    case 'edit':
+    case 'patch':
+      return 'write'
+    case 'shell':
+    case 'process':
+    case 'launch':
+      return 'shell'
+    case 'task':
+    case 'plan':
+      return 'task'
+    default:
+      return 'other'
+  }
+}
+
+function compactLabelPart(family: CompactLabelFamily, count: number): string {
+  switch (family) {
+    case 'read':
+      return `Read ${pluralizeCompact(count, 'file')}`
+    case 'write':
+      return `Edited ${pluralizeCompact(count, 'file')}`
+    case 'search':
+      return count === 1 ? 'Searched once' : `Searched ×${count}`
+    case 'shell':
+      return `Ran ${pluralizeCompact(count, 'command')}`
+    case 'task':
+      return `Completed ${pluralizeCompact(count, 'task')}`
+    default:
+      return count === 1 ? 'Used 1 tool' : `Used ${count} tools`
+  }
+}
+
+function joinCompactLabelParts(parts: readonly string[]): string {
+  if (parts.length === 0) return 'Used 0 tools'
+  if (parts.length <= COMPACT_LABEL_MAX_PARTS) return parts.join(' · ')
+  const kept = parts.slice(0, COMPACT_LABEL_MAX_PARTS - 1)
+  const remainder = parts.length - kept.length
+  return `${kept.join(' · ')} · +${remainder} more`
+}
+
+/**
+ * Header string for a collapsed `ActivityCompactGroup`. Same-family groups
+ * stay single-phrase ("Read 3 files"). Mixed groups join family phrases with
+ * " · " in first-appearance order — the settled-stack one-liner voice —
+ * truncating past four segments with "+N more". Only truly unmapped tools
+ * fall back to "Used N tools".
  */
 export function buildCompactGroupLabel(activities: readonly ToolActivity[]): string {
-  const searchCount = activities.filter(isSearchActivity).length
-  const readCount = activities.filter((a) => a.category === 'read' && !isSearchActivity(a)).length
-  const writeCount = activities.filter((a) => a.category === 'write').length
-  const shellCount = activities.filter((a) => a.category === 'shell').length
-  const taskCount = activities.filter((a) => a.category === 'task').length
-  const otherCount = activities.length - searchCount - readCount
-
-  if (otherCount === 0) {
-    if (searchCount > 0 && readCount > 0) {
-      return `Read ${readCount} ${readCount === 1 ? 'file' : 'files'} and searched ${searchCount} ${searchCount === 1 ? 'time' : 'times'}`
-    }
-    if (searchCount > 0) {
-      return `Searched ${searchCount} ${searchCount === 1 ? 'time' : 'times'}`
-    }
-    return `Read ${readCount} ${readCount === 1 ? 'file' : 'files'}`
+  const order: CompactLabelFamily[] = []
+  const counts = new Map<CompactLabelFamily, number>()
+  for (const activity of activities) {
+    const family = resolveCompactLabelFamily(activity)
+    if (!counts.has(family)) order.push(family)
+    counts.set(family, (counts.get(family) || 0) + 1)
   }
-
-  const counts: Array<[number, string]> = [
-    [writeCount, `Edited ${writeCount} ${writeCount === 1 ? 'file' : 'files'}`],
-    [shellCount, `Ran ${shellCount} ${shellCount === 1 ? 'command' : 'commands'}`],
-    [readCount, `Read ${readCount} ${readCount === 1 ? 'file' : 'files'}`],
-    [searchCount, `Searched ${searchCount} ${searchCount === 1 ? 'time' : 'times'}`],
-    [taskCount, `Completed ${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}`]
-  ]
-  counts.sort((a, b) => b[0] - a[0])
-  const [dominantCount, dominantLabel] = counts[0]
-  if (dominantCount === 0) {
-    const total = activities.length
-    return `Used ${total} ${total === 1 ? 'tool' : 'tools'}`
-  }
-  const remainder = activities.length - dominantCount
-  if (remainder <= 0) return dominantLabel
-  return `${dominantLabel} (+${remainder} more)`
+  const parts = order.map((family) => compactLabelPart(family, counts.get(family) || 0))
+  return joinCompactLabelParts(parts)
 }
 
 type CompactGroupTargetKind = 'read-file' | 'write-file' | 'shell-command'

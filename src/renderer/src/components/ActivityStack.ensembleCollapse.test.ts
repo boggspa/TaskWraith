@@ -259,12 +259,15 @@ describe('buildTimelineItems — same-tool grouping (unified single + ensemble)'
 })
 
 /*
- * buildCompactGroupLabel is UNCHANGED — same-family groups resolve to
- * a single-family label ("Read 3 files", "Edited 2 files"), and the
- * function still defensively handles heterogeneous inputs.
+ * buildCompactGroupLabel — same-family groups stay single-family
+ * ("Read 3 files"); heterogeneous groups join family phrases with
+ * " · " in first-appearance order (collapsed-stack voice), not a
+ * dominant label with a vague "(+N more)". Unknown categories still
+ * resolve via toolNameToFamily so shell/task icons never sit beside
+ * a bare "Used N tools".
  */
 describe('buildCompactGroupLabel', () => {
-  it('keeps the descriptive read+search phrasing for pure read/search groups', () => {
+  it('keeps pure same-family labels', () => {
     expect(
       buildCompactGroupLabel([
         activity({ id: 'r1', category: 'read', toolName: 'read_file' }),
@@ -278,17 +281,10 @@ describe('buildCompactGroupLabel', () => {
         activity({ id: 's1', category: 'search', toolName: 'grep' }),
         activity({ id: 's2', category: 'search', toolName: 'grep' })
       ])
-    ).toBe('Searched 2 times')
-
-    expect(
-      buildCompactGroupLabel([
-        activity({ id: 'r1', category: 'read', toolName: 'read_file' }),
-        activity({ id: 's1', category: 'search', toolName: 'grep' })
-      ])
-    ).toBe('Read 1 file and searched 1 time')
+    ).toBe('Searched ×2')
   })
 
-  it('emits "Edited N files" for write-heavy heterogeneous groups', () => {
+  it('joins mixed families with · in first-appearance order', () => {
     expect(
       buildCompactGroupLabel([
         activity({ id: 'w1', category: 'write', toolName: 'edit' }),
@@ -296,10 +292,25 @@ describe('buildCompactGroupLabel', () => {
         activity({ id: 'w3', category: 'write', toolName: 'edit' }),
         activity({ id: 's1', category: 'shell', toolName: 'bash' })
       ])
-    ).toBe('Edited 3 files (+1 more)')
+    ).toBe('Edited 3 files · Ran 1 command')
+
+    expect(
+      buildCompactGroupLabel([
+        activity({ id: 't1', category: 'task', toolName: 'plan' }),
+        activity({ id: 't2', category: 'task', toolName: 'plan' }),
+        activity({ id: 'w1', category: 'write', toolName: 'edit' })
+      ])
+    ).toBe('Completed 2 tasks · Edited 1 file')
+
+    expect(
+      buildCompactGroupLabel([
+        activity({ id: 'w1', category: 'write', toolName: 'edit' }),
+        activity({ id: 's1', category: 'shell', toolName: 'bash' })
+      ])
+    ).toBe('Edited 1 file · Ran 1 command')
   })
 
-  it('emits "Ran N commands" for shell-heavy heterogeneous groups', () => {
+  it('emits "Ran N commands" for shell-only groups', () => {
     expect(
       buildCompactGroupLabel([
         activity({ id: 's1', category: 'shell', toolName: 'bash' }),
@@ -308,26 +319,18 @@ describe('buildCompactGroupLabel', () => {
     ).toBe('Ran 2 commands')
   })
 
-  it('emits "Completed N tasks" for task-heavy heterogeneous groups', () => {
+  it('resolves unknown categories via tool name so icons and label agree', () => {
     expect(
       buildCompactGroupLabel([
-        activity({ id: 't1', category: 'task', toolName: 'plan' }),
-        activity({ id: 't2', category: 'task', toolName: 'plan' }),
-        activity({ id: 'w1', category: 'write', toolName: 'edit' })
+        activity({ id: 's1', category: 'unknown', toolName: 'run_shell_command' }),
+        activity({ id: 's2', category: 'unknown', toolName: 'bash' }),
+        activity({ id: 't1', category: 'unknown', toolName: 'run_task' }),
+        activity({ id: 't2', category: 'unknown', toolName: 'list_active_runs' })
       ])
-    ).toBe('Completed 2 tasks (+1 more)')
+    ).toBe('Ran 2 commands · Completed 2 tasks')
   })
 
-  it('uses singular phrasing for count === 1', () => {
-    expect(
-      buildCompactGroupLabel([
-        activity({ id: 'w1', category: 'write', toolName: 'edit' }),
-        activity({ id: 's1', category: 'shell', toolName: 'bash' })
-      ])
-    ).toBe('Edited 1 file (+1 more)')
-  })
-
-  it('falls back to "Used N tools" when no activity has a categorisable kind', () => {
+  it('falls back to "Used N tools" only when nothing categorises', () => {
     expect(
       buildCompactGroupLabel([
         activity({ id: 'u1', category: 'unknown', toolName: 'x' }),
@@ -336,17 +339,16 @@ describe('buildCompactGroupLabel', () => {
     ).toBe('Used 2 tools')
   })
 
-  it('picks the highest-count category as the dominant label', () => {
+  it('truncates long family lists to one line with +N more', () => {
     expect(
       buildCompactGroupLabel([
         activity({ id: 'r1', category: 'read', toolName: 'read_file' }),
-        activity({ id: 'r2', category: 'read', toolName: 'read_file' }),
-        activity({ id: 'r3', category: 'read', toolName: 'read_file' }),
         activity({ id: 'w1', category: 'write', toolName: 'edit' }),
-        activity({ id: 'w2', category: 'write', toolName: 'edit' }),
-        activity({ id: 's1', category: 'shell', toolName: 'bash' })
+        activity({ id: 's1', category: 'shell', toolName: 'bash' }),
+        activity({ id: 'g1', category: 'search', toolName: 'grep' }),
+        activity({ id: 't1', category: 'task', toolName: 'run_task' })
       ])
-    ).toBe('Read 3 files (+3 more)')
+    ).toBe('Read 1 file · Edited 1 file · Ran 1 command · +2 more')
   })
 })
 
