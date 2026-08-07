@@ -366,6 +366,21 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'mesh-scene:import-user-package': ['nonEmptyString'],
   'mesh-scene:close-presentation': ['nonEmptyString', 'nonEmptyString'],
   'mesh-scene:delete': ['nonEmptyString', 'nonEmptyString'],
+  // Simulator Canvas host actions (simctl / Simulator.app). Main-window dock
+  // only; renderer passes udid / paths / bundle ids for the invoked action.
+  'simulator-canvas:status': [],
+  'simulator-canvas:open-app': [],
+  'simulator-canvas:list-devices': [],
+  'simulator-canvas:boot': ['nonEmptyString'],
+  'simulator-canvas:install': ['nonEmptyString', 'nonEmptyString'],
+  'simulator-canvas:launch': ['nonEmptyString', 'nonEmptyString'],
+  'simulator-canvas:terminate': ['nonEmptyString', 'optionalString'],
+  'simulator-canvas:screenshot': ['nonEmptyString'],
+  // Human bezel gestures — gated in SimulatorInteractionBridge; no silent control.
+  'simulator-canvas:interaction-status': ['nonEmptyString'],
+  'simulator-canvas:tap': ['object'],
+  'simulator-canvas:type': ['object'],
+  'simulator-canvas:scroll': ['object'],
   // Changelog sheet (update-pill feature): `changelog-snapshot` is a no-arg
   // read returning ProductChangelogSnapshot | null; `mark-changelog-seen`
   // persists the last-seen version. The handler coerces a missing/empty

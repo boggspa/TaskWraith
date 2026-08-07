@@ -1259,6 +1259,9 @@ import { registerMeshAssetProtocol, MESH_ASSET_PRIVILEGE } from './mesh/MeshAsse
 import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
 import { MeshSceneStore } from './mesh/MeshSceneStore'
 import { registerMeshSceneHandlers } from './ipc/meshSceneHandlers'
+import { registerSimulatorCanvasHandlers } from './ipc/simulatorCanvasHandlers'
+import { SimulatorHostService } from './simulator/SimulatorHostService'
+import { SimulatorInteractionBridge } from './simulator/SimulatorInteractionBridge'
 import {
   createLaunchToolExecutors,
   isLaunchMcpToolName,
@@ -4061,6 +4064,18 @@ const meshSceneService = new MeshSceneService({
   }
 })
 const meshToolExecutors = createMeshToolExecutors(meshSceneService)
+const simulatorHostService = new SimulatorHostService()
+const simulatorInteractionBridge = new SimulatorInteractionBridge({
+  getControlStatus: (chatId) => {
+    const status = nativeWindowCoordinatorRef?.statusForChat(chatId)
+    return {
+      // Lease presence only — never invent control. Human bezel gestures use
+      // the approved View & Control lease; agent canAdmitActions is separate.
+      canControl: Boolean(status?.control),
+      hasObservation: Boolean(status?.observation)
+    }
+  }
+})
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
   createDriver: (
@@ -5886,6 +5901,11 @@ registerMeshSceneHandlers(ipcMain, {
   },
   getRequestingWindow: (event) => BrowserWindow.fromWebContents(event.sender),
   showOpenDialog: (window, options) => dialog.showOpenDialog(window, options)
+})
+
+registerSimulatorCanvasHandlers(ipcMain, {
+  getHost: () => simulatorHostService,
+  getInteraction: () => simulatorInteractionBridge
 })
 
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.

@@ -344,6 +344,21 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'mesh-scene:close-presentation',
   'mesh-scene:delete',
 
+  // Simulator Canvas dock lives in the main chat window only; secondary
+  // renderers have no independent bezel surface for host simctl actions.
+  'simulator-canvas:status',
+  'simulator-canvas:open-app',
+  'simulator-canvas:list-devices',
+  'simulator-canvas:boot',
+  'simulator-canvas:install',
+  'simulator-canvas:launch',
+  'simulator-canvas:terminate',
+  'simulator-canvas:screenshot',
+  'simulator-canvas:interaction-status',
+  'simulator-canvas:tap',
+  'simulator-canvas:type',
+  'simulator-canvas:scroll',
+
   // Office suite documents live in the main window's right dock only; there
   // is no office popout surface, so secondary renderers have no claim on
   // these channels. The handlers additionally assert workspace-file scope.

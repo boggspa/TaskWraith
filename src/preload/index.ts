@@ -1282,6 +1282,35 @@ const api = {
     }
   },
 
+  // Simulator Canvas — main-owned simctl / Simulator.app host actions for the
+  // dock bezel. Renderer passes only udid / app path / bundle id; no MCP here.
+  simulatorCanvas: {
+    status: () => ipcRenderer.invoke('simulator-canvas:status'),
+    openApp: () => ipcRenderer.invoke('simulator-canvas:open-app'),
+    listDevices: () => ipcRenderer.invoke('simulator-canvas:list-devices'),
+    boot: (udid: string) => ipcRenderer.invoke('simulator-canvas:boot', udid),
+    install: (udid: string, appPath: string) =>
+      ipcRenderer.invoke('simulator-canvas:install', udid, appPath),
+    launch: (udid: string, bundleId: string) =>
+      ipcRenderer.invoke('simulator-canvas:launch', udid, bundleId),
+    terminate: (udid: string, bundleId?: string) =>
+      ipcRenderer.invoke('simulator-canvas:terminate', udid, bundleId),
+    screenshot: (udid: string) => ipcRenderer.invoke('simulator-canvas:screenshot', udid),
+    interactionStatus: (chatId: string) =>
+      ipcRenderer.invoke('simulator-canvas:interaction-status', chatId),
+    tap: (payload: { chatId: string; x: number; y: number }) =>
+      ipcRenderer.invoke('simulator-canvas:tap', payload),
+    type: (payload: { chatId: string; text: string }) =>
+      ipcRenderer.invoke('simulator-canvas:type', payload),
+    scroll: (payload: {
+      chatId: string
+      x: number
+      y: number
+      deltaX: number
+      deltaY: number
+    }) => ipcRenderer.invoke('simulator-canvas:scroll', payload)
+  },
+
   // QMOD (1.0.3) — `ask_user_question` MCP tool bridge. Main fires
   // `agent-question-requested` when an agent calls the tool; renderer
   // responds via `answer-agent-question` (with the user's pick) or

@@ -211,6 +211,16 @@ import type {
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
+  SimulatorCapabilityStatus,
+  SimulatorDeviceInfo,
+  SimulatorGestureResult,
+  SimulatorHostActionResult,
+  SimulatorInteractionStatus,
+  SimulatorScrollGesture,
+  SimulatorTapGesture,
+  SimulatorTypeGesture
+} from '../shared/simulatorCanvas'
+import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason
 } from '../main/services/GitSnapshotPublisher'
@@ -1269,6 +1279,25 @@ declare global {
         closePresentation: (chatId: string, sceneId: string) => Promise<unknown>
         deleteScene: (chatId: string, sceneId: string) => Promise<unknown>
         onEvent: (handler: (event: unknown) => void) => () => void
+      }
+      simulatorCanvas: {
+        status: () => Promise<{ ok: true; status: SimulatorCapabilityStatus }>
+        openApp: () => Promise<SimulatorHostActionResult>
+        listDevices: () => Promise<{
+          ok: boolean
+          error?: string
+          devices?: SimulatorDeviceInfo[]
+          status?: SimulatorCapabilityStatus
+        }>
+        boot: (udid: string) => Promise<SimulatorHostActionResult>
+        install: (udid: string, appPath: string) => Promise<SimulatorHostActionResult>
+        launch: (udid: string, bundleId: string) => Promise<SimulatorHostActionResult>
+        terminate: (udid: string, bundleId?: string) => Promise<SimulatorHostActionResult>
+        screenshot: (udid: string) => Promise<SimulatorHostActionResult>
+        interactionStatus: (chatId: string) => Promise<SimulatorInteractionStatus>
+        tap: (payload: SimulatorTapGesture) => Promise<SimulatorGestureResult>
+        type: (payload: SimulatorTypeGesture) => Promise<SimulatorGestureResult>
+        scroll: (payload: SimulatorScrollGesture) => Promise<SimulatorGestureResult>
       }
       onAgentQuestionRequested: (
         handler: (request: {
