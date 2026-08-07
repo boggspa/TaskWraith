@@ -228,9 +228,9 @@ describe('HostProductionBootstrap options validation', () => {
     // Mirrors the providers guard pin. approvals is OPTIONAL, but when present
     // the METHOD must satisfy the port — otherwise snapshot reads throw
     // mid-flight instead of failing closed to [].
-    expect(() =>
-      createHostProductionBootstrap(validOptions({ approvals: {} as never }))
-    ).toThrow('HostProductionBootstrap requires approvals.listApprovals to be a function')
+    expect(() => createHostProductionBootstrap(validOptions({ approvals: {} as never }))).toThrow(
+      'HostProductionBootstrap requires approvals.listApprovals to be a function'
+    )
   })
 
   it('accepts omitted approvals — optional port stays optional', () => {
@@ -255,6 +255,35 @@ describe('HostProductionBootstrap options validation', () => {
     })
     const families = await compositionInput.snapshotDonor()
     expect(families.approvals.map((row) => row.approvalId)).toEqual(['1700000000000-abc123'])
+  })
+
+  it('rejects a questions object missing listQuestions (Wave 5c Phase 3 guard)', () => {
+    expect(() => createHostProductionBootstrap(validOptions({ questions: {} as never }))).toThrow(
+      'HostProductionBootstrap requires questions.listQuestions to be a function'
+    )
+  })
+
+  it('accepts omitted questions — optional port stays optional', () => {
+    const result = createHostProductionBootstrap(validOptions())
+    expect(result).toBeDefined()
+  })
+
+  it('threads an injected questions port through to the snapshot donor', async () => {
+    const { compositionInput } = captureSupervisorInput({
+      questions: {
+        listQuestions: () => [
+          {
+            questionId: 'q-1700000000000-abc123',
+            threadId: 'chat-1',
+            status: 'open',
+            promptPreview: 'Which approach should we take?',
+            askedAt: Date.parse('2024-11-14T22:13:20.000Z')
+          }
+        ]
+      }
+    })
+    const families = await compositionInput.snapshotDonor()
+    expect(families.questions.map((row) => row.questionId)).toEqual(['q-1700000000000-abc123'])
   })
 
   it('rejects missing bridge', () => {

@@ -33,6 +33,7 @@ import type {
   HostApprovalProjection,
   HostHealthProjection,
   HostProviderModelProjection,
+  HostQuestionProjection,
   HostThreadProjection,
   HostUsageObservation,
   HostWorkspaceProjection
@@ -130,6 +131,23 @@ export interface HostProductionApprovalListPort {
   listApprovals(): HostApprovalProjection[]
 }
 
+/**
+ * Wave 5c Phase 3 — optional RemoteQuestionRegistry pending-question shadow
+ * port.
+ *
+ * The composition root adapts RemoteQuestionRegistry (or an equivalent)
+ * through HostProductionQuestionShadow so this module never imports
+ * registry/store symbols. When absent, the questions family is an honest
+ * empty array.
+ *
+ * FAIL-CLOSED: a throwing listQuestions must propagate. Catching it and
+ * painting [] would be a false empty — "there are no open questions" —
+ * when the source is actually unavailable.
+ */
+export interface HostProductionQuestionListPort {
+  listQuestions(): HostQuestionProjection[]
+}
+
 /* ------------------------------------------------------------------ */
 /*  Options                                                           */
 /* ------------------------------------------------------------------ */
@@ -151,6 +169,11 @@ export interface HostProductionSuppliersOptions {
    * When absent, approvals is an honest empty array (shadow not wired).
    */
   readonly approvals?: HostProductionApprovalListPort
+  /**
+   * Wave 5c Phase 3 — optional RemoteQuestionRegistry pending-question
+   * shadow port. When absent, questions is an honest empty array.
+   */
+  readonly questions?: HostProductionQuestionListPort
 }
 
 /* ------------------------------------------------------------------ */
@@ -303,6 +326,12 @@ export function createHostProductionSuppliers(
       ? options.approvals.listApprovals()
       : []
 
+    /* ---- questions (Wave 5c Phase 3 shadow port) ----
+     * Same fail-closed contract as approvals. Omitted port → honest empty. */
+    const questions: HostQuestionProjection[] = options.questions
+      ? options.questions.listQuestions()
+      : []
+
     return {
       health: HONEST_HEALTH,
       workspaces,
@@ -312,7 +341,7 @@ export function createHostProductionSuppliers(
       rounds: [],
       participants: [],
       providers,
-      questions: [],
+      questions,
       approvals,
       schedules: [],
       usage: HONEST_USAGE,

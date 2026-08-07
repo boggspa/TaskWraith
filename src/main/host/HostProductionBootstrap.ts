@@ -73,7 +73,8 @@ import {
   createHostProductionSuppliers,
   type HostProductionApprovalListPort,
   type HostProductionChatListPort,
-  type HostProductionProviderListPort
+  type HostProductionProviderListPort,
+  type HostProductionQuestionListPort
 } from './HostProductionSuppliers'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import type { HostSessionHostIdentity } from './HostSession'
@@ -212,6 +213,12 @@ export interface HostProductionBootstrapOptions {
    */
   readonly approvals?: HostProductionApprovalListPort
   /**
+   * Wave 5c Phase 3 — optional RemoteQuestionRegistry pending-question
+   * shadow port. Optional: when absent, questions is an honest empty array.
+   * The guard checks the METHOD (typeof listQuestions === 'function').
+   */
+  readonly questions?: HostProductionQuestionListPort
+  /**
    * Live Bridge action surface. The root passes its BridgeActionExecutor
    * singleton directly; this module builds the HostBridgeCommandExecutor
    * over it so the root never constructs a Host type.
@@ -315,6 +322,9 @@ export function createHostProductionBootstrap(
   if (options.approvals !== undefined && typeof options.approvals.listApprovals !== 'function') {
     throw new Error('HostProductionBootstrap requires approvals.listApprovals to be a function')
   }
+  if (options.questions !== undefined && typeof options.questions.listQuestions !== 'function') {
+    throw new Error('HostProductionBootstrap requires questions.listQuestions to be a function')
+  }
   if (
     !options.host ||
     typeof options.host.hostId !== 'string' ||
@@ -341,7 +351,8 @@ export function createHostProductionBootstrap(
   const snapshotDonor = createHostProductionSuppliers({
     chatList: options.chatList,
     ...(options.providers ? { providers: options.providers } : {}),
-    ...(options.approvals ? { approvals: options.approvals } : {})
+    ...(options.approvals ? { approvals: options.approvals } : {}),
+    ...(options.questions ? { questions: options.questions } : {})
   })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
 

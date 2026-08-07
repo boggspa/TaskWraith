@@ -17,7 +17,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { projectHostSnapshot } from './HostSnapshotProjector'
 import type {
   HostApprovalProjection,
-  HostProviderModelProjection
+  HostProviderModelProjection,
+  HostQuestionProjection
 } from '../../shared/hostProtocol'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
 import {
@@ -25,7 +26,8 @@ import {
   type HostProductionApprovalListPort,
   type HostProductionChatListEntry,
   type HostProductionChatListPort,
-  type HostProductionProviderListPort
+  type HostProductionProviderListPort,
+  type HostProductionQuestionListPort
 } from './HostProductionSuppliers'
 
 /* ------------------------------------------------------------------ */
@@ -220,6 +222,48 @@ describe('HostProductionSuppliers approvals shadow port (Wave 5c Phase 2)', () =
       }
     }
     const donor = createHostProductionSuppliers({ chatList: makePort([]), approvals })
+    await expect(donor()).rejects.toThrow('registry unavailable')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Questions shadow port (Wave 5c Phase 3)                           */
+/* ------------------------------------------------------------------ */
+
+function makeQuestionRow(overrides: Partial<HostQuestionProjection> = {}): HostQuestionProjection {
+  return {
+    questionId: 'q-1700000000000-abc123',
+    threadId: 'chat-1',
+    status: 'open',
+    promptPreview: 'Which approach should we take?',
+    askedAt: Date.parse('2024-11-14T22:13:20.000Z'),
+    ...overrides
+  }
+}
+
+describe('HostProductionSuppliers questions shadow port (Wave 5c Phase 3)', () => {
+  it('publishes port-supplied question rows into the family', async () => {
+    const questions: HostProductionQuestionListPort = {
+      listQuestions: vi.fn(() => [makeQuestionRow()])
+    }
+    const donor = createHostProductionSuppliers({ chatList: makePort([]), questions })
+    const families = await donor()
+    expect(families.questions).toEqual([makeQuestionRow()])
+  })
+
+  it('keeps the family empty when no questions port is injected', async () => {
+    const donor = createHostProductionSuppliers({ chatList: makePort([]) })
+    const families = await donor()
+    expect(families.questions).toEqual([])
+  })
+
+  it('fails closed when the questions port throws — never paints a false empty', async () => {
+    const questions: HostProductionQuestionListPort = {
+      listQuestions: () => {
+        throw new Error('registry unavailable')
+      }
+    }
+    const donor = createHostProductionSuppliers({ chatList: makePort([]), questions })
     await expect(donor()).rejects.toThrow('registry unavailable')
   })
 })
