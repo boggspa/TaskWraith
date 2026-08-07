@@ -24,6 +24,7 @@ tool-capable providers.
 | Image generation | Enable the tool and paste an OpenAI or xAI image API key. | Optional, off by default |
 | iOS Remote | Install the companion app, pair it with the Mac, optionally add Tailscale for off-LAN access. | Working beta / TestFlight phased |
 | Screen Watch | Grant macOS window/screen capture permission when attaching a window. | Optional advanced surface |
+| Simulator Canvas | Optional Xcode / Simulator.app (never auto-installed). | Optional advanced surface |
 | Discord Context | Bot token and guild IDs for read-only composer context. | Supported optional context attachment |
 | Creative app automation | Install Final Cut Pro, Logic Pro, or Blender and approve macOS Automation prompts. | Super experimental / WIP |
 | Custom external MCP servers | Add, import, validate, and export definitions in Settings -> Integrations -> MCP Servers. | Supported advanced surface |
@@ -190,6 +191,31 @@ Captured frames are tool inputs. They may be sent to the active provider as
 visual context, so avoid attaching windows that contain secrets, credentials,
 private messages, or customer data.
 
+## Simulator Canvas
+
+Simulator Canvas is a chat-owned Canvas dock surface for Apple's iOS Simulator.
+It is optional and never auto-installs Xcode or Simulator.app.
+
+Setup and usage:
+
+1. Install Xcode (and open it once so platforms install) if you want local
+   Simulator support. TaskWraith does not download or provision Xcode for you.
+2. In a chat, open the composer **Canvas** menu and choose **Open Simulator
+   Canvas**.
+3. Preview uses `simctl` screenshots of a booted device.
+4. Tap, type, and scroll need **Screen Watch** with **View & Control** on the
+   Simulator window — preview alone is not input control.
+
+Agents:
+
+- `simulator_status` is prompt-free (read-only capability / device inventory).
+- Mutating Simulator Canvas tools stay under the workspace **simulatorCanvas**
+  agentic-service policy (Ask / Allow / Deny), like other attended surfaces.
+
+Honest residual risk: attaching the Simulator window for View & Control is
+ordinary OS-window control (Screen Watch), not idb or XCUITest. Treat it like
+any other attached app window.
+
 ## Discord Context
 
 This surface is optional and should not be part of a first-run setup.
@@ -280,6 +306,7 @@ For cautious users, enable optional surfaces in this order:
 4. iOS Remote on the same LAN.
 5. Tailscale for off-LAN iOS Remote.
 6. Screen Watch on a non-sensitive window.
-7. Discord read-only context.
-8. Creative app automation and custom external MCP only after the core workflow
+7. Simulator Canvas after Xcode / Simulator.app is already installed (optional).
+8. Discord read-only context.
+9. Creative app automation and custom external MCP only after the core workflow
    is familiar.

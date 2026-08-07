@@ -21,6 +21,10 @@ do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
 - **User Fan-Out steer / retry.** Composer steer and participant Retry open or continue a User Fan-Out lane instead of rewriting the active round or spawning a fresh round.
 - **Transcript / close-out polish.** Task Complete epic nesting, per-seat working rows, stream-reveal and paint fencing, iPad transcript/composer/fan-out fixes, ACP transient prompt retry, and history-deletion / reap performance.
 
+### Simulator Canvas (source-ahead)
+
+- **Simulator Canvas dock.** Optional chat-owned iOS Simulator preview via Composer → Canvas → Open Simulator Canvas; `simctl` screenshots for the bezel, Screen Watch View & Control for tap/type/scroll, and mutating agent tools under the `simulatorCanvas` policy (see `ADVANCED_OPTIONAL_SETUP.md`).
+
 ### Remaining focus for 1.9.4 (not feature construction)
 
 - **Host Arc** — Wave 4 client cutover still in flight (`docs/HOST_ARC_STATUS.md`); Waves 5–6 not started.
