@@ -13,6 +13,7 @@ import {
   meshCanvasIssueMessage
 } from '../lib/meshCanvasAvailability'
 import { requestMeshCanvasOpen } from '../lib/meshCanvasLaunch'
+import { requestSimulatorCanvasOpen } from '../lib/simulatorCanvasLaunch'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 import { PillButton } from './PillButton'
 
@@ -69,7 +70,7 @@ export function CanvasComposerButton({
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busyMode, setBusyMode] = useState<'web' | 'sketch' | 'mesh' | null>(null)
+  const [busyMode, setBusyMode] = useState<'web' | 'sketch' | 'mesh' | 'simulator' | null>(null)
   const canOpenSketch = sketchBridgeAvailable()
 
   // Clear any stale error when the popover closes, so reopening starts fresh.
@@ -145,6 +146,23 @@ export function CanvasComposerButton({
       setOpen(false)
     } catch (error) {
       setError(meshCanvasIssueMessage(error, 'Mesh Canvas could not be opened.'))
+    } finally {
+      setBusyMode(null)
+    }
+  }
+
+  const handleOpenSimulator = async (): Promise<void> => {
+    setError(null)
+    if (!chatId) {
+      setError('Simulator Canvas requires an active chat.')
+      return
+    }
+    setBusyMode('simulator')
+    try {
+      requestSimulatorCanvasOpen(chatId)
+      setOpen(false)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Simulator Canvas could not be opened.')
     } finally {
       setBusyMode(null)
     }
@@ -240,6 +258,28 @@ export function CanvasComposerButton({
                   disabled={busyMode !== null || !chatId}
                 >
                   {busyMode === 'mesh' ? 'Opening Mesh Canvas…' : 'Open Mesh Canvas'}
+                </PillButton>
+              </div>
+              <div
+                style={{
+                  height: 1,
+                  background: 'var(--border-subtle, rgba(127,127,127,0.22))'
+                }}
+              />
+              <div style={CANVAS_SECTION_ROW}>
+                <div style={CANVAS_SECTION_TEXT}>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                    Simulator Canvas
+                  </div>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                    Preview and drive an iOS Simulator in this chat.
+                  </div>
+                </div>
+                <PillButton
+                  onClick={() => void handleOpenSimulator()}
+                  disabled={busyMode !== null || !chatId}
+                >
+                  {busyMode === 'simulator' ? 'Opening Simulator Canvas…' : 'Open Simulator Canvas'}
                 </PillButton>
               </div>
               <div

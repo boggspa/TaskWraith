@@ -714,6 +714,10 @@ import {
   subscribeMeshCanvasOpenRequests
 } from './lib/meshCanvasLaunch'
 import {
+  getPendingSimulatorCanvasOpenRequest,
+  subscribeSimulatorCanvasOpenRequests
+} from './lib/simulatorCanvasLaunch'
+import {
   readDockSurface,
   resolveDockSurfaceContext,
   writeDockSurface
@@ -25401,6 +25405,17 @@ function App(): React.JSX.Element {
     }
     openRequestedMeshCanvas()
     return subscribeMeshCanvasOpenRequests(openRequestedMeshCanvas)
+  }, [currentChat?.appChatId])
+  // Human composer request for Simulator Canvas — same dock focus as Mesh.
+  useEffect(() => {
+    const openRequestedSimulatorCanvas = (): void => {
+      const request = getPendingSimulatorCanvasOpenRequest()
+      if (!request || request.chatId !== currentChat?.appChatId) return
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    }
+    openRequestedSimulatorCanvas()
+    return subscribeSimulatorCanvasOpenRequests(openRequestedSimulatorCanvas)
   }, [currentChat?.appChatId])
   // Single toggle entry point for the glass-pill rim buttons. Opening goes
   // through the exclusive dock lifecycle (close siblings, open, select) so

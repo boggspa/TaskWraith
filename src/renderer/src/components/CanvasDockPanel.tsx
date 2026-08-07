@@ -22,7 +22,13 @@ import {
   getPendingMeshCanvasOpenRequest,
   subscribeMeshCanvasOpenRequests
 } from '../lib/meshCanvasLaunch'
+import {
+  consumeSimulatorCanvasOpenRequest,
+  getPendingSimulatorCanvasOpenRequest,
+  subscribeSimulatorCanvasOpenRequests
+} from '../lib/simulatorCanvasLaunch'
 import { MeshCanvasPanel, toMeshSceneSummary } from './MeshCanvasPanel'
+import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
 
 export type CanvasDockSessionKind = 'web' | 'sketch'
 
@@ -259,9 +265,40 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   const [busy, setBusy] = useState<'web' | 'sketch' | null>(null)
   const [showLauncher, setShowLauncher] = useState(false)
   const [showMesh, setShowMesh] = useState(false)
+  const [showSimulator, setShowSimulator] = useState(false)
   // Async completions race chat switches; compare-and-drop stale ones.
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
+
+  const openMeshSurface = useCallback((): void => {
+    setShowSimulator(false)
+    setShowMesh(true)
+    setShowLauncher(false)
+  }, [])
+
+  const openSimulatorSurface = useCallback((): void => {
+    setShowMesh(false)
+    setShowSimulator(true)
+    setShowLauncher(false)
+  }, [])
+
+  const toggleMeshSurface = useCallback((): void => {
+    setShowMesh((current) => {
+      const next = !current
+      if (next) setShowSimulator(false)
+      return next
+    })
+    setShowLauncher(false)
+  }, [])
+
+  const toggleSimulatorSurface = useCallback((): void => {
+    setShowSimulator((current) => {
+      const next = !current
+      if (next) setShowMesh(false)
+      return next
+    })
+    setShowLauncher(false)
+  }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
     const api = window.api?.canvas
@@ -296,6 +333,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     const api = window.api?.meshCanvas
     let cancelled = false
     setShowMesh(false)
+    setShowSimulator(false)
     if (!api) return () => {
       cancelled = true
     }
@@ -304,14 +342,14 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       .then((records) => {
         if (cancelled || chatIdRef.current !== chatId) return
         if (records.map(toMeshSceneSummary).some((scene) => scene?.presentedAt)) {
-          setShowMesh(true)
+          openMeshSurface()
         }
       })
       .catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [chatId])
+  }, [chatId, openMeshSurface])
 
   // The composer can explicitly open Mesh Canvas before any scene exists. Keep
   // that one-shot renderer request long enough for this dock to mount, then
@@ -321,7 +359,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     const showRequestedMesh = (): void => {
       const request = getPendingMeshCanvasOpenRequest()
       if (!request || request.chatId !== chatId) return
-      setShowMesh(true)
+      openMeshSurface()
       // Defer consumption by one task. React development Strict Mode runs
       // mount effects twice; consuming synchronously would make the second
       // pass reset `showMesh` to its normal default before the dock paints.
@@ -337,7 +375,28 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       unsubscribe()
       if (consumeTimer !== null) window.clearTimeout(consumeTimer)
     }
-  }, [chatId])
+  }, [chatId, openMeshSurface])
+
+  // Composer one-shot for Simulator Canvas — same mount/consume timing as Mesh.
+  useEffect(() => {
+    let consumeTimer: number | null = null
+    const showRequestedSimulator = (): void => {
+      const request = getPendingSimulatorCanvasOpenRequest()
+      if (!request || request.chatId !== chatId) return
+      openSimulatorSurface()
+      if (consumeTimer !== null) window.clearTimeout(consumeTimer)
+      consumeTimer = window.setTimeout(() => {
+        consumeTimer = null
+        consumeSimulatorCanvasOpenRequest(request.id)
+      }, 0)
+    }
+    showRequestedSimulator()
+    const unsubscribe = subscribeSimulatorCanvasOpenRequests(showRequestedSimulator)
+    return () => {
+      unsubscribe()
+      if (consumeTimer !== null) window.clearTimeout(consumeTimer)
+    }
+  }, [chatId, openSimulatorSurface])
 
   // Live refresh: every canvas action broadcasts an audit event carrying its
   // chatId — agent opens/closes/navigations show up without polling.
@@ -368,9 +427,9 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     if (!api?.onEvent) return
     return api.onEvent((event) => {
       const record = event as { chatId?: unknown; kind?: unknown } | null
-      if (record?.chatId === chatId && record.kind === 'scene.presented') setShowMesh(true)
+      if (record?.chatId === chatId && record.kind === 'scene.presented') openMeshSurface()
     })
-  }, [chatId])
+  }, [chatId, openMeshSurface])
 
   const runOpen = async (
     mode: 'web' | 'sketch',
@@ -482,11 +541,17 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     new Set(ownedSummaries.keys())
   )
   const launcherVisible = showLauncher || !sessions.length
+  const showingSpecialSurface = showMesh || showSimulator
+  const toolbarTitle = showSimulator
+    ? 'Simulator Canvas'
+    : showMesh
+      ? 'Mesh Canvas'
+      : 'Canvas'
 
   return (
     <div className="canvas-dock-panel" aria-label="Canvas panel">
       <div className="canvas-dock-toolbar">
-        {!showMesh && sessions.length ? (
+        {!showingSpecialSurface && sessions.length ? (
           <div className="canvas-dock-tabs" role="tablist" aria-label="Open canvases">
             {sessions.map((session) => {
               const summary = ownedSummaries.get(session.canvasId)
@@ -506,6 +571,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
                   title={summary?.url || label}
                   onClick={() => {
                     setShowLauncher(false)
+                    setShowMesh(false)
+                    setShowSimulator(false)
                     canvasDockSessionStore.activate(chatId, session.canvasId)
                   }}
                 >
@@ -515,21 +582,27 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
             })}
           </div>
         ) : (
-          <span className="canvas-dock-toolbar-title">{showMesh ? 'Mesh Canvas' : 'Canvas'}</span>
+          <span className="canvas-dock-toolbar-title">{toolbarTitle}</span>
         )}
         <button
           type="button"
           className={`canvas-dock-mesh${showMesh ? ' is-active' : ''}`}
-          onClick={() => {
-            setShowMesh((current) => !current)
-            setShowLauncher(false)
-          }}
+          onClick={toggleMeshSurface}
           aria-label="Show Mesh Canvas"
           title="Show Mesh Canvas"
         >
           3D
         </button>
-        {!showMesh && sessions.length > 0 && (
+        <button
+          type="button"
+          className={`canvas-dock-sim${showSimulator ? ' is-active' : ''}`}
+          onClick={toggleSimulatorSurface}
+          aria-label="Show Simulator Canvas"
+          title="Show Simulator Canvas"
+        >
+          Sim
+        </button>
+        {!showingSpecialSurface && sessions.length > 0 && (
           <button
             type="button"
             className={`canvas-dock-new${launcherVisible ? ' is-active' : ''}`}
@@ -542,7 +615,9 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
         )}
       </div>
 
-      {showMesh ? (
+      {showSimulator ? (
+        <SimulatorCanvasPanel chatId={chatId} />
+      ) : showMesh ? (
         <MeshCanvasPanel chatId={chatId} />
       ) : (
         <>
@@ -568,6 +643,20 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
               disabled={busy !== null}
             >
               Open sketch canvas
+            </button>
+          </div>
+          <div className="canvas-dock-launcher-divider" />
+          <div className="canvas-dock-launcher-group">
+            <div className="canvas-dock-launcher-title">Simulator Canvas</div>
+            <div className="canvas-dock-launcher-hint">
+              Preview and drive an iOS Simulator in this chat.
+            </div>
+            <button
+              type="button"
+              className="canvas-dock-launcher-sketch"
+              onClick={openSimulatorSurface}
+            >
+              Open Simulator Canvas
             </button>
           </div>
           {busy && <div className="canvas-dock-launcher-hint">Opening…</div>}
