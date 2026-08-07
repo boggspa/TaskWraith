@@ -441,6 +441,7 @@ import {
   verifyExternalPathGrantSignature,
   type ExternalPathGrantRunBindingContext
 } from './ExternalPathGrantBinding'
+import { chatGrantWorkspaceBindingFromChat } from '../shared/externalPathGrantBinding'
 import { resolveDaemonShouldRun } from './BridgeDaemonSettings'
 import { BridgeActionRouter, approvalModeFromPayload } from './BridgeActionRouter'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
@@ -25684,19 +25685,7 @@ function detectExternalPathForProviderApproval(input: {
     }))
   })
   if (!detection.needsPrompt || !detection.path || !detection.access) return undefined
-  const workspaceBinding = chat
-    ? {
-        workspaceScope: (chat.scope === 'global' ? 'global' : 'workspace') as
-          | 'global'
-          | 'workspace',
-        ...(chat.scope === 'global'
-          ? {}
-          : {
-              workspaceId: chat.workspaceId ?? null,
-              workspacePath: chat.workspacePath ?? null
-            })
-      }
-    : undefined
+  const workspaceBinding = chat ? chatGrantWorkspaceBindingFromChat(chat) : undefined
   return {
     provider: input.provider,
     path: detection.path,
@@ -35596,9 +35585,14 @@ async function executeGeminiMcpTool(
       (genericApprovalResolution.action === 'decline' ||
         genericApprovalResolution.action === 'declineExternalPath' ||
         genericApprovalResolution.action === 'cancel')
+    const staleExternalPathGrantBinding =
+      genericApprovalResolution?.decisionSource === 'system' &&
+      genericApprovalResolution.action === 'declineExternalPath'
     const deniedError = explicitlyDeclinedByUser
       ? `The user ${genericApprovalResolution?.action === 'cancel' ? 'cancelled' : 'declined'} the ${toolName} approval. Do not retry or request the same permission again.`
-      : networkBlockedTool
+      : staleExternalPathGrantBinding
+        ? `TaskWraith cancelled the ${toolName} approval because the chat workspace changed while the grant prompt was open. Re-request access from the current workspace if still needed.`
+        : networkBlockedTool
         ? networkAccessBlockedMessage(networkBlockedTool)
         : mediaToolDenied
           ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${

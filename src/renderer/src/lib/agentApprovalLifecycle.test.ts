@@ -8,6 +8,8 @@ describe('agent approval lifecycle UI', () => {
   it('keeps the exact-review card when main rejects or cannot persist the response', () => {
     expect(shouldDismissAgentApproval(false)).toBe(false)
     expect(shouldDismissAgentApproval(true)).toBe(true)
+    expect(shouldDismissAgentApproval({ ok: true })).toBe(true)
+    expect(shouldDismissAgentApproval({ ok: false })).toBe(false)
   })
 
   it('labels only native Kimi wire cancellation as a run cancellation', () => {

@@ -6,10 +6,6 @@ import {
 } from 'electron'
 import type { ChatRecord, ExternalPathGrant, ProviderId, WorkspaceRecord } from '../store/types'
 import { assertSafeChatId } from '../ChatPath'
-import {
-  chatGrantWorkspaceBindingFromChat,
-  sameChatGrantWorkspaceBinding
-} from '../../shared/externalPathGrantBinding'
 
 interface ExternalPathGrantDialogResult {
   canceled: boolean
@@ -137,7 +133,13 @@ export function grantProvidersForChat(
 }
 
 function sameGrantWorkspaceBinding(left: ChatRecord, right: ChatRecord): boolean {
-  return sameChatGrantWorkspaceBinding(chatGrantWorkspaceBindingFromChat(left), right)
+  // Keep raw === for chat↔chat mid-dialog cancel (pre-trim semantics).
+  // Detection↔chat Accept uses trimmed sameChatGrantWorkspaceBinding instead.
+  const leftScope = left.scope === 'global' ? 'global' : 'workspace'
+  const rightScope = right.scope === 'global' ? 'global' : 'workspace'
+  if (leftScope !== rightScope) return false
+  if (leftScope === 'global') return true
+  return left.workspaceId === right.workspaceId && left.workspacePath === right.workspacePath
 }
 
 function sameGrantProviderSet(left: readonly ProviderId[], right: readonly ProviderId[]): boolean {

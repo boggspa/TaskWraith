@@ -108,7 +108,7 @@ function createDeps(order: string[]) {
       }),
       resolve: vi.fn((requestId: string, action: string, options?: unknown) => {
         order.push('resolve')
-        return { resolved: true, requestId, action, options }
+        return true
       })
     },
     issueExternalPathGrant: vi.fn((grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>) => {
@@ -178,7 +178,6 @@ describe('registerApprovalResponseHandlers', () => {
       'getPendingExternalPathDetection',
       'getChat',
       'issueExternalPathGrant',
-      'getChat',
       'saveChat',
       'broadcastChatUpdated',
       'resolve'
@@ -200,7 +199,13 @@ describe('registerApprovalResponseHandlers', () => {
       'grantExternalPathRead',
       undefined
     )
-    expect(result).toEqual(expect.objectContaining({ resolved: true }))
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        resolvedAction: 'grantExternalPathRead',
+        decisionSource: 'user'
+      })
+    )
   })
 
   // (d2) grantExternalPathEdit → write access + directory kind from the stat probe.
@@ -257,14 +262,29 @@ describe('registerApprovalResponseHandlers', () => {
     )
     registerApprovalResponseHandlers(deps)
 
-    await handlerFor('respond-agent-approval')({}, 'req-rebind', 'grantExternalPathEdit')
+    const result = await handlerFor('respond-agent-approval')(
+      {},
+      'req-rebind',
+      'grantExternalPathEdit'
+    )
 
     expect(vi.mocked(deps.issueExternalPathGrant)).not.toHaveBeenCalled()
     expect(vi.mocked(deps.saveChat)).not.toHaveBeenCalled()
     expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
       'req-rebind',
       'declineExternalPath',
-      undefined
+      expect.objectContaining({
+        decisionSource: 'system',
+        extraMetadata: expect.objectContaining({ reason: 'stale-grant-binding' })
+      })
+    )
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        resolvedAction: 'declineExternalPath',
+        decisionSource: 'system',
+        reason: 'stale-grant-binding'
+      })
     )
     expect(order[order.length - 1]).toBe('resolve')
   })
@@ -287,7 +307,10 @@ describe('registerApprovalResponseHandlers', () => {
     expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
       'req-path-only',
       'declineExternalPath',
-      undefined
+      expect.objectContaining({
+        decisionSource: 'system',
+        extraMetadata: expect.objectContaining({ reason: 'stale-grant-binding' })
+      })
     )
   })
 
@@ -309,7 +332,10 @@ describe('registerApprovalResponseHandlers', () => {
     expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
       'req-legacy-stamp',
       'declineExternalPath',
-      undefined
+      expect.objectContaining({
+        decisionSource: 'system',
+        extraMetadata: expect.objectContaining({ reason: 'stale-grant-binding' })
+      })
     )
   })
 
@@ -326,7 +352,10 @@ describe('registerApprovalResponseHandlers', () => {
     expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
       'req-deleted',
       'declineExternalPath',
-      undefined
+      expect.objectContaining({
+        decisionSource: 'system',
+        extraMetadata: expect.objectContaining({ reason: 'stale-grant-binding' })
+      })
     )
   })
 
@@ -342,30 +371,10 @@ describe('registerApprovalResponseHandlers', () => {
     expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
       'req-scope-flip',
       'declineExternalPath',
-      undefined
-    )
-  })
-
-  it('declines when the chat rebinds after mint but before durable persist', async () => {
-    const order: string[] = []
-    const { deps } = createDeps(order)
-    let getChatCalls = 0
-    vi.mocked(deps.getChat).mockImplementation(() => {
-      order.push('getChat')
-      getChatCalls += 1
-      if (getChatCalls === 1) return createChat()
-      return createChat({ workspaceId: 'ws-2', workspacePath: '/ws-2' })
-    })
-    registerApprovalResponseHandlers(deps)
-
-    await handlerFor('respond-agent-approval')({}, 'req-post-mint', 'grantExternalPathEdit')
-
-    expect(vi.mocked(deps.issueExternalPathGrant)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(deps.saveChat)).not.toHaveBeenCalled()
-    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
-      'req-post-mint',
-      'declineExternalPath',
-      undefined
+      expect.objectContaining({
+        decisionSource: 'system',
+        extraMetadata: expect.objectContaining({ reason: 'stale-grant-binding' })
+      })
     )
   })
 
@@ -420,7 +429,13 @@ describe('registerApprovalResponseHandlers', () => {
       'grantExternalPathEdit',
       undefined
     )
-    expect(result).toEqual(expect.objectContaining({ resolved: true }))
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        resolvedAction: 'grantExternalPathEdit',
+        decisionSource: 'user'
+      })
+    )
   })
 
   // (d6) a non-grant action never touches the grant path — resolve only, and the
@@ -446,6 +461,7 @@ describe('registerApprovalResponseHandlers', () => {
 
     await handlerFor('respond-agent-approval')({}, 'req-7', 'decline', '  keep this  ')
     expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenLastCalledWith('req-7', 'decline', {
+      decisionSource: 'user',
       extraMetadata: { intentNote: 'keep this' }
     })
 

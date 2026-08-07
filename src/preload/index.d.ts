@@ -985,7 +985,16 @@ declare global {
         requestId: string,
         action: AgentApprovalAction,
         intentNote?: string
-      ) => Promise<boolean>
+      ) => Promise<
+        | boolean
+        | {
+            ok: boolean
+            resolvedAction: AgentApprovalAction
+            decisionSource: 'user' | 'system'
+            reason?: string
+            message?: string
+          }
+      >
       writeGeminiInput: (data: string) => Promise<boolean>
       getDiff: (
         workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }

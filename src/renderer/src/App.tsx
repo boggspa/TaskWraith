@@ -19428,7 +19428,15 @@ function App(): React.JSX.Element {
     const noteForDecision = (intentNoteOverride ?? intentNote).trim() || undefined
     const usesIntentNoteOverride = intentNoteOverride !== undefined
     const pendingRoute = findPendingApprovalRoute(requestId)
-    let responseAccepted = false
+    let responseAccepted:
+      | boolean
+      | {
+          ok: boolean
+          resolvedAction?: AgentApprovalAction
+          decisionSource?: 'user' | 'system'
+          reason?: string
+          message?: string
+        } = false
     try {
       responseAccepted = await window.api.respondAgentApproval(
         requestId,
@@ -19446,11 +19454,24 @@ function App(): React.JSX.Element {
         ])
         return
       }
+      const remapped =
+        responseAccepted &&
+        typeof responseAccepted === 'object' &&
+        responseAccepted.reason === 'stale-grant-binding'
+          ? responseAccepted
+          : null
       setRawLogs((prev) => [
         ...prev,
         {
-          type: 'info',
-          content: `${getProviderLabel(pendingAgentApproval?.provider || currentProvider)} approval response sent: ${action}`
+          type: remapped ? 'stderr' : 'info',
+          content: remapped
+            ? remapped.message ||
+              'Grant cancelled: the chat workspace changed while the prompt was open. Re-approve from the current workspace if still needed.'
+            : `${getProviderLabel(pendingAgentApproval?.provider || currentProvider)} approval response sent: ${
+                typeof responseAccepted === 'object' && responseAccepted.resolvedAction
+                  ? responseAccepted.resolvedAction
+                  : action
+              }`
         }
       ])
       if (action === 'acceptForWorkspace') {

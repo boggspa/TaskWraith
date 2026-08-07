@@ -7,7 +7,11 @@ import {
   canonicalizeExternalPathGrantMetadata,
   collectExternalPathGrantsFromMetadata
 } from '../store/ExternalPathGrants'
-import { sameChatGrantWorkspaceBinding } from '../../shared/externalPathGrantBinding'
+import {
+  sameChatGrantWorkspaceBinding,
+  STALE_EXTERNAL_PATH_GRANT_BINDING_MESSAGE,
+  STALE_EXTERNAL_PATH_GRANT_BINDING_REASON
+} from '../../shared/externalPathGrantBinding'
 
 /**
  * approvalResponseHandlers — M3-3d approval-cluster extraction (per
@@ -24,9 +28,8 @@ import { sameChatGrantWorkspaceBinding } from '../../shared/externalPathGrantBin
  *
  * SECURITY-PRESERVING (co-move-FORBIDDEN ordering, design-m3-3-spec invariant #5):
  * for a grant action, the sequence
- *   fs.stat (kind probe) → issueExternalPathGrant (secret-bound signature)
- *   → getChat → canonicalize+collect grant metadata → saveChat (PERSIST)
- *   → broadcastChatUpdated (BROADCAST)
+ *   fs.stat (kind probe) → binding check → issueExternalPathGrant
+ *   → saveChat (PERSIST) → broadcastChatUpdated (BROADCAST)
  * runs verbatim INSIDE the outer try/catch, and `resolve` runs LAST, OUTSIDE the
  * try — so it ALWAYS fires (partial-failure safety) but only AFTER the grant is
  * durably persisted. A reorder that let `resolve` fire before persist is a
@@ -40,6 +43,15 @@ import { sameChatGrantWorkspaceBinding } from '../../shared/externalPathGrantBin
  * non-null. The registrar structurally cannot run pre-construction, so it can
  * never hit the stale-null bug the module-scope bundles risked.
  */
+
+export type RespondAgentApprovalResult = {
+  ok: boolean
+  resolvedAction: AgentApprovalAction
+  decisionSource: 'user' | 'system'
+  reason?: typeof STALE_EXTERNAL_PATH_GRANT_BINDING_REASON
+  message?: string
+}
+
 export interface ApprovalResponseHandlerDeps {
   approvalService: Pick<ApprovalService, 'getPendingExternalPathDetection' | 'resolve'>
   assertSenderCanRespond: (event: IpcMainInvokeEvent, requestId: string) => void
@@ -54,7 +66,12 @@ export interface ApprovalResponseHandlerDeps {
 export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDeps): void {
   ipcMain.handle(
     'respond-agent-approval',
-    async (event, requestId: string, action: AgentApprovalAction, intentNote?: string) => {
+    async (
+      event,
+      requestId: string,
+      action: AgentApprovalAction,
+      intentNote?: string
+    ): Promise<RespondAgentApprovalResult> => {
       deps.assertSenderCanRespond(event, requestId)
       // Order-4 — optional one-line "why" note captured in the
       // approval card. Trim + cap defensively (the renderer already
@@ -63,10 +80,8 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
       // off the metadata entirely so we never persist a blank note.
       const trimmedIntentNote =
         typeof intentNote === 'string' ? intentNote.trim().slice(0, 280) : ''
-      const resolveOptions = trimmedIntentNote
-        ? { extraMetadata: { intentNote: trimmedIntentNote } }
-        : undefined
       let actionToResolve = action
+      let staleGrantBinding = false
       // Slice 5 v2 of the external-path-redesign arc. When the user
       // clicks "Grant read access" / "Grant edit access" in an
       // external-path approval modal, peek at the pending approval's stashed
@@ -95,14 +110,17 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
             }
             // Re-read the chat after the await (and vs the stamped binding from
             // modal open). If the primary moved, consent no longer describes the
-            // target — fail closed like pick-and-persist, decline the action,
-            // and do not mint onto the new primary.
+            // target — fail closed like pick-and-persist. Cancel as a system
+            // decision so the tool is not told the user declined.
             const chatAtAccept = deps.getChat(detection.appChatId)
             if (!chatAtAccept || !sameChatGrantWorkspaceBinding(detection, chatAtAccept)) {
               actionToResolve = 'declineExternalPath'
+              staleGrantBinding = true
             } else {
               const grantAccess: 'read' | 'write' =
                 action === 'grantExternalPathEdit' ? 'write' : 'read'
+              // Mirror pick-and-persist: mint then persist the same chat
+              // snapshot (no await between them).
               const grant = deps.issueExternalPathGrant({
                 id: `runtime-${Date.now()}-${randomBytes(4).toString('hex')}`,
                 provider: detection.provider,
@@ -115,30 +133,49 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
                 securityScopedBookmark: undefined,
                 createdAt: new Date().toISOString()
               })
-              const chat = deps.getChat(detection.appChatId)
-              if (chat && sameChatGrantWorkspaceBinding(detection, chat)) {
-                const updatedChat = {
-                  ...chat,
-                  providerMetadata: canonicalizeExternalPathGrantMetadata(chat.providerMetadata, [
-                    ...collectExternalPathGrantsFromMetadata(chat.providerMetadata),
-                    grant
-                  ]),
-                  updatedAt: Date.now()
-                }
-                deps.saveChat(updatedChat)
-                deps.broadcastChatUpdated(updatedChat)
-              } else {
-                // Minted against the consented primary, but the chat moved
-                // before durable persist — do not leave Accept as a grant.
-                actionToResolve = 'declineExternalPath'
+              const updatedChat = {
+                ...chatAtAccept,
+                providerMetadata: canonicalizeExternalPathGrantMetadata(
+                  chatAtAccept.providerMetadata,
+                  [...collectExternalPathGrantsFromMetadata(chatAtAccept.providerMetadata), grant]
+                ),
+                updatedAt: Date.now()
               }
+              deps.saveChat(updatedChat)
+              deps.broadcastChatUpdated(updatedChat)
             }
           } catch (err) {
             console.warn('[ExternalPathGrant] runtime grant persistence failed', err)
           }
         }
       }
-      return deps.approvalService.resolve(requestId, actionToResolve, resolveOptions)
+
+      const decisionSource: 'user' | 'system' = staleGrantBinding ? 'system' : 'user'
+      const extraMetadata: Record<string, unknown> = {}
+      if (trimmedIntentNote) extraMetadata.intentNote = trimmedIntentNote
+      if (staleGrantBinding) {
+        extraMetadata.reason = STALE_EXTERNAL_PATH_GRANT_BINDING_REASON
+        extraMetadata.message = STALE_EXTERNAL_PATH_GRANT_BINDING_MESSAGE
+      }
+      const resolveOptions =
+        Object.keys(extraMetadata).length > 0 || decisionSource !== 'user'
+          ? { decisionSource, extraMetadata }
+          : undefined
+
+      const ok = Boolean(
+        await deps.approvalService.resolve(requestId, actionToResolve, resolveOptions)
+      )
+      return {
+        ok,
+        resolvedAction: actionToResolve,
+        decisionSource,
+        ...(staleGrantBinding
+          ? {
+              reason: STALE_EXTERNAL_PATH_GRANT_BINDING_REASON,
+              message: STALE_EXTERNAL_PATH_GRANT_BINDING_MESSAGE
+            }
+          : {})
+      }
     }
   )
 }

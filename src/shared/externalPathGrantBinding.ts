@@ -8,6 +8,12 @@
 
 export const EXTERNAL_PATH_GRANT_BINDING_VERSION = 2 as const
 
+/** Ledger / IPC reason when Accept is cancelled because the chat primary moved. */
+export const STALE_EXTERNAL_PATH_GRANT_BINDING_REASON = 'stale-grant-binding' as const
+
+export const STALE_EXTERNAL_PATH_GRANT_BINDING_MESSAGE =
+  'The chat workspace changed while this grant prompt was open. TaskWraith cancelled the grant; re-approve from the current workspace if still needed.'
+
 type ExternalPathGrantBindingShape = {
   bindingVersion?: unknown
   issuedBy?: unknown
@@ -77,6 +83,9 @@ export function chatGrantWorkspaceBindingFromChat(chat: {
  * True when a pending consent still describes the chat's current primary.
  * Missing stamped binding fails closed — Accept must not remint onto a
  * rebound primary the way pick-and-persist cancels mid-dialog.
+ *
+ * Id/path comparison trims whitespace so detection stamps and store reads
+ * align. Chat↔chat pick-and-persist keeps raw `===` in its local wrapper.
  */
 export function sameChatGrantWorkspaceBinding(
   stamped:
