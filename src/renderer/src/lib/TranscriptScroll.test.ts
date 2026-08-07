@@ -2,12 +2,15 @@ import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   advanceExternalRestoreLifecycle,
   DOWNWARD_INTENT_WINDOW_MS,
+  USER_SCROLL_GESTURE_WINDOW_MS,
   STICK_ENGAGE_PX,
   STICK_REENGAGE_DOWNWARD_PX,
   STICK_DISENGAGE_PX,
   PROGRAMMATIC_SCROLL_EPSILON_PX,
   captureChatScrollState,
   countJumpToLatestCountableMessages,
+  decidePhase1AnchorCorrection,
+  shouldRearmPhase1DeferOnSkip,
   expectedBottomScrollTop,
   hasExplicitTranscriptScrollAwayIntent,
   hasRecentTranscriptDownwardIntent,
@@ -15,6 +18,7 @@ import {
   isExpectedProgrammaticScroll,
   isJumpToLatestCountableMessage,
   isTranscriptScrollbarPointer,
+  isTranscriptUserScrollGestureLive,
   normalizeChatScrollState,
   restoreChatScrollAnchor,
   restoreChatScrollState,
@@ -340,6 +344,147 @@ describe('TranscriptScroll', () => {
 
       expect(scroller.scrollTop).toBe(77)
       expect(callbacks.size).toBe(0)
+    })
+  })
+
+  describe('isTranscriptUserScrollGestureLive', () => {
+    // Cut 2a: short settle window for "gesture currently live" — NOT the
+    // 400ms downward re-engage voucher, and not sticky scroll-away ownership.
+    it('is live while the scrollbar pointer is held', () => {
+      expect(
+        isTranscriptUserScrollGestureLive({
+          lastUserScrollAt: 0,
+          scrollbarPointerActive: true,
+          now: 10_000
+        })
+      ).toBe(true)
+    })
+
+    it('is live within the dedicated user-scroll gesture window', () => {
+      const lastUserScrollAt = 10_000
+      expect(
+        isTranscriptUserScrollGestureLive({
+          lastUserScrollAt,
+          scrollbarPointerActive: false,
+          now: lastUserScrollAt + USER_SCROLL_GESTURE_WINDOW_MS
+        })
+      ).toBe(true)
+      expect(
+        isTranscriptUserScrollGestureLive({
+          lastUserScrollAt,
+          scrollbarPointerActive: false,
+          now: lastUserScrollAt + USER_SCROLL_GESTURE_WINDOW_MS + 1
+        })
+      ).toBe(false)
+    })
+
+    it('rejects zero / non-finite lastUserScrollAt when the pointer is idle', () => {
+      expect(
+        isTranscriptUserScrollGestureLive({
+          lastUserScrollAt: 0,
+          scrollbarPointerActive: false,
+          now: 10_000
+        })
+      ).toBe(false)
+      expect(
+        isTranscriptUserScrollGestureLive({
+          lastUserScrollAt: Number.NaN,
+          scrollbarPointerActive: false,
+          now: 10_000
+        })
+      ).toBe(false)
+    })
+
+    it('honours an explicit windowMs override', () => {
+      expect(
+        isTranscriptUserScrollGestureLive({
+          lastUserScrollAt: 1000,
+          scrollbarPointerActive: false,
+          now: 1080,
+          windowMs: 50
+        })
+      ).toBe(false)
+      expect(
+        isTranscriptUserScrollGestureLive({
+          lastUserScrollAt: 1000,
+          scrollbarPointerActive: false,
+          now: 1040,
+          windowMs: 50
+        })
+      ).toBe(true)
+    })
+
+    it('keeps the gesture window well below the downward-intent voucher', () => {
+      expect(USER_SCROLL_GESTURE_WINDOW_MS).toBeGreaterThanOrEqual(100)
+      expect(USER_SCROLL_GESTURE_WINDOW_MS).toBeLessThanOrEqual(150)
+      expect(USER_SCROLL_GESTURE_WINDOW_MS).toBeLessThan(DOWNWARD_INTENT_WINDOW_MS)
+    })
+  })
+
+  describe('decidePhase1AnchorCorrection', () => {
+    // Cut 2a: Phase-1 absolute restore — skip hard gates, defer mid-gesture, else apply.
+    const ready = {
+      skipNext: false,
+      measureConverged: true,
+      atBottom: false,
+      hasAnchor: true,
+      absDeltaPx: 12,
+      gestureLive: false
+    }
+
+    it('skips when skipNext / !converged / atBottom / !anchor / delta<=eps', () => {
+      expect(decidePhase1AnchorCorrection({ ...ready, skipNext: true })).toBe('skip')
+      expect(decidePhase1AnchorCorrection({ ...ready, measureConverged: false })).toBe('skip')
+      expect(decidePhase1AnchorCorrection({ ...ready, atBottom: true })).toBe('skip')
+      expect(decidePhase1AnchorCorrection({ ...ready, hasAnchor: false })).toBe('skip')
+      expect(decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 0.5 })).toBe('skip')
+      expect(decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 0 })).toBe('skip')
+    })
+
+    it('defers when hard gates pass but a user scroll gesture is live', () => {
+      expect(decidePhase1AnchorCorrection({ ...ready, gestureLive: true })).toBe('defer')
+    })
+
+    it('applies when converged, anchored, away from bottom, and gesture settled', () => {
+      expect(decidePhase1AnchorCorrection(ready)).toBe('apply')
+    })
+
+    it('prefers skip over defer when a hard gate fails during a live gesture', () => {
+      expect(
+        decidePhase1AnchorCorrection({ ...ready, atBottom: true, gestureLive: true })
+      ).toBe('skip')
+      expect(
+        decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 0.25, gestureLive: true })
+      ).toBe('skip')
+    })
+  })
+
+  describe('shouldRearmPhase1DeferOnSkip', () => {
+    // Cut 2a P1: a deferred restore must survive soft layout skips (!converged).
+    // Hard skips drop the pending defer so a settle timer cannot revive a
+    // restore that is no longer valid (bottom / no anchor / skipNext).
+    const pendingSoft = {
+      deferredPending: true,
+      skipNext: false,
+      atBottom: false,
+      hasAnchor: true,
+      measureConverged: false
+    }
+
+    it('re-arms only for a pending defer skipped solely because measure has not converged', () => {
+      expect(shouldRearmPhase1DeferOnSkip(pendingSoft)).toBe(true)
+      expect(
+        shouldRearmPhase1DeferOnSkip({ ...pendingSoft, measureConverged: true })
+      ).toBe(false)
+    })
+
+    it('does not re-arm hard skips or when nothing was deferred', () => {
+      expect(
+        shouldRearmPhase1DeferOnSkip({ ...pendingSoft, deferredPending: false })
+      ).toBe(false)
+      expect(shouldRearmPhase1DeferOnSkip({ ...pendingSoft, skipNext: true })).toBe(false)
+      expect(shouldRearmPhase1DeferOnSkip({ ...pendingSoft, atBottom: true })).toBe(false)
+      expect(shouldRearmPhase1DeferOnSkip({ ...pendingSoft, hasAnchor: false })).toBe(false)
     })
   })
 

@@ -86,6 +86,16 @@ export const STICK_REENGAGE_DOWNWARD_PX = 48
 export const DOWNWARD_INTENT_WINDOW_MS = 400
 
 /**
+ * How long a verified user scroll gesture (any direction) stays "live" for
+ * Phase-1 anchor-correction deferral. Short enough that a stop settles in
+ * about one frame of inertia, long enough to cover wheel/touch momentum
+ * ticks. Deliberately narrower than {@link DOWNWARD_INTENT_WINDOW_MS} — that
+ * voucher arms follow re-engage; this one only pauses absolute restore mid-
+ * fling so it does not fight the reader.
+ */
+export const USER_SCROLL_GESTURE_WINDOW_MS = 120
+
+/**
  * Width of the pointer hit strip used for overlay scrollbars. macOS overlay
  * scrollbars do not consume layout width (`offsetWidth - clientWidth === 0`),
  * so the native gutter alone cannot identify a thumb drag. Pointer events that
@@ -95,6 +105,9 @@ export const DOWNWARD_INTENT_WINDOW_MS = 400
 export const OVERLAY_SCROLLBAR_HIT_PX = 14
 
 export const PROGRAMMATIC_SCROLL_EPSILON_PX = 1
+
+/** Phase-1 absolute-restore epsilon — matches the virtualizer's 0.5px gate. */
+export const PHASE1_ANCHOR_CORRECTION_EPSILON_PX = 0.5
 
 /**
  * Distance, in CSS pixels, within which the transcript viewport counts as
@@ -122,6 +135,89 @@ export function hasRecentTranscriptDownwardIntent(input: {
   }
   const elapsed = input.now - input.intentAt
   return elapsed >= 0 && elapsed <= DOWNWARD_INTENT_WINDOW_MS
+}
+
+/**
+ * Whether a user-owned scroll gesture is currently live (cut 2a).
+ *
+ * True while the scrollbar pointer is held, or while `lastUserScrollAt` falls
+ * inside the short settle window (wheel/touch/key stamps). Sticky
+ * "scrolled away / follow off" ownership must NOT feed this — that would
+ * starve Phase-1 for the whole reading session.
+ */
+export function isTranscriptUserScrollGestureLive(input: {
+  lastUserScrollAt: number
+  scrollbarPointerActive: boolean
+  now: number
+  windowMs?: number
+}): boolean {
+  if (input.scrollbarPointerActive) return true
+  if (
+    !Number.isFinite(input.lastUserScrollAt) ||
+    !Number.isFinite(input.now) ||
+    input.lastUserScrollAt <= 0
+  ) {
+    return false
+  }
+  const windowMs =
+    typeof input.windowMs === 'number' && Number.isFinite(input.windowMs) && input.windowMs >= 0
+      ? input.windowMs
+      : USER_SCROLL_GESTURE_WINDOW_MS
+  const elapsed = input.now - input.lastUserScrollAt
+  return elapsed >= 0 && elapsed <= windowMs
+}
+
+export type Phase1AnchorCorrectionDecision = 'skip' | 'defer' | 'apply'
+
+/**
+ * Decide whether Phase-1 absolute anchor correction should write this
+ * pre-paint pass (cut 2a). Hard gates (`skipNext`, convergence, bottom,
+ * missing anchor, sub-epsilon delta) skip entirely; a live user gesture
+ * defers without arming the programmatic scroll guard; otherwise apply.
+ */
+export function decidePhase1AnchorCorrection(input: {
+  skipNext: boolean
+  measureConverged: boolean
+  atBottom: boolean
+  hasAnchor: boolean
+  absDeltaPx: number
+  gestureLive: boolean
+  epsilonPx?: number
+}): Phase1AnchorCorrectionDecision {
+  const epsilon =
+    typeof input.epsilonPx === 'number' && Number.isFinite(input.epsilonPx)
+      ? input.epsilonPx
+      : PHASE1_ANCHOR_CORRECTION_EPSILON_PX
+  if (input.skipNext) return 'skip'
+  if (!input.measureConverged) return 'skip'
+  if (input.atBottom) return 'skip'
+  if (!input.hasAnchor) return 'skip'
+  if (!Number.isFinite(input.absDeltaPx) || input.absDeltaPx <= epsilon) return 'skip'
+  if (input.gestureLive) return 'defer'
+  return 'apply'
+}
+
+/**
+ * Whether a Phase-1 skip should keep a previously deferred restore alive.
+ *
+ * Soft skip only (`!measureConverged` while still anchored away from the
+ * bottom): re-arm the settle timer. Hard skips (`skipNext`, atBottom, missing
+ * anchor, or a converged sub-epsilon/no-op) must clear — otherwise a flush
+ * that hard-skips after the timer would drop the restore forever, or a
+ * sub-epsilon skip would spin the timer.
+ */
+export function shouldRearmPhase1DeferOnSkip(input: {
+  deferredPending: boolean
+  skipNext: boolean
+  atBottom: boolean
+  hasAnchor: boolean
+  measureConverged: boolean
+}): boolean {
+  if (!input.deferredPending) return false
+  if (input.skipNext) return false
+  if (input.atBottom) return false
+  if (!input.hasAnchor) return false
+  return !input.measureConverged
 }
 
 export interface ChatScrollState {
