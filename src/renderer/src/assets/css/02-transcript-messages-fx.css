@@ -5679,7 +5679,23 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   -webkit-appearance: none;
   border: 0;
   background: none;
-  font: inherit;
+  /* NOT `font: inherit`. That shorthand also sets font-family, font-size and
+   * line-height — the three `.message-bubble` declares, including the
+   * user-configurable `--transcript-font-family`. Both rules are single-class,
+   * so they tie on specificity and source order decides; this one is ~370 lines
+   * later, so the shorthand won and the button rendered "Working" in the
+   * ambient UI font at the ambient size while the <div> variant beside it used
+   * the transcript font. It moved the shimmer too — the sweep is a 105deg
+   * gradient clipped to the label's text box, so different glyph metrics and a
+   * different box height sweep differently.
+   *
+   * The shorthand was never needed for those three: AUTHOR RULES BEAT UA RULES
+   * REGARDLESS OF ORDER, so `.message-bubble` already neutralised the UA button
+   * font. `font: inherit` only ever won against its own stylesheet. Reset just
+   * the UA's remaining font opinions and leave the bubble's typography alone.
+   * Guarded by workingBubbleTypographyCss.test.ts. */
+  font-weight: inherit;
+  font-style: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
