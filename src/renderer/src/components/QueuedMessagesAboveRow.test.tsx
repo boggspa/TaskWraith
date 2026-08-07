@@ -56,8 +56,10 @@ describe('QueuedMessagesAboveRow steer actions', () => {
     expect(html).not.toContain('Add to Blackboard')
     expect(html).toContain('Steer Ensemble queued message 1 from the queue now')
     expect(html).toContain('Steer Codex queued message 2 from the queue now')
-    expect(html).toContain('data-provider-logo="codex"')
-    expect(html).toContain('<img class="provider-brand-logo-image')
+    // No provider brand glyph — ensemble rows were leaking the chat seed
+    // provider icon (e.g. Claude next to an @GrokWork prompt).
+    expect(html).not.toContain('data-provider-logo=')
+    expect(html).not.toContain('provider-brand-logo-image')
     expect(html).not.toContain('provider-glyph-codex')
   })
 })
