@@ -1530,7 +1530,6 @@ struct ThreadDetailView: View {
         return twRunHasFailureExplanation(rows: rows, runId: summary.runId)
     }
 
-
     /// Tombstoned Participants / Commits tables from the matching close-out
     /// row (desktop RunCompleteEpicStack). Prefer round close-out, then
     /// run-scoped close-out. Absent on older Macs — TaskCompleteCard keeps
