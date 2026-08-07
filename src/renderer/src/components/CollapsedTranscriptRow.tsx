@@ -6,6 +6,7 @@ import {
   type CollapsedStackDiffTotals,
   type CollapsedStackLabelPart
 } from '../lib/collapsedActivityStack'
+import { renderCollapsedStackLabelPart } from '../lib/activitySummaryLabel'
 import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
 
 /**
@@ -81,24 +82,18 @@ export function CollapsedTranscriptRow({
           ▸
         </span>
         {icons}
-        {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
+        {metaLabel ? (
+          <span className="collapsed-activity-stack-meta activity-summary-verb">{metaLabel}</span>
+        ) : null}
         <span className="collapsed-activity-stack-label">
           {labelContent ??
             (labelParts
               ? labelParts.map((part, index) => {
                   const prefix = index > 0 ? ' · ' : ''
-                  if (!part.failed) {
-                    return <Fragment key={index}>{`${prefix}${part.text}`}</Fragment>
-                  }
-                  // Accent the leading verb ("Ran"); parts without one (the
-                  // error tally) accent whole.
-                  const accent =
-                    part.verb && part.text.startsWith(part.verb) ? part.verb : part.text
                   return (
                     <Fragment key={index}>
                       {prefix}
-                      <span className="collapsed-activity-stack-verb is-failed">{accent}</span>
-                      {part.text.slice(accent.length)}
+                      {renderCollapsedStackLabelPart(part)}
                     </Fragment>
                   )
                 })

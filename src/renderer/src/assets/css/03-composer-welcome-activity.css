@@ -12715,6 +12715,19 @@ button.diff-file-row {
 .collapsed-activity-stack.is-compact .collapsed-activity-stack-diff {
   font-size: 11px;
 }
+/* Summary verbs (Thought / Read / Edited / Ran / System / …) — same accent
+ * weight as an inline ActivityRow file target so folded parents scan like
+ * the youngest child event row. Failed verbs keep the deletion-red override. */
+.activity-summary-verb,
+.collapsed-activity-stack-verb {
+  color: color-mix(in srgb, var(--accent) 88%, white 10%);
+  font-weight: 650;
+  font-style: normal;
+}
+.collapsed-activity-stack-meta.activity-summary-verb {
+  font-size: inherit;
+  color: color-mix(in srgb, var(--accent) 88%, white 10%);
+}
 .collapsed-activity-stack.is-expanded .collapsed-activity-stack-summary {
   margin-bottom: 2px;
 }

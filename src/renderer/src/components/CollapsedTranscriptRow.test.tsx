@@ -57,13 +57,16 @@ describe('CollapsedActivityStackRow diff totals', () => {
     )
     const text = visibleText(html)
     expect(text).toContain('Thought for 12s · Edited 2 files')
+    // Success verbs are highlighted like the child-row file target accent.
+    expect(html).toContain('class="activity-summary-verb collapsed-activity-stack-verb">Thought</span>')
+    expect(html).toContain('class="activity-summary-verb collapsed-activity-stack-verb">Edited</span>')
     // 40 + 2 added, 11 + 7 removed — the two folded edits summed, not the
     // last one winning and not a per-file list.
     expect(text).toContain('+42')
     expect(text).toContain('-18')
     // Totals trail the summary label rather than interrupting it.
     expect(html.indexOf('collapsed-activity-stack-diff')).toBeGreaterThan(
-      html.indexOf('Edited 2 files')
+      html.indexOf('activity-summary-verb collapsed-activity-stack-verb">Edited')
     )
     expect(html).toContain('collapsed-activity-stack-diff-stat is-add')
     expect(html).toContain('collapsed-activity-stack-diff-stat is-del')
