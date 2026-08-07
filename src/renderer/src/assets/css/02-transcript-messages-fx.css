@@ -8264,9 +8264,31 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     backwards;
 }
 
+/* The 0% stop is not only the start of a fade — it is a RESTING STATE.
+ *
+ * An animation whose timeline is not advancing sits at `currentTime: 0` and
+ * keeps applying this stop, and the main BrowserWindow does not set
+ * `backgroundThrottling: false` (src/main/index.ts, webPreferences), so a
+ * backgrounded or occluded window can stop ticking these while words are still
+ * arriving. The spans then paint here and STAY here until something resumes the
+ * timeline — reported as assistant text rendering in a darker shade that
+ * "fixes itself" as soon as you engage with the window. Note `fill-mode:
+ * backwards` is NOT the culprit and removing it changes nothing: fill governs
+ * time OUTSIDE the active duration, and t=0 is inside it.
+ *
+ * So the depth of this stop is a visibility budget, not just taste: whatever it
+ * is, someone will eventually see it held still. 0.32 was clearly legible as
+ * "this text is wrong". At 0.72 the fade still reads as a reveal while a frozen
+ * span is close enough to settled text not to look broken.
+ *
+ * This bounds the SYMPTOM; it does not stop the freeze. The real fix is to stop
+ * emitting reveal spans while the document cannot animate them, which lives in
+ * the renderer (`revealEnabled`, TranscriptPanel) — deliberately not done here
+ * because the trigger condition is still unmeasured: `visibilityState` covers
+ * an occluded window but NOT one that is visible and merely unfocused. */
 @keyframes stream-reveal-token-in {
   from {
-    opacity: 0.32;
+    opacity: 0.72;
   }
   58% {
     opacity: 0.9;
