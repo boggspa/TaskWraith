@@ -3855,6 +3855,26 @@ describe('ollamaNativeToolDefinitions', () => {
     })
   })
 
+  it('gives native local models the minimal blackboard post/read schemas', () => {
+    const defs = ollamaNativeToolDefinitions('read_only', { compact: true })
+    const post = defs.find((definition) => definition.function.name === 'blackboard_post')
+    const read = defs.find((definition) => definition.function.name === 'blackboard_read')
+
+    expect(post?.function.parameters.required).toEqual(['key', 'value'])
+    expect(post?.function.parameters.properties).toMatchObject({
+      key: { type: 'string', minLength: 1 },
+      value: { type: 'string', minLength: 1 },
+      category: { type: 'string', enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note'] },
+      scope: { type: 'string', enum: ['round', 'session', 'chat'] }
+    })
+    expect(read?.function.parameters.required).toBeUndefined()
+    expect(read?.function.parameters.properties).toMatchObject({
+      ids: { type: 'array' },
+      keys: { type: 'array' },
+      unseenOnly: { type: 'boolean' }
+    })
+  })
+
   it('omits native web schemas when the resolved run posture denies network access', () => {
     const defs = ollamaNativeToolDefinitions('read_only', { networkAccess: 'deny' })
     const names = defs.map((def) => def.function.name)

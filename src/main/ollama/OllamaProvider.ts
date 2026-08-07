@@ -1725,6 +1725,62 @@ function ollamaNativeToolParameters(
         },
         required: ['action']
       }
+    case 'blackboard_post':
+      return {
+        description: compact
+          ? 'Post a shared Ensemble blackboard entry.'
+          : 'Post a shared Ensemble blackboard entry. key and value must be non-empty.',
+        properties: {
+          key: {
+            ...STRING,
+            minLength: 1,
+            description: compact ? 'Short stable key.' : 'Short stable topic/key for the shared entry.'
+          },
+          value: {
+            ...STRING,
+            minLength: 1,
+            description: compact ? 'Fact, decision, risk, or note.' : 'The fact, decision, risk, or note to share.'
+          },
+          category: {
+            ...STRING,
+            enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note'],
+            description: 'Entry category.'
+          },
+          scope: {
+            ...STRING,
+            enum: ['round', 'session', 'chat'],
+            description: 'Visibility lifetime.'
+          },
+          ttlMinutes: { type: 'number', description: 'Optional expiry in minutes (1–10080).' },
+          pollOptions: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: 2,
+            maxItems: 6,
+            description: 'Optional 2–6 plain-text poll choices.'
+          }
+        },
+        required: ['key', 'value']
+      }
+    case 'blackboard_read':
+      return {
+        description: compact
+          ? 'Read the shared Ensemble blackboard; bare {} returns newest entries.'
+          : 'Read bounded shared Ensemble blackboard entries. A bare call returns the newest entries.',
+        properties: {
+          ids: { type: 'array', items: { type: 'string' }, description: 'Optional entry ids.' },
+          keys: { type: 'array', items: { type: 'string' }, description: 'Optional entry keys.' },
+          category: {
+            ...STRING,
+            enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note'],
+            description: 'Optional category filter.'
+          },
+          unseenOnly: { type: 'boolean', description: 'Only entries not yet seen by this participant.' },
+          first: { type: 'number', description: 'Optional oldest-entry limit.' },
+          last: { type: 'number', description: 'Optional newest-entry limit.' }
+        },
+        required: []
+      }
     default:
       return {
         description: `Invoke the TaskWraith ${toolName} tool using its documented MCP argument schema.`,
