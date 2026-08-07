@@ -158,13 +158,49 @@ function withLiveOutput(
   }
 }
 
+function normalizeSeatModel(model?: string | null): string {
+  return typeof model === 'string' ? model.trim() : ''
+}
+
+function runModelForSeatMatch(run: ChatRun): string {
+  return normalizeSeatModel(
+    run.actualModel || run.requestedModel || run.ensembleSeatSnapshot?.model
+  )
+}
+
+function runProviderForSeatMatch(run: ChatRun): ProviderId | undefined {
+  return run.provider || run.ensembleSeatSnapshot?.provider
+}
+
+/**
+ * Whether a sealed run still describes the participant's current seat.
+ * Ensemble seat changes reuse `participantId`, so prior runs remain on the
+ * chat but belong to a different model/provider window. A run missing
+ * model/provider cannot be proven stale and still counts.
+ */
+export function runMatchesParticipantSeat(
+  run: ChatRun,
+  participant: Pick<EnsembleParticipant, 'provider' | 'model'>
+): boolean {
+  const runProvider = runProviderForSeatMatch(run)
+  if (runProvider && runProvider !== participant.provider) return false
+  const runModel = runModelForSeatMatch(run)
+  const seatModel = normalizeSeatModel(participant.model)
+  if (runModel && seatModel && runModel !== seatModel) return false
+  return true
+}
+
 /**
  * The latest run (by startedAt) that carries real usage stats, optionally scoped
  * to one ensemble participant. Returns its context token total, or zero.
+ * When `participant` is supplied, only runs that still match that seat's
+ * provider/model count — so a Codex→Spark swap under the same participantId
+ * does not inherit the prior fill.
  */
 function latestRunContext(
   runs: ReadonlyArray<ChatRun>,
-  participantId?: string
+  participantId?: string,
+  participant?: Pick<EnsembleParticipant, 'provider' | 'model'>
 ): {
   tokens: number
   usage?: ContextUsageSnapshot
@@ -180,6 +216,7 @@ function latestRunContext(
   } | null = null
   for (const run of runs) {
     if (participantId && run.ensembleParticipantId !== participantId) continue
+    if (participant && !runMatchesParticipantSeat(run, participant)) continue
     const usage = contextUsageFromStats(run?.stats)
     if (!usage) continue
     const tokens = usage.contextTokens
@@ -201,10 +238,14 @@ function latestRunContext(
 function latestContext(
   runs: ReadonlyArray<ChatRun>,
   compaction: ContextCompactionUsageEvidence | null | undefined,
-  participantId?: string
+  participantId?: string,
+  participant?: Pick<EnsembleParticipant, 'provider' | 'model'>
 ): ReturnType<typeof latestRunContext> {
-  const latest = latestRunContext(runs, participantId)
+  const latest = latestRunContext(runs, participantId, participant)
   if (!compaction || compaction.observedAt < latest.observedAt) return latest
+  // Compaction without a matching current-seat sealed baseline is prior-seat
+  // evidence — do not resurrect it as current occupancy after a seat change.
+  if (latest.observedAt === Number.NEGATIVE_INFINITY) return latest
   const usage = contextUsageAfterCompaction(latest.usage, compaction)
   return {
     ...latest,
@@ -522,7 +563,8 @@ export function buildParticipantContextRows(
     const latest = latestContext(
       runs,
       compactions?.byParticipantId.get(participant.id),
-      participant.id
+      participant.id,
+      participant
     )
     let usage = latest.usage
     if (live?.participantId && participant.id === live.participantId) {

@@ -248,18 +248,21 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
     const runs = [
       run({
         runId: 'p1a',
+        provider: 'claude',
         ensembleParticipantId: 'p1',
         startedAt: '2026-05-30T12:00:00.000Z',
         stats: usage(10_000, 500)
       }),
       run({
         runId: 'p1b',
+        provider: 'claude',
         ensembleParticipantId: 'p1',
         startedAt: '2026-05-30T12:06:00.000Z',
         stats: usage(120_000, 4_000)
       }),
       run({
         runId: 'p2a',
+        provider: 'codex',
         ensembleParticipantId: 'p2',
         startedAt: '2026-05-30T12:03:00.000Z',
         stats: usage(30_000, 1_000)
@@ -317,8 +320,18 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
 
   it('adds the live output estimate ONLY to the actively-running participant', () => {
     const runs = [
-      run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) }),
-      run({ runId: 'p2a', ensembleParticipantId: 'p2', stats: usage(30_000, 1_000) })
+      run({
+        runId: 'p1a',
+        provider: 'claude',
+        ensembleParticipantId: 'p1',
+        stats: usage(80_000, 2_000)
+      }),
+      run({
+        runId: 'p2a',
+        provider: 'codex',
+        ensembleParticipantId: 'p2',
+        stats: usage(30_000, 1_000)
+      })
     ]
     const rows = buildParticipantContextRows(runs, participants, {
       participantId: 'p1',
@@ -330,8 +343,18 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
 
   it('applies completed compaction only to its matching participant row', () => {
     const runs = [
-      run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) }),
-      run({ runId: 'p2a', ensembleParticipantId: 'p2', stats: usage(30_000, 1_000) })
+      run({
+        runId: 'p1a',
+        provider: 'claude',
+        ensembleParticipantId: 'p1',
+        stats: usage(80_000, 2_000)
+      }),
+      run({
+        runId: 'p2a',
+        provider: 'codex',
+        ensembleParticipantId: 'p2',
+        stats: usage(30_000, 1_000)
+      })
     ]
     const messages = [
       {
@@ -380,8 +403,18 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
 
     const rows = buildParticipantContextRows(
       [
-        run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) }),
-        run({ runId: 'p2a', ensembleParticipantId: 'p2', stats: usage(30_000, 1_000) })
+        run({
+          runId: 'p1a',
+          provider: 'claude',
+          ensembleParticipantId: 'p1',
+          stats: usage(80_000, 2_000)
+        }),
+        run({
+          runId: 'p2a',
+          provider: 'codex',
+          ensembleParticipantId: 'p2',
+          stats: usage(30_000, 1_000)
+        })
       ],
       participants,
       { messages }
@@ -453,6 +486,91 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
 
     expect(rows.find((r) => r.id === 'ollama-custom')?.windowTokens).toBe(65_536)
     expect(rows.find((r) => r.id === 'claude')?.windowTokens).toBe(200_000)
+  })
+
+  it('suppresses prior sealed usage after a same-participantId model change (Codex → Spark)', () => {
+    // Seat changes reuse participantId; a prior Codex fill must not pressure a
+    // fresh Spark window under the same id until Spark seals its own usage.
+    const sparkSeat = {
+      id: 'p2',
+      provider: 'codex',
+      model: 'gpt-5.3-codex-spark',
+      enabled: true,
+      role: 'Builder',
+      order: 1
+    } as EnsembleParticipant
+    const peer = {
+      id: 'p1',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      enabled: true,
+      role: 'Architect',
+      order: 0
+    } as EnsembleParticipant
+    const runs = [
+      run({
+        runId: 'p1-claude',
+        provider: 'claude',
+        requestedModel: 'claude-sonnet-4-6',
+        actualModel: 'claude-sonnet-4-6',
+        ensembleParticipantId: 'p1',
+        startedAt: '2026-05-30T12:00:00.000Z',
+        stats: usage(160_000, 4_000)
+      }),
+      run({
+        runId: 'p2-codex-fill',
+        provider: 'codex',
+        requestedModel: 'gpt-5.5',
+        actualModel: 'gpt-5.5',
+        ensembleParticipantId: 'p2',
+        startedAt: '2026-05-30T12:06:00.000Z',
+        stats: usage(900_000, 20_000)
+      })
+    ]
+    const rows = buildParticipantContextRows(runs, [peer, sparkSeat])
+    const spark = rows.find((r) => r.id === 'p2')
+    const claude = rows.find((r) => r.id === 'p1')
+    expect(spark?.usedTokens).toBe(0)
+    expect(spark?.percent).toBe(0)
+    expect(spark?.windowTokens).toBe(200_000)
+    // Peer participant keeps its own sealed usage — seat scoping is per id.
+    expect(claude?.usedTokens).toBe(164_000)
+    expect(claude?.percent).toBeGreaterThan(80)
+  })
+
+  it('restores pressure after a sealed Spark run matches the current seat', () => {
+    const sparkSeat = {
+      id: 'p2',
+      provider: 'codex',
+      model: 'gpt-5.3-codex-spark',
+      enabled: true,
+      role: 'Builder',
+      order: 1
+    } as EnsembleParticipant
+    const runs = [
+      run({
+        runId: 'p2-codex-fill',
+        provider: 'codex',
+        requestedModel: 'gpt-5.5',
+        actualModel: 'gpt-5.5',
+        ensembleParticipantId: 'p2',
+        startedAt: '2026-05-30T12:06:00.000Z',
+        stats: usage(900_000, 20_000)
+      }),
+      run({
+        runId: 'p2-spark',
+        provider: 'codex',
+        requestedModel: 'gpt-5.3-codex-spark',
+        actualModel: 'gpt-5.3-codex-spark',
+        ensembleParticipantId: 'p2',
+        startedAt: '2026-05-30T12:20:00.000Z',
+        stats: usage(170_000, 6_000)
+      })
+    ]
+    const row = buildParticipantContextRows(runs, [sparkSeat]).find((r) => r.id === 'p2')
+    expect(row?.usedTokens).toBe(176_000)
+    expect(row?.windowTokens).toBe(200_000)
+    expect(row?.percent).toBe(88)
   })
 })
 
