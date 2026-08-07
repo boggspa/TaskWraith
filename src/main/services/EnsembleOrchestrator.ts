@@ -5452,11 +5452,13 @@ export class EnsembleOrchestrator {
    * Keep an unsettled fan-out wave inside its configured authority ring.
    *
    * Ordinary yields remain unchanged once every lane/dispatch settles. While
-   * work is live, however, a configured Boss or Captain may hand off only to
-   * the OTHER currently-routable authority seat. Every other request is an
-   * acknowledged, non-terminal hold: the provider remains alive so it can use
-   * ensemble_await / ensemble_lane_result and synthesize before serial work or
-   * review begins.
+   * work is live, a configured Boss or Captain may:
+   * - hand off immediately to the OTHER currently-routable authority seat, or
+   * - record an explicit yield to a concrete foreground worker (deferred until
+   *   the wave settles, same as non-Boss owners).
+   * Targetless yields, yields to the user, and unresolved/ambiguous targets
+   * stay as acknowledged non-terminal holds so the authority seat remains
+   * alive for ensemble_await / ensemble_lane_result synthesis.
    */
   private activeFanoutManagerHandoffHold(
     chat: ChatRecord,
@@ -5493,6 +5495,18 @@ export class EnsembleOrchestrator {
         ? resolveYieldTargetDetail(target, participants, new Set([run.participant.id]))
         : undefined
     if (detail?.kind === 'resolved' && eligibleManagerIds.has(detail.participant.id)) {
+      return undefined
+    }
+    // Concrete foreground worker handoff: let markYielded store yieldRouting
+    // (deferred until settlement). Keep the hold for targetless / user /
+    // unresolved / ambiguous / background targets so Boss stays alive to
+    // synthesize.
+    if (
+      detail?.kind === 'resolved' &&
+      detail.participant.enabled &&
+      !isBackgroundParticipant(detail.participant) &&
+      !this.fanoutAuthorityRoleForCaller(chat, runtime, detail.participant.id)
+    ) {
       return undefined
     }
 
@@ -5576,11 +5590,18 @@ export class EnsembleOrchestrator {
   }
 
   private clearNonAuthorityFanoutYieldRouting(
-    chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun
   ): void {
-    if (this.pendingYieldTargetsActiveFanoutManager(chat, runtime, run)) return
+    // Preserve any explicit queue handoff with a concrete seat — manager or
+    // worker. Authority-ring re-summons must not wipe a deferred Boss→worker
+    // yieldRouting that should apply once the wave settles.
+    if (
+      runtime.yieldRouting?.kind === 'queue' &&
+      runtime.yieldRouting.targetParticipantId
+    ) {
+      return
+    }
     if (!runtime.yieldRouting) return
     runtime.yieldRouting = undefined
     this.discardYieldReturnFrameForYielder(runtime, run.participant.id)
@@ -5726,7 +5747,10 @@ export class EnsembleOrchestrator {
     if (runtime.dmTargetParticipantId && participant.id !== runtime.dmTargetParticipantId) {
       return reject('outside_scope')
     }
-    if (this.participantFanoutDispatchState(runtime, participant.id)) {
+    // Only block seats whose fan-out lane is still live. A prior wave that
+    // already settled ('handled') must remain a valid yield target — e.g. Boss
+    // handing back to a reviewer after the Review wave completes.
+    if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') {
       return reject('blocked_status')
     }
 
@@ -14871,14 +14895,19 @@ export class EnsembleOrchestrator {
         }
       }
       const fanoutDispatchState = this.participantFanoutDispatchState(runtime, participant.id)
-      if (fanoutDispatchState) {
-        if (fanoutDispatchState === 'active') {
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `${participantDisplayName(participant)} is already running in a fan-out lane; skipping duplicate serial dispatch.`
-          )
-        }
+      if (fanoutDispatchState === 'active') {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${participantDisplayName(participant)} is already running in a fan-out lane; skipping duplicate serial dispatch.`
+        )
+        continue
+      }
+      // A prior settled fan-out ('handled') still suppresses the ordinary serial
+      // seat so the wave does not double-speak. Explicit yield / @-mention /
+      // yield-return routing populates stageGateExemptIds and must be allowed
+      // through — otherwise Boss→reviewer handoffs after Review wave are no-ops.
+      if (fanoutDispatchState === 'handled' && !stageGateExemptIds.has(participant.id)) {
         continue
       }
       // Spike 4 — defer stage-role reviewers while any non-reviewer still
@@ -14947,14 +14976,15 @@ export class EnsembleOrchestrator {
         break
       }
       const postCompactionFanoutState = this.participantFanoutDispatchState(runtime, participant.id)
-      if (postCompactionFanoutState) {
-        if (postCompactionFanoutState === 'active') {
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `${participantDisplayName(participant)} entered a fan-out lane while its serial turn was preparing; skipping duplicate serial dispatch.`
-          )
-        }
+      if (postCompactionFanoutState === 'active') {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${participantDisplayName(participant)} entered a fan-out lane while its serial turn was preparing; skipping duplicate serial dispatch.`
+        )
+        continue
+      }
+      if (postCompactionFanoutState === 'handled' && !stageGateExemptIds.has(participant.id)) {
         continue
       }
 
@@ -15453,20 +15483,28 @@ export class EnsembleOrchestrator {
           notedMissingSynthesis = true
         }
         // While lanes are live, keep the authority ring closed (no ordinary
-        // serial writers; non-manager yields stay held). After settlement, an
-        // explicit yield/mention may route normally — only a silent end with a
-        // still-pending synthesis obligation re-summons the authority seat.
+        // serial writers). An explicit queue yieldRouting to a concrete seat is
+        // preserved and applied after settlement — same deferred handoff model
+        // as non-Boss owners. Only a silent end with a still-pending synthesis
+        // obligation re-summons the authority seat.
         const retainAuthorityRing =
           !synthesizedThisTurn && (waveActive || (synthesisPendingForSeat && !runtime.yieldRouting))
+        const pendingDeferredNonManagerYield =
+          runtime.yieldRouting?.kind === 'queue' &&
+          Boolean(runtime.yieldRouting.targetParticipantId) &&
+          !this.pendingYieldTargetsActiveFanoutManager(chat, runtime, run)
         if (retainAuthorityRing) {
           noteMissingOnce()
           if (waveActive) {
-            this.clearNonAuthorityFanoutYieldRouting(chat, runtime, run)
+            this.clearNonAuthorityFanoutYieldRouting(runtime, run)
           }
           // Prefer an immediate re-summon so Boss/Captain can keep working
-          // (ensemble_await / more tools) while lanes run. Fall back to the
-          // owned-settlement wait only when the continuation hop is refused.
+          // (ensemble_await / more tools) while lanes run — unless an explicit
+          // non-manager handoff is already stored. Re-summoning in that case
+          // would start another Boss speaking turn and bury the deferred yield;
+          // wait for settlement instead, then fall through to applyStoredYieldRouting.
           if (
+            !pendingDeferredNonManagerYield &&
             this.requeueAuthorityForActiveFanoutHold(
               runtime,
               remaining,
@@ -15487,14 +15525,30 @@ export class EnsembleOrchestrator {
           const stillUnsettledCount = this.unsettledFanoutLaneCount(runtime, run)
           const stillOwned = this.hasOwnedFanoutWork(run)
           const stillWaveActive = stillOwned || stillUnsettledCount > 0
+          // After settlement, an explicit yieldRouting waives synthesis and
+          // must fall through to applyStoredYieldRouting (not requeue Boss).
+          // Re-check here: the pre-wait waiver only saw waveActive=true.
+          const stillDeferredNonManagerYield =
+            runtime.yieldRouting?.kind === 'queue' &&
+            Boolean(runtime.yieldRouting.targetParticipantId) &&
+            !this.pendingYieldTargetsActiveFanoutManager(chat, runtime, run)
+          if (
+            !stillWaveActive &&
+            stillDeferredNonManagerYield &&
+            runtime.pendingAuthorityFanoutSynthesisParticipantId === participant.id
+          ) {
+            runtime.pendingAuthorityFanoutSynthesisParticipantId = undefined
+          }
           const stillSynthesisPending =
             this.runMissingOwnedFanoutSynthesis(run) ||
             runtime.pendingAuthorityFanoutSynthesisParticipantId === participant.id
-          const stillRetain = stillWaveActive || (stillSynthesisPending && !runtime.yieldRouting)
+          const stillRetain =
+            !stillDeferredNonManagerYield &&
+            (stillWaveActive || (stillSynthesisPending && !runtime.yieldRouting))
           if (stillRetain) {
             noteMissingOnce()
             if (stillWaveActive) {
-              this.clearNonAuthorityFanoutYieldRouting(chat, runtime, run)
+              this.clearNonAuthorityFanoutYieldRouting(runtime, run)
             }
             if (
               this.requeueAuthorityForActiveFanoutHold(
@@ -16212,10 +16266,7 @@ export class EnsembleOrchestrator {
    * superseded) while deferred, the entry is dropped — `cancelRound`
    * already closed the round.
    */
-  private maybeResumeDeferredDrain(
-    chatId: string,
-    options: { allowAutoContinuation?: boolean } = {}
-  ): void {
+  private maybeResumeDeferredDrain(chatId: string): void {
     const runtime = this.deferredLaneDrainByChatId.get(chatId)
     if (!runtime) return
     const round = this.deps.getChat(chatId)?.ensemble?.activeRound
@@ -16250,7 +16301,14 @@ export class EnsembleOrchestrator {
       )
       return
     }
-    if (options.allowAutoContinuation && !runtime.cancelled && runtime.queuedPrompts.length === 0) {
+    // Same Continuous drain tail as runRound: once every lane/reservation and
+    // owned settlement is clear, auto-continue when hops remain. Previously
+    // gated behind `allowAutoContinuation`, which left BG / non-owned deferred
+    // resumes calling finalizeDrainedRound with unused hops (Review wave or
+    // other fan-out completes → Task Complete while Continuous should keep
+    // going / return to Boss). Owned settlement ordering stays protected by
+    // `hasPendingOwnedFanoutSettlements` above.
+    if (!runtime.cancelled && runtime.queuedPrompts.length === 0) {
       const chat = this.deps.getChat(chatId)
       if (chat) {
         const continuationRoster = this.tryAutoContinueRound(runtime, chat)
@@ -17559,9 +17617,7 @@ export class EnsembleOrchestrator {
             // released. `finishFanoutPass` marks the lane terminal before this
             // cleanup callback, so resuming from its inner finally can otherwise
             // finish the round and make the owner's continuation look late.
-            this.maybeResumeDeferredDrain(sourceOwner.chatId, {
-              allowAutoContinuation: true
-            })
+            this.maybeResumeDeferredDrain(sourceOwner.chatId)
           })
           .catch(() => undefined)
       }
@@ -17777,7 +17833,7 @@ export class EnsembleOrchestrator {
     if (runtime.unreachableParticipantIds?.has(participant.id)) {
       return { appended: false, reason: 'unreachable' }
     }
-    if (this.participantFanoutDispatchState(runtime, participant.id)) {
+    if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') {
       return { appended: false, reason: 'active_fanout' }
     }
     const participantStatus = this.activeRoundParticipantStatus(runtime, participant.id)

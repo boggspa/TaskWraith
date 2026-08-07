@@ -13537,6 +13537,43 @@ Next action:
     expect(continuousLimitStatuses(harness)).toHaveLength(1)
   })
 
+  it('auto-continues continuous mode after a deferred BG lane settles with hops remaining', async () => {
+    // Regression: maybeResumeDeferredDrain used to skip tryAutoContinueRound
+    // unless allowAutoContinuation was set (owned settlement only). Detached
+    // BG / Review-wave-adjacent resumes then finalized the round as Task
+    // Complete while Continuous still had hops left.
+    const harness = makeHarness()
+    const backgroundIndex = await startContinuousQuartet(harness, true)
+    expect(typeof backgroundIndex).toBe('number')
+
+    await advanceContinuousForegroundTo(harness, 4)
+    const foregroundBeforeDrain = continuousForegroundRuns(harness).length
+    completeLatestContinuousForeground(harness)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('Serial queue drained · holding the round open')
+        )
+      ).toBe(true)
+    )
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+
+    completeDispatchedRun(harness, backgroundIndex!)
+    await vi.waitFor(() =>
+      expect(continuousForegroundRuns(harness).length).toBeGreaterThan(foregroundBeforeDrain)
+    )
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('auto-continuing for pass 2')
+      )
+    ).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
+  })
+
   it('suppresses a pending terminal hop-limit status when the held round is cancelled', async () => {
     const harness = makeHarness()
     await holdExhaustedContinuousRoundForBackground(harness)
@@ -17455,48 +17492,66 @@ Next action:
     completeDispatchedRun(harness, 2)
   })
 
-  it('holds a Boss-to-worker yield while fan-out is active, then restores normal routing', async () => {
+  it('defers a Boss-to-worker yield while fan-out is active, then applies it after settlement', async () => {
     const harness = makeFanoutRaceHarness()
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
     const { fanout } = await startUnresolvedReviewerFanout(harness)
     const ownerRunId = harness.dispatched[0].appRunId!
 
+    // Targetless / user yields still hold the authority seat alive for synthesis.
     expect(harness.orchestrator.markYielded(ownerRunId, 'No target yet.')).toMatchObject({
       kind: 'fanout_handoff_held'
     })
     expect(
       harness.orchestrator.markYielded(ownerRunId, 'Return control early.', 'user')
     ).toMatchObject({ kind: 'fanout_handoff_held' })
-    const held = harness.orchestrator.markYielded(
-      ownerRunId,
-      'Researcher should review next.',
-      'Researcher'
+
+    // Concrete worker yield is recorded immediately (like non-Boss owners) and
+    // applied once the lane settles — no second yield required.
+    expectYielded(
+      harness.orchestrator.markYielded(
+        ownerRunId,
+        'Researcher should take it after the review returns.',
+        'Researcher'
+      )
     )
-    expect(held).toMatchObject({
-      kind: 'fanout_handoff_held',
-      activeLaneCount: 1,
-      eligibleManagerParticipantIds: []
-    })
-    if (held.kind === 'fanout_handoff_held') {
-      expect(held.message).toContain('remains responsible')
-      expect(held.message).toContain('normal serial routing resumes')
-    }
-    expect(harness.orchestrator.getParticipantIdForRun(ownerRunId)).toBe('codex')
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(harness.dispatched).toHaveLength(2)
 
     completeDispatchedRun(harness, 1)
     await expect(fanout).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    completeDispatchedRun(harness, 2)
+  })
 
+  it('allows Boss to yield to a reviewer whose fan-out lane already settled (handled)', async () => {
+    const harness = makeFanoutRaceHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 8
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+
+    // Reviewer is 'handled' after the wave — still a valid yield target.
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: ownerRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'REVIEW-SYNTHESIS.' }
+    )
     expectYielded(
       harness.orchestrator.markYielded(
         ownerRunId,
-        'The fan-out settled; Researcher can review now.',
-        'Researcher'
+        'Hand back to the reviewer who already fanned out.',
+        'Reviewer'
       )
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
-    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('claude')
+    expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
     completeDispatchedRun(harness, 2)
   })
 
@@ -17581,12 +17636,6 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
 
-    expect(
-      harness.orchestrator.markYielded(captainRunId, 'Worker should start early.', 'Worker')
-    ).toMatchObject({
-      kind: 'fanout_handoff_held',
-      eligibleManagerParticipantIds: ['boss']
-    })
     expect(
       harness.orchestrator.markYielded(captainRunId, 'Return the authority baton to Boss.', 'Boss')
     ).toMatchObject({
