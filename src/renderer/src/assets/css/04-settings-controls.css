@@ -4558,6 +4558,15 @@ input:disabled, select:disabled, textarea:disabled {
   font-family: var(--transcript-font-family);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
+  /* Close-out mounts this under `.message-group` (`align-items: flex-start`),
+   * so without an explicit stretch the card shrink-wraps to content and sits
+   * short of the transcript column — often after a brief full-width paint
+   * while the footer lane still hosted it. Footer lane already stretches
+   * children; saying so here keeps both hosts full-column. */
+  align-self: stretch;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .run-complete-main {
