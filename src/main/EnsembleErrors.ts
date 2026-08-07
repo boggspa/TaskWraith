@@ -62,8 +62,21 @@ const UNREACHABLE_CODES = new Set([
 
 export type DispatchFailureReason =
   | { kind: 'unreachable'; underlyingCode: string }
+  | { kind: 'external_path_grant'; message: string }
   | { kind: 'preflight'; message: string }
   | { kind: 'unknown'; message: string }
+
+const EXTERNAL_PATH_GRANT_AUTHORITY_MARKERS = [
+  'External path grant does not match this chat, workspace, provider, or run',
+  'External path grant provider does not match the dispatched provider',
+  'External path grants must be issued by TaskWraith in this app session'
+] as const
+
+export function isExternalPathGrantAuthorityMessage(message: string): boolean {
+  const normalized = message.trim()
+  if (!normalized) return false
+  return EXTERNAL_PATH_GRANT_AUTHORITY_MARKERS.some((marker) => normalized.includes(marker))
+}
 
 /**
  * Typed wrapper for participant-unreachable failures, intended for
@@ -147,6 +160,12 @@ export function classifyDispatchError(error: unknown): DispatchFailureReason {
     }
   }
 
+  // Stale/mismatched secondary-workspace grants — never treat as a soft
+  // seat skip; the orchestrator remints or pauses for an explicit grant.
+  if (message && isExternalPathGrantAuthorityMessage(message)) {
+    return { kind: 'external_path_grant', message }
+  }
+
   // Preflight / auth / permission failures don't have a posix code
   // but DO have a meaningful message. Categorise these as preflight
   // so the user knows it's a config-side rather than runtime-side
@@ -201,6 +220,13 @@ export function formatDispatchFailureNote(
       `${PARTICIPANT_HEALTH_TAG} ⚠ ${who} unreachable (${reason.underlyingCode}). ` +
       `Skipping for this round — re-launch the provider CLI or ` +
       `re-enable from the chip strip when the socket is back.`
+    )
+  }
+  if (reason.kind === 'external_path_grant') {
+    const trimmed = reason.message.replace(/[.!?\s]+$/u, '')
+    return (
+      `${PARTICIPANT_HEALTH_TAG} ⚠ ${who} needs workspace access: ${trimmed}. ` +
+      `Waiting for you to approve (or dismiss) the grant prompt — seats are not skipped.`
     )
   }
   if (reason.kind === 'preflight') {

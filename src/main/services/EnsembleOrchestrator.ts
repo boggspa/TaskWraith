@@ -117,12 +117,15 @@ import {
 } from './EnsembleBackgroundDispatch'
 import {
   classifyDispatchError,
+  isExternalPathGrantAuthorityMessage,
   formatAllUnreachableNote,
   formatDispatchFailureNote,
   formatYieldTargetUnreachableNote,
   PARTICIPANT_HEALTH_TAG,
+  participantNoteLabel,
   type DispatchFailureReason
 } from '../EnsembleErrors'
+import { collectExternalPathGrantsFromMetadata } from '../store/ExternalPathGrants'
 import { resolveImagePathsForProvider } from '../ProviderImageAttachmentSupport'
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
 import {
@@ -585,6 +588,18 @@ export interface EnsembleOrchestratorDeps {
    */
   probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
   /**
+   * Remint secondary-workspace grants that still carry prior consent but are
+   * bound to a stale primary workspace id. Returns true when at least one
+   * path was reminted for the full active provider set.
+   */
+  repairStaleExternalPathGrants?: (chatId: string) => Promise<boolean>
+  /** Ask the renderer to open the grant prompt; user dismiss is the only deny. */
+  notifyExternalPathGrantRepairNeeded?: (input: {
+    chatId: string
+    roundId: string
+    message: string
+  }) => void
+  /**
    * Wave 3 seat compaction — host maintenance-lane compaction for Kimi/Grok
    * seats. `awaitPendingSeatCompaction` returns the in-flight compaction
    * promise for a seat (if any); every participant dispatch awaits it so a
@@ -745,6 +760,8 @@ interface ActiveParticipantRun {
    * stopped.
    */
   transportDispatchState?: 'pending' | 'accepted' | 'rejected' | 'unknown'
+  /** One silent remint+retry after a stale secondary-workspace grant refusal. */
+  externalPathGrantRepairAttempted?: boolean
   /** At least one exact provider cancellation returned an affirmative receipt. */
   transportCancellationConfirmed?: boolean
   laneId?: string
@@ -15218,11 +15235,56 @@ export class EnsembleOrchestrator {
         // sender for a solo run, and now returns it so a seat's note can say
         // WHY instead of "dispatch failed" with no cause. `unknown` is the
         // last resort, for a refusal that genuinely carried no reason.
+        const failureMessage = dispatchedResult?.failureMessage || ''
         const reason: DispatchFailureReason =
           dispatchFailure ||
-          (dispatchedResult?.failureMessage
-            ? { kind: 'preflight', message: dispatchedResult.failureMessage }
+          (failureMessage
+            ? isExternalPathGrantAuthorityMessage(failureMessage)
+              ? { kind: 'external_path_grant', message: failureMessage }
+              : { kind: 'preflight', message: failureMessage }
             : { kind: 'unknown', message: '' })
+
+        // Stale secondary-workspace grants must never soft-skip a seat.
+        // Remint every active provider from prior consent when possible, then
+        // pause the round for an explicit grant prompt (or a clean resend
+        // after silent remint). User dismiss is the only deny.
+        if (reason.kind === 'external_path_grant') {
+          const repaired =
+            !run.externalPathGrantRepairAttempted &&
+            (await this.deps.repairStaleExternalPathGrants?.(runtime.chatId)) === true
+          run.externalPathGrantRepairAttempted = true
+          if (repaired) {
+            const liveChat = this.deps.getChat(runtime.chatId)
+            if (liveChat) {
+              runtime.externalPathGrants = collectExternalPathGrantsFromMetadata(
+                liveChat.providerMetadata
+              )
+            }
+            this.appendRoundStatus(
+              runtime.chatId,
+              runtime.roundId,
+              `${PARTICIPANT_HEALTH_TAG} Rebounded workspace access grants for every active provider. Resend to continue — seats were not skipped.`
+            )
+          }
+          const note = formatDispatchFailureNote(participant, reason)
+          this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+          this.deps.notifyExternalPathGrantRepairNeeded?.({
+            chatId: runtime.chatId,
+            roundId: runtime.roundId,
+            message: reason.message
+          })
+          this.finalizeRun(run, 'cancelled', note)
+          runtime.activeRunId = undefined
+          await this.cancelRound(
+            runtime.chatId,
+            repaired
+              ? 'Workspace grants were rebound — resend to continue. Seats were not skipped.'
+              : 'Waiting for external path grant approval — seats were not skipped.',
+            runtime.roundId
+          )
+          break
+        }
+
         if (reason.kind === 'unreachable') unreachableFailures += 1
         const note = formatDispatchFailureNote(participant, reason)
         // 1.0.4 — yield-target-specific transcript note. When the

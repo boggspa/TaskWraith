@@ -95,6 +95,16 @@ describe('classifyDispatchError', () => {
     })
   })
 
+  it('classifies stale external path grant authority errors separately', () => {
+    const err = new Error(
+      'External path grant does not match this chat, workspace, provider, or run.'
+    )
+    expect(classifyDispatchError(err)).toEqual({
+      kind: 'external_path_grant',
+      message: 'External path grant does not match this chat, workspace, provider, or run.'
+    })
+  })
+
   it('classifies plain string inputs as preflight when non-empty', () => {
     expect(classifyDispatchError('Permission preset rejected the run')).toEqual({
       kind: 'preflight',
@@ -141,6 +151,16 @@ describe('formatDispatchFailureNote', () => {
     expect(note).toContain('dispatch failed')
     expect(note).toContain('Codex CLI binary missing')
     expect(note).toContain('Skipping for this round')
+  })
+
+  it('formats external-path-grant failures without skipping seats', () => {
+    const note = formatDispatchFailureNote(codexWorker, {
+      kind: 'external_path_grant',
+      message: 'External path grant does not match this chat, workspace, provider, or run.'
+    })
+    expect(note).toContain('needs workspace access')
+    expect(note).toContain('grant prompt')
+    expect(note).not.toContain('Skipping for this round')
   })
 
   it('trims trailing punctuation from preflight messages so the sentence reads cleanly', () => {
