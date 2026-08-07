@@ -106,7 +106,7 @@ function createDeps(order: string[]) {
         order.push('getPendingExternalPathDetection')
         return detection
       }),
-      resolve: vi.fn((requestId: string, action: string, options?: unknown) => {
+      resolve: vi.fn((_requestId: string, _action: string, _options?: unknown) => {
         order.push('resolve')
         return true
       })
