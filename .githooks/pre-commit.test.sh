@@ -74,8 +74,13 @@ sha256_string() {
 
 # Fixtures must stamp a FRESH `started`: a lease is now capped at 15 minutes from
 # it, so the old hard-coded 2026-07-29 start made every `expires: 2099-…` marker
-# decay instantly and stop blocking anything.
-now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# decay instantly and stop blocking anything. Use Node for relative timestamps;
+# BSD date has `-v`, GNU date does not.
+iso_shift() {
+  MARKER_TEST_MINUTES="$1" node -e \
+    'const minutes = Number(process.env.MARKER_TEST_MINUTES); process.stdout.write(new Date(Date.now() + minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, "Z"))'
+}
+now_iso() { iso_shift 0; }
 
 write_manual_marker() {
   local repo="$1" marker_pid="$2" path="$3"
@@ -505,7 +510,7 @@ assertions=$((assertions + 1))
 set_marker_started() {
   sed -E "s|^started:.*|started: $2|" "$1" > "$1.next" && mv "$1.next" "$1"
 }
-iso_ago() { date -u -v-"$1"M +%Y-%m-%dT%H:%M:%SZ; }
+iso_ago() { iso_shift "-$1"; }
 
 repo="$(new_repo lease-within-ceiling)"
 stage_file "$repo" src/manual.ts
@@ -553,7 +558,7 @@ stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$foreign_pid" src/manual.ts
 sed '/^started:/d' "$repo/.WORK-IN-PROGRESS-manual-test.md" > "$repo/m.next"
 mv "$repo/m.next" "$repo/.WORK-IN-PROGRESS-manual-test.md"
-set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(date -u -v+5M +%Y-%m-%dT%H:%M:%SZ)"
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_shift 5)"
 expect_block 'a short lease needs no started to hold' "$repo"
 
 # A seat claim is capped too — it is the case with no pid to decay it.

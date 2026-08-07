@@ -793,8 +793,14 @@ function reconcileWorkProvenance({ root, dirty, sidecar, snapshot, now }) {
         (candidate) => candidate.path === origin.path
       )
       const startedMs = Date.parse(entry.marker?.started || entry.firstObservedAt || '')
+      const mtimeChangedSinceObservation =
+        Number.isFinite(Number(baseline?.mtimeMs)) &&
+        Number.isFinite(Number(claimed?.mtimeMs)) &&
+        Number(baseline.mtimeMs) !== Number(claimed.mtimeMs)
       const changedSinceObservation =
-        baseline && !sameFingerprint(baseline.fingerprint, claimed?.fingerprint)
+        baseline &&
+        (!sameFingerprint(baseline.fingerprint, claimed?.fingerprint) ||
+          mtimeChangedSinceObservation)
       return (
         claimed &&
         sameFingerprint(claimed.fingerprint, live.fingerprint) &&

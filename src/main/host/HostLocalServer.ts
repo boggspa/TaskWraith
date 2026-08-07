@@ -303,12 +303,16 @@ export class HostLocalServer {
    * Idempotent when already stopped.
    */
   async stop(): Promise<void> {
-    this.disconnectClients()
     const server = this.server
     this.server = null
-    if (server?.listening) {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
-    }
+    const closePromise = server?.listening
+      ? new Promise<void>((resolve) => server.close(() => resolve()))
+      : Promise.resolve()
+    // Register the listener close callback before destroying active clients.
+    // This ordering matters for Windows named pipes, where destroying the last
+    // connection can otherwise race the close callback and leave stop() pending.
+    this.disconnectClients()
+    await closePromise
     await Promise.all([
       rm(this.discoveryPath, { force: true }),
       rm(this.tokenPath, { force: true }),

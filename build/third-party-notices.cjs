@@ -117,7 +117,15 @@ function parseJson(bytes, label) {
 }
 
 function archiveReader(asarPath, asarApi) {
-  const entries = [...new Set(asarApi.listPackage(asarPath).map(normalizeArchivePath))].sort()
+  // ASAR's Windows implementation can expose backslash-separated entry names
+  // while extractFile still expects that native spelling. Keep a normalized
+  // lookup for all policy checks, but retain the exact archive entry for reads.
+  const rawByNormalized = new Map()
+  for (const rawEntry of asarApi.listPackage(asarPath)) {
+    const normalized = normalizeArchivePath(rawEntry)
+    if (!rawByNormalized.has(normalized)) rawByNormalized.set(normalized, rawEntry)
+  }
+  const entries = [...rawByNormalized.keys()].sort()
   const entrySet = new Set(entries)
   return {
     entries,
@@ -129,7 +137,15 @@ function archiveReader(asarPath, asarApi) {
       if (!entrySet.has(normalized)) {
         throw new Error(`Packaged file is missing from app.asar: ${normalized}`)
       }
-      return Buffer.from(asarApi.extractFile(asarPath, normalized))
+      const rawEntry = rawByNormalized.get(normalized)
+      try {
+        return Buffer.from(asarApi.extractFile(asarPath, rawEntry))
+      } catch (error) {
+        // Some ASAR versions report a leading separator from listPackage but
+        // accept only the normalized root-relative spelling on extraction.
+        if (rawEntry === normalized) throw error
+        return Buffer.from(asarApi.extractFile(asarPath, normalized))
+      }
     }
   }
 }

@@ -13,8 +13,7 @@ import { fork, type ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { createRequire } from 'node:module'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -53,17 +52,17 @@ interface WorkerIpcMessage {
 }
 
 function workerModulePath(): string {
-  const resolved = path.resolve(
+  return path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     'WorkspaceLockParallelMissionProcess.worker.ts'
   )
-  return process.platform === 'win32' ? pathToFileURL(resolved).href : resolved
 }
 
-function jitiRegisterSpecifier(): string {
-  // jiti 2 package exports hide subpaths from require.resolve; load the file by package root.
-  const require = createRequire(import.meta.url)
-  return path.join(path.dirname(require.resolve('jiti/package.json')), 'lib', 'jiti-register.mjs')
+function workerBootstrapPath(): string {
+  return path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'WorkspaceLockParallelMissionProcess.bootstrap.cjs'
+  )
 }
 
 function makeHarness(): {
@@ -146,10 +145,12 @@ function forkWorker(input: {
     `--displayName=Process ${input.role}`
   ]
 
-  const child = fork(workerModulePath(), argv, {
-    execArgv: [`--import`, jitiRegisterSpecifier()],
+  const child = fork(workerBootstrapPath(), argv, {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    env: { ...process.env }
+    env: {
+      ...process.env,
+      TASKWRAITH_PROCESS_WORKER_MODULE: workerModulePath()
+    }
   })
   children.push(child)
 

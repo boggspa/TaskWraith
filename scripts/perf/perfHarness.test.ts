@@ -1880,7 +1880,7 @@ describe('T2 runner (no Electron launch)', () => {
     expect(spawned[0].cmd).toBe(path.resolve('/virtual/Electron'))
     expect(spawned[0].cmd).not.toBe('npx')
     expect(child.pid).toBe(4242)
-    expect(child.electronBinary).toBe('/virtual/Electron')
+    expect(child.electronBinary).toBe(path.resolve('/virtual/Electron'))
     expect(child.pgid).toBe(4242)
     expect(spawned[0].opts.detached).toBe(true)
 
