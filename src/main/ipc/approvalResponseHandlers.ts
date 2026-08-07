@@ -127,6 +127,10 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
                 }
                 deps.saveChat(updatedChat)
                 deps.broadcastChatUpdated(updatedChat)
+              } else {
+                // Minted against the consented primary, but the chat moved
+                // before durable persist — do not leave Accept as a grant.
+                actionToResolve = 'declineExternalPath'
               }
             }
           } catch (err) {

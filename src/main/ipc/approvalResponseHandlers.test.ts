@@ -269,6 +269,106 @@ describe('registerApprovalResponseHandlers', () => {
     expect(order[order.length - 1]).toBe('resolve')
   })
 
+  it('fails closed on path-only primary drift (same workspace id)', async () => {
+    const order: string[] = []
+    const { deps, setChat } = createDeps(order)
+    setChat(
+      createChat({
+        workspaceId: 'ws-1',
+        workspacePath: '/ws-1b'
+      })
+    )
+    registerApprovalResponseHandlers(deps)
+
+    await handlerFor('respond-agent-approval')({}, 'req-path-only', 'grantExternalPathEdit')
+
+    expect(vi.mocked(deps.issueExternalPathGrant)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.saveChat)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
+      'req-path-only',
+      'declineExternalPath',
+      undefined
+    )
+  })
+
+  it('fails closed when the pending detection has no stamped workspace binding', async () => {
+    const order: string[] = []
+    const { deps, setDetection } = createDeps(order)
+    setDetection({
+      path: '/tmp/target',
+      appChatId: 'chat-1',
+      provider: 'codex',
+      access: 'read'
+    })
+    registerApprovalResponseHandlers(deps)
+
+    await handlerFor('respond-agent-approval')({}, 'req-legacy-stamp', 'grantExternalPathRead')
+
+    expect(vi.mocked(deps.issueExternalPathGrant)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.saveChat)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
+      'req-legacy-stamp',
+      'declineExternalPath',
+      undefined
+    )
+  })
+
+  it('fails closed when the chat was deleted before Accept', async () => {
+    const order: string[] = []
+    const { deps, setChat } = createDeps(order)
+    setChat(null)
+    registerApprovalResponseHandlers(deps)
+
+    await handlerFor('respond-agent-approval')({}, 'req-deleted', 'grantExternalPathEdit')
+
+    expect(vi.mocked(deps.issueExternalPathGrant)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.saveChat)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
+      'req-deleted',
+      'declineExternalPath',
+      undefined
+    )
+  })
+
+  it('fails closed when the chat flips between workspace and global scope', async () => {
+    const order: string[] = []
+    const { deps, setChat } = createDeps(order)
+    setChat(createChat({ scope: 'global', workspaceId: undefined, workspacePath: undefined }))
+    registerApprovalResponseHandlers(deps)
+
+    await handlerFor('respond-agent-approval')({}, 'req-scope-flip', 'grantExternalPathEdit')
+
+    expect(vi.mocked(deps.issueExternalPathGrant)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
+      'req-scope-flip',
+      'declineExternalPath',
+      undefined
+    )
+  })
+
+  it('declines when the chat rebinds after mint but before durable persist', async () => {
+    const order: string[] = []
+    const { deps } = createDeps(order)
+    let getChatCalls = 0
+    vi.mocked(deps.getChat).mockImplementation(() => {
+      order.push('getChat')
+      getChatCalls += 1
+      if (getChatCalls === 1) return createChat()
+      return createChat({ workspaceId: 'ws-2', workspacePath: '/ws-2' })
+    })
+    registerApprovalResponseHandlers(deps)
+
+    await handlerFor('respond-agent-approval')({}, 'req-post-mint', 'grantExternalPathEdit')
+
+    expect(vi.mocked(deps.issueExternalPathGrant)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(deps.saveChat)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
+      'req-post-mint',
+      'declineExternalPath',
+      undefined
+    )
+  })
+
   // (d3) stat throws → grantKind falls back to 'file'; persist + resolve still run.
   it('(d3) falls back to file kind when the stat probe throws, still persists + resolves', async () => {
     const order: string[] = []
