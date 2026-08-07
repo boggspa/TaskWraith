@@ -15567,7 +15567,7 @@ function App(): React.JSX.Element {
           currentProvider === 'codex' &&
           !isCurrentEnsembleChat &&
           Boolean(currentChat?.linkedProviderSessionId),
-        workspaceRecord: currentChatWorkspace || currentWorkspace,
+        workspaceRecord: currentChatWorkspace || currentWorkspace || undefined,
         chatRecord: currentChat
       }
 
