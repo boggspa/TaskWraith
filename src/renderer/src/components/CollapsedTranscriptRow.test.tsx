@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ToolActivity } from '../../../main/store/types'
-import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
+import { CollapsedActivityStackRow, CollapsedTranscriptRow } from './CollapsedTranscriptRow'
 
 const css = readFileSync(
   join(process.cwd(), 'src/renderer/src/assets/css/03-composer-welcome-activity.css'),
@@ -160,5 +160,34 @@ describe('collapsed one-liner diff accents', () => {
     const wrapper = block('.collapsed-activity-stack-diff {')
     expect(wrapper).not.toContain('margin-left: auto')
     expect(wrapper).toContain('flex-shrink: 0')
+  })
+})
+
+describe('CollapsedTranscriptRow metaLabel verb accent', () => {
+  it('accents only System — Fan-Out and other metas stay muted', () => {
+    const system = renderToStaticMarkup(
+      <CollapsedTranscriptRow
+        header={null}
+        metaLabel="System"
+        label="notice text"
+        expanded={false}
+        onToggle={() => {}}
+      />
+    )
+    expect(system).toContain(
+      'class="collapsed-activity-stack-meta activity-summary-verb">System</span>'
+    )
+
+    const fanout = renderToStaticMarkup(
+      <CollapsedTranscriptRow
+        header={null}
+        metaLabel="Fan-Out"
+        label="2 lanes"
+        expanded={false}
+        onToggle={() => {}}
+      />
+    )
+    expect(fanout).toContain('class="collapsed-activity-stack-meta">Fan-Out</span>')
+    expect(fanout).not.toContain('activity-summary-verb">Fan-Out')
   })
 })

@@ -281,6 +281,15 @@
   color: color-mix(in srgb, var(--text-primary) 88%, transparent);
 }
 
+/* File targets inside the compact title need the same accent as
+ * `.activity-row-inline .activity-file-name` — that selector does not
+ * reach this header. */
+.activity-compact-group-title .activity-file-name {
+  color: color-mix(in srgb, var(--accent) 88%, white 10%);
+  font-style: normal;
+  font-weight: 650;
+}
+
 .activity-compact-group-duration,
 .activity-compact-group-caret {
   color: var(--text-tertiary);

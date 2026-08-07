@@ -2177,10 +2177,18 @@ function ActivityCompactGroup({
       style={{ position: 'relative' }}
     >
       <span className="activity-gutter-dot" aria-hidden />
-      <button
+      <div
         className="activity-compact-group-header"
-        type="button"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setExpanded((current) => !current)
+          }
+        }}
       >
         {distinctFamilies.length === 0 ? (
           <ToolCategoryIcon category={primaryCategory} />
@@ -2272,7 +2280,7 @@ function ActivityCompactGroup({
             <polyline points="3,4.5 6,7.5 9,4.5" />
           </svg>
         </span>
-      </button>
+      </div>
       {!expanded && chips.length > 0 && (
         <div className="activity-compact-group-chips">
           {chips.map((chip) => (

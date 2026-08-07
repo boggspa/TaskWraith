@@ -675,6 +675,9 @@ describe('ActivityStack compact tool groups', () => {
     expect(html).toContain('class="activity-summary-verb">Read</span>')
     expect(html).toContain('transcript-file-target activity-file-name')
     expect(html).toContain('>foo.ts</button>')
+    // Header is a div[role=button] so the file target button is not nested.
+    expect(html).toContain('class="activity-compact-group-header" role="button"')
+    expect(html).not.toMatch(/<button[^>]*activity-compact-group-header/)
     expect(html).toContain('activity-compact-chip-repeat')
     expect(html).toContain('×2')
     expect(html).toContain('activity-count-badge')
@@ -749,6 +752,7 @@ describe('ActivityStack compact tool groups', () => {
     expect(title).not.toContain('font-family: var(--transcript-font-family)')
     expect(title).toContain('font-size: var(--font-size-sm)')
     expect(title).toContain('font-weight: 600')
+    expect(groupCss).toContain('.activity-compact-group-title .activity-file-name')
   })
 
   it('debounces only same-id transitions from individual rows into a compact group', () => {
