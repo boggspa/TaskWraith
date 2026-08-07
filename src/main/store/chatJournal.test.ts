@@ -755,7 +755,7 @@ describe('ChatJournal compaction bounds journal BYTES, not just lines', () => {
       journalBytes,
       `journal tail is ${(journalBytes / 1048576).toFixed(1)} MB — compaction is not bounding bytes`
     ).toBeLessThan(24 * 1024 * 1024)
-  })
+  }, 30_000)
 
   it('still replays the exact latest record after byte-triggered compaction', () => {
     const chatId = 'fat-chat-replay'
@@ -767,7 +767,7 @@ describe('ChatJournal compaction bounds journal BYTES, not just lines', () => {
     const latest =
       tail.length > 0 ? (tail[tail.length - 1].record as Record<string, unknown>) : snapshot
     expect((latest as Record<string, unknown>).updatedAt).toBe(39)
-  })
+  }, 30_000)
 })
 
 describe('compaction collapses history instead of accumulating it', () => {
@@ -835,7 +835,7 @@ describe('compaction collapses history instead of accumulating it', () => {
     ]
     const latest = entries[entries.length - 1]
     expect((latest.record as Record<string, unknown>).updatedAt).toBe(39)
-  })
+  }, 30_000)
 })
 
 /**

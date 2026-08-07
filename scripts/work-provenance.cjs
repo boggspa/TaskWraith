@@ -57,7 +57,11 @@ function gitBufferQuiet(root, args, extraEnv) {
 
 function physicalPath(candidate) {
   try {
-    return fs.realpathSync(candidate)
+    const realpath =
+      process.platform === 'win32' && typeof fs.realpathSync.native === 'function'
+        ? fs.realpathSync.native
+        : fs.realpathSync
+    return realpath(candidate)
   } catch {
     return path.resolve(candidate)
   }
@@ -1664,11 +1668,16 @@ function markerTargetsWorktree(row, worktreeRoot) {
 }
 
 function equivalentPhysicalPath(left, right) {
-  const normalize = (value) => path.normalize(value)
   if (process.platform === 'win32') {
-    return normalize(left).toLowerCase() === normalize(right).toLowerCase()
+    const normalizeWindows = (value) => {
+      let normalized = path.win32.normalize(String(value))
+      if (normalized.startsWith('\\\\?\\')) normalized = normalized.slice(4)
+      if (normalized.startsWith('UNC\\')) normalized = `\\\\${normalized.slice(4)}`
+      return normalized.toLowerCase()
+    }
+    return normalizeWindows(left) === normalizeWindows(right)
   }
-  return normalize(left) === normalize(right)
+  return path.normalize(left) === path.normalize(right)
 }
 
 function markerClaimsPath(marker, targetPath) {
