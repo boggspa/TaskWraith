@@ -6935,10 +6935,21 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * a mostly-empty 331px box — the reservation exists to stop the ratchet WHILE
  * streaming, not to standardise every finished card. The cost is one reflow at
  * settle, in place of one per delta, at the same moment the rim stops.
+ *
+ * THE `>` IS LOAD-BEARING. A lane nests a SECOND LiveActivityViewport inside
+ * this one: the tools part renders `.ensemble-fanout-tools-viewport` (184px)
+ * within the lane viewport (331px), and both emit the same
+ * `.live-activity-viewport-scroll` class while publishing their own
+ * `--live-activity-collapsed-height`. A descendant combinator therefore
+ * reserved the INNER box too, pinning a one-row tool block to a fixed 184px —
+ * measured in Chromium at 156px of dead space for a 28px row, which is the
+ * "huge gap" reported inside collapsed fan-out viewports. The inner viewport
+ * already sits inside the band this rule reserves; reserving it again can only
+ * add emptiness. Guarded by styles/fanoutLaneViewportReserveCss.test.ts.
  * ============================================================ */
 .ensemble-fanout-result-card.is-working
   .ensemble-fanout-result-viewport.is-collapsed
-  .live-activity-viewport-scroll {
+  > .live-activity-viewport-scroll {
   height: var(--live-activity-collapsed-height);
   /* The reveal replaces the growth, so it must not ALSO inherit the shared
      `transition: max-height` — the cap never changes here. */
@@ -6960,7 +6971,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 @media (prefers-reduced-motion: reduce) {
   .ensemble-fanout-result-card.is-working
     .ensemble-fanout-result-viewport.is-collapsed
-    .live-activity-viewport-scroll {
+    > .live-activity-viewport-scroll {
     animation: none;
   }
 }
@@ -6968,7 +6979,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 :root[data-reduce-motion='true']
   .ensemble-fanout-result-card.is-working
   .ensemble-fanout-result-viewport.is-collapsed
-  .live-activity-viewport-scroll {
+  > .live-activity-viewport-scroll {
   animation: none;
 }
 
