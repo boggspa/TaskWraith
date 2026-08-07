@@ -198,6 +198,15 @@ export interface AcpTurnOptions {
    */
   transientPromptRetryDelayMs?: number | ((attempt: number) => number)
   /**
+   * How far back stderr counts as describing the prompt failure being
+   * classified (default 10_000ms). Providers log the upstream body to their
+   * tracing channel and then reply with a bare JSON-RPC envelope — grok's gap
+   * is ~13ms — so without this correlation the classifier sees no evidence at
+   * all. Older stderr is ignored so a stale 500 cannot license an unrelated
+   * retry.
+   */
+  stderrCorrelationWindowMs?: number
+  /**
    * Called once when the child exits. `turnComplete` is true when the prompt
    * reached a terminal stopReason before exit; `terminalStatus` is that raw
    * status so callers can distinguish end_turn from Cancelled/PermissionRejected,
@@ -376,6 +385,26 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let inFlightPromptText = ''
   let transientPromptRetries = 0
   let transientRetryTimer: ReturnType<typeof setTimeout> | null = null
+  // Recent provider stderr, kept only long enough to explain a prompt failure
+  // that arrives as a bare JSON-RPC envelope. Bounded in both time and bytes:
+  // this is a classification hint, never a log.
+  const recentStderr: Array<{ at: number; text: string }> = []
+  const collectStderr = (text: string): void => {
+    recentStderr.push({ at: Date.now(), text })
+    while (recentStderr.length > 32) recentStderr.shift()
+  }
+  const stderrEvidence = (): string => {
+    const windowMs = options.stderrCorrelationWindowMs ?? 10_000
+    // A non-positive window disables correlation outright. Without this, 0 still
+    // admits same-millisecond stderr, which reads as "off" but is not.
+    if (windowMs <= 0) return ''
+    const cutoff = Date.now() - windowMs
+    return recentStderr
+      .filter((entry) => entry.at >= cutoff)
+      .map((entry) => entry.text)
+      .join('\n')
+      .slice(-8192)
+  }
 
   child.stdin?.on?.('error', (err) => {
     if (isTerminalStdinWriteError(err)) {
@@ -676,7 +705,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           message.id === ACP_ID.sessionResume ||
           (typeof message.id === 'number' && message.id === activePromptRpcId))
       ) {
-        const rpcError = message.error as { message?: string; data?: unknown }
+        const rpcError = message.error as { code?: unknown; message?: string; data?: unknown }
         if (
           message.id === ACP_ID.sessionResume &&
           options.allowResumeFallback !== false &&
@@ -705,7 +734,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         // straight through to the terminalize path below.
         if (
           step === 'session/prompt' &&
-          isTransientAcpPromptFailure(rpcError) &&
+          isTransientAcpPromptFailure(rpcError, { evidence: stderrEvidence() }) &&
           scheduleTransientPromptRetry(rpcError?.message || 'request error')
         ) {
           continue
@@ -907,7 +936,9 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   child.stderr?.on('data', (chunk) => {
     const text = chunk.toString().trim()
-    if (text) options.onEvent({ type: 'provider_warning', text })
+    if (!text) return
+    collectStderr(text)
+    options.onEvent({ type: 'provider_warning', text })
   })
 
   let processError: Error | null = null

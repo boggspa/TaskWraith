@@ -59,6 +59,13 @@ export interface GrokSeatSessionOptions {
   transientPromptRetryLimit?: number
   /** Backoff before each transient retry (default 1s then 3s). Tests pass 0. */
   transientPromptRetryDelayMs?: number | ((attempt: number) => number)
+  /**
+   * How far back stderr counts as describing the prompt failure being
+   * classified (default 10_000ms). grok logs the upstream body to its tracing
+   * channel ~13ms before replying with a bare JSON-RPC envelope, so without
+   * this correlation the classifier sees no evidence at all.
+   */
+  stderrCorrelationWindowMs?: number
 }
 
 export interface GrokSeatTurnOptions {
@@ -119,6 +126,11 @@ export class GrokSeatSession {
   private pendingPromptTurn: ActiveTurn | null = null
   /** Pending transient-retry backoffs, cleared on cancel/dispose/death. */
   private readonly transientRetryTimers = new Set<ReturnType<typeof setTimeout>>()
+  /**
+   * Recent stderr, kept only long enough to explain a prompt failure that
+   * arrives as a bare JSON-RPC envelope. A classification hint, never a log.
+   */
+  private readonly recentStderr: Array<{ at: number; text: string }> = []
 
   constructor(options: GrokSeatSessionOptions) {
     this.options = options
@@ -133,7 +145,10 @@ export class GrokSeatSession {
     this.child.stdout?.on('data', (chunk) => this.handleStdout(chunk.toString()))
     this.child.stderr?.on('data', (chunk) => {
       const text = chunk.toString().trim()
-      if (text) this.activeTurn?.onEvent({ type: 'provider_warning', text })
+      if (!text) return
+      this.recentStderr.push({ at: Date.now(), text })
+      while (this.recentStderr.length > 32) this.recentStderr.shift()
+      this.activeTurn?.onEvent({ type: 'provider_warning', text })
     })
     this.child.on('error', (err) => {
       this.activeTurn?.onEvent({ type: 'provider_warning', text: err.message || String(err) })
@@ -281,6 +296,20 @@ export class GrokSeatSession {
     return true
   }
 
+  /** Stderr recent enough to describe the failure being classified. */
+  private stderrEvidence(): string {
+    const windowMs = this.options.stderrCorrelationWindowMs ?? 10_000
+    // A non-positive window disables correlation outright; 0 would otherwise
+    // still admit same-millisecond stderr.
+    if (windowMs <= 0) return ''
+    const cutoff = Date.now() - windowMs
+    return this.recentStderr
+      .filter((entry) => entry.at >= cutoff)
+      .map((entry) => entry.text)
+      .join('\n')
+      .slice(-8192)
+  }
+
   private clearTransientRetryTimers(): void {
     for (const timer of this.transientRetryTimers) clearTimeout(timer)
     this.transientRetryTimers.clear()
@@ -306,7 +335,7 @@ export class GrokSeatSession {
           message.id === SESSION_NEW_RPC_ID ||
           (activePromptId !== undefined && message.id === activePromptId))
       ) {
-        const rpcError = message.error as { message?: string; data?: unknown }
+        const rpcError = message.error as { code?: unknown; message?: string; data?: unknown }
         const step =
           message.id === INITIALIZE_RPC_ID
             ? 'initialize'
@@ -323,7 +352,7 @@ export class GrokSeatSession {
         if (
           step === 'session/prompt' &&
           this.activeTurn &&
-          isTransientAcpPromptFailure(rpcError) &&
+          isTransientAcpPromptFailure(rpcError, { evidence: this.stderrEvidence() }) &&
           this.scheduleTransientPromptRetry(
             this.activeTurn,
             rpcError?.message || 'request error'

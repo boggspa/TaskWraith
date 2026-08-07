@@ -63,6 +63,16 @@ export interface GrokAcpRunOptions {
   onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
   /** Opt-in raw JSON-RPC frame tap (both directions) for gated debug capture. */
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
+  /**
+   * Bounded same-session retry for a TRANSIENT `session/prompt` failure — xAI
+   * 500s are the observed case. Defaults live in the neutral ACP core (2
+   * attempts at 1s/3s); these exist so the Grok adapter and its tests can tune
+   * them without reaching past runGrokAcpTurn.
+   */
+  transientPromptRetryLimit?: number
+  transientPromptRetryDelayMs?: number | ((attempt: number) => number)
+  /** How far back grok's stderr counts as explaining a bare JSON-RPC error. */
+  stderrCorrelationWindowMs?: number
 }
 
 export interface GrokAcpRunHandle extends AcpTurnHandle {
@@ -204,6 +214,9 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
           : 'Grok stopped after a declined or failed tool; continuing once so it can finish from available evidence.'
     },
     formatProcessError: formatGrokProcessError,
+    transientPromptRetryLimit: options.transientPromptRetryLimit,
+    transientPromptRetryDelayMs: options.transientPromptRetryDelayMs,
+    stderrCorrelationWindowMs: options.stderrCorrelationWindowMs,
     // Grok receives a bounded graceful termination request first. The neutral
     // ACP core sends SIGKILL after its grace window if no close event arrives.
     endProcess: (child) => child.kill('SIGTERM'),

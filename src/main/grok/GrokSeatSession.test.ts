@@ -26,8 +26,16 @@ class FakeAcpChild implements AcpChildProcess {
       this.dataListeners.push(listener)
     }
   }
+  private stderrListeners: ((chunk: string) => void)[] = []
   stderr = {
-    on: (_event: 'data', _listener: (chunk: string) => void): void => {}
+    on: (_event: 'data', listener: (chunk: string) => void): void => {
+      this.stderrListeners.push(listener)
+    }
+  }
+
+  /** Emit on grok's stderr tracing channel. */
+  errorOutput(text: string): void {
+    this.stderrListeners.forEach((cb) => cb(text))
   }
 
   on(event: 'error' | 'close', listener: (arg: never) => void): void {
@@ -189,6 +197,44 @@ describe('GrokSeatSession', () => {
     expect(first.ends).toEqual([
       { turnComplete: true, terminalStatus: 'end_turn', processExited: false }
     ])
+  })
+
+  it('correlates stderr to retry a bare envelope, and to veto an auth failure', async () => {
+    const bareEnvelope = { code: -32603, message: 'Internal error' }
+    // Transient: the 500 body only ever reaches the stderr channel.
+    const live = new FakeAcpChild()
+    const liveSession = new GrokSeatSession({
+      cwd: '/repo',
+      spawnProcess: () => live,
+      transientPromptRetryDelayMs: 0
+    })
+    const transient = makeTurn()
+    liveSession.runTurn(transient.turn)
+    completeHandshake(live)
+    live.errorOutput(
+      'ERROR error=Internal error: {"message":"API error (status 500 Internal Server Error): error: Service temporarily unavailable.","http_status":500}'
+    )
+    live.emit({ jsonrpc: '2.0', id: 3, error: bareEnvelope })
+    await new Promise((r) => setTimeout(r, 5))
+    expect(live.killed).toBe(false)
+    expect(liveSession.isAlive()).toBe(true)
+    expect(live.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(2)
+
+    // Same envelope, but stderr names a cause no retry can clear.
+    const dead = new FakeAcpChild()
+    const deadSession = new GrokSeatSession({
+      cwd: '/repo',
+      spawnProcess: () => dead,
+      transientPromptRetryDelayMs: 0
+    })
+    const fatal = makeTurn()
+    deadSession.runTurn(fatal.turn)
+    completeHandshake(dead)
+    dead.errorOutput('worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)')
+    dead.emit({ jsonrpc: '2.0', id: 3, error: bareEnvelope })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(dead.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
+    expect(deadSession.isAlive()).toBe(false)
   })
 
   it('rejects a concurrent turn without disturbing the in-flight one', () => {

@@ -28,7 +28,17 @@ class FakeAcpChild implements AcpChildProcess {
       this.dataListeners.push(listener)
     }
   }
-  stderr = { on: (_event: 'data', _listener: (chunk: string) => void): void => {} }
+  private stderrListeners: ((chunk: string) => void)[] = []
+  stderr = {
+    on: (_event: 'data', listener: (chunk: string) => void): void => {
+      this.stderrListeners.push(listener)
+    }
+  }
+
+  /** Emit on the provider's stderr channel (its tracing log, not tool stdout). */
+  errorOutput(text: string): void {
+    this.stderrListeners.forEach((cb) => cb(text))
+  }
 
   on(event: 'error' | 'close', listener: (arg: never) => void): void {
     if (event === 'close') this.closeListener = listener as (code: number | null) => void
@@ -713,6 +723,70 @@ describe('runAcpTurn — neutral core', () => {
     child.emit({ jsonrpc: '2.0', id: prompts[1].id as number, result: { stopReason: 'end_turn' } })
     await new Promise((r) => setTimeout(r, 40))
     expect(closes).toEqual([{ turnComplete: true, terminalStatus: 'end_turn' }])
+  })
+
+  it('retries a bare "Internal error" whose 500 evidence only reached stderr', async () => {
+    const child = new FakeAcpChild()
+    baseOptions(child, { transientPromptRetryDelayMs: 0 })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // Captured verbatim from run grok-1786115061135 (2026-08-07T15:11:24Z):
+    // grok logs the upstream body to stderr 13ms BEFORE replying, and the
+    // JSON-RPC error itself carries no data at all.
+    child.errorOutput(
+      'ERROR error=Internal error: {\n  "message": "API error (status 500 Internal Server Error): API error (status 500 Internal Server Error): error: Service temporarily unavailable.",\n  "http_status": 500\n}'
+    )
+    child.emit({ jsonrpc: '2.0', id: 3, error: { code: -32603, message: 'Internal error' } })
+    await new Promise((r) => setTimeout(r, 5))
+
+    expect(child.killed).toBe(false)
+    expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(2)
+  })
+
+  it('refuses to retry when recent stderr shows the real cause is auth', async () => {
+    const child = new FakeAcpChild()
+    const closes: Array<{ turnComplete: boolean; terminalStatus?: string }> = []
+    baseOptions(child, {
+      transientPromptRetryDelayMs: 0,
+      onClose: (_code, turnComplete, terminalStatus) => {
+        closes.push({ turnComplete, terminalStatus })
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // Same uninformative envelope — but the stderr channel says a retry is
+    // pointless. Correlating the channels is what makes the refusal possible.
+    child.errorOutput('ERROR worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)')
+    child.emit({ jsonrpc: '2.0', id: 3, error: { code: -32603, message: 'Internal error' } })
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
+    expect(closes).toEqual([{ turnComplete: false, terminalStatus: 'rpc_error:session/prompt' }])
+  })
+
+  it('ignores stderr that predates the correlation window', async () => {
+    const child = new FakeAcpChild()
+    baseOptions(child, { transientPromptRetryDelayMs: 0, stderrCorrelationWindowMs: 5 })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // A 500 from earlier in the run must not license a retry for an unrelated
+    // failure that happens to follow it. Let the window genuinely lapse.
+    child.errorOutput('API error (status 500 Internal Server Error)')
+    await new Promise((r) => setTimeout(r, 25))
+    child.emit({ jsonrpc: '2.0', id: 3, error: { code: -32000, message: 'Server error' } })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
+  })
+
+  it('correlation can be switched off entirely with a zero window', async () => {
+    const child = new FakeAcpChild()
+    baseOptions(child, { transientPromptRetryDelayMs: 0, stderrCorrelationWindowMs: 0 })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.errorOutput('API error (status 500 Internal Server Error)')
+    child.emit({ jsonrpc: '2.0', id: 3, error: { code: -32000, message: 'Server error' } })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
   })
 
   it('terminalizes once the transient prompt retry budget is exhausted', async () => {

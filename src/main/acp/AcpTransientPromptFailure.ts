@@ -27,10 +27,39 @@
 // Modeled on ProviderQuotaWallClassifier: pure, side-effect free, unit-tested
 // against real captured bodies rather than invented prose.
 
+// CHANNEL SPLIT (the reason the first cut of this file did not fire). grok does
+// NOT put the upstream body in the JSON-RPC error. Captured from run
+// grok-1786112089519 / -1786115061135 on 2026-08-07, 13ms apart:
+//
+//   stderr  15:11:24.082Z  ERROR error=Internal error: {"message":"API error
+//                          (status 500 ...): Service temporarily unavailable.",
+//                          "http_status":500}
+//   rpc     15:11:24.095Z  {"id":3,"error":{"code":-32603,
+//                          "message":"Internal error"}}
+//
+// The frame is a bare envelope; every classifiable token is on stderr. So the
+// caller passes recent stderr as `evidence`, and classification runs over both
+// channels. That correlation is what lets the exclusions work too: an auth
+// failure also arrives as a bare -32603, and only the stderr line distinguishes
+// it from a 500.
+
 /** The `error` member of a JSON-RPC error response. */
 export interface AcpRpcErrorLike {
+  code?: unknown
   message?: unknown
   data?: unknown
+}
+
+/** JSON-RPC 2.0 reserved code for a server-side internal error. */
+const JSON_RPC_INTERNAL_ERROR = -32603
+
+export interface AcpTransientClassificationOptions {
+  /**
+   * Corroborating text from another channel — in practice the provider's recent
+   * stderr. The caller owns the freshness window; anything passed here is
+   * treated as describing THIS failure.
+   */
+  evidence?: string | null
 }
 
 /**
@@ -55,7 +84,13 @@ const NEVER_TRANSIENT: RegExp[] = [
   /\bout of credits\b/i,
   /\boverloaded\b/i,
   /\b(?:status|code)\s*[:=]?\s*(?:429|529)\b/i,
-  /"(?:http_)?status"\s*:\s*(?:429|529)\b/i
+  /"(?:http_)?status"\s*:\s*(?:429|529)\b/i,
+  // Malformed / oversized request — deterministic, and re-sending an oversized
+  // prompt twice is the one retry that is not cheap.
+  /\bcontext[_ ]length[_ ]exceeded\b/i,
+  /\bmaximum context length\b/i,
+  /\b(?:prompt|context|input) (?:is )?too long\b/i,
+  /\binvalid[_ ]request(?:[_ ]error)?\b/i
 ]
 
 /**
@@ -111,13 +146,29 @@ export function acpRpcErrorText(error: AcpRpcErrorLike | null | undefined): stri
 
 /**
  * True only for a failure a bounded same-session retry can plausibly clear.
- * Unrecognized text is NOT transient: the existing terminalize path is the safe
- * default, and widening this predicate silently converts hard failures into
- * slow ones.
+ *
+ * Order matters. An excluded signal anywhere in the combined evidence wins, so
+ * a 503 page describing a rate limit — or a bare envelope whose stderr says
+ * `Auth(AuthorizationRequired)` — is refused. Only then does a recognized
+ * transient token, or the JSON-RPC internal-error code, license a retry.
  */
-export function isTransientAcpPromptFailure(error: AcpRpcErrorLike | null | undefined): boolean {
-  const text = acpRpcErrorText(error)
-  if (!text.trim()) return false
+export function isTransientAcpPromptFailure(
+  error: AcpRpcErrorLike | null | undefined,
+  options?: AcpTransientClassificationOptions
+): boolean {
+  const evidence = typeof options?.evidence === 'string' ? options.evidence : ''
+  const text = `${acpRpcErrorText(error)} ${evidence}`.trim()
+  if (!text) return false
   if (NEVER_TRANSIENT.some((re) => re.test(text))) return false
-  return TRANSIENT.some((re) => re.test(text))
+  if (TRANSIENT.some((re) => re.test(text))) return true
+  // Nothing named the cause. JSON-RPC reserves -32603 for a fault inside the
+  // server — the canonical retryable class — and by here no exclusion matched
+  // on either channel. The asymmetry decides it: a wrong retry costs one
+  // bounded backoff, a wrong refusal costs the entire turn.
+  return toRpcErrorCode(error) === JSON_RPC_INTERNAL_ERROR
+}
+
+function toRpcErrorCode(error: AcpRpcErrorLike | null | undefined): number | null {
+  const code = error?.code
+  return typeof code === 'number' && Number.isFinite(code) ? code : null
 }

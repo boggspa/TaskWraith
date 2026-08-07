@@ -69,6 +69,56 @@ describe('isTransientAcpPromptFailure', () => {
     }
   })
 
+  it('classifies the bare envelope from stderr evidence on the other channel', () => {
+    // The real captured pair: the frame says nothing, stderr says everything.
+    const bareEnvelope = { code: -32603, message: 'Internal error' }
+    const stderr =
+      'ERROR error=Internal error: {\n  "message": "API error (status 500 Internal Server Error): error: Service temporarily unavailable.",\n  "http_status": 500\n}'
+    expect(isTransientAcpPromptFailure(bareEnvelope, { evidence: stderr })).toBe(true)
+  })
+
+  it('lets stderr evidence VETO a retry the envelope alone would have allowed', () => {
+    // Auth arrives as the same bare -32603; only the other channel can tell
+    // the two apart, which is the whole point of correlating them.
+    const bareEnvelope = { code: -32603, message: 'Internal error' }
+    expect(
+      isTransientAcpPromptFailure(bareEnvelope, {
+        evidence:
+          'worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)'
+      })
+    ).toBe(false)
+    expect(
+      isTransientAcpPromptFailure(bareEnvelope, { evidence: 'Error code: 429 - rate_limit_error' })
+    ).toBe(false)
+  })
+
+  it('treats an uncorroborated JSON-RPC -32603 as retryable, other codes not', () => {
+    // -32603 is reserved for a fault inside the server. A wrong retry costs one
+    // bounded backoff; a wrong refusal costs the whole turn.
+    expect(isTransientAcpPromptFailure({ code: -32603, message: 'Internal error' })).toBe(true)
+    expect(isTransientAcpPromptFailure({ code: -32602, message: 'Invalid params' })).toBe(false)
+    expect(isTransientAcpPromptFailure({ code: -32601, message: 'Method not found' })).toBe(false)
+    expect(isTransientAcpPromptFailure({ code: -32000, message: 'Server error' })).toBe(false)
+  })
+
+  it('never retries a deterministic oversized or malformed request', () => {
+    // Re-sending an oversized prompt is the one retry that is not cheap.
+    for (const text of [
+      'context_length_exceeded',
+      "This model's maximum context length is 131072 tokens",
+      'prompt is too long',
+      'invalid_request_error'
+    ]) {
+      expect(
+        isTransientAcpPromptFailure(
+          { code: -32603, message: 'Internal error' },
+          { evidence: text }
+        ),
+        text
+      ).toBe(false)
+    }
+  })
+
   it('fails closed on an unrecognized or empty error', () => {
     expect(isTransientAcpPromptFailure(null)).toBe(false)
     expect(isTransientAcpPromptFailure(undefined)).toBe(false)

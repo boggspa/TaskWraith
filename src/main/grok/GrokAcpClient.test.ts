@@ -33,8 +33,16 @@ class FakeAcpChild implements AcpChildProcess {
       this.dataListeners.push(listener)
     }
   }
+  private stderrListeners: ((chunk: string) => void)[] = []
   stderr = {
-    on: (_event: 'data', _listener: (chunk: string) => void): void => {}
+    on: (_event: 'data', listener: (chunk: string) => void): void => {
+      this.stderrListeners.push(listener)
+    }
+  }
+
+  /** Emit on grok's stderr tracing channel. */
+  errorOutput(text: string): void {
+    this.stderrListeners.forEach((cb) => cb(text))
   }
 
   on(event: 'error' | 'close', listener: (arg: never) => void): void {
@@ -436,13 +444,28 @@ describe('runGrokAcpTurn', () => {
 
   it('preserves a prompt RPC failure as a non-success terminal status', async () => {
     const child = new FakeAcpChild()
-    const { events, closeInfos } = run(child)
+    // A bare -32603 is now retried (the upstream 500 that produces it is
+    // self-clearing), so exhaust the budget: what must survive is the
+    // NON-SUCCESS terminal status, or an adapter downstream normalizes an
+    // unfinished prompt to an empty success.
+    const { events, closeInfos } = run(child, {
+      transientPromptRetryLimit: 1,
+      transientPromptRetryDelayMs: 0
+    })
     child.emit({ jsonrpc: '2.0', id: 1, result: {} })
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
 
     child.emit({
       jsonrpc: '2.0',
       id: 3,
+      error: { code: -32603, message: 'Internal error' }
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    const retried = child.sent().filter((m) => m.method === 'session/prompt')
+    expect(retried).toHaveLength(2)
+    child.emit({
+      jsonrpc: '2.0',
+      id: retried[1].id as number,
       error: { code: -32603, message: 'Internal error' }
     })
     await new Promise((r) => setTimeout(r, 40))
@@ -455,6 +478,42 @@ describe('runGrokAcpTurn', () => {
     expect(closeInfos).toEqual([
       { code: 0, turnComplete: false, terminalStatus: 'rpc_error:session/prompt' }
     ])
+  })
+
+  it('recovers a Grok turn from a transient upstream 500 without losing it', async () => {
+    const child = new FakeAcpChild()
+    const { events, closeInfos } = run(child, { transientPromptRetryDelayMs: 0 })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // End-to-end shape of the reported failure: stderr carries the 500, the
+    // JSON-RPC error is a bare envelope.
+    child.errorOutput(
+      'ERROR error=Internal error: {"message":"API error (status 500 Internal Server Error): error: Service temporarily unavailable.","http_status":500}'
+    )
+    child.emit({ jsonrpc: '2.0', id: 3, error: { code: -32603, message: 'Internal error' } })
+    await new Promise((r) => setTimeout(r, 10))
+
+    const retried = child.sent().filter((m) => m.method === 'session/prompt')
+    expect(retried).toHaveLength(2)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Answer after the blip.' }
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: retried[1].id as number, result: { stopReason: 'end_turn' } })
+    await new Promise((r) => setTimeout(r, 40))
+
+    // The turn the user would otherwise have lost entirely.
+    expect(
+      events.some((e) => e.type === 'content' && e.text === 'Answer after the blip.')
+    ).toBe(true)
+    expect(closeInfos).toEqual([{ code: 0, turnComplete: true, terminalStatus: 'end_turn' }])
   })
 
   it('reports the exact broker-unavailable blocker after a denied native tool', async () => {
