@@ -94,8 +94,12 @@ import {
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
 import {
+  preservesInitialPassRoster,
   resolveAuthoritySelection,
-  type EnsembleAuthorityRoutingCheckpoint
+  shouldAttachContinuousAuthoritySelectionCheckpoint,
+  shouldResummonAuthorityForUnresolvedRouting,
+  type EnsembleAuthorityRoutingCheckpoint,
+  type EnsembleAuthorityRoutingDecision
 } from '../EnsembleAuthorityRouting'
 import type {
   EnsembleYieldOutcome,
@@ -857,13 +861,7 @@ interface ActiveParticipantRun {
    */
   authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
   /** Explicit host-admitted response to the attached authority checkpoint. */
-  authorityRoutingDecision?:
-    | 'selected'
-    | 'skipped_intervention'
-    | 'skipped_participant'
-    | 'summoned'
-    | 'fanout'
-    | 'redirected'
+  authorityRoutingDecision?: EnsembleAuthorityRoutingDecision
   participant: EnsembleParticipant
   promptMessageId: string
   /**
@@ -5400,7 +5398,7 @@ export class EnsembleOrchestrator {
         run.roundId,
         checkpoint?.kind === 'tagged_intervention'
           ? `Authority routing checkpoint: ${participantDisplayName(run.participant)} must make a targeted routing decision or explicitly skip this tagged intervention before yielding.`
-          : `Authority routing checkpoint: ${participantDisplayName(run.participant)} must select pending participants or explicitly preserve the queue before yielding this later Continuous pass.`
+          : `Authority routing checkpoint: ${participantDisplayName(run.participant)} must select pending participants, route with a targeted yield/@mention/fan-out, or explicitly preserve the queue before yielding this Continuous pass.`
       )
       return {
         kind: 'authority_routing_decision_required',
@@ -8205,14 +8203,19 @@ export class EnsembleOrchestrator {
     authorityRole: 'boss' | 'second_in_command'
   ): EnsembleBossmanControlResult {
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
-    if (this.isInitialAuthorityPass(runtime)) {
+    if (
+      preservesInitialPassRoster({
+        orchestrationMode: runtime.orchestrationMode,
+        continuationPass: runtime.continuationPass
+      })
+    ) {
       return {
         ok: false,
         tool: 'ensemble_bossman_control',
         action: 'select_participants',
         roundId: runtime.roundId,
         message:
-          'Boss/Captain selection is unavailable during the initial Ensemble pass; every first-pass participant keeps its turn.',
+          'Boss/Captain selection is unavailable during the initial Turn-bound Ensemble pass; every first-pass participant keeps its turn.',
         error: 'initial_pass_preserves_roster'
       }
     }
@@ -8336,7 +8339,12 @@ export class EnsembleOrchestrator {
       }
     }
     if (active) {
-      if (this.isInitialAuthorityPass(runtime)) {
+      if (
+        preservesInitialPassRoster({
+          orchestrationMode: runtime.orchestrationMode,
+          continuationPass: runtime.continuationPass
+        })
+      ) {
         return {
           ok: false,
           tool: 'ensemble_bossman_control',
@@ -8344,7 +8352,7 @@ export class EnsembleOrchestrator {
           roundId: runtime.roundId,
           participantId: active.participant.id,
           message:
-            'Boss/Captain cannot skip a participant during the initial Ensemble pass; every first-pass participant keeps its turn.',
+            'Boss/Captain cannot skip a participant during the initial Turn-bound Ensemble pass; every first-pass participant keeps its turn.',
           error: 'initial_pass_preserves_roster'
         }
       }
@@ -8388,7 +8396,12 @@ export class EnsembleOrchestrator {
         error: 'stale_target'
       }
     }
-    if (this.isInitialAuthorityPass(runtime)) {
+    if (
+      preservesInitialPassRoster({
+        orchestrationMode: runtime.orchestrationMode,
+        continuationPass: runtime.continuationPass
+      })
+    ) {
       return {
         ok: false,
         tool: 'ensemble_bossman_control',
@@ -8396,7 +8409,7 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         participantId: targetParticipantId,
         message:
-          'Boss/Captain cannot skip a participant during the initial Ensemble pass; every first-pass participant keeps its turn.',
+          'Boss/Captain cannot skip a participant during the initial Turn-bound Ensemble pass; every first-pass participant keeps its turn.',
         error: 'initial_pass_preserves_roster'
       }
     }
@@ -12558,9 +12571,10 @@ export class EnsembleOrchestrator {
     }
 
     if (
-      runtime.orchestrationMode === 'continuous' &&
-      !this.isInitialAuthorityPass(runtime) &&
-      (runtime.remainingParticipants?.length || 0) > 0
+      shouldAttachContinuousAuthoritySelectionCheckpoint({
+        orchestrationMode: runtime.orchestrationMode,
+        remainingParticipantCount: runtime.remainingParticipants?.length || 0
+      })
     ) {
       return {
         kind: 'later_pass',
@@ -15602,7 +15616,17 @@ export class EnsembleOrchestrator {
         remaining.length = 0
         break
       }
-      this.noteUnresolvedAuthorityRoutingCheckpoint(run)
+      // Continuous selectionRequired checkpoints are resolved after yield/@mention
+      // routing below. Soft-note only the non-blocking tagged interventions here.
+      if (
+        !shouldResummonAuthorityForUnresolvedRouting({
+          orchestrationMode: runtime.orchestrationMode,
+          selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
+          decision: run.authorityRoutingDecision
+        })
+      ) {
+        this.noteUnresolvedAuthorityRoutingCheckpoint(run)
+      }
       const bossYieldedToUser =
         runtime.returnedControlToUser && this.isBossParticipant(chat, runtime, participant.id)
       if (bossYieldedToUser) {
@@ -15834,9 +15858,11 @@ export class EnsembleOrchestrator {
         const orderedTargets = routedMentionedParticipants.filter((tagged) =>
           remainingTargetIds.has(tagged.id)
         )
+        let mentionRouted = false
         if (orderedTargets.length > 0) {
           const rest = remaining.filter((entry) => !remainingTargetIds.has(entry.id))
           remaining.splice(0, remaining.length, ...orderedTargets, ...rest)
+          mentionRouted = true
           if (
             priorityAuthorityMatch &&
             remainingTargetIds.has(priorityAuthorityMatch.participant.id)
@@ -15882,6 +15908,7 @@ export class EnsembleOrchestrator {
               }
             )
             if (continuation.appended) {
+              mentionRouted = true
               if (isPriorityAuthority) {
                 runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
                 runtime.pendingAuthorityRoutingCheckpoints.set(
@@ -15914,6 +15941,35 @@ export class EnsembleOrchestrator {
             )
           }
         }
+        if (mentionRouted) {
+          this.markAuthorityRoutingDecision(run, 'mentioned')
+        }
+      }
+      if (
+        shouldResummonAuthorityForUnresolvedRouting({
+          orchestrationMode: runtime.orchestrationMode,
+          selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
+          decision: run.authorityRoutingDecision
+        })
+      ) {
+        const statusMessage = `Authority routing checkpoint: ${participantDisplayName(participant)} ended without an explicit routing decision; re-summoning before ordinary serial writers.`
+        if (
+          this.requeueAuthorityForActiveFanoutHold(runtime, remaining, participant, statusMessage)
+        ) {
+          runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
+          runtime.pendingAuthorityRoutingCheckpoints.set(
+            participant.id,
+            run.authorityRoutingCheckpoint!
+          )
+          continue
+        }
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${statusMessage} Could not re-summon ${participantDisplayName(participant)}; pausing ordinary serial writers for this round.`
+        )
+        remaining.length = 0
+        break
       }
       // 1.0.4 — remember whose dispatch is "the yield target" for
       // the next iteration so a failed dispatch on that participant

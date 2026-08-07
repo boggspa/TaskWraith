@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { resolveAuthoritySelection } from './EnsembleAuthorityRouting'
+import {
+  preservesInitialPassRoster,
+  resolveAuthoritySelection,
+  shouldAttachContinuousAuthoritySelectionCheckpoint,
+  shouldResummonAuthorityForUnresolvedRouting
+} from './EnsembleAuthorityRouting'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import type { EnsembleParticipant } from './store/types'
 
@@ -107,5 +112,64 @@ describe('resolveAuthoritySelection', () => {
     if (!result.ok) return
     expect(result.selected).toHaveLength(MAX_ENSEMBLE_PARTICIPANTS - 1)
     expect(result.skipped).toEqual([])
+  })
+})
+
+describe('Continuous Boss ownership helpers', () => {
+  it('attaches a Continuous selection checkpoint whenever serial seats remain', () => {
+    expect(
+      shouldAttachContinuousAuthoritySelectionCheckpoint({
+        orchestrationMode: 'continuous',
+        remainingParticipantCount: 2
+      })
+    ).toBe(true)
+    expect(
+      shouldAttachContinuousAuthoritySelectionCheckpoint({
+        orchestrationMode: 'continuous',
+        remainingParticipantCount: 0
+      })
+    ).toBe(false)
+    expect(
+      shouldAttachContinuousAuthoritySelectionCheckpoint({
+        orchestrationMode: 'turn_bound',
+        remainingParticipantCount: 2
+      })
+    ).toBe(false)
+  })
+
+  it('preserves Turn-bound first-pass roster but lifts Continuous pass 1', () => {
+    expect(
+      preservesInitialPassRoster({ orchestrationMode: 'turn_bound', continuationPass: 1 })
+    ).toBe(true)
+    expect(
+      preservesInitialPassRoster({ orchestrationMode: 'continuous', continuationPass: 1 })
+    ).toBe(false)
+    expect(
+      preservesInitialPassRoster({ orchestrationMode: 'continuous', continuationPass: 2 })
+    ).toBe(false)
+  })
+
+  it('re-summons Continuous authority only for unmet selectionRequired checkpoints', () => {
+    expect(
+      shouldResummonAuthorityForUnresolvedRouting({
+        orchestrationMode: 'continuous',
+        selectionRequired: true,
+        decision: undefined
+      })
+    ).toBe(true)
+    expect(
+      shouldResummonAuthorityForUnresolvedRouting({
+        orchestrationMode: 'continuous',
+        selectionRequired: true,
+        decision: 'mentioned'
+      })
+    ).toBe(false)
+    expect(
+      shouldResummonAuthorityForUnresolvedRouting({
+        orchestrationMode: 'turn_bound',
+        selectionRequired: true,
+        decision: undefined
+      })
+    ).toBe(false)
   })
 })

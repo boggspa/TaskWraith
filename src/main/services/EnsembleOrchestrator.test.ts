@@ -6703,6 +6703,184 @@ Next action:
     expect(harness.dispatched[3].provider).toBe('kimi')
   })
 
+  it('Continuous later-pass Boss quiet answer re-summons authority and does not dispatch Worker', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.maxContinuationHops = 50
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Own the round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { continuationPass: number }>
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationPass = 2
+    // Re-dispatch is not automatic when we mutate pass mid-run; the active Boss
+    // run already carries (or will carry) a selectionRequired checkpoint once
+    // Continuous later-pass ownership is enforced. Quiet-answer without a
+    // routing decision must re-summon Boss rather than advance to Worker.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Looks fine; nothing to route.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(1))
+    expect(harness.dispatched[1].provider).toBe('claude')
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
+    expect(harness.dispatched.slice(1).some((entry) => entry.provider === 'codex')).toBe(false)
+    expect(harness.chat.messages.some((message) => /re-summon/i.test(message.content || ''))).toBe(
+      true
+    )
+  })
+
+  it('Continuous pass-1 Boss can select_participants / skip; quiet answer without decision re-summons', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.maxContinuationHops = 50
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants.push({
+      id: 'kimi',
+      provider: 'kimi',
+      enabled: true,
+      role: 'Researcher',
+      instructions: 'Research.',
+      order: 3,
+      permissionPresetId: 'read_only'
+    })
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Direct pass one.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].prompt).toContain('Authority routing checkpoint')
+
+    const selection = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker'],
+        reason: 'Only the writer is needed on pass 1.'
+      }
+    )
+    expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'kimi'
+      )?.status
+    ).toBe('skipped')
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Worker should continue.',
+        'Worker'
+      )
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+
+    const quietChat = makeChat()
+    quietChat.ensemble!.bossmanParticipantId = 'claude'
+    quietChat.ensemble!.orchestrationMode = 'continuous'
+    quietChat.ensemble!.maxContinuationHops = 50
+    quietChat.ensemble!.participants[0].role = 'Boss'
+    const quiet = makeHarness({ initialChat: quietChat })
+    quiet.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Direct pass one quietly.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(quiet.dispatched).toHaveLength(1))
+    expect(quiet.dispatched[0].prompt).toContain('Authority routing checkpoint')
+    quiet.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: quiet.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Standing by.' }
+    )
+    quiet.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: quiet.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(quiet.dispatched.length).toBeGreaterThan(1))
+    expect(quiet.dispatched[1].provider).toBe('claude')
+    expect(quiet.dispatched.some((entry) => entry.provider === 'codex')).toBe(false)
+  })
+
+  it('unique @Worker mention from Continuous Boss counts as a routing decision', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.maxContinuationHops = 50
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Route via mention.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].prompt).toContain('Authority routing checkpoint')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: '@Worker please implement the next slice.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.chat.messages.some((message) => /re-summon/i.test(message.content || ''))).toBe(
+      false
+    )
+  })
+
+  it('Turn-bound Boss quiet answer still advances without the Continuous must-route gate', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Panel answers.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].prompt || '').not.toContain(
+      'Authority routing checkpoint (Continuous pass'
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'My panel answer.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+  })
+
   it('lets Boss explicitly re-summon an answered worker in Continuous mode', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.orchestrationMode = 'continuous'

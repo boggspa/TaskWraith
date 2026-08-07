@@ -24,6 +24,7 @@ command that requested them instead of relying on loose UI state.
 ### Ensemble scales without losing the thread
 
 - **50-seat rosters.** Ensemble capacity now reaches 50 participants across desktop, iOS, presets, bridge validation, agent schemas, and orchestration. The transcript's compact participant filter rail keeps that full roster to two 25-seat columns.
+- **Continuous Boss ownership.** In Continuous mode, an acting Boss/Captain with remaining serial seats must make an explicit routing decision (`select_participants` / skip / summon, targeted yield, unique foreground `@mention`, or accepted fan-out) before ordinary writers advance; a quiet answer re-summons authority. Continuous pass 1 may select/skip; Turn-bound still preserves the full first pass.
 - **Fan-out remains legible.** Two-column lane cards, bounded result viewports, agent-built roster rows, working-seat navigation, and settled question/answer preservation keep a busy round readable while it is still moving.
 - **Continuity survives change.** Mid-round steering and queue delivery now absorb late settlements without cancelling live work; seat controls, permissions, effort, and Fast carry across provider changes; and blackboard workflows recover cleanly across supported native tools.
 

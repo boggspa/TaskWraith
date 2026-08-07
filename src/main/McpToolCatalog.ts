@@ -2587,7 +2587,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_bossman_control',
       description:
-        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly select the later-pass queue (or preserve it with skip_intervention), explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. The initial pass always preserves each participant. Non-authority callers and stale round/run/participant ids are rejected and audited.',
+        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly select the Continuous-pass queue including Continuous pass 1 (or preserve it with skip_intervention), explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Turn-bound first pass still preserves every participant; Continuous acting Boss/Captain may select/skip on pass 1. Non-authority callers and stale round/run/participant ids are rejected and audited.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2642,7 +2642,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'array',
             items: { type: 'string' },
             description:
-              'For reorder_remaining: pending participant ids in desired priority order. For select_participants on a later Continuous pass: exact participant ids or unique role/model aliases to keep; every other pending serial participant is skipped.'
+              'For reorder_remaining: pending participant ids in desired priority order. For select_participants on a Continuous pass (including Continuous pass 1): exact participant ids or unique role/model aliases to keep; every other pending serial participant is skipped. Turn-bound first pass still rejects selection.'
           },
           participantRoles: {
             type: 'array',

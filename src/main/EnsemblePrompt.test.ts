@@ -1614,7 +1614,32 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Authority routing checkpoint (Continuous pass 2)')
     expect(prompt).toContain('select_participants')
     expect(prompt).toContain('skip_intervention')
+    expect(prompt).toContain('Continuous pass 1 may select')
+    expect(prompt).toContain('unique foreground')
     expect(prompt).not.toContain('do not use a broad/all target')
+  })
+
+  it('gives Continuous pass-1 authority the same must-route checkpoint stanza', () => {
+    const continuousEnsemble: EnsembleConfig = {
+      ...ensemble,
+      orchestrationMode: 'continuous',
+      maxContinuationHops: 6
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: continuousEnsemble,
+      participant: continuousEnsemble.participants[0],
+      currentPrompt: 'Direct pass one.',
+      roundId: 'round-1',
+      authorityRoutingCheckpoint: {
+        kind: 'later_pass',
+        pass: 1,
+        selectionRequired: true
+      }
+    })
+
+    expect(prompt).toContain('Authority routing checkpoint (Continuous pass 1)')
+    expect(prompt).toContain('re-summons you instead of advancing ordinary serial seats')
   })
 
   // 1.0.4-AR8 — meta-round suspension. When the chat has no workspace

@@ -893,10 +893,10 @@ export function buildEnsembleParticipantPromptProjection(
       const routingRule =
         checkpoint.kind === 'tagged_intervention'
           ? '- A targeted listed `ensemble_fanout` or `ensemble_yield(target)` also counts as a routing decision, but the target must name specific participants or a specific stage/role; do not use a broad/all target for this tagged checkpoint.'
-          : '- A listed `ensemble_fanout` or `ensemble_yield(target)` also counts as a routing decision. Follow that tool\'s normal target policy; use `select_participants` when you need to reduce serial churn.'
+          : '- A listed `ensemble_fanout` (≥1 accepted lane), a targeted `ensemble_yield(target)`, or a unique foreground `@Role`/`@Model` mention that routes also counts as a routing decision. Follow each tool\'s normal target policy; use `select_participants` when you need to reduce serial churn.'
       return [
         `Authority routing checkpoint (Continuous pass ${checkpoint.pass}): before you end or yield, make one explicit routing decision.${source}`,
-        '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats; every other pending serial seat is skipped. Or call `skip_intervention` to preserve the current queue when no routing change is needed.',
+        '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats (Continuous pass 1 may select); every other pending serial seat is skipped. Or call `skip_intervention` / `skip_participant` / `summon_participant` when those controls are listed. Ending quietly without a decision re-summons you instead of advancing ordinary serial seats.',
         `${routingRule} If the needed tool is absent, state the precise selection or opt-out visibly with unique @Role/@Model names.`
       ]
     }

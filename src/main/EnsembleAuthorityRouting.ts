@@ -12,10 +12,53 @@ export interface EnsembleAuthorityRoutingCheckpoint {
   kind: 'later_pass' | 'tagged_intervention'
   /** One-based autonomous pass number within the active Ensemble round. */
   pass: number
-  /** Later continuous passes require a keep/skip decision before a bare yield. */
+  /** Continuous authority passes require a keep/skip/routing decision before ending. */
   selectionRequired: boolean
   /** Present when a peer explicitly summoned the active authority by @-mention. */
   sourceParticipantLabel?: string
+}
+
+export type EnsembleAuthorityRoutingDecision =
+  | 'selected'
+  | 'skipped_intervention'
+  | 'skipped_participant'
+  | 'summoned'
+  | 'fanout'
+  | 'redirected'
+  | 'mentioned'
+
+/**
+ * Continuous acting Boss/Captain owns queue direction whenever ordinary
+ * serial seats remain. Pass 1 is included — Turn-bound keeps its full
+ * first-pass preserve separately.
+ */
+export function shouldAttachContinuousAuthoritySelectionCheckpoint(input: {
+  orchestrationMode: string | undefined
+  remainingParticipantCount: number
+}): boolean {
+  return input.orchestrationMode === 'continuous' && input.remainingParticipantCount > 0
+}
+
+/**
+ * Turn-bound first pass always preserves every seat. Continuous lifts that
+ * preserve so acting Boss/Captain can select/skip on pass 1.
+ */
+export function preservesInitialPassRoster(input: {
+  orchestrationMode: string | undefined
+  continuationPass: number
+}): boolean {
+  return input.continuationPass <= 1 && input.orchestrationMode !== 'continuous'
+}
+
+/** Quiet Continuous authority completion with an unmet selection checkpoint. */
+export function shouldResummonAuthorityForUnresolvedRouting(input: {
+  orchestrationMode: string | undefined
+  selectionRequired: boolean | undefined
+  decision: EnsembleAuthorityRoutingDecision | undefined
+}): boolean {
+  return (
+    input.orchestrationMode === 'continuous' && Boolean(input.selectionRequired) && !input.decision
+  )
 }
 
 export interface ResolveAuthoritySelectionInput {
