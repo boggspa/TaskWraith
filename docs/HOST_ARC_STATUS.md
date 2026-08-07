@@ -1,9 +1,9 @@
 # Host Arc — Status & Progress Tracker
 
-**Documentarian:** `@SparkDocs` (paperwork owner) · **This refresh:** `@SparkDocs` (Boss rule `host-arc-docs-must-record-DONE-never-IN-FLIGHT` — record closed Cap lands only; never in-flight wire/adopt prose)  
-**Last updated:** 2026-08-06T21:00Z continuous round  
+**Documentarian:** `@SparkDocs` (paperwork owner; relieved for this catch-up) · **This refresh:** `@Spare2` under Cap dispatch (Boss rule `host-arc-docs-must-record-DONE-never-IN-FLIGHT` — record closed Cap lands only; never in-flight wire/adopt prose)  
+**Last updated:** 2026-08-07T17:45Z continuous round  
 **Branch ahead of origin/master:** moving (`git log --oneline -1` is authoritative for HEAD)  
-**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a–c** + **4.3a pure/wire/adapter** + **Wave 4.4** `402f34e0e` + **Wave 4.3c** `1269e3fc7` + **Wave 4.3d** `e63add3c7` + **Wave 4.6** `d7b44f23c` + **Wave 4.5** `f1f950207` + **Wave 4.3e** `f370800da` + **Wave 4.6a** `3d3d766cc` + **Wave 4.8** docs `998dde2cd` + **R4'-patch** `7abaf33be` + **Step 3 (a')** `9ef9e0361` + **Wave 4.3b** `d2c79bd57` + docs tip `7096defbe` + **Step 5a** `266f20435` + harness timeout `3f521753e` + **Step 5b-port** `6c9658d6d` + **Step 5b-admission** `5bce10bac` + **Step 5b-wire** `cf3b03eb7` + docs `95bd8587a` + **Wave 5d** `215c03849` all **LANDED**. Node production composition boots/serves/stops under test; TUI proves first **real** client round trip against real Host sockets; Desktop mounts provider **and** reads Host via ungated `HostStatusRow` (Approvals) **and** has Desktop command/receipt IPC plumbing (`d2c79bd57` — capability, **not** AppStore authority cutover) **and** projects the `providers` family leaf (`266f20435`). **Does NOT** retire AppStore authority. AC1–6 **PARTIAL** (never PASS). **Host publishes under Electron** (`host-arc-58-…`): discovery **0600** + token **0600** + real socket (`srw-------`) + listener **ACCEPTS** + clean teardown — proven on **three** independent profiles (`workspaces=8` / `threads=45` on the third prove the chatList port serves real data). Socket suite **CLOSED as seat-specific** — durable seat matrix: **Claude = LISTEN OK · Pi = LISTEN OK · Cursor = EPERM**. **5b-wire** `cf3b03eb7` injects the admission port at the composition root via a late-bound thunk (`() => getConfiguredProviderSnapshot()`) — **not** a hoist; zero domain logic in root. **Providers** is the **5th real family**. **Wave 5d** `215c03849` stops fabricating telemetry when the provider source is not ready: readiness travels as typed warning code `provider_source_not_ready` (no protocol version bump); Desktop paints **Unknown**, not a confident zero; genuine measured zero after ready still paints **None reported**. **Source population remainder** (`host-arc-61-…`): **five** real (health, workspaces, threads, usage, providers) and **nine** still hardcoded empty (runs, missions, rounds, participants, questions, approvals, schedules, artifacts, warnings) — the goal names all fourteen. Empty `providers` on early **and** late Electron probes remains **permanently inconclusive** from outside for *population* — `ready` is not a snapshot field; no further launches/probes for that question. **AppStore metadata cutover** / **iOS** remain open sequencing (recon maps exist). **iOS Kit reachable:** Swift **6.2.4**; `test:swift:ios-kit` = **868/115 green ~6s** (warm cache).
+**Overall completeness:** **Wave 3 CLOSED** — four SHAs (`18ec305f9`, `a12f2840a`, `80b1284c5`, `b45d4297f`). **Wave 4.2a–c** + **4.3a pure/wire/adapter** + **Wave 4.4** `402f34e0e` + **Wave 4.3c** `1269e3fc7` + **Wave 4.3d** `e63add3c7` + **Wave 4.6** `d7b44f23c` + **Wave 4.5** `f1f950207` + **Wave 4.3e** `f370800da` + **Wave 4.6a** `3d3d766cc` + **Wave 4.8** docs `998dde2cd` + **R4'-patch** `7abaf33be` + **Step 3 (a')** `9ef9e0361` + **Wave 4.3b** `d2c79bd57` + docs tip `7096defbe` + **Step 5a** `266f20435` + harness timeout `3f521753e` + **Step 5b-port** `6c9658d6d` + **Step 5b-admission** `5bce10bac` + **Step 5b-wire** `cf3b03eb7` + docs `95bd8587a` + **Wave 5d** `215c03849` + **Wave 5e** `69530f5fc` + **Wave 5f** `07b87384f` all **LANDED**. Node production composition boots/serves/stops under test; TUI proves first **real** client round trip against real Host sockets; Desktop mounts provider **and** reads Host via ungated `HostStatusRow` (Approvals) **and** has Desktop command/receipt IPC plumbing (`d2c79bd57` — capability, **not** AppStore authority cutover) **and** projects the `providers` family leaf (`266f20435`) **and** projects **awaiting** Host approvals into that same status row (`07b87384f` — leaf, not AppStore cutover). **Does NOT** retire AppStore authority. AC1–6 **PARTIAL** (never PASS). **Host publishes under Electron** (`host-arc-58-…`): discovery **0600** + token **0600** + real socket (`srw-------`) + listener **ACCEPTS** + clean teardown — proven on **three** independent profiles (`workspaces=8` / `threads=45` on the third prove the chatList port serves real data). Socket suite **CLOSED as seat-specific** — durable seat matrix: **Claude = LISTEN OK · Pi = LISTEN OK · Cursor = EPERM**. **5b-wire** `cf3b03eb7` injects the admission port at the composition root via a late-bound thunk (`() => getConfiguredProviderSnapshot()`) — **not** a hoist; zero domain logic in root. **Providers** is the **5th real family**. **Wave 5d** `215c03849` stops fabricating telemetry when the provider source is not ready: readiness travels as typed warning code `provider_source_not_ready` (no protocol version bump); Desktop paints **Unknown**, not a confident zero; genuine measured zero after ready still paints **None reported**. **Wave 5e** `69530f5fc` closes the leaf/admission **wording** debt: wire `available` stays the required admitted-in-snapshot boolean; UI says **configured**, not runtime-healthy “available” (no protocol version bump). **Source population remainder** (remeasured at HEAD): **six** real (health, workspaces, threads, usage, providers, **approvals** via composition bridge merge — `HostMainComposition` PIN S4-Q / `host-arc-66-…`) · **warnings** partial (5d readiness path) · **seven from-zero empty** (runs, missions, rounds, participants, questions, schedules, artifacts). Empty `providers` on early **and** late Electron probes remains **permanently inconclusive** from outside for *population* — `ready` is not a snapshot field; no further launches/probes for that question. **AppStore metadata cutover** / **iOS** remain open sequencing (recon maps exist; Boss ruled metadata-only Host + AppStore keeps transcripts). **iOS Kit reachable:** Swift **6.2.4**; `test:swift:ios-kit` = **868/115 green ~6s** (warm cache).
 
 ---
 
@@ -21,16 +21,16 @@
 | Socket suite / `EPERM` | **CLOSED as seat-specific, not environmental.** **Seat matrix:** Claude = **LISTEN OK** · Pi = **LISTEN OK** · Cursor = **EPERM**. Cap discloses Cursor `EPERM` rather than claiming sockets. |
 | Wave **4.4** Node boot proof green | **LANDED** `402f34e0e`. Proves real composition + real server under **Node**. **Not** Electron launch by itself. |
 | “Electron observation is ops, not code” | **FALSE** (`host-arc-electron-observation-is-NOT-ops-a-harness-exists`). Wave **4.5** harness **LANDED** `f1f950207`. Live publish proof is `@GrokWork` hostobs (`host-arc-58-…`), not the script land alone. |
-| “AC1–6 will PASS when Host publishes” | **FALSE.** Process half closed; **two remainders** stay: (1) **client projections** (AppStore authority cutover, iOS Host-shaped path) and (2) **source population** — ten of fourteen HostSnapshot families still hardcoded empty at the donor (`host-arc-61-…`). AC1–6 stay **PARTIAL**. |
+| “AC1–6 will PASS when Host publishes” | **FALSE.** Process half closed; **two remainders** stay: (1) **client projections** (AppStore authority cutover, iOS Host-shaped path) and (2) **source population** — **seven from-zero empty** families remain (approvals is merged-real at composition; warnings partial since 5d — `host-arc-61-…` / `host-arc-66-…`). AC1–6 stay **PARTIAL**. |
 | “Providers leaf means Host is populated” | **FALSE — SUPERSEDED by 5b-wire `cf3b03eb7`.** Step **5a** `266f20435` paints `providers` on Desktop. Step **5b-port/admission** land the conduit + mapper. **5b-wire** `cf3b03eb7` **does** inject the admission port — providers is the **5th real family**. Any prose saying “without an injected admission port… live Electron still paints None reported” is **FALSE** since that SHA. |
 | “Live + empty `providers` = measured none / None reported” | **FALSE after Wave 5d `215c03849` when source is not ready.** Pre-5d, `ready:false` → `providers:[]` with no warning → Desktop painted **None reported** (fabricated telemetry — goal invariant). **5d** emits warning code `provider_source_not_ready`; leaf paints **Unknown**. Genuine measured zero after `sourceReady` still paints **None reported** (regression guard). |
 | “Empty `providers` on live Electron proves the wire failed / succeeded” | **FALSE — permanently inconclusive from outside for population.** Early **and** late probes returned `providers: []`; `ready` is **not** a snapshot field, so external observation cannot settle population. **No further launches or probes.** Honesty of not-ready vs measured-zero is settled in code by **5d**, not by another hostobs. |
 | “Welcome-modal green Cursor = Host `confirmedConfigured`” | **FALSE.** Modal cards take props from App.tsx (`agentStatusByProvider` / auth objects). Host admission reads `statusSnapshot().configuredProviders`. `configuredProviderProbes` has **six** entries (codex/claude/kimi/ollama/pi/antigravity) — **Cursor is not probed**. A green Cursor dot cannot validate the Host family. |
 | “Pristine userData profile = unconfigured app” | **FALSE.** CLI logins, PATH binaries, and local daemons are **machine-scoped** and survive a fresh profile. Detector inputs are not `settings.configuredProviders` (often undefined). |
-| “N of N available = runtime health” | **FALSE.** Admission sets `available: true` for every configured row — meaning **admitted in the configured snapshot**, not process health. Named honesty debt; do not invent a health signal in the wire. |
+| “N of N available = runtime health” | **FALSE — CLOSED as wording by Wave 5e `69530f5fc`.** Wire `available: true` remains the required admitted/configured boolean (decoder forbids omit). Leaf + admission HONESTY now say **configured**, not runtime-healthy “available”. Do not invent a health signal in the wire (`host-arc-65-…`). |
 | “Invalid package-smoke profile degrades to production” | **FALSE — SUPERSEDED** (`host-arc-45-SUPERSEDED-app-fails-closed-not-open`). The app **FAILS CLOSED**. |
 
-Do **not** inherit “never publishes” from Wave **4.8** prose after Step 3 + hostobs. Wave 4.4 Node ≠ Electron publish. Wave 4.6 Node+TUI ≠ Desktop AppStore cutover. **4.3b plumbing ≠ authority cutover.** **5a leaf ≠ source population.** **5b-port/admission ≠ composition-root wire** (that is `cf3b03eb7`). **Empty wire `providers` ≠ proof either way for population.** **5d honesty ≠ AppStore cutover** and does **not** populate the nine empty families.
+Do **not** inherit “never publishes” from Wave **4.8** prose after Step 3 + hostobs. Wave 4.4 Node ≠ Electron publish. Wave 4.6 Node+TUI ≠ Desktop AppStore cutover. **4.3b plumbing ≠ authority cutover.** **5a leaf ≠ source population.** **5b-port/admission ≠ composition-root wire** (that is `cf3b03eb7`). **Empty wire `providers` ≠ proof either way for population.** **5d honesty ≠ AppStore cutover**. **5e wording ≠ protocol bump**. **5f awaiting-approvals leaf ≠ AppStore cutover**. Source remainder is **seven from-zero empties** (not “nine empty”).
 
 ---
 
@@ -43,7 +43,7 @@ Do **not** inherit “never publishes” from Wave **4.8** prose after Step 3 + 
 | **Wave 2E-2B** (Deferred allow + Authority integration) | ✅ **PASS** | `@SolBoss` / `@GrokCapt` | Resolver `verifyCommand` split @ `aceb0993a`; `HostDeferredAllowPipeline` @ `9d4a2a104`; micro-fix @ `167f6916b` |
 | **Wave 2E-2C** (typecheck debt) | ✅ **PASS** | `@DSeekWork` | `joinFor` cleanup @ `5a0761793`; Ruling-C complete |
 | **Wave 3** (Dedicated Host + supervision) | ✅ **CLOSED** | `@SolBoss` / `@GrokCapt` | Substrate + Gates 1/2/3.6e + R4' wiring + **R4'-patch** + **Step 3 (a')** all committed. Host **wiring ON** in main. AC1–6 → **PARTIAL** (not PASS). Host **publishes** under Electron (`host-arc-58-…`). |
-| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** | `@SolBoss` / `@SolWork` / `@GrokCapt` / `@GrokWork` / `@DSeekWork` / `@GemProWork` / `@CursorWork` | Order ruled **TUI → Desktop → iOS**. Prior Wave 4 Cap lands + **Step 5a** `266f20435` + harness `3f521753e` + **5b-port** `6c9658d6d` + **5b-admission** `5bce10bac` + **5b-wire** `cf3b03eb7` + **Wave 5d** `215c03849` **LANDED**. Desktop Host consumer **ungated** (`f370800da`). Host **publishes** under Electron. **4.3b** = command **capability** (not AppStore cutover). **5a** = providers **projection leaf** (not cutover). **5b-wire** injects admission port — providers **5th real family**. **5d** = provider-readiness honesty (warning code; no protocol bump). Source: **5 real / 9 still empty** families. AppStore metadata cutover / iOS = open sequencing. |
+| **Wave 4** (Desktop / TUI / paired iOS cutovers) | 🔄 **ACTIVE** | `@SolBoss` / `@SolWork` / `@GrokCapt` / `@GrokWork` / `@DSeekWork` / `@GemProWork` / `@CursorWork` | Order ruled **TUI → Desktop → iOS**. Prior Wave 4 Cap lands + **Step 5a** `266f20435` + harness `3f521753e` + **5b-port** `6c9658d6d` + **5b-admission** `5bce10bac` + **5b-wire** `cf3b03eb7` + **Wave 5d** `215c03849` + **Wave 5e** `69530f5fc` + **Wave 5f** `07b87384f` **LANDED**. Desktop Host consumer **ungated** (`f370800da`). Host **publishes** under Electron. **4.3b** = command **capability** (not AppStore cutover). **5a** = providers **projection leaf** (not cutover). **5b-wire** injects admission port — providers **5th real family**. **5d** = provider-readiness honesty (warning code; no protocol bump). **5e** = configured≠available leaf/admission wording (closed). **5f** = Desktop HostStatusRow projects **awaiting** approvals subset (leaf). Source: **6 real** (incl. approvals merged at composition) / **warnings partial** / **7 from-zero empty**. AppStore metadata cutover / iOS = open sequencing. |
 | **Wave 5** (`.twmission` flight recorder) | NOT STARTED | `@SolBoss` | Blocked by Waves 3–4 progress; AC9 still NOT STARTED |
 | **Wave 6** (Adversarial review + final gates) | NOT STARTED | `@SolBoss` | Socket **unit** gap closed (seat-specific). Process publish proven; still blocked by remaining client cutover + adversarial gates |
 
@@ -178,7 +178,7 @@ Measured by `@GrokWork` after Step 3 bytes were in the **rebuilt** bundle (worki
 - **Author:** Cap-landed Desktop projection + `HostStatusRow` · **Adopter:** `@GrokCapt`
 - **Paths (exact-path four):** `hostSnapshotProjection{,.test}.ts`, `HostStatusRow{,.test}.tsx`
 - **What landed:** allowlisted `projectProvider` (no credential spread); `describeHostProviders` honesty — not-live/cached → **Unknown** (never fabricated `0`); live+empty → **None reported**; live+rows → `N of M available`; second footer row “Host providers”
-- **What this does NOT prove:** AppStore cutover; production supplier population of the other nine empty families; that live Electron ever returns a non-empty `providers` array (empty wire reads remain permanently inconclusive — `ready` is not on the wire)
+- **What this does NOT prove:** AppStore cutover; production supplier population of the remaining from-zero empties; that live Electron ever returns a non-empty `providers` array (empty wire reads remain permanently inconclusive — `ready` is not on the wire)
 
 ### 4.5 harness — discovery timeout = inconclusive — **LANDED**
 
@@ -202,8 +202,8 @@ Measured by `@GrokWork` after Step 3 bytes were in the **rebuilt** bundle (worki
 - **Author:** `@CursorWork` · **Adopter:** `@GrokCapt`
 - **Paths:** `HostProductionProviderAdmission{,.test}.ts`, `HostProductionBootstrap.test.ts` (providers guard pins)
 - **Landed shape:** thin `getConfiguredSnapshot()` deps port; `ready !== true` → `[]`; allowlisted wire fields only; notes ∈ `{configured, conditional-offer}`; credential/`baseUrl`/header/free-form note poison stripped; re-reads every `getProviders()` (no stale construct cache)
-- **Honest debt (recorded, not a Cap reopen):** `available: true` is unconditional per configured id — **admitted**, not runtime-healthy
-- **What this does NOT prove:** composition-root injection into Electron bootstrap; nine other empty families; AppStore authority cutover
+- **Honest debt (CLOSED as wording by Wave 5e `69530f5fc`):** wire `available: true` stays admitted/configured; leaf says **configured**
+- **What this does NOT prove (at this SHA alone):** composition-root injection into Electron bootstrap; remaining from-zero empties; AppStore authority cutover
 
 ### Step 5b-wire — composition-root injection — **LANDED**
 
@@ -216,7 +216,7 @@ Measured by `@GrokWork` after Step 3 bytes were in the **rebuilt** bundle (worki
 - **Gate evidence:** `typecheck:node` **0** Host errors (3 foreign AC14); host suite **950/950** (37 files) zero regressions; focused admission+suppliers+bootstrap **85/85**
 - **Observation limits (binding, post–`cf3b03eb7`):** Host publishes / authenticates / serves under Electron on **three** independent profiles; `workspaces=8` / `threads=45` prove the chatList port. Early **and** late probes still returned `providers: []` — that is **permanently inconclusive from outside** because `ready` is not on the wire. **No further launches/probes** for providers population. Welcome modal ≠ Host wire (six probes; Cursor not among them). “Pristine profile” ≠ “unconfigured app” (machine-scoped CLI/PATH/daemons). Code-level evidence (typecheck + suite) stands; empty observation does **not** prove wire-broken or wire-absent.
 - **What this CLOSES:** providers family is now wired from source through admission → suppliers → HostSnapshot — **5th real family** (was `[]`)
-- **What this does NOT close (at this SHA alone):** 9 remaining empty families; AppStore authority cutover; iOS; honesty of “None reported” vs not-ready — **closed later by Wave 5d `215c03849`**
+- **What this does NOT close (at this SHA alone):** remaining from-zero empties; AppStore authority cutover; iOS; honesty of “None reported” vs not-ready — **closed later by Wave 5d `215c03849`**; configured≠available leaf wording — **closed later by Wave 5e `69530f5fc`**
 
 ### Wave 5d — provider-source readiness honesty — **LANDED**
 
@@ -228,16 +228,35 @@ Measured by `@GrokWork` after Step 3 bytes were in the **rebuilt** bundle (worki
 - **Gate evidence (author handoff, Cap re-verified at adopt):** focused **100/100**; host glob **958/958** (37 files); renderer host **61/61**; `typecheck:node` / `typecheck:web` **0** owned (foreign residuals elsewhere); Prettier owned clean
 - **Named follow-ups (not reopen):** (1) absent provider port still treated ready / `warnings: []` — preserves `@GemProWork` L169 pin; (2) warning `severity: 'info'` (startup-transient, not fault)
 - **What this CLOSES:** fabricated “None reported” when source meant “not yet known” (`host-arc-64-…`)
-- **What this does NOT close:** 9 empty families; AppStore authority cutover; iOS; admission `available: true` honesty debt; population of live `providers` rows (still externally inconclusive)
+- **What this does NOT close (at this SHA alone):** remaining from-zero empties; AppStore authority cutover; iOS; admission `available: true` leaf wording — **closed later by Wave 5e `69530f5fc`**; population of live `providers` rows (still externally inconclusive)
 
-### Production supplier families (binding scope fact) — `host-arc-61-…`
+### Wave 5e — configured ≠ available wording — **LANDED**
 
-| Kind | Families |
-|---|---|
-| **REAL today** | health · workspaces · threads · usage · providers |
-| **Hardcoded empty until a port/donor fills them** | runs · missions · rounds · participants · questions · approvals · schedules · artifacts · warnings |
+- **SHA:** `69530f5fc` — `fix(host): say configured not available for admitted providers (Wave 5e)`
+- **Author:** Cap-landed · **Adopter:** `@GrokCapt`
+- **Paths (exact-path four):** `HostProductionProviderAdmission.ts`, `hostProtocol.ts`, `HostStatusRow{,.test}.tsx` · `+43/−6`
+- **What landed:** wire `available` stays **required** boolean = admitted/configured in the snapshot (decoder forbids omit — `host-arc-65-…`). Admission HONESTY header + Desktop leaf now say **configured** (`N of M configured` / none reported). **No** protocol version bump; **no** new warning code.
+- **What this CLOSES:** open “available debt” as a **wording/doc** defect (not a protocol fix)
+- **What this does NOT close:** AppStore authority cutover; iOS; seven from-zero empty families; live `providers` population (still externally inconclusive)
 
-The goal names **all fourteen**. Client-projection work and source-population work are **two remainders**. Recording **5a/5b-port/admission** must not be read as “the arc is nearly done.”
+### Wave 5f — Desktop awaiting-approvals Host status leaf — **LANDED**
+
+- **SHA:** `07b87384f` — `feat(host): project awaiting approvals into the Desktop Host status row.` *(subject lacks `(Wave 5f)` tag; SHA is identity)*
+- **Author:** Cap-landed · **Adopter:** `@GrokCapt`
+- **Paths (exact-path four):** `hostSnapshotProjection{,.test}.ts`, `HostStatusRow{,.test}.tsx` · `+270/−1`
+- **What landed:** allowlisted awaiting-subset projection into Desktop `HostStatusRow`; labels **None awaiting** / **N awaiting**; count honesty for pending/awaiting. Bridge already merges pending approval cards at composition (`HostMainComposition` / `host-arc-66-…`); this is the **Desktop consumer leaf**, not a full ledger and not AppStore popover cutover.
+- **What this does NOT close:** AppStore approvals popover (wire lacks title/provider/chatId map-key — `host-arc-5c-approvals-wire-shape-vs-popover-shape`); 5c Phase 1 providers cutover; iOS; seven from-zero empties
+
+### Production supplier families (binding scope fact) — remasured at HEAD
+
+| Kind | Families | Evidence |
+|---|---|---|
+| **REAL** | health · workspaces · threads · usage · providers | `HostProductionSuppliers` production donors |
+| **REAL (composition merge)** | approvals | Supplier base is `[]`; `HostMainComposition` merges deferred-bridge awaiting cards (`host-arc-66-…`) — **not** a from-zero empty |
+| **PARTIAL** | warnings | 5d `provider_source_not_ready` path; otherwise may be empty |
+| **From-zero empty** | runs · missions · rounds · participants · questions · schedules · artifacts | Hardcoded `[]` at supplier until a port/donor fills them — **seven** |
+
+The goal names **all fourteen**. Client-projection work and source-population work are **two remainders**. Do **not** restate “5 real / 9 empty” after 5d/5e/5f — that undercounts approvals (merged-real) and misclassifies warnings.
 
 ### WAVE 4.2a — TUI read-only Host projection — **LANDED**
 
@@ -361,10 +380,12 @@ Any adopt that cites a host-suite count **must** still state whether socket test
 | **4.6a** Durable connection pin (timing flake) | ✅ **LANDED** `3d3d766cc` | `@DSeekWork` / `@GrokCapt` | Exact-path **1** file · `+62/−13` · `src/tui/hostLiveIntegration.test.ts` only. Three regex layers closed + pinned: (1) case/timing — notice + durable HUD `CONNECTED`; (2) `/CONNECTED/i` ⊇ `DISCONNECTED` → word boundary; (3) product notice `TaskWraith Host is not connected.` → `/(?<!not\s+)\bCONNECTED\b/i` (`host-arc-46a-NOT-CONNECTED-is-reachable-from-product-code`). Negative pin covers all three. Cap: negative pin **1/1**; accept Pi **3/3** · **59/59** · `typecheck:tui` exit 0 (Cursor EPERM disclosed). Test-only — TUI product code untouched. |
 | **Step 5a** Desktop providers leaf | ✅ **LANDED** `266f20435` | Cap / `@GrokCapt` | Exact-path **4** files · projection allowlist + `HostStatusRow` honesty pins. **Projection leaf only** — not AppStore cutover; not source population. |
 | **Step 5b-port** provider list conduit | ✅ **LANDED** `6c9658d6d` | `@GemProWork` / `@GrokCapt` | Exact-path **3** files · `HostProductionProviderListPort` + fail-closed supplier + bootstrap options. Conduit populated by 5b-wire. |
-| **Step 5b-admission** snapshot → Host rows | ✅ **LANDED** `5bce10bac` | `@CursorWork` / `@GrokCapt` | Exact-path **3** files · admission mapper + bootstrap guard pins. Credential strip. `available: true` = admitted (honesty debt). Mapper lives in admission module; root stays wiring-only. |
+| **Step 5b-admission** snapshot → Host rows | ✅ **LANDED** `5bce10bac` | `@CursorWork` / `@GrokCapt` | Exact-path **3** files · admission mapper + bootstrap guard pins. Credential strip. `available: true` = admitted/configured (leaf wording closed by **5e**). Mapper lives in admission module; root stays wiring-only. |
 | **Step 5b-wire** composition-root injection | ✅ **LANDED** `cf3b03eb7` | `@SolWork` / `@GrokCapt` | Exact-path **1** file · `src/main/index.ts` `+15/−1`. Lazy thunk (arrow closure avoids TDZ); **zero** domain logic in root; **zero** lines hoisted. Fail-closed net is double (admission + supplier). Evidence: host suite **950/950**; typecheck **0** Host errors; focused **85/85**. Providers now **5th real family**. Empty wire `providers` on live Electron = **permanently inconclusive** for population (`ready` not a snapshot field); no further probes. |
 | **Wave 5d** provider-source readiness honesty | ✅ **LANDED** `215c03849` | `@SolWork` / `@GrokCapt` | Exact-path **9** files · `+357/−12`. Warning code `provider_source_not_ready`; leaf **Unknown** when not ready; genuine zero still **None reported**. Closes fabricated telemetry (`host-arc-64-…`). No protocol version bump. |
-| **4.4+** AppStore authority / paired iOS / remaining families | 🔍 **RECON maps exist** · sequencing open | `@SolWork` (AppStore map) · `@GrokWork` (iOS) · Boss sequencing | **AppStore:** `HostSnapshot` is **metadata-only by design** — transcripts excluded. **iOS:** e2ee-v1 client; **zero** Host types in `ios/`; Kit **868/115** green. **Source:** nine families still empty until ports (`host-arc-61-…`). |
+| **Wave 5e** configured ≠ available wording | ✅ **LANDED** `69530f5fc` | Cap / `@GrokCapt` | Exact-path **4** files · `+43/−6`. Wire `available` stays required admitted boolean; leaf/admission say **configured**. Closes available-debt as wording (`host-arc-65-…`). No protocol bump. |
+| **Wave 5f** Desktop awaiting-approvals leaf | ✅ **LANDED** `07b87384f` | Cap / `@GrokCapt` | Exact-path **4** files · `+270/−1`. `HostStatusRow` projects awaiting subset (**None awaiting** / **N awaiting**). Leaf only — not AppStore popover cutover. Subject lacks `(Wave 5f)` tag; SHA is identity. |
+| **4.4+** AppStore authority / paired iOS / remaining families | 🔍 **RECON maps exist** · sequencing open | `@SolWork` (AppStore map) · `@GrokWork` (iOS) · Boss sequencing | **AppStore:** `HostSnapshot` is **metadata-only by design** — transcripts excluded (Boss 5c ruling). **iOS:** e2ee-v1 client must project Mac Host; Kit **868/115** green. **Source:** **seven from-zero empty** until ports; approvals merged-real; warnings partial. |
 
 ### Renderer-restart / per-window store (binding)
 
@@ -425,14 +446,16 @@ Review seats `@GrokReview` / `@K3Review` are read-clamped and have **no shell**.
 34. **Discovery poll ≥120s; timeout is inconclusive.** `@GrokWork`’s 60s brief would have false-negatived — absent at 40s, present by 70s (`host-arc-58-…`). Never treat poll timeout as “Host failed”.
 35. **Host publishes under Electron** — discovery 0600 + token 0600 + real socket + accept + clean teardown (`host-arc-58-…`). Process half closed; client projection half remains. **4.3b** `d2c79bd57` is capability, not AppStore cutover.
 36. **DONE-only docs** — never write IN-FLIGHT Cap/adopt status into this file; a doc that asserts an already-landed wave is unlanded (or invents a land) is worse than lag (`host-arc-docs-must-record-DONE-never-IN-FLIGHT`).
-37. **Nine of fourteen families are still empty at the source** — health/workspaces/threads/usage/**providers** real after `cf3b03eb7`; the other nine hardcoded `[]` until ports (`host-arc-61-…` updated post-wire). Projection leaf ≠ population of the remainder.
-38. **Admission `available: true` ≠ runtime health** — configured/admitted only; do not invent liveness in a wiring hunk.
+37. **Seven of fourteen families are still from-zero empty at the source** — health/workspaces/threads/usage/**providers** real after `cf3b03eb7`; **approvals** merged-real at composition (`host-arc-66-…`); **warnings** partial since 5d; remaining seven hardcoded `[]` until ports. Projection leaf ≠ population of the remainder.
+38. **Admission `available: true` ≠ runtime health — CLOSED as wording by 5e** — wire field stays required admitted/configured boolean; leaf says **configured** (`69530f5fc` / `host-arc-65-…`). Do not invent liveness in a wiring hunk.
 39. **4.5 harness timeout is inconclusive, not Host-failed** — `EXIT_INCONCLUSIVE=22`, default **120s** (`3f521753e`). Script still has **zero** repo tests.
 40. **5b composition-root inject is a lazy thunk, not a hoist** — Boss ruled against moving ~22 lines in `index.ts`; a late-bound `() => getConfiguredProviderSnapshot()` avoids TDZ without domain logic in the root (`host-arc-62-…`).
 41. **Fail-closed net is double, not single** — admission module try/catch (Layer 1) fires before supplier try/catch (Layer 2). Both are load-bearing; "tidying" either as "redundant" silently removes a safety layer. All tests pass with either removed — only byte-level review catches it (`host-arc-63-…`).
 42. **Empty live `providers` is permanently inconclusive from outside for population** — `ready` is not a snapshot field. Early and late probes both returned `[]`; waiting longer cannot help. Welcome modal ≠ Host `confirmedConfigured` (Cursor not in the six-probe list). “Pristine profile” ≠ “unconfigured app”. **No further launches/probes** for population.
 43. **“Without an injected admission port” prose is FALSE after `cf3b03eb7`** — the port **is** injected.
 44. **Unavailable telemetry is not zero** — pre-5d, `ready:false` → `providers:[]` → Desktop **None reported** fabricated a measured empty. Wave **5d** `215c03849` carries readiness as warning code `provider_source_not_ready`; leaf paints **Unknown**. Genuine measured zero after ready still **None reported** (`host-arc-64-…`).
+45. **Wave 5e closes available-debt as wording, not protocol** — decoder requires boolean `available`; omitting it fails the snapshot. Say **configured** in UI/docs (`69530f5fc` / `host-arc-65-…`).
+46. **Wave 5f is a Desktop leaf, not AppStore cutover** — awaiting subset on `HostStatusRow`; approvals popover remains AppStore-shaped until a ruled dual-read/join (`07b87384f` / `host-arc-5c-approvals-wire-shape-vs-popover-shape`).
 ---
 
 ## Wave 4.8 — Electron observation: Host constructs but never publishes (HISTORICAL)
@@ -482,6 +505,8 @@ Relaunch with the wrap in the rebuilt bundle named the throw: `requires an injec
 Top-of-tree churns every pass with foreign concurrent-session commits. This table lists **arc-owned commits only** — run `git log --oneline -1` for current HEAD.
 
 ```text
+07b87384f  feat(host): project awaiting approvals into the Desktop Host status row.         (@GrokCapt adopted; WAVE 5f LEAF — SHA IS IDENTITY)
+69530f5fc  fix(host): say configured not available for admitted providers (Wave 5e)       (@GrokCapt adopted; CONFIGURED ≠ AVAILABLE WORDING)
 215c03849  fix(host): stop fabricating provider telemetry when source is not ready (Wave 5d) (@SolWork authored; @GrokCapt adopted; WARNING CODE — HONEST UNKNOWN)
 95bd8587a  docs(host): record Step 5b-wire under DONE-only Host Arc status                  (@SparkDocs; @GrokCapt adopted; PRE–5d tip)
 cf3b03eb7  feat(host): wire provider admission into Electron Host bootstrap (Step 5b-wire) (@SolWork authored; @GrokCapt adopted; LAZY THUNK — 5TH REAL FAMILY)
@@ -612,6 +637,8 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 - ✅ **Step 5b-wire** @ `cf3b03eb7` — composition-root lazy thunk; providers = **5th real family**; empty live `providers` permanently inconclusive from outside for population
 - ✅ **Docs catch-up (5b-wire tip)** @ `95bd8587a` — DONE-only; retired false “no injected port” prose
 - ✅ **Wave 5d** @ `215c03849` — stop fabricating provider telemetry when source not ready; warning code; **Unknown** vs genuine **None reported**
+- ✅ **Wave 5e** @ `69530f5fc` — leaf/admission say **configured**; wire `available` stays required admitted boolean; available-debt wording **CLOSED**
+- ✅ **Wave 5f** @ `07b87384f` — Desktop HostStatusRow projects **awaiting** approvals subset (leaf; not AppStore cutover)
 
 ### What remains (post–Electron publish)
 | Item | Owner | Status |
@@ -637,9 +664,11 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 | **Step 5b-admission — snapshot mapper** | `@CursorWork` / `@GrokCapt` | ✅ **LANDED** `5bce10bac` — mapper exists; does not by itself inject into Electron bootstrap. |
 | **Step 5b-wire — composition-root injection** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `cf3b03eb7` — lazy thunk; providers = **5th real family**; empty live reads permanently inconclusive for population. |
 | **Wave 5d — provider-source readiness honesty** | `@SolWork` / `@GrokCapt` | ✅ **LANDED** `215c03849` — warning code `provider_source_not_ready`; closes fabricated telemetry (`host-arc-64-…`). |
+| **Wave 5e — configured ≠ available wording** | Cap / `@GrokCapt` | ✅ **LANDED** `69530f5fc` — available-debt wording **CLOSED**; wire boolean unchanged. |
+| **Wave 5f — Desktop awaiting-approvals leaf** | Cap / `@GrokCapt` | ✅ **LANDED** `07b87384f` — HostStatusRow awaiting subset; not AppStore popover cutover. |
 | **Bridge twin (9-method port)** | `@SolBoss` sequencing | Standing residual — not a Step 3 defect; do not mechanical-copy chatList guard. |
-| **Source population — nine other empty families** | `@SolBoss` sequencing | Open — after providers, nine of fourteen families remain hardcoded empty (`host-arc-61-…`). |
-| **Admission availability honesty** | `@SolBoss` sequencing | Named debt — `available: true` means admitted, not runtime-healthy. |
+| **Source population — seven from-zero empty families** | `@SolBoss` sequencing | Open — runs/missions/rounds/participants/questions/schedules/artifacts; approvals merged-real; warnings partial. |
+| **Admission availability honesty** | Cap / `@GrokCapt` | ✅ **CLOSED as wording** by Wave **5e** `69530f5fc` — say **configured**; wire `available` stays admitted boolean. |
 | **Absent-port readiness follow-up** | `@SolBoss` sequencing | Named 5d residual — no-port case still `warnings: []` (preserves `@GemProWork` pin). |
 | **AppStore → Host metadata cutover** | `@SolBoss` sequencing | Open — HostSnapshot metadata-only; transcripts excluded by design (`host-arc-appstore-cutover-gap-map-measured`). |
 | **iOS paired projection** | Downstream of Mac/Desktop cutover | 🔍 Recon done — e2ee-v1 client; zero Host types in `ios/`; Kit **868/115** green. |
@@ -672,7 +701,7 @@ d612e1e7   docs(host): refresh Host Arc status snapshots                        
 
 Foreign markers present (not Host Arc): `.WORK-IN-PROGRESS-observatory-gpu-calm.md`, `.WORK-IN-PROGRESS-seat-strip-desktop.md`, `.WORK-IN-PROGRESS-tool-event-dual-lane-dedupe.md`.
 
-`@SparkDocs` note: this Cursor seat has **`TASKWRAITH_LOCK_OWNER_ID` absent**; docs lease uses open coordination (claiming marker is expires-only). Cap lands **`215c03849` / `cf3b03eb7` / `5bce10bac` / `6c9658d6d` / `3f521753e` / `266f20435`** + docs tip **`95bd8587a`** + Electron publish **`host-arc-58-…`** are **DONE**. This refresh records Wave **5d** only (DONE-never-IN-FLIGHT): tip SHA `215c03849`, retires false “None reported = not-ready source” conflation, adds lesson 44. Does **not** invent 5c / empty-family lands. This file records **DONE** waves only; a document that contradicts HEAD is worse than one that lags. Commit status is `git log`, not this file.
+`@Spare2` note (Cap exclusive docs catch-up; `@SparkDocs` relieved for this refresh only): Cap lands **`07b87384f` / `69530f5fc` / `215c03849` / `cf3b03eb7` / `5bce10bac` / `6c9658d6d` / `3f521753e` / `266f20435`** + Electron publish **`host-arc-58-…`** are **DONE**. This refresh records Waves **5e** + **5f** only (DONE-never-IN-FLIGHT): records both SHAs, retires open available-debt prose as wording-closed by 5e, corrects family inventory to **6 real** (approvals merged-real) / **warnings partial** / **7 from-zero empty**. Does **not** invent 5c / iOS / Wave 5–6 lands. This file records **DONE** waves only; a document that contradicts HEAD is worse than one that lags. Commit status is `git log`, not this file.
 
 ### R5 — Evaluator Sourcing (DURABLE — unchanged; Gate 1 landed)
 
@@ -692,7 +721,7 @@ Ten names: `snapshot.get`, `deltas.since`, `receipt.lookup`, `ping`, `approval.d
 
 | AC | Status | Note |
 |---|---|---|
-| AC1–AC6 | ⚠ **PARTIAL** | Host **wiring** ON (`b45d4297f` + `7abaf33be` + Step 3 `9ef9e0361`). Wave **4.4** Node boot (`402f34e0e`). Wave **4.6/4.6a** real TUI round trip. Wave **4.3d/4.3e** Desktop consumes Host ungated. Wave **4.3b** `d2c79bd57` Desktop command **capability**. Step **5a** `266f20435` providers leaf. **5b-port/admission/wire** `6c9658d6d` / `5bce10bac` / `cf3b03eb7` — providers = **5th real family**. **Host publishes under Electron** (`host-arc-58-…`, three profiles). Process half **closed**; **two remainders** — client projection (AppStore cutover / iOS Host-shaped) **and** source population (**5 real / 9 empty** families). Empty live `providers` permanently inconclusive. **Never PASS.** |
+| AC1–AC6 | ⚠ **PARTIAL** | Host **wiring** ON (`b45d4297f` + `7abaf33be` + Step 3 `9ef9e0361`). Wave **4.4** Node boot (`402f34e0e`). Wave **4.6/4.6a** real TUI round trip. Wave **4.3d/4.3e** Desktop consumes Host ungated. Wave **4.3b** `d2c79bd57` Desktop command **capability**. Step **5a** `266f20435` providers leaf. **5b-port/admission/wire** `6c9658d6d` / `5bce10bac` / `cf3b03eb7` — providers = **5th real family**. **5d** `215c03849` readiness honesty. **5e** `69530f5fc` configured wording. **5f** `07b87384f` awaiting-approvals leaf. **Host publishes under Electron** (`host-arc-58-…`, three profiles). Process half **closed**; **two remainders** — client projection (AppStore cutover / iOS Host-shaped) **and** source population (**6 real** incl. approvals merge / **warnings partial** / **7 from-zero empty**). Empty live `providers` permanently inconclusive. **Never PASS.** |
 | AC7–AC8 | ⚠ PARTIAL | Host core authoritative; TUI is first full (read+command+live) projection client; Desktop mounts **and** consumes Host projection ungated **and** has command plumbing + providers leaf (AppStore still authority for most views); iOS already e2ee-v1 projection client (not Host v2) |
 | AC9 | ❌ **NOT STARTED** | `.twmission` / mission evidence not started (Wave 5) |
 | AC10–AC11 | ⚠ PARTIAL | TUI read+command+live paths live in HEAD; Desktop pure + wire + adapter + mount + leaf + ungated + **4.3b command capability** + **5a providers leaf** + **5b-wire** providers family live in HEAD; **no** AppStore authority cutover; iOS Host-shaped work is Mac-side |
