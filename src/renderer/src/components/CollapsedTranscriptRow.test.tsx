@@ -172,6 +172,7 @@ describe('CollapsedTranscriptRow metaLabel verb accent', () => {
         label="notice text"
         expanded={false}
         onToggle={() => {}}
+        ariaTargetLabel="system notice"
       />
     )
     expect(system).toContain(
@@ -185,6 +186,7 @@ describe('CollapsedTranscriptRow metaLabel verb accent', () => {
         label="2 lanes"
         expanded={false}
         onToggle={() => {}}
+        ariaTargetLabel="fan-out summary"
       />
     )
     expect(fanout).toContain('class="collapsed-activity-stack-meta">Fan-Out</span>')
