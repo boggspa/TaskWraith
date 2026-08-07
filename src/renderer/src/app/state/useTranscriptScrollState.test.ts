@@ -62,6 +62,7 @@ describe('useTranscriptScrollState', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('publishes input-owned follow changes so the streaming jump pill can rerender', () => {
@@ -88,6 +89,71 @@ describe('useTranscriptScrollState', () => {
     })
     expect(autoFollowStateSetter).toHaveBeenLastCalledWith(true)
     expect(autoFollowStateSetter).toHaveBeenCalledTimes(2)
+  })
+
+  it('stamps lastUserScrollAt on any wheel/key scroll intent for Phase-1 gesture defer', () => {
+    const now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+
+    const result = useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    expect(result.lastUserScrollAtRef.current).toBe(0)
+    expect(result.getUserScrollGestureLive()).toBe(false)
+
+    // Effect 3 owns wheel/key/pointer intent.
+    hookHarness.effectFactories[2]?.()
+
+    // Downward intent must stamp too — Phase-1 defers for any live gesture,
+    // not only scroll-away / follow-off.
+    hookHarness.listeners.get('wheel')?.({ deltaY: 1 })
+    expect(result.lastUserScrollAtRef.current).toBe(now)
+    expect(result.getUserScrollGestureLive()).toBe(true)
+
+    vi.mocked(Date.now).mockReturnValue(now + 121)
+    expect(result.getUserScrollGestureLive()).toBe(false)
+
+    hookHarness.windowListeners.get('keydown')?.({
+      key: 'ArrowUp',
+      target: null,
+      preventDefault: vi.fn()
+    })
+    expect(result.lastUserScrollAtRef.current).toBe(now + 121)
+    expect(result.getUserScrollGestureLive()).toBe(true)
+  })
+
+  it('cancels a pending follow-pin frame when wheel intent scrolls away', () => {
+    // Live-edge geometry so the messages layout pass arms pinNowAndScheduleTrailing
+    // (sync apply + one coalesced trailing rAF) without scheduling the separate
+    // programmatic-clear nested frames.
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    const requestAnimationFrame = vi.fn(() => 42)
+    const cancelAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'streaming-message' }],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    // Layout effect 2 owns message-growth follow pins.
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(requestAnimationFrame).toHaveBeenCalled()
+    expect(cancelAnimationFrame).not.toHaveBeenCalled()
+
+    // Effect 3 owns wheel/key/pointer intent — upward wheel must drop the
+    // trailing pin so a later frame cannot re-teleport the reader to the tail.
+    hookHarness.effectFactories[2]?.()
+    hookHarness.listeners.get('wheel')?.({ deltaY: -1 })
+
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(42)
   })
 
   it('rebinds every transcript DOM effect when an empty-start pane mounts its transcript', () => {

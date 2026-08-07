@@ -14,6 +14,7 @@ import {
   isEditableTranscriptKeyTarget,
   isExpectedProgrammaticScroll,
   isTranscriptScrollbarPointer,
+  isTranscriptUserScrollGestureLive,
   restoreChatScrollStateWhenReady,
   resolveTranscriptChatSwitchPlan,
   shouldAbortAutoFollowSnap,
@@ -127,6 +128,11 @@ export function useTranscriptScrollState({
   // scrollTop actually moves downward. The normal 400ms timestamp window gives
   // the final scroll event a short grace after pointerup.
   const scrollbarPointerActiveRef = useRef(false)
+  // Cut 2a — any verified user scroll intent (wheel/touch/key, either
+  // direction). Paired with scrollbarPointerActiveRef via
+  // isTranscriptUserScrollGestureLive so Phase-1 can defer absolute restore
+  // mid-fling without reading sticky follow-off ownership.
+  const lastUserScrollAtRef = useRef(0)
   // Phase E — single outer follow-pin owner. Messages-layout trailing re-pin,
   // content ResizeObserver, and scroll-evaluate gap-close share one rAF slot.
   const followPinApplyRef = useRef<() => void>(() => {})
@@ -387,6 +393,18 @@ export function useTranscriptScrollState({
     [scheduleProgrammaticScrollTargetClear]
   )
 
+  // Stable read for Phase-1: scrollbar hold OR the short settle window after
+  // a wheel/touch/key stamp. Keeps scrollbarPointerActiveRef internal.
+  const getUserScrollGestureLive = useCallback(
+    () =>
+      isTranscriptUserScrollGestureLive({
+        lastUserScrollAt: lastUserScrollAtRef.current,
+        scrollbarPointerActive: scrollbarPointerActiveRef.current,
+        now: Date.now()
+      }),
+    []
+  )
+
   // Re-derive `awayFromLiveEdge` from live scroller geometry. Reaching the
   // band also clears the unread tally: at the live edge everything below the
   // fold has been seen, and a count held past that point would resurface as a
@@ -453,13 +471,14 @@ export function useTranscriptScrollState({
       userScrolledAwayInFrameRef.current = true
       jumpInFlightRef.current = false
       downwardIntentAtRef.current = 0
+      followPinScheduler.cancel()
       lastTranscriptScrollTopRef.current = nextScrollTop
       lastNativeScrollTopRef.current = nextScrollTop
       lastNativeScrollHeightRef.current = scroller.scrollHeight
       lastNativeClientHeightRef.current = scroller.clientHeight
       return true
     },
-    [clearProgrammaticScrollTarget, setAutoFollow]
+    [clearProgrammaticScrollTarget, followPinScheduler, setAutoFollow]
   )
 
   // Sole gated writer for coalesced follow pins. Callers request via
@@ -499,7 +518,8 @@ export function useTranscriptScrollState({
     setAutoFollow(false)
     userScrolledAwayInFrameRef.current = true
     jumpInFlightRef.current = false
-  }, [cancelPendingExternalRestore, setAutoFollow])
+    followPinScheduler.cancel()
+  }, [cancelPendingExternalRestore, followPinScheduler, setAutoFollow])
 
   const clearPendingMessageJump = useCallback(() => {
     pendingTranscriptJumpChatIdRef.current = null
@@ -661,6 +681,7 @@ export function useTranscriptScrollState({
         setAutoFollow(false)
         jumpInFlightRef.current = false
         downwardIntentAtRef.current = 0
+        followPinScheduler.cancel()
       }
       if (rafId !== null) return
       rafId = requestAnimationFrame(evaluate)
@@ -694,7 +715,11 @@ export function useTranscriptScrollState({
     if (!scroller) return
 
     const handleScrollIntent = (deltaY: number) => {
-      if (deltaY !== 0) cancelPendingExternalRestore()
+      if (deltaY !== 0) {
+        // Cut 2a — stamp any-direction user intent for Phase-1 deferral.
+        lastUserScrollAtRef.current = Date.now()
+        cancelPendingExternalRestore()
+      }
       if (deltaY > 0) {
         // Downward gesture — vouches for the wide re-engage band for a
         // short window (see hasRecentTranscriptDownwardIntent).
@@ -709,6 +734,7 @@ export function useTranscriptScrollState({
         // The user's LAST input is upward — a stale downward flick must not
         // hand the band to this frame's coalesced net movement.
         downwardIntentAtRef.current = 0
+        followPinScheduler.cancel()
       }
     }
 
@@ -810,7 +836,7 @@ export function useTranscriptScrollState({
       window.removeEventListener('blur', endScrollbarPointer)
       scrollbarPointerActiveRef.current = false
     }
-  }, [cancelPendingExternalRestore, chatId, setAutoFollow, transcriptMounted])
+  }, [cancelPendingExternalRestore, chatId, followPinScheduler, setAutoFollow, transcriptMounted])
 
   useEffect(() => {
     if (!transcriptMounted) return
@@ -985,6 +1011,8 @@ export function useTranscriptScrollState({
     transcriptScrollRef,
     transcriptContentRef,
     autoFollowRef,
+    lastUserScrollAtRef,
+    getUserScrollGestureLive,
     externalRestoreAnchorMessageId:
       externalRestoreAnchorTarget?.targetChatId === chatId
         ? externalRestoreAnchorTarget.messageId
