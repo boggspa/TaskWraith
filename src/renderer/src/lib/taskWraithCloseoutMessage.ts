@@ -17,7 +17,6 @@ import {
   taskWraithRoundCloseoutId,
   taskWraithRunCloseoutId
 } from '../../../shared/taskWraithCloseout'
-import { encodeSeatChangeLink } from '../../../shared/seatChange'
 import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
 import { formatContextTokens } from './contextWindows'
 import { reasoningDisplayLabel } from './composerChipFormat'
@@ -83,7 +82,8 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     (message) => message.runId === run.runId,
     { chat }
   )
-  lines.push(...formatCommitTableSection(closeoutCommits))
+  // Commits render in the Task-complete epic stack from metadata — keep the
+  // close-out bubble to Worked-for + prose (Foundation Models via meta).
 
   return {
     id: taskWraithRunCloseoutId(run.runId),
@@ -135,10 +135,8 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     (message) => message.metadata?.ensembleRoundId === round.roundId,
     { chat }
   )
-  lines.push(
-    ...formatParticipantTableSection(chat, closeoutParticipants, roundRuns),
-    ...formatCommitTableSection(closeoutCommits)
-  )
+  // Participants + Commits render in the Task-complete epic stack. The close-out
+  // bubble above it keeps Worked-for + Close-out prose only.
 
   return {
     id: taskWraithRoundCloseoutId(round.roundId),
@@ -1171,29 +1169,6 @@ export function buildCloseoutParticipantTable(
   }
 }
 
-function formatParticipantTableSection(
-  chat: ChatRecord,
-  participants: EnsembleRoundParticipantState[],
-  roundRuns: ChatRun[]
-): string[] {
-  const table = buildCloseoutParticipantTable(chat, participants, roundRuns)
-  if (!table) return []
-  const rows = table.rows.map((row) => {
-    const seatText = escapeMarkdownTableCell(row.seatText)
-    const seatHref = encodeSeatChangeLink(row.seatLink)
-    return `| [${seatText}](${seatHref}) | ${row.workLabel} ${row.statusGlyphMarkdown} |`
-  })
-  rows.push(`| **Round Total** | ${table.totalWorkLabel} |`)
-  return [
-    '',
-    '**Participants**',
-    '',
-    '| Seat | Turns & Tokens |',
-    '| --- | --- |',
-    ...rows
-  ]
-}
-
 /**
  * The seat as it entered and left the round — the ends of each field's
  * sequence, so the element's before/after always match the link text beside
@@ -1431,7 +1406,8 @@ function formatParticipantTokenCell(totalTokens: number, estimated = false): str
   return `${estimated ? '~' : ''}${formatContextTokens(totalTokens)}`
 }
 
-const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
+/** Visible commit rows in the Task-complete epic stack (metadata keeps the rest). */
+export const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
 
 export type CloseoutCommit = {
   hash: string
@@ -1497,32 +1473,6 @@ function scoreCloseoutCommit(commit: CloseoutCommit): number {
   )
 }
 
-function formatCommitTableSection(commits: CloseoutCommit[]): string[] {
-  if (commits.length === 0) return []
-  const visible = commits.slice(0, CLOSEOUT_COMMIT_TABLE_LIMIT)
-  const lines = [
-    '',
-    '**Commits**',
-    '',
-    '| Hash | Message | Seat | Changes |',
-    '| --- | --- | --- | --- |',
-    ...visible.map((commit) => {
-      const hash = commit.hash.slice(0, 9)
-      const subject = escapeMarkdownTableCell(commit.subject || '—')
-      const stats = escapeMarkdownTableCell(commit.stats || '—')
-      const seat = commit.seatLink
-        ? `[seat](${encodeSeatChangeLink(commit.seatLink)})`
-        : '—'
-      return `| \`${hash}\` | ${subject} | ${seat} | ${stats} |`
-    })
-  ]
-  const overflow = commits.length - visible.length
-  if (overflow > 0) {
-    lines.push('', `_${overflow} more commit${overflow === 1 ? '' : 's'} not shown._`)
-  }
-  return lines
-}
-
 function seatLinkForCommitMessage(chat: ChatRecord, message: ChatMessage): SeatChangeLink | null {
   const participantId =
     typeof message.metadata?.ensembleParticipantId === 'string'
@@ -1569,10 +1519,6 @@ function seatLinkForCommitMessage(chat: ChatRecord, message: ChatMessage): SeatC
     ...(permissionPresetId ? { permissionPresetId } : {})
   }
   return { participantId, before: state, after: state }
-}
-
-function escapeMarkdownTableCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim()
 }
 
 function normalizeCommitText(text: string): string {

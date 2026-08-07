@@ -100,11 +100,7 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.content).toContain('The run used about 3k tokens in total.')
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
     expect(closeout.content).not.toContain('Changed:')
-    expect(closeout.content).toContain('**Commits**')
-    expect(closeout.content).toContain('| Hash | Message | Seat | Changes |')
-    expect(closeout.content).toContain(
-      '`18003ca96` | Add TaskWraith transcript closeouts | — | 21 files |'
-    )
+    expect(closeout.content).not.toContain('**Commits**')
     expect(closeout.metadata?.closeoutCommits).toEqual([
       {
         hash: '18003ca96',
@@ -469,12 +465,11 @@ describe('taskWraithCloseoutMessage', () => {
       exitCode: 130
     })
 
-    expect(closeout.content).toContain(
-      '`d038a820e` | refactor(main-m3): make approval orchestration deps explicit | — | 1 file, +100 −31 |'
-    )
-    expect(closeout.content).toContain(
-      '`bf52e2a62` | test(services): add coverage for M3 approval routing | — | 1 file, +66 −13 |'
-    )
+    expect(closeout.content).not.toContain('**Commits**')
+    expect(closeout.metadata?.closeoutCommits?.map((commit) => commit.hash)).toEqual([
+      'd038a820e',
+      'bf52e2a62'
+    ])
     expect(closeout.content).not.toContain('\\n')
   })
 
@@ -504,8 +499,8 @@ describe('taskWraithCloseoutMessage', () => {
       exitCode: 0
     })
 
-    expect(closeout.content).toContain('_2 more commits not shown._')
-    expect(closeout.content.match(/^\| `/gm)?.length).toBe(8)
+    expect(closeout.content).not.toContain('**Commits**')
+    expect(closeout.metadata?.closeoutCommits).toHaveLength(10)
   })
 
   it('inserts an ensemble closeout after its round body without stamping ensembleRoundId', () => {
@@ -873,36 +868,8 @@ Next action:
       completedAt: round.endedAt!
     })
 
-    expect(closeout.content).toContain('**Participants**')
-    expect(closeout.content).toContain('| Seat | Turns & Tokens |')
-    // Five columns collapse into one seat link: the element renders from the
-    // href, and the link TEXT is what plain-text surfaces still read.
-    expect(closeout.content).toContain(
-      '| [@Builder · Codex · GPT-5.6-Sol · Ultra · Full WS Access]' +
-        '(ensemble-seat://p1?p=codex&m=gpt-5.6-sol&role=Builder&n=1&r=ultracode&k=workspace_write)' +
-        ' | 2k Tks / 2 Turns [Answered](ensemble-status://answered) |'
-    )
-    expect(closeout.content).toContain(
-      '| [@Reviewer · Claude · Fable 5 · Max · Ask]' +
-        '(ensemble-seat://p2?p=claude&m=claude-fable-5&role=Reviewer&n=2&r=max&k=read_only)' +
-        ' | 500 Tks / 1 Turn [Yielded](ensemble-status://yielded) |'
-    )
-    // No turns: no work cell at all, and the seat falls back to the
-    // round-entry snapshot rather than inventing a change.
-    expect(closeout.content).toContain(
-      '| [@Cursor · Cursor · Composer 2.5 Fast · Accept Edits]' +
-        '(ensemble-seat://p3?p=cursor&m=composer-2.5-fast&role=Cursor&n=3&k=default)' +
-        ' | — [Skipped](ensemble-status://skipped) |'
-    )
-    // Kimi's "Thinking" comes from the thinking flag, not a reasoning effort —
-    // the seat must carry it or the element renders a blank where the text
-    // beside it says Thinking.
-    expect(closeout.content).toContain(
-      '| [@Kimi · Kimi · K2.7 Coding · Thinking · Plan]' +
-        '(ensemble-seat://p4?p=kimi&m=kimi-k2.7-code&role=Kimi&n=4&t=1&k=plan)' +
-        ' | ~300 Tks / 1 Turn [Failed](ensemble-status://failed) |'
-    )
-    expect(closeout.content).toContain('| **Round Total** | ~2k Tks / 4 Turns |')
+    expect(closeout.content).not.toContain('**Participants**')
+    expect(closeout.content).not.toContain('| Seat | Turns & Tokens |')
     expect(closeout.content).toContain('The round used about 2k tokens in total.')
     expect(closeout.content).not.toContain('Participants:')
     expect(closeout.content).not.toContain('- Tokens:')
@@ -910,7 +877,18 @@ Next action:
     expect(table?.rows).toHaveLength(4)
     expect(table?.totalWorkLabel).toBe('~2k Tks / 4 Turns')
     expect(table?.rows?.[0]?.seatLink?.participantId).toBe('p1')
-    expect(table?.rows?.[0]?.seatText).toContain('Builder')
+    expect(table?.rows?.[0]?.seatText).toContain(
+      '@Builder · Codex · GPT-5.6-Sol · Ultra · Full WS Access'
+    )
+    expect(table?.rows?.[1]?.seatText).toContain('@Reviewer · Claude · Fable 5 · Max · Ask')
+    expect(table?.rows?.[2]?.seatText).toContain(
+      '@Cursor · Cursor · Composer 2.5 Fast · Accept Edits'
+    )
+    expect(table?.rows?.[3]?.seatText).toContain(
+      '@Kimi · Kimi · K2.7 Coding · Thinking · Plan'
+    )
+    expect(table?.rows?.[0]?.workLabel).toBe('2k Tks / 2 Turns')
+    expect(table?.rows?.[2]?.workLabel).toBe('—')
   })
 
   it('uses compact status icons without repeating participant counts in prose', () => {
@@ -948,18 +926,18 @@ Next action:
       completedAt: round.endedAt!
     })
 
-    // The status column is gone (owner call 2026-08-05: it earned no width in
-    // a two-column table) — and with it the emoji vocabulary it carried.
-    expect(closeout.content).toContain('[@Answered · Codex')
+    // Structured rows keep seat text + status for the Task-complete stack;
+    // the close-out bubble itself stays prose-only (no emoji status column).
+    const table = closeout.metadata?.closeoutParticipantTable
+    expect(table?.rows?.some((row) => row.seatText.includes('@Answered · Codex'))).toBe(true)
     expect(closeout.content).not.toContain('✅')
     expect(closeout.content).not.toContain('💤')
     expect(closeout.content).not.toContain('❌')
-    // The status COLUMN is still gone; the glyph rides the work cell instead.
     expect(closeout.content).not.toContain('| Status |')
     expect(closeout.content).toContain('The round was completed.')
     expect(closeout.content).not.toContain('Participants:')
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
-    expect(closeout.content).toContain('| **Round Total** | — |')
+    expect(table?.totalWorkLabel).toBe('—')
   })
 
   it('reports per-turn seat changes and keeps contributors removed from the live round', () => {
@@ -1055,20 +1033,23 @@ Next action:
     })
 
     expect(closeout.content).not.toContain('Participants:')
-    // The link text keeps the full per-turn journey; the href carries only its
-    // ENDS, which is what the element rolls between. Both are derived from one
-    // compaction, so a mid-round value (Full WS Access) can never appear as an
-    // end state.
-    expect(closeout.content).toContain(
-      '| [@Lead · Claude → Codex · Fable 5 → GPT-5.6-Sol · Ultracode → High' +
-        ' · Accept Edits → Full WS Access → Ask]' +
-        '(ensemble-seat://seat?p=codex&m=gpt-5.6-sol&role=Lead&n=1&r=high&k=read_only' +
-        '&bp=claude&bm=claude-fable-5&brole=Lead&bn=1&br=ultracode&bk=default)' +
-        ' | 3 Turns [Answered](ensemble-status://answered) |'
+    // seatText keeps the full per-turn journey; seatLink carries only its ENDS
+    // for the animated element. Mid-round Full WS Access must not be an end state.
+    const table = closeout.metadata?.closeoutParticipantTable
+    expect(table?.rows?.[0]?.seatText).toContain(
+      '@Lead · Claude → Codex · Fable 5 → GPT-5.6-Sol · Ultracode → High · Accept Edits → Full WS Access → Ask'
     )
-    // The total row carries NO glyph: a round has many statuses and no single
-    // one, so a glyph there would have to pick a winner.
-    expect(closeout.content).toContain('| **Round Total** | 3 Turns |')
+    expect(table?.rows?.[0]?.seatLink?.after).toMatchObject({
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      permissionPresetId: 'read_only'
+    })
+    expect(table?.rows?.[0]?.seatLink?.before).toMatchObject({
+      provider: 'claude',
+      model: 'claude-fable-5',
+      permissionPresetId: 'default'
+    })
+    expect(table?.totalWorkLabel).toBe('3 Turns')
   })
 
   it('prefers an AI summary over the final assistant text and records provenance', () => {
@@ -1185,10 +1166,11 @@ Next action:
       exitCode: 0
     })
 
-    expect(closeout.content).toContain('`1a2b3c4d5`')
-    expect(closeout.content).not.toContain('`9f8e7d6c1`')
-    expect(closeout.content).not.toContain('`89e6c9812`')
-    expect(closeout.content).not.toContain('`fa3d11234`')
+    const hashes = closeout.metadata?.closeoutCommits?.map((commit) => commit.hash) || []
+    expect(hashes).toContain('1a2b3c4d5')
+    expect(hashes).not.toContain('9f8e7d6c1')
+    expect(hashes).not.toContain('89e6c9812')
+    expect(hashes).not.toContain('fa3d11234')
   })
 
   it('still extracts bare hashes printed on their own line', () => {
@@ -1217,7 +1199,9 @@ Next action:
       exitCode: 0
     })
 
-    expect(closeout.content).toContain('`abc1234de`')
+    expect(closeout.metadata?.closeoutCommits?.map((commit) => commit.hash)).toEqual([
+      'abc1234def567'
+    ])
   })
 
   it('falls back to deterministic provenance when the AI summary is blank', () => {
