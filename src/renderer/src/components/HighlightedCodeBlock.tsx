@@ -61,11 +61,64 @@ export function chatHighlightStyleRules(): string {
 
 const shellLanguage = StreamLanguage.define(shell)
 
+/**
+ * Trim/lowercase, then collapse aliases that share an identical language pack
+ * so the highlight cache key (`${normalizeLanguage}\\0${content}`) hits across
+ * `js` / `javascript` (and peers). `tsx` stays distinct from `ts` because the
+ * pack enables JSX only for tsx.
+ */
+const LANGUAGE_CANON: Record<string, string> = {
+  js: 'javascript',
+  jsx: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  javascript: 'javascript',
+  ts: 'typescript',
+  typescript: 'typescript',
+  // tsx intentionally omitted — different pack options than ts
+  py: 'python',
+  python: 'python',
+  python3: 'python',
+  md: 'markdown',
+  markdown: 'markdown',
+  json: 'json',
+  jsonc: 'json',
+  html: 'html',
+  htm: 'html',
+  xml: 'html',
+  svg: 'html',
+  css: 'css',
+  scss: 'css',
+  sass: 'css',
+  less: 'css',
+  c: 'cpp',
+  h: 'cpp',
+  cc: 'cpp',
+  cpp: 'cpp',
+  'c++': 'cpp',
+  cxx: 'cpp',
+  hpp: 'cpp',
+  hh: 'cpp',
+  objc: 'cpp',
+  'objective-c': 'cpp',
+  m: 'cpp',
+  mm: 'cpp',
+  metal: 'cpp',
+  swift: 'cpp',
+  sh: 'shell',
+  bash: 'shell',
+  zsh: 'shell',
+  shell: 'shell',
+  terminal: 'shell'
+}
+
 const normalizeLanguage = (language?: string): string => {
-  return (language || '')
+  const raw = (language || '')
     .trim()
     .toLowerCase()
     .replace(/^[.`]+|[.`]+$/g, '')
+  if (!raw) return ''
+  return LANGUAGE_CANON[raw] ?? raw
 }
 
 /** Same language-pack map as the former CM path; returns Lezer `Language`s. */
@@ -73,38 +126,22 @@ const languageFor = (language?: string): Language | null => {
   const normalized = normalizeLanguage(language)
   if (!normalized) return null
 
-  if (['js', 'jsx', 'javascript', 'mjs', 'cjs'].includes(normalized)) {
+  if (normalized === 'javascript') {
     return javascript({ jsx: true }).language
   }
-  if (['ts', 'tsx', 'typescript'].includes(normalized)) {
-    return javascript({ jsx: normalized === 'tsx', typescript: true }).language
+  if (normalized === 'tsx') {
+    return javascript({ jsx: true, typescript: true }).language
   }
-  if (['py', 'python', 'python3'].includes(normalized)) return python().language
-  if (['md', 'markdown'].includes(normalized)) return markdown().language
-  if (['json', 'jsonc'].includes(normalized)) return json().language
-  if (['html', 'htm', 'xml', 'svg'].includes(normalized)) return html().language
-  if (['css', 'scss', 'sass', 'less'].includes(normalized)) return css().language
-  if (
-    [
-      'c',
-      'h',
-      'cc',
-      'cpp',
-      'c++',
-      'cxx',
-      'hpp',
-      'hh',
-      'objc',
-      'objective-c',
-      'm',
-      'mm',
-      'metal',
-      'swift'
-    ].includes(normalized)
-  ) {
-    return cpp().language
+  if (normalized === 'typescript') {
+    return javascript({ jsx: false, typescript: true }).language
   }
-  if (['sh', 'bash', 'zsh', 'shell', 'terminal'].includes(normalized)) return shellLanguage
+  if (normalized === 'python') return python().language
+  if (normalized === 'markdown') return markdown().language
+  if (normalized === 'json') return json().language
+  if (normalized === 'html') return html().language
+  if (normalized === 'css') return css().language
+  if (normalized === 'cpp') return cpp().language
+  if (normalized === 'shell') return shellLanguage
 
   return null
 }
@@ -124,14 +161,54 @@ function languageParser(language?: string) {
   return lang?.parser ?? null
 }
 
+/** Module LRU for sync Lezer highlight results across virtualizer remounts. */
+const HIGHLIGHT_CACHE_MAX = 64
+const HIGHLIGHT_CACHE_MAX_CHARS = 200_000
+const highlightToNodesCache = new Map<string, ReactNode>()
+let highlightParseCountForTest = 0
+
+export function getHighlightParseCountForTest(): number {
+  return highlightParseCountForTest
+}
+
+export function highlightToNodesCacheSizeForTest(): number {
+  return highlightToNodesCache.size
+}
+
+export function resetHighlightToNodesCacheForTest(): void {
+  highlightToNodesCache.clear()
+  highlightParseCountForTest = 0
+}
+
+function rememberHighlightNodes(key: string, nodes: ReactNode, contentLength: number): void {
+  if (contentLength > HIGHLIGHT_CACHE_MAX_CHARS) return
+  highlightToNodesCache.set(key, nodes)
+  while (highlightToNodesCache.size > HIGHLIGHT_CACHE_MAX) {
+    const oldest = highlightToNodesCache.keys().next().value
+    if (oldest === undefined) break
+    highlightToNodesCache.delete(oldest)
+  }
+}
+
 function highlightToNodes(content: string, language?: string): ReactNode {
   const parser = languageParser(language)
   if (!parser) return content
 
+  const cacheKey = `${normalizeLanguage(language)}\0${content}`
+  const cached = highlightToNodesCache.get(cacheKey)
+  if (cached !== undefined) {
+    // Refresh insertion order (LRU).
+    highlightToNodesCache.delete(cacheKey)
+    highlightToNodesCache.set(cacheKey, cached)
+    return cached
+  }
+
   let tree
   try {
+    highlightParseCountForTest += 1
     tree = parser.parse(content)
   } catch {
+    rememberHighlightNodes(cacheKey, content, content.length)
     return content
   }
 
@@ -157,6 +234,7 @@ function highlightToNodes(content: string, language?: string): ReactNode {
       nodes.push('\n')
     }
   )
+  rememberHighlightNodes(cacheKey, nodes, content.length)
   return nodes
 }
 

@@ -1,9 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   HighlightedCodeBlock,
   chatHighlightStyleRules,
-  extensionsForLanguage
+  extensionsForLanguage,
+  getHighlightParseCountForTest,
+  highlightToNodesCacheSizeForTest,
+  resetHighlightToNodesCacheForTest
 } from './HighlightedCodeBlock'
 
 function classForColor(rules: string, color: string): string | null {
@@ -15,6 +18,10 @@ function classForColor(rules: string, color: string): string | null {
 }
 
 describe('HighlightedCodeBlock', () => {
+  beforeEach(() => {
+    resetHighlightToNodesCacheForTest()
+  })
+
   it('renders a static Lezer body with no CodeMirror editor chrome', () => {
     const html = renderToStaticMarkup(
       <HighlightedCodeBlock content={'const value = "ok"'} language="javascript" />
@@ -62,5 +69,81 @@ describe('HighlightedCodeBlock', () => {
     expect(extensionsForLanguage('bash').length).toBe(1)
     expect(extensionsForLanguage('').length).toBe(0)
     expect(extensionsForLanguage('unknown-lang').length).toBe(0)
+  })
+
+  it('parses once across remounts with the same content and language', () => {
+    const content = 'const value = "ok"'
+    const first = renderToStaticMarkup(
+      <HighlightedCodeBlock content={content} language="javascript" />
+    )
+    expect(getHighlightParseCountForTest()).toBe(1)
+
+    const second = renderToStaticMarkup(
+      <HighlightedCodeBlock content={content} language="javascript" />
+    )
+    expect(getHighlightParseCountForTest()).toBe(1)
+    expect(second).toBe(first)
+    expect(highlightToNodesCacheSizeForTest()).toBe(1)
+  })
+
+  it('hits the cache across js/javascript language aliases', () => {
+    const content = 'const alias = 1'
+    renderToStaticMarkup(<HighlightedCodeBlock content={content} language="js" />)
+    expect(getHighlightParseCountForTest()).toBe(1)
+
+    renderToStaticMarkup(<HighlightedCodeBlock content={content} language="javascript" />)
+    expect(getHighlightParseCountForTest()).toBe(1)
+    expect(highlightToNodesCacheSizeForTest()).toBe(1)
+  })
+
+  it('misses the cache when content changes', () => {
+    renderToStaticMarkup(<HighlightedCodeBlock content={'const a = 1'} language="js" />)
+    renderToStaticMarkup(<HighlightedCodeBlock content={'const a = 2'} language="js" />)
+    expect(getHighlightParseCountForTest()).toBe(2)
+    expect(highlightToNodesCacheSizeForTest()).toBe(2)
+  })
+
+  it('does not grow the cache for unknown languages', () => {
+    renderToStaticMarkup(
+      <HighlightedCodeBlock content={'plain source'} language="not-a-real-lang" />
+    )
+    renderToStaticMarkup(
+      <HighlightedCodeBlock content={'more plain'} language="also-unknown" />
+    )
+    expect(getHighlightParseCountForTest()).toBe(0)
+    expect(highlightToNodesCacheSizeForTest()).toBe(0)
+  })
+
+  it('highlights huge content without storing it in the cache', () => {
+    const huge = `${'const x = 1;\n'.repeat(20_000)}// end`
+    expect(huge.length).toBeGreaterThan(200_000)
+
+    const html = renderToStaticMarkup(
+      <HighlightedCodeBlock content={huge} language="javascript" />
+    )
+    expect(html).toContain('message-code-static')
+    expect(getHighlightParseCountForTest()).toBe(1)
+    expect(highlightToNodesCacheSizeForTest()).toBe(0)
+
+    renderToStaticMarkup(<HighlightedCodeBlock content={huge} language="javascript" />)
+    expect(getHighlightParseCountForTest()).toBe(2)
+    expect(highlightToNodesCacheSizeForTest()).toBe(0)
+  })
+
+  it('evicts the oldest entry once the cache exceeds 64 keys', () => {
+    for (let i = 0; i < 65; i += 1) {
+      renderToStaticMarkup(
+        <HighlightedCodeBlock content={`const n = ${i}`} language="javascript" />
+      )
+    }
+    expect(highlightToNodesCacheSizeForTest()).toBe(64)
+    expect(getHighlightParseCountForTest()).toBe(65)
+
+    // Oldest key (n = 0) was evicted — remount re-parses.
+    renderToStaticMarkup(
+      <HighlightedCodeBlock content={'const n = 0'} language="javascript" />
+    )
+    expect(getHighlightParseCountForTest()).toBe(66)
+    expect(highlightToNodesCacheSizeForTest()).toBe(64)
   })
 })
