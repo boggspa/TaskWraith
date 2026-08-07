@@ -606,6 +606,21 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
                 )
               }
             : renderer ?? {}
+        // selectCandidates() walks the whole chat corpus (AppStore.getChats())
+        // to find abandoned drafts, so it is not free to call repeatedly. The
+        // loop still re-validates a candidate against LIVE state immediately
+        // before deleting it -- awaiting deleteChatWithLifecycle can let
+        // anything change (a message arrives, the chat gets pinned or opened
+        // in a popout) -- but it no longer re-fetches when nothing could have
+        // changed. The candidate list a fresh selectCandidates() call just
+        // produced is still exactly correct for every candidate reached
+        // before the next `await`: the first candidate is checked against the
+        // very computation that selected it (a zero-width window), and any
+        // candidate reached via a `continue` (no await) reuses that same
+        // fetch. Once a deleteChatWithLifecycle await happens, the next
+        // candidate forces a fresh selectCandidates() call again. This
+        // narrows call COUNT only -- every candidate that follows an await is
+        // still re-checked against a fresh corpus read, exactly as before.
         const selectCandidates = (): string[] => {
           const collected: string[] = []
           deps.reapAbandonedChats(
@@ -621,13 +636,23 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
           return collected
         }
         const candidates = deps.isHistoryErasureInFlight() ? [] : selectCandidates()
+        let latestCandidateIds = candidates
+        let latestCandidateIdsFresh = true
         for (const id of candidates) {
           // Defer the remainder as soon as any erasure is pending — every
           // further deletion attempt would reject against that intent anyway.
           if (deps.isHistoryErasureInFlight()) break
-          if (!selectCandidates().includes(id)) continue
+          if (!latestCandidateIdsFresh) {
+            latestCandidateIds = selectCandidates()
+            latestCandidateIdsFresh = true
+          }
+          if (!latestCandidateIds.includes(id)) continue
           await deps.deleteChatWithLifecycle(id)
           deleted.push(id)
+          // An await just happened -- another IPC call or a live provider
+          // could have changed a sibling candidate's state, so the next one
+          // needs a genuinely fresh re-check rather than this stale fetch.
+          latestCandidateIdsFresh = false
         }
         if (deleted.length > 0) deps.broadcastThreadList()
         return { ok: true, reaped: deleted }

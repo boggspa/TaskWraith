@@ -1077,6 +1077,38 @@ describe('registerChatHandlers', () => {
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
   })
 
+  it('does not re-scan the corpus for a candidate it just selected (no await occurred yet)', async () => {
+    // MEASURED (scratchpad/measure_chats.js against live userData, 2026-08-07):
+    // a full AppStore.getChats() corpus scan cold-parses every chats/*.json
+    // file. The loop used to call selectCandidates() -> reapAbandonedChats()
+    // once to build the candidate list and then AGAIN for every candidate
+    // inside the delete loop, including the very first one -- a re-check
+    // across a ZERO-WIDTH window where nothing could have changed, because no
+    // `await` happens between building the list and checking candidate #1.
+    // For the common real-world case (a single standing abandoned draft) that
+    // paid for the full scan twice for no reason. This test does not touch
+    // the freshness re-check for a candidate that follows an awaited
+    // deleteChatWithLifecycle -- that path stays covered by
+    // 're-validates each candidate against live records before its own
+    // deletion' above, which still requires (and gets) a fresh
+    // reapAbandonedChats call per such candidate.
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >((reaperDeps) => {
+      reaperDeps.deleteChat('old-chat')
+      return ['old-chat']
+    })
+    const deps = createDeps({ reapAbandonedChats })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('reap-abandoned-chats')({} as any, {})).resolves.toEqual({
+      ok: true,
+      reaped: ['old-chat']
+    })
+
+    expect(reapAbandonedChats).toHaveBeenCalledTimes(1)
+  })
+
   it('authoritatively protects live chat popouts after their handoff payload is consumed', async () => {
     const reapAbandonedChats = vi.fn<
       Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
