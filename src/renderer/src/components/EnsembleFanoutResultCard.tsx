@@ -196,6 +196,12 @@ export function EnsembleFanoutResultCard({
   } as CSSProperties
   const modelBadge = provider && model ? shortModelName(provider, '', model) : model
   const laneId = textValue(metadata.ensembleLaneId)
+  const chatId = textValue(chat?.appChatId)
+  const canSkipLane = Boolean(working && chatId && laneId)
+  const skipFanoutLane = (): void => {
+    if (!chatId || !laneId) return
+    void window.api.skipEnsembleFanoutLane(chatId, laneId)
+  }
   const order = numberValue(metadata.ensembleOrder)
   // The lane's seat, decoded from the snapshot captured when the row was
   // written — so a lane read back later still shows what it actually ran as.
@@ -411,6 +417,9 @@ export function EnsembleFanoutResultCard({
           expandLabel="Expand result"
           collapseLabel="Collapse result"
           jumpLabel="Jump to latest result"
+          active={working}
+          onSkip={canSkipLane ? skipFanoutLane : undefined}
+          skipTitle="Stop this fan-out lane only. Remaining lanes and the round continue; Stop still cancels the whole round."
         >
           <div className="ensemble-fanout-result-body-inner">
             {hasTranscriptParts ? (

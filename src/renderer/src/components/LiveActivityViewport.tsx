@@ -39,6 +39,13 @@ interface LiveActivityViewportProps {
   expandLabel?: string
   collapseLabel?: string
   jumpLabel?: string
+  /**
+   * Optional per-viewport Skip (fan-out lane cards). Rendered in the bottom-right
+   * controls row next to Expand/Collapse. Callers gate when it appears.
+   */
+  onSkip?: () => void
+  skipLabel?: string
+  skipTitle?: string
 }
 
 /**
@@ -61,7 +68,10 @@ export function LiveActivityViewport({
   label = 'Live activity',
   expandLabel = 'Expand activity',
   collapseLabel = 'Collapse activity',
-  jumpLabel = 'Jump to latest'
+  jumpLabel = 'Jump to latest',
+  onSkip,
+  skipLabel = 'Skip',
+  skipTitle
 }: LiveActivityViewportProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [localExpanded, setLocalExpanded] = useState(defaultExpanded)
@@ -134,6 +144,7 @@ export function LiveActivityViewport({
   }
 
   const showJump = shouldShowViewportJump({ expanded, following })
+  const hasSkipAction = typeof onSkip === 'function'
 
   return (
     <div
@@ -141,7 +152,7 @@ export function LiveActivityViewport({
         active ? ' is-active' : ''
       }${following ? ' is-following' : ''}${fadeTop ? ' has-fade-top' : ''}${
         fadeBottom ? ' has-fade-bottom' : ''
-      }${className ? ` ${className}` : ''}`}
+      }${hasSkipAction ? ' has-skip-action' : ''}${className ? ` ${className}` : ''}`}
       data-following={following ? 'true' : 'false'}
       data-active={active ? 'true' : 'false'}
     >
@@ -201,6 +212,20 @@ export function LiveActivityViewport({
         </button>
       )}
       <div className="live-activity-viewport-controls">
+        {hasSkipAction && (
+          <button
+            type="button"
+            className="live-activity-viewport-skip"
+            onClick={onSkip}
+            title={
+              skipTitle ||
+              'Stop this fan-out lane and let the remaining seats continue. Round Stop still cancels the whole round.'
+            }
+            aria-label={skipTitle || 'Skip this fan-out lane'}
+          >
+            {skipLabel}
+          </button>
+        )}
         <button
           type="button"
           className="live-activity-viewport-toggle"

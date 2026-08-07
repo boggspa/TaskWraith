@@ -463,6 +463,33 @@ describe('working-lane rim shimmer', () => {
     expect(html).toContain('ensemble-fanout-result-rim-sweep')
   })
 
+  it('offers a per-lane Skip next to Expand result while the lane is working', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage()}
+        chat={{ appChatId: 'ensemble-chat' } as never}
+        working
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(html).toContain('live-activity-viewport-skip')
+    expect(html).toContain('>Skip<')
+    expect(html).toContain('Expand result')
+    // Tool-call viewports must not get a second Skip — only the result footer.
+    expect(html.split('live-activity-viewport-skip').length - 1).toBe(1)
+  })
+
+  it('hides per-lane Skip once the lane is no longer working', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage()}
+        chat={{ appChatId: 'ensemble-chat' } as never}
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(html).not.toContain('live-activity-viewport-skip')
+  })
+
   it('leaves a finished lane unmarked — the shimmer is the whole "still going" signal', () => {
     const html = renderToStaticMarkup(
       <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />
