@@ -3030,6 +3030,117 @@ function historyRecordMatches(
   )
 }
 
+// run-events/ is append-only and nothing prunes it, so the scoped-deletion
+// reconciliation sweep below grew unbounded: measured at 75.3s across a 15.5 GB
+// / 8,441-file corpus, on the main thread, for a single deleted chat. These two
+// bounds cut that work without narrowing what the sweep can find — an erasure
+// path may only ever get faster, never less complete.
+
+/**
+ * A run event naming a chat cannot have been written before that chat existed,
+ * so a file last modified before the earliest in-scope chat was created cannot
+ * reference any of them. The margin absorbs clock skew and coarse timestamps.
+ */
+const HISTORY_DELETION_RUN_EVENT_MTIME_MARGIN_MS = 7 * 24 * 60 * 60 * 1000
+
+/** `JSON.stringify` escapes none of these, so such an id survives verbatim into the ledger bytes. */
+const JSON_VERBATIM_IDENTITY = /^[A-Za-z0-9._:-]+$/
+
+/**
+ * Identity strings whose literal presence is a precondition for
+ * {@link historyRecordMatches} to return true under `includeRunIds: false`:
+ * that call can only match on `chatId`/`parentChatId`/`subThreadId` against
+ * `intent.chatIds`, or on `workspaceId` for a workspace clear. A ledger file
+ * containing none of these bytes therefore has no matching row.
+ *
+ * Returns null when the probe cannot be proven sound, which keeps the caller on
+ * the exhaustive parse.
+ */
+function historyDeletionIdentityNeedles(intent: HistoryDeletionIntent): Buffer[] | null {
+  if (intent.kind === 'global') return null
+  const ids = [...intent.chatIds]
+  if (intent.kind === 'workspace' && typeof intent.workspaceId === 'string' && intent.workspaceId) {
+    ids.push(intent.workspaceId)
+  }
+  if (ids.length === 0) return null
+  // A single id that JSON could escape makes the byte probe unsound for the
+  // whole pass, so fall back rather than guess at the encoded form.
+  if (!ids.every((id) => JSON_VERBATIM_IDENTITY.test(id))) return null
+  return ids.map((id) => Buffer.from(id, 'utf8'))
+}
+
+/**
+ * Earliest mtime a ledger file may have and still be able to reference the
+ * deletion scope. Null disables the bound — required whenever any in-scope id
+ * has no readable record (its chat file may already be gone, or the id may come
+ * from the list index alone), since such a chat's age is unknown.
+ */
+function historyDeletionRunEventMtimeFloorMs(
+  chats: ChatRecord[],
+  chatIds: Set<string>
+): number | null {
+  const resolved = new Set<string>()
+  let floorMs: number | null = null
+  for (const chat of chats) {
+    if (!chatIds.has(chat.appChatId)) continue
+    // ChatRecord.createdAt is epoch milliseconds. Legacy records have been seen
+    // holding an ISO string, and a placeholder `0`/`1` carries no real age, so
+    // anything that is not a usable positive instant disables the bound.
+    const raw: unknown = chat.createdAt
+    const createdMs =
+      typeof raw === 'number' ? raw : typeof raw === 'string' ? Date.parse(raw) : Number.NaN
+    if (!Number.isFinite(createdMs) || createdMs <= 0) return null
+    resolved.add(chat.appChatId)
+    floorMs = floorMs === null ? createdMs : Math.min(floorMs, createdMs)
+  }
+  if (floorMs === null) return null
+  for (const chatId of chatIds) {
+    if (!resolved.has(chatId)) return null
+  }
+  return floorMs - HISTORY_DELETION_RUN_EVENT_MTIME_MARGIN_MS
+}
+
+/**
+ * Byte-level probe for any of {@link historyDeletionIdentityNeedles}. Reads raw
+ * Buffers in bounded chunks, carrying an overlap so a needle straddling a chunk
+ * boundary still matches, and never materialises the utf8 string or per-line
+ * splits that dominated the profile. Fails open: an unreadable probe returns
+ * true so the caller parses the file instead of skipping it.
+ */
+function runEventFileContainsIdentity(filePath: string, needles: Buffer[]): boolean {
+  const longest = needles.reduce((max, needle) => Math.max(max, needle.length), 0)
+  if (longest === 0) return true
+  const chunkBytes = 1 << 20
+  const overlap = longest - 1
+  let fd: number | null = null
+  try {
+    fd = fs.openSync(filePath, 'r')
+    const buffer = Buffer.allocUnsafe(chunkBytes + overlap)
+    let carried = 0
+    for (;;) {
+      const read = fs.readSync(fd, buffer, carried, chunkBytes, null)
+      if (read <= 0) return false
+      const filled = carried + read
+      const window = buffer.subarray(0, filled)
+      for (const needle of needles) {
+        if (window.includes(needle)) return true
+      }
+      carried = Math.min(overlap, filled)
+      if (carried > 0) buffer.copy(buffer, 0, filled - carried, filled)
+    }
+  } catch {
+    return true
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // Already closed or gone; the probe result stands.
+      }
+    }
+  }
+}
+
 function rewriteArrayHistoryStore(
   filePath: string,
   label: string,
@@ -7136,8 +7247,22 @@ export class AppStore {
     } else if (fs.existsSync(runEventsDir)) {
       // A run can reach the event ledger before it is attached to ChatRecord.
       // Inspect retained event identities so a scoped clear also catches that row.
+      //
+      // Both bounds below only skip files that provably cannot match, so the
+      // set of runIds found here is identical to parsing every line — see
+      // historyDeletionIdentityNeedles and historyDeletionRunEventMtimeFloorMs.
+      const identityNeedles = historyDeletionIdentityNeedles(draft)
+      const mtimeFloorMs = historyDeletionRunEventMtimeFloorMs(allChats, chatIds)
       for (const file of fs.readdirSync(runEventsDir).filter((item) => item.endsWith('.jsonl'))) {
         const filePath = path.join(runEventsDir, file)
+        if (mtimeFloorMs !== null) {
+          try {
+            if (fs.statSync(filePath).mtimeMs < mtimeFloorMs) continue
+          } catch {
+            // An unreadable stat must not shrink the sweep; fall through.
+          }
+        }
+        if (identityNeedles && !runEventFileContainsIdentity(filePath, identityNeedles)) continue
         let lines: string[]
         try {
           lines = fs.readFileSync(filePath, 'utf-8').split(/\r?\n/).filter(Boolean)
