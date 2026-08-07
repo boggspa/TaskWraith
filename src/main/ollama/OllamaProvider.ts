@@ -1886,6 +1886,9 @@ export function ollamaToolResultFollowUpPrompt(input: {
   output: string
   ok: boolean
 }): string {
+  const blackboardHint = !input.ok
+    ? ollamaBlackboardFailureRepairHint(input.toolName, input.output)
+    : null
   return [
     `TaskWraith executed ${input.toolName}.`,
     input.ok ? 'Tool status: success.' : 'Tool status: error.',
@@ -1900,10 +1903,45 @@ export function ollamaToolResultFollowUpPrompt(input: {
           'Do not repeat an identical tool call, and only output JSON when you are requesting another TaskWraith tool.'
         ].join(' ')
       : [
-          'The tool failed.',
-          'Explain the limitation or request a different allowed TaskWraith tool only if that can recover.'
+          blackboardHint || 'The tool failed.',
+          blackboardHint
+            ? 'Retry the corrected blackboard call now instead of answering as if the post or read already succeeded.'
+            : 'Explain the limitation or request a different allowed TaskWraith tool only if that can recover.'
         ].join(' ')
   ].join('\n')
+}
+
+function ollamaBlackboardSchemaRepairHint(toolName: string): string | null {
+  if (toolName === 'blackboard_post') {
+    return [
+      'Blackboard posting requires BOTH non-empty string fields: key and value.',
+      'Retry with a concrete call such as {"taskwraith_tool":{"name":"blackboard_post","arguments":{"key":"short-key","value":"shared fact or decision"}}}.',
+      'To read the current board first, call blackboard_read with {}.'
+    ].join(' ')
+  }
+  if (toolName === 'blackboard_read') {
+    return 'A bare blackboard_read call is valid and returns the newest entries: {"taskwraith_tool":{"name":"blackboard_read","arguments":{}}}.'
+  }
+  return null
+}
+
+function ollamaBlackboardFailureRepairHint(toolName: string, output: string): string | null {
+  const normalized = String(output || '').toLowerCase()
+  if (
+    toolName === 'blackboard_post' &&
+    (normalized.includes('non-empty') ||
+      normalized.includes('key and value') ||
+      normalized.includes('required argument'))
+  ) {
+    return ollamaBlackboardSchemaRepairHint(toolName)
+  }
+  if (
+    toolName === 'blackboard_read' &&
+    (normalized.includes('argument') || normalized.includes('array') || normalized.includes('filter'))
+  ) {
+    return ollamaBlackboardSchemaRepairHint(toolName)
+  }
+  return null
 }
 
 export function ollamaToolArgumentRepairPrompt(
@@ -1918,9 +1956,10 @@ export function ollamaToolArgumentRepairPrompt(
     input.output,
     '',
     `Re-issue the same ${input.toolName} tool call with the missing required argument set.`,
+    ollamaBlackboardSchemaRepairHint(input.toolName) || '',
     'Do not describe the tool call in prose, and do not answer as if the tool already ran.',
     ...ollamaEnsembleRetryReminder(input)
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 export function ollamaGoalLifecycleStopContent(toolName: string): string | null {

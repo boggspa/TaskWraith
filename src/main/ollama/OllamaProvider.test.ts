@@ -3505,6 +3505,31 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).not.toContain('The tool failed.')
   })
 
+  it('gives blackboard argument failures an exact compact recovery call', () => {
+    const postPrompt = ollamaToolArgumentRepairPrompt({
+      toolName: 'blackboard_post',
+      output: 'blackboard_post requires non-empty key and value.'
+    })
+    expect(postPrompt).toContain('BOTH non-empty string fields: key and value')
+    expect(postPrompt).toContain('"name":"blackboard_post"')
+    expect(postPrompt).toContain('blackboard_read with {}')
+
+    const readPrompt = ollamaToolArgumentRepairPrompt({
+      toolName: 'blackboard_read',
+      output: 'The read filters had the wrong argument shape.'
+    })
+    expect(readPrompt).toContain('A bare blackboard_read call is valid')
+    expect(readPrompt).toContain('"arguments":{}}')
+
+    const failedPost = ollamaToolResultFollowUpPrompt({
+      toolName: 'blackboard_post',
+      output: 'blackboard_post requires non-empty key and value.',
+      ok: false
+    })
+    expect(failedPost).toContain('Retry the corrected blackboard call now')
+    expect(failedPost).not.toContain('Explain the limitation')
+  })
+
   it('validates required tool arguments with executor-supported aliases only', () => {
     expect(validateOllamaToolArguments('read_file', { file_path: 'README.md' })).toEqual({
       ok: true
@@ -3541,6 +3566,17 @@ describe('parseOllamaToolRequest', () => {
     const missingIntent = validateOllamaToolArguments('write_file', { path: 'a.ts', content: 'x' })
     expect(missingIntent.ok).toBe(false)
     if (!missingIntent.ok) expect(missingIntent.message).toContain('intent')
+
+    const emptyBlackboardPost = validateOllamaToolArguments('blackboard_post', {
+      key: '   ',
+      value: ''
+    })
+    expect(emptyBlackboardPost.ok).toBe(false)
+    if (!emptyBlackboardPost.ok) {
+      expect(emptyBlackboardPost.message).toContain('key')
+      expect(emptyBlackboardPost.message).toContain('value')
+    }
+    expect(validateOllamaToolArguments('blackboard_read', {})).toEqual({ ok: true })
   })
 
   it('voices the retry-ceiling finalize differently for solo vs ensemble runs', () => {
