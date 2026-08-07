@@ -207,10 +207,15 @@ describe('HostDeferredCommandEnvelopeStore', () => {
     expect(JSON.stringify(recovery)).not.toContain('thread-1')
 
     const journalPath = join(dataDir, HOST_DEFERRED_COMMAND_ENVELOPE_JOURNAL_FILENAME)
-    expect(statSync(journalPath).mode & 0o777).toBe(0o600)
+    // Windows does not expose POSIX owner-only mode bits.
+    if (process.platform !== 'win32') {
+      expect(statSync(journalPath).mode & 0o777).toBe(0o600)
+    }
     store.compact()
     const checkpointPath = join(dataDir, HOST_DEFERRED_COMMAND_ENVELOPE_CHECKPOINT_FILENAME)
-    expect(statSync(checkpointPath).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(checkpointPath).mode & 0o777).toBe(0o600)
+    }
   })
 
   it('reopens and compacts without losing exact command or lifecycle state', () => {

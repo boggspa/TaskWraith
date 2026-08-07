@@ -121,7 +121,10 @@ describe('durable write primitive', () => {
 
     expect(fs.readFileSync(chatPath, 'utf-8')).toBe(JSON.stringify(data, null, 2))
     // 0o600 matters: chat records are user-private.
-    expect(fs.statSync(chatPath).mode & 0o777).toBe(0o600)
+    // Windows does not expose POSIX owner-only mode bits.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(chatPath).mode & 0o777).toBe(0o600)
+    }
   })
 
   /**

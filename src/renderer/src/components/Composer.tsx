@@ -6,7 +6,7 @@ import {
   MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   computeGoalRuntimeTiming
 } from '../../../main/GoalState'
-import {
+import type {
   AgenticServiceId,
   AgenticWorkspaceGrant,
   ChatWorkflowMode,
@@ -14,9 +14,9 @@ import {
   EnsembleFanoutPolicy,
   EnsembleParticipant,
   PermissionPresetId,
-  ProviderId,
-  resolveEnsembleFanoutIsolationPolicy
+  ProviderId
 } from '../../../main/store/types'
+import { resolveEnsembleFanoutIsolationPolicy } from '../../../shared/ensembleFanoutIsolation'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'

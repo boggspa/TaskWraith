@@ -6,7 +6,7 @@ import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
-import type { SeatChangeRowPayload } from '../../shared/seatChange'
+import type { SeatChangeLink, SeatChangeRowPayload } from '../../shared/seatChange'
 export type {
   SeatChangePayload,
   SeatChangeRowPayload,
@@ -24,6 +24,12 @@ import type {
 } from '../../shared/plugins/PluginTypes'
 import type { ProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
 import type { SoloSteerTranscriptPreparation } from '../../shared/midRunSteeringQueue'
+import type { EnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
+export type {
+  EnsembleFanoutIsolation,
+  EnsembleFanoutIsolationPolicy
+} from '../../shared/ensembleFanoutIsolation'
+export { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -769,36 +775,6 @@ export type EnsembleFanoutPolicy =
   | 'all'
   | 'locked_writers_with_boss'
   | 'locked_writers_user_preflight'
-
-/**
- * Lane-level isolation for a write-intent fan-out lane. `'worktree'` gives
- * the lane its own linked git worktree (branched from the workspace HEAD) so
- * parallel writers cannot stomp each other; read-only lanes always keep the
- * shared checkout, since they need to see current state and cannot mutate it.
- */
-export type EnsembleFanoutIsolation = 'off' | 'worktree'
-
-/**
- * Chat-level Isolate setting (the composer's Shared / Worktrees / Any
- * control). `'off'` and `'worktree'` are USER-PINNED regimes a per-call
- * `ensemble_fanout` isolation override cannot escape: `'off'` pins every
- * lane to the shared checkout (agents are also briefed not to hand-create
- * branches/worktrees), `'worktree'` pins write-intent lanes into per-lane
- * worktrees and fails them closed when no allocator is available. `'any'`
- * delegates the per-dispatch choice to the calling Boss/Captain, defaulting
- * to the shared checkout when omitted. Undefined reads as `'off'` so
- * existing chats keep their shared-checkout behavior.
- */
-export type EnsembleFanoutIsolationPolicy = EnsembleFanoutIsolation | 'any'
-
-/** Normalize a persisted/IPC value to the effective chat-level Isolate
- * policy. Single source of truth — orchestrator, prompt composition, and the
- * renderer clamps all resolve through this. */
-export function resolveEnsembleFanoutIsolationPolicy(
-  value: unknown
-): EnsembleFanoutIsolationPolicy {
-  return value === 'worktree' || value === 'any' ? value : 'off'
-}
 
 /**
  * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4;
@@ -3428,11 +3404,7 @@ export interface ChatMessage {
     closeoutParticipantTable?: {
       rows: Array<{
         participantId: string
-        seatLink: {
-          participantId: string
-          before: Record<string, unknown>
-          after: Record<string, unknown>
-        }
+        seatLink: SeatChangeLink
         seatText: string
         workLabel: string
         status: EnsembleParticipantStatus
@@ -3445,11 +3417,7 @@ export interface ChatMessage {
       hash: string
       subject?: string
       stats?: string
-      seatLink?: {
-        participantId: string
-        before: Record<string, unknown>
-        after: Record<string, unknown>
-      }
+      seatLink?: SeatChangeLink
       participantId?: string
     }>
     /** User pin timestamp (ms since epoch). Missing means not pinned. */

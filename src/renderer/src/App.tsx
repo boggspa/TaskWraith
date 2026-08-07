@@ -100,7 +100,7 @@ import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
-import {
+import type {
   AppSettings,
   WorkspaceRecord,
   ChatRecord,
@@ -149,7 +149,6 @@ import {
   EnsembleParticipant,
   PermissionPresetId,
   EnsembleFanoutIsolationPolicy,
-  resolveEnsembleFanoutIsolationPolicy,
   EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   PinnedMessageGroup,
@@ -158,6 +157,7 @@ import {
   ActiveGoalStatus,
   TranscriptMediaRef
 } from '../../main/store/types'
+import { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import {
   activeGoalModeLabel,
   createActiveGoal,

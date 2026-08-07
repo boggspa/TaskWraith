@@ -8,8 +8,12 @@
 import * as nodeCrypto from 'node:crypto'
 import type { ChatRecord, ExternalPathGrant, ProviderId, WorkspaceRecord } from './store/types'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
+import { EXTERNAL_PATH_GRANT_BINDING_VERSION } from '../shared/externalPathGrantBinding'
 
-export const EXTERNAL_PATH_GRANT_BINDING_VERSION = 2 as const
+export {
+  EXTERNAL_PATH_GRANT_BINDING_VERSION,
+  isChatBoundDurableExternalPathGrant
+} from '../shared/externalPathGrantBinding'
 
 type GrantSigningFields = Pick<
   ExternalPathGrant,
@@ -157,33 +161,6 @@ export function matchesExternalPathGrantExecutionAuthority(
     return false
   }
   return matchesExternalPathGrantRunBinding(grant, context)
-}
-
-/**
- * Structural chat/primary-workspace binding check for durable grants.
- *
- * Renderer preflight uses this (without HMAC) so a secondary workspace that
- * was granted under primary workspace A, then the chat's primary was removed
- * and re-added as B, is treated as a gap — not as satisfied coverage. Main
- * still verifies the signature before reminting or executing.
- *
- * `thisRun` grants never satisfy durable secondary-workspace coverage.
- */
-export function isChatBoundDurableExternalPathGrant(
-  grant: ExternalPathGrant,
-  chat: Pick<ChatRecord, 'appChatId' | 'workspaceId'>
-): boolean {
-  if (grant.bindingVersion !== EXTERNAL_PATH_GRANT_BINDING_VERSION) return false
-  if (grant.issuedBy !== 'main') return false
-  if (typeof grant.signature !== 'string' || grant.signature.length === 0) return false
-  if (grant.duration === 'thisRun') return false
-  if (!isExecutableExternalPathGrantDuration(grant.duration)) return false
-  const grantChatId = trimmed(grant.chatId)
-  const grantWorkspaceId = trimmed(grant.workspaceId)
-  const chatId = trimmed(chat.appChatId)
-  const workspaceId = trimmed(chat.workspaceId)
-  if (!grantChatId || !grantWorkspaceId || !chatId || !workspaceId) return false
-  return grantChatId === chatId && grantWorkspaceId === workspaceId
 }
 
 /**

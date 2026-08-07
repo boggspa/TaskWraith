@@ -1,5 +1,5 @@
 import type { ChatRecord, ExternalPathGrant, ProviderId } from '../../../main/store/types'
-import { isChatBoundDurableExternalPathGrant } from '../../../main/ExternalPathGrantBinding'
+import { isChatBoundDurableExternalPathGrant } from '../../../shared/externalPathGrantBinding'
 import {
   EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS,
   isExternalPathGrantDispatchProvider
