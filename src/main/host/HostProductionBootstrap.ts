@@ -71,6 +71,7 @@ import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
 import { createHostProductionAuthorityEvaluator } from './HostProductionAuthorityEvaluator'
 import {
   createHostProductionSuppliers,
+  type HostProductionApprovalListPort,
   type HostProductionChatListPort,
   type HostProductionProviderListPort
 } from './HostProductionSuppliers'
@@ -204,6 +205,13 @@ export interface HostProductionBootstrapOptions {
    */
   readonly providers?: HostProductionProviderListPort
   /**
+   * Wave 5c Phase 2 — optional AppStore pending-approval shadow port.
+   * Optional: when absent, approvals is an honest empty array. The guard
+   * checks the METHOD (typeof listApprovals === 'function'), not the
+   * container — same lesson as providers.
+   */
+  readonly approvals?: HostProductionApprovalListPort
+  /**
    * Live Bridge action surface. The root passes its BridgeActionExecutor
    * singleton directly; this module builds the HostBridgeCommandExecutor
    * over it so the root never constructs a Host type.
@@ -304,6 +312,9 @@ export function createHostProductionBootstrap(
   if (options.providers !== undefined && typeof options.providers.getProviders !== 'function') {
     throw new Error('HostProductionBootstrap requires providers.getProviders to be a function')
   }
+  if (options.approvals !== undefined && typeof options.approvals.listApprovals !== 'function') {
+    throw new Error('HostProductionBootstrap requires approvals.listApprovals to be a function')
+  }
   if (
     !options.host ||
     typeof options.host.hostId !== 'string' ||
@@ -329,7 +340,8 @@ export function createHostProductionBootstrap(
   /* ---- 1. domain ports built HERE, not by the root (R1) ---- */
   const snapshotDonor = createHostProductionSuppliers({
     chatList: options.chatList,
-    ...(options.providers ? { providers: options.providers } : {})
+    ...(options.providers ? { providers: options.providers } : {}),
+    ...(options.approvals ? { approvals: options.approvals } : {})
   })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
 

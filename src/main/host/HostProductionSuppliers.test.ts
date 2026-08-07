@@ -15,10 +15,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { projectHostSnapshot } from './HostSnapshotProjector'
-import type { HostProviderModelProjection } from '../../shared/hostProtocol'
+import type {
+  HostApprovalProjection,
+  HostProviderModelProjection
+} from '../../shared/hostProtocol'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
 import {
   createHostProductionSuppliers,
+  type HostProductionApprovalListPort,
   type HostProductionChatListEntry,
   type HostProductionChatListPort,
   type HostProductionProviderListPort
@@ -174,6 +178,49 @@ describe('HostProductionSuppliers empty state', () => {
     expect(families.rounds).toEqual([])
     expect(families.participants).toEqual([])
     expect(families.providers).toEqual([])
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Approvals shadow port (Wave 5c Phase 2)                           */
+/* ------------------------------------------------------------------ */
+
+function makeApprovalRow(overrides: Partial<HostApprovalProjection> = {}): HostApprovalProjection {
+  return {
+    approvalId: '1700000000000-abc123',
+    commandId: 'appstore-shadow:1700000000000-abc123',
+    status: 'pending',
+    actionKind: 'mcpTools',
+    createdAt: 0,
+    summary: 'Allow a gated tool?',
+    ...overrides
+  }
+}
+
+describe('HostProductionSuppliers approvals shadow port (Wave 5c Phase 2)', () => {
+  it('publishes port-supplied approval rows into the family', async () => {
+    const approvals: HostProductionApprovalListPort = {
+      listApprovals: vi.fn(() => [makeApprovalRow()])
+    }
+    const donor = createHostProductionSuppliers({ chatList: makePort([]), approvals })
+    const families = await donor()
+    expect(families.approvals).toEqual([makeApprovalRow()])
+  })
+
+  it('keeps the family empty when no approvals port is injected', async () => {
+    const donor = createHostProductionSuppliers({ chatList: makePort([]) })
+    const families = await donor()
+    expect(families.approvals).toEqual([])
+  })
+
+  it('fails closed when the approvals port throws — never paints a false empty', async () => {
+    const approvals: HostProductionApprovalListPort = {
+      listApprovals: () => {
+        throw new Error('registry unavailable')
+      }
+    }
+    const donor = createHostProductionSuppliers({ chatList: makePort([]), approvals })
+    await expect(donor()).rejects.toThrow('registry unavailable')
   })
 })
 

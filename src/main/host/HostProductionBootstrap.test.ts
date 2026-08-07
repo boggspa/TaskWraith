@@ -224,6 +224,39 @@ describe('HostProductionBootstrap options validation', () => {
     expect(result).toBeDefined()
   })
 
+  it('rejects an approvals object missing listApprovals (Wave 5c Phase 2 guard)', () => {
+    // Mirrors the providers guard pin. approvals is OPTIONAL, but when present
+    // the METHOD must satisfy the port — otherwise snapshot reads throw
+    // mid-flight instead of failing closed to [].
+    expect(() =>
+      createHostProductionBootstrap(validOptions({ approvals: {} as never }))
+    ).toThrow('HostProductionBootstrap requires approvals.listApprovals to be a function')
+  })
+
+  it('accepts omitted approvals — optional port stays optional', () => {
+    const result = createHostProductionBootstrap(validOptions())
+    expect(result).toBeDefined()
+  })
+
+  it('threads an injected approvals port through to the snapshot donor', async () => {
+    const { compositionInput } = captureSupervisorInput({
+      approvals: {
+        listApprovals: () => [
+          {
+            approvalId: '1700000000000-abc123',
+            commandId: 'appstore-shadow:1700000000000-abc123',
+            status: 'pending',
+            actionKind: 'mcpTools',
+            createdAt: 0,
+            summary: 'Allow a gated tool?'
+          }
+        ]
+      }
+    })
+    const families = await compositionInput.snapshotDonor()
+    expect(families.approvals.map((row) => row.approvalId)).toEqual(['1700000000000-abc123'])
+  })
+
   it('rejects missing bridge', () => {
     expect(() =>
       createHostProductionBootstrap(

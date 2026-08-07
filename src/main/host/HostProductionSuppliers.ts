@@ -30,6 +30,7 @@
  */
 
 import type {
+  HostApprovalProjection,
   HostHealthProjection,
   HostProviderModelProjection,
   HostThreadProjection,
@@ -114,6 +115,21 @@ export interface HostProductionProviderListPort {
   readProviders?(): HostProviderListRead
 }
 
+/**
+ * Wave 5c Phase 2 — optional AppStore pending-approval shadow port.
+ *
+ * The composition root adapts ApprovalService (or an equivalent registry)
+ * through HostProductionApprovalShadow so this module never imports store
+ * symbols. When absent, the approvals family is an honest empty array.
+ *
+ * FAIL-CLOSED: a throwing listApprovals must propagate. Catching it and
+ * painting [] would be a false empty — "there are no pending approvals" —
+ * when the source is actually unavailable.
+ */
+export interface HostProductionApprovalListPort {
+  listApprovals(): HostApprovalProjection[]
+}
+
 /* ------------------------------------------------------------------ */
 /*  Options                                                           */
 /* ------------------------------------------------------------------ */
@@ -130,6 +146,11 @@ export interface HostProductionSuppliersOptions {
    * providers is an honest empty array.
    */
   readonly providers?: HostProductionProviderListPort
+  /**
+   * Wave 5c Phase 2 — optional AppStore pending-approval shadow port.
+   * When absent, approvals is an honest empty array (shadow not wired).
+   */
+  readonly approvals?: HostProductionApprovalListPort
 }
 
 /* ------------------------------------------------------------------ */
@@ -274,6 +295,14 @@ export function createHostProductionSuppliers(
       })
     }
 
+    /* ---- approvals (Wave 5c Phase 2 shadow port) ----
+     * No try/catch: a throwing port must reject the donor. Painting [] on
+     * failure would be a false empty ("no pending approvals") when the
+     * registry is actually unavailable. Omitted port → honest empty. */
+    const approvals: HostApprovalProjection[] = options.approvals
+      ? options.approvals.listApprovals()
+      : []
+
     return {
       health: HONEST_HEALTH,
       workspaces,
@@ -284,7 +313,7 @@ export function createHostProductionSuppliers(
       participants: [],
       providers,
       questions: [],
-      approvals: [],
+      approvals,
       schedules: [],
       usage: HONEST_USAGE,
       artifacts: [],
