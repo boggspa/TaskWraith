@@ -1917,6 +1917,8 @@ const api = {
     ipcRenderer.invoke('skip-ensemble-participant', chatId),
   skipEnsembleReadFanout: (chatId: string) =>
     ipcRenderer.invoke('skip-ensemble-read-fanout', chatId),
+  skipEnsembleFanoutLane: (chatId: string, laneId: string) =>
+    ipcRenderer.invoke('skip-ensemble-fanout-lane', chatId, laneId),
   getLatestSessionCheckpoint: (chatId: string) =>
     ipcRenderer.invoke(
       'session-checkpoints:latest',

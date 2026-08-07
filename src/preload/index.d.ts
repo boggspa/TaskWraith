@@ -1928,6 +1928,7 @@ declare global {
       ) => Promise<EnsembleUserRosterMutationResult>
       skipEnsembleParticipant: (chatId: string) => Promise<boolean>
       skipEnsembleReadFanout: (chatId: string) => Promise<boolean>
+      skipEnsembleFanoutLane: (chatId: string, laneId: string) => Promise<boolean>
       getLatestSessionCheckpoint: (chatId: string) => Promise<SessionCheckpointRecord | null>
       acceptSessionCheckpoint: (
         checkpointId: string

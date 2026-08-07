@@ -53999,6 +53999,16 @@ if (isGeminiMcpBridgeProcess) {
       return ensembleOrchestratorRef?.skipReadFanout(canonicalChatId)
     })
 
+    ipcMain.handle(
+      'skip-ensemble-fanout-lane',
+      async (event, chatId?: string, laneId?: string) => {
+        const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
+        const canonicalLaneId = requireNonEmptyString(laneId, 'Fan-out lane id')
+        assertRendererChatScope(event, canonicalChatId)
+        return ensembleOrchestratorRef?.skipFanoutLane(canonicalChatId, canonicalLaneId)
+      }
+    )
+
     registerCheckpointHandlers({
       getSessionCheckpointStore: () => mainRuntimeContext.getSessionCheckpoints(),
       requireNonEmptyString,

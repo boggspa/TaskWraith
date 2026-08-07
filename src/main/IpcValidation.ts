@@ -140,6 +140,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'cancel-ensemble-round': ['chatId'],
   'skip-ensemble-participant': ['chatId'],
   'skip-ensemble-read-fanout': ['chatId'],
+  'skip-ensemble-fanout-lane': ['chatId', 'nonEmptyString'],
   'session-checkpoints:latest': ['chatId'],
   'session-checkpoints:accept': ['nonEmptyString'],
   'session-checkpoints:dismiss': ['nonEmptyString'],

@@ -249,6 +249,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'sidebar:show-workspace-in-finder',
   'skip-ensemble-participant',
   'skip-ensemble-read-fanout',
+  'skip-ensemble-fanout-lane',
   'spellcheck:add-word-to-dictionary',
   'spellcheck:get-last-context',
   'spellcheck:replace-misspelling',
