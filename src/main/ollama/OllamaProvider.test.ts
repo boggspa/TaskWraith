@@ -4128,6 +4128,8 @@ describe('buildOllamaOpeningMessages', () => {
     expect(messages[1].content).toContain('TaskWraith Ensemble Mode')
     expect(messages[2].content).toContain('complete TaskWraith Ensemble instruction block')
     expect(messages[2].content).toContain('Boss/Bossman/Lead authority rules')
+    expect(messages[2].content).toContain('blackboard_read with {}')
+    expect(messages[2].content).toContain('blackboard_post requires a non-empty key and value')
     expect(messages[2].content).not.toContain('Your task is the user request')
   })
 

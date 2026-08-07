@@ -98,6 +98,7 @@ export function ollamaEnsembleHarnessKickoffPrompt(
     'Ensemble workspace task: the previous message is the complete TaskWraith Ensemble instruction block, not just the raw user request.',
     'Follow your participant identity, role instructions, Role boundary contract, Boss/Bossman/Lead authority rules, turn position, and current user request exactly as written.',
     'If your assigned role or permission posture is Ask/read-only, gather evidence and report findings; do not take implementation work unless assigned.',
+    'Use blackboard_read with {} to load shared context; blackboard_post requires a non-empty key and value.',
     tools.includes('todo_write')
       ? 'Use todo_write only if your assigned ensemble slice genuinely needs a visible checklist.'
       : 'Ground with workspace_search or list_directory before reading unfamiliar paths.'
