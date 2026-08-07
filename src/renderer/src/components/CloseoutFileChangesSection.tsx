@@ -65,7 +65,12 @@ export function CloseoutFileChangesSection({
       <div className="file-change-summary-list">
         {changes.map((item) => (
           <div className="file-change-summary-item" key={`${item.path}-${item.status}`}>
-            <span className="file-change-summary-row-content">
+            {/* `is-closeout` drops the owner column the live footer row carries.
+             * Without it the four cells here land in the footer's five-track
+             * grid, so the stats sit in the OWNER column and the unused fifth
+             * track strands them ~132px short of the card's right edge —
+             * visibly out of line with the Participants card above. */}
+            <span className="file-change-summary-row-content is-closeout">
               <span className={`file-change-summary-status status-${item.status}`}>
                 {item.status === 'modified' ? 'edited' : item.status}
               </span>

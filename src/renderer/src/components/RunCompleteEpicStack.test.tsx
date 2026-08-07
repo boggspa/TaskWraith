@@ -114,4 +114,22 @@ describe('RunCompleteEpicStack', () => {
     expect(html).not.toContain('file-change-summary-item-interactive')
     expect(html).not.toContain('Open Workbench')
   })
+
+  it('marks closeout file-change rows as ownerless so the stats keep the last column', () => {
+    const html = renderToStaticMarkup(
+      <CloseoutFileChangesSection
+        changes={[
+          { path: 'src/example.ts', status: 'modified', additions: 4, deletions: 2 },
+          { path: 'src/other.ts', status: 'created', additions: 12, deletions: 0 }
+        ]}
+      />
+    )
+    // The live footer row has five cells (status, icon, path, owner, stats);
+    // the close-out row omits the owner, so without this modifier the stats
+    // land in the owner column and the grid's fifth track becomes a phantom
+    // ~132px of dead space between them and the card's right edge.
+    expect(html).not.toContain('file-change-summary-owner')
+    const rowCount = html.split('file-change-summary-row-content is-closeout').length - 1
+    expect(rowCount).toBe(2)
+  })
 })

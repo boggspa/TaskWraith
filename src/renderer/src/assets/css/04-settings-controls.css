@@ -4637,6 +4637,14 @@ input:disabled, select:disabled, textarea:disabled {
   flex-direction: column;
   gap: var(--space-sm);
   min-width: 0;
+  /* The footer lane's `.run-complete-card` stretches its children by default,
+   * but the transcript tombstone lane mounts this stack inside
+   * `.message-group`, which is `align-items: flex-start` — so the stack
+   * shrink-wrapped to its widest row and sat ~75px short of the bubble it
+   * follows, reading as a card shoved to the left of the column. The stack
+   * is a full-width row in BOTH lanes; say so here rather than leaving it to
+   * whichever parent happens to host it. */
+  align-self: stretch;
 }
 
 .run-complete-epic-list {
@@ -4823,6 +4831,13 @@ input:disabled, select:disabled, textarea:disabled {
   column-gap: 8px;
 }
 
+/* Close-out rows render no owner cell, so the stats become the LAST track.
+ * Keeping the footer's five-track grid here left the unused fifth track
+ * (~132px) stranded between the numbers and the card edge. */
+.file-change-summary-row-content.is-closeout {
+  grid-template-columns: 72px 14px minmax(0, 1fr) minmax(14ch, max-content);
+}
+
 .file-change-summary-diff-bubble {
   appearance: none;
   -webkit-appearance: none;
@@ -4941,6 +4956,22 @@ input:disabled, select:disabled, textarea:disabled {
 .file-change-stat-delete {
   color: var(--diff-stat-del-color, #ec3d35);
   text-align: left;
+}
+
+/* Close-out card: hard-align the +/- column to the card's right edge so it
+ * lines up with the Participants card's "Turns & Tokens" column above —
+ * both land var(--space-md) in from the border. Two insets had to go:
+ * the 10px padding on the stats grid, and the delete cell's left-aligned
+ * text, which stranded a short "-5" mid-track. Both cells stay
+ * fixed-min-width and right-aligned, so every row's "+N" shares one right
+ * edge and every "-N" shares another — columnar, not ragged. */
+.run-complete-epic-card .file-change-summary-stats,
+.file-change-summary-row-content.is-closeout .file-change-summary-item-stats {
+  padding-right: 0;
+}
+
+.run-complete-epic-card .file-change-stat-delete {
+  text-align: right;
 }
 
 .file-change-summary-owner {
