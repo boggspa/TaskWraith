@@ -3101,6 +3101,49 @@ function historyDeletionRunEventMtimeFloorMs(
 }
 
 /**
+ * `previewHistoryDeletionScope` and `prepareHistoryDeletion` are contractually
+ * invoked in the same synchronous stack, and ScopedHistoryDeletionCoordinator
+ * does exactly that: resolveChatIds, listProviderRuns and prepare run back to
+ * back with no await between them, so quiescence cannot land new events in the
+ * gap. The ledger sweep between the two is therefore identical work over
+ * identical bytes — and it is the expensive half.
+ *
+ * Memoise only the sweep's own contribution, never the intent, so operationId
+ * and timestamps stay freshly minted. Keyed by the full identity scope and
+ * expiring almost at once: any miss simply recomputes, so the worst case is the
+ * behaviour this replaces.
+ */
+const HISTORY_DELETION_LEDGER_SWEEP_TTL_MS = 2_000
+let historyDeletionLedgerSweepMemo: {
+  key: string
+  runIds: string[]
+  atMs: number
+} | null = null
+
+function historyDeletionLedgerSweepKey(intent: HistoryDeletionIntent): string {
+  return JSON.stringify({
+    kind: intent.kind,
+    workspaceId: intent.workspaceId ?? null,
+    chatIds: [...intent.chatIds].sort()
+  })
+}
+
+function readHistoryDeletionLedgerSweep(key: string): string[] | null {
+  const memo = historyDeletionLedgerSweepMemo
+  if (!memo || memo.key !== key) return null
+  if (Date.now() - memo.atMs > HISTORY_DELETION_LEDGER_SWEEP_TTL_MS) {
+    historyDeletionLedgerSweepMemo = null
+    return null
+  }
+  return memo.runIds
+}
+
+/** Exposed for tests that need the sweep to run again from cold. */
+export function resetHistoryDeletionLedgerSweepMemoForTests(): void {
+  historyDeletionLedgerSweepMemo = null
+}
+
+/**
  * Byte-level probe for any of {@link historyDeletionIdentityNeedles}. Reads raw
  * Buffers in bounded chunks, carrying an overlap so a needle straddling a chunk
  * boundary still matches, and never materialises the utf8 string or per-line
@@ -7251,34 +7294,47 @@ export class AppStore {
       // Both bounds below only skip files that provably cannot match, so the
       // set of runIds found here is identical to parsing every line — see
       // historyDeletionIdentityNeedles and historyDeletionRunEventMtimeFloorMs.
-      const identityNeedles = historyDeletionIdentityNeedles(draft)
-      const mtimeFloorMs = historyDeletionRunEventMtimeFloorMs(allChats, chatIds)
-      for (const file of fs.readdirSync(runEventsDir).filter((item) => item.endsWith('.jsonl'))) {
-        const filePath = path.join(runEventsDir, file)
-        if (mtimeFloorMs !== null) {
+      const sweepKey = historyDeletionLedgerSweepKey(draft)
+      const memoised = readHistoryDeletionLedgerSweep(sweepKey)
+      if (memoised) {
+        for (const runId of memoised) runIds.add(runId)
+      } else {
+        const sweptRunIds = new Set<string>()
+        const identityNeedles = historyDeletionIdentityNeedles(draft)
+        const mtimeFloorMs = historyDeletionRunEventMtimeFloorMs(allChats, chatIds)
+        for (const file of fs.readdirSync(runEventsDir).filter((item) => item.endsWith('.jsonl'))) {
+          const filePath = path.join(runEventsDir, file)
+          if (mtimeFloorMs !== null) {
+            try {
+              if (fs.statSync(filePath).mtimeMs < mtimeFloorMs) continue
+            } catch {
+              // An unreadable stat must not shrink the sweep; fall through.
+            }
+          }
+          if (identityNeedles && !runEventFileContainsIdentity(filePath, identityNeedles)) continue
+          let lines: string[]
           try {
-            if (fs.statSync(filePath).mtimeMs < mtimeFloorMs) continue
+            lines = fs.readFileSync(filePath, 'utf-8').split(/\r?\n/).filter(Boolean)
           } catch {
-            // An unreadable stat must not shrink the sweep; fall through.
+            continue
+          }
+          for (const line of lines) {
+            try {
+              const event = JSON.parse(line) as unknown
+              if (!historyRecordMatches(event, draft, { includeRunIds: false })) continue
+              const runId = objectRecord(event)?.runId
+              if (typeof runId === 'string' && runId) sweptRunIds.add(runId)
+            } catch {
+              // Another valid row in the same append-only ledger may still identify ownership.
+            }
           }
         }
-        if (identityNeedles && !runEventFileContainsIdentity(filePath, identityNeedles)) continue
-        let lines: string[]
-        try {
-          lines = fs.readFileSync(filePath, 'utf-8').split(/\r?\n/).filter(Boolean)
-        } catch {
-          continue
+        historyDeletionLedgerSweepMemo = {
+          key: sweepKey,
+          runIds: [...sweptRunIds],
+          atMs: Date.now()
         }
-        for (const line of lines) {
-          try {
-            const event = JSON.parse(line) as unknown
-            if (!historyRecordMatches(event, draft, { includeRunIds: false })) continue
-            const runId = objectRecord(event)?.runId
-            if (typeof runId === 'string' && runId) runIds.add(runId)
-          } catch {
-            // Another valid row in the same append-only ledger may still identify ownership.
-          }
-        }
+        for (const runId of sweptRunIds) runIds.add(runId)
       }
     }
 

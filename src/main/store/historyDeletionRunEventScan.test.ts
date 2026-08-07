@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
-import { AppStore } from '../store'
+import { AppStore, resetHistoryDeletionLedgerSweepMemoForTests } from '../store'
 import type { ChatRecord } from './types'
 
 const userDataPath = vi.hoisted(
@@ -53,8 +53,8 @@ function eventLine(chatId: string, runId: string): string {
   return JSON.stringify({ kind: 'run/started', chatId, runId, at: CHAT_CREATED_AT })
 }
 
-function previewRunIds(): string[] {
-  return AppStore.previewHistoryDeletionScope({ kind: 'chat', rootChatId: TARGET_CHAT }).runIds
+function previewRunIds(rootChatId = TARGET_CHAT): string[] {
+  return AppStore.previewHistoryDeletionScope({ kind: 'chat', rootChatId }).runIds
 }
 
 describe('scoped history deletion — run-events reconciliation scan', () => {
@@ -62,6 +62,9 @@ describe('scoped history deletion — run-events reconciliation scan', () => {
     fs.rmSync(userDataPath, { recursive: true, force: true })
     fs.mkdirSync(chatsDir, { recursive: true })
     fs.mkdirSync(runEventsDir, { recursive: true })
+    // The sweep memo outlives a single test, so a stale entry would silently
+    // answer the next one.
+    resetHistoryDeletionLedgerSweepMemoForTests()
     saveChat(TARGET_CHAT)
   })
 
@@ -112,6 +115,29 @@ describe('scoped history deletion — run-events reconciliation scan', () => {
     ])
 
     expect(previewRunIds()).not.toContain('mention-run')
+  })
+
+  it('sweeps the ledger once for the paired preview and prepare of one deletion', () => {
+    writeLedger('orphan-run', [eventLine(TARGET_CHAT, 'orphan-run')])
+    expect(previewRunIds()).toContain('orphan-run')
+
+    // ScopedHistoryDeletionCoordinator calls preview and prepare back to back
+    // with no await, so no ledger can appear between them. This stands in for
+    // that second call: it must reuse the first sweep, not walk the corpus.
+    writeLedger('appeared-after', [eventLine(TARGET_CHAT, 'appeared-after')])
+    expect(previewRunIds()).not.toContain('appeared-after')
+
+    resetHistoryDeletionLedgerSweepMemoForTests()
+    expect(previewRunIds()).toContain('appeared-after')
+  })
+
+  it('never answers one deletion scope with another’s sweep', () => {
+    saveChat(OTHER_CHAT)
+    writeLedger('orphan-run', [eventLine(TARGET_CHAT, 'orphan-run')])
+    writeLedger('other-chat-run', [eventLine(OTHER_CHAT, 'other-chat-run')])
+
+    expect(previewRunIds(TARGET_CHAT)).toEqual(['orphan-run'])
+    expect(previewRunIds(OTHER_CHAT)).toEqual(['other-chat-run'])
   })
 
   it('bounds the sweep to ledgers written after the chat existed', () => {
