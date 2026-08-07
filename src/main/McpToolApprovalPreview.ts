@@ -645,6 +645,33 @@ export function createMcpToolApprovalPreviewer(
       }
     }
 
+    if (toolName === 'appshots') {
+      const meta = deps.getAttachedWindowMeta(context.appChatId)
+      const pid =
+        typeof args.pid === 'number'
+          ? args.pid
+          : typeof args.pid === 'string' && Number.isFinite(Number(args.pid))
+            ? Number(args.pid)
+            : null
+      const attachedLabel = meta
+        ? `${meta.applicationName || meta.bundleID || 'window'}: ${meta.title || '(untitled)'}`
+        : null
+      const body =
+        pid != null
+          ? `pid ${Math.trunc(pid)}${attachedLabel ? ` (attached: ${attachedLabel})` : ''}`
+          : attachedLabel || 'no pid / no attached window'
+      return {
+        title: 'AppShots capture',
+        body,
+        service: 'mcpTools',
+        preview: {
+          kind: 'tool',
+          toolName,
+          params: { windowMeta: meta || null, args }
+        }
+      }
+    }
+
     if (
       toolName === 'appwatch_start' ||
       toolName === 'appwatch_stop' ||

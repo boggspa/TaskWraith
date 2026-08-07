@@ -1698,6 +1698,66 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'appshots',
+      description:
+        'Capture one or more screenshots of a process window for this chat. Prefer omitting pid when Screen Watch is already attached. Otherwise pass a TaskWraith-spawned / launch / workspace-artifact pid. Owned/attached targets auto-allow outside Plan and Ask; foreign pids require approval (Full Access auto-allows via mcpTools). Optional interval_ms + count capture a short burst (max 8 frames, 5 with OCR). Returns PNG image content blocks that land as transcript thumbnails.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pid: {
+            type: 'number',
+            description:
+              "Target process id. Omit to use the chat's currently attached Screen Watch window."
+          },
+          interval_ms: {
+            type: 'number',
+            description:
+              'Optional delay between frames when count > 1 (100–60000 ms). Ignored for a single frame.'
+          },
+          count: {
+            type: 'number',
+            description:
+              'Number of frames to capture. Default 1; clamped to 1..8 (1..5 with OCR).'
+          },
+          max_dimension_px: {
+            type: 'number',
+            description:
+              'Cap the longer side of each returned image (preserves aspect ratio). Default 1600.'
+          },
+          include_ocr: {
+            type: 'boolean',
+            description: 'Run local Vision OCR on each frame. Default false.'
+          },
+          window_id: {
+            type: 'number',
+            description:
+              'Optional CGWindowID when the process owns multiple windows. Default: largest on-screen window.'
+          }
+        }
+      }
+    },
+    {
+      name: 'appshots_status',
+      description:
+        'List AppShots capture targets available to this chat: the attached Screen Watch window (if any) plus TaskWraith-spawned / launch / workspace-artifact processes. No pixel data. Auto-approved.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {}
+      }
+    },
+    {
       name: 'browser_console',
       description:
         'Return recent MCP browser console messages, or app renderer console messages with target=app/all.',

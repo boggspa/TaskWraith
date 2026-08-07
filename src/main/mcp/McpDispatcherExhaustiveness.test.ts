@@ -12,6 +12,7 @@ import { AUDIO_MCP_TOOL_NAMES } from './AudioToolExecutors'
 import { AUDIT_MCP_TOOL_NAMES } from './AuditToolExecutors'
 import { CANVAS_MCP_TOOL_NAMES } from './CanvasToolExecutors'
 import { DESKTOP_MCP_TOOL_NAMES } from './DesktopToolExecutors'
+import { APPSHOTS_MCP_TOOL_NAMES } from './AppshotsToolExecutors'
 import { DOCUMENT_MCP_TOOL_NAMES } from './DocumentToolExecutors'
 import { EVIDENCE_MCP_TOOL_NAMES } from './EvidenceToolExecutors'
 import { FFMPEG_MCP_TOOL_NAMES } from './FfmpegToolExecutors'
@@ -106,6 +107,7 @@ const DISPATCHER_BRANCH_CONTRACTS = [
     'run-control',
     'workspace-tools'
   ),
+  branch('isAppshotsMcpToolName(toolName)', APPSHOTS_MCP_TOOL_NAMES, 'appshots'),
   branch("toolName === 'switch_auth_profile'", ['switch_auth_profile'], 'provider-status'),
   branch("toolName === 'ensemble_yield'", ['ensemble_yield'], 'ensemble-control'),
   branch("toolName === 'ensemble_send'", ['ensemble_send'], 'ensemble-control'),

@@ -98,6 +98,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   'appwatch_status',
   'appwatch_latest_frame',
   'appwatch_frames',
+  // Agent AppShots — owned/attached process screenshots (optional interval burst).
+  // Capture is posture-gated; status is auto-allowed like other status tools.
+  'appshots',
+  'appshots_status',
   'approval_status',
   'provider_auth_status',
   // 1.0.4-AR9 — coarse quota-band view for the agent so it can

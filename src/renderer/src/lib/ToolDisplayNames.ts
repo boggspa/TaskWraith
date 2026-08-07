@@ -88,6 +88,8 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   appwatch_latest_frame: 'Latest AppWatch frame',
   appwatch_frames: 'AppWatch frames',
   appwatch_ocr: 'AppWatch OCR',
+  appshots: 'AppShots capture',
+  appshots_status: 'AppShots status',
 
   // ── Workspace / project introspection ────────────────────────
   workspace_search: 'Workspace search',

@@ -50,6 +50,8 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // pixel data, only stream-up/down + counts the renderer pill already
   // shows. Start / stop / latest_frame stay gated.
   'appwatch_status',
+  // appshots_status lists owned/attached capture targets without pixels.
+  'appshots_status',
   // Phase L — Editor / IDE transport tools. Opening a file in the
   // user's editor of choice is a focus-change, not a state mutation.
   // No destructive surface beyond the agent's choice of editor (which

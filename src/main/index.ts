@@ -1203,7 +1203,16 @@ import {
 import { AuditOrchestrator } from './audit/AuditOrchestrator'
 import { AuditRunTracker } from './audit/AuditRunTracker'
 import { createAuditGatesRunner } from './audit/AuditGatesRunner'
-import { createDesktopToolExecutors, isDesktopMcpToolName } from './mcp/DesktopToolExecutors'
+import {
+  createDesktopToolExecutors,
+  isDesktopMcpToolName
+} from './mcp/DesktopToolExecutors'
+import {
+  createAppshotsToolExecutors,
+  isAppshotsMcpToolName
+} from './mcp/AppshotsToolExecutors'
+import { shouldAutoAllowAppshotsCapture } from './AppshotsCaptureAutoAllow'
+import { resolveAppshotsTargetOwnership } from './AppshotsTargetOwnership'
 import { CanvasService, type CanvasHistoryAuthority } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
@@ -4180,6 +4189,9 @@ const canvasToolExecutors = createCanvasToolExecutors({
 // (see the registerLaunchHandlers wiring). Held at module scope so the shared MCP
 // dispatcher (executeGeminiMcpTool) can reach it.
 let launchMcpExecutors: LaunchToolExecutors | null = null
+let appshotsToolExecutors: ReturnType<typeof createAppshotsToolExecutors> | null = null
+/** Lazy launch attempt list for AppShots ownership (filled once LaunchManager exists). */
+let listAppshotsLaunchAttempts: () => import('./launch/types').LaunchAttempt[] = () => []
 const imageToolExecutors = createImageToolExecutors({
   engine: offscreenImageEngine,
   resolveRasterSource: resolveImageRasterSource,
@@ -13104,11 +13116,57 @@ function isMcpAutoAllowedForRun(
   ) {
     return true
   }
+  if (
+    shouldAutoAllowAppshotsCapture({
+      toolName: canonical,
+      presetId: effectivePermissions?.presetId,
+      ownership: resolveAppshotsOwnershipForAutoAllow(canonical, toolArgs, requestContext)
+    })
+  ) {
+    return true
+  }
   return (
     isTaskWraithMcpToolName(canonical) &&
     MCP_AUTO_ALLOWED_TOOLS.has(canonical as TaskWraithMcpToolName) &&
     !networkAccessBlockedToolName(raw, effectivePermissions, toolArgs)
   )
+}
+
+function resolveAppshotsOwnershipForAutoAllow(
+  toolName: string,
+  toolArgs: unknown,
+  requestContext?: { appRunId?: string; appChatId?: string }
+): { allowed: boolean; reason: string } {
+  if (toolName !== 'appshots') return { allowed: false, reason: 'foreign' }
+  const chatId = String(requestContext?.appChatId || '').trim()
+  const args =
+    toolArgs && typeof toolArgs === 'object' && !Array.isArray(toolArgs)
+      ? (toolArgs as Record<string, unknown>)
+      : {}
+  const rawPid = args.pid ?? args.process_id ?? args.processId
+  const requestedPid =
+    rawPid === undefined || rawPid === null || rawPid === ''
+      ? null
+      : Number.isFinite(Number(rawPid)) && Number(rawPid) > 0
+        ? Math.trunc(Number(rawPid))
+        : null
+  const attached = nativeWindowCoordinatorRef?.getForChat(chatId || null) ?? null
+  const chat = chatId ? AppStore.getChat(chatId) : null
+  const workspacePath = chat?.workspacePath || undefined
+  return resolveAppshotsTargetOwnership({
+    chatId,
+    requestedPid,
+    attached: attached
+      ? {
+          pid: attached.windowMeta.pid,
+          chatId: attached.chatID,
+          processStartedAt: attached.windowMeta.processStartedAt
+        }
+      : null,
+    spawns: spawnRegistry.list(),
+    launches: listAppshotsLaunchAttempts(),
+    workspacePath
+  })
 }
 
 interface ExplicitUserRequestedRosterImportResolution {
@@ -33944,7 +34002,7 @@ function unsupportedNativeMcpToolResult(
   const capabilities = getNativeCapabilitySnapshot()
   const feature = toolName.startsWith('attached_window_')
     ? capabilities.screenWatch
-    : toolName.startsWith('appwatch_')
+    : toolName.startsWith('appwatch_') || toolName === 'appshots' || toolName.startsWith('appshots_')
       ? capabilities.appwatch
       : toolName === 'creative_applescript_dispatch'
         ? capabilities.appleEvents
@@ -35248,7 +35306,7 @@ async function executeGeminiMcpTool(
   let verifiedDirectMutationAuthority: ScopedPathAuthority | null = null
   let verifiedMutationExecutionContext: VerifiedWorkspaceMutationExecutionContext | null = null
   let revalidateExternalMutationAtCommit: (() => Promise<void>) | null = null
-  if (isDesktopMcpToolName(toolName)) {
+  if (isDesktopMcpToolName(toolName) || isAppshotsMcpToolName(toolName)) {
     const unsupportedResult = unsupportedNativeMcpToolResult(toolName)
     if (unsupportedResult) {
       return unsupportedResult
@@ -35318,7 +35376,10 @@ async function executeGeminiMcpTool(
     isThreadMessageMcpToolName(toolName) ||
     explicitUserRequestedRosterImport.allowed ||
     exactOneOffPermissionRetry ||
-    isMcpAutoAllowedForRun(toolName, context.effectivePermissions, args)
+    isMcpAutoAllowedForRun(toolName, context.effectivePermissions, args, {
+      appRunId: context.appRunId,
+      appChatId: context.appChatId
+    })
   // 1.0.72 — read-only hard-deny for side-effecting fall-through tools. The host
   // gate denies file/shell under read_only, but a mutating tool that classifies
   // as the generic mcpTools service (creative_blender_python, browser_open/click,
@@ -36551,6 +36612,14 @@ async function executeGeminiMcpTool(
           })
         )
       }
+    } else if (isAppshotsMcpToolName(toolName)) {
+      markDispatchHandled('appshots')
+      if (!appshotsToolExecutors) {
+        throw new Error('AppShots tools are not available yet (app still initializing).')
+      }
+      applyRichResult(
+        await appshotsToolExecutors.executeAppshotsTool(toolName, args, context)
+      )
     } else if (isDesktopMcpToolName(toolName)) {
       markDispatchHandled(
         'window-capture',
@@ -48368,6 +48437,29 @@ if (isGeminiMcpBridgeProcess) {
       attempts: () => launchManager.snapshot().attempts
     }
     launchMcpExecutors = createLaunchToolExecutors({ controller: launchMcpController })
+    listAppshotsLaunchAttempts = () => launchManager.snapshot().attempts
+    appshotsToolExecutors = createAppshotsToolExecutors({
+      getBridgeDaemon: () => bridgeDaemonRef,
+      getNativeCapabilities: () => getNativeCapabilitySnapshot(),
+      attachedWindow: {
+        getForChat: (chatId) => nativeWindowCoordinatorRef?.getForChat(chatId) ?? null,
+        updateStreaming: (exact, streaming) =>
+          nativeWindowCoordinatorRef?.updateStreaming(exact, streaming) ?? null,
+        clearExact: (exact) => nativeWindowCoordinatorRef?.clearExact(exact) ?? null,
+        rendererProjectionForChat: (chatId) =>
+          nativeWindowCoordinatorRef?.rendererProjectionForChat(chatId) ?? null
+      },
+      listTrackedSpawns: () => spawnRegistry.list(),
+      listLaunchAttempts: () => listAppshotsLaunchAttempts(),
+      getWorkspacePathForChat: (chatId) => AppStore.getChat(chatId)?.workspacePath,
+      getProtectedOwners: () => {
+        const pids = [...currentNativeWindowProtectedPids()]
+        return pids.length > 0 ? { pids } : null
+      },
+      // Reaching the executor means the mcpTools gate already approved (or
+      // owned auto-allow). Foreign PIDs are therefore user/Full-Access approved.
+      allowForeignAfterApproval: () => true
+    })
 
     const updateSnapshotToChangelog = (
       snapshot: UpdateStateSnapshot

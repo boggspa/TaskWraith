@@ -377,6 +377,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   // Outlook mail + calendar (reads and draft creation) share one glyph.
   if (normalised.startsWith('outlook_')) return 'mail'
   if (normalised.startsWith('appwatch_')) return 'window-context'
+  if (normalised === 'appshots' || normalised.startsWith('appshots_')) return 'window-context'
   if (normalised.startsWith('ensemble_') || normalised === 'list_ensemble_participants') {
     return 'fanout'
   }

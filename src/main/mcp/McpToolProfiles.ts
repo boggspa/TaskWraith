@@ -76,6 +76,8 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
   'appwatch_status',
   'appwatch_latest_frame',
   'appwatch_frames',
+  'appshots',
+  'appshots_status',
   'approval_status',
   'provider_auth_status',
   'provider_usage_status',

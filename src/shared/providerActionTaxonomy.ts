@@ -48,6 +48,7 @@ export const CANONICAL_DISPATCH_OWNERS = [
   'browser-tools',
   'window-capture',
   'appwatch',
+  'appshots',
   'provider-status',
   'creative-app',
   'ide-tools',
@@ -1157,6 +1158,22 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'appwatch',
     'host-state',
     'application-resource'
+  ),
+  appshots: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'appshots',
+    'host-state',
+    'application-resource'
+  ),
+  appshots_status: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'appshots',
+    'none',
+    'none'
   ),
   approval_status: tool(
     'orchestration',

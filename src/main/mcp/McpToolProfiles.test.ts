@@ -130,9 +130,9 @@ describe('immutable v1 MCP profile snapshots', () => {
     // V1_HIDDEN is that filter(), every derived hidden catalogue (v1..v9 and
     // their mesh variants) gains the tool as DISCOVERABLE; none gains a direct
     // slot. Re-pinned below rather than minting a v10 for one additive tool.
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(158)
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(160)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      'a9f83cc131d5b07c4aa03af92d3ff29fd21037cc78bd13b31632a692c91693b8'
+      'e180f0e4382fc00325806efb41b3e1c9f42326746df239e457e3003041609992'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -172,9 +172,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
   })
 
   it('keeps gateway-v1 hidden membership exact while v2 adds only the proposal tool', () => {
-    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(120)
+    // 2026-08-07: appshots + appshots_status — 120 → 122 via FULL filter().
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(122)
     expect(nameHash(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '3145b67a4c16ad14329d7008f9a71683c9df02d8dff8836b462900af388e5ffb'
+      'd5dfb1d65b31dfc6d3264b4ec495fdccc0e31c95e91d69a7216ca327c69fae38'
     )
     expect(new Set(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).size).toBe(
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES.length
@@ -417,8 +418,11 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // enumerate the discoverable set, so the immutable v1 gateway moves by a
     // single character (41,580 -> 41,581). Both fresh transports are
     // byte-identical, and the over-ceiling list below is unchanged.
-    expect(fullChars).toBe(141_158)
-    expect(gatewayChars).toBe(41_581)
+    // Re-measured 2026-08-07 for appshots + appshots_status: full 141,158 ->
+    // 143,121; immutable v1 gateway 41,581 -> 41,748 (discoverable-set enum
+    // growth). Fresh v10 / v10-mesh stay byte-identical.
+    expect(fullChars).toBe(143_121)
+    expect(gatewayChars).toBe(41_748)
     expect(freshGatewayChars).toBe(38_692)
     expect(freshMeshGatewayChars).toBe(41_496)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
@@ -831,12 +835,13 @@ describe('catalogue reachability', () => {
     )
     // 2026-08-06: 141 → 142 (launch_adopt). The hidden universe is a filter()
     // off FULL, so a FULL-only tool reaches every version's discovery surface.
-    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(142)
+    // 2026-08-07: 142 → 144 (appshots + appshots_status).
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(144)
     expect(nameHash(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '2c15c6d14259e6e62cbcb867d6036756822f970b56ac404dc5a705d5e462fe18'
+      '3ff7b9e9f3113800f18215c5ba4e4bb375644f08498c436529af3f96691655c7'
     )
     expect(nameHash(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '2c15c6d14259e6e62cbcb867d6036756822f970b56ac404dc5a705d5e462fe18'
+      '3ff7b9e9f3113800f18215c5ba4e4bb375644f08498c436529af3f96691655c7'
     )
   })
 

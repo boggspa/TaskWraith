@@ -596,6 +596,23 @@ Return a chronological batch of recent Appwatch frames from the attached-window 
 - Optional args: since, count, format, include_ocr, includeOCR
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appwatch_frames","arguments":{"since":"text"}}}}`
 
+## appshots
+
+Capture one or more screenshots of a process window for this chat. Omit `pid` to use the currently attached Screen Watch window. Otherwise pass a TaskWraith-spawned, launch, or workspace-artifact pid. Owned/attached targets auto-allow outside Plan and Ask; foreign pids require approval (Full Access auto-allows via mcpTools). Optional `interval_ms` + `count` capture a short burst (max 8 frames; 5 with OCR). PNG image blocks land as transcript thumbnails (click to expand; right-click Copy image / Save image).
+
+- Access: read-only (owned/attached auto-allow except Plan/Ask; otherwise approval-gated)
+- Required args: none (pid optional when a window is attached)
+- Optional args: pid, interval_ms, count, max_dimension_px, include_ocr, window_id
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appshots","arguments":{"pid":12345,"count":3,"interval_ms":1000}}}}`
+
+## appshots_status
+
+List AppShots capture targets for this chat: the attached Screen Watch window (if any) plus TaskWraith-spawned / launch / workspace-artifact processes. No pixel data.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appshots_status","arguments":{}}}}`
+
 ## approval_status
 
 Return approval policies, workspace grants, and recent approval ledger records. By default the query is scoped to the current run+chat (derived from the calling agent context) so the agent sees only approvals relevant to its own work. Pass `all: true` to widen the query to ALL of the calling agent's provider's approvals across every run+chat — useful for auditing or surfacing historical approvals. Explicit `runId` / `chatId` always override scope inference, regardless of `all`.
