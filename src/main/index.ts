@@ -873,6 +873,7 @@ import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { createHostProductionProviderAdmission } from './host/HostProductionProviderAdmission'
 import { createHostProductionApprovalShadow } from './host/HostProductionApprovalShadow'
+import { createHostProductionQuestionShadow } from './host/HostProductionQuestionShadow'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -47525,6 +47526,17 @@ if (isGeminiMcpBridgeProcess) {
               kind: 'appstore',
               title: c.title,
               ...(c.threadId ? { threadId: c.threadId } : {})
+            }))
+        }),
+        // Wave 5c Phase 3 — RemoteQuestionRegistry pending shadow into Host questions family.
+        // remoteQuestionRegistry is module-scope (~L2369); no TDZ arrow needed.
+        questions: createHostProductionQuestionShadow({
+          listPending: () =>
+            remoteQuestionRegistry.listPending().map((r) => ({
+              questionId: r.questionId,
+              question: r.question,
+              createdAt: r.createdAt,
+              ...(r.threadId ? { threadId: r.threadId } : {})
             }))
         })
       })
