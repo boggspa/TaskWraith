@@ -186,10 +186,12 @@ describe('OllamaHarnessGates', () => {
       ensembleRun: true
     })
 
-    expect(prompt).toContain('assigned ensemble role')
-    expect(prompt).toContain('Boss/Bossman/Lead routing')
+    expect(prompt).toContain('assigned local seat')
+    expect(prompt).toContain('role / authority boundary from the capsule')
     expect(prompt).toContain('assigned ensemble slice')
     expect(prompt).not.toContain('original user request')
+    expect(prompt).not.toContain('Boss/Bossman/Lead')
+    expect(prompt).not.toContain('Role boundary contract')
   })
 
   it('ships the default harness todo scaffold', () => {

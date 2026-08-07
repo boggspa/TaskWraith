@@ -18,6 +18,9 @@ import {
   ollamaReasoningOnlyNudgePrompt,
   ollamaToolIntentNudgePrompt,
   ollamaToolArgumentRepairPrompt,
+  ollamaToolSchemaRepairHint,
+  ollamaIdenticalFailureStrategyNudge,
+  canonicalizeOllamaToolArguments,
   ollamaCeilingFinalizeContent,
   ollamaSessionMemoryKeyForRun,
   ollamaToolResultFollowUpPrompt,
@@ -1022,8 +1025,8 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     expect(chatBodies).toHaveLength(2)
-    expect(chatBodies[1]).toContain('assigned ensemble role')
-    expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
+    expect(chatBodies[1]).toContain('assigned local seat')
+    expect(chatBodies[1]).toContain('role / authority boundary from the capsule')
   })
 
   it('loads and saves Ollama ensemble memory by participant seat key', async () => {
@@ -1259,7 +1262,7 @@ describe('runOllamaProvider streaming', () => {
 
     expect(chatBodies).toHaveLength(2)
     expect(chatBodies[1]).toContain('assigned participant')
-    expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
+    expect(chatBodies[1]).toContain('role / authority boundary from the capsule')
     expect(chatBodies[1]).toContain('assigned participant role')
   })
 
@@ -1340,7 +1343,7 @@ describe('runOllamaProvider streaming', () => {
 
     expect(chatBodies).toHaveLength(2)
     expect(chatBodies[1]).toContain('assigned participant')
-    expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
+    expect(chatBodies[1]).toContain('role / authority boundary from the capsule')
     expect(chatBodies[1]).toContain('assigned participant role')
   })
 
@@ -2343,7 +2346,7 @@ describe('runOllamaProvider streaming', () => {
     expect(chatBodies).toHaveLength(2)
     expect(chatBodies[1]).toContain('Do NOT call update_goal')
     expect(chatBodies[1]).toContain('assigned ensemble slice')
-    expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
+    expect(chatBodies[1]).toContain('role / authority boundary from the capsule')
     expect(
       lines
         .filter((line) => line.payload.type === 'content')
@@ -2628,17 +2631,20 @@ describe('runOllamaProvider streaming', () => {
 
   it('stops a tool that keeps failing the SAME way instead of looping for hours', async () => {
     let chatCalls = 0
+    const chatBodies: string[] = []
     // The model re-issues the same shell command and the tool fails identically
     // every time (the 2026-07-28 QA 82-minute error loop). An executed failure
     // is progress the first two times (real iteration loops look like that);
     // an unchanged failure streak must stop crediting the turn so the retry
     // ceiling finalizes. Streak math: failures 1-2 productive, 3-6 feed the
     // 4-turn ceiling, turn 7 never dispatches → 6 chat turns, 6 executions.
+    // On the first non-credited failure (streak === 3) the model gets a
+    // directed strategy-change nudge before later turns climb to the ceiling.
     const executeTool = vi.fn(async () => ({
       ok: false,
       output: 'python3: command exited 1: ModuleNotFoundError: tidepool'
     }))
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/api/tags')) {
         return jsonResponse({
           models: [
@@ -2656,6 +2662,7 @@ describe('runOllamaProvider streaming', () => {
       }
       if (String(url).endsWith('/api/chat')) {
         chatCalls += 1
+        chatBodies.push(String(init?.body || ''))
         return ollamaStreamResponse([
           JSON.stringify({
             message: {
@@ -2675,6 +2682,8 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(6)
     expect(chatCalls).toBe(6)
+    expect(chatBodies.filter((body) => body.includes('Change approach now')).length).toBeGreaterThanOrEqual(3)
+    expect(chatBodies.some((body) => body.includes('failed the same way repeatedly'))).toBe(true)
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
@@ -3502,7 +3511,46 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).toContain('rejected read_file before execution')
     expect(prompt).toContain('Validation error:')
     expect(prompt).toContain('Re-issue the same read_file tool call')
+    expect(prompt).toContain('"name":"read_file"')
+    expect(prompt).toContain('"path":"README.md"')
     expect(prompt).not.toContain('The tool failed.')
+  })
+
+  it('gives top tools exact compact recovery JSON examples', () => {
+    expect(ollamaToolSchemaRepairHint('write_file')).toContain('"intent":')
+    expect(ollamaToolSchemaRepairHint('replace')).toContain('old_string')
+    expect(ollamaToolSchemaRepairHint('run_shell_command')).toContain('"command":')
+    expect(ollamaToolSchemaRepairHint('workspace_search')).toContain('"query":')
+    expect(ollamaToolSchemaRepairHint('find_files')).toContain('"pattern":')
+    expect(ollamaToolSchemaRepairHint('blackboard_delete')).toContain('"keys":')
+    expect(ollamaToolSchemaRepairHint('unknown_tool')).toBeNull()
+  })
+
+  it('canonicalizes synonym keys and wraps blackboard string selectors', () => {
+    expect(canonicalizeOllamaToolArguments('read_file', { file_path: 'README.md' })).toEqual({
+      file_path: 'README.md',
+      path: 'README.md'
+    })
+    expect(
+      canonicalizeOllamaToolArguments('write_file', {
+        file_path: 'a.ts',
+        content: 'x',
+        reason: 'add file'
+      })
+    ).toMatchObject({ path: 'a.ts', intent: 'add file' })
+    expect(canonicalizeOllamaToolArguments('blackboard_read', { keys: 'jokes-count' })).toEqual({
+      keys: ['jokes-count']
+    })
+    expect(canonicalizeOllamaToolArguments('delete_path', { file_path: 'gone.txt' })).toMatchObject({
+      path: 'gone.txt'
+    })
+    expect(validateOllamaToolArguments('blackboard_read', { keys: 'jokes-count' }).ok).toBe(false)
+    expect(
+      validateOllamaToolArguments(
+        'blackboard_read',
+        canonicalizeOllamaToolArguments('blackboard_read', { keys: 'jokes-count' })
+      )
+    ).toEqual({ ok: true })
   })
 
   it('gives blackboard argument failures an exact compact recovery call', () => {
@@ -3521,6 +3569,14 @@ describe('parseOllamaToolRequest', () => {
     expect(readPrompt).toContain('A bare blackboard_read call is valid')
     expect(readPrompt).toContain('"arguments":{}}')
 
+    const ensembleRepair = ollamaToolArgumentRepairPrompt({
+      toolName: 'read_file',
+      output: 'missing path',
+      ensembleRun: true
+    })
+    expect(ensembleRepair).toContain('role / authority boundary from the capsule')
+    expect(ensembleRepair).not.toContain('Boss/Bossman/Lead routing')
+
     const failedPost = ollamaToolResultFollowUpPrompt({
       toolName: 'blackboard_post',
       output: 'blackboard_post requires non-empty key and value.',
@@ -3528,6 +3584,26 @@ describe('parseOllamaToolRequest', () => {
     })
     expect(failedPost).toContain('Retry the corrected blackboard call now')
     expect(failedPost).not.toContain('Explain the limitation')
+
+    const failedGeneric = ollamaToolResultFollowUpPrompt({
+      toolName: 'run_shell_command',
+      output: 'exit 1',
+      ok: false
+    })
+    expect(failedGeneric).toContain('re-issue the same tool with corrected args')
+  })
+
+  it('builds a strategy-change nudge when identical failures stop counting as progress', () => {
+    const prompt = ollamaIdenticalFailureStrategyNudge({
+      toolName: 'run_shell_command',
+      output: 'python3: command exited 1: ModuleNotFoundError: tidepool',
+      ensembleRun: true
+    })
+    expect(prompt).toContain('failed the same way repeatedly')
+    expect(prompt).toContain('Do not repeat that identical call')
+    expect(prompt).toContain('Change approach now')
+    expect(prompt).toContain('role / authority boundary from the capsule')
+    expect(prompt).not.toContain('Boss/Bossman/Lead')
   })
 
   it('validates required tool arguments with executor-supported aliases only', () => {
@@ -3816,7 +3892,7 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).toContain('to the user')
     const ensemblePrompt = ollamaToolIntentNudgePrompt(['web_search'], { ensembleRun: true })
     expect(ensemblePrompt).toContain('assigned participant role')
-    expect(ensemblePrompt).toContain('Boss/Bossman/Lead routing')
+    expect(ensemblePrompt).toContain('role / authority boundary from the capsule')
     expect(ensemblePrompt).not.toContain('to the user')
   })
 
@@ -3855,7 +3931,7 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).toContain('escape them correctly')
     expect(prompt).toContain('Do not output the tool request as plain prose')
     const ensemblePrompt = ollamaMalformedToolJsonNudgePrompt({ ensembleRun: true })
-    expect(ensemblePrompt).toContain('Boss/Bossman/Lead routing')
+    expect(ensemblePrompt).toContain('role / authority boundary from the capsule')
     expect(ensemblePrompt).toContain('assigned participant slice')
     expect(ensemblePrompt).toContain('assigned role')
   })
@@ -4228,7 +4304,7 @@ describe('repeated-tool-call guard', () => {
     expect(nudge).toContain('still above in this conversation')
     const ensembleNudge = ollamaRepeatedToolCallNudge('read_file', { ensembleRun: true })
     expect(ensembleNudge).toContain('assigned ensemble slice')
-    expect(ensembleNudge).toContain('Boss/Bossman/Lead routing')
+    expect(ensembleNudge).toContain('role / authority boundary from the capsule')
     expect(ensembleNudge).toContain('role owns')
   })
 
@@ -4280,7 +4356,7 @@ describe('repeated-tool-call guard', () => {
     )
     const ensembleNudge = ollamaNoActiveGoalToolNudge('goal_update', { ensembleRun: true })
     expect(ensembleNudge).toContain('assigned ensemble slice')
-    expect(ensembleNudge).toContain('Boss/Bossman/Lead routing')
+    expect(ensembleNudge).toContain('role / authority boundary from the capsule')
     expect(ensembleNudge).not.toContain('Continue the user request')
   })
 })

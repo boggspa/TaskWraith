@@ -44,6 +44,7 @@ describe('Ollama ensemble prompt capsule', () => {
     expect(prompt).toContain('tool-tests/')
     expect(prompt).toContain('ask_user_question only when')
     expect(prompt).toContain('blackboard_delete')
+    expect(prompt).toContain('re-issue that same tool once with corrected args')
   })
 
   it('preserves transcript row identity through keep-tail truncation', () => {

@@ -234,6 +234,9 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
       text: '- Act on the Current user request above as your role. Prefer one concrete workspace action (search, read, small edit, or shell) over long meta commentary.'
     },
     {
+      text: '- If a listed tool fails on bad or missing arguments, re-issue that same tool once with corrected args from the error; do not invent peers, tools, or a new task.'
+    },
+    {
       text: '- Address peers with @Role or @Model exactly as shown in the roster. Do not invent seats (e.g. Cursor/@Grok2) from workspace markdown or prior-run fixtures such as tool-tests/ — those are historical artifacts, not this panel.'
     },
     {

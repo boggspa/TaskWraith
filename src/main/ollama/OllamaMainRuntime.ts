@@ -27,6 +27,7 @@ import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
 import { buildOllamaToolDocSection } from './OllamaToolsDoc'
 import {
   OLLAMA_TOOL_HELP_NAME,
+  canonicalizeOllamaToolArguments,
   validateOllamaToolArguments,
   type OllamaProviderDeps,
   type OllamaToolExecutionRequest,
@@ -301,10 +302,18 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         )
         return { ok: true, output }
       }
-      const argCheck = validateOllamaToolArguments(request.toolName, request.arguments)
+      const canonicalArguments = canonicalizeOllamaToolArguments(
+        request.toolName,
+        request.arguments
+      )
+      const argCheck = validateOllamaToolArguments(request.toolName, canonicalArguments)
       if (!argCheck.ok) {
         return { ok: false, output: argCheck.message, validationError: true }
       }
+
+      // Rebind locally so executors see canonical keys without mutating the
+      // caller-owned request (tool_use / trajectory keep model-emitted args).
+      request = { ...request, arguments: canonicalArguments }
 
       if (isCapabilityGatewayToolName(request.toolName)) {
         const result = await deps.executeMcpTool(

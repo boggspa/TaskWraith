@@ -281,7 +281,7 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
   const guidance: string[] = []
   if (input.ensembleRun) {
     guidance.push(
-      "Keep following your assigned ensemble role, Role boundary contract, and Boss/Bossman/Lead routing; do not broaden into another participant's slice."
+      "Keep following your assigned local seat and stay inside your role / authority boundary from the capsule; do not invent peers or broaden into another participant's slice."
     )
   }
   if (input.ok) {
@@ -329,7 +329,7 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
     }
   } else {
     guidance.push(
-      'The tool failed. Follow the harness gate message, try a different allowed tool, or explain the limitation.'
+      'The tool failed. If this was bad or missing arguments, re-issue the same tool with corrected args from the error. Otherwise follow the harness gate message, try a different allowed tool, or explain the limitation.'
     )
   }
 

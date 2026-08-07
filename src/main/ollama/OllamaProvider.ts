@@ -1906,23 +1906,90 @@ export function ollamaToolResultFollowUpPrompt(input: {
           blackboardHint || 'The tool failed.',
           blackboardHint
             ? 'Retry the corrected blackboard call now instead of answering as if the post or read already succeeded.'
-            : 'Explain the limitation or request a different allowed TaskWraith tool only if that can recover.'
+            : 'If this was bad or missing arguments, re-issue the same tool with corrected args from the error. Otherwise try a different allowed TaskWraith tool, or explain the limitation.'
         ].join(' ')
   ].join('\n')
 }
 
-function ollamaBlackboardSchemaRepairHint(toolName: string): string | null {
-  if (toolName === 'blackboard_post') {
-    return [
-      'Blackboard posting requires BOTH non-empty string fields: key and value.',
-      'Retry with a concrete call such as {"taskwraith_tool":{"name":"blackboard_post","arguments":{"key":"short-key","value":"shared fact or decision"}}}.',
-      'To read the current board first, call blackboard_read with {}.'
-    ].join(' ')
+function ollamaToolSchemaRepairExample(name: string, argsJson: string): string {
+  return `Retry with a concrete call such as {"taskwraith_tool":{"name":"${name}","arguments":${argsJson}}}.`
+}
+
+/** Exact JSON recovery examples for load-bearing tools. Kept short so capsule
+ *  seats can copy-paste a valid call without reloading the Rules encyclopaedia. */
+export function ollamaToolSchemaRepairHint(toolName: string): string | null {
+  switch (toolName) {
+    case 'read_file':
+      return [
+        'read_file requires a non-empty string path.',
+        ollamaToolSchemaRepairExample('read_file', '{"path":"README.md"}')
+      ].join(' ')
+    case 'list_directory':
+      return [
+        'list_directory requires a non-empty string path (use "." for workspace root).',
+        ollamaToolSchemaRepairExample('list_directory', '{"path":"."}')
+      ].join(' ')
+    case 'find_files':
+      return [
+        'find_files requires a non-empty pattern (filename/path glob).',
+        ollamaToolSchemaRepairExample('find_files', '{"pattern":"**/*.ts"}')
+      ].join(' ')
+    case 'workspace_search':
+      return [
+        'workspace_search requires a non-empty query string.',
+        ollamaToolSchemaRepairExample('workspace_search', '{"query":"TODO"}')
+      ].join(' ')
+    case 'write_file':
+      return [
+        'write_file requires path, content, and intent (short reason).',
+        ollamaToolSchemaRepairExample(
+          'write_file',
+          '{"path":"notes.txt","content":"hello\\n","intent":"add a short note file"}'
+        )
+      ].join(' ')
+    case 'replace':
+      return [
+        'replace requires path, old_string, new_string, and intent.',
+        ollamaToolSchemaRepairExample(
+          'replace',
+          '{"path":"src/app.ts","old_string":"const x = 1","new_string":"const x = 2","intent":"bump constant"}'
+        )
+      ].join(' ')
+    case 'run_shell_command':
+      return [
+        'run_shell_command requires command and intent.',
+        ollamaToolSchemaRepairExample(
+          'run_shell_command',
+          '{"command":"ls","intent":"list workspace root"}'
+        )
+      ].join(' ')
+    case 'todo_write':
+      return [
+        'todo_write expects a todos array of {id, content, status}; merge:true patches by id.',
+        ollamaToolSchemaRepairExample(
+          'todo_write',
+          '{"merge":true,"todos":[{"id":"1","content":"Search then read","status":"in_progress"}]}'
+        )
+      ].join(' ')
+    case 'blackboard_post':
+      return [
+        'Blackboard posting requires BOTH non-empty string fields: key and value.',
+        ollamaToolSchemaRepairExample(
+          'blackboard_post',
+          '{"key":"short-key","value":"shared fact or decision"}'
+        ),
+        'To read the current board first, call blackboard_read with {}.'
+      ].join(' ')
+    case 'blackboard_read':
+      return 'A bare blackboard_read call is valid and returns the newest entries: {"taskwraith_tool":{"name":"blackboard_read","arguments":{}}}.'
+    case 'blackboard_delete':
+      return [
+        'blackboard_delete retires entries by ids, keys, category, and/or all:true; pass arrays for ids/keys.',
+        ollamaToolSchemaRepairExample('blackboard_delete', '{"keys":["stale-decision"]}')
+      ].join(' ')
+    default:
+      return null
   }
-  if (toolName === 'blackboard_read') {
-    return 'A bare blackboard_read call is valid and returns the newest entries: {"taskwraith_tool":{"name":"blackboard_read","arguments":{}}}.'
-  }
-  return null
 }
 
 function ollamaBlackboardFailureRepairHint(toolName: string, output: string): string | null {
@@ -1933,13 +2000,13 @@ function ollamaBlackboardFailureRepairHint(toolName: string, output: string): st
       normalized.includes('key and value') ||
       normalized.includes('required argument'))
   ) {
-    return ollamaBlackboardSchemaRepairHint(toolName)
+    return ollamaToolSchemaRepairHint(toolName)
   }
   if (
     toolName === 'blackboard_read' &&
     (normalized.includes('argument') || normalized.includes('array') || normalized.includes('filter'))
   ) {
-    return ollamaBlackboardSchemaRepairHint(toolName)
+    return ollamaToolSchemaRepairHint(toolName)
   }
   return null
 }
@@ -1956,10 +2023,32 @@ export function ollamaToolArgumentRepairPrompt(
     input.output,
     '',
     `Re-issue the same ${input.toolName} tool call with the missing required argument set.`,
-    ollamaBlackboardSchemaRepairHint(input.toolName) || '',
+    ollamaToolSchemaRepairHint(input.toolName) || '',
     'Do not describe the tool call in prose, and do not answer as if the tool already ran.',
     ...ollamaEnsembleRetryReminder(input)
   ].filter(Boolean).join('\n')
+}
+
+/** Directed strategy-change nudge when the same executed failure has stopped
+ *  counting as progress. Does not reset streak/ceiling counters — recovery
+ *  channel only; the non-productive ceiling still finalizes if the model loops. */
+export function ollamaIdenticalFailureStrategyNudge(
+  input: {
+    toolName: OllamaCallableToolName | string
+    output: string
+  } & OllamaRetryPromptOptions
+): string {
+  return [
+    `TaskWraith executed ${input.toolName} and it failed the same way repeatedly.`,
+    'Tool result:',
+    input.output,
+    '',
+    'Do not repeat that identical call.',
+    'Change approach now: different arguments, a different allowed tool, or give your final answer for this turn with what you already know.',
+    ...ollamaEnsembleRetryReminder(input)
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 export function ollamaGoalLifecycleStopContent(toolName: string): string | null {
@@ -1983,7 +2072,7 @@ interface OllamaRetryPromptOptions {
 function ollamaEnsembleRetryReminder(options?: OllamaRetryPromptOptions): string[] {
   return options?.ensembleRun
     ? [
-        'For this ensemble run, answer as your assigned participant and keep following the Role boundary contract plus Boss/Bossman/Lead routing.'
+        'For this ensemble run, answer only as your assigned local seat and stay inside your role / authority boundary from the capsule; do not invent peers or broaden into another participant\'s slice.'
       ]
     : []
 }
@@ -2452,7 +2541,7 @@ const OLLAMA_ARG_SYNONYMS_BY_TOOL: Partial<Record<OllamaToolName, Record<string,
     new_string: ['newString']
   },
   create_directory: { path: ['directory'] },
-  delete_path: { path: ['file', 'directory'] },
+  delete_path: { path: ['file', 'directory', 'file_path'] },
   move_path: {
     from: ['source', 'sourcePath', 'path'],
     to: ['destination', 'destinationPath', 'target']
@@ -2523,6 +2612,71 @@ const OLLAMA_ARG_TYPE_CHECKS: Partial<Record<OllamaToolName, Record<string, 'str
   blackboard_post: { key: 'string', value: 'string' },
   blackboard_read: { ids: 'array', keys: 'array' },
   blackboard_delete: { ids: 'array', keys: 'array' }
+}
+
+function ollamaArgValueAbsent(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (typeof value === 'string' && value.trim().length === 0) return true
+  if (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        item === undefined ||
+        item === null ||
+        (typeof item === 'string' && item.trim().length === 0)
+    )
+  ) {
+    return true
+  }
+  return false
+}
+
+/**
+ * Host-side soft coerce before validate/execute: copy non-empty synonym values
+ * onto canonical schema keys, promote intent aliases, and wrap single-string
+ * blackboard selectors into arrays. Does not invent missing values.
+ */
+export function canonicalizeOllamaToolArguments(
+  toolName: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  if (toolName === OLLAMA_TOOL_HELP_NAME) return args
+  if (!OLLAMA_KNOWN_TOOL_NAMES.has(toolName as OllamaToolName)) return args
+  const typedToolName = toolName as OllamaToolName
+  const out: Record<string, unknown> = { ...args }
+
+  const synonyms = OLLAMA_ARG_SYNONYMS_BY_TOOL[typedToolName]
+  if (synonyms) {
+    for (const [canonical, aliases] of Object.entries(synonyms)) {
+      if (!ollamaArgValueAbsent(out[canonical])) continue
+      for (const alias of aliases) {
+        if (ollamaArgValueAbsent(out[alias])) continue
+        out[canonical] = out[alias]
+        break
+      }
+    }
+  }
+
+  if (ollamaArgValueAbsent(out.intent)) {
+    for (const alias of ['summary', 'reason', 'description'] as const) {
+      const value = out[alias]
+      if (typeof value === 'string' && value.trim().length > 0) {
+        out.intent = value
+        break
+      }
+    }
+  }
+
+  if (typedToolName === 'blackboard_read' || typedToolName === 'blackboard_delete') {
+    for (const field of ['ids', 'keys'] as const) {
+      const value = out[field]
+      if (typeof value === 'string' && value.trim().length > 0) {
+        out[field] = [value.trim()]
+      }
+    }
+  }
+
+  return out
 }
 
 /**
@@ -3330,6 +3484,7 @@ export async function runOllamaProvider(
         )
         let toolResult: OllamaToolExecutionResult
         let noActiveGoalToolResult = false
+        let identicalFailureStrategyNudge = false
         let repeat: OllamaRepeatedToolCallEvaluation = { repeated: false, compactedAway: false }
         const toolExecutionRequest: OllamaToolExecutionRequest = {
           toolName: toolRequest.toolName,
@@ -3421,6 +3576,11 @@ export async function runOllamaProvider(
               lastToolFailureKey = failureKey
               if (identicalToolFailureStreak < OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES) {
                 productiveToolRanThisTurn = true
+              } else {
+                // Once identical failures stop counting as progress, keep the
+                // directed strategy nudge for the rest of that streak so later
+                // ceiling turns do not fall back to "re-issue the same tool".
+                identicalFailureStrategyNudge = true
               }
             }
           }
@@ -3464,6 +3624,12 @@ export async function runOllamaProvider(
           })
         } else if (toolResult.validationError) {
           modelFacingOutput = ollamaToolArgumentRepairPrompt({
+            toolName: toolRequest.toolName,
+            output: truncatedOutput,
+            ensembleRun
+          })
+        } else if (identicalFailureStrategyNudge) {
+          modelFacingOutput = ollamaIdenticalFailureStrategyNudge({
             toolName: toolRequest.toolName,
             output: truncatedOutput,
             ensembleRun
@@ -3533,7 +3699,7 @@ export async function runOllamaProvider(
           })
           messages.push({
             role: 'user',
-            content: toolResult.validationError
+            content: toolResult.validationError || identicalFailureStrategyNudge
               ? modelFacingOutput
               : harnessEnabled
                 ? ollamaHarnessToolFollowUpPrompt({
