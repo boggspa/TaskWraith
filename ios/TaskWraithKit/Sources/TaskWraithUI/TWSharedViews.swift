@@ -1228,6 +1228,15 @@ struct ProviderModelPicker: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Provider and model")
         .accessibilityValue(providerModelAccessibilityValue)
+        // Touch-down open so a focused composer blur cannot cancel the tap
+        // before the popover presents (same race as roster chips).
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !isPresented else { return }
+                    isPresented = true
+                }
+        )
         .popover(isPresented: $isPresented) {
             pickerPopover
                 .presentationCompactAdaptation(.popover)
@@ -5293,28 +5302,7 @@ struct ToolActivityViewport<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            viewport
-            if shouldScroll, let expandLabel {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        expanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(expanded ? (collapseLabel ?? "Collapse") : expandLabel)
-                        Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.bold))
-                            .rotationEffect(.degrees(expanded ? 180 : 0))
-                    }
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(TWTheme.textTertiary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(TWTheme.surface3, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(expanded ? (collapseLabel ?? "Collapse") : expandLabel)
-            }
+            expandableSurface
         }
         .onPreferenceChange(ToolActivityViewportHeightKey.self) { height in
             guard abs(contentHeight - height) > 1 else { return }
@@ -5322,14 +5310,65 @@ struct ToolActivityViewport<Content: View>: View {
         }
     }
 
+    /// Collapsed viewport is the tap target — no separate "Expand more" pill.
+    /// Tapping the clipped + faded area expands inline. Expanded content stays
+    /// plain/selectable (never a Button label — that eats copy/selection).
+    /// Collapse is a bounded bottom strip + a11y action only. The inner
+    /// ScrollView stays for correct GeometryReader measurement (unbounded
+    /// height proposal) but `.scrollDisabled(true)` kills the nested-scroll
+    /// gesture that was the actual bug.
     @ViewBuilder
-    private var viewport: some View {
-        if shouldScroll && !expanded {
+    private var expandableSurface: some View {
+        if shouldScroll, let expandLabel, !expanded {
+            // Collapsed: clipped at maxHeight with edge fade; tap to expand.
+            // Keep the inner ScrollView (with .scrollDisabled(true)) so
+            // GeometryReader gets an unbounded height proposal — measuring
+            // under a bounded .frame(height:) risks the geometry-livelock
+            // class. scrollDisabled kills the nested-scroll gesture.
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) { expanded = true }
+            } label: {
+                ScrollView(.vertical, showsIndicators: false) {
+                    measuredContent
+                }
+                .frame(height: maxHeight)
+                .mask(edgeFadeMask)
+                .scrollDisabled(true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expandLabel)
+        } else if shouldScroll, expandLabel != nil, expanded {
+            // Expanded: selectable content — do NOT wrap in Button (eats
+            // textSelection). Collapse only via the bounded strip below.
+            VStack(spacing: 0) {
+                measuredContent
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) { expanded = false }
+                } label: {
+                    Color.clear
+                        .frame(height: 28)
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .center) {
+                            Capsule()
+                                .fill(Color.secondary.opacity(0.35))
+                                .frame(width: 36, height: 4)
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(collapseLabel ?? "Collapse result")
+            }
+            .accessibilityAction(named: Text(collapseLabel ?? "Collapse result")) {
+                withAnimation(.easeInOut(duration: 0.16)) { expanded = false }
+            }
+        } else if shouldScroll {
+            // No expand label — legacy tool-card inner scroll.
             ScrollView(.vertical, showsIndicators: false) {
                 measuredContent
             }
             .frame(height: maxHeight)
             .mask(edgeFadeMask)
+            .scrollDisabled(true)
         } else {
             measuredContent
         }
@@ -6575,9 +6614,15 @@ public struct EditableRosterStrip: View {
     /// Optimistic thread-wide Auto Approvals overlay (cleared on Mac echo).
     @State private var autoApprovalsDraft: Bool? = nil
 
+    /// Called when a chip editor popover opens/closes. The host uses this to
+    /// keep the above-rows visible while a popover is open, preventing composer
+    /// blur from tearing down the popover's anchor mid-interaction.
+    var onChipEditingChange: ((Bool) -> Void)? = nil
+
     public init(
         model: RemoteSessionModel, threadId: String, workspaceId: String,
-        attached: Bool = false, isShellTop: Bool = false, onOwnCard: Bool = false
+        attached: Bool = false, isShellTop: Bool = false, onOwnCard: Bool = false,
+        onChipEditingChange: ((Bool) -> Void)? = nil
     ) {
         self.model = model
         self.threadId = threadId
@@ -6585,6 +6630,7 @@ public struct EditableRosterStrip: View {
         self.attached = attached
         self.isShellTop = isShellTop
         self.onOwnCard = onOwnCard
+        self.onChipEditingChange = onChipEditingChange
     }
 
     private var state: RemoteEnsembleState? { model.ensembleStates[threadId] }
@@ -6760,6 +6806,16 @@ public struct EditableRosterStrip: View {
                 autoApprovalsDraft = nil
             }
         }
+        .onChange(of: editingChipId) { _, _ in
+            notifyChipEditingChange()
+        }
+        .onChange(of: addPopoverPresented) { _, _ in
+            notifyChipEditingChange()
+        }
+    }
+
+    private func notifyChipEditingChange() {
+        onChipEditingChange?(editingChipId != nil || addPopoverPresented)
     }
 
     /// Store the measured row frame, QUANTIZED to whole points and only when it
@@ -6848,6 +6904,16 @@ public struct EditableRosterStrip: View {
             .opacity(draggingId == entry.id ? 0.4 : 1)
         }
         .buttonStyle(.plain)
+        // Open on touch-down, before composer blur can unmount this strip.
+        // A normal Button action races the TextField resign: blur tears down
+        // the focus-gated above-rows and the popover never attaches.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard editingChipId != entry.id else { return }
+                    editingChipId = entry.id
+                }
+        )
         // Open to the LEADING side of the chip, not above it.
         //
         // The roster strip sits directly on top of the composer, so an
@@ -6982,6 +7048,16 @@ public struct EditableRosterStrip: View {
         }
         .buttonStyle(.plain)
         .disabled(draft.count >= editableRosterMaxParticipants)
+        // Same touch-down open as chips — beat composer blur tearing the strip down.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !addPopoverPresented,
+                        draft.count < editableRosterMaxParticipants
+                    else { return }
+                    addPopoverPresented = true
+                }
+        )
         .popover(isPresented: $addPopoverPresented) {
             RosterAddParticipantPopover(
                 catalogs: catalogs,

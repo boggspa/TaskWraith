@@ -382,6 +382,11 @@ struct ThreadDetailView: View {
     /// the compact pill (mounted only while the composer is blurred) can no
     /// longer own that trigger.
     @Environment(\.scenePhase) private var scenePhase
+    /// When a roster chip editor popover is open, keep the above-rows visible
+    /// even if the composer blurs — prevents the popover anchor from being
+    /// torn down mid-interaction (the "can't interact with popovers while
+    /// keyboard is up" bug).
+    @State private var rosterChipEditing = false
     /// Follow the transcript tail as content streams in. Driven by the bottom
     /// sentinel's visibility (on screen ⇒ follow); the jump-to-latest pill and
     /// thread-open also re-arm it.
@@ -1179,6 +1184,12 @@ struct ThreadDetailView: View {
     }
 
     private func toggleFanoutViewportExpanded(_ id: String) {
+        // Do NOT latch followPin.userLatchedOff here — that flag is for
+        // genuine touch unfollow, not for inline layout toggles. Sticky
+        // unfollow on expand/collapse permanently kills auto-follow during a
+        // live run (the user's exact reported symptom). The height delta from
+        // expand/collapse is handled by the scroll view's content size change
+        // and the existing settle-pass ~2.5s deceleration window.
         if expandedFanoutViewports.contains(id) {
             expandedFanoutViewports.remove(id)
         } else {
@@ -2130,7 +2141,15 @@ struct ThreadDetailView: View {
                     .transition(ComposerMotion.floatingChipTransition(reduceMotion: reduceMotion))
                 }
                 #if canImport(UIKit)
-                    if keyboardVisible {
+                    // Show the dismiss pill when the software keyboard is up
+                    // (iPhone / iPad with software keyboard), OR on iPad with
+                    // a hardware keyboard where `keyboardVisible` stays false
+                    // forever. Without this, the only way out of focus on iPad
+                    // is a thread switch — the compact pill row is gated on
+                    // `compactHeight` (always false on iPad) and no floating
+                    // dismiss ever appears. This was the "Tools pill dead on
+                    // iPad" root cause.
+                    if keyboardVisible || (composerFocused && isPadInterface) {
                         Button {
                             dismissKeyboard()
                         } label: {
@@ -2301,7 +2320,7 @@ struct ThreadDetailView: View {
                     // one-line input + model pill + send. Focus is the gate, NOT
                     // composerExpanded (which lingers while a draft/queue exists).
                     let hasAboveContent =
-                        composerFocused
+                        (composerFocused || rosterChipEditing)
                         && (hasAttachedRows || card.isEnsemble
                             || !(card.queuedComposerPrompts ?? []).isEmpty)
                     let tuckedTab = resolved.layout.tuckedAboveTab && hasAboveContent
@@ -2440,7 +2459,11 @@ struct ThreadDetailView: View {
                         // pill (same numbers, same sheet on tap), and the
                         // roster is on the toolbar's Roster button. Nothing
                         // here is the only way to reach anything.
-                        if composerFocused && !compactHeight {
+                        //
+                        // rosterChipEditing keeps the above-rows alive while a
+                        // chip editor popover is open — without it, composer
+                        // blur tears down the popover anchor mid-interaction.
+                        if (composerFocused && !compactHeight) || rosterChipEditing {
                         VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
@@ -2544,7 +2567,7 @@ struct ThreadDetailView: View {
                         VStack(spacing: bareTelemetry ? 6 : 0) {
                             // codex tucks the roster/queued rows INTO this core
                             // card (above the input), as merged segments.
-                            if tuck && composerFocused {
+                            if tuck && (composerFocused || rosterChipEditing) {
                                 composerSecondaryRows(
                                     card: card, hasAttachedRows: hasAttachedRows,
                                     onOwnCards: false, suppressFill: true,
@@ -2672,7 +2695,8 @@ struct ThreadDetailView: View {
                 model: model, threadId: taskId, workspaceId: wsId,
                 attached: true,
                 isShellTop: !hasAttachedRows,
-                onOwnCard: suppressFill)
+                onOwnCard: suppressFill,
+                onChipEditingChange: { rosterChipEditing = $0 })
             .composerShellIf(onOwnCards, resolved)
             if !onOwnCards {
                 Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -2784,6 +2808,14 @@ struct ThreadDetailView: View {
         }
         .onChange(of: threadValue(model.streamingTexts) ?? "") { _, _ in
             guard autoFollow else { return }
+            // Streaming-token follow-pins route through requestFollowPin(force: true)
+            // which deliberately bypasses the 100ms reveal-pin throttle — real
+            // content changes must pin exactly. The existing coalescer already
+            // deduplicates within a single runloop turn, and the settle pass at
+            // ~2.5s after the last pin handles the tail. Do not add a leading-only
+            // guard here: it has no trailing edge, so the final delta of a run
+            // (which almost always lands <50ms after the previous one) would
+            // silently drop its pin and leave the transcript short of the tail.
             requestFollowPin(proxy, force: true)
         }
     }
@@ -2874,12 +2906,23 @@ struct ThreadDetailView: View {
                 // itself it would have missed the keyboard going up and report
                 // zero. See TWKeyboardTracker.start().
                 .onAppear { TWKeyboardTracker.shared.start() }
+                // Use keyboardDid* (not Will*) so layout changes happen after
+                // the animation finishes — avoids the flash where keyboard
+                // hides, layout reflows, then the animation catches up.
                 .onReceive(NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardWillShowNotification
-                )) { _ in keyboardVisible = true }
+                    for: UIResponder.keyboardDidShowNotification
+                )) { _ in
+                    // Always mirror reality: a real DidShow means the keyboard
+                    // is up. Never clock-suppress this — a rapid dismiss →
+                    // re-tap leaves keyboardVisible=false while the keyboard
+                    // covers the screen (floating dismiss / insets desync).
+                    keyboardVisible = true
+                }
                 .onReceive(NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardWillHideNotification
-                )) { _ in keyboardVisible = false }
+                    for: UIResponder.keyboardDidHideNotification
+                )) { _ in
+                    keyboardVisible = false
+                }
         #else
             base
         #endif
@@ -2887,6 +2930,17 @@ struct ThreadDetailView: View {
 
     #if canImport(UIKit)
         private func dismissKeyboard() {
+            // Collapse focus chrome immediately so Tools / unfocused pills
+            // return without waiting for textViewDidEndEditing → onFocusChange.
+            // Without this, a dismiss that races a layout remount can leave
+            // the focused face up and the keyboard bouncing back in.
+            // Do NOT clock-suppress keyboardDidShow: a rapid re-tap must keep
+            // keyboardVisible in sync with the real keyboard.
+            if composerFocused && !rosterChipEditing {
+                withAnimation(ComposerMotion.focusAnimation(reduceMotion: reduceMotion)) {
+                    composerFocused = false
+                }
+            }
             UIApplication.shared.sendAction(
                 #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
@@ -4415,7 +4469,7 @@ struct MessageActionsBar: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(accented ? TWTheme.chroma1 : TWTheme.textTertiary)
                 .frame(width: 28, height: 24)
                 .contentShape(Rectangle())
@@ -4799,12 +4853,37 @@ struct ThreadRowView: View, Equatable {
                             .textSelection(.enabled)
                         }
                         if let footerTime = transcriptFooterTime {
-                            Text(footerTime)
-                                .font(.caption2)
-                                .foregroundStyle(TWTheme.textMuted.opacity(0.88))
-                                .monospacedDigit()
-                        }
-                        if showsMessageActionChrome {
+                            HStack(spacing: 6) {
+                                Text(footerTime)
+                                    .font(.caption2)
+                                    .foregroundStyle(TWTheme.textMuted.opacity(0.88))
+                                    .monospacedDigit()
+                                if showsMessageActionChrome {
+                                    MessageActionsBar(
+                                        isPinned: isPinned,
+                                        onCopy: { copyText(preview) },
+                                        onAddToPrompt: {
+                                            model.requestComposerAppend(preview, threadId: threadId)
+                                        },
+                                        onTogglePin: { togglePin() },
+                                        onOpenSideChat: { openSideChatFromMessage() },
+                                        onDelete: canDeleteTranscriptMessage
+                                            ? { requestMessageDeletion() }
+                                            : nil
+                                    )
+                                }
+                            }
+                            if showsMessageActionChrome,
+                                let assistantFeedbackItem, let card = threadCard
+                            {
+                                AssistantMessageFeedbackBar(
+                                    item: assistantFeedbackItem,
+                                    onFeedback: { request in
+                                        model.toggleMessageFeedback(card, request: request)
+                                    }
+                                )
+                            }
+                        } else if showsMessageActionChrome {
                             MessageActionsBar(
                                 isPinned: isPinned,
                                 onCopy: { copyText(preview) },

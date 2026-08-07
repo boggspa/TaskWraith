@@ -49,7 +49,7 @@ struct PinnedMessageActionsBar: View {
     ) -> some View {
         Button(action: run) {
             Image(systemName: PinnedMessageActionsModel.actionSystemImage(action))
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(TWTheme.textMuted)
                 .frame(width: 28, height: 24)
                 .contentShape(Rectangle())
