@@ -8,7 +8,7 @@ import {
 /** Codex app-server's host UI request, not a TaskWraith MCP tool name. */
 export const CODEX_USER_INPUT_METHOD = 'tool/requestUserInput'
 export const CODEX_USER_INPUT_MAX_QUESTIONS = 3
-export const CODEX_USER_INPUT_MAX_TIMEOUT_MS = 10 * 60 * 1000
+export const CODEX_USER_INPUT_MAX_TIMEOUT_MS = 12 * 60 * 1000
 
 export interface CodexUserInputQuestion {
   id: string

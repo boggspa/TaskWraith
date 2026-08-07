@@ -88,7 +88,7 @@ interface PendingRemoteQuestion {
   timerHandle?: unknown
 }
 
-const DEFAULT_TTL_MS = 10 * 60 * 1000
+const DEFAULT_TTL_MS = 12 * 60 * 1000
 export const REMOTE_QUESTION_MAX_QUESTION_CHARS = 600
 export const REMOTE_QUESTION_MAX_CONTEXT_CHARS = 240
 export const REMOTE_QUESTION_MAX_OPTION_CHARS = 96

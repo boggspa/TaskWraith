@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS,
   MCP_BROKER_LONG_POLL_TIMEOUT_MS,
   MCP_BROKER_REQUEST_TIMEOUT_MS,
   mcpBrokerRequestTimeoutMsFor
 } from './McpBrokerTimeouts'
 
 describe('mcpBrokerRequestTimeoutMsFor', () => {
-  it('grants the long-poll budget to ensemble_await tool calls only', () => {
+  it('grants the long-poll budget to ensemble_await tool calls', () => {
     expect(
       mcpBrokerRequestTimeoutMsFor({
         jsonrpc: '2.0',
@@ -15,6 +16,17 @@ describe('mcpBrokerRequestTimeoutMsFor', () => {
         params: { name: 'ensemble_await', arguments: { timeoutSeconds: 600 } }
       })
     ).toBe(MCP_BROKER_LONG_POLL_TIMEOUT_MS)
+  })
+
+  it('grants the ask-user budget so brokered seats can wait the full card TTL', () => {
+    expect(
+      mcpBrokerRequestTimeoutMsFor({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'ask_user_question', arguments: { question: 'Continue?' } }
+      })
+    ).toBe(MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS)
   })
 
   it('keeps the standard budget for other tools, methods, and unparseable requests', () => {
@@ -42,5 +54,10 @@ describe('mcpBrokerRequestTimeoutMsFor', () => {
     // liveness backstop, never the effective cap.
     expect(MCP_BROKER_LONG_POLL_TIMEOUT_MS).toBe(630_000)
     expect(MCP_BROKER_LONG_POLL_TIMEOUT_MS).toBeGreaterThan(600_000)
+  })
+
+  it('ask-user broker grace stays ahead of the 12-minute card TTL', () => {
+    expect(MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS).toBe(750_000)
+    expect(MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS).toBeGreaterThan(12 * 60 * 1000)
   })
 })

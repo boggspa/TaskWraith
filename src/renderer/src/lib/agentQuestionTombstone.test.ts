@@ -83,7 +83,7 @@ describe('agent question tombstone', () => {
   })
 
   it('reports a question with no reply as skipped, not as unanswered-forever', () => {
-    // Dismissal and the 10-minute timeout BOTH append nothing, so they are
+    // Dismissal and the 12-minute timeout BOTH append nothing, so they are
     // indistinguishable here — and mean the same thing to a reader.
     const t = buildAgentQuestionTombstone(marker(), new Map())
     expect(t?.outcome).toBe('skipped')

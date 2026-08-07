@@ -2357,7 +2357,7 @@ const rendererConsoleBuffer: Array<{
  * tool call on a Promise. The Promise resolves when the renderer
  * sends back `answer-agent-question` (user clicked a button or typed
  * a free-text reply) or `cancel-agent-question` (user dismissed). A
- * 10-minute timeout falls back to `cancelled: true` so a stale
+ * 12-minute timeout falls back to `cancelled: true` so a stale
  * question can't pin a run forever.
  *
  * `RemoteQuestionRegistry` owns the pending-question metadata and
@@ -2365,7 +2365,7 @@ const rendererConsoleBuffer: Array<{
  * remote/iOS projection cards, so desktop and mobile answers resolve
  * the same parked tool call.
  */
-const AGENT_QUESTION_TIMEOUT_MS = 10 * 60 * 1000
+const AGENT_QUESTION_TIMEOUT_MS = 12 * 60 * 1000
 type AgentQuestionResult = RemoteQuestionResolution
 const remoteQuestionRegistry = new RemoteQuestionRegistry({
   defaultTtlMs: AGENT_QUESTION_TIMEOUT_MS

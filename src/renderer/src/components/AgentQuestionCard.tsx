@@ -3,6 +3,11 @@ import type { ReactElement } from 'react'
 import type { ProviderId } from '../../../main/store/types'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { MOTION_DURATIONS, presenceSettleMs, usePresence } from '../hooks/usePanelPresence'
+import {
+  clearAgentQuestionDraft,
+  initialAgentQuestionCardDraft,
+  writeAgentQuestionDraft
+} from '../lib/agentQuestionDraftStore'
 import { createOneShotLatch } from '../lib/oneShotLatch'
 import { AgentQuestionAsker } from './AgentQuestionAsker'
 
@@ -56,13 +61,22 @@ export function AgentQuestionCard({
   seat = null
 }: AgentQuestionCardProps): ReactElement | null {
   const hasOptions = (state.options?.length ?? 0) > 0
-  const [showFreeText, setShowFreeText] = useState(!hasOptions)
-  const [freeText, setFreeText] = useState('')
+  // Draft is lifted by questionId: pending markers re-tail on chat-updated and
+  // remount this card under a new `${id}#${index}` row key. Local-only state
+  // would blank the textarea mid-type.
+  const initialDraft = initialAgentQuestionCardDraft(state.questionId, hasOptions)
+  const [showFreeText, setShowFreeText] = useState(initialDraft.showFreeText)
+  const [freeText, setFreeText] = useState(initialDraft.freeText)
   const [isClosing, setIsClosing] = useState(false)
   const providerClass = state.provider ? ` provider-${state.provider}` : ''
   const questionTitleId = useId()
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const lastFocusedRef = useRef<HTMLElement | null>(null)
+  const draftRef = useRef({
+    freeText: initialDraft.freeText,
+    showFreeText: initialDraft.showFreeText
+  })
+  draftRef.current = { freeText, showFreeText }
 
   // Resolve-once guard: a fast double-click, or an answer racing the ×/Escape
   // dismiss, must not fire both `answerAgentQuestion` AND `cancelAgentQuestion`
@@ -72,6 +86,17 @@ export function AgentQuestionCard({
   const latchRef = useRef(createOneShotLatch())
   const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const applyDraft = (patch: { freeText?: string; showFreeText?: boolean }): void => {
+    const next = {
+      freeText: patch.freeText ?? draftRef.current.freeText,
+      showFreeText: patch.showFreeText ?? draftRef.current.showFreeText
+    }
+    draftRef.current = next
+    setFreeText(next.freeText)
+    setShowFreeText(next.showFreeText)
+    writeAgentQuestionDraft(state.questionId, next)
+  }
+
   useEffect(() => {
     return () => {
       if (completionTimerRef.current != null) clearTimeout(completionTimerRef.current)
@@ -80,6 +105,7 @@ export function AgentQuestionCard({
 
   const finishAfterExit = (resolve: () => void): void => {
     latchRef.current.run(() => {
+      clearAgentQuestionDraft(state.questionId)
       setIsClosing(true)
       // Answer after the exit fade; under reduce-motion settle is immediate.
       completionTimerRef.current = setTimeout(resolve, presenceSettleMs(MOTION_DURATIONS.base))
@@ -133,8 +159,7 @@ export function AgentQuestionCard({
       if (event.key === 'Escape') {
         event.preventDefault()
         if (showFreeText && hasOptions) {
-          setShowFreeText(false)
-          setFreeText('')
+          applyDraft({ freeText: '', showFreeText: false })
           return
         }
         dismissOnce()
@@ -202,7 +227,7 @@ export function AgentQuestionCard({
           <button
             type="button"
             className="plan-choice-action-btn agent-question-card-other"
-            onClick={() => setShowFreeText(true)}
+            onClick={() => applyDraft({ showFreeText: true })}
             aria-label="Type your own answer instead"
           >
             Other…
@@ -218,7 +243,7 @@ export function AgentQuestionCard({
             id="agent-question-answer"
             className="agent-question-card-input"
             value={freeText}
-            onChange={(event) => setFreeText(event.target.value)}
+            onChange={(event) => applyDraft({ freeText: event.target.value })}
             placeholder="Type your answer… (⌘/Ctrl+Enter to submit)"
             rows={3}
             autoFocus
@@ -230,8 +255,7 @@ export function AgentQuestionCard({
               if (event.key === 'Escape') {
                 event.preventDefault()
                 if (hasOptions) {
-                  setShowFreeText(false)
-                  setFreeText('')
+                  applyDraft({ freeText: '', showFreeText: false })
                 } else {
                   dismissOnce()
                 }
@@ -243,10 +267,7 @@ export function AgentQuestionCard({
               <button
                 type="button"
                 className="plan-choice-action-btn agent-question-card-cancel"
-                onClick={() => {
-                  setShowFreeText(false)
-                  setFreeText('')
-                }}
+                onClick={() => applyDraft({ freeText: '', showFreeText: false })}
               >
                 Back to options
               </button>
