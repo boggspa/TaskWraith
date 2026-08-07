@@ -3,6 +3,7 @@ import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 import type { WorkspaceChurnSample } from '../WorkspaceChurn'
 import { EnsembleOrchestrator, type EnsembleDispatchPromptEvidence } from './EnsembleOrchestrator'
+import { deriveActiveEnsembleWorkingPresentations } from '../../renderer/src/lib/workingIndicatorPresentation'
 
 const CHAT_ID = 'ensemble-chat'
 const STEER_TEXT = 'MID-RUN: verify the retry boundary too.'
@@ -454,6 +455,63 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => {
       expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
     })
+  })
+
+  // The one seam nobody owns: MAIN writes the lane, the RENDERER decides who is
+  // shown working, and each was only ever tested against a hand-built version of
+  // the other's shape. This drives a real User Fan-Out and feeds the actual
+  // round record to the actual derivation, so "the fan-out seat gets a working
+  // row" stops resting on an assumption about what a lane looks like.
+  it('surfaces a real User Fan-Out lane as a working row beside the serial speaker', async () => {
+    const roster = [
+      participant('codex', 'codex', 1, { role: 'Worker' }),
+      participant('claude', 'claude', 2, { role: 'Reviewer' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    // Only the serial speaker is working so far.
+    expect(
+      deriveActiveEnsembleWorkingPresentations(harness.chat).map((item) => item.participantId)
+    ).toEqual([])
+
+    const prompt = '@Reviewer try your slice again.'
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'steer'
+      }).status
+    ).toBe('steered')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
+
+    // The shape that hid the seat, pinned exactly: `addLaneToRound` flips
+    // `concurrentMode` on when it stores a lane, but NOTHING moves the round's
+    // own `fanoutPolicy` off 'off' — a User Fan-Out dispatches on
+    // `concurrentLanesEnabled()` alone and does not ask the round's policy.
+    // The old derivation required BOTH, so the `fanoutPolicy` clause is what
+    // actually dropped this seat. Assert both halves so a future change to
+    // either one cannot quietly restore the hole.
+    const round = harness.chat.ensemble?.activeRound
+    expect(round?.concurrentMode).toBe(true)
+    expect(round?.fanoutPolicy).toBe('off')
+    expect(
+      Object.values(round?.lanes || {}).map((lane) => ({
+        participantId: lane.participantId,
+        status: lane.status
+      }))
+    ).toEqual([{ participantId: 'claude', status: 'running' }])
+    expect(
+      deriveActiveEnsembleWorkingPresentations(harness.chat).map((item) => item.participantId)
+    ).toEqual(['codex', 'claude'])
   })
 
   // The queued row and the composer send the same typed text through two
