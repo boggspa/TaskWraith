@@ -182,4 +182,99 @@ describe('formatTallySuffix', () => {
     expect(suffix).toContain('£')
     expect(suffix).toContain('41.4GB')
   })
+
+  it('never shows currency for Ollama even when peak RAM is missing', () => {
+    const suffix = formatTallySuffix(
+      'ollama',
+      {
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2,
+        explicitCostUsd: 1.5,
+        estimatedCostUsd: 1.5,
+        peakMemoryRssGb: 0
+      },
+      'GBP',
+      0
+    )
+    expect(suffix).not.toMatch(/[£$€]/)
+    expect(suffix).toBe('')
+  })
+
+  it('never shows currency for Ollama under dualCostAndRam when tally has no money cost', () => {
+    const suffix = formatTallySuffix(
+      'ollama',
+      {
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2,
+        explicitCostUsd: 0,
+        estimatedCostUsd: 0,
+        peakMemoryRssGb: 17.2
+      },
+      'GBP',
+      0,
+      { dualCostAndRam: true }
+    )
+    expect(suffix).toBe(' · 17.2GB')
+    expect(suffix).not.toMatch(/[£$€]/)
+  })
+
+  it('keeps sealed cloud spend under dualCostAndRam even when provider is ollama', () => {
+    // Ollama-seeded mixed ensemble: completed Codex/Claude cost lives in the
+    // aggregate tally and must still surface next to peak RAM.
+    const suffix = formatTallySuffix(
+      'ollama',
+      {
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2,
+        explicitCostUsd: 1.5,
+        estimatedCostUsd: 0,
+        peakMemoryRssGb: 17.2
+      },
+      'GBP',
+      0,
+      { dualCostAndRam: true }
+    )
+    expect(suffix).toContain('£')
+    expect(suffix).toContain('17.2GB')
+  })
+})
+
+describe('buildChatTokenTally ollama local cost', () => {
+  it('does not estimate API-equivalent cost for Ollama Gemma runs', () => {
+    const ollamaRates: RendererProviderRates = {
+      ollama: [
+        {
+          modelId: 'gemma4:12b',
+          // Inject non-zero rates to prove the Ollama skip is structural,
+          // not an accident of the baked-in $0 table.
+          inputUsdPerMillion: 10,
+          outputUsdPerMillion: 10
+        }
+      ],
+      gemini: [
+        {
+          modelId: 'gemini-3.1-pro-preview',
+          inputUsdPerMillion: 2,
+          outputUsdPerMillion: 12
+        }
+      ]
+    }
+    const tally = buildChatTokenTally(
+      [
+        run(
+          {
+            input_tokens: 2_000_000,
+            output_tokens: 50_000
+          },
+          { provider: 'ollama', actualModel: 'gemma4:12b' }
+        )
+      ],
+      { providerRates: ollamaRates }
+    )
+    expect(tally.estimatedCostUsd).toBe(0)
+    expect(tallyCostUsd(tally)).toBe(0)
+  })
 })

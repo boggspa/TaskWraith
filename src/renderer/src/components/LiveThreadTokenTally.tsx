@@ -2,7 +2,11 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactElement } from 'r
 import type { ProviderId } from '../../../main/store/types'
 import { formatContextTokens } from '../lib/contextWindows'
 import { formatCostAlwaysOn, type DisplayCurrency } from '../lib/formatCost'
-import { estimateRunCostUsd, type RendererProviderRates } from '../lib/providerRateEstimate'
+import {
+  estimateRunCostUsd,
+  isKnownLocalOllamaModel,
+  type RendererProviderRates
+} from '../lib/providerRateEstimate'
 import { formatTallySuffix, tallyCostUsd, type ChatTokenTally } from '../lib/threadTokenTally'
 import { resolveLiveTallyTokens } from '../lib/liveTallyTokens'
 import { useParticipantWorkingTokenSnapshot } from '../lib/participantWorkingTelemetryStore'
@@ -115,28 +119,44 @@ export const LiveThreadTokenTally = memo(function LiveThreadTokenTally({
   }, [running])
 
   const suffix = useMemo(() => {
-    if (!dualCostAndRam && provider === 'ollama') {
-      return formatTallySuffix(provider, baseTally, currency, overestimatePercent)
+    // Local Ollama lanes (including Google-branded Gemma) must never project
+    // live £/$/€. Ensemble chats often keep a cloud seed on chat.provider
+    // while the active model is a local tag — isKnownLocalOllamaModel catches
+    // that without stripping sealed non-Ollama cost from dual telemetry.
+    const localOllamaLane =
+      provider === 'ollama' || isKnownLocalOllamaModel(providerRates, model)
+    if (!dualCostAndRam && localOllamaLane) {
+      return formatTallySuffix('ollama', baseTally, currency, overestimatePercent)
     }
     const liveOutputExtra = Math.max(0, displayedOutputTokens - baseTally.outputTokens)
     // Now prices BOTH the live input (from the authoritative snapshot) and the
     // live output — previously input was hard-coded to 0, so mid-turn cost
     // omitted the in-flight prompt entirely.
-    const liveCostUsd = running
-      ? estimateRunCostUsd(providerRates, provider, model, liveInputExtra, liveOutputExtra)
-      : 0
+    const liveCostUsd =
+      running && !localOllamaLane
+        ? estimateRunCostUsd(providerRates, provider, model, liveInputExtra, liveOutputExtra)
+        : 0
     const baseCostUsd = tallyCostUsd(baseTally)
     const totalCostUsd = baseCostUsd + liveCostUsd
     const hasProjectedCost = (baseTally.estimatedCostUsd || 0) > 0 || liveCostUsd > 0
     if (dualCostAndRam) {
+      // Live projection already skipped for local lanes. Keep dual formatting
+      // so sealed cloud spend in mixed ensembles still appears next to peak GB;
+      // pure-local tallies (totalCostUsd === 0) render RAM only.
       const tallyForSuffix =
         running && liveCostUsd > 0
           ? { ...baseTally, estimatedCostUsd: (baseTally.estimatedCostUsd || 0) + liveCostUsd }
           : baseTally
-      return formatTallySuffix(provider, tallyForSuffix, currency, overestimatePercent, {
-        dualCostAndRam: true,
-        projectedCost: running && liveCostUsd > 0
-      })
+      return formatTallySuffix(
+        provider === 'ollama' ? 'ollama' : provider,
+        tallyForSuffix,
+        currency,
+        overestimatePercent,
+        {
+          dualCostAndRam: true,
+          projectedCost: running && liveCostUsd > 0
+        }
+      )
     }
     const cost =
       totalCostUsd > 0

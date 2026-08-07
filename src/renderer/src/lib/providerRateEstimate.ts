@@ -174,6 +174,38 @@ export function resolveModelRate(
 }
 
 /**
+ * True when `model` exact/prefix-matches a row in the Ollama rate table.
+ * Unlike {@link resolveModelRate}, this never falls through to `table[0]`,
+ * so a Gemini/Codex model id cannot be mistaken for local inference.
+ *
+ * Prefix matching is one-way and delimiter-aware (`wanted` extends a table
+ * id via `:` / `-` / end). The reverse `id.startsWith(wanted)` direction is
+ * intentionally omitted — it would treat cloud `devstral-small` as the local
+ * `devstral-small-2:24b` row and suppress real API-equivalent cost.
+ *
+ * Used by the composer tally to suppress API-equivalent £/$/€ projection
+ * when an ensemble's chat seed provider is still cloud-tagged but the
+ * active lane is a local Gemma / Nemotron / Qwen tag.
+ */
+export function isKnownLocalOllamaModel(
+  rates: RendererProviderRates,
+  model: string | undefined
+): boolean {
+  const table = rates.ollama
+  if (!table || table.length === 0) return false
+  const wanted = (model || '').trim().toLowerCase()
+  if (!wanted || DEFAULT_MODEL_SENTINELS.has(wanted)) return false
+  return table.some((r) => {
+    const id = r.modelId.toLowerCase()
+    if (wanted === id) return true
+    // Quant / variant tags: `gemma4:12b-it-q4_K_M` extends `gemma4:12b`.
+    if (!wanted.startsWith(id)) return false
+    const next = wanted.charAt(id.length)
+    return next === '' || next === ':' || next === '-'
+  })
+}
+
+/**
  * Pure estimate: project the USD API-equivalent cost of `inputTokens` /
  * `outputTokens` for one (provider, model) pair using the rate table.
  *

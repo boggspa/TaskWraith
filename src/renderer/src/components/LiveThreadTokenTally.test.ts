@@ -133,4 +133,70 @@ describe('LiveThreadTokenTally render', () => {
     const html = render({ running: false, baseTally: tally(), liveOutputTokens: 0 })
     expect(html).toBe('')
   })
+
+  it('does not project currency for ensemble Ollama Gemma when chat seed provider is Gemini', () => {
+    // Localz-style bug: ensemble dual telemetry + chat.provider still gemini
+    // while the active lane is a local Gemma tag. Live tokens must not be
+    // priced at Gemini table[0] rates.
+    const html = render({
+      provider: 'gemini',
+      model: 'gemma4:12b',
+      dualCostAndRam: true,
+      running: true,
+      liveOutputTokens: 40_000,
+      currency: 'GBP',
+      baseTally: tally({
+        inputTokens: 2_000_000,
+        outputTokens: 10_000,
+        totalTokens: 2_010_000,
+        peakMemoryRssGb: 17.2
+      }),
+      providerRates: {
+        gemini: [
+          {
+            modelId: 'gemini-3.1-pro-preview',
+            inputUsdPerMillion: 2,
+            outputUsdPerMillion: 12
+          }
+        ],
+        ollama: [
+          {
+            modelId: 'gemma4:12b',
+            inputUsdPerMillion: 0,
+            outputUsdPerMillion: 0
+          }
+        ]
+      }
+    })
+    expect(html).not.toMatch(/[£$€]/)
+    expect(html).toContain('GB')
+  })
+
+  it('does not project currency for dualCostAndRam when provider is ollama', () => {
+    const html = render({
+      provider: 'ollama',
+      model: 'nemotron3:33b',
+      dualCostAndRam: true,
+      running: true,
+      liveOutputTokens: 40_000,
+      currency: 'GBP',
+      baseTally: tally({
+        inputTokens: 2_000_000,
+        outputTokens: 10_000,
+        totalTokens: 2_010_000,
+        peakMemoryRssGb: 41.4
+      }),
+      providerRates: {
+        ollama: [
+          {
+            modelId: 'nemotron3:33b',
+            inputUsdPerMillion: 5,
+            outputUsdPerMillion: 30
+          }
+        ]
+      }
+    })
+    expect(html).not.toMatch(/[£$€]/)
+    expect(html).toContain('GB')
+  })
 })

@@ -35,6 +35,9 @@ const estimateCompletedRunCostUsd = (
   explicitCostUsd: number,
   providerRates: RendererProviderRates | undefined
 ): number => {
+  // Local Ollama inference is never API-equivalent priced — the composer
+  // shows peak RAM/GPU instead. Skip even if a rate row is non-zero.
+  if (run?.provider === 'ollama') return 0
   if (explicitCostUsd > 0 || !run?.stats || !providerRates) return 0
   const stats = run.stats
   const inputIncludesCache = usageInputIncludesCache(stats)
@@ -127,8 +130,15 @@ const formatTallySuffix = (
   const hasEstimatedCost = (tally.estimatedCostUsd || 0) > 0 || options?.projectedCost === true
   const cost = formatExplicitCostUsd(totalCostUsd, currency, overestimatePercent)
 
+  // Solo Ollama never shows £/$/€ — peak GB only (even when peak is missing).
+  if (provider === 'ollama' && !options?.dualCostAndRam) {
+    return ram ? ` · ${ram}` : ''
+  }
+
   if (options?.dualCostAndRam) {
     const parts: string[] = []
+    // Ollama-seeded ensembles still surface sealed cloud spend from mixed
+    // history; pure-local tallies keep RAM-only (totalCostUsd === 0).
     if (totalCostUsd > 0) {
       const costLabel = formatCostAlwaysOn(totalCostUsd, currency, undefined, overestimatePercent)
       parts.push(hasEstimatedCost ? `~${costLabel}` : costLabel)
@@ -137,8 +147,8 @@ const formatTallySuffix = (
     return parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
   }
 
-  if (provider === 'ollama' && ram) {
-    return ` · ${ram}`
+  if (provider === 'ollama') {
+    return ram ? ` · ${ram}` : ''
   }
   return cost ? ` · ${hasEstimatedCost ? '~' : ''}${cost}` : ''
 }

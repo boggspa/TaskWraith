@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   estimateRunCostUsd,
   estimateUsageRecordCostUsd,
+  isKnownLocalOllamaModel,
   normalizeProviderRates,
   resolveModelRate,
   usageRecordInputTokens,
@@ -309,5 +310,54 @@ describe('estimateUsageRecordCostUsd', () => {
     })
 
     expect(usd).toBeCloseTo(5.9, 6)
+  })
+})
+
+describe('isKnownLocalOllamaModel', () => {
+  const rates: RendererProviderRates = {
+    ollama: [
+      { modelId: 'qwen3:4b-instruct', inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      { modelId: 'gemma4:12b', inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      { modelId: 'nemotron3:33b', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
+    ],
+    gemini: [
+      { modelId: 'gemini-3.1-pro-preview', inputUsdPerMillion: 2, outputUsdPerMillion: 12 }
+    ]
+  }
+
+  it('recognises Gemma and Nemotron local tags without falling back to table[0]', () => {
+    expect(isKnownLocalOllamaModel(rates, 'gemma4:12b')).toBe(true)
+    expect(isKnownLocalOllamaModel(rates, 'gemma4:12b-it-q4_K_M')).toBe(true)
+    expect(isKnownLocalOllamaModel(rates, 'nemotron3:33b')).toBe(true)
+  })
+
+  it('does not treat cloud Gemini models as local Ollama', () => {
+    expect(isKnownLocalOllamaModel(rates, 'gemini-3.1-pro-preview')).toBe(false)
+    expect(isKnownLocalOllamaModel(rates, 'gpt-5.5')).toBe(false)
+    expect(isKnownLocalOllamaModel(rates, undefined)).toBe(false)
+  })
+
+  it('does not treat shorter cloud ids as local via reverse prefix', () => {
+    const withDevstral: RendererProviderRates = {
+      ...rates,
+      ollama: [
+        ...(rates.ollama || []),
+        { modelId: 'devstral-small-2:24b', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
+      ]
+    }
+    expect(isKnownLocalOllamaModel(withDevstral, 'devstral-small')).toBe(false)
+  })
+})
+
+describe('resolveModelRate gemma mis-tag trap', () => {
+  it('falls through to Gemini table[0] for gemma tags (documents the live £ bug)', () => {
+    const rates: RendererProviderRates = {
+      gemini: [
+        { modelId: 'gemini-3.1-pro-preview', inputUsdPerMillion: 2, outputUsdPerMillion: 12 },
+        { modelId: 'gemini-3.1-flash-lite', inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.4 }
+      ]
+    }
+    expect(resolveModelRate(rates, 'gemini', 'gemma4:12b')?.modelId).toBe('gemini-3.1-pro-preview')
+    expect(estimateRunCostUsd(rates, 'gemini', 'gemma4:12b', 0, 40_000)).toBeGreaterThan(0)
   })
 })
