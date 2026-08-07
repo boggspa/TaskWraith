@@ -67,6 +67,7 @@ export type TranscriptPanelMemoComparable = {
   copy: unknown
   virtualize?: unknown
   autoFollowRef?: unknown
+  getUserScrollGestureLive?: unknown
   onProgrammaticScrollWrite?: unknown
   collapseOlderRounds?: unknown
   userMessageGutterEnabled?: unknown
@@ -193,6 +194,7 @@ export function transcriptPanelPropsEqual(
     previous.copy === next.copy &&
     previous.virtualize === next.virtualize &&
     previous.autoFollowRef === next.autoFollowRef &&
+    previous.getUserScrollGestureLive === next.getUserScrollGestureLive &&
     previous.onProgrammaticScrollWrite === next.onProgrammaticScrollWrite &&
     previous.collapseOlderRounds === next.collapseOlderRounds &&
     previous.userMessageGutterEnabled === next.userMessageGutterEnabled &&

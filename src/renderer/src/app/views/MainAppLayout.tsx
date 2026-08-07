@@ -143,6 +143,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   auraProviderKey,
   autoFollowRef,
   markMainTranscriptProgrammaticScroll,
+  getMainTranscriptUserScrollGestureLive,
   markSideTranscriptProgrammaticScroll,
   autoResumeParentOnSubThreadCompletion,
   autoUpdateEnabled,
@@ -2260,6 +2261,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 copiedId={copiedId}
                 copy={copy}
                 autoFollowRef={autoFollowRef}
+                getUserScrollGestureLive={getMainTranscriptUserScrollGestureLive}
                 onProgrammaticScrollWrite={markMainTranscriptProgrammaticScroll}
                 currency={displayCurrency}
                 currencyOverestimatePercent={overestimatePercent}

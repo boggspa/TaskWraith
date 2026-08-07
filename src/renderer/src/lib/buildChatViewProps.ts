@@ -62,6 +62,7 @@ export interface BuildChatViewPropsInput {
   onPreviewImage: TranscriptPanelProps['onPreviewImage']
   onDetachToPane?: TranscriptPanelProps['onDetachToPane']
   autoFollowRef?: TranscriptPanelProps['autoFollowRef']
+  getUserScrollGestureLive?: TranscriptPanelProps['getUserScrollGestureLive']
   externalRestoreAnchorMessageId?: TranscriptPanelProps['externalRestoreAnchorMessageId']
   onManualTranscriptJump?: TranscriptPanelProps['onManualTranscriptJump']
   onJumpToLatest?: TranscriptPanelProps['onJumpToLatest']
@@ -254,6 +255,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onPreviewImage: input.onPreviewImage,
     onDetachToPane: input.onDetachToPane,
     autoFollowRef: input.autoFollowRef,
+    getUserScrollGestureLive: input.getUserScrollGestureLive,
     externalRestoreAnchorMessageId: input.externalRestoreAnchorMessageId,
     onManualTranscriptJump: input.onManualTranscriptJump,
     onJumpToLatest: input.onJumpToLatest,

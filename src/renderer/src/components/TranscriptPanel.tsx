@@ -56,6 +56,11 @@ import { CloseoutFileChangesSection } from './CloseoutFileChangesSection'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import {
+  USER_SCROLL_GESTURE_WINDOW_MS,
+  decidePhase1AnchorCorrection,
+  shouldRearmPhase1DeferOnSkip
+} from '../lib/TranscriptScroll'
+import {
   getChatTranscriptStore,
   useChatTranscript
 } from '../lib/useChatTranscript'
@@ -72,6 +77,9 @@ import {
   projectRow,
   projectRows,
   selectWindow,
+  selectWindowBand,
+  virtualWindowBandChanged,
+  computeTranscriptScrollSpy,
   findScrollAnchor,
   sumHeights,
   sumHeightOffsets,
@@ -83,8 +91,10 @@ import {
   measurementContentVersion,
   structuralRowSetKey,
   widthBucket,
+  type TranscriptScrollSpy,
   type VirtualRow,
-  type VirtualWindow
+  type VirtualWindow,
+  type VirtualWindowBand
 } from '../lib/TranscriptVirtualWindow'
 import {
   buildTranscriptUserGutterMarkers,
@@ -617,6 +627,12 @@ export type TranscriptPanelProps = {
    * is disengaged. A stable ref, so it never perturbs the memo.
    */
   autoFollowRef?: React.MutableRefObject<boolean>
+  /**
+   * Cut 2a — live user scroll gesture probe from useTranscriptScrollState
+   * (wheel/touch/key settle window or scrollbar pointer hold). Phase-1
+   * defers absolute restore while this returns true. Stable callback.
+   */
+  getUserScrollGestureLive?: () => boolean
   /**
    * Arm the parent scroll evaluator's programmatic-scroll guard for the
    * virtual-window anchor-correction write below. Without it the anchor
@@ -1395,6 +1411,7 @@ function useTranscriptVirtualization(params: {
   contentRef?: React.RefObject<HTMLDivElement | null>
   chatId?: string | null
   autoFollowRef?: React.MutableRefObject<boolean>
+  getUserScrollGestureLive?: () => boolean
   onProgrammaticScrollWrite?: (landedScrollTop: number) => void
   compactDensity: boolean
   forcedRowIndex?: number | null
@@ -1418,6 +1435,12 @@ function useTranscriptVirtualization(params: {
    * desync the spacers from real layout.
    */
   hiddenRowKeys?: ReadonlySet<string>
+  /**
+   * Cut 1b — gutter-owned sink for per-frame spy updates. Invoked from the
+   * scroll RAF even when `scrollTick` is held (band unchanged). Must NOT
+   * setState inside this hook / TranscriptPanel; the gutter registers itself.
+   */
+  spySinkRef?: React.MutableRefObject<((snap: TranscriptScrollSpy) => void) | null>
 }): {
   window: VirtualWindow
   blockRef: (el: HTMLDivElement | null) => void
@@ -1429,7 +1452,8 @@ function useTranscriptVirtualization(params: {
    * viewport) currently sits on, derived from the SAME `effectiveScrollTop` +
    * held `windowHeights` that drive the window — a pure read, never a scroll
    * write. Null on the non-virtualised path. Consumers map it to a user-message
-   * marker via `findActiveGutterMarkerKey`.
+   * marker via `findActiveGutterMarkerKey`. Structural / band-commit path only;
+   * mid-band frames reach the gutter via `spySinkRef`.
    */
   spyRowIndex: number | null
   /** Scroll-progress fraction (0..1) for the rail's read-position fill. */
@@ -1448,12 +1472,14 @@ function useTranscriptVirtualization(params: {
     contentRef,
     chatId,
     autoFollowRef,
+    getUserScrollGestureLive,
     onProgrammaticScrollWrite,
     compactDensity,
     forcedRowIndex,
     activeLiveRowKeys,
     expandedRowIds,
-    hiddenRowKeys
+    hiddenRowKeys,
+    spySinkRef
   } = params
 
   const measurementsRef = useRef<Map<string, number>>(new Map())
@@ -1515,14 +1541,47 @@ function useTranscriptVirtualization(params: {
   // loads older rows.
   const hasScrolledRef = useRef(false)
   const skipNextAnchorCorrectionRef = useRef(false)
+  // Cut 1a — mounted-band identity + held-window geometry for the RAF bump gate.
+  // `committedBandRef` is the last published band; held heights/offsets mirror
+  // the hysteresis snapshot `selectWindow` uses (not live measure heights).
+  const committedBandRef = useRef<VirtualWindowBand | null>(null)
+  const windowHeightsRef = useRef<readonly number[]>(EMPTY_TRANSCRIPT_HEIGHTS)
+  const windowHeightOffsetsRef = useRef<readonly number[]>(EMPTY_TRANSCRIPT_HEIGHT_OFFSETS)
+  const forcedRowIndexRef = useRef<number | null>(forcedRowIndex ?? null)
+  // Cut 2a — Phase-1 deferred while a user gesture is live. Timer re-bumps
+  // measure after the settle window so absolute restore can apply once quiet.
+  // Keep `deferredPendingRef` true across the timer→bump path: a soft skip
+  // (!measureConverged) must re-arm rather than drop the restore forever.
+  const deferredPendingRef = useRef(false)
+  const deferredAnchorCorrectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearDeferredAnchorCorrection = useCallback(() => {
+    deferredPendingRef.current = false
+    if (deferredAnchorCorrectionTimerRef.current !== null) {
+      clearTimeout(deferredAnchorCorrectionTimerRef.current)
+      deferredAnchorCorrectionTimerRef.current = null
+    }
+  }, [])
 
-  // Re-render signals. State (not refs) so a change forces a recompute;
-  // the heavy work is gone (only the small window mounts) so a per-frame
-  // recompute is cheap.
+  // Re-render signals. State (not refs) so a change forces a recompute.
+  // Cut 1a: scrollTick bumps only when the mounted band changes (or on
+  // hasScrolled false→true / chat reset / sync); mid-band scroll frames
+  // update the gutter via spySinkRef instead of re-running this tree.
   const [scrollTick, setScrollTick] = useState(0)
   const [measureTick, setMeasureTick] = useState(0)
   const bumpScroll = useCallback(() => setScrollTick((t) => (t + 1) % 0x7fffffff), [])
   const bumpMeasure = useCallback(() => setMeasureTick((t) => (t + 1) % 0x7fffffff), [])
+  const scheduleDeferredAnchorCorrection = useCallback(() => {
+    deferredPendingRef.current = true
+    if (deferredAnchorCorrectionTimerRef.current !== null) {
+      clearTimeout(deferredAnchorCorrectionTimerRef.current)
+    }
+    deferredAnchorCorrectionTimerRef.current = setTimeout(() => {
+      deferredAnchorCorrectionTimerRef.current = null
+      // Do not clear deferredPending here — the next layout pass decides
+      // apply / re-arm (soft skip) / clear (hard skip).
+      bumpMeasure()
+    }, USER_SCROLL_GESTURE_WINDOW_MS)
+  }, [bumpMeasure])
   useEffect(() => {
     if (measurementChatIdRef.current === chatId) return
     measurementChatIdRef.current = chatId
@@ -1531,9 +1590,12 @@ function useTranscriptVirtualization(params: {
     blockElsRef.current.clear()
     anchorRef.current = null
     hasScrolledRef.current = false
+    committedBandRef.current = null
+    clearDeferredAnchorCorrection()
     bumpMeasure()
     bumpScroll()
-  }, [bumpMeasure, bumpScroll, chatId])
+  }, [bumpMeasure, bumpScroll, chatId, clearDeferredAnchorCorrection])
+  useEffect(() => () => clearDeferredAnchorCorrection(), [clearDeferredAnchorCorrection])
   const syncScrollPosition = useCallback(
     (nextScrollTop: number): void => {
       if (!enabled) return
@@ -1548,9 +1610,10 @@ function useTranscriptVirtualization(params: {
       hasScrolledRef.current = true
       anchorRef.current = null
       skipNextAnchorCorrectionRef.current = true
+      clearDeferredAnchorCorrection()
       bumpScroll()
     },
-    [bumpScroll, contentRef, enabled, scrollRef]
+    [bumpScroll, clearDeferredAnchorCorrection, contentRef, enabled, scrollRef]
   )
 
   // Slot heights (measured-or-estimated, gap folded in). Recomputed only
@@ -1583,7 +1646,7 @@ function useTranscriptVirtualization(params: {
   rowsRef.current = rows
 
   // Window selection. Inline (not memoised) because it reads scroll refs;
-  // it re-runs on every tick, which is cheap.
+  // it re-runs on scrollTick / structural renders (cut 1a holds mid-band).
   //
   // Drive the window from the REAL browser scroll position. The App
   // scroll machinery keeps `scrollTop` pinned to the bottom while
@@ -1628,6 +1691,9 @@ function useTranscriptVirtualization(params: {
     () => (enabled ? buildHeightOffsets(windowHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
     [enabled, windowHeights]
   )
+  windowHeightsRef.current = windowHeights
+  windowHeightOffsetsRef.current = windowHeightOffsets
+  forcedRowIndexRef.current = forcedRowIndex ?? null
   const virtualWindow: VirtualWindow = enabled
     ? selectWindow({
         scrollTop: effectiveScrollTop,
@@ -1638,46 +1704,38 @@ function useTranscriptVirtualization(params: {
         forceIndex: forcedRowIndex
       })
     : { startIndex: 0, endIndex: rows.length, topSpacerPx: 0, bottomSpacerPx: 0 }
+  // Publish the band we just committed so the next scroll RAF can gate
+  // bumpScroll against the mounted window (cut 1a).
+  committedBandRef.current = enabled
+    ? {
+        startIndex: virtualWindow.startIndex,
+        endIndex: virtualWindow.endIndex,
+        forceIndex:
+          typeof forcedRowIndex === 'number' && Number.isInteger(forcedRowIndex)
+            ? forcedRowIndex
+            : null
+      }
+    : null
 
-  // Scroll-spy anchor (reading position). Same inputs as the window — the held
-  // `windowHeights` snapshot + `effectiveScrollTop` — so it recomputes on scroll
-  // (scrollTick) but is HELD across a pure measurement bump, sharing the window's
-  // anti-flicker hysteresis. The reference line is the top-third of the viewport
-  // (the common scroll-spy `-30% / -70%` convention) so a turn reads "current"
-  // once it's comfortably into the reading pane, not at the literal top pixel.
-  // Pure arithmetic over the FULL heights array (covers off-window rows that
-  // virtualisation has unmounted) — never a scroll write, never touches
-  // autoFollowRef. During `forceBottomOnLoad` `effectiveScrollTop` is the synthetic
-  // bottom, so it resolves to the latest turn (never flashes the first message).
-  const spyRowIndex =
-    enabled && windowHeights.length > 0
-      ? findScrollAnchor(
-          effectiveScrollTop + viewportRef.current * 0.3,
-          windowHeights,
-          windowHeightOffsets
-        ).index
-      : null
-
-  // Scroll-progress fraction (0..1) for the rail's read-position fill. The rail
-  // is body-portaled (position:fixed, NOT a descendant of the scroller), so a CSS
-  // `scroll()` timeline can't bind to the transcript — we derive the fraction here
-  // from the same held snapshot and hand it to the gutter as a plain number. 0
-  // when nothing scrolls (short chats), which reads better than a full bar.
-  const spyMaxScroll = enabled ? Math.max(0, totalHeight - viewportRef.current) : 0
-  const spyProgress =
-    spyMaxScroll > 0 ? Math.max(0, Math.min(1, effectiveScrollTop / spyMaxScroll)) : 0
-
-  // Visible-content fraction for the rail's reading lens: viewport ÷ total
-  // content height, from the same held snapshot as spyProgress. 1 (not 0) when
-  // the whole transcript fits, so the lens layout can distinguish "everything
-  // visible → hide lens" from "unmeasured → hide lens" with one code path.
-  const spyViewportFraction =
-    enabled && totalHeight > 0
-      ? Math.max(0, Math.min(1, viewportRef.current / totalHeight))
-      : 0
+  // Scroll-spy (structural / band-commit path). Mid-band frames update the
+  // gutter through `spySinkRef` with the same pure helper so the rail never
+  // freezes while scrollTick is held. Progress uses LIVE total height;
+  // rowIndex uses HELD window heights + the top-third reading line.
+  const spySnap = computeTranscriptScrollSpy({
+    enabled,
+    scrollTop: effectiveScrollTop,
+    viewportHeight: viewportRef.current,
+    liveHeightOffsets: heightOffsets,
+    windowHeights,
+    windowHeightOffsets
+  })
+  const spyRowIndex = spySnap.rowIndex
+  const spyProgress = spySnap.progress
+  const spyViewportFraction = spySnap.viewportFraction
 
   // Read-only passive scroll + resize listener: refresh metrics, capture
-  // the anchor, and request a window recompute. Never writes scrollTop.
+  // the anchor, publish gutter spy, and bump scrollTick only when the
+  // mounted band changes (cut 1a). Never writes scrollTop.
   useEffect(() => {
     if (!enabled) return
     const scroller = scrollRef.current
@@ -1706,18 +1764,30 @@ function useTranscriptVirtualization(params: {
         const el = scrollRef.current
         if (!el) return
         // 1.0.7 — if this scroll event is the anchor correction's OWN
-        // `scrollTop +=` write, re-read metrics but DON'T re-baseline the
-        // anchor or bump. Re-baselining here from a mid-convergence heights
-        // snapshot is what produced a fresh non-zero delta every pass → another
-        // write → the async oscillation. Consuming the flag makes the anchor
-        // correction one-shot: the baseline only moves on real user scrolls.
+        // `scrollTop +=` write, re-read metrics + publish spy, but DON'T
+        // re-baseline the anchor or bump scrollTick. Re-baselining here from a
+        // mid-convergence heights snapshot is what produced a fresh non-zero
+        // delta every pass → another write → the async oscillation. Consuming
+        // the flag makes the anchor correction one-shot: the baseline only
+        // moves on real user scrolls. Spy still publishes so the gutter lens
+        // tracks the corrected scrollTop.
         if (anchorWriteRef.current) {
           anchorWriteRef.current = false
           readMetricsInto(el)
+          const snap = computeTranscriptScrollSpy({
+            enabled: true,
+            scrollTop: scrollTopRef.current,
+            viewportHeight: viewportRef.current,
+            liveHeightOffsets: heightOffsetsRef.current,
+            windowHeights: windowHeightsRef.current,
+            windowHeightOffsets: windowHeightOffsetsRef.current
+          })
+          spySinkRef?.current?.(snap)
           return
         }
         // The scroller has reported a real position (incl. the
         // snap-to-bottom): from here the window tracks the live scrollTop.
+        const wasScrolled = hasScrolledRef.current
         hasScrolledRef.current = true
         const bucketChanged = readMetricsInto(el)
         // Re-baseline the anchor at the new scroll position. Capturing the
@@ -1739,7 +1809,35 @@ function useTranscriptVirtualization(params: {
             }
           : null
         if (bucketChanged) bumpMeasure()
-        bumpScroll()
+        // Cut 1b — publish spy every scroll frame (even when scrollTick is held).
+        // hasScrolled is true here, so effectiveScrollTop === scrollTopRef.
+        const snap = computeTranscriptScrollSpy({
+          enabled: true,
+          scrollTop: scrollTopRef.current,
+          viewportHeight: viewportRef.current,
+          liveHeightOffsets: heightOffsetsRef.current,
+          windowHeights: windowHeightsRef.current,
+          windowHeightOffsets: windowHeightOffsetsRef.current
+        })
+        spySinkRef?.current?.(snap)
+        // Cut 1a — always bump on first real scroll; otherwise only when the
+        // mounted band (start/end/force) would change.
+        if (
+          !wasScrolled ||
+          virtualWindowBandChanged(
+            committedBandRef.current,
+            selectWindowBand({
+              scrollTop: scrollTopRef.current,
+              viewportHeight: viewportRef.current,
+              heights: windowHeightsRef.current,
+              heightOffsets: windowHeightOffsetsRef.current,
+              overscanPx: DEFAULT_OVERSCAN_PX,
+              forceIndex: forcedRowIndexRef.current
+            })
+          )
+        ) {
+          bumpScroll()
+        }
       })
     }
     scroller.addEventListener('scroll', refresh, { passive: true })
@@ -1752,7 +1850,7 @@ function useTranscriptVirtualization(params: {
         scrollRafRef.current = null
       }
     }
-  }, [enabled, scrollRef, bumpScroll, bumpMeasure])
+  }, [enabled, scrollRef, bumpScroll, bumpMeasure, contentRef, spySinkRef])
 
   // Shared ResizeObserver on individual mounted blocks → re-measure on
   // async growth (CodeMirror, ActivityStack output reveal, image load).
@@ -1818,30 +1916,72 @@ function useTranscriptVirtualization(params: {
     // bottom where the App machinery owns scrollTop.
     const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
     const atBottom = distanceFromBottom <= 24
-    const skipAnchorCorrection = skipNextAnchorCorrectionRef.current
+    const skipNext = skipNextAnchorCorrectionRef.current
     skipNextAnchorCorrectionRef.current = false
-    if (!skipAnchorCorrection && measureConvergedRef.current && !atBottom && anchorRef.current) {
-      const anchor = anchorRef.current
+    if (skipNext) clearDeferredAnchorCorrection()
+
+    const anchor = anchorRef.current
+    let hasAnchor = false
+    let absDeltaPx = 0
+    let restoreTarget = 0
+    let restoreAboveHeight = 0
+    if (anchor) {
       const idx = rowsRef.current.findIndex((r) => r.rowKey === anchor.rowKey)
       if (idx >= 0) {
-        const aboveHeight = sumHeightOffsets(heightOffsetsRef.current, 0, idx)
-        const target = Math.max(0, aboveHeight + anchor.offsetWithin)
-        if (Math.abs(target - scroller.scrollTop) > 0.5) {
-          // 1.0.7 — flag the programmatic write so the passive scroll listener
-          // recognises the resulting scroll event as our own and skips the
-          // re-baseline/bump (Fix 4), keeping the restore one-shot.
-          anchorWriteRef.current = true
-          // Arm the PARENT scroll evaluator BEFORE the write — setting
-          // `scrollTop` dispatches a synchronous scroll event, and without a
-          // pre-arm the App-level auto-follow listener can hit the 2px engage
-          // band (movedDown, no gesture) and re-lock follow before the guard
-          // exists. Refresh after the write with the browser-clamped landed
-          // position so overshoot-to-bottom remains matched.
-          onProgrammaticScrollWrite?.(target)
-          scroller.scrollTop = target
-          onProgrammaticScrollWrite?.(scroller.scrollTop)
-        }
-        anchor.aboveHeight = aboveHeight
+        hasAnchor = true
+        restoreAboveHeight = sumHeightOffsets(heightOffsetsRef.current, 0, idx)
+        restoreTarget = Math.max(0, restoreAboveHeight + anchor.offsetWithin)
+        absDeltaPx = Math.abs(restoreTarget - scroller.scrollTop)
+      }
+    }
+
+    const phase1Decision = decidePhase1AnchorCorrection({
+      skipNext,
+      measureConverged: measureConvergedRef.current,
+      atBottom,
+      hasAnchor,
+      absDeltaPx,
+      gestureLive: getUserScrollGestureLive?.() === true
+    })
+
+    if (phase1Decision === 'defer') {
+      // Mid-gesture: do not write scrollTop or arm the programmatic guard.
+      scheduleDeferredAnchorCorrection()
+      if (anchor && hasAnchor) anchor.aboveHeight = restoreAboveHeight
+    } else if (phase1Decision === 'apply') {
+      clearDeferredAnchorCorrection()
+      // 1.0.7 — flag the programmatic write so the passive scroll listener
+      // recognises the resulting scroll event as our own and skips the
+      // re-baseline/bump (Fix 4), keeping the restore one-shot.
+      anchorWriteRef.current = true
+      // Arm the PARENT scroll evaluator BEFORE the write — setting
+      // `scrollTop` dispatches a synchronous scroll event, and without a
+      // pre-arm the App-level auto-follow listener can hit the 2px engage
+      // band (movedDown, no gesture) and re-lock follow before the guard
+      // exists. Refresh after the write with the browser-clamped landed
+      // position so overshoot-to-bottom remains matched.
+      onProgrammaticScrollWrite?.(restoreTarget)
+      scroller.scrollTop = restoreTarget
+      onProgrammaticScrollWrite?.(scroller.scrollTop)
+      if (anchor) anchor.aboveHeight = restoreAboveHeight
+    } else {
+      // skip — soft (!converged) keeps a pending defer alive; hard drops it.
+      if (
+        shouldRearmPhase1DeferOnSkip({
+          deferredPending: deferredPendingRef.current,
+          skipNext,
+          atBottom,
+          hasAnchor,
+          measureConverged: measureConvergedRef.current
+        })
+      ) {
+        scheduleDeferredAnchorCorrection()
+      } else if (deferredPendingRef.current) {
+        clearDeferredAnchorCorrection()
+      }
+      if (anchor && hasAnchor && !atBottom && measureConvergedRef.current && !skipNext) {
+        // Soft skip (sub-epsilon): keep the tracked above-height in sync.
+        anchor.aboveHeight = restoreAboveHeight
       }
     }
 
@@ -2080,6 +2220,7 @@ export const TranscriptPanel = memo(
     copy,
     virtualize,
     autoFollowRef,
+    getUserScrollGestureLive,
     onProgrammaticScrollWrite,
     showRunCompleteSummary,
     collapseOlderRounds,
@@ -3459,6 +3600,9 @@ export const TranscriptPanel = memo(
       return rowPosition >= 0 ? rowPosition : null
     }, [externalRestoreAnchorMessageId, findProjectedRowForMessage, projectedRowLookup])
     const virtualRows = virtualizeEnabled ? projectedRows : EMPTY_VIRTUAL_ROWS
+    // Cut 1b — gutter registers its setState sink here; virtualizer publishes
+    // per-frame spy without bumping scrollTick / re-rendering this panel.
+    const gutterSpySinkRef = useRef<((snap: TranscriptScrollSpy) => void) | null>(null)
     const {
       window: virtualWindow,
       blockRef: virtualBlockRef,
@@ -3475,12 +3619,14 @@ export const TranscriptPanel = memo(
       contentRef,
       chatId: currentChat?.appChatId ?? null,
       autoFollowRef,
+      getUserScrollGestureLive,
       onProgrammaticScrollWrite,
       compactDensity,
       forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
       activeLiveRowKeys,
       expandedRowIds: expandedRowIdsWithLiveViewports,
-      hiddenRowKeys
+      hiddenRowKeys,
+      spySinkRef: gutterSpySinkRef
     })
     const virtualHeightOffsets = useMemo(
       () => (virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -3824,6 +3970,7 @@ export const TranscriptPanel = memo(
             activeScrollRowKey={activeScrollRowKey}
             scrollProgress={spyProgress}
             scrollViewportFraction={spyViewportFraction}
+            spySinkRef={gutterSpySinkRef}
             scrollRef={scrollRef}
             contentRef={contentRef}
             currentChat={currentChat}

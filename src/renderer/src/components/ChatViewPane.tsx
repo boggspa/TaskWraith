@@ -557,6 +557,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
             {...buildChatViewProps({
               ...props,
               autoFollowRef: paneScrollState.autoFollowRef,
+              getUserScrollGestureLive: paneScrollState.getUserScrollGestureLive,
               externalRestoreAnchorMessageId: paneScrollState.externalRestoreAnchorMessageId,
               onManualTranscriptJump: paneScrollState.beginManualTranscriptJump,
               onJumpToLatest: paneScrollState.handleJumpToLatest,

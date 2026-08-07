@@ -104,9 +104,11 @@ describe('two-pane simultaneous streaming', () => {
     const onManualTranscriptJump = () => {}
     const onJumpToLatest = () => {}
     const onProgrammaticScrollWrite = () => {}
+    const getUserScrollGestureLive = () => false
     const props = buildChatViewProps({
       ...viewerInput(chatA, runningChatIds),
       autoFollowRef,
+      getUserScrollGestureLive,
       externalRestoreAnchorMessageId: 'a1',
       onManualTranscriptJump,
       onJumpToLatest,
@@ -114,6 +116,7 @@ describe('two-pane simultaneous streaming', () => {
     })
 
     expect(props.autoFollowRef).toBe(autoFollowRef)
+    expect(props.getUserScrollGestureLive).toBe(getUserScrollGestureLive)
     expect(props.externalRestoreAnchorMessageId).toBe('a1')
     expect(props.onManualTranscriptJump).toBe(onManualTranscriptJump)
     expect(props.onJumpToLatest).toBe(onJumpToLatest)

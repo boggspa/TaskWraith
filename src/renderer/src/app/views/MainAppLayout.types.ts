@@ -208,6 +208,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   auraProviderKey: any
   autoFollowRef: any
   markMainTranscriptProgrammaticScroll: (landedScrollTop: number) => void
+  getMainTranscriptUserScrollGestureLive: () => boolean
   markSideTranscriptProgrammaticScroll: (landedScrollTop: number) => void
   autoResumeParentOnSubThreadCompletion: any
   autoUpdateEnabled: any

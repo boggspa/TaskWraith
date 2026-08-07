@@ -3,12 +3,16 @@ import { createPortal } from 'react-dom'
 import type { ChatRecord } from '../../../main/store/types'
 import {
   GUTTER_BULGE_MAX_SCALE,
+  findActiveGutterMarkerKey,
   gutterBulgeRadiusPx,
   layoutGutterLens,
   layoutGutterVerticalFrame,
   layoutTranscriptUserGutterMarkers,
+  shouldAcceptGutterLiveSpy,
+  structuralGutterSpyPropsChanged,
   type TranscriptUserGutterMarker
 } from '../lib/TranscriptUserMessageGutter'
+import type { TranscriptScrollSpy } from '../lib/TranscriptVirtualWindow'
 import { railClearBottomPx, useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { collectMessageMediaRefs } from './ChatMediaPanel'
 import { FileTypeIcon } from './FileTypeIcon'
@@ -123,6 +127,12 @@ interface TranscriptUserMessageGutterProps {
    * Omitted / 0 / >=1 hides the lens (unmeasured, or everything fits).
    */
   scrollViewportFraction?: number
+  /**
+   * Cut 1b — register a setState sink so the virtualiser can publish mid-band
+   * spy frames without bumping scrollTick / re-rendering TranscriptPanel.
+   * Structural spy props above still drive mount / band-commit renders.
+   */
+  spySinkRef?: React.MutableRefObject<((snap: TranscriptScrollSpy) => void) | null>
   scrollRef: React.RefObject<HTMLDivElement | null>
   contentRef: React.RefObject<HTMLDivElement | null>
   currentChat?: ChatRecord | null
@@ -241,6 +251,7 @@ export function TranscriptUserMessageGutter({
   activeScrollRowKey,
   scrollProgress,
   scrollViewportFraction,
+  spySinkRef,
   scrollRef,
   contentRef,
   currentChat,
@@ -250,6 +261,17 @@ export function TranscriptUserMessageGutter({
 }: TranscriptUserMessageGutterProps): React.JSX.Element | null {
   const [frame, setFrame] = useState<GutterFrame | null>(null)
   const [activeMarker, setActiveMarker] = useState<ActiveMarkerState | null>(null)
+  // Cut 1b — live spy from the virtualiser RAF sink. Overrides structural
+  // spy props for lens / is-read / is-in-view while the mounted window band
+  // is held (no scrollTick). Kept local so TranscriptPanel does not re-render.
+  // Cleared when structural props freshen (content growth while scrolled up)
+  // so the latch cannot permanently ignore parent recomputes.
+  const [liveSpy, setLiveSpy] = useState<TranscriptScrollSpy | null>(null)
+  const lastStructuralSpyPropsRef = useRef<{
+    scrollProgress: number | undefined
+    scrollViewportFraction: number | undefined
+    activeScrollRowKey: string | null | undefined
+  } | null>(null)
   const markerRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const dismissTimerRef = useRef<number | null>(null)
   // Preview open-delay (pointer only): a short dwell before the popover commits,
@@ -357,6 +379,52 @@ export function TranscriptUserMessageGutter({
   // filtered transitionend). Kept identical to the sibling filter rail so the
   // two can't drift apart again. See lib/useRailFrameRemeasure.
   useRailFrameRemeasure(updateFrame, { scrollRef, contentRef, railRef })
+
+  // Cut 1b — register gutter-local setState as the virtualiser's spy sink.
+  useLayoutEffect(() => {
+    if (!spySinkRef) return
+    spySinkRef.current = (snap) => {
+      setLiveSpy((prev) => (shouldAcceptGutterLiveSpy(prev, snap) ? snap : prev))
+    }
+    return () => {
+      spySinkRef.current = null
+    }
+  }, [spySinkRef])
+
+  // When TranscriptPanel recomputes structural spy props (streaming growth,
+  // band commit, measure), drop the RAF latch so props win until the next
+  // sink tick. Without this, liveSpy != null forever ignores fresher props.
+  useEffect(() => {
+    const next = { scrollProgress, scrollViewportFraction, activeScrollRowKey }
+    const prev = lastStructuralSpyPropsRef.current
+    lastStructuralSpyPropsRef.current = next
+    if (structuralGutterSpyPropsChanged(prev, next)) {
+      setLiveSpy(null)
+    }
+  }, [scrollProgress, scrollViewportFraction, activeScrollRowKey])
+
+  // Prefer live RAF spy when present; fall back to structural props from the
+  // last band-commit / mount render.
+  const progressFraction = Math.max(
+    0,
+    Math.min(
+      1,
+      Number.isFinite(liveSpy?.progress)
+        ? (liveSpy as TranscriptScrollSpy).progress
+        : Number.isFinite(scrollProgress)
+          ? (scrollProgress as number)
+          : 0
+    )
+  )
+  const viewportFraction = Number.isFinite(liveSpy?.viewportFraction)
+    ? (liveSpy as TranscriptScrollSpy).viewportFraction
+    : Number.isFinite(scrollViewportFraction)
+      ? (scrollViewportFraction as number)
+      : 0
+  const effectiveActiveScrollRowKey =
+    liveSpy != null
+      ? findActiveGutterMarkerKey(markers, liveSpy.rowIndex ?? -1)
+      : activeScrollRowKey ?? null
 
   const activeMarkerModel = useMemo(
     () => markers.find((marker) => marker.key === activeMarker?.key) || null,
@@ -585,8 +653,8 @@ export function TranscriptUserMessageGutter({
       const hovered = markers.findIndex((marker) => marker.key === activeMarker.key)
       if (hovered >= 0) return hovered
     }
-    if (activeScrollRowKey) {
-      const inView = markers.findIndex((marker) => marker.key === activeScrollRowKey)
+    if (effectiveActiveScrollRowKey) {
+      const inView = markers.findIndex((marker) => marker.key === effectiveActiveScrollRowKey)
       if (inView >= 0) return inView
     }
     return 0
@@ -668,11 +736,6 @@ export function TranscriptUserMessageGutter({
 
   if (markers.length < 2) return null
 
-  const progressFraction = Math.max(
-    0,
-    Math.min(1, Number.isFinite(scrollProgress) ? (scrollProgress as number) : 0)
-  )
-
   // Skeuomorphic reading lens: a slide-rule-cursor carriage riding the stack.
   // Geometry (height = visible share, position = scroll progress) is THE
   // scroll-position channel now that the vertical spine/fill is gone.
@@ -681,7 +744,7 @@ export function TranscriptUserMessageGutter({
         markerStackBounds.first,
         markerStackBounds.last,
         progressFraction,
-        Number.isFinite(scrollViewportFraction) ? (scrollViewportFraction as number) : 0
+        viewportFraction
       )
     : null
 
@@ -730,7 +793,7 @@ export function TranscriptUserMessageGutter({
           type="button"
           className={`transcript-user-gutter-marker${
             activeMarker?.key === marker.key ? ' is-active' : ''
-          }${activeScrollRowKey === marker.key ? ' is-in-view' : ''}${
+          }${effectiveActiveScrollRowKey === marker.key ? ' is-in-view' : ''}${
             readFillPx !== null && (markerCenters.get(marker.key) ?? Infinity) <= readFillPx + 0.5
               ? ' is-read'
               : ''
@@ -743,7 +806,7 @@ export function TranscriptUserMessageGutter({
           }}
           data-message-id={marker.messageId}
           data-row-key={marker.rowKey}
-          aria-current={activeScrollRowKey === marker.key ? 'true' : undefined}
+          aria-current={effectiveActiveScrollRowKey === marker.key ? 'true' : undefined}
           aria-label={`Jump to user message ${marker.ordinal}: ${marker.title}`}
           tabIndex={index === activeIndex ? 0 : -1}
           onMouseEnter={(event) => activateMarker(marker, event.currentTarget, false)}
