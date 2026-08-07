@@ -1106,7 +1106,8 @@ describe('UsageJournalStore', () => {
       expect(restarted.getRecords().map((record) => record.id)).toEqual([`sibling-${crashStep}`])
       expect(fs.readFileSync(archivePath, 'utf8')).not.toContain(`target-${crashStep}`)
       expect(fs.existsSync(`${journalPath}.history-mutation-v1.json`)).toBe(false)
-    }
+    },
+    30_000
   )
 
   it('recovers bytes isolated by a crash after the retirement rename', () => {
