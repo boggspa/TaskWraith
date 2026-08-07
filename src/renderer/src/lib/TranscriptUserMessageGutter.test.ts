@@ -14,6 +14,8 @@ import {
   layoutGutterLens,
   layoutGutterVerticalFrame,
   layoutTranscriptUserGutterMarkers,
+  shouldAcceptGutterLiveSpy,
+  structuralGutterSpyPropsChanged,
   userGutterPreview,
   userGutterTitle
 } from './TranscriptUserMessageGutter'
@@ -377,6 +379,41 @@ describe('layoutGutterVerticalFrame (rail band vs the workspace terminal)', () =
   it('falls back to the resting bottom on an unmeasured clear bottom', () => {
     const resting = layoutGutterVerticalFrame(scrollerTop, scrollerHeight, scrollerBottom)
     expect(layoutGutterVerticalFrame(scrollerTop, scrollerHeight, Number.NaN)).toEqual(resting)
+  })
+})
+
+describe('cut 1b gutter liveSpy merge', () => {
+  it('clears the liveSpy latch when structural spy props change (streaming growth)', () => {
+    // Panel recomputes progress from a taller live total while the user is
+    // scrolled up; the RAF sink may not fire, so props must win.
+    expect(
+      structuralGutterSpyPropsChanged(
+        { scrollProgress: 0.4, scrollViewportFraction: 0.2, activeScrollRowKey: 'u#0' },
+        { scrollProgress: 0.35, scrollViewportFraction: 0.18, activeScrollRowKey: 'u#0' }
+      )
+    ).toBe(true)
+    expect(
+      structuralGutterSpyPropsChanged(
+        { scrollProgress: 0.4, scrollViewportFraction: 0.2, activeScrollRowKey: 'u#0' },
+        { scrollProgress: 0.4, scrollViewportFraction: 0.2, activeScrollRowKey: 'u#0' }
+      )
+    ).toBe(false)
+    expect(
+      structuralGutterSpyPropsChanged(null, {
+        scrollProgress: 0.4,
+        scrollViewportFraction: 0.2,
+        activeScrollRowKey: 'u#0'
+      })
+    ).toBe(false)
+  })
+
+  it('accepts sub-1e-4 progress deltas (pixel-scale on tall threads)', () => {
+    // maxScroll ≈ 50_000 → 2px ≈ 4e-5 normalized; the old 1e-4 bail-out
+    // treated that as unchanged and froze the lens.
+    const prev = { rowIndex: 12, progress: 0.4, viewportFraction: 0.15 }
+    const snap = { rowIndex: 12, progress: 0.4 + 4e-5, viewportFraction: 0.15 }
+    expect(shouldAcceptGutterLiveSpy(prev, snap)).toBe(true)
+    expect(shouldAcceptGutterLiveSpy(prev, prev)).toBe(false)
   })
 })
 

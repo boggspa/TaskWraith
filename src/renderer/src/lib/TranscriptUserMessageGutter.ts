@@ -1,6 +1,11 @@
 import type { ChatMessage } from '../../../main/store/types'
 import { truncateUserMessagePreview } from './UserMessageCollapse'
-import { buildHeightOffsets, totalHeightFromOffsets, type VirtualRow } from './TranscriptVirtualWindow'
+import {
+  buildHeightOffsets,
+  totalHeightFromOffsets,
+  type TranscriptScrollSpy,
+  type VirtualRow
+} from './TranscriptVirtualWindow'
 
 const GUTTER_PREVIEW_THRESHOLDS = {
   maxLines: 4,
@@ -195,6 +200,47 @@ export function findActiveGutterMarkerKey(
     else hi = mid
   }
   return lo > 0 ? markers[lo - 1].key : null
+}
+
+/** Structural spy props from TranscriptPanel (band-commit / mount render). */
+export type StructuralGutterSpyProps = {
+  scrollProgress?: number
+  scrollViewportFraction?: number
+  activeScrollRowKey?: string | null
+}
+
+/**
+ * Cut 1b — once the RAF sink has latched `liveSpy`, fresher structural props
+ * (e.g. content growth while scrolled up) must clear that latch so the rail
+ * does not keep painting a stale progress / in-view marker.
+ */
+export function structuralGutterSpyPropsChanged(
+  prev: StructuralGutterSpyProps | null,
+  next: StructuralGutterSpyProps
+): boolean {
+  if (!prev) return false
+  return (
+    prev.scrollProgress !== next.scrollProgress ||
+    prev.scrollViewportFraction !== next.scrollViewportFraction ||
+    prev.activeScrollRowKey !== next.activeScrollRowKey
+  )
+}
+
+/**
+ * Whether the gutter RAF spy sink should replace `prev` with `snap`.
+ * Normalized progress uses float-noise tolerance only — a 1e-4 floor can
+ * swallow multi-pixel scroll shifts on tall threads (delta ≈ px / maxScroll).
+ */
+export function shouldAcceptGutterLiveSpy(
+  prev: TranscriptScrollSpy | null,
+  snap: TranscriptScrollSpy
+): boolean {
+  if (!prev) return true
+  if (prev.rowIndex !== snap.rowIndex) return true
+  // Float noise only — never a normalized 1e-4 floor (swallows px on tall threads).
+  if (Math.abs(prev.progress - snap.progress) >= Number.EPSILON) return true
+  if (Math.abs(prev.viewportFraction - snap.viewportFraction) >= Number.EPSILON) return true
+  return false
 }
 
 function compactMarkerStepPx(count: number): number {

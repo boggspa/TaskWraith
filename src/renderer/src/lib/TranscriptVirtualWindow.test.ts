@@ -26,6 +26,9 @@ import {
   sumHeightOffsets,
   totalHeightFromOffsets,
   selectWindow,
+  selectWindowBand,
+  virtualWindowBandChanged,
+  computeTranscriptScrollSpy,
   computeAnchorDelta,
   windowReachesEnd,
   findScrollAnchor,
@@ -755,6 +758,134 @@ describe('TranscriptVirtualWindow', () => {
       // NaN scrollTop -> 0; infinite viewport clamps to a usable window
       expect(w.startIndex).toBe(0)
       expect(w.topSpacerPx).toBe(0)
+    })
+  })
+
+  describe('virtualWindowBandChanged / selectWindowBand', () => {
+    // Cut 1a: gate scrollTick bumps on mounted band identity (start/end/force),
+    // not every scroll frame. Spacers are intentionally ignored.
+    const bandInput = (scrollTop: number, forceIndex?: number | null) => ({
+      scrollTop,
+      viewportHeight: 200,
+      heights: uniformHeights(40, 100),
+      overscanPx: DEFAULT_OVERSCAN_PX,
+      forceIndex
+    })
+
+    it('returns false for an intra-band scroll that keeps start/end', () => {
+      // Overscan is 900px and rows are 100px, so only scroll deltas that stay
+      // inside the same offset cell keep the mounted band identical.
+      const prev = selectWindowBand(bandInput(1520))
+      const next = selectWindowBand(bandInput(1550))
+      expect(prev.startIndex).toBe(next.startIndex)
+      expect(prev.endIndex).toBe(next.endIndex)
+      expect(virtualWindowBandChanged(prev, next)).toBe(false)
+    })
+
+    it('returns true when scroll crosses into a different mounted band', () => {
+      const prev = selectWindowBand(bandInput(1520))
+      const next = selectWindowBand(bandInput(2000))
+      expect(prev.startIndex !== next.startIndex || prev.endIndex !== next.endIndex).toBe(true)
+      expect(virtualWindowBandChanged(prev, next)).toBe(true)
+    })
+
+    it('returns true when forceIndex identity changes even if start/end match', () => {
+      expect(
+        virtualWindowBandChanged(
+          { startIndex: 2, endIndex: 8, forceIndex: null },
+          { startIndex: 2, endIndex: 8, forceIndex: 50 }
+        )
+      ).toBe(true)
+      const withForce = selectWindowBand(bandInput(0, 50))
+      expect(withForce.forceIndex).toBe(50)
+    })
+
+    it('returns true on first publish (null/undefined previous)', () => {
+      const band = selectWindowBand(bandInput(400))
+      expect(virtualWindowBandChanged(null, band)).toBe(true)
+      expect(virtualWindowBandChanged(undefined, band)).toBe(true)
+    })
+
+    it('returns false for identical band values', () => {
+      const band = { startIndex: 3, endIndex: 12, forceIndex: null as number | null }
+      expect(virtualWindowBandChanged(band, { ...band })).toBe(false)
+      expect(virtualWindowBandChanged(band, { startIndex: 3, endIndex: 12 })).toBe(false)
+    })
+
+    it('returns true when only startIndex or only endIndex changes', () => {
+      const base = { startIndex: 3, endIndex: 12, forceIndex: null as number | null }
+      expect(virtualWindowBandChanged(base, { ...base, startIndex: 4 })).toBe(true)
+      expect(virtualWindowBandChanged(base, { ...base, endIndex: 13 })).toBe(true)
+    })
+  })
+
+  describe('computeTranscriptScrollSpy', () => {
+    // Cut 1b: RAF spy sink shares this formula with render. Progress uses LIVE
+    // offsets (total height); rowIndex uses HELD window heights + 0.3*viewport.
+    it('derives progress from live total height and rowIndex from held window', () => {
+      const heldHeights = uniformHeights(10, 100)
+      const heldOffsets = buildHeightOffsets(heldHeights)
+      // Live content grew (e.g. measured taller) while the mounted band is held.
+      const liveHeights = heldHeights.map((h, i) => (i < 3 ? h + 50 : h))
+      const liveOffsets = buildHeightOffsets(liveHeights)
+      const viewportHeight = 200
+      const scrollTop = 250
+      const snap = computeTranscriptScrollSpy({
+        enabled: true,
+        scrollTop,
+        viewportHeight,
+        liveHeightOffsets: liveOffsets,
+        windowHeights: heldHeights,
+        windowHeightOffsets: heldOffsets
+      })
+      const liveTotal = totalHeightFromOffsets(liveOffsets)
+      const maxScroll = liveTotal - viewportHeight
+      expect(snap.progress).toBeCloseTo(scrollTop / maxScroll, 6)
+      expect(snap.viewportFraction).toBeCloseTo(viewportHeight / liveTotal, 6)
+      expect(snap.rowIndex).toBe(
+        findScrollAnchor(scrollTop + viewportHeight * 0.3, heldHeights, heldOffsets).index
+      )
+    })
+
+    it('returns null rowIndex and zero fractions when disabled or empty', () => {
+      expect(
+        computeTranscriptScrollSpy({
+          enabled: false,
+          scrollTop: 100,
+          viewportHeight: 200,
+          liveHeightOffsets: buildHeightOffsets(uniformHeights(5, 100)),
+          windowHeights: uniformHeights(5, 100),
+          windowHeightOffsets: buildHeightOffsets(uniformHeights(5, 100))
+        })
+      ).toEqual({ rowIndex: null, progress: 0, viewportFraction: 0 })
+      expect(
+        computeTranscriptScrollSpy({
+          enabled: true,
+          scrollTop: 0,
+          viewportHeight: 200,
+          liveHeightOffsets: [],
+          windowHeights: [],
+          windowHeightOffsets: []
+        })
+      ).toEqual({ rowIndex: null, progress: 0, viewportFraction: 0 })
+    })
+
+    it('clamps progress to 0..1 and reports full viewport when content fits', () => {
+      const heights = uniformHeights(2, 50)
+      const offsets = buildHeightOffsets(heights)
+      const snap = computeTranscriptScrollSpy({
+        enabled: true,
+        scrollTop: 999,
+        viewportHeight: 400,
+        liveHeightOffsets: offsets,
+        windowHeights: heights,
+        windowHeightOffsets: offsets
+      })
+      expect(snap.progress).toBe(0)
+      expect(snap.viewportFraction).toBe(1)
+      expect(snap.rowIndex).toBe(
+        findScrollAnchor(999 + 400 * 0.3, heights, offsets).index
+      )
     })
   })
 

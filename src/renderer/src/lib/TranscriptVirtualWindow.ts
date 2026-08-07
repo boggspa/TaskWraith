@@ -713,6 +713,95 @@ export function selectWindow(input: SelectWindowInput): VirtualWindow {
 }
 
 /**
+ * Mounted-window identity used to gate scrollTick bumps (cut 1a). Spacers
+ * are intentionally omitted: they track held-vs-live height hysteresis and
+ * would false-positive a bump on measure churn that does not remount rows.
+ */
+export type VirtualWindowBand = {
+  startIndex: number
+  endIndex: number
+  forceIndex?: number | null
+}
+
+/**
+ * True when the mounted band (or force-mount identity) would change.
+ * `previous == null` means first publish / chat reset.
+ */
+export function virtualWindowBandChanged(
+  previous: VirtualWindowBand | null | undefined,
+  next: VirtualWindowBand
+): boolean {
+  if (previous == null) return true
+  return (
+    previous.startIndex !== next.startIndex ||
+    previous.endIndex !== next.endIndex ||
+    (previous.forceIndex ?? null) !== (next.forceIndex ?? null)
+  )
+}
+
+/**
+ * Project {@link selectWindow} into a bump-gate band. `forceIndex` is the
+ * caller's request identity (integer), not whether that row fell inside the
+ * natural overscan window.
+ */
+export function selectWindowBand(input: SelectWindowInput): VirtualWindowBand {
+  const w = selectWindow(input)
+  return {
+    startIndex: w.startIndex,
+    endIndex: w.endIndex,
+    forceIndex:
+      typeof input.forceIndex === 'number' && Number.isInteger(input.forceIndex)
+        ? input.forceIndex
+        : null
+  }
+}
+
+/**
+ * Scroll-spy snapshot for the user-message gutter (cut 1b). Progress and
+ * viewport fraction use the LIVE height-offset total (so the rail fill
+ * tracks measured content growth); rowIndex uses the HELD window heights
+ * (+ 0.3×viewport reading line) so it shares the mounted-window hysteresis
+ * and never force-remounts rows. Shared by render and the scroll RAF sink.
+ */
+export type TranscriptScrollSpy = {
+  rowIndex: number | null
+  progress: number
+  viewportFraction: number
+}
+
+export function computeTranscriptScrollSpy(input: {
+  enabled: boolean
+  scrollTop: number
+  viewportHeight: number
+  liveHeightOffsets: readonly number[]
+  windowHeights: readonly number[]
+  windowHeightOffsets: readonly number[]
+}): TranscriptScrollSpy {
+  if (!input.enabled) {
+    return { rowIndex: null, progress: 0, viewportFraction: 0 }
+  }
+  const viewportHeight = Number.isFinite(input.viewportHeight)
+    ? Math.max(0, input.viewportHeight)
+    : 0
+  const scrollTop = Number.isFinite(input.scrollTop) ? Math.max(0, input.scrollTop) : 0
+  const totalHeight = totalHeightFromOffsets(input.liveHeightOffsets)
+  const spyMaxScroll = Math.max(0, totalHeight - viewportHeight)
+  const progress =
+    spyMaxScroll > 0 ? Math.max(0, Math.min(1, scrollTop / spyMaxScroll)) : 0
+  const viewportFraction =
+    totalHeight > 0 ? Math.max(0, Math.min(1, viewportHeight / totalHeight)) : 0
+  const rowIndex =
+    input.windowHeights.length > 0
+      ? findScrollAnchor(
+          scrollTop + viewportHeight * 0.3,
+          input.windowHeights,
+          input.windowHeightOffsets
+        ).index
+      : null
+  return { rowIndex, progress, viewportFraction }
+}
+
+/**
  * The scroll-anchor correction applied when rows ABOVE the viewport
  * mount or resize (the highest virtualisation risk). When the top spacer
  * changes from `previousTopSpacerPx` to `nextTopSpacerPx`, the caller
