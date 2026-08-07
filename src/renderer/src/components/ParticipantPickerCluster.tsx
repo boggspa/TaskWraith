@@ -8,6 +8,7 @@ import type {
 } from '../../../main/store/types'
 import {
   buildProviderModelChangeParticipantPatch,
+  buildSameProviderModelChangeParticipantPatch,
   getEnsembleModelDefaults,
   getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
@@ -45,70 +46,21 @@ export const PERMISSION_PRESET_OPTIONS: PermissionOption[] = [
  * Build one lossless provider+model patch for the roster and Agent Pool.
  *
  * A cross-provider choice starts from the canonical provider-change patch so
- * runtime profiles, linked sessions, permission presets, and tool-grant
- * overrides cannot leak across providers. A same-provider model choice leaves
- * those fields absent from the patch, preserving the row's existing runtime
- * and permission configuration. In both cases reasoning and Fast are then
- * normalized against the selected model before the caller shallow-merges the
- * patch into the participant.
+ * runtime profiles and linked sessions cannot leak across providers, while
+ * permission preset/grants, reasoning (closest ladder), and Fast carry from
+ * the previous seat when still applicable. A same-provider model choice leaves
+ * permission/runtime fields absent from the patch and normalizes only
+ * model/reasoning/Fast against the selected model.
  */
 export function buildParticipantProviderModelPatch(
   participant: EnsembleParticipant,
   provider: ProviderId,
   model: string
 ): Partial<EnsembleParticipant> {
-  const providerChanged = provider !== participant.provider
-  if (providerChanged) {
-    return buildProviderModelChangeParticipantPatch(provider, model)
+  if (provider !== participant.provider) {
+    return buildProviderModelChangeParticipantPatch(provider, model, undefined, participant)
   }
-  const defaults = getEnsembleModelDefaults(provider)
-  const patch: Partial<EnsembleParticipant> = {
-    provider,
-    model
-  }
-
-  if (provider !== 'kimi') {
-    const enabledReasoning = getEnsembleReasoningOptions(provider, model).filter(
-      (option) => !option.disabled
-    )
-    const enabledReasoningValues = new Set(enabledReasoning.map((option) => option.value))
-    const seededReasoning = participant.reasoningEffort
-    patch.reasoningEffort =
-      enabledReasoning.length === 0
-        ? undefined
-        : seededReasoning && enabledReasoningValues.has(seededReasoning)
-          ? seededReasoning
-          : enabledReasoningValues.has(defaults.defaultReasoning)
-            ? defaults.defaultReasoning
-            : enabledReasoning[0]?.value
-  }
-
-  if (provider === 'codex') {
-    const seededFast =
-      participant.serviceTier === 'fast' ||
-      (participant.serviceTier == null && participant.fastModeEnabled === true)
-    const nextFast = defaults.fastModeCapableModelIds.has(model) && seededFast
-    patch.fastModeEnabled = nextFast
-    patch.serviceTier = nextFast ? 'fast' : ''
-  } else if (provider === 'claude') {
-    const seededFast = participant.fastModeEnabled === true
-    patch.fastModeEnabled = defaults.fastModeCapableModelIds.has(model) && seededFast
-  } else if (provider === 'kimi') {
-    const seededFast = participant.fastModeEnabled === true
-    const nextFast = defaults.fastModeCapableModelIds.has(model) && seededFast
-    patch.fastModeEnabled = nextFast
-    patch.serviceTier = nextFast ? 'fast' : 'standard'
-  } else if (provider === 'cursor') {
-    const seededFast = participant.fastModeEnabled === true
-    patch.fastModeEnabled =
-      model === 'composer-2.5-fast'
-        ? true
-        : model === 'composer-2.5'
-          ? false
-          : defaults.fastModeCapableModelIds.has(model) && seededFast
-  }
-
-  return patch
+  return buildSameProviderModelChangeParticipantPatch(participant, model)
 }
 
 interface ParticipantPickerClusterProps {

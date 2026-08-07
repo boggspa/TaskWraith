@@ -24,10 +24,11 @@ function participant(
 }
 
 describe('buildParticipantProviderModelPatch', () => {
-  it('atomically resets provider-scoped configuration and normalizes the chosen model', () => {
+  it('carries permissions and grants across providers while clearing runtime/session hygiene', () => {
     const patch = buildParticipantProviderModelPatch(
       participant({
         runtimeProfileId: 'claude-runtime',
+        permissionPresetId: 'workspace_write',
         permissionOverrides: { approvalMode: 'full_access' },
         linkedProviderSessionId: 'claude-session',
         reasoningEffort: 'ultracode',
@@ -40,14 +41,16 @@ describe('buildParticipantProviderModelPatch', () => {
     expect(patch).toMatchObject({
       provider: 'codex',
       model: 'gpt-5.4-mini',
-      permissionPresetId: 'default',
-      reasoningEffort: 'medium',
+      permissionPresetId: 'workspace_write',
+      permissionOverrides: { approvalMode: 'full_access' },
+      // Ultracode → nearest Codex stop on mini (xhigh ladder top for that row)
+      reasoningEffort: 'xhigh',
+      // Fast drops: gpt-5.4-mini is not Fast-capable
       fastModeEnabled: false,
       serviceTier: '',
       linkedProviderSessionId: null
     })
     expect(patch).toHaveProperty('runtimeProfileId', undefined)
-    expect(patch).toHaveProperty('permissionOverrides', undefined)
   })
 
   it('preserves runtime and permission settings on a same-provider model change', () => {
@@ -73,13 +76,18 @@ describe('buildParticipantProviderModelPatch', () => {
     expect(patch).not.toHaveProperty('permissionOverrides')
   })
 
-  it('uses the selected model default when switching providers', () => {
+  it('maps previous reasoning to the closest enabled ladder stop across providers', () => {
     expect(
-      buildParticipantProviderModelPatch(participant(), 'codex', 'gpt-5.6-sol')
+      buildParticipantProviderModelPatch(
+        participant({ reasoningEffort: 'high', permissionPresetId: 'read_only' }),
+        'codex',
+        'gpt-5.6-sol'
+      )
     ).toMatchObject({
       provider: 'codex',
       model: 'gpt-5.6-sol',
-      reasoningEffort: 'low',
+      permissionPresetId: 'read_only',
+      reasoningEffort: 'high',
       fastModeEnabled: false,
       serviceTier: ''
     })
@@ -110,9 +118,9 @@ describe('buildParticipantProviderModelPatch', () => {
     expect(patch).toMatchObject({
       model: 'kimi-k2.7-code',
       fastModeEnabled: true,
-      serviceTier: 'fast'
+      serviceTier: 'fast',
+      thinkingEnabled: true
     })
-    expect(patch).not.toHaveProperty('thinkingEnabled')
   })
 })
 
