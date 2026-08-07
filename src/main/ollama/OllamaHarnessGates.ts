@@ -1,6 +1,9 @@
 import { normalize, relative, resolve } from 'node:path'
 import type { OllamaToolControlTier } from '../store/types'
-import { ollamaEnforcesRetrievalFirst, ollamaReadFileExemptFromRetrievalFirst } from './OllamaRetrievalFirst'
+import {
+  ollamaEnforcesRetrievalFirst,
+  ollamaReadFileExemptFromRetrievalFirst
+} from './OllamaRetrievalFirst'
 import {
   OLLAMA_FILE_EDIT_TOOL_NAMES,
   ollamaToolNamesForTier,
@@ -51,7 +54,11 @@ export function ollamaHarnessEnforced(modelId?: string | null): boolean {
 
 export function ollamaHarnessDefaultTodos(): OllamaHarnessTodoScaffoldItem[] {
   return [
-    { id: 'explore', content: 'Explore workspace (search or list directories)', status: 'in_progress' },
+    {
+      id: 'explore',
+      content: 'Explore workspace (search or list directories)',
+      status: 'in_progress'
+    },
     { id: 'read', content: 'Read only the files needed for the task', status: 'pending' },
     { id: 'edit', content: 'Apply localized edits one file at a time', status: 'pending' },
     { id: 'verify', content: 'Verify changes against the original request', status: 'pending' }
@@ -95,18 +102,20 @@ export function ollamaEnsembleHarnessKickoffPrompt(
 ): string {
   const tools = ollamaToolNamesForTier(tier)
   return [
-    'Ensemble workspace task: the previous message is the complete TaskWraith Ensemble instruction block, not just the raw user request.',
-    'Follow your participant identity, role instructions, Role boundary contract, Boss/Bossman/Lead authority rules, turn position, and current user request exactly as written.',
-    'If your assigned role or permission posture is Ask/read-only, gather evidence and report findings; do not take implementation work unless assigned.',
-    'Use blackboard_read with {} to load shared context; blackboard_post requires a non-empty key and value.',
+    'Ensemble workspace task: start from the Current user request at the top of the previous capsule.',
+    'Stay in your local Ollama seat and role; do not invent peers from workspace fixture files.',
+    'If your posture is Ask/read-only, gather evidence and report; otherwise take one concrete workspace action.',
     tools.includes('todo_write')
-      ? 'Use todo_write only if your assigned ensemble slice genuinely needs a visible checklist.'
-      : 'Ground with workspace_search or list_directory before reading unfamiliar paths.'
+      ? 'Use todo_write only if your assigned slice genuinely needs a visible checklist.'
+      : 'Ground with workspace_search or list_directory before reading unfamiliar paths.',
+    'Use blackboard only for durable shared facts; do not re-post the same key in a loop.'
   ].join(' ')
 }
 
 function isEditTool(toolName: string): boolean {
-  return OLLAMA_FILE_EDIT_TOOL_NAMES.includes(toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number])
+  return OLLAMA_FILE_EDIT_TOOL_NAMES.includes(
+    toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number]
+  )
 }
 
 function pathsFromApplyPatch(patchValue: unknown, workspacePath?: string | null): string[] {
@@ -136,7 +145,11 @@ export function ollamaHarnessTargetPaths(
 }
 
 export function ollamaHarnessReadBlockedMessage(pathValue: string): string {
-  const query = pathValue.split('/').pop()?.replace(/\.[^.]+$/, '') || pathValue
+  const query =
+    pathValue
+      .split('/')
+      .pop()
+      ?.replace(/\.[^.]+$/, '') || pathValue
   return [
     'Harness explore gate: run workspace_search or list_directory before read_file on unfamiliar paths.',
     `Suggested: workspace_search({"query":"${query}","path":".","maxResults":25,"contextLines":1})`,
@@ -268,7 +281,7 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
   const guidance: string[] = []
   if (input.ensembleRun) {
     guidance.push(
-      'Keep following your assigned ensemble role, Role boundary contract, and Boss/Bossman/Lead routing; do not broaden into another participant\'s slice.'
+      "Keep following your assigned ensemble role, Role boundary contract, and Boss/Bossman/Lead routing; do not broaden into another participant's slice."
     )
   }
   if (input.ok) {
@@ -282,7 +295,9 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
         'Pick the best match from these results and read_file that path only — do not read whole directories blindly.'
       )
       if (ollamaToolNamesForTier(input.tier).includes('todo_write') && input.state.publishedTodos) {
-        guidance.push('Mark the explore todo completed and set read to in_progress when you start reading.')
+        guidance.push(
+          'Mark the explore todo completed and set read to in_progress when you start reading.'
+        )
       }
     } else if (input.toolName === 'read_file') {
       guidance.push(
@@ -299,7 +314,9 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
           : 'Re-read the file if you need another edit. Summarize what changed and whether the original user request is satisfied.'
       )
       if (ollamaToolNamesForTier(input.tier).includes('todo_write') && input.state.publishedTodos) {
-        guidance.push('Mark edit completed and move verify to in_progress before you claim the task is done.')
+        guidance.push(
+          'Mark edit completed and move verify to in_progress before you claim the task is done.'
+        )
       }
     } else if (input.toolName === 'todo_write') {
       guidance.push(

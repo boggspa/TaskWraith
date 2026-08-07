@@ -932,8 +932,8 @@ describe('runOllamaProvider streaming', () => {
     expect(chatBodies).toHaveLength(1)
     const messagesText = chatBodies[0]
     expect(messagesText).toContain('TaskWraith Ensemble Mode')
-    expect(messagesText).toContain('complete TaskWraith Ensemble instruction block')
-    expect(messagesText).toContain('Boss/Bossman/Lead authority rules')
+    expect(messagesText).toContain('Current user request at the top of the previous capsule')
+    expect(messagesText).toContain('do not invent peers from workspace fixture files')
     expect(messagesText).not.toContain('Your task is the user request')
   })
 
@@ -4106,7 +4106,7 @@ describe('buildOllamaOpeningMessages', () => {
     expect(messages[2].content).toContain('previous message')
   })
 
-  it('anchors ensemble harness kickoff to the full ensemble instruction block', () => {
+  it('anchors ensemble harness kickoff to the request-first capsule', () => {
     const messages = buildOllamaOpeningMessages({
       toolProtocolEnabled: true,
       harnessEnabled: true,
@@ -4115,9 +4115,7 @@ describe('buildOllamaOpeningMessages', () => {
       model: 'ornith:35b',
       workspaceIndexBlock: 'Workspace index:\nsrc/',
       userPrompt: [
-        'TaskWraith Ensemble Mode',
-        'Role boundary contract:',
-        '- Treat Boss routing as authoritative.',
+        'TaskWraith Ensemble Mode — Ollama context capsule',
         'Current user request:',
         'Continue the plan arc.'
       ].join('\n'),
@@ -4125,11 +4123,11 @@ describe('buildOllamaOpeningMessages', () => {
     })
 
     expect(messages).toHaveLength(3)
-    expect(messages[1].content).toContain('TaskWraith Ensemble Mode')
-    expect(messages[2].content).toContain('complete TaskWraith Ensemble instruction block')
-    expect(messages[2].content).toContain('Boss/Bossman/Lead authority rules')
-    expect(messages[2].content).toContain('blackboard_read with {}')
-    expect(messages[2].content).toContain('blackboard_post requires a non-empty key and value')
+    expect(messages[1].content).toContain('Ollama context capsule')
+    expect(messages[2].content).toContain('Current user request at the top of the previous capsule')
+    expect(messages[2].content).toContain('do not invent peers from workspace fixture files')
+    expect(messages[2].content).toContain('Use blackboard only for durable shared facts')
+    expect(messages[2].content).not.toContain('Boss/Bossman/Lead authority rules')
     expect(messages[2].content).not.toContain('Your task is the user request')
   })
 

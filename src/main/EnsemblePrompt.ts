@@ -89,6 +89,7 @@ import {
   resolveEnsemblePromptTransportProfile,
   type EnsemblePromptTransportProfile
 } from './antigravity/AntigravityEnsemblePromptProfile'
+import { buildOllamaEnsemblePromptCapsuleProjection } from './ollama/OllamaEnsemblePromptProfile'
 
 // 1.0.4-AR2 — this ceiling originally mirrored a renderer-local
 // constant. It now comes from shared/ensembleLimits so a renderer/main
@@ -1138,6 +1139,65 @@ export function buildEnsembleParticipantPromptProjection(
       : undefined
   )
   const transcript = transcriptProjection.text
+
+  // Ollama locals get a request-first capsule instead of the full Rules
+  // encyclopaedia — small models bury the ask under Boss/fan-out prose and
+  // then invent peers from workspace fixture markdown.
+  if (isOllamaParticipant) {
+    const allEntries = input.config.blackboard || []
+    const visibleBlackboard = selectBlackboardForRound(allEntries, input.roundId)
+    const blackboardSnapshot = formatBlackboardForPrompt(visibleBlackboard, {
+      allEntries
+    })
+    const scoutBriefs =
+      input.scoutBriefs && input.scoutBriefs.length > 0
+        ? formatScoutBriefsForPrompt(input.scoutBriefs)
+        : undefined
+    const compactRoundPolicy =
+      orchestrationMode === 'continuous'
+        ? `Continuous round: follow the current assignment, then use a listed lifecycle handoff or complete the work; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
+        : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
+    const compactParallelPolicy = activeConcurrentMode
+      ? hasWriteIntentLane
+        ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
+        : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
+      : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
+    return buildOllamaEnsemblePromptCapsuleProjection(
+      {
+        participantLabel,
+        modelLabel: input.participant.model || selfModelLabel,
+        selfToken,
+        roundId: input.roundId,
+        stageRole: input.participant.stageRole,
+        roleInstructions:
+          input.participant.instructions ||
+          'Contribute a concise, useful response for your role.',
+        currentPrompt: sanitizeText(input.currentPrompt),
+        currentPromptLabel: input.currentPromptLabel,
+        roster: roster || '- No other enabled participants.',
+        authorityLines: authorityRoutingLines,
+        roleBoundaryLines,
+        roundPolicy: compactRoundPolicy,
+        parallelPolicy: compactParallelPolicy,
+        dynamicState: includeDynamicState ? dynamicStateSnapshot.block : undefined,
+        workspaceStanza,
+        workspaceChurnStanza: input.workspaceChurnStanza,
+        scoutBriefs,
+        blackboardSnapshot: blackboardSnapshot || undefined,
+        seatSummary: seatSummaryBlock || undefined,
+        transcript,
+        permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+        workflowHint: ollamaScoutDelegateWorkflowHint(input.participant.model, ollamaHintIntent),
+        transcriptAutoCompacted: Boolean(ollamaTranscriptBudget?.autoCompacted)
+      },
+      {
+        ...(input.currentPromptMessageId
+          ? { currentPromptMessageId: input.currentPromptMessageId }
+          : {}),
+        transcriptRows: transcriptProjection.suppliedRows
+      }
+    )
+  }
 
   if (promptTransportProfile === 'antigravity-official-agy') {
     const allEntries = input.config.blackboard || []

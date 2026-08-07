@@ -2591,6 +2591,41 @@ describe('Ollama ensemble prompt budgeting', () => {
     expect(budget.autoCompacted).toBe(false)
   })
 
+  it('uses the Ollama request-first capsule instead of the full Rules shell', () => {
+    const ollamaParticipant: EnsembleParticipant = {
+      id: 'ollama-gemma',
+      provider: 'ollama',
+      enabled: true,
+      role: 'Builder',
+      instructions: 'Add smoke tests.',
+      order: 4,
+      permissionPresetId: 'workspace_write',
+      model: 'gemma4:12b'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: {
+        ...ensemble,
+        participants: [...ensemble.participants, ollamaParticipant],
+        ensembleContextChars: 200_000
+      },
+      participant: ollamaParticipant,
+      currentPrompt: 'CAPSULE_REQUEST_MARKER Add a Zig joke test.',
+      roundId: 'round-ollama-capsule',
+      chatContextTurns: 10
+    })
+    expect(prompt).toContain('Ollama context capsule')
+    const requestAt = prompt.indexOf('CAPSULE_REQUEST_MARKER')
+    const identityAt = prompt.indexOf('You are a LOCAL model running through Ollama')
+    expect(requestAt).toBeGreaterThanOrEqual(0)
+    expect(identityAt).toBeGreaterThan(requestAt)
+    expect(prompt).not.toContain('Rules:')
+    expect(prompt).not.toContain('@Farmer')
+    expect(prompt).not.toContain('ensemble_fanout → ensemble_await')
+    expect(prompt).toContain('tool-tests/')
+    expect(prompt).toContain('ask_user_question only when')
+  })
+
   it('adds local empowerment notes for Ollama ensemble participants', () => {
     const ollamaParticipant: EnsembleParticipant = {
       id: 'ollama-gemma',
@@ -2614,18 +2649,15 @@ describe('Ollama ensemble prompt budgeting', () => {
       roundId: 'round-ollama',
       chatContextTurns: 10
     })
-    expect(prompt).toContain('Local Ollama participant notes:')
+    expect(prompt).toContain('Ollama context capsule')
     // Identity anchor: the Ollama seat is told it is a local model and that
     // roster names identify peers, so it doesn't mirror a stronger label or
-    // imply that unavailable canonical providers are live participants.
+    // invent seats from workspace fixtures.
     expect(prompt).toContain('You are a LOCAL model running through Ollama')
-    expect(prompt).toContain('Other names in the participant roster identify peer seats, not you')
+    expect(prompt).toContain('Other roster names are peer seats, not you')
     expect(prompt).not.toContain('Cursor — those are OTHER participants')
-    // Tier retirement (2026-07): the ensemble note no longer hard-codes the old
-    // "write with approval, shell with approval" tier semantics — approval is set
-    // by the run's permission role, same tools as every participant.
-    expect(prompt).toContain('the same real workspace tools as every participant')
-    expect(prompt).toContain('sized for your local context window')
+    expect(prompt).toContain('Prefer one concrete workspace action')
+    expect(prompt).toContain('tool-tests/')
     // Ensemble ollama seats get the findings-shaped recon hint unless they
     // are the designated plan owner of a plan-workflow chat — the old
     // plan-drafting scout hint contradicted the read_only anti-plan rule.
