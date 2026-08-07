@@ -160,9 +160,9 @@ struct TaskCompleteCard: View {
 
     private var title: String { failed ? "Run failed" : "Task complete" }
 
-    /// Never send the reader up a transcript that has nothing to find.
-    private var runFooterLine: String {
-        guard failed else { return "Awaiting your next prompt." }
+    /// Failure-only footer — success no longer adds an "awaiting" row.
+    private var runFooterLine: String? {
+        guard failed else { return nil }
         return hasFailureDetail
             ? "See the transcript above for details."
             : "No failure details were recorded for this run."
@@ -537,9 +537,11 @@ struct TaskCompleteCard: View {
                     }
                 }
                 .font(.caption)
-                Text(runFooterLine)
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textMuted)
+                if let runFooterLine {
+                    Text(runFooterLine)
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textMuted)
+                }
             }
 
             if usesEpicStack {
