@@ -22317,7 +22317,7 @@ describe('terminal-goal pre-emption of the serial queue', () => {
     expect(runtime.remainingParticipants).toHaveLength(0)
   })
 
-  it('turn_bound rounds are never swept (panel answers keep independent value)', async () => {
+  it('turn_bound rounds also pre-empt remaining seats and persist skipped status', async () => {
     const harness = makeHarness()
     harness.chat.activeGoal = buildActiveGoal('goal-tb')
     harness.orchestrator.startRound({
@@ -22328,8 +22328,8 @@ describe('terminal-goal pre-emption of the serial queue', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const io = internals(harness.orchestrator)
     const runtime = io.roundsByChatId.get('ensemble-chat')!
+    expect(runtime.orchestrationMode).not.toBe('continuous')
     harness.chat.activeGoal = { ...harness.chat.activeGoal!, status: 'completed' }
-    const before = runtime.remainingParticipants!.length
     io.preemptRemainingForTerminalGoal.call(
       harness.orchestrator,
       runtime,
@@ -22337,7 +22337,22 @@ describe('terminal-goal pre-emption of the serial queue', () => {
       runtime.remainingParticipants!,
       new Set()
     )
-    expect(runtime.remainingParticipants).toHaveLength(before)
+    expect(runtime.remainingParticipants).toHaveLength(0)
+    const codexState = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'codex'
+    )
+    expect(codexState?.status).toBe('skipped')
+    expect(codexState?.reason).toMatch(/Goal completed — remaining turn pre-empted/)
+    // Durable chat projection (not runtime-only): goal terminal + skipped seat remain on the chat record.
+    expect(harness.chat.activeGoal?.status).toBe('completed')
+    expect(harness.saveChat).toHaveBeenCalled()
+    const saved = harness.saveChat.mock.calls.at(-1)?.[0] as ChatRecord | undefined
+    expect(saved?.activeGoal?.status).toBe('completed')
+    expect(
+      saved?.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )?.status
+    ).toBe('skipped')
   })
 
   it('explicitly-routed and fan-out-lane seats survive the sweep', async () => {

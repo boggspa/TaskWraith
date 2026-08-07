@@ -18085,15 +18085,15 @@ export class EnsembleOrchestrator {
   /**
    * Efficiency audit 2026-07 — terminal-goal pre-emption of the serial queue.
    *
-   * Once the active goal leaves 'active' DURING a continuous round, every
-   * still-undispatched ordinary serial seat would burn a full provider turn
-   * just to confirm the closure (the observed transcript pattern: Boss calls
-   * goal_complete, then Captain/scouts/workers/reviewers each wake to report
-   * "nothing open"). Sweep those seats out of the queue as 'skipped' instead.
+   * Once the active goal leaves 'active' DURING a round, every still-undispatched
+   * ordinary serial seat would burn a full provider turn just to confirm the
+   * closure (the observed transcript pattern: Boss calls goal_complete, then
+   * Captain/scouts/workers/reviewers each wake to report "nothing open"). Sweep
+   * those seats out of the queue as 'skipped' instead. Applies to Continuous and
+   * Turn-bound; skipped seats are persisted on the durable round projection via
+   * updateParticipantState / saveChat (not runtime-only UI).
    *
    * Deliberately narrow:
-   *  - continuous mode only — a turn_bound panel round is one pass of
-   *    independent answers whose value doesn't hinge on goal state;
    *  - explicitly-routed seats (yield / yield-return / @-mention promotions in
    *    `exemptIds`) keep their turn — agent-directed routing outranks the sweep;
    *  - seats with a live/reserved/settled fan-out lane are left to the existing
@@ -18108,7 +18108,6 @@ export class EnsembleOrchestrator {
     remaining: EnsembleParticipant[],
     exemptIds: ReadonlySet<string>
   ): void {
-    if (runtime.orchestrationMode !== 'continuous') return
     if (remaining.length === 0) return
     const goal = chat.activeGoal
     if (!goal || goal.status === 'active') return
