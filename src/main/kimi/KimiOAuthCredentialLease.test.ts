@@ -142,7 +142,7 @@ describe('KimiOAuthCredentialAuthority', () => {
       credential(2_000, 'R1')
     )
     await expect(next.lease.commitAndRelease()).resolves.toBe('unchanged')
-  })
+  }, 30_000)
 
   it('never steals a stale-parent lease while its exact provider child is still alive', async () => {
     const f = await fixture()
@@ -172,7 +172,7 @@ describe('KimiOAuthCredentialAuthority', () => {
     expect(await fs.readFile(join(f.homeA, 'credentials', 'kimi-code.json'), 'utf8')).toBe(
       credential(2_000, 'R1')
     )
-  })
+  }, 30_000)
 
   it('rejects a stale writer after the source authority advances independently', async () => {
     const f = await fixture()

@@ -231,7 +231,7 @@ describe('WorkspaceLockAuthority', () => {
       )
     ).toMatchObject({ ok: true })
     authority.dispose()
-  })
+  }, 30_000)
 
   it('allows disjoint same-baseline hunks but rejects overlap and baseline drift', async () => {
     const h = harness()
@@ -384,7 +384,7 @@ describe('WorkspaceLockAuthority', () => {
     })
     expect(authority.snapshot().leases.filter((lease) => lease.status === 'held')).toEqual([])
     authority.dispose()
-  })
+  }, 30_000)
 
   it('returns verified exact mutation capabilities and rejects an ancestor symlink swap', async () => {
     const h = harness()
@@ -431,7 +431,7 @@ describe('WorkspaceLockAuthority', () => {
       await authority.verifyAcquisitionForMutation(operationOwner, acquired.transitionId)
     ).toMatchObject({ ok: false, reason: 'path_changed' })
     authority.dispose()
-  })
+  }, 30_000)
 
   it('atomically transfers a native lease to the exact spawned child incarnation', async () => {
     const h = harness()

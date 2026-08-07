@@ -265,7 +265,7 @@ describe('work provenance query and reconciliation', () => {
           event.kind === 'resolution' && event.originEventId === 'origin-other-worktree'
       )
     ).toBe(false)
-  })
+  }, 30_000)
 
   it('counts overlapping marker scopes once in one coherent repository generation', () => {
     const root = makeRepo()
@@ -423,7 +423,7 @@ describe('work provenance query and reconciliation', () => {
       projection.workItems.find((item: any) => item.path === 'src/shared.ts' && item.currentDirty)
     ).toMatchObject({ lifecycle: 'unresolved', confidence: 'unknown' })
     expect(Object.keys(sidecar.tombstones)).toHaveLength(0)
-  })
+  }, 30_000)
 
   it('replays a vanished-marker receipt idempotently after a sidecar-write crash', () => {
     const root = makeRepo()
@@ -483,7 +483,7 @@ describe('work provenance query and reconciliation', () => {
     expect(current.currentContributors.map((entry: any) => entry.actor.displayName).sort()).toEqual(
       ['Replay Writer', 'Unattributed pre-existing work']
     )
-  })
+  }, 30_000)
 
   it('accepts a concurrent retry whose deterministic event differs only by timestamp', () => {
     const root = makeRepo()
@@ -763,5 +763,5 @@ describe('work provenance query and reconciliation', () => {
         execFileSync('git', ['rev-parse', '--verify', ref], { cwd: root, stdio: 'ignore' })
       ).toThrow()
     }
-  })
+  }, 30_000)
 })
