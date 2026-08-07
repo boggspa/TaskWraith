@@ -468,7 +468,7 @@ function advanceMarkerObservations({ root, markers, dirty, previousSidecar, now,
   for (const marker of markers) {
     seenFiles.add(marker.file)
     const markerRoot = physicalPath(path.resolve(root, marker.worktree || root))
-    const claimsThisRoot = markerRoot === physicalPath(root)
+    const claimsThisRoot = equivalentPhysicalPath(markerRoot, physicalPath(root))
     const claimed = [...dirtyMap.entries()]
       .filter(([dirtyPath]) => claimsThisRoot && markerClaimsPath(marker, dirtyPath))
       .map(([dirtyPath, evidence]) => ({ path: dirtyPath, ...evidence }))
@@ -1643,7 +1643,15 @@ function markerTargetsWorktree(row, worktreeRoot) {
   const declaredRoot = marker.worktree
     ? path.resolve(markerBaseRoot, marker.worktree)
     : path.resolve(markerBaseRoot)
-  return physicalPath(declaredRoot) === physicalPath(worktreeRoot)
+  return equivalentPhysicalPath(physicalPath(declaredRoot), physicalPath(worktreeRoot))
+}
+
+function equivalentPhysicalPath(left, right) {
+  const normalize = (value) => path.normalize(value)
+  if (process.platform === 'win32') {
+    return normalize(left).toLowerCase() === normalize(right).toLowerCase()
+  }
+  return normalize(left) === normalize(right)
 }
 
 function markerClaimsPath(marker, targetPath) {

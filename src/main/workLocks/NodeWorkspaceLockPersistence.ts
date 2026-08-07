@@ -42,7 +42,7 @@ export interface NodeWorkspaceLockPersistenceFs {
     readonly O_NOFOLLOW?: number
   }
   mkdirSync(path: string, options?: { recursive?: boolean; mode?: number }): unknown
-  lstatSync(path: string): NodeWorkspaceLockPersistenceStat
+  lstatSync(path: string, options?: { bigint?: boolean }): NodeWorkspaceLockPersistenceStat
   realpathSync(path: string): string
   openSync(path: string, flags: number, mode?: number): number
   fstatSync(fd: number): NodeWorkspaceLockPersistenceStat
@@ -521,7 +521,9 @@ export class NodeWorkspaceLockPersistence {
       if (replacedRootIsAbsent) return null
       throw new Error('Workspace-lock marker root no longer resolves to its canonical path.')
     }
-    const stat = this.fs.lstatSync(realRoot)
+    // Path acquisition records dev/ino with bigint precision. Re-read the
+    // same identity without narrowing a Windows file ID through a number.
+    const stat = this.fs.lstatSync(realRoot, { bigint: true })
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       if (replacedRootIsAbsent) return null
       throw new Error(`Workspace-lock marker root is not a real directory: ${realRoot}`)
