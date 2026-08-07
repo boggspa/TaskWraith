@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   createOllamaHarnessRunState,
@@ -5,10 +6,56 @@ import {
   ollamaHarnessDefaultTodos,
   ollamaHarnessTargetPaths,
   ollamaHarnessToolFollowUpPrompt,
+  normalizeOllamaHarnessPath,
   recordOllamaHarnessToolResult
 } from './OllamaHarnessGates'
 
 describe('OllamaHarnessGates', () => {
+  it('canonicalizes relative and absolute aliases to workspace-relative identities', () => {
+    const workspace = resolve('/tmp/taskwraith-ollama-paths')
+    const file = resolve(workspace, 'src/foo.ts')
+
+    expect(normalizeOllamaHarnessPath('./src/../src/foo.ts', workspace)).toBe('src/foo.ts')
+    expect(normalizeOllamaHarnessPath(file, workspace)).toBe('src/foo.ts')
+    expect(normalizeOllamaHarnessPath('src\\foo.ts', workspace)).toBe('src/foo.ts')
+    expect(normalizeOllamaHarnessPath('../outside.ts', workspace)).toBe('../outside.ts')
+  })
+
+  it('does not block an edit when read and edit use different path spellings', () => {
+    const workspace = resolve('/tmp/taskwraith-ollama-paths')
+    let state = createOllamaHarnessRunState()
+    state = recordOllamaHarnessToolResult(
+      state,
+      'workspace_search',
+      { query: 'foo' },
+      true,
+      workspace
+    )
+    state = recordOllamaHarnessToolResult(
+      state,
+      'read_file',
+      { path: './src/../src/foo.ts' },
+      true,
+      workspace
+    )
+
+    const gate = evaluateOllamaHarnessGate({
+      modelId: 'ministral-3:3b',
+      workspacePath: workspace,
+      tier: 'approved_edits',
+      state,
+      toolName: 'replace',
+      args: {
+        path: resolve(workspace, 'src/foo.ts'),
+        old_string: 'a',
+        new_string: 'b',
+        intent: 'test'
+      }
+    })
+
+    expect(gate.blocked).toBe(false)
+  })
+
   it('blocks read_file until explore tools run', () => {
     const state = createOllamaHarnessRunState()
     const gate = evaluateOllamaHarnessGate({

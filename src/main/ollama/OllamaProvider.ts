@@ -3249,6 +3249,7 @@ export async function runOllamaProvider(
         const harnessGate = harnessEnabled
           ? evaluateOllamaHarnessGate({
               modelId: model,
+              workspacePath: payload.workspace,
               tier: toolControlTier,
               state: harnessState,
               toolName: toolRequest.toolName,
@@ -3333,7 +3334,8 @@ export async function runOllamaProvider(
               harnessState,
               toolRequest.toolName,
               toolRequest.arguments,
-              toolResult.ok
+              toolResult.ok,
+              payload.workspace
             )
           }
           deps.sendAgentCompatLine(

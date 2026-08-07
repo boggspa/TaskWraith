@@ -1,3 +1,4 @@
+import { normalize, relative, resolve } from 'node:path'
 import type { OllamaToolControlTier } from '../store/types'
 import { ollamaEnforcesRetrievalFirst, ollamaReadFileExemptFromRetrievalFirst } from './OllamaRetrievalFirst'
 import {
@@ -29,10 +30,19 @@ export function createOllamaHarnessRunState(): OllamaHarnessRunState {
   }
 }
 
-export function normalizeOllamaHarnessPath(pathValue: unknown): string {
+export function normalizeOllamaHarnessPath(
+  pathValue: unknown,
+  workspacePath?: string | null
+): string {
   const raw = String(pathValue || '').trim()
   if (!raw) return ''
-  return raw.replace(/\\/g, '/').replace(/^\/+/, '')
+  const slashPath = raw.replace(/\\/g, '/')
+  if (workspacePath && workspacePath.trim()) {
+    const workspaceRoot = resolve(workspacePath)
+    const targetPath = resolve(workspaceRoot, slashPath)
+    return relative(workspaceRoot, targetPath).replace(/\\/g, '/') || '.'
+  }
+  return normalize(slashPath).replace(/\\/g, '/').replace(/^\/+/, '')
 }
 
 export function ollamaHarnessEnforced(modelId?: string | null): boolean {
@@ -98,7 +108,7 @@ function isEditTool(toolName: string): boolean {
   return OLLAMA_FILE_EDIT_TOOL_NAMES.includes(toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number])
 }
 
-function pathsFromApplyPatch(patchValue: unknown): string[] {
+function pathsFromApplyPatch(patchValue: unknown, workspacePath?: string | null): string[] {
   const patch = String(patchValue || '')
   if (!patch.trim()) return []
   const paths = new Set<string>()
@@ -106,7 +116,7 @@ function pathsFromApplyPatch(patchValue: unknown): string[] {
     const match = line.match(/^(?:---|\+\+\+)\s+(?:[ab]\/)?(.+)$/)
     if (!match) continue
     if (match[1].trim() === '/dev/null' || match[1].trim() === 'dev/null') continue
-    const normalized = normalizeOllamaHarnessPath(match[1])
+    const normalized = normalizeOllamaHarnessPath(match[1], workspacePath)
     if (normalized && normalized !== 'dev/null') paths.add(normalized)
   }
   return [...paths]
@@ -114,12 +124,13 @@ function pathsFromApplyPatch(patchValue: unknown): string[] {
 
 export function ollamaHarnessTargetPaths(
   toolName: OllamaToolName | string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  workspacePath?: string | null
 ): string[] {
   if (toolName === 'apply_patch') {
-    return pathsFromApplyPatch(args.patch)
+    return pathsFromApplyPatch(args.patch, workspacePath)
   }
-  const path = normalizeOllamaHarnessPath(args.path || args.file_path)
+  const path = normalizeOllamaHarnessPath(args.path || args.file_path, workspacePath)
   return path ? [path] : []
 }
 
@@ -149,6 +160,7 @@ export function ollamaHarnessTodoBlockedMessage(): string {
 
 export interface OllamaHarnessGateInput {
   modelId?: string | null
+  workspacePath?: string | null
   tier: OllamaToolControlTier | string | undefined | null
   state: OllamaHarnessRunState
   toolName: OllamaToolName | string
@@ -160,11 +172,11 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
   blocked: boolean
   message?: string
 } {
-  const { modelId, state, toolName, args } = input
+  const { modelId, workspacePath, state, toolName, args } = input
   if (!ollamaHarnessEnforced(modelId)) return { blocked: false }
 
   if (toolName === 'read_file') {
-    const readPath = normalizeOllamaHarnessPath(args.path || args.file_path)
+    const readPath = normalizeOllamaHarnessPath(args.path || args.file_path, workspacePath)
     if (!state.hasExplored && readPath && !ollamaReadFileExemptFromRetrievalFirst(readPath)) {
       return { blocked: true, message: ollamaHarnessReadBlockedMessage(readPath) }
     }
@@ -179,7 +191,7 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
           'Harness explore gate: run workspace_search or list_directory before editing workspace files.'
       }
     }
-    const targets = ollamaHarnessTargetPaths(toolName, args)
+    const targets = ollamaHarnessTargetPaths(toolName, args, workspacePath)
     if (targets.length === 0) {
       if (state.readPaths.size === 0) {
         return { blocked: true, message: ollamaHarnessEditBlockedMessage([]) }
@@ -199,7 +211,8 @@ export function recordOllamaHarnessToolResult(
   state: OllamaHarnessRunState,
   toolName: OllamaToolName | string,
   args: Record<string, unknown>,
-  ok: boolean
+  ok: boolean,
+  workspacePath?: string | null
 ): OllamaHarnessRunState {
   if (!ok) return state
 
@@ -214,7 +227,7 @@ export function recordOllamaHarnessToolResult(
   }
 
   if (toolName === 'read_file') {
-    const path = normalizeOllamaHarnessPath(args.path || args.file_path)
+    const path = normalizeOllamaHarnessPath(args.path || args.file_path, workspacePath)
     if (path) {
       state.readPaths.add(path)
       state.activePhase = 'read'
@@ -227,7 +240,7 @@ export function recordOllamaHarnessToolResult(
 
   if (isEditTool(toolName)) {
     state.activePhase = 'edit'
-    for (const path of ollamaHarnessTargetPaths(toolName, args)) {
+    for (const path of ollamaHarnessTargetPaths(toolName, args, workspacePath)) {
       state.readPaths.delete(path)
     }
   }
