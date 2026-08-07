@@ -49,3 +49,62 @@ export function isChatBoundDurableExternalPathGrant(
   if (!grantChatId || !grantWorkspaceId || !chatId || !workspaceId) return false
   return grantChatId === chatId && grantWorkspaceId === workspaceId
 }
+
+/** Snapshot of a chat's primary workspace at grant-consent time. */
+export type ChatGrantWorkspaceBinding = {
+  workspaceScope: 'global' | 'workspace'
+  workspaceId?: string | null
+  workspacePath?: string | null
+}
+
+export function chatGrantWorkspaceBindingFromChat(chat: {
+  scope?: string | null
+  workspaceId?: string | null
+  workspacePath?: string | null
+}): ChatGrantWorkspaceBinding {
+  const workspaceScope = chat.scope === 'global' ? 'global' : 'workspace'
+  if (workspaceScope === 'global') {
+    return { workspaceScope: 'global' }
+  }
+  return {
+    workspaceScope: 'workspace',
+    workspaceId: trimmed(chat.workspaceId),
+    workspacePath: trimmed(chat.workspacePath)
+  }
+}
+
+/**
+ * True when a pending consent still describes the chat's current primary.
+ * Missing stamped binding fails closed — Accept must not remint onto a
+ * rebound primary the way pick-and-persist cancels mid-dialog.
+ */
+export function sameChatGrantWorkspaceBinding(
+  stamped:
+    | {
+        workspaceScope?: 'global' | 'workspace' | null
+        workspaceId?: string | null
+        workspacePath?: string | null
+      }
+    | null
+    | undefined,
+  chat:
+    | {
+        scope?: string | null
+        workspaceId?: string | null
+        workspacePath?: string | null
+      }
+    | null
+    | undefined
+): boolean {
+  if (!stamped || !chat) return false
+  if (stamped.workspaceScope !== 'global' && stamped.workspaceScope !== 'workspace') {
+    return false
+  }
+  const current = chatGrantWorkspaceBindingFromChat(chat)
+  if (stamped.workspaceScope !== current.workspaceScope) return false
+  if (stamped.workspaceScope === 'global') return true
+  return (
+    trimmed(stamped.workspaceId) === trimmed(current.workspaceId) &&
+    trimmed(stamped.workspacePath) === trimmed(current.workspacePath)
+  )
+}

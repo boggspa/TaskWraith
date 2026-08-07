@@ -7,6 +7,7 @@ import {
   canonicalizeExternalPathGrantMetadata,
   collectExternalPathGrantsFromMetadata
 } from '../store/ExternalPathGrants'
+import { sameChatGrantWorkspaceBinding } from '../../shared/externalPathGrantBinding'
 
 /**
  * approvalResponseHandlers — M3-3d approval-cluster extraction (per
@@ -40,10 +41,7 @@ import {
  * never hit the stale-null bug the module-scope bundles risked.
  */
 export interface ApprovalResponseHandlerDeps {
-  approvalService: Pick<
-    ApprovalService,
-    'getPendingExternalPathDetection' | 'resolve'
-  >
+  approvalService: Pick<ApprovalService, 'getPendingExternalPathDetection' | 'resolve'>
   assertSenderCanRespond: (event: IpcMainInvokeEvent, requestId: string) => void
   issueExternalPathGrant: (
     grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>
@@ -86,8 +84,6 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
         }
         if (detection?.path && detection.appChatId) {
           try {
-            const grantAccess: 'read' | 'write' =
-              action === 'grantExternalPathEdit' ? 'write' : 'read'
             // Probe synchronously to determine file vs directory.
             // Best-effort — fall back to 'file' on any error.
             let grantKind: 'file' | 'directory' = 'file'
@@ -97,30 +93,41 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
             } catch {
               /* keep default */
             }
-            const grant = deps.issueExternalPathGrant({
-              id: `runtime-${Date.now()}-${randomBytes(4).toString('hex')}`,
-              provider: detection.provider,
-              workspaceId: undefined,
-              chatId: detection.appChatId,
-              path: detection.path,
-              kind: grantKind,
-              access: grantAccess,
-              duration: 'thisThread',
-              securityScopedBookmark: undefined,
-              createdAt: new Date().toISOString()
-            })
-            const chat = deps.getChat(detection.appChatId)
-            if (chat) {
-              const updatedChat = {
-                ...chat,
-                providerMetadata: canonicalizeExternalPathGrantMetadata(chat.providerMetadata, [
-                  ...collectExternalPathGrantsFromMetadata(chat.providerMetadata),
-                  grant
-                ]),
-                updatedAt: Date.now()
+            // Re-read the chat after the await (and vs the stamped binding from
+            // modal open). If the primary moved, consent no longer describes the
+            // target — fail closed like pick-and-persist, decline the action,
+            // and do not mint onto the new primary.
+            const chatAtAccept = deps.getChat(detection.appChatId)
+            if (!chatAtAccept || !sameChatGrantWorkspaceBinding(detection, chatAtAccept)) {
+              actionToResolve = 'declineExternalPath'
+            } else {
+              const grantAccess: 'read' | 'write' =
+                action === 'grantExternalPathEdit' ? 'write' : 'read'
+              const grant = deps.issueExternalPathGrant({
+                id: `runtime-${Date.now()}-${randomBytes(4).toString('hex')}`,
+                provider: detection.provider,
+                workspaceId: undefined,
+                chatId: detection.appChatId,
+                path: detection.path,
+                kind: grantKind,
+                access: grantAccess,
+                duration: 'thisThread',
+                securityScopedBookmark: undefined,
+                createdAt: new Date().toISOString()
+              })
+              const chat = deps.getChat(detection.appChatId)
+              if (chat && sameChatGrantWorkspaceBinding(detection, chat)) {
+                const updatedChat = {
+                  ...chat,
+                  providerMetadata: canonicalizeExternalPathGrantMetadata(chat.providerMetadata, [
+                    ...collectExternalPathGrantsFromMetadata(chat.providerMetadata),
+                    grant
+                  ]),
+                  updatedAt: Date.now()
+                }
+                deps.saveChat(updatedChat)
+                deps.broadcastChatUpdated(updatedChat)
               }
-              deps.saveChat(updatedChat)
-              deps.broadcastChatUpdated(updatedChat)
             }
           } catch (err) {
             console.warn('[ExternalPathGrant] runtime grant persistence failed', err)

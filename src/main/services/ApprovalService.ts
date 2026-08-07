@@ -131,6 +131,14 @@ export interface PendingExternalPathDetection {
   access: 'read' | 'write'
   basename?: string
   appChatId?: string
+  /**
+   * Primary workspace binding at detection / modal-open time. Accept fails
+   * closed (no mint) if the chat rebinds before the user grants — mirroring
+   * pick-and-persist mid-dialog cancellation.
+   */
+  workspaceScope?: 'global' | 'workspace'
+  workspaceId?: string | null
+  workspacePath?: string | null
 }
 
 export interface PendingCodexApproval {

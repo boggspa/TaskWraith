@@ -61,12 +61,17 @@ function handlerFor(channel: string): RegisteredHandler {
   return handler
 }
 
-type Detection = {
-  path?: string
-  appChatId?: string
-  provider: string
-  access: 'read' | 'write'
-} | undefined
+type Detection =
+  | {
+      path?: string
+      appChatId?: string
+      provider: string
+      access: 'read' | 'write'
+      workspaceScope?: 'global' | 'workspace'
+      workspaceId?: string | null
+      workspacePath?: string | null
+    }
+  | undefined
 
 function createChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -74,6 +79,9 @@ function createChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
     appChatId: 'chat-1',
     chatKind: 'single',
     provider: 'codex',
+    scope: 'workspace',
+    workspaceId: 'ws-1',
+    workspacePath: '/ws-1',
     providerMetadata: {},
     updatedAt: 1,
     ...overrides
@@ -85,7 +93,10 @@ function createDeps(order: string[]) {
     path: '/tmp/target',
     appChatId: 'chat-1',
     provider: 'codex',
-    access: 'read'
+    access: 'read',
+    workspaceScope: 'workspace',
+    workspaceId: 'ws-1',
+    workspacePath: '/ws-1'
   }
   let chat: ChatRecord | null = createChat()
   const deps = {
@@ -165,6 +176,7 @@ describe('registerApprovalResponseHandlers', () => {
 
     expect(order).toEqual([
       'getPendingExternalPathDetection',
+      'getChat',
       'issueExternalPathGrant',
       'getChat',
       'saveChat',
@@ -213,7 +225,10 @@ describe('registerApprovalResponseHandlers', () => {
       path: '/tmp/target',
       appChatId: 'chat-1',
       provider: 'codex',
-      access: 'write'
+      access: 'write',
+      workspaceScope: 'workspace',
+      workspaceId: 'ws-1',
+      workspacePath: '/ws-1'
     })
     registerApprovalResponseHandlers(deps)
 
@@ -224,6 +239,30 @@ describe('registerApprovalResponseHandlers', () => {
     )
     expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
       'req-2b',
+      'declineExternalPath',
+      undefined
+    )
+    expect(order[order.length - 1]).toBe('resolve')
+  })
+
+  it('fails closed when the chat primary rebinds while the approval modal is open', async () => {
+    // Mirror pick-and-persist: consent described ws-1; Accept must not remint onto ws-2.
+    const order: string[] = []
+    const { deps, setChat } = createDeps(order)
+    setChat(
+      createChat({
+        workspaceId: 'ws-2',
+        workspacePath: '/ws-2'
+      })
+    )
+    registerApprovalResponseHandlers(deps)
+
+    await handlerFor('respond-agent-approval')({}, 'req-rebind', 'grantExternalPathEdit')
+
+    expect(vi.mocked(deps.issueExternalPathGrant)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.saveChat)).not.toHaveBeenCalled()
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
+      'req-rebind',
       'declineExternalPath',
       undefined
     )

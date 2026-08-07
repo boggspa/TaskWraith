@@ -25684,12 +25684,26 @@ function detectExternalPathForProviderApproval(input: {
     }))
   })
   if (!detection.needsPrompt || !detection.path || !detection.access) return undefined
+  const workspaceBinding = chat
+    ? {
+        workspaceScope: (chat.scope === 'global' ? 'global' : 'workspace') as
+          | 'global'
+          | 'workspace',
+        ...(chat.scope === 'global'
+          ? {}
+          : {
+              workspaceId: chat.workspaceId ?? null,
+              workspacePath: chat.workspacePath ?? null
+            })
+      }
+    : undefined
   return {
     provider: input.provider,
     path: detection.path,
     access: detection.access,
     basename: detection.basename,
-    appChatId: input.appChatId
+    appChatId: input.appChatId,
+    ...workspaceBinding
   }
 }
 

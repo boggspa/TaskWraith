@@ -6,6 +6,10 @@ import {
 } from 'electron'
 import type { ChatRecord, ExternalPathGrant, ProviderId, WorkspaceRecord } from '../store/types'
 import { assertSafeChatId } from '../ChatPath'
+import {
+  chatGrantWorkspaceBindingFromChat,
+  sameChatGrantWorkspaceBinding
+} from '../../shared/externalPathGrantBinding'
 
 interface ExternalPathGrantDialogResult {
   canceled: boolean
@@ -133,11 +137,7 @@ export function grantProvidersForChat(
 }
 
 function sameGrantWorkspaceBinding(left: ChatRecord, right: ChatRecord): boolean {
-  const leftScope = left.scope === 'global' ? 'global' : 'workspace'
-  const rightScope = right.scope === 'global' ? 'global' : 'workspace'
-  if (leftScope !== rightScope) return false
-  if (leftScope === 'global') return true
-  return left.workspaceId === right.workspaceId && left.workspacePath === right.workspacePath
+  return sameChatGrantWorkspaceBinding(chatGrantWorkspaceBindingFromChat(left), right)
 }
 
 function sameGrantProviderSet(left: readonly ProviderId[], right: readonly ProviderId[]): boolean {
@@ -471,9 +471,7 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
       const canonicalGrants = deps.collectExternalPathGrantsFromMetadata(chat.providerMetadata)
       const revokedGrantIds = [
         ...new Set(
-          canonicalGrants
-            .filter((grant) => requestedIdSet.has(grant.id))
-            .map((grant) => grant.id)
+          canonicalGrants.filter((grant) => requestedIdSet.has(grant.id)).map((grant) => grant.id)
         )
       ]
       if (revokedGrantIds.length === 0) {
@@ -484,10 +482,7 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
       const grants = canonicalGrants.filter((grant) => !revokedIdSet.has(grant.id))
       const updatedChat: ChatRecord = {
         ...chat,
-        providerMetadata: deps.canonicalizeExternalPathGrantMetadata(
-          chat.providerMetadata,
-          grants
-        ),
+        providerMetadata: deps.canonicalizeExternalPathGrantMetadata(chat.providerMetadata, grants),
         updatedAt: Date.now()
       }
       deps.saveChat(updatedChat)
