@@ -23,11 +23,13 @@ const CURRENT_AGENTIC_SERVICE_IDS = [
   'canvasInteraction',
   'sketchCanvas',
   'meshCanvas',
+  'simulatorCanvas',
   'canvasEval',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',
-  'mediaRecording'
+  'mediaRecording',
+  'webBrowsing'
 ] as const satisfies readonly AgenticServiceId[]
 
 function readOnlyPerms(): EffectiveRunPermissions {
@@ -43,6 +45,7 @@ function readOnlyPerms(): EffectiveRunPermissions {
       canvasInteraction: 'ask',
       sketchCanvas: 'deny',
       meshCanvas: 'ask',
+      simulatorCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
       mediaEditing: 'deny',
@@ -70,6 +73,7 @@ function fullAccessPerms(): EffectiveRunPermissions {
       canvasInteraction: 'ask',
       sketchCanvas: 'allow',
       meshCanvas: 'ask',
+      simulatorCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
       mediaEditing: 'allow',
@@ -97,6 +101,7 @@ function defaultPerms(): EffectiveRunPermissions {
       canvasInteraction: 'ask',
       sketchCanvas: 'allow',
       meshCanvas: 'ask',
+      simulatorCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
       mediaEditing: 'ask',
@@ -168,6 +173,7 @@ describe('canonical posture + sign/verify', () => {
         canvasInteraction: 'ask',
         sketchCanvas: 'allow',
         meshCanvas: 'ask',
+        simulatorCanvas: 'ask',
         crossThreadRead: 'ask',
         threadMessage: 'ask',
         mediaEditing: 'allow',

@@ -24,6 +24,7 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'canvasInteraction',
   'sketchCanvas',
   'meshCanvas',
+  'simulatorCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',
@@ -40,13 +41,13 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 //
 //   plan ("Plan" — the strict floor): NO mid-run permission asks for ordinary
 //     mutating services. Anything not auto-allowed is DENIED — "denied and no
-//     elevation offered". Deliberate attended exception (2026-08-08):
-//     `subThreadDelegation` stays ASK so `delegate_to_subthread` can modal-
-//     approve; unattended/scheduled Plan overrides that back to DENY. The only
-//     other elevation is the proposed-plan document approval (which flips the
-//     chat to Accept Edits and re-dispatches), and the only write is the
-//     product-managed markdown plan artifact (executor-owned carve-out, not a
-//     service policy).
+//     elevation offered". Deliberate attended exceptions (2026-08-08):
+//     `subThreadDelegation` and `simulatorCanvas` stay ASK so their tools can
+//     modal-approve; unattended/scheduled Plan overrides those back to DENY.
+//     The only other elevation is the proposed-plan document approval (which
+//     flips the chat to Accept Edits and re-dispatches), and the only write is
+//     the product-managed markdown plan artifact (executor-owned carve-out, not
+//     a service policy).
 //   read_only ("Ask" — the ask tier): anything not auto-allowed MAY be asked
 //     via the approval modal — per-invocation human approval, NO auto-deny.
 //     Approval genuinely executes on the brokered lane (the gate is the only
@@ -56,10 +57,11 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 //
 // plan is therefore a strict SUBSET of read_only in reachable authority for
 // ordinary services: it only ever TIGHTENS read_only's ASK to DENY, never the
-// reverse — except the attended subThreadDelegation carve-out above. The
-// deny-survival line in effectiveAgenticSettings still preserves every global
-// DENY across the key-by-key rebuild, and the grant-hold below keeps standing
-// grants from zero-clicking read_only's asks (and Plan's subThreadDelegation).
+// reverse — except the attended subThreadDelegation / simulatorCanvas carve-
+// outs above. The deny-survival line in effectiveAgenticSettings still
+// preserves every global DENY across the key-by-key rebuild, and the grant-
+// hold below keeps standing grants from zero-clicking read_only's asks (and
+// Plan's modal instruments).
 const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'ask',
   fileChanges: 'ask',
@@ -69,6 +71,7 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   canvasInteraction: 'ask',
   sketchCanvas: 'ask',
   meshCanvas: 'ask',
+  simulatorCanvas: 'ask',
   crossThreadRead: 'ask',
   threadMessage: 'ask',
   mediaEditing: 'ask',
@@ -85,11 +88,11 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
 
 // `plan` = the no-ask floor for ordinary mutating services. Plan must not
 // interrupt mid-run for shell/file/canvas/… — those stay DENY and elevate only
-// via the plan document. Deliberate exception (2026-08-08): subThreadDelegation
-// is ASK so `delegate_to_subthread` stays reachable with a request modal on
-// Plan seats (grant-held via PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES). Generic
-// mcpTools stays DENY; scoped TaskWraith broker attach may still list the
-// gated instrument set without reopening the full MCP ask surface.
+// via the plan document. Deliberate exceptions (2026-08-08): subThreadDelegation
+// and simulatorCanvas are ASK so their tools stay reachable with a request
+// modal on Plan seats (grant-held via PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES).
+// Generic mcpTools stays DENY; scoped TaskWraith broker attach may still list
+// the gated instrument set without reopening the full MCP ask surface.
 const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
@@ -99,6 +102,7 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   canvasInteraction: 'deny',
   sketchCanvas: 'deny',
   meshCanvas: 'deny',
+  simulatorCanvas: 'ask',
   crossThreadRead: 'deny',
   threadMessage: 'deny',
   mediaEditing: 'deny',
@@ -150,7 +154,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       fileChanges: 'allow',
       // Accept Edits authorizes TaskWraith sub-thread delegation as a standard
       // brokered tool (no per-call modal). Ask/Plan remain modal-gated.
-      subThreadDelegation: 'allow'
+      subThreadDelegation: 'allow',
+      // Same Accept Edits authorization for Simulator Canvas control.
+      simulatorCanvas: 'allow'
     }
   },
   workspace_write: {
@@ -190,8 +196,10 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // 'allow' already reaches the network); the surface itself stays
       // sandboxed + SSRF-guarded, and actuation remains separately gated.
       webBrowsing: 'allow',
-      // Full WS Access also authorizes standard brokered sub-thread delegation.
-      subThreadDelegation: 'allow'
+      // Full WS Access also authorizes standard brokered sub-thread delegation
+      // and Simulator Canvas control.
+      subThreadDelegation: 'allow',
+      simulatorCanvas: 'allow'
     }
   },
   full_access: {
@@ -207,6 +215,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       canvasInteraction: 'allow',
       sketchCanvas: 'allow',
       meshCanvas: 'allow',
+      simulatorCanvas: 'allow',
       // Cross-thread reads are grantable; Full access auto-allows them.
       crossThreadRead: 'allow',
       // Queued thread messages are grantable; Full access auto-allows them. A WAKE
@@ -250,18 +259,20 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'canvasInteraction',
   'sketchCanvas',
   'meshCanvas',
+  'simulatorCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',
   'webBrowsing'
 ]
 
-// Plan's deliberate per-invocation instrument (2026-08-08): sub-thread
-// delegation stays ASK under Plan and must not be zero-clicked by a standing
-// grant minted under Accept Edits / Full WS / Full Access. Kept exported so
-// the approval gate folds it into neverAutoAllow.
+// Plan's deliberate per-invocation instruments (2026-08-08): sub-thread
+// delegation and Simulator Canvas stay ASK under Plan and must not be
+// zero-clicked by a standing grant minted under Accept Edits / Full WS /
+// Full Access. Kept exported so the approval gate folds them into
+// neverAutoAllow.
 export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
-  new Set<AgenticServiceId>(['subThreadDelegation'])
+  new Set<AgenticServiceId>(['subThreadDelegation', 'simulatorCanvas'])
 
 // The Ask tier's defining property is PER-INVOCATION human approval: anything
 // the map asks for must genuinely prompt, so a standing workspace grant or an
@@ -276,6 +287,7 @@ export const READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticSer
     'shellCommands',
     'fileChanges',
     'subThreadDelegation',
+    'simulatorCanvas',
     'canvasInteraction',
     'sketchCanvas',
     'meshCanvas',
@@ -453,6 +465,7 @@ function servicesFromSettings(
     // Edits. Ask/Plan presets override this base value above.
     sketchCanvas: normalizePolicy(settings?.sketchCanvas, 'allow'),
     meshCanvas: normalizePolicy(settings?.meshCanvas, 'ask'),
+    simulatorCanvas: normalizePolicy(settings?.simulatorCanvas, 'ask'),
     crossThreadRead: normalizePolicy(settings?.crossThreadRead, 'ask'),
     // Thread messages default to 'ask' (grantable, like crossThreadRead).
     threadMessage: normalizePolicy(settings?.threadMessage, 'ask'),

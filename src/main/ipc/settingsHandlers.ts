@@ -247,6 +247,7 @@ function rendererChatSettings(
       canvasInteraction: services.canvasInteraction,
       ...(services.sketchCanvas ? { sketchCanvas: services.sketchCanvas } : {}),
       ...(services.meshCanvas ? { meshCanvas: services.meshCanvas } : {}),
+      ...(services.simulatorCanvas ? { simulatorCanvas: services.simulatorCanvas } : {}),
       canvasEval: services.canvasEval,
       ...(services.crossThreadRead ? { crossThreadRead: services.crossThreadRead } : {}),
       ...(services.threadMessage ? { threadMessage: services.threadMessage } : {}),

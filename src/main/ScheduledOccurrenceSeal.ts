@@ -86,6 +86,7 @@ const AGENTIC_SERVICE_AUTHORITY_FIELDS = {
   canvasInteraction: true,
   sketchCanvas: true,
   meshCanvas: true,
+  simulatorCanvas: true,
   canvasEval: true,
   crossThreadRead: true,
   threadMessage: true,

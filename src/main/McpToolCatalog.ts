@@ -1809,6 +1809,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'subThreadDelegation',
               'canvasInteraction',
               'meshCanvas',
+              'simulatorCanvas',
               'crossThreadRead',
               'mediaEditing',
               'mediaRecording',

@@ -118,6 +118,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.fileChanges).toBe('ask')
     expect(resolved.agenticServices.shellCommands).toBe('ask')
     expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
+    expect(resolved.agenticServices.simulatorCanvas).toBe('ask')
     expect(resolved.agenticServices.canvasInteraction).toBe('ask')
     expect(resolved.agenticServices.meshCanvas).toBe('ask')
     expect(resolved.agenticServices.mediaEditing).toBe('ask')
@@ -131,7 +132,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
   })
 
-  it('plan is the no-ask floor except sub-thread delegation (modal instrument)', () => {
+  it('plan is the no-ask floor except sub-thread delegation and Simulator Canvas (modal instruments)', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
@@ -139,6 +140,7 @@ describe('resolveEffectiveRunPermissions', () => {
       presetId: 'plan'
     })
     expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
+    expect(resolved.agenticServices.simulatorCanvas).toBe('ask')
     expect(resolved.agenticServices.canvasInteraction).toBe('deny')
     expect(resolved.agenticServices.sketchCanvas).toBe('deny')
     expect(resolved.agenticServices.meshCanvas).toBe('deny')
@@ -323,7 +325,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.webBrowsing).toBe('workspace')
   })
 
-  it('plan tightens read_only except sub-thread delegation (modal instrument carve-out)', () => {
+  it('plan tightens read_only except sub-thread delegation and Simulator Canvas (modal instruments)', () => {
     const base = { provider: 'claude' as const, workspacePath: '/repo', settings: settings() }
     const readOnly = resolveEffectiveRunPermissions({ ...base, presetId: 'read_only' }).agenticServices
     const plan = resolveEffectiveRunPermissions({ ...base, presetId: 'plan' }).agenticServices
@@ -332,9 +334,9 @@ describe('resolveEffectiveRunPermissions', () => {
         // The one shared auto-deny: no attended capture flow exists to approve.
         expect(readOnly[service]).toBe('deny')
         expect(plan[service]).toBe('deny')
-      } else if (service === 'subThreadDelegation') {
-        // Deliberate Plan instrument (2026-08-08): stays ASK so delegate_to_subthread
-        // can modal-approve without reopening the no-ask floor for other services.
+      } else if (service === 'subThreadDelegation' || service === 'simulatorCanvas') {
+        // Deliberate Plan instruments: stay ASK so attended modals can approve
+        // without reopening the no-ask floor for other services.
         expect(readOnly[service]).toBe('ask')
         expect(plan[service]).toBe('ask')
       } else {
@@ -353,6 +355,22 @@ describe('resolveEffectiveRunPermissions', () => {
         settings: settings(),
         presetId
       }).agenticServices.subThreadDelegation
+
+    expect(policyFor('read_only')).toBe('ask')
+    expect(policyFor('plan')).toBe('ask')
+    expect(policyFor('default')).toBe('allow')
+    expect(policyFor('workspace_write')).toBe('allow')
+    expect(policyFor('full_access')).toBe('allow')
+  })
+
+  it('pins the Simulator Canvas ladder across every permission preset (mirrors subThreadDelegation)', () => {
+    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+      resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: settings(),
+        presetId
+      }).agenticServices.simulatorCanvas
 
     expect(policyFor('read_only')).toBe('ask')
     expect(policyFor('plan')).toBe('ask')
@@ -1043,6 +1061,7 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
       'shellCommands',
       'fileChanges',
       'subThreadDelegation',
+      'simulatorCanvas',
       'canvasInteraction',
       'sketchCanvas',
       'meshCanvas',
@@ -1064,6 +1083,14 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
     expect(isPlanInstrumentGrantHold('plan', 'subThreadDelegation')).toBe(true)
     expect(isPlanInstrumentGrantHold('plan', 'mcpTools')).toBe(false)
     expect(isPlanInstrumentGrantHold('plan', 'fileChanges')).toBe(false)
+  })
+
+  it('holds simulatorCanvas under plan so standing grants cannot zero-click Simulator Canvas', () => {
+    expect(isPlanInstrumentGrantHold('plan', 'simulatorCanvas')).toBe(true)
+    expect(isPlanInstrumentGrantHold('plan', 'meshCanvas')).toBe(false)
+    expect(isPlanInstrumentGrantHold('default', 'simulatorCanvas')).toBe(false)
+    expect(isPlanInstrumentGrantHold('workspace_write', 'simulatorCanvas')).toBe(false)
+    expect(isPlanInstrumentGrantHold('full_access', 'simulatorCanvas')).toBe(false)
   })
 
   it('does NOT hold under other presets — canvas/media stay normally grantable there', () => {

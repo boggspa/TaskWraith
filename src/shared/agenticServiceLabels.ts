@@ -9,6 +9,7 @@ export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   canvasInteraction: 'Canvas interaction',
   sketchCanvas: 'Sketch Canvas',
   meshCanvas: 'Mesh Canvas',
+  simulatorCanvas: 'Simulator Canvas',
   crossThreadRead: 'Cross-thread read',
   threadMessage: 'Thread message',
   mediaEditing: 'Media editing',

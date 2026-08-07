@@ -559,6 +559,7 @@ const EFFECTIVE_RUN_AGENTIC_SERVICE_ID_RECORD = {
   canvasInteraction: true,
   sketchCanvas: true,
   meshCanvas: true,
+  simulatorCanvas: true,
   canvasEval: true,
   crossThreadRead: true,
   threadMessage: true,

@@ -20,6 +20,7 @@ const services = {
   canvasInteraction: 'deny',
   sketchCanvas: 'deny',
   meshCanvas: 'deny',
+  simulatorCanvas: 'deny',
   canvasEval: 'deny',
   crossThreadRead: 'deny',
   threadMessage: 'deny',

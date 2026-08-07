@@ -8,6 +8,7 @@ export const DEFAULT_AGENTIC_SERVICES: AgenticServicesSettings = {
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
   sketchCanvas: 'allow',
+  simulatorCanvas: 'ask',
   crossThreadRead: 'ask',
   threadMessage: 'ask',
   mediaEditing: 'ask',

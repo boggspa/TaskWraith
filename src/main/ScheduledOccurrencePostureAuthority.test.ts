@@ -32,6 +32,7 @@ function permissions(
       canvasInteraction: 'ask',
       sketchCanvas: 'allow',
       meshCanvas: 'ask',
+      simulatorCanvas: 'ask',
       canvasEval: 'deny',
       crossThreadRead: 'deny',
       threadMessage: 'deny',

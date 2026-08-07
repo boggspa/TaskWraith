@@ -463,6 +463,11 @@ export type AgenticServiceId =
   // deliberately separate from canvasInteraction: granting control of a web
   // preview must not grant scene authoring/import, and vice versa.
   | 'meshCanvas'
+  // iOS / watchOS Simulator Canvas — chat-owned simulator control surface.
+  // Mirrors subThreadDelegation posture: Accept Edits / Full WS / Full Access
+  // allow; Ask and Plan stay per-invocation ASK (grant-held). Separate from
+  // meshCanvas / canvasInteraction so those grants never open the simulator.
+  | 'simulatorCanvas'
   // Canvas arbitrary `eval` (RCE in the previewed page). Its OWN service so it is
   // STRICTER than canvasInteraction: signed-elevated — never auto-allowed by any
   // preset, grant, or session-YOLO (every eval is individually human-approved),
@@ -656,6 +661,10 @@ export interface AgenticServicesSettings {
   // Optional for back-compat with settings persisted before Mesh Canvas. It is
   // grantable and defaults to 'ask' in the sanitizer/resolver.
   meshCanvas?: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before Simulator Canvas.
+  // Grantable; defaults to 'ask' in the sanitizer/resolver. Accept Edits /
+  // Full WS / Full Access presets allow; Ask/Plan stay modal ASK.
+  simulatorCanvas?: AgenticServicePolicy
   canvasEval: AgenticServicePolicy
   // Optional for back-compat with settings persisted before cross-thread recall;
   // defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
@@ -1901,10 +1910,10 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  // canvasInteraction / sketchCanvas / meshCanvas / canvasEval / crossThreadRead /
-  // threadMessage / mediaEditing / mediaRecording / webBrowsing are approval-grant
-  // buckets, not provider-capability contract rows — excluded like
-  // subThreadDelegation. (The media tools are already advertised under the
+  // canvasInteraction / sketchCanvas / meshCanvas / simulatorCanvas / canvasEval /
+  // crossThreadRead / threadMessage / mediaEditing / mediaRecording / webBrowsing
+  // are approval-grant buckets, not provider-capability contract rows — excluded
+  // like subThreadDelegation. (The media tools are already advertised under the
   // MCP/tool surface; they don't get their own contract row. Thread messaging and
   // the Canvas Browser are harness-owned and identical on every provider, so they
   // are not per-provider capabilities either.)
@@ -1914,6 +1923,7 @@ export type ProviderToolingCapabilityId =
       | 'canvasInteraction'
       | 'sketchCanvas'
       | 'meshCanvas'
+      | 'simulatorCanvas'
       | 'canvasEval'
       | 'crossThreadRead'
       | 'threadMessage'

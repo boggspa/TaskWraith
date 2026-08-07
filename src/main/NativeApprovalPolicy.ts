@@ -81,6 +81,9 @@ export function effectiveAgenticSettings(
       // Mesh Canvas is its own authoring/import service. Preserve a Recon
       // deny through this main-owned effective-policy rebuild.
       meshCanvas: preserveCurrentDeny(current.meshCanvas, effective.meshCanvas),
+      // Simulator Canvas mirrors subThreadDelegation: Ask/Plan stay ASK (not
+      // deny), but a global deny must still survive this rebuild.
+      simulatorCanvas: preserveCurrentDeny(current.simulatorCanvas, effective.simulatorCanvas),
       // Cross-thread reads: the read_only preset's crossThreadRead:'deny' must
       // survive this key-by-key rebuild (same deny-survival as canvasInteraction).
       crossThreadRead: preserveCurrentDeny(current.crossThreadRead, effective.crossThreadRead),

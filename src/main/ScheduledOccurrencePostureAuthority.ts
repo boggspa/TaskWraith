@@ -49,6 +49,7 @@ export const SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS = [
   'canvasInteraction',
   'sketchCanvas',
   'meshCanvas',
+  'simulatorCanvas',
   'canvasEval',
   'crossThreadRead',
   'threadMessage',

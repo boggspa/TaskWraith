@@ -72,6 +72,7 @@ function makeEffectivePermissions(
       canvasInteraction: 'ask',
       sketchCanvas: 'deny',
       meshCanvas: 'ask',
+      simulatorCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
       mediaEditing: 'deny',

@@ -15,6 +15,7 @@ function fullAccessPermissions(): EffectiveRunPermissions {
       canvasInteraction: 'allow',
       sketchCanvas: 'allow',
       meshCanvas: 'allow',
+      simulatorCanvas: 'allow',
       crossThreadRead: 'allow',
       threadMessage: 'allow',
       mediaEditing: 'allow',

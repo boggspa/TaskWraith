@@ -70,6 +70,7 @@ function effectiveServices(
     canvasInteraction: 'ask',
     sketchCanvas: 'allow',
     meshCanvas: 'ask',
+    simulatorCanvas: 'ask',
     crossThreadRead: 'ask',
     threadMessage: 'ask',
     mediaEditing: 'ask',

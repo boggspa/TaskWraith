@@ -13,6 +13,7 @@ export function agenticServiceDisabledMessage(service: AgenticServiceId): string
     service === 'canvasInteraction' ||
     service === 'sketchCanvas' ||
     service === 'meshCanvas' ||
+    service === 'simulatorCanvas' ||
     service === 'crossThreadRead' ||
     service === 'threadMessage' ||
     service === 'mediaEditing' ||
@@ -34,6 +35,7 @@ export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'canvasInteraction',
   'sketchCanvas',
   'meshCanvas',
+  'simulatorCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',

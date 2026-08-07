@@ -147,6 +147,7 @@ const agenticServiceKeys = [
   'canvasInteraction',
   'sketchCanvas',
   'meshCanvas',
+  'simulatorCanvas',
   'canvasEval',
   'crossThreadRead',
   'threadMessage',
