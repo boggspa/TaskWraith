@@ -7,6 +7,7 @@ import {
   estimateWorstOllamaEnsembleUiPressure,
   hasKnownOllamaContextTokenLimit,
   resolveOllamaContextTokenLimit,
+  resolveOllamaEnsemblePromptShellChars,
   resolveOllamaEnsembleTranscriptCharsForBudget
 } from './OllamaEnsembleContext'
 
@@ -184,5 +185,80 @@ describe('OllamaEnsembleContext', () => {
     expect(compacted).toContain('Current user request:')
     expect(compacted).toContain('Continue the Plan Mode arc.')
     expect(compacted).toContain('[transcript compacted for Ollama context]')
+  })
+
+  it('capsule-shaped over-budget prompt keeps the Current user request body', () => {
+    const requestBody =
+      'Ship request-preserving compaction so locals never lose the ask under panel noise.'
+    const prompt = [
+      'TaskWraith Ensemble Mode — Ollama context capsule',
+      '',
+      'Current user request:',
+      requestBody,
+      '',
+      'You are a LOCAL model running through Ollama (ornith). You are Scout / ornith.',
+      'Round id: round-capsule-1',
+      'Participant roster:',
+      '- Scout / ornith',
+      '- Boss / Codex',
+      '',
+      'Do this turn:',
+      '- Act on the Current user request above as your role.',
+      '',
+      'Recent panel context:',
+      'panel-history\n'.repeat(800),
+      '',
+      'Respond now as [Scout / ornith].'
+    ].join('\n')
+
+    const compacted = compactOllamaEnsemblePromptText(prompt, 3_200)
+
+    expect(compacted).toContain('Current user request:')
+    expect(compacted).toContain(requestBody)
+    expect(compacted).toContain('Respond now as [Scout / ornith].')
+    expect(compacted).toMatch(/\[(?:panel context|transcript) compacted for Ollama context\]/)
+    expect(compacted.length).toBeLessThan(prompt.length)
+    expect(compacted.length).toBeLessThanOrEqual(3_200 + 80)
+  })
+
+  it('fallback compaction pins the request block instead of bare head-slicing through it', () => {
+    const requestBody = 'UNIQUE_REQUEST_BODY_MUST_SURVIVE_COMPACTION_xyz'
+    const prompt = [
+      'TaskWraith Ensemble Mode',
+      'x'.repeat(2_000),
+      '',
+      'Current user request:',
+      requestBody,
+      '',
+      'You are a LOCAL model running through Ollama.',
+      'y'.repeat(2_000)
+    ].join('\n')
+
+    const compacted = compactOllamaEnsemblePromptText(prompt, 1_200)
+
+    expect(compacted).toContain('Current user request:')
+    expect(compacted).toContain(requestBody)
+    expect(compacted).not.toBe(
+      `${prompt.slice(0, Math.max(0, 1_200 - 48))}\n[ensemble prompt compacted for Ollama context]`
+    )
+  })
+
+  it('resolves shellChars from Recent panel context before tagged transcript', () => {
+    const prompt = [
+      'prefix shell',
+      '',
+      'Current user request:',
+      'Do the thing.',
+      '',
+      'Recent panel context:',
+      'panel'
+    ].join('\n')
+    expect(resolveOllamaEnsemblePromptShellChars(prompt)).toBe(prompt.indexOf('Recent panel context:'))
+  })
+
+  it('resolves shellChars carefully when neither transcript header is present', () => {
+    const prompt = ['rules shell\n\n', 'Current user request:', 'Ask me.'].join('\n')
+    expect(resolveOllamaEnsemblePromptShellChars(prompt)).toBe(prompt.indexOf('Current user request:'))
+    expect(resolveOllamaEnsemblePromptShellChars('no markers at all')).toBe(5_800)
   })
 })

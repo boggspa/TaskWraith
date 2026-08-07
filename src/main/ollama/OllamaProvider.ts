@@ -32,6 +32,7 @@ import {
 } from './OllamaModelPreflight'
 import {
   compactOllamaEnsemblePromptText,
+  resolveOllamaEnsemblePromptShellChars,
   resolveOllamaEnsembleTranscriptCharsForBudget
 } from './OllamaEnsembleContext'
 import {
@@ -59,6 +60,19 @@ import {
 } from './OllamaToolResultSummary'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { OllamaPromptIntent } from './OllamaPromptIntent'
+import {
+  appendOllamaStickyAskRemnant,
+  boundOllamaStickyAskExcerpt,
+  extractOllamaStickyAskText,
+  OLLAMA_STICKY_ASK_MAX_CHARS
+} from './OllamaStickyAsk'
+
+export {
+  appendOllamaStickyAskRemnant,
+  boundOllamaStickyAskExcerpt,
+  extractOllamaStickyAskText,
+  OLLAMA_STICKY_ASK_MAX_CHARS
+} from './OllamaStickyAsk'
 import { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
 import { buildOllamaWorkspaceIndexBlock } from './OllamaWorkspaceIndex'
 import {
@@ -562,15 +576,18 @@ export function ollamaRepeatedToolCallNudge(
   toolName: string,
   options?: OllamaRetryPromptOptions
 ): string {
-  return [
-    `You already called \`${toolName}\` with these exact arguments earlier this run and got the same result; its full output is still above in this conversation.`,
-    'Do NOT call it again.',
-    ...ollamaEnsembleRetryReminder(options),
-    options?.ensembleRun
-      ? 'Act on what you have now inside your assigned ensemble slice: make only the edits your role owns, or give your final answer for this turn.'
-      : 'Act on what you have now: make the edits the task needs (edit_file / write_file), or give your final answer.',
-    'Repeating identical reads wastes your limited local tool budget and will end the run with no result.'
-  ].join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      `You already called \`${toolName}\` with these exact arguments earlier this run and got the same result; its full output is still above in this conversation.`,
+      'Do NOT call it again.',
+      ...ollamaEnsembleRetryReminder(options),
+      options?.ensembleRun
+        ? 'Act on what you have now inside your assigned ensemble slice: make only the edits your role owns, or give your final answer for this turn.'
+        : 'Act on what you have now: make the edits the task needs (edit_file / write_file), or give your final answer.',
+      'Repeating identical reads wastes your limited local tool budget and will end the run with no result.'
+    ].join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 /**
@@ -607,20 +624,23 @@ export function isOllamaNoActiveGoalToolResult(
 
 export function ollamaNoActiveGoalToolNudge(
   toolName: string,
-  options: { repeated?: boolean; ensembleRun?: boolean } = {}
+  options: { repeated?: boolean } & OllamaRetryPromptOptions = {}
 ): string {
   const prefix = options.repeated
     ? `You already retried \`${toolName}\`, but TaskWraith still has no active thread goal.`
     : `TaskWraith reported there is no active thread goal, so \`${toolName}\` cannot help this request.`
-  return [
-    prefix,
-    'Do NOT call update_goal, goal_update, goal_complete, or goal_blocked again in this run.',
-    'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools.',
-    ...ollamaEnsembleRetryReminder(options),
-    options.ensembleRun
-      ? 'Continue inside your assigned ensemble slice with the available workspace tools, or give a normal final answer with the next local step.'
-      : 'Continue the user request with the available workspace tools, or give a normal final answer with the next local step.'
-  ].join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      prefix,
+      'Do NOT call update_goal, goal_update, goal_complete, or goal_blocked again in this run.',
+      'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools.',
+      ...ollamaEnsembleRetryReminder(options),
+      options.ensembleRun
+        ? 'Continue inside your assigned ensemble slice with the available workspace tools, or give a normal final answer with the next local step.'
+        : 'Continue the user request with the available workspace tools, or give a normal final answer with the next local step.'
+    ].join(' '),
+    options.currentRequestExcerpt
+  )
 }
 
 export function normalizeOllamaBaseUrl(value?: string | null): string {
@@ -1885,11 +1905,12 @@ export function ollamaToolResultFollowUpPrompt(input: {
   toolName: OllamaCallableToolName
   output: string
   ok: boolean
+  currentRequestExcerpt?: string
 }): string {
   const blackboardHint = !input.ok
     ? ollamaBlackboardFailureRepairHint(input.toolName, input.output)
     : null
-  return [
+  const body = [
     `TaskWraith executed ${input.toolName}.`,
     input.ok ? 'Tool status: success.' : 'Tool status: error.',
     'Tool result:',
@@ -1909,6 +1930,7 @@ export function ollamaToolResultFollowUpPrompt(input: {
             : 'If this was bad or missing arguments, re-issue the same tool with corrected args from the error. Otherwise try a different allowed TaskWraith tool, or explain the limitation.'
         ].join(' ')
   ].join('\n')
+  return input.ok ? body : appendOllamaStickyAskRemnant(body, input.currentRequestExcerpt)
 }
 
 function ollamaToolSchemaRepairExample(name: string, argsJson: string): string {
@@ -2017,16 +2039,21 @@ export function ollamaToolArgumentRepairPrompt(
     output: string
   } & OllamaRetryPromptOptions
 ): string {
-  return [
-    `TaskWraith rejected ${input.toolName} before execution because its arguments did not match the required schema.`,
-    'Validation error:',
-    input.output,
-    '',
-    `Re-issue the same ${input.toolName} tool call with the missing required argument set.`,
-    ollamaToolSchemaRepairHint(input.toolName) || '',
-    'Do not describe the tool call in prose, and do not answer as if the tool already ran.',
-    ...ollamaEnsembleRetryReminder(input)
-  ].filter(Boolean).join('\n')
+  return appendOllamaStickyAskRemnant(
+    [
+      `TaskWraith rejected ${input.toolName} before execution because its arguments did not match the required schema.`,
+      'Validation error:',
+      input.output,
+      '',
+      `Re-issue the same ${input.toolName} tool call with the missing required argument set.`,
+      ollamaToolSchemaRepairHint(input.toolName) || '',
+      'Do not describe the tool call in prose, and do not answer as if the tool already ran.',
+      ...ollamaEnsembleRetryReminder(input)
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    input.currentRequestExcerpt
+  )
 }
 
 /** Directed strategy-change nudge when the same executed failure has stopped
@@ -2038,17 +2065,20 @@ export function ollamaIdenticalFailureStrategyNudge(
     output: string
   } & OllamaRetryPromptOptions
 ): string {
-  return [
-    `TaskWraith executed ${input.toolName} and it failed the same way repeatedly.`,
-    'Tool result:',
-    input.output,
-    '',
-    'Do not repeat that identical call.',
-    'Change approach now: different arguments, a different allowed tool, or give your final answer for this turn with what you already know.',
-    ...ollamaEnsembleRetryReminder(input)
-  ]
-    .filter(Boolean)
-    .join('\n')
+  return appendOllamaStickyAskRemnant(
+    [
+      `TaskWraith executed ${input.toolName} and it failed the same way repeatedly.`,
+      'Tool result:',
+      input.output,
+      '',
+      'Do not repeat that identical call.',
+      'Change approach now: different arguments, a different allowed tool, or give your final answer for this turn with what you already know.',
+      ...ollamaEnsembleRetryReminder(input)
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    input.currentRequestExcerpt
+  )
 }
 
 export function ollamaGoalLifecycleStopContent(toolName: string): string | null {
@@ -2067,6 +2097,8 @@ export function shouldStopOllamaAfterGoalLifecycleTool(toolName: string, ok: boo
 
 interface OllamaRetryPromptOptions {
   ensembleRun?: boolean
+  /** Optional head of the current user/request text for sticky-ask recovery nudges. */
+  currentRequestExcerpt?: string
 }
 
 function ollamaEnsembleRetryReminder(options?: OllamaRetryPromptOptions): string[] {
@@ -2088,25 +2120,31 @@ export function ollamaCeilingFinalizeContent(options?: OllamaRetryPromptOptions)
 }
 
 export function ollamaEmptyToolResponseRetryPrompt(options?: OllamaRetryPromptOptions): string {
-  return [
-    'Your previous response was empty after TaskWraith returned tool results.',
-    'Do not request another tool unless it is strictly required.',
-    ...ollamaEnsembleRetryReminder(options),
-    options?.ensembleRun
-      ? 'Answer now in normal assistant prose, summarizing the tool results inside your assigned ensemble slice.'
-      : 'Answer the original user now in normal assistant prose, summarizing the tool results you already received.'
-  ].join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      'Your previous response was empty after TaskWraith returned tool results.',
+      'Do not request another tool unless it is strictly required.',
+      ...ollamaEnsembleRetryReminder(options),
+      options?.ensembleRun
+        ? 'Answer now in normal assistant prose, summarizing the tool results inside your assigned ensemble slice.'
+        : 'Answer the original user now in normal assistant prose, summarizing the tool results you already received.'
+    ].join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 export function ollamaEmptyResponseRetryPrompt(options?: OllamaRetryPromptOptions): string {
-  return [
-    'Your previous response was empty.',
-    ...ollamaEnsembleRetryReminder(options),
-    options?.ensembleRun
-      ? 'Answer the current ensemble turn now in normal assistant prose from your assigned participant role.'
-      : 'Answer the original user request now in normal assistant prose.',
-    'Put your final answer in your normal response, not only in hidden reasoning.'
-  ].join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      'Your previous response was empty.',
+      ...ollamaEnsembleRetryReminder(options),
+      options?.ensembleRun
+        ? 'Answer the current ensemble turn now in normal assistant prose from your assigned participant role.'
+        : 'Answer the original user request now in normal assistant prose.',
+      'Put your final answer in your normal response, not only in hidden reasoning.'
+    ].join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 /** Max generated tokens that still counts as a degenerate ensemble/solo turn. */
@@ -2116,14 +2154,17 @@ export const OLLAMA_DEGENERATE_OUTPUT_TOKEN_MAX = 1
 export const OLLAMA_DEGENERATE_STUB_MAX_CHARS = 24
 
 export function ollamaDegenerateResponseNudgePrompt(options?: OllamaRetryPromptOptions): string {
-  return [
-    'Your previous reply was too short to count as a turn (often caused by running out of context window).',
-    ...ollamaEnsembleRetryReminder(options),
-    options?.ensembleRun
-      ? 'Answer the current ensemble turn in full assistant prose now, or call a TaskWraith tool if your assigned slice needs workspace facts.'
-      : 'Answer the current request in full assistant prose now, or call a TaskWraith tool if you need workspace facts.',
-    'Do not stop after a single word or fragment.'
-  ].join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      'Your previous reply was too short to count as a turn (often caused by running out of context window).',
+      ...ollamaEnsembleRetryReminder(options),
+      options?.ensembleRun
+        ? 'Answer the current ensemble turn in full assistant prose now, or call a TaskWraith tool if your assigned slice needs workspace facts.'
+        : 'Answer the current request in full assistant prose now, or call a TaskWraith tool if you need workspace facts.',
+      'Do not stop after a single word or fragment.'
+    ].join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 export function looksLikeDegenerateOllamaStub(visibleText: string): boolean {
@@ -2151,15 +2192,18 @@ export function isDegenerateOllamaTurn(
  * reasoning channel without producing a final answer or an actual tool call.
  * We must not surface chain-of-thought as the answer, so push the model to act. */
 export function ollamaReasoningOnlyNudgePrompt(options?: OllamaRetryPromptOptions): string {
-  return [
-    'You produced internal reasoning but no final answer and no tool call.',
-    'If you need external data (web pages, files, search results), call one of the available tools now.',
-    ...ollamaEnsembleRetryReminder(options),
-    options?.ensembleRun
-      ? 'Otherwise, write your final answer for this ensemble turn in normal assistant prose from your assigned participant role.'
-      : 'Otherwise, write your final answer for the user in normal assistant prose.',
-    'Do not leave your response only in hidden reasoning.'
-  ].join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      'You produced internal reasoning but no final answer and no tool call.',
+      'If you need external data (web pages, files, search results), call one of the available tools now.',
+      ...ollamaEnsembleRetryReminder(options),
+      options?.ensembleRun
+        ? 'Otherwise, write your final answer for this ensemble turn in normal assistant prose from your assigned participant role.'
+        : 'Otherwise, write your final answer for the user in normal assistant prose.',
+      'Do not leave your response only in hidden reasoning.'
+    ].join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 /** Nudge for models (notably gpt-oss) that ANNOUNCE a tool in prose
@@ -2172,17 +2216,20 @@ export function ollamaToolIntentNudgePrompt(
   options?: OllamaRetryPromptOptions
 ): string {
   const available = toolNames.filter(Boolean)
-  return [
-    'You described using a tool in prose but did not actually call one.',
-    'Stop announcing the tool and emit a real tool call now (a structured function call), not a description of it.',
-    available.length ? `Available tools: ${available.join(', ')}.` : '',
-    ...ollamaEnsembleRetryReminder(options),
-    options?.ensembleRun
-      ? 'If you do not actually need a tool, give your complete final answer for this ensemble turn from your assigned participant role instead.'
-      : 'If you do not actually need a tool, give your complete final answer to the user in normal assistant prose instead.'
-  ]
-    .filter(Boolean)
-    .join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      'You described using a tool in prose but did not actually call one.',
+      'Stop announcing the tool and emit a real tool call now (a structured function call), not a description of it.',
+      available.length ? `Available tools: ${available.join(', ')}.` : '',
+      ...ollamaEnsembleRetryReminder(options),
+      options?.ensembleRun
+        ? 'If you do not actually need a tool, give your complete final answer for this ensemble turn from your assigned participant role instead.'
+        : 'If you do not actually need a tool, give your complete final answer to the user in normal assistant prose instead.'
+    ]
+      .filter(Boolean)
+      .join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 /** Nudge for a model that emitted a native tool call naming a tool that does
@@ -2196,17 +2243,20 @@ export function ollamaUnknownToolNameNudgePrompt(
 ): string {
   const invalid = [...new Set(droppedNames.filter(Boolean))]
   const available = toolNames.filter(Boolean)
-  return [
-    invalid.length
-      ? `The tool ${invalid.map((n) => `"${n}"`).join(', ')} is not directly callable in this compact TaskWraith profile, so that call did nothing.`
-      : 'That tool call is not directly callable in this compact TaskWraith profile, so it did nothing.',
-    available.length ? `Available tools: ${available.join(', ')}.` : '',
-    'Use capability_search for a hidden capability, then capability_invoke with its exact name and arguments. Legacy tool_help can also fetch one schema.',
-    'Re-issue a call through an available direct tool or capability_invoke, or answer in normal prose if no tool is needed.',
-    ...ollamaEnsembleRetryReminder(options)
-  ]
-    .filter(Boolean)
-    .join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      invalid.length
+        ? `The tool ${invalid.map((n) => `"${n}"`).join(', ')} is not directly callable in this compact TaskWraith profile, so that call did nothing.`
+        : 'That tool call is not directly callable in this compact TaskWraith profile, so it did nothing.',
+      available.length ? `Available tools: ${available.join(', ')}.` : '',
+      'Use capability_search for a hidden capability, then capability_invoke with its exact name and arguments. Legacy tool_help can also fetch one schema.',
+      'Re-issue a call through an available direct tool or capability_invoke, or answer in normal prose if no tool is needed.',
+      ...ollamaEnsembleRetryReminder(options)
+    ]
+      .filter(Boolean)
+      .join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 /** Detect a leaked tool-protocol attempt: the model tried to emit the
@@ -2223,17 +2273,20 @@ export function looksLikeLeakedOllamaToolProtocol(text: string): boolean {
 
 /** Nudge for a malformed/leaked tool-call JSON that couldn't be parsed. */
 export function ollamaMalformedToolJsonNudgePrompt(options?: OllamaRetryPromptOptions): string {
-  return [
-    'Your previous tool request could not be parsed as valid JSON.',
-    'If a string argument contains source code or backslashes, escape them correctly (for example, a literal backslash must be written as \\\\, and embedded double quotes as \\").',
-    ...ollamaEnsembleRetryReminder(options),
-    'Re-issue the tool call now as a single valid JSON object (or emit a native tool call). Do not output the tool request as plain prose.',
-    options?.ensembleRun
-      ? 'If this tool is no longer required for your assigned participant slice, answer from your assigned role instead.'
-      : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
+  return appendOllamaStickyAskRemnant(
+    [
+      'Your previous tool request could not be parsed as valid JSON.',
+      'If a string argument contains source code or backslashes, escape them correctly (for example, a literal backslash must be written as \\\\, and embedded double quotes as \\").',
+      ...ollamaEnsembleRetryReminder(options),
+      'Re-issue the tool call now as a single valid JSON object (or emit a native tool call). Do not output the tool request as plain prose.',
+      options?.ensembleRun
+        ? 'If this tool is no longer required for your assigned participant slice, answer from your assigned role instead.'
+        : ''
+    ]
+      .filter(Boolean)
+      .join(' '),
+    options?.currentRequestExcerpt
+  )
 }
 
 /** Heuristic: does this turn's visible `content` merely ANNOUNCE a tool call
@@ -2393,7 +2446,7 @@ export function prepareOllamaEnsemblePromptForRuntime(input: {
   configuredContextTurns?: number
   toolsEnabled?: boolean
 }): string {
-  const shellChars = Math.max(0, input.prompt.indexOf('Recent tagged transcript:'))
+  const shellChars = resolveOllamaEnsemblePromptShellChars(input.prompt)
   const runtimeContextLimit = resolveOllamaRuntimeContextLimit({
     modelInfo: input.modelInfo,
     contextCapTokens: input.contextCapTokens
@@ -2401,7 +2454,7 @@ export function prepareOllamaEnsemblePromptForRuntime(input: {
   const budget = resolveOllamaEnsembleTranscriptCharsForBudget({
     configuredChars: input.configuredContextChars,
     configuredTurns: input.configuredContextTurns,
-    promptWithoutTranscriptChars: shellChars > 0 ? shellChars : 5_800,
+    promptWithoutTranscriptChars: shellChars,
     modelId: input.modelId,
     contextLength: runtimeContextLimit,
     toolsEnabled: input.toolsEnabled
@@ -3041,6 +3094,13 @@ export async function runOllamaProvider(
           })
         : undefined
     const ensembleRun = Boolean(payload.ensembleRun)
+    const currentRequestExcerpt = boundOllamaStickyAskExcerpt(
+      extractOllamaStickyAskText(launchPlan.userPrompt)
+    )
+    const stickyRetryOptions: OllamaRetryPromptOptions = {
+      ensembleRun,
+      currentRequestExcerpt: currentRequestExcerpt || undefined
+    }
     const chatId = route.appChatId || payload.appChatId
     const memoryKey = launchPlan.memoryKey ?? undefined
     let sessionMemory = JSON.parse(
@@ -3159,7 +3219,7 @@ export async function runOllamaProvider(
     for (let turnIndex = 0; ; turnIndex += 1) {
       assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
       if (consecutiveNonProductiveTurns >= OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS) {
-        emitOllamaContent(ollamaCeilingFinalizeContent({ ensembleRun }))
+        emitOllamaContent(ollamaCeilingFinalizeContent(stickyRetryOptions))
         break
       }
       const jsonToolFallback =
@@ -3374,7 +3434,7 @@ export async function runOllamaProvider(
             content: ollamaUnknownToolNameNudgePrompt(
               turn.droppedNativeToolNames,
               availableToolNames,
-              { ensembleRun }
+              stickyRetryOptions
             )
           })
           continue
@@ -3387,8 +3447,8 @@ export async function runOllamaProvider(
             role: 'user',
             content:
               toolCallCount > 0
-                ? ollamaEmptyToolResponseRetryPrompt({ ensembleRun })
-                : ollamaReasoningOnlyNudgePrompt({ ensembleRun })
+                ? ollamaEmptyToolResponseRetryPrompt(stickyRetryOptions)
+                : ollamaReasoningOnlyNudgePrompt(stickyRetryOptions)
           })
           continue
         }
@@ -3397,8 +3457,8 @@ export async function runOllamaProvider(
             role: 'user',
             content:
               toolCallCount > 0
-                ? ollamaEmptyToolResponseRetryPrompt({ ensembleRun })
-                : ollamaEmptyResponseRetryPrompt({ ensembleRun })
+                ? ollamaEmptyToolResponseRetryPrompt(stickyRetryOptions)
+                : ollamaEmptyResponseRetryPrompt(stickyRetryOptions)
           })
           continue
         }
@@ -3413,7 +3473,7 @@ export async function runOllamaProvider(
         ) {
           forceJsonToolFallback = true
           messages.push({ role: 'assistant', content: turn.content })
-          messages.push({ role: 'user', content: ollamaMalformedToolJsonNudgePrompt({ ensembleRun }) })
+          messages.push({ role: 'user', content: ollamaMalformedToolJsonNudgePrompt(stickyRetryOptions) })
           continue
         }
         // Tool-intent stub: the model announced a tool in prose ("We need to
@@ -3429,7 +3489,7 @@ export async function runOllamaProvider(
           messages.push({ role: 'assistant', content: turn.content })
           messages.push({
             role: 'user',
-            content: ollamaToolIntentNudgePrompt(availableToolNames, { ensembleRun })
+            content: ollamaToolIntentNudgePrompt(availableToolNames, stickyRetryOptions)
           })
           continue
         }
@@ -3439,7 +3499,7 @@ export async function runOllamaProvider(
           if (turn.content.trim()) {
             messages.push({ role: 'assistant', content: turn.content })
           }
-          messages.push({ role: 'user', content: ollamaDegenerateResponseNudgePrompt({ ensembleRun }) })
+          messages.push({ role: 'user', content: ollamaDegenerateResponseNudgePrompt(stickyRetryOptions) })
           continue
         }
         if (visibleText) {
@@ -3620,22 +3680,22 @@ export async function runOllamaProvider(
         if (noActiveGoalToolResult) {
           modelFacingOutput = ollamaNoActiveGoalToolNudge(toolRequest.toolName, {
             repeated: repeat.repeated,
-            ensembleRun
+            ...stickyRetryOptions
           })
         } else if (toolResult.validationError) {
           modelFacingOutput = ollamaToolArgumentRepairPrompt({
             toolName: toolRequest.toolName,
             output: truncatedOutput,
-            ensembleRun
+            ...stickyRetryOptions
           })
         } else if (identicalFailureStrategyNudge) {
           modelFacingOutput = ollamaIdenticalFailureStrategyNudge({
             toolName: toolRequest.toolName,
             output: truncatedOutput,
-            ensembleRun
+            ...stickyRetryOptions
           })
         } else if (repeat.repeated && !repeat.compactedAway) {
-          modelFacingOutput = ollamaRepeatedToolCallNudge(toolRequest.toolName, { ensembleRun })
+          modelFacingOutput = ollamaRepeatedToolCallNudge(toolRequest.toolName, stickyRetryOptions)
         } else if (repeat.repeated && repeat.compactedAway) {
           modelFacingOutput = `${ollamaCompactedRepeatToolCallPreamble(toolRequest.toolName)}\n${truncatedOutput}`
         }
@@ -3708,12 +3768,13 @@ export async function runOllamaProvider(
                     ok: toolResult.ok,
                     state: harnessState,
                     tier: toolControlTier,
-                    ensembleRun
+                    ...stickyRetryOptions
                   })
                 : ollamaToolResultFollowUpPrompt({
                     toolName: toolRequest.toolName,
                     output: modelFacingOutput,
-                    ok: toolResult.ok
+                    ok: toolResult.ok,
+                    currentRequestExcerpt: stickyRetryOptions.currentRequestExcerpt
                   })
           })
         }

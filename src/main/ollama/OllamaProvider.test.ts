@@ -20,6 +20,10 @@ import {
   ollamaToolArgumentRepairPrompt,
   ollamaToolSchemaRepairHint,
   ollamaIdenticalFailureStrategyNudge,
+  OLLAMA_STICKY_ASK_MAX_CHARS,
+  boundOllamaStickyAskExcerpt,
+  appendOllamaStickyAskRemnant,
+  extractOllamaStickyAskText,
   canonicalizeOllamaToolArguments,
   ollamaCeilingFinalizeContent,
   ollamaSessionMemoryKeyForRun,
@@ -359,6 +363,44 @@ describe('prepareOllamaEnsemblePromptForRuntime', () => {
 
     expect(prepared).toContain(transcript)
     expect(prepared).not.toContain('[transcript compacted for Ollama context]')
+  })
+
+  it('capsule ensemble prompt keeps Current user request under a tight context window', () => {
+    const requestBody = 'Preserve this capsule ask when panel context overflows.'
+    const prompt = [
+      'TaskWraith Ensemble Mode — Ollama context capsule',
+      '',
+      'Current user request:',
+      requestBody,
+      '',
+      'You are a LOCAL model running through Ollama (qwen). You are Worker / qwen.',
+      'Round id: round-tight-1',
+      'Participant roster:',
+      '- Worker / qwen',
+      '',
+      'Do this turn:',
+      '- Act on the Current user request above as your role.',
+      '',
+      'Recent panel context:',
+      'prior panel turn\n'.repeat(2_000),
+      '',
+      'Respond now as [Worker / qwen].'
+    ].join('\n')
+
+    const prepared = prepareOllamaEnsemblePromptForRuntime({
+      prompt,
+      modelId: 'qwen3:4b-instruct',
+      modelInfo: { id: 'qwen3:4b-instruct', label: 'Qwen', contextLength: 4096 } as any,
+      contextCapTokens: 4096,
+      configuredContextChars: 2_000,
+      configuredContextTurns: 2,
+      toolsEnabled: false
+    })
+
+    expect(prepared).toContain('Current user request:')
+    expect(prepared).toContain(requestBody)
+    expect(prepared).toContain('Respond now as [Worker / qwen].')
+    expect(prepared.length).toBeLessThan(prompt.length)
   })
 })
 
@@ -1943,13 +1985,22 @@ describe('runOllamaProvider streaming', () => {
       executeTool
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: 'Current user request:\nRead README.md for the sticky ask remnant.'
+      },
+      baseRoute
+    )
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     expect(chatBodies).toHaveLength(2)
     const repairTurn = JSON.stringify(chatBodies[1].messages)
     expect(repairTurn).toContain('TaskWraith rejected read_file before execution')
     expect(repairTurn).toContain('Re-issue the same read_file tool call')
+    expect(repairTurn).toContain('Still answering: «Read README.md for the sticky ask remnant.»')
     expect(repairTurn).not.toContain('The tool failed.')
     expect(
       lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
@@ -3514,6 +3565,72 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).toContain('"name":"read_file"')
     expect(prompt).toContain('"path":"README.md"')
     expect(prompt).not.toContain('The tool failed.')
+  })
+
+  describe('sticky ask remnant', () => {
+    it('bounds and appends Still answering excerpts', () => {
+      expect(boundOllamaStickyAskExcerpt('  keep me  ')).toBe('keep me')
+      expect(boundOllamaStickyAskExcerpt('')).toBe('')
+      expect(boundOllamaStickyAskExcerpt('   ')).toBe('')
+      const long = 'x'.repeat(OLLAMA_STICKY_ASK_MAX_CHARS + 20)
+      const bounded = boundOllamaStickyAskExcerpt(long)
+      expect(bounded).toBe(`${'x'.repeat(OLLAMA_STICKY_ASK_MAX_CHARS)}…`)
+      expect(appendOllamaStickyAskRemnant('body', '  ask this  ')).toBe(
+        'body\nStill answering: «ask this»'
+      )
+      expect(appendOllamaStickyAskRemnant('body', '   ')).toBe('body')
+      expect(appendOllamaStickyAskRemnant('body')).toBe('body')
+    })
+
+    it('includes Still answering on repair and strategy nudges when excerpt is passed', () => {
+      const repair = ollamaToolArgumentRepairPrompt({
+        toolName: 'read_file',
+        output: 'missing path',
+        currentRequestExcerpt: 'Fix the README path'
+      })
+      expect(repair.endsWith('\nStill answering: «Fix the README path»')).toBe(true)
+
+      const strategy = ollamaIdenticalFailureStrategyNudge({
+        toolName: 'run_shell_command',
+        output: 'exit 1',
+        currentRequestExcerpt: 'Install tidepool deps'
+      })
+      expect(strategy.endsWith('\nStill answering: «Install tidepool deps»')).toBe(true)
+
+      const without = ollamaToolArgumentRepairPrompt({
+        toolName: 'read_file',
+        output: 'missing path'
+      })
+      expect(without).not.toContain('Still answering')
+    })
+
+    it('extracts only the Current user request body from an ensemble capsule', () => {
+      const capsule = [
+        'TaskWraith Ensemble Mode — Ollama context capsule',
+        '',
+        'Current user request:',
+        'Write a Zig joke test.',
+        '',
+        'You are a LOCAL model running through Ollama (qwen3:4b).',
+        'Round id: round-1',
+        '',
+        'Your role instructions:',
+        'Implement the request.',
+        '',
+        'Scout briefs:',
+        'secret scout finding should not leak',
+        '',
+        'Recent panel context:',
+        '[User] old chatter'
+      ].join('\n')
+      expect(extractOllamaStickyAskText(capsule)).toBe('Write a Zig joke test.')
+      expect(boundOllamaStickyAskExcerpt(extractOllamaStickyAskText(capsule))).not.toContain(
+        'LOCAL model'
+      )
+      expect(boundOllamaStickyAskExcerpt(extractOllamaStickyAskText(capsule))).not.toContain(
+        'Scout briefs'
+      )
+    })
   })
 
   it('gives top tools exact compact recovery JSON examples', () => {

@@ -983,6 +983,64 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('local-scout workflow')
     expect(result.contextualPrompt).toContain('Hi OSS how are you?')
+    expect(result.contextualPrompt).not.toContain('Current user request:')
+  })
+
+  it('labels cold Ollama workspace prompts with Current user request exactly once', () => {
+    const result = composeRunPrompt({
+      provider: 'ollama',
+      finalPrompt: 'Add a Zig joke test.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Ollama',
+      nextModel: 'qwen3:4b-instruct'
+    })
+
+    expect(result.contextualPrompt).toContain('Current user request:\nAdd a Zig joke test.')
+    expect(result.contextualPrompt.match(/Current user request:/g)?.length).toBe(1)
+  })
+
+  it('does not double-wrap Ollama workspace prompts that already carry the marker', () => {
+    const result = composeRunPrompt({
+      provider: 'ollama',
+      finalPrompt: 'Read README.md and fix the Zig compile error.',
+      messages: [
+        message({ role: 'user', content: 'prior ask about Zig sources in src/' }),
+        message({ role: 'assistant', content: 'I inspected src/main.zig earlier.' })
+      ],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Ollama',
+      nextModel: 'qwen3:4b-instruct'
+    })
+
+    // Prior turns inject context via appendConversationContext, which already
+    // labels the ask. Cold-wrap must remain idempotent.
+    expect(result.contextualPrompt).toContain(
+      'Current user request:\nRead README.md and fix the Zig compile error.'
+    )
+    expect(result.contextualPrompt.match(/Current user request:/g)?.length).toBe(1)
+  })
+
+  it('does not add Current user request cold-wrap for non-Ollama providers', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'Add a Zig joke test.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude'
+    })
+
+    expect(result.contextualPrompt).toContain('Add a Zig joke test.')
+    expect(result.contextualPrompt).not.toContain('Current user request:')
   })
 
   it('keeps thanks-only follow-ups free of the prior tool trajectory block', () => {

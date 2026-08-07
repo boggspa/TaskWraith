@@ -22,7 +22,16 @@ export const OLLAMA_TOOL_SYSTEM_PROMPT_TOKENS = 420
 export const OLLAMA_COMPACT_TOOL_SYSTEM_PROMPT_TOKENS = 260
 
 const TRANSCRIPT_SECTION_HEADER = 'Recent tagged transcript:'
+const PANEL_CONTEXT_HEADER = 'Recent panel context:'
 const CURRENT_REQUEST_HEADER = 'Current user request:'
+const ENSEMBLE_COMPACT_MARKER = '[ensemble prompt compacted for Ollama context]'
+const TRANSCRIPT_COMPACT_MARKER = '[transcript compacted for Ollama context]'
+const PANEL_COMPACT_MARKER = '[panel context compacted for Ollama context]'
+const DEFAULT_SHELL_CHARS_FALLBACK = 5_800
+
+/** Ends the pinned Current user request block (header + body). */
+const REQUEST_BLOCK_END_RE =
+  /\n\n(?=(?:Recent panel context:|Recent tagged transcript:|Your role instructions:|Participant roster:|Do this turn:|Role boundary contract:|Authority and role boundary:|Dynamic ensemble state:|Workspace subject:|Workspace churn:|Scout briefs:|Shared blackboard|Bounded prior-seat summary:|Respond now as |You are a LOCAL model))/
 
 export type OllamaContextPressureSeverity = 'ok' | 'warn' | 'critical'
 
@@ -157,29 +166,166 @@ export function resolveOllamaEnsembleTranscriptCharsForBudget(input: {
   return { contextChars, contextTurns, autoCompacted }
 }
 
+/** Chars before the shrinkable transcript/panel body for ensemble budget math. */
+export function resolveOllamaEnsemblePromptShellChars(prompt: string): number {
+  const value = String(prompt || '')
+  const panelIdx = value.indexOf(PANEL_CONTEXT_HEADER)
+  if (panelIdx >= 0) return panelIdx
+  const transcriptIdx = value.indexOf(TRANSCRIPT_SECTION_HEADER)
+  if (transcriptIdx >= 0) return transcriptIdx
+  const requestIdx = value.indexOf(CURRENT_REQUEST_HEADER)
+  if (requestIdx > 0) return requestIdx
+  return DEFAULT_SHELL_CHARS_FALLBACK
+}
+
+function findRequestBlockRange(value: string): { start: number; end: number } | null {
+  const start = value.indexOf(CURRENT_REQUEST_HEADER)
+  if (start < 0) return null
+  const afterHeader = value.slice(start + CURRENT_REQUEST_HEADER.length)
+  const endMatch = afterHeader.match(REQUEST_BLOCK_END_RE)
+  const end =
+    endMatch && typeof endMatch.index === 'number'
+      ? start + CURRENT_REQUEST_HEADER.length + endMatch.index
+      : value.length
+  return { start, end }
+}
+
+function findRespondTail(value: string): string {
+  const match = value.match(/\nRespond now as \[[^\]]*\]\.?\s*$/)
+  return match?.[0] ?? ''
+}
+
+function compactFillableBody(body: string, budget: number, marker: string): string {
+  const trimmed = body.trim()
+  if (trimmed.length <= budget) return trimmed
+  const keep = Math.max(0, budget - marker.length - 1)
+  return `${trimmed.slice(0, keep)}\n${marker}`
+}
+
+function compactCapsulePanelLayout(value: string, maxChars: number, requestRange: {
+  start: number
+  end: number
+}): string {
+  const panelIdx = value.indexOf(PANEL_CONTEXT_HEADER)
+  if (panelIdx < 0 || panelIdx < requestRange.end) return ''
+
+  const prefix = value.slice(0, panelIdx + PANEL_CONTEXT_HEADER.length)
+  const afterHeader = value.slice(panelIdx + PANEL_CONTEXT_HEADER.length)
+  const respondTail = findRespondTail(afterHeader)
+  const panelBody = respondTail
+    ? afterHeader.slice(0, afterHeader.length - respondTail.length)
+    : afterHeader
+  const overhead = prefix.length + respondTail.length + 2
+  if (prefix.length + respondTail.length > maxChars) {
+    // Prefix alone still over budget: pin request, shrink middle shell, keep respond tail.
+    return pinRequestAndFill(value, maxChars, requestRange, respondTail)
+  }
+  const panelBudget = Math.max(0, maxChars - overhead)
+  const compactedPanel = compactFillableBody(panelBody, panelBudget, PANEL_COMPACT_MARKER)
+  return `${prefix}\n${compactedPanel}${respondTail}`
+}
+
+function compactClassicTranscriptLayout(value: string, maxChars: number, requestIdx: number): string {
+  const transcriptIdx = value.indexOf(TRANSCRIPT_SECTION_HEADER)
+  if (transcriptIdx < 0 || requestIdx <= transcriptIdx) return ''
+
+  const prefix = value.slice(0, transcriptIdx + TRANSCRIPT_SECTION_HEADER.length)
+  const suffix = value.slice(requestIdx)
+  const transcriptBudget = Math.max(800, maxChars - prefix.length - suffix.length - 80)
+  const transcriptBody = value
+    .slice(transcriptIdx + TRANSCRIPT_SECTION_HEADER.length, requestIdx)
+    .trim()
+  const compactedTranscript = compactFillableBody(
+    transcriptBody,
+    transcriptBudget,
+    TRANSCRIPT_COMPACT_MARKER
+  )
+  return `${prefix}\n${compactedTranscript}\n\n${suffix}`
+}
+
+function pinRequestAndFill(
+  value: string,
+  maxChars: number,
+  requestRange: { start: number; end: number },
+  respondTail = ''
+): string {
+  const requestBlock = value.slice(requestRange.start, requestRange.end).trimEnd()
+  const titlePrefix = value.slice(0, requestRange.start).trimEnd()
+  const afterRequest = value.slice(requestRange.end)
+  const tail =
+    respondTail ||
+    findRespondTail(afterRequest) ||
+    (afterRequest.trim() ? `\n\n${ENSEMBLE_COMPACT_MARKER}` : `\n${ENSEMBLE_COMPACT_MARKER}`)
+
+  // Always keep the full request block when possible.
+  if (requestBlock.length + 1 >= maxChars) {
+    const keep = Math.max(0, maxChars - ENSEMBLE_COMPACT_MARKER.length - 1)
+    return `${requestBlock.slice(0, keep)}\n${ENSEMBLE_COMPACT_MARKER}`
+  }
+
+  const remaining = maxChars - requestBlock.length - tail.length
+  if (remaining <= 0) {
+    return `${requestBlock}${tail}`.slice(0, maxChars)
+  }
+
+  // Prefer a short title/shell prefix before the request, then optional mid fill.
+  const prefixBudget = Math.min(titlePrefix.length, Math.max(0, Math.floor(remaining * 0.55)))
+  const keptPrefix =
+    prefixBudget >= titlePrefix.length
+      ? titlePrefix
+      : titlePrefix.slice(0, Math.max(0, prefixBudget - 24)).trimEnd()
+
+  const used = (keptPrefix ? keptPrefix.length + 2 : 0) + requestBlock.length + tail.length
+  const midBudget = Math.max(0, maxChars - used)
+  const midSource = afterRequest.replace(/\nRespond now as \[[^\]]*\]\.?\s*$/, '').trim()
+  const mid =
+    midBudget > 64 && midSource
+      ? `\n${compactFillableBody(midSource, midBudget, ENSEMBLE_COMPACT_MARKER)}\n`
+      : keptPrefix || midSource
+        ? '\n\n'
+        : ''
+
+  const parts = [
+    keptPrefix,
+    keptPrefix ? '\n\n' : '',
+    requestBlock,
+    mid.startsWith('\n') ? mid : mid ? `\n${mid}` : '',
+    tail.startsWith('\n') ? tail : tail ? `\n${tail}` : ''
+  ]
+  let assembled = parts.join('')
+  if (assembled.length > maxChars) {
+    assembled = `${requestBlock}\n${ENSEMBLE_COMPACT_MARKER}`
+  }
+  return assembled
+}
+
 export function compactOllamaEnsemblePromptText(prompt: string, maxChars: number): string {
   const value = (prompt || '').trim()
   if (!value || value.length <= maxChars) return value
 
+  const requestRange = findRequestBlockRange(value)
+  const requestIdx = requestRange?.start ?? value.indexOf(CURRENT_REQUEST_HEADER)
+  const panelIdx = value.indexOf(PANEL_CONTEXT_HEADER)
   const transcriptIdx = value.indexOf(TRANSCRIPT_SECTION_HEADER)
-  const requestIdx = value.indexOf(CURRENT_REQUEST_HEADER)
-  if (transcriptIdx < 0 || requestIdx <= transcriptIdx) {
-    return `${value.slice(0, Math.max(0, maxChars - 48))}\n[ensemble prompt compacted for Ollama context]`
+
+  // Capsule: request-first, Recent panel context near the end — shrink panel body only.
+  if (requestRange && panelIdx > requestRange.end) {
+    const capsule = compactCapsulePanelLayout(value, maxChars, requestRange)
+    if (capsule) return capsule
   }
 
-  const prefix = value.slice(0, transcriptIdx + TRANSCRIPT_SECTION_HEADER.length)
-  const suffix = value.slice(requestIdx)
-  const suffixBudget = suffix.length
-  const transcriptBudget = Math.max(800, maxChars - prefix.length - suffixBudget - 80)
-  const transcriptBody = value
-    .slice(transcriptIdx + TRANSCRIPT_SECTION_HEADER.length, requestIdx)
-    .trim()
-  const compactedTranscript =
-    transcriptBody.length <= transcriptBudget
-      ? transcriptBody
-      : `${transcriptBody.slice(0, Math.max(0, transcriptBudget - 64))}\n[transcript compacted for Ollama context]`
+  // Classic: Recent tagged transcript before request — shrink the middle transcript body.
+  if (transcriptIdx >= 0 && requestIdx > transcriptIdx) {
+    const classic = compactClassicTranscriptLayout(value, maxChars, requestIdx)
+    if (classic) return classic
+  }
 
-  return `${prefix}\n${compactedTranscript}\n\n${suffix}`
+  // Fallback: never bare-slice through the request; pin the request block first.
+  if (requestRange) {
+    return pinRequestAndFill(value, maxChars, requestRange)
+  }
+
+  return `${value.slice(0, Math.max(0, maxChars - ENSEMBLE_COMPACT_MARKER.length - 1))}\n${ENSEMBLE_COMPACT_MARKER}`
 }
 
 export function estimateOllamaEnsembleUiPressure(input: {

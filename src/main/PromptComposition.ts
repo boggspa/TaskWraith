@@ -1283,6 +1283,12 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     // tool-trajectory block — just the user's words. Work prompts keep both.
     const promptIntent = ollamaPromptIntent || 'workspace'
     if (promptIntent === 'workspace') {
+      // Cold workspace turns often lack conversation/peer/goal wraps, so the
+      // opening user message has no labeled ask for the harness kickoff to
+      // point at. Idempotent: skip when a marker is already present.
+      if (!contextualPrompt.includes('Current user request:\n')) {
+        contextualPrompt = `Current user request:\n${finalPrompt}`
+      }
       const sessionMemoryBlock = formatOllamaSessionMemoryForPrompt(ollamaSessionMemory)
       const scoutHint = ollamaTierAwareWorkflowHint(
         nextModel,

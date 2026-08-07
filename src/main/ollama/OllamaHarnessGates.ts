@@ -4,6 +4,7 @@ import {
   ollamaEnforcesRetrievalFirst,
   ollamaReadFileExemptFromRetrievalFirst
 } from './OllamaRetrievalFirst'
+import { appendOllamaStickyAskRemnant } from './OllamaStickyAsk'
 import {
   OLLAMA_FILE_EDIT_TOOL_NAMES,
   ollamaToolNamesForTier,
@@ -269,6 +270,7 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
   state: OllamaHarnessRunState
   tier: OllamaToolControlTier | string | undefined | null
   ensembleRun?: boolean
+  currentRequestExcerpt?: string
 }): string {
   const base = [
     `TaskWraith executed ${input.toolName}.`,
@@ -333,5 +335,9 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
     )
   }
 
-  return [...base, guidance.join(' ')].join('\n')
+  const body = [...base, guidance.join(' ')].join('\n')
+  if (!input.ok) {
+    return appendOllamaStickyAskRemnant(body, input.currentRequestExcerpt)
+  }
+  return body
 }
