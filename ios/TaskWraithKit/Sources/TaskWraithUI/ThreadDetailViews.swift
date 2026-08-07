@@ -65,8 +65,14 @@ enum TranscriptTouchTrackingPolicy {
 /// position. `force` at the call site only bypasses the reveal-pin throttle —
 /// it must never override an explicit unfollow (`autoFollow == false`).
 enum TranscriptFollowPolicy {
-    /// Quiet window after a finger leaves the transcript (covers scroll inertia).
+    /// Quiet window after a finger leaves the transcript, before a content-driven
+    /// pin may move the offset again.
     static let userTouchQuietPeriod: TimeInterval = 0.6
+    /// How long a flick can still be MOVING the transcript after the finger has
+    /// gone. UIKit deceleration outlives `userTouchQuietPeriod` several times
+    /// over, and until it stops the scroll is still the user's gesture playing
+    /// out — see `sentinelDisappearanceEndsFollowing`.
+    static let userScrollSettlePeriod: TimeInterval = 2.5
     /// After a programmatic pin, ignore sentinel `onAppear` re-arm so a settle
     /// pass that briefly shows the bottom cannot undo a user unfollow.
     static let programmaticPinRearmGrace: TimeInterval = 0.35
@@ -103,24 +109,33 @@ enum TranscriptFollowPolicy {
 
     /// Does the bottom sentinel going off-screen mean the USER left the bottom?
     ///
-    /// Only when a finger was recently on the transcript. The sentinel also
-    /// disappears for reasons that are pure layout — a snapshot swap on send
-    /// replaces the row set, a long streamed message grows the content below the
-    /// viewport, a lazy stack drops the trailing row while re-materializing —
-    /// and treating those as intent LATCHED FOLLOWING OFF MID-RUN: both re-pin
-    /// triggers (`onChange(rows.count)`, `onChange(streamingTexts)`) are gated
-    /// behind `autoFollow`, so nothing could ever set it back. The transcript
-    /// then sat frozen while the reply streamed in below the fold, and only a
-    /// manual jump-to-latest tap recovered it — the 2026-07-28 "picker during
-    /// streaming" stall, which reproduced on a plain send with no picker at all.
+    /// Only when the transcript may still be moving under their own gesture. The
+    /// sentinel also disappears for reasons that are pure layout — a snapshot
+    /// swap on send replaces the row set, a long streamed message grows the
+    /// content below the viewport, a lazy stack drops the trailing row while
+    /// re-materializing — and treating those as intent LATCHED FOLLOWING OFF
+    /// MID-RUN: both re-pin triggers (`onChange(rows.count)`,
+    /// `onChange(streamingTexts)`) are gated behind `autoFollow`, so nothing
+    /// could ever set it back. The transcript then sat frozen while the reply
+    /// streamed in below the fold, and only a manual jump-to-latest tap
+    /// recovered it — the 2026-07-28 "picker during streaming" stall, which
+    /// reproduced on a plain send with no picker at all.
     ///
-    /// Same quiet period as `shouldScroll`, and the same principle: a real
-    /// gesture always wins, a layout event never speaks for the user.
+    /// The window is `userScrollSettlePeriod`, NOT the shorter
+    /// `userTouchQuietPeriod` this shared with `shouldScroll` until 2026-08-07.
+    /// Sharing one constant left the two edges adjacent with nothing in between:
+    /// the instant a disappearance stopped counting as the user's, a repair pin
+    /// was already permitted. A flick whose sentinel dematerialised during
+    /// deceleration therefore latched nothing off AND scrolled back to the tail,
+    /// which is the transcript fighting the gesture in the opposite direction.
+    /// A flick's deceleration is that gesture still playing out, so it belongs
+    /// on the user's side of the line; only a transcript provably at rest can
+    /// attribute a disappearance to layout.
     static func sentinelDisappearanceEndsFollowing(
         lastUserTouchAt: Date,
         now: Date = Date()
     ) -> Bool {
-        now.timeIntervalSince(lastUserTouchAt) < userTouchQuietPeriod
+        now.timeIntervalSince(lastUserTouchAt) < userScrollSettlePeriod
     }
 }
 
@@ -350,8 +365,6 @@ struct ThreadDetailView: View {
     @State private var expandedFanoutViewports: Set<String> = []
     /// Session-only additive participant/System selection. Empty means show all.
     @State private var activeTranscriptFilterKeys: Set<String> = []
-    /// Last scrubber jump, used as a compact active-turn cue.
-    @State private var activeTurnScrubberMarkerKey: String?
     /// Two-format transcript export popover state (raw Messages / handoff Markdown).
     @State private var transcriptCopyMenuState = TranscriptCopyMenuState()
     /// Canonical pinned source row temporarily materialized when it falls
@@ -527,9 +540,6 @@ struct ThreadDetailView: View {
             sourceRows,
             activeFilterKeys: activeTranscriptFilterKeys
         )
-    }
-    private var userTurnScrubberMarkers: [UserTurnScrubberMarker] {
-        TranscriptNavigationAdapter.scrubberMarkers(for: filteredTranscriptRows)
     }
     private var showsSystemTranscriptRows: Bool {
         activeTranscriptFilterKeys.isEmpty
@@ -1551,7 +1561,6 @@ struct ThreadDetailView: View {
         .onChange(of: taskId) { _, newTaskId in
             store.bind(model: model, taskId: newTaskId)
             activeTranscriptFilterKeys.removeAll()
-            activeTurnScrubberMarkerKey = nil
             transcriptCopyMenuState = TranscriptCopyMenuState()
             pinnedJumpSourceRow = nil
         }
@@ -1943,9 +1952,10 @@ struct ThreadDetailView: View {
                     // the old drag heuristic set `false` with no way back to
                     // `true` while already at the bottom, so the pill stuck on.
                     //
-                    // The OFF edge is gated on a recent touch: the sentinel also
-                    // vanishes for pure-layout reasons mid-run, and taking those
-                    // as intent latched following off with no way back (see
+                    // The OFF edge is gated on the scroll still being the user's:
+                    // the sentinel also vanishes for pure-layout reasons mid-run,
+                    // and taking those as intent latched following off with no
+                    // way back (see
                     // TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing).
                     // A layout-driven disappearance instead RE-PINS, which is
                     // what puts the sentinel back on screen (2026-07-28 freeze).
@@ -1953,13 +1963,20 @@ struct ThreadDetailView: View {
                     // The ON edge ignores appear inside the programmatic-pin
                     // grace window so a deferred settle that briefly shows the
                     // sentinel cannot re-arm after the user unfollowed.
+                    //
+                    // Both edges write `autoFollow` only on a real transition.
+                    // It is `@State`, so a redundant write invalidates the whole
+                    // ThreadDetailView.body and Equatable-diffs every
+                    // materialized row — and the sentinel crosses the lazy band
+                    // repeatedly WHILE SCROLLING, so the redundant writes landed
+                    // mid-gesture, exactly where a re-layout is felt as a stutter.
                     .onAppear {
                         guard TranscriptFollowPolicy.sentinelAppearShouldRearmFollowing(
                             userLatchedOff: followPin.userLatchedOff,
                             lastProgrammaticPinAt: followPin.lastProgrammaticPinAt)
                         else { return }
                         followPin.userLatchedOff = false
-                        autoFollow = true
+                        if !autoFollow { autoFollow = true }
                     }
                     .onDisappear {
                         if TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
@@ -1970,7 +1987,7 @@ struct ThreadDetailView: View {
                             // can re-arm immediately (grace only blocks appear
                             // caused by a pin that landed after unfollow).
                             followPin.lastProgrammaticPinAt = .distantPast
-                            autoFollow = false
+                            if autoFollow { autoFollow = false }
                         } else if autoFollow {
                             requestFollowPin(proxy, force: true)
                         }
@@ -2011,7 +2028,6 @@ struct ThreadDetailView: View {
                 ) { key in
                     activeTranscriptFilterKeys = TranscriptParticipantFilter.toggle(
                         key: key, in: activeTranscriptFilterKeys)
-                    activeTurnScrubberMarkerKey = nil
                 }
                 topActionBanner
                 attentionBanner
@@ -2060,18 +2076,16 @@ struct ThreadDetailView: View {
             }
             .padding(.bottom, 14)
         }
-        .overlay(alignment: .trailing) {
-            if UserTurnScrubber.isVisible(markers: userTurnScrubberMarkers) {
-                UserTurnScrubberView(
-                    markers: userTurnScrubberMarkers,
-                    activeMarkerKey: activeTurnScrubberMarkerKey,
-                    frameHeight: 220
-                ) { intent in
-                    handleUserTurnScrubberJump(intent, proxy: proxy)
-                }
-                .padding(.trailing, 6)
-            }
-        }
+        // NO trailing overlay here. The user-turn scrubber rail used to live at
+        // this edge, and an overlay sits ABOVE the ScrollView: every pixel it
+        // hit-tests is a scroll DEAD ZONE, because a touch delivered to the
+        // overlay never reaches the scroll view's pan recognizer (they are
+        // sibling branches, not ancestor/descendant). A right-thumb drag along
+        // that edge therefore scrolled nothing at all, and a touch the rail's
+        // buttons read as a tap jumped the transcript to a marker — motion the
+        // user never asked for, usually the way they were NOT scrolling. Any
+        // future edge affordance must live INSIDE the scroll content, or be
+        // `.allowsHitTesting(false)`.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // AnyView stage-break: the shell stack (banner + changes rows +
             // roster row + composer + rail) exceeds xcodebuild's stricter
@@ -2119,32 +2133,6 @@ struct ThreadDetailView: View {
         }
     }
 
-    private func handleUserTurnScrubberJump(
-        _ intent: UserTurnScrubberJumpIntent,
-        proxy: ScrollViewProxy
-    ) {
-        withAnimation(.easeOut(duration: 0.25)) {
-            switch intent {
-            case .begin:
-                activeTurnScrubberMarkerKey = nil
-                followPin.userLatchedOff = true
-                autoFollow = false
-                proxy.scrollTo("transcript-start", anchor: .top)
-            case .end:
-                activeTurnScrubberMarkerKey = nil
-                followPin.userLatchedOff = false
-                autoFollow = true
-                followPin.lastProgrammaticPinAt = Date()
-                proxy.scrollTo("transcript-tail", anchor: .bottom)
-            case .marker(let marker):
-                activeTurnScrubberMarkerKey = marker.key
-                followPin.userLatchedOff = true
-                autoFollow = false
-                proxy.scrollTo(marker.messageId, anchor: .center)
-            }
-        }
-    }
-
     private func handlePinnedTranscriptJump(
         _ request: RemoteSessionModel.PinnedTranscriptJumpRequest,
         proxy: ScrollViewProxy
@@ -2157,7 +2145,6 @@ struct ThreadDetailView: View {
             pinnedRows: snapshot?.pinnedRows ?? []
         ) ?? request.sourceRow
         activeTranscriptFilterKeys.removeAll()
-        activeTurnScrubberMarkerKey = nil
         followPin.userLatchedOff = true
         autoFollow = false
         model.pinnedTranscriptJumpRequest = nil

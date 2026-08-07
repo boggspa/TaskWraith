@@ -73,6 +73,10 @@ struct TranscriptFollowPolicyTests {
                 now: now
             )
         )
+        // The disappearance edge no longer flips here — it runs to
+        // `userScrollSettlePeriod`, because a flick is still moving the
+        // transcript long after this window closes. See
+        // `decelerationAfterAFlickStillCountsAsUserIntent`.
         #expect(
             TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
                 lastUserTouchAt: now.addingTimeInterval(-0.59), now: now
@@ -81,7 +85,7 @@ struct TranscriptFollowPolicyTests {
         #expect(
             TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
                 lastUserTouchAt: now.addingTimeInterval(-0.6), now: now
-            ) == false
+            )
         )
     }
 
@@ -150,9 +154,11 @@ struct TranscriptFollowPolicyTests {
         )
     }
 
-    /// The bottom sentinel disappearing means "the user scrolled away" ONLY if a
-    /// finger was just on the transcript.
-    @Test func sentinelDisappearanceIsIntentOnlyAfterATouch() {
+    /// The bottom sentinel disappearing means "the user scrolled away" ONLY while
+    /// the transcript may still be moving from their gesture — during the touch
+    /// itself or the deceleration that follows it. Long after the transcript came
+    /// to rest, a disappearance can only be layout.
+    @Test func sentinelDisappearanceIsIntentOnlyWhileTheScrollIsTheUsers() {
         #expect(
             TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
                 lastUserTouchAt: now.addingTimeInterval(-0.1), now: now
@@ -161,6 +167,11 @@ struct TranscriptFollowPolicyTests {
         #expect(
             TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
                 lastUserTouchAt: now.addingTimeInterval(-1), now: now
+            )
+        )
+        #expect(
+            TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
+                lastUserTouchAt: now.addingTimeInterval(-5), now: now
             ) == false
         )
     }
@@ -182,21 +193,57 @@ struct TranscriptFollowPolicyTests {
         }
     }
 
-    /// The quiet period is shared with `shouldScroll` on purpose: the window
-    /// that suppresses a follow-pin is the same window that credits a sentinel
-    /// disappearance to the user. Drifting them apart would let a gesture stop
-    /// following while its own re-pin was still suppressed, or the reverse.
-    @Test func bothEdgesShareTheQuietPeriod() {
-        let onTheBoundary = now.addingTimeInterval(-TranscriptFollowPolicy.userTouchQuietPeriod)
+    /// THE YANK. The two edges used to hand off at the SAME instant, which left
+    /// no state for "the scroll is still coasting from the user's own flick":
+    /// the moment a disappearance stopped counting as intent, a repair pin was
+    /// already permitted. A flick that dematerialised the sentinel after the
+    /// quiet period therefore latched nothing off AND scrolled straight back to
+    /// the tail — the transcript fighting the gesture in the opposite direction.
+    ///
+    /// The settle period must therefore cover the whole of UIKit's deceleration,
+    /// so every instant a repair pin is allowed is an instant the disappearance
+    /// is already known NOT to be the user's.
+    @Test func noInstantBothDeniesUserIntentAndPermitsARepairPin() {
+        for millisecondsSinceTouch in stride(from: 0, through: 4_000, by: 25) {
+            let lastUserTouchAt = now.addingTimeInterval(-Double(millisecondsSinceTouch) / 1000)
+            let isTheUser = TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
+                lastUserTouchAt: lastUserTouchAt, now: now)
+            let mayRepair = TranscriptFollowPolicy.shouldScroll(
+                autoFollow: true, force: true, lastUserTouchAt: lastUserTouchAt, now: now)
+            #expect(
+                !(mayRepair && !isTheUser && millisecondsSinceTouch < 2_500),
+                "a repair pin was permitted \(millisecondsSinceTouch)ms after the last touch, while the scroll may still be decelerating from that gesture"
+            )
+        }
+    }
+
+    /// A flick's deceleration is a continuation of the user's gesture, not a
+    /// layout event: the finger is gone but the transcript is still moving
+    /// because they threw it. Anywhere inside that window a sentinel
+    /// disappearance is intent, so following latches off and the jump-to-latest
+    /// pill appears — rather than the transcript snapping back to the tail.
+    @Test func decelerationAfterAFlickStillCountsAsUserIntent() {
+        #expect(TranscriptFollowPolicy.userScrollSettlePeriod == 2.5)
+        // The ordering is the whole invariant: if the settle period were ever
+        // SHORTER than the pin-suppression window, the yank comes straight back.
+        #expect(
+            TranscriptFollowPolicy.userScrollSettlePeriod
+                >= TranscriptFollowPolicy.userTouchQuietPeriod
+        )
+        for secondsSinceFingerLift in stride(from: 0.0, to: 2.5, by: 0.1) {
+            #expect(
+                TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
+                    lastUserTouchAt: now.addingTimeInterval(-secondsSinceFingerLift), now: now
+                ),
+                "a sentinel disappearance \(secondsSinceFingerLift)s after the finger lifted was credited to layout while the flick could still be coasting"
+            )
+        }
+        // Past the settle period the scroll is provably at rest, so a
+        // disappearance really is layout and the repair pin is the right answer.
         #expect(
             TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
-                lastUserTouchAt: onTheBoundary, now: now
+                lastUserTouchAt: now.addingTimeInterval(-2.5), now: now
             ) == false
-        )
-        #expect(
-            TranscriptFollowPolicy.shouldScroll(
-                autoFollow: true, force: false, lastUserTouchAt: onTheBoundary, now: now
-            )
         )
     }
 }
