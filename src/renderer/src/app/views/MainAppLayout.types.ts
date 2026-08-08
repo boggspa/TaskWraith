@@ -210,6 +210,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   markMainTranscriptProgrammaticScroll: (landedScrollTop: number) => void
   getMainTranscriptUserScrollGestureLive: () => boolean
   markSideTranscriptProgrammaticScroll: (landedScrollTop: number) => void
+  getSideTranscriptUserScrollGestureLive: () => boolean
   autoResumeParentOnSubThreadCompletion: any
   autoUpdateEnabled: any
   auditBundleVerificationResult: any

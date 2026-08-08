@@ -145,6 +145,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   markMainTranscriptProgrammaticScroll,
   getMainTranscriptUserScrollGestureLive,
   markSideTranscriptProgrammaticScroll,
+  getSideTranscriptUserScrollGestureLive,
   autoResumeParentOnSubThreadCompletion,
   autoUpdateEnabled,
   auditBundleVerificationResult,
@@ -2594,6 +2595,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               }
               onManualTranscriptJump={beginManualSideTranscriptJump}
               onProgrammaticScrollWrite={markSideTranscriptProgrammaticScroll}
+              getUserScrollGestureLive={getSideTranscriptUserScrollGestureLive}
               copiedId={copiedId}
               copy={copy}
               autoFollowRef={sideAutoFollowRef}

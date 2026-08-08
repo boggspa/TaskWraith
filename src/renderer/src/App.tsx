@@ -634,6 +634,8 @@ import {
   shouldReengageAutoFollowAfterScroll,
   shouldTreatScrollAsUserScrollAway,
   shouldRepinAfterFrame,
+  isTranscriptUserScrollGestureLive,
+  isTranscriptScrollbarPointer,
   type ChatScrollState
 } from './lib/TranscriptScroll'
 import {
@@ -3694,6 +3696,10 @@ function App(): React.JSX.Element {
   // target: leaner, and it covers the manual message jump whose landing
   // position is unknown up front (a numeric target couldn't predict it).
   const sideProgrammaticScrollRef = useRef(false)
+  // Lean twin of main's lastUserScrollAt / scrollbarPointerActive — Phase-1
+  // gesture deferral for the side scroller without pulling in useTranscriptScrollState.
+  const sideLastUserScrollAtRef = useRef(0)
+  const sideScrollbarPointerActiveRef = useRef(false)
   const setChatMediaPanelOpenPreservingTranscript = useCallback(
     (next: boolean | ((open: boolean) => boolean)) => {
       preserveMainTranscriptScrollWhile(() => setIsChatMediaPanelOpen(next))
@@ -3765,6 +3771,15 @@ function App(): React.JSX.Element {
     if (!Number.isFinite(landedScrollTop)) return
     sideProgrammaticScrollRef.current = true
   }, [])
+  const getSideTranscriptUserScrollGestureLive = useCallback(
+    () =>
+      isTranscriptUserScrollGestureLive({
+        lastUserScrollAt: sideLastUserScrollAtRef.current,
+        scrollbarPointerActive: sideScrollbarPointerActiveRef.current,
+        now: Date.now()
+      }),
+    []
+  )
   // Raw Events panel auto-follow mirror of the transcript pair above.
   // The Inspector's Raw Events tab streams every run event as it arrives;
   // an earlier implementation unconditionally scrolled the panel to the
@@ -4827,6 +4842,11 @@ function App(): React.JSX.Element {
       lastSideTranscriptScrollTopRef.current = nextScrollTop
     }
     const onScroll = () => {
+      // Stamp while the scrollbar thumb is held so Phase-1 keeps deferring through
+      // settle after pointerup (main stamps lastUserScrollAt on verified away).
+      if (sideScrollbarPointerActiveRef.current) {
+        sideLastUserScrollAtRef.current = Date.now()
+      }
       if (
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastSideTranscriptScrollTopRef.current,
@@ -4837,6 +4857,7 @@ function App(): React.JSX.Element {
         })
       ) {
         sideAutoFollowRef.current = false
+        sideLastUserScrollAtRef.current = Date.now()
       }
       if (rafId !== null) return
       rafId = requestAnimationFrame(evaluate)
@@ -4844,12 +4865,38 @@ function App(): React.JSX.Element {
     lastSideTranscriptScrollTopRef.current = scroller.scrollTop
 
     const handleUpwardIntent = (deltaY: number) => {
+      if (deltaY !== 0) {
+        sideLastUserScrollAtRef.current = Date.now()
+      }
       if (deltaY >= 0) return
       if (scroller.scrollTop > 0) {
         sideAutoFollowRef.current = false
       }
     }
     const onWheel = (event: WheelEvent) => handleUpwardIntent(event.deltaY)
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      const rect = scroller.getBoundingClientRect()
+      const direction = getComputedStyle(scroller).direction === 'rtl' ? 'rtl' : 'ltr'
+      if (
+        !isTranscriptScrollbarPointer({
+          clientX: event.clientX,
+          rectLeft: rect.left,
+          rectRight: rect.right,
+          offsetWidth: scroller.offsetWidth,
+          clientWidth: scroller.clientWidth,
+          scrollHeight: scroller.scrollHeight,
+          clientHeight: scroller.clientHeight,
+          direction
+        })
+      ) {
+        return
+      }
+      sideScrollbarPointerActiveRef.current = true
+    }
+    const endScrollbarPointer = () => {
+      sideScrollbarPointerActiveRef.current = false
+    }
     let lastTouchY: number | null = null
     const onTouchStart = (event: TouchEvent) => {
       lastTouchY = event.touches[0]?.clientY ?? null
@@ -4866,15 +4913,27 @@ function App(): React.JSX.Element {
 
     scroller.addEventListener('scroll', onScroll, { passive: true })
     scroller.addEventListener('wheel', onWheel, { passive: true })
+    scroller.addEventListener('pointerdown', onPointerDown, { passive: true })
     scroller.addEventListener('touchstart', onTouchStart, { passive: true })
     scroller.addEventListener('touchmove', onTouchMove, { passive: true })
     scroller.addEventListener('touchend', onTouchEnd, { passive: true })
+    window.addEventListener('pointerup', endScrollbarPointer, { passive: true })
+    window.addEventListener('pointercancel', endScrollbarPointer, { passive: true })
+    window.addEventListener('blur', endScrollbarPointer)
     return () => {
       scroller.removeEventListener('scroll', onScroll)
       scroller.removeEventListener('wheel', onWheel)
+      scroller.removeEventListener('pointerdown', onPointerDown)
       scroller.removeEventListener('touchstart', onTouchStart)
       scroller.removeEventListener('touchmove', onTouchMove)
       scroller.removeEventListener('touchend', onTouchEnd)
+      window.removeEventListener('pointerup', endScrollbarPointer)
+      window.removeEventListener('pointercancel', endScrollbarPointer)
+      window.removeEventListener('blur', endScrollbarPointer)
+      // Clear gesture stamp on side-chat remount so Phase-1 does not inherit ≤120ms
+      // of live from the previous side chat (mirrors main chat-switch clear).
+      sideLastUserScrollAtRef.current = 0
+      sideScrollbarPointerActiveRef.current = false
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
     // Re-bind on side-scroller remount: the side TranscriptPanel is keyed by
@@ -30456,6 +30515,7 @@ function App(): React.JSX.Element {
     markMainTranscriptProgrammaticScroll,
     getMainTranscriptUserScrollGestureLive,
     markSideTranscriptProgrammaticScroll,
+    getSideTranscriptUserScrollGestureLive,
     autoResumeParentOnSubThreadCompletion,
     autoUpdateEnabled,
     auditBundleVerificationResult,
