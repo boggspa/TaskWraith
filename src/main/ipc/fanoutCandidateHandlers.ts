@@ -24,7 +24,9 @@ export interface FanoutCandidateWorkspaceDiff {
 }
 
 export interface FanoutCandidateHandlerDeps {
-  service: FanoutCandidateService
+  /** Null only while durable workspace-lock startup recovery is unavailable. */
+  service: FanoutCandidateService | null
+  unavailableReason?: () => string | null | undefined
   getChat: (chatId: string) => ChatRecord | null
   /** DiffService.getWorkspaceDiff — pointed at the candidate's worktree so
    * the renderer gets the exact per-file summary shape Diff Studio uses. */
@@ -32,6 +34,15 @@ export interface FanoutCandidateHandlerDeps {
 }
 
 export function registerFanoutCandidateHandlers(deps: FanoutCandidateHandlerDeps): void {
+  const requireService = (): FanoutCandidateService => {
+    if (deps.service) return deps.service
+    const reason = deps.unavailableReason?.()?.trim()
+    throw new Error(
+      reason
+        ? `Fan-out candidates are unavailable: ${reason}`
+        : 'Fan-out candidates are unavailable while workspace-lock recovery is required.'
+    )
+  }
   const requireChatId = (chatId: unknown): string => {
     const id = typeof chatId === 'string' ? chatId.trim() : ''
     if (!id || !deps.getChat(id)) {
@@ -48,15 +59,19 @@ export function registerFanoutCandidateHandlers(deps: FanoutCandidateHandlerDeps
   ipcMain.handle(
     'fanout-candidates:list',
     async (_event, chatId: unknown): Promise<FanoutWorktreeCandidate[]> =>
-      deps.service.list(requireChatId(chatId))
+      requireService().list(requireChatId(chatId))
   )
 
   ipcMain.handle(
     'fanout-candidates:diff',
-    async (_event, chatId: unknown, candidateId: unknown): Promise<FanoutCandidateWorkspaceDiff> => {
+    async (
+      _event,
+      chatId: unknown,
+      candidateId: unknown
+    ): Promise<FanoutCandidateWorkspaceDiff> => {
       const chat = requireChatId(chatId)
       const id = requireCandidateId(candidateId)
-      const candidates = await deps.service.list(chat)
+      const candidates = await requireService().list(chat)
       const candidate = candidates.find((entry) => entry.candidateId === id)
       if (!candidate) throw new Error('Unknown fan-out candidate for this chat.')
       if (candidate.status === 'promoted' || candidate.status === 'discarded') {
@@ -71,12 +86,12 @@ export function registerFanoutCandidateHandlers(deps: FanoutCandidateHandlerDeps
   ipcMain.handle(
     'fanout-candidates:promote',
     async (_event, chatId: unknown, candidateId: unknown): Promise<CandidateResolution> =>
-      deps.service.promote(requireChatId(chatId), requireCandidateId(candidateId))
+      requireService().promote(requireChatId(chatId), requireCandidateId(candidateId))
   )
 
   ipcMain.handle(
     'fanout-candidates:discard',
     async (_event, chatId: unknown, candidateId: unknown): Promise<CandidateResolution> =>
-      deps.service.discard(requireChatId(chatId), requireCandidateId(candidateId))
+      requireService().discard(requireChatId(chatId), requireCandidateId(candidateId))
   )
 }

@@ -53983,24 +53983,35 @@ if (isGeminiMcpBridgeProcess) {
     wakeupTimerServiceRef = new WakeupTimerService({
       onFire: handleEnsembleWakeupTimerFired
     })
-    if (!workspaceLockRuntimeRef) {
-      throw new Error('Candidate promotion requires the durable workspace-lock runtime.')
+    // A workspace-lock recovery failure must not prevent generic run IPC from
+    // registering. Workspace mutations and fan-out allocation remain
+    // fail-closed until the durable authority is available.
+    const fanoutCandidateUnavailableReason = (): string =>
+      workspaceLockStartupRecoveryBlockedReason
+        ? `Workspace-lock recovery is required: ${workspaceLockStartupRecoveryBlockedReason}`
+        : 'Workspace-lock runtime is unavailable.'
+    const fanoutCandidateService = workspaceLockRuntimeRef
+      ? new FanoutCandidateService({
+          git: new GitService(),
+          promotionLock: new DurableFanoutCandidatePromotionLock({
+            runtime: workspaceLockRuntimeRef
+          }),
+          store: {
+            getCandidates: (chatId) => AppStore.getFanoutWorktreeCandidates(chatId),
+            upsertCandidate: (chatId, candidate) =>
+              AppStore.upsertFanoutWorktreeCandidate(chatId, candidate),
+            patchCandidate: (chatId, candidateId, patch) =>
+              AppStore.patchFanoutWorktreeCandidate(chatId, candidateId, patch)
+          }
+        })
+      : null
+    const requireFanoutCandidateService = (): FanoutCandidateService => {
+      if (fanoutCandidateService) return fanoutCandidateService
+      throw new Error(`Fan-out worktrees are unavailable: ${fanoutCandidateUnavailableReason()}`)
     }
-    const fanoutCandidateService = new FanoutCandidateService({
-      git: new GitService(),
-      promotionLock: new DurableFanoutCandidatePromotionLock({
-        runtime: workspaceLockRuntimeRef
-      }),
-      store: {
-        getCandidates: (chatId) => AppStore.getFanoutWorktreeCandidates(chatId),
-        upsertCandidate: (chatId, candidate) =>
-          AppStore.upsertFanoutWorktreeCandidate(chatId, candidate),
-        patchCandidate: (chatId, candidateId, patch) =>
-          AppStore.patchFanoutWorktreeCandidate(chatId, candidateId, patch)
-      }
-    })
     registerFanoutCandidateHandlers({
       service: fanoutCandidateService,
+      unavailableReason: fanoutCandidateUnavailableReason,
       getChat: (chatId) => AppStore.getChat(chatId),
       getWorkspaceDiff: (workspace) => getWorkspaceDiff(workspace)
     })
@@ -54019,8 +54030,10 @@ if (isGeminiMcpBridgeProcess) {
         ),
       externalContributionQueue,
       signRunPermissionPosture: signRunPosture,
-      allocateFanoutLaneWorktree: (input) => fanoutCandidateService.allocateForLane(input),
+      allocateFanoutLaneWorktree: (input) =>
+        requireFanoutCandidateService().allocateForLane(input),
       settleFanoutLaneWorktree: (input) => {
+        if (!fanoutCandidateService) return
         void fanoutCandidateService.settleLane(input).catch((error) => {
           console.warn(
             '[fanout-candidates] settle failed:',

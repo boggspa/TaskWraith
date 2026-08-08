@@ -966,6 +966,45 @@ describe('WorkspaceLockAuthority', () => {
     third.dispose()
   })
 
+  it('recovers a dead lease before projecting onto a recreated workspace root', async () => {
+    const h = harness('instance-a')
+    const first = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: h.dependencies
+    })
+    const acquired = await first.acquire(owner({ lockOwnerId: 'owner-a', runId: 'run-a' }), {
+      workspacePath: h.workspace,
+      kind: 'file',
+      targetPath: path.join(h.workspace, 'src', 'a.ts')
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    const marker = workspaceLockRuntimeMarkerFilename('instance-a', 'owner-a')
+    expect(fs.existsSync(path.join(h.workspace, marker))).toBe(true)
+    first.dispose()
+
+    const priorWorkspace = path.join(h.root, 'workspace-prior')
+    fs.renameSync(h.workspace, priorWorkspace)
+    fs.mkdirSync(path.join(h.workspace, 'src'), { recursive: true })
+    fs.writeFileSync(path.join(h.workspace, 'src', 'a.ts'), 'replacement\n')
+    h.observations.set(201, { state: 'dead' })
+
+    const restarted = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: {
+        ...h.dependencies,
+        instance: { ...h.dependencies.instance, instanceId: 'instance-b' }
+      }
+    })
+
+    expect(restarted.snapshot().leases).toEqual([
+      expect.objectContaining({ status: 'recovered', recoveryReason: 'owner_dead' })
+    ])
+    expect(fs.existsSync(path.join(h.workspace, marker))).toBe(false)
+    expect(fs.existsSync(path.join(priorWorkspace, marker))).toBe(true)
+    expect(decodeWorkspaceLockWal(h.persistence.readEvents().raw).knownMarkers).toEqual([])
+    restarted.dispose()
+  })
+
   it('fences direct release tokens and protects exact-live orphans from terminal cleanup', async () => {
     const h = harness()
     const authority = await WorkspaceLockAuthority.open({

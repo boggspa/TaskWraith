@@ -155,7 +155,12 @@ export class WorkspaceLockAuthority {
   static async open(options: WorkspaceLockAuthorityOptions): Promise<WorkspaceLockAuthority> {
     const authority = new WorkspaceLockAuthority(options)
     await authority.boot()
+    // A recorded worktree can have been moved or recreated while the prior
+    // process was down. Classify stale owners before any marker projection:
+    // a conclusively dead lease can then be retired without ever writing to
+    // the replacement root.
     await authority.recoverStaleClaims()
+    await authority.renewDerivedMarkers()
     authority.startMarkerRenewal()
     return authority
   }
@@ -1409,7 +1414,9 @@ export class WorkspaceLockAuthority {
         })
         this.persistence.appendEvent(appended.line, current.byteLength)
         this.state = appended.nextState
-        this.syncMarkers(appended.nextState)
+        // Marker projection deliberately follows stale-claim recovery in
+        // open(). Projecting here can fail against a replaced worktree root
+        // and prevent a dead owner's durable lease from being recovered.
         released = this.persistence.releaseInstanceFence(fence.fenceId)
         if (!released) throw new Error('Workspace-lock boot fence was replaced before release.')
         return
