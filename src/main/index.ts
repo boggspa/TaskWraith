@@ -9,6 +9,7 @@ import {
   instanceResourceIdentity
 } from './devAppName'
 import { createInstanceResourceEpoch } from './InstanceResourceIdentity'
+import { StartupWindowGate } from './StartupWindowGate'
 import { watchedPrDescriptorFromGitHubUrl } from '../shared/watchedPrNotify'
 import {
   app,
@@ -40144,6 +40145,10 @@ function createWindow(): void {
   }
 }
 
+// A second launch can arrive while the first instance is still awaiting boot
+// recovery. Do not expose the renderer until its run IPC handlers exist.
+const startupWindowGate = new StartupWindowGate()
+
 function parseWorkspacePopoutInput(input: unknown): {
   kind: WorkspacePopoutKind
   workspacePath?: string
@@ -40466,7 +40471,7 @@ if (isGeminiMcpBridgeProcess) {
       mainWindow.show()
       mainWindow.focus()
     } else {
-      createWindow()
+      startupWindowGate.requestWindow(createWindow)
     }
   })
   app.whenReady().then(async () => {
@@ -56006,7 +56011,11 @@ if (isGeminiMcpBridgeProcess) {
       console.error('Failed to start Gemini MCP broker', error)
     })
 
-    createWindow()
+    // `run-agent` and `run-ensemble-round` are now registered. If a second
+    // instance asked to show the app during startup, flush that request instead
+    // of creating a duplicate window below.
+    const openedForDeferredSecondInstance = startupWindowGate.release(createWindow)
+    if (!openedForDeferredSecondInstance) createWindow()
     scheduleNextTaskTimer()
 
     app.on('activate', function () {
