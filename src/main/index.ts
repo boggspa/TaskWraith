@@ -880,6 +880,8 @@ import { createHostProductionRunShadow } from './host/HostProductionRunShadow'
 import { createHostProductionMissionShadow } from './host/HostProductionMissionShadow'
 import { createHostProductionRoundShadow } from './host/HostProductionRoundShadow'
 import { createHostProductionScheduleShadow } from './host/HostProductionScheduleShadow'
+import { createHostProductionParticipantShadow } from './host/HostProductionParticipantShadow'
+import { createHostProductionArtifactShadow } from './host/HostProductionArtifactShadow'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -47796,6 +47798,77 @@ if (isGeminiMcpBridgeProcess) {
                   ? { nextFireAt: Math.floor(nextFireAt) }
                   : {})
               }
+            })
+        }),
+        // Track4 Mixed — last empty families. Capabilities stay withheld
+        // until W4-B deliberately opens ads.
+        participants: createHostProductionParticipantShadow({
+          listParticipants: () =>
+            AppStore.getChatList().flatMap((chat) => {
+              const roster = chat.ensemble?.participants
+              if (!Array.isArray(roster) || roster.length === 0) return []
+              const roundLive = isEnsembleRoundDispatchLive(chat.ensemble?.activeRound)
+              const roundStates = chat.ensemble?.activeRound?.participants || []
+              const statusById = new Map(
+                roundStates
+                  .filter((p) => typeof p.participantId === 'string' && p.participantId.length > 0)
+                  .map((p) => [p.participantId, p.status] as const)
+              )
+              const activeIds = new Set(
+                roundStates
+                  .filter((p) => {
+                    if (!roundLive) return false
+                    // EnsembleParticipantStatus active set — never invent
+                    // foreign lifecycle vocab on the Host wire.
+                    return p.status === 'running' || p.status === 'sleeping'
+                  })
+                  .map((p) => p.participantId)
+                  .filter((id): id is string => typeof id === 'string' && id.length > 0)
+              )
+              return roster.map((participant) => {
+                const roundStatus = statusById.get(participant.id)
+                return {
+                  id: participant.id,
+                  providerId: participant.provider,
+                  role: participant.role,
+                  order: participant.order,
+                  enabled: participant.enabled !== false,
+                  active: activeIds.has(participant.id),
+                  ...(typeof participant.model === 'string' && participant.model.length > 0
+                    ? { modelId: participant.model }
+                    : {}),
+                  ...(typeof participant.stageRole === 'string'
+                    ? { stage: participant.stageRole }
+                    : {}),
+                  ...(typeof roundStatus === 'string' && roundStatus.length > 0
+                    ? { status: roundStatus }
+                    : {})
+                }
+              })
+            })
+        }),
+        artifacts: createHostProductionArtifactShadow({
+          listArtifacts: () =>
+            canvasStore.listSessions().flatMap((session) => {
+              const createdAt = Date.parse(session.createdAt)
+              if (!Number.isFinite(createdAt) || createdAt < 0) return []
+              // Privacy: never forward URL / body / screenshot bytes.
+              // Title falls back to opaque id when missing.
+              const title =
+                typeof session.title === 'string' && session.title.trim().length > 0
+                  ? session.title.trim()
+                  : session.id
+              return [
+                {
+                  artifactId: session.id,
+                  kind: `canvas:${session.driver}`,
+                  title,
+                  createdAt: Math.floor(createdAt),
+                  ...(typeof session.chatId === 'string' && session.chatId.length > 0
+                    ? { threadId: session.chatId }
+                    : {})
+                }
+              ]
             })
         })
       })
