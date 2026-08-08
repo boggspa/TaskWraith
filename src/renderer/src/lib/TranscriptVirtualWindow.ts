@@ -103,7 +103,7 @@ export const ESTIMATED_ROW_HEIGHT_PX: Record<VirtualRowType, number> = {
   tool: 180,
   participantHealth: 132,
   delegation: 104,
-  return: 148,
+  return: 280,
   threadMessage: 300,
   fanoutResult: 320,
   guestReply: 220,
@@ -294,6 +294,11 @@ const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
  * `distanceFromBottom` is corrupted enough to feed the re-engage bands. Capping the
  * estimate at the real clamped height keeps `scrollHeight` honest.
  *
+ * `return`: `SubThreadReturnCard` likewise wraps its body in one height-clamped
+ * viewport; dense child output must not content-scale the off-screen estimate
+ * past the collapsed card. Base estimate sits near the resting clamped chrome
+ * (~280px) rather than the old 148px floor.
+ *
  * NOT applied to `tool`: a standalone `ActivityStack` renders one viewport PER
  * segment with no single outer cap, so its height genuinely scales with activity
  * count and the generic scale is appropriate.
@@ -301,7 +306,8 @@ const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
 export const VIEWPORT_CLAMPED_ESTIMATE_CAP_PX = 360
 const VIEWPORT_CLAMPED_TYPES: ReadonlySet<VirtualRowType> = new Set([
   'threadMessage',
-  'fanoutResult'
+  'fanoutResult',
+  'return'
 ])
 
 /**
@@ -337,21 +343,27 @@ export function estimatedHeightFor(
     : base
   /*
    * Paired lanes share a grid row, so two of them cost ONE row's height. The
-   * estimate is halved for EVERY fan-out lane row rather than only for the
-   * paired ones, and that is deliberate: pairing depends on a row's NEIGHBOURS,
-   * and `useProjectedRows` reuses row objects for an unchanged prefix — so a
-   * neighbour-sensitive estimate would go stale the moment an appended lane
-   * turned the previous `solo` into a `lead`. Halving unconditionally keeps the
-   * estimate a pure function of the row itself, at the cost of under-estimating
-   * an unpaired lane by half a row.
+   * estimate is halved for EVERY fan-out / return lane row rather than only for
+   * the paired ones, and that is deliberate: pairing depends on a row's
+   * NEIGHBOURS, and `useProjectedRows` reuses row objects for an unchanged
+   * prefix — so a neighbour-sensitive estimate would go stale the moment an
+   * appended lane turned the previous `solo` into a `lead`. Halving
+   * unconditionally keeps the estimate a pure function of the row itself, at
+   * the cost of under-estimating an unpaired lane by half a row.
    *
    * Under-estimating is the safe direction here. An OVER-estimate inflates the
    * bottom spacer, `scrollHeight` balloons, and auto-follow's snap lurches into
    * empty overscan — the exact defect VIEWPORT_CLAMPED_ESTIMATE_CAP_PX exists to
    * prevent. An under-estimate is absorbed by the anchor-correction pass on the
    * first measurement.
+   *
+   * `return` mirrors `fanoutResult` once pairing admits return slots into the
+   * shared grid (same `pairFanoutLanes` gate).
    */
-  const laid = pairFanoutLanes && rowType === 'fanoutResult' ? Math.round(scaled / 2) : scaled
+  const laid =
+    pairFanoutLanes && (rowType === 'fanoutResult' || rowType === 'return')
+      ? Math.round(scaled / 2)
+      : scaled
   return laid + (hasRunBoundary ? RUN_BOUNDARY_HEIGHT_PX : 0)
 }
 
@@ -400,9 +412,10 @@ export function projectRow(
   // viewports. Feed the virtualizer a coarse size signal so it does not begin
   // from a tiny spacer and then spend extra passes correcting when the row
   // enters view. NOTE: `estimatedHeightFor` caps hard-clamped types
-  // (`fanoutResult`, whose entire body sits in one 240px viewport) at
-  // VIEWPORT_CLAMPED_ESTIMATE_CAP_PX so this coarse signal cannot balloon the
-  // bottom spacer past the row's real clamped height (see that constant).
+  // (`fanoutResult` / `return` / `threadMessage`, whose body sits in one
+  // height-clamped viewport) at VIEWPORT_CLAMPED_ESTIMATE_CAP_PX so this coarse
+  // signal cannot balloon the bottom spacer past the row's real clamped height
+  // (see that constant).
   const activityEstimate =
     (message.toolActivities?.length || 0) * TOOL_ACTIVITY_ESTIMATE_CHARS +
     (message.toolActivities || []).reduce(

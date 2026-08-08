@@ -288,8 +288,10 @@ describe('TranscriptVirtualWindow', () => {
     })
 
     it('sizes dense viewport rows above the flat estimate from a coarse content signal', () => {
+      // tool rows are multi-segment (no single outer viewport cap) and keep the
+      // generic content scale. Dense sub-thread returns are viewport-clamped —
+      // see the ceiling test below.
       expect(estimatedHeightFor('tool', false, 5000)).toBe(CONTENT_SCALE_CAP_PX)
-      expect(estimatedHeightFor('return', false, 2000)).toBe(Math.round(2000 * CONTENT_PX_PER_CHAR))
     })
 
     it('caps single-viewport card estimates at the viewport-clamped ceiling', () => {
@@ -299,6 +301,8 @@ describe('TranscriptVirtualWindow', () => {
       // CONTENT_SCALE_CAP_PX. That phantom bottom-spacer height is what made
       // auto-follow's snap-to-scrollHeight lurch the transcript to the bottom on
       // every flush while the visible lane card stayed contained at 240px.
+      // Sub-thread return cards share the same single-viewport clamp, so a dense
+      // return must hit the same ceiling rather than content-scale toward 1400.
       expect(estimatedHeightFor('fanoutResult', false, 100000)).toBe(
         VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
       )
@@ -306,10 +310,14 @@ describe('TranscriptVirtualWindow', () => {
       expect(estimatedHeightFor('threadMessage', false, 100000)).toBe(
         VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
       )
-      // A small fan-out card still floors at its flat per-type base estimate.
+      expect(estimatedHeightFor('return', false, 100000)).toBe(VIEWPORT_CLAMPED_ESTIMATE_CAP_PX)
+      expect(estimatedHeightFor('return', false, 2000)).toBe(VIEWPORT_CLAMPED_ESTIMATE_CAP_PX)
+      expect(estimatedHeightFor('return', false, 2000)).toBeLessThan(CONTENT_SCALE_CAP_PX)
+      // A small fan-out / return card still floors at its flat per-type base.
       expect(estimatedHeightFor('fanoutResult', false, 0)).toBe(
         ESTIMATED_ROW_HEIGHT_PX.fanoutResult
       )
+      expect(estimatedHeightFor('return', false, 0)).toBe(ESTIMATED_ROW_HEIGHT_PX.return)
       // tool rows are multi-segment (no single outer cap) and keep scaling —
       // only cards with one hard-clamped outer viewport are capped.
       expect(estimatedHeightFor('tool', false, 100000)).toBe(CONTENT_SCALE_CAP_PX)
@@ -325,10 +333,29 @@ describe('TranscriptVirtualWindow', () => {
       expect(paired * 2).toBe(stacked)
     })
 
+    it('halves a sub-thread return estimate while the paired layout shares a grid row', () => {
+      // Once pairing stamps return slots alongside fan-out lanes, a paired
+      // return must contribute half a row — same invariant as fanoutResult.
+      const stacked = estimatedHeightFor('return', false, 100000)
+      const paired = estimatedHeightFor('return', false, 100000, true)
+      expect(paired).toBe(Math.round(stacked / 2))
+      expect(paired * 2).toBe(stacked)
+    })
+
     it('leaves every other row type alone under the paired layout', () => {
-      // Only lane cards pair. A user or assistant row still spans the column,
-      // so halving it would under-size the spacer for the whole transcript.
-      for (const rowType of ['assistant', 'user', 'tool', 'threadMessage'] as const) {
+      // Only lane cards that pair (`fanoutResult`, `return`) halve. Full-width
+      // transcript rows must keep their stacked estimate — including other
+      // viewport-clamped cards like threadMessage that do not share a grid row.
+      for (const rowType of [
+        'assistant',
+        'user',
+        'tool',
+        'threadMessage',
+        'system',
+        'guestReply',
+        'collaborator',
+        'delegation'
+      ] as const) {
         expect(estimatedHeightFor(rowType, false, 4000, true)).toBe(
           estimatedHeightFor(rowType, false, 4000)
         )
