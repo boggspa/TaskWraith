@@ -14082,6 +14082,14 @@ function App(): React.JSX.Element {
             // filters per participant.
             ...(request.externalPathGrants && request.externalPathGrants.length > 0
               ? { externalPathGrants: request.externalPathGrants }
+              : {}),
+            // P1 F6 — Use-next selection for ensemble rounds. MAIN re-resolves
+            // against the Project registry; the orchestrator appendix helper
+            // formats per-seat disclosure (BG stays catalogue-only).
+            ...(request.projectReferenceContextSelection
+              ? {
+                  projectReferenceContextSelection: request.projectReferenceContextSelection
+                }
               : {})
           })
           const acceptedQueueWrapperReason = acceptedEnsembleRunQueueWrapperReason({
@@ -14092,6 +14100,7 @@ function App(): React.JSX.Element {
           if (acceptedQueueWrapperReason) {
             updateRunQueueJobStatus(currentRunId, 'completed', acceptedQueueWrapperReason)
           }
+          settleProjectReferenceContextForRequest(request, 'accepted')
         } catch (error) {
           if (didOptimisticallyQueue) {
             removeOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
@@ -14102,6 +14111,7 @@ function App(): React.JSX.Element {
             'Ensemble dispatch handoff failed.',
             redactLog(String(error))
           )
+          settleProjectReferenceContextForRequest(request, 'rejected')
           throw error
         }
         dispatchAccepted = true
@@ -28613,8 +28623,7 @@ function App(): React.JSX.Element {
       currentChat: viewerChat,
       currentComposerChatId: viewerChatId,
       hasProjectReferenceContext: Boolean(
-        !paneIsEnsembleChat &&
-          getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
+        getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
       ),
       currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
       resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
@@ -29826,8 +29835,7 @@ function App(): React.JSX.Element {
         currentChat: viewerChat,
         currentComposerChatId: viewerChatId,
         hasProjectReferenceContext: Boolean(
-          !paneIsEnsembleChat &&
-            getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
+          getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
         ),
         currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
         resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
@@ -30299,7 +30307,7 @@ function App(): React.JSX.Element {
     currentEnsembleActiveGoalStatus: currentChat?.activeGoal?.status ?? null,
     currentComposerChatId,
     hasProjectReferenceContext: Boolean(
-      currentProjectReferenceContextSelection?.referenceIds.length && !isCurrentEnsembleChat
+      currentProjectReferenceContextSelection?.referenceIds.length
     ),
     humanCollaborationInviteActive: Boolean(currentChatHumanCollaborationShare),
     humanCollaborationShare: currentChatHumanCollaborationShare,

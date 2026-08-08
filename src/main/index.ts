@@ -729,9 +729,11 @@ import {
 } from './services/ProjectReferenceArtifactStore'
 import { DeferredProjectReferenceReconciler } from './services/DeferredProjectReferenceReconciler'
 import { ProjectReferenceContextAuditService } from './services/ProjectReferenceContextAuditService'
+import { parseProjectReferenceContextSelection } from '../shared/projectReferenceContext'
 import { filterProjectReferenceLegacyArtifactRefsForPendingDeletion } from './services/ProjectReferenceLegacyOwnership'
 import { createProjectReferenceOwnershipWorkerLoader } from './ProjectReferenceOwnershipWorkerScan'
 import { ProjectReferenceProposalService } from './services/ProjectReferenceProposalService'
+import { bootstrapProjectReferenceExtracts } from './projectReferenceExtractBootstrap'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
 import { ExecutionGraphRepository } from './executionGraph/ExecutionGraphRepository'
@@ -8079,6 +8081,11 @@ const projectReferenceProposalService = new ProjectReferenceProposalService({
   createId: (kind) =>
     kind === 'reference' ? newProjectReferenceId() : `project-reference-proposal-${randomUUID()}`,
   now: () => Date.now()
+})
+
+const projectReferenceExtracts = bootstrapProjectReferenceExtracts({
+  userDataPath: app.getPath('userData'),
+  getReferences: () => AppStore.getProjectReferences()
 })
 
 const projectReferenceToolExecutors = createProjectReferenceToolExecutors({
@@ -49089,6 +49096,7 @@ if (isGeminiMcpBridgeProcess) {
     const composerService = new ComposerService({
       appStore: AppStore,
       getSettings: () => AppStore.getSettings(),
+      projectReferenceExtractLoader: projectReferenceExtracts.extractLoader,
       signRunPermissionPosture: signRunPosture,
       resolveFrozenPermissionPosture: (input) => {
         const candidate = AppStore.getRunQueueJob(input.appRunId)
@@ -49856,6 +49864,7 @@ if (isGeminiMcpBridgeProcess) {
       importLegacyProjects: (rawJson) => AppStore.importLegacyProjects(rawJson),
       assertSenderCanManageProjects: assertMainRendererSender
     })
+    projectReferenceExtracts.registerHandlers(assertMainRendererSender)
     // Authoritative project changes fan out to the main window; the renderer
     // facade reconciles its optimistic snapshot from this event. The payload
     // is the full registry state: { projects, workProfiles }.
@@ -53761,6 +53770,7 @@ if (isGeminiMcpBridgeProcess) {
           exactPickerParticipantId?: string
           externalPathGrants?: ExternalPathGrant[]
           scheduledTaskId?: string
+          projectReferenceContextSelection?: unknown
         }
       ) => {
         if (AppStore.getSettings().ensembleModeEnabled === false) {
@@ -53775,8 +53785,23 @@ if (isGeminiMcpBridgeProcess) {
         }
         const imageAttachments = imageAttachmentSnapshots(payload?.imageAttachments)
         const prompt = typeof payload?.prompt === 'string' ? payload.prompt : ''
-        if (!prompt.trim() && imageAttachments.length === 0) {
-          throw new Error('Ensemble prompt or attachment is required.')
+        const projectReferenceContextSelection = parseProjectReferenceContextSelection(
+          payload?.projectReferenceContextSelection
+        )
+        if (
+          Object.prototype.hasOwnProperty.call(payload, 'projectReferenceContextSelection') &&
+          payload.projectReferenceContextSelection != null &&
+          !projectReferenceContextSelection
+        ) {
+          throw new Error('Project reference context selection is invalid.')
+        }
+        // P1 F6 — reference-only Use-next sends are valid for ensemble rounds.
+        if (
+          !prompt.trim() &&
+          imageAttachments.length === 0 &&
+          !projectReferenceContextSelection
+        ) {
+          throw new Error('Ensemble prompt, attachment, or Project reference selection is required.')
         }
         const dispatchImageAttachments = await authorizeThenExpandAttachmentRecords(
           imageAttachments,
@@ -53849,6 +53874,9 @@ if (isGeminiMcpBridgeProcess) {
           })
           if (absorbed?.status === 'steered') return absorbed
         }
+        // P1 F6 — selection is forwarded for the orchestrator appendix helper.
+        // EnsembleOrchestrator wiring lands via /tmp/work-refs-ensemble-appendix.patch
+        // when peer dirt clears; until then startRound ignores the extra field.
         const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
@@ -53863,8 +53891,11 @@ if (isGeminiMcpBridgeProcess) {
           imageAttachments: dispatchImageAttachments,
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
           ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
-          ...(externalPathGrants.length > 0 ? { externalPathGrants } : {})
-        })
+          ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
+          ...(projectReferenceContextSelection
+            ? { projectReferenceContextSelection }
+            : {})
+        } as Parameters<NonNullable<typeof ensembleOrchestratorRef>['startRound']>[0])
         return ensembleStartResult
       }
     )
