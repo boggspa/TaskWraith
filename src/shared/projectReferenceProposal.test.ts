@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   MAX_PROJECT_REFERENCE_PROPOSAL_LOCATOR_LENGTH,
+  MAX_PROJECT_REFERENCE_PROPOSAL_PREVIEW_LENGTH,
   MAX_PROJECT_REFERENCE_PROPOSAL_REASON_LENGTH,
   parseProjectReferenceProposalCandidate,
   parseProjectReferenceProposedPayload,
@@ -97,6 +98,46 @@ describe('Project reference proposal codecs', () => {
         title: 'Brief'
       })
     ).not.toBeNull()
+  })
+
+  it('accepts optional agent-claimed preview evidence without requiring it on old events', () => {
+    expect(parseProjectReferenceProposedPayload(proposed)).toEqual(proposed)
+    const withPreview = {
+      ...proposed,
+      previewSnippet: 'A short quote from an already-fetched page.',
+      previewSource: 'web_fetch'
+    }
+    expect(parseProjectReferenceProposedPayload(withPreview)).toEqual(withPreview)
+  })
+
+  it('rejects previewSource without snippet, overlong snippets, and unknown preview sources', () => {
+    expect(
+      parseProjectReferenceProposedPayload({
+        ...proposed,
+        previewSource: 'web_fetch'
+      })
+    ).toBeNull()
+    expect(
+      parseProjectReferenceProposedPayload({
+        ...proposed,
+        previewSnippet: 'x'.repeat(MAX_PROJECT_REFERENCE_PROPOSAL_PREVIEW_LENGTH + 1),
+        previewSource: 'web_fetch'
+      })
+    ).toBeNull()
+    expect(
+      parseProjectReferenceProposedPayload({
+        ...proposed,
+        previewSnippet: 'Looks fine',
+        previewSource: 'main_fetch'
+      })
+    ).toBeNull()
+    expect(
+      parseProjectReferenceProposedPayload({
+        ...proposed,
+        previewSnippet: 'Has\nnewline',
+        previewSource: 'web_fetch'
+      })
+    ).toBeNull()
   })
 
   it('requires an immutable source and reference id only for approval', () => {

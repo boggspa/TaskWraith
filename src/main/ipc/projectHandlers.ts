@@ -51,6 +51,9 @@ export interface ProjectReferenceProposalView {
     title: string
   }
   reason?: string
+  /** Agent-claimed review evidence only — never main-fetched. */
+  previewSnippet?: string
+  previewSource?: string
   proposedAt: number
   provider?: ProviderId
   runId: string
@@ -127,9 +130,7 @@ function requireProjectReferenceProposalId(value: unknown, label: string): strin
   return value.trim()
 }
 
-function parseProjectReferenceProposalReview(
-  value: unknown
-): ReviewProjectReferenceProposalInput {
+function parseProjectReferenceProposalReview(value: unknown): ReviewProjectReferenceProposalInput {
   if (!isRecord(value)) throw new Error('Malformed Project reference proposal review.')
   const allowed = new Set(['projectId', 'proposalId', 'decision'])
   if (Object.keys(value).some((key) => !allowed.has(key))) {
@@ -156,6 +157,8 @@ function toProjectReferenceProposalView(
       title: payload.candidate.title
     },
     ...(payload.reason ? { reason: payload.reason } : {}),
+    ...(payload.previewSnippet ? { previewSnippet: payload.previewSnippet } : {}),
+    ...(payload.previewSource ? { previewSource: payload.previewSource } : {}),
     proposedAt: payload.proposedAt,
     ...(event.provider ? { provider: event.provider } : {}),
     runId: event.runId

@@ -7,8 +7,17 @@ export const MAX_PROJECT_REFERENCE_PROPOSAL_ID_LENGTH = 256
 export const MAX_PROJECT_REFERENCE_PROPOSAL_TITLE_LENGTH = 512
 export const MAX_PROJECT_REFERENCE_PROPOSAL_LOCATOR_LENGTH = 4096
 export const MAX_PROJECT_REFERENCE_PROPOSAL_REASON_LENGTH = 2000
+export const MAX_PROJECT_REFERENCE_PROPOSAL_PREVIEW_LENGTH = 800
 
 export type ProjectReferenceProposalDecision = 'approve' | 'reject'
+
+/** Agent-claimed provenance for optional review snippets — never main-fetched proof. */
+export type ProjectReferenceProposalPreviewSource =
+  | 'web_search'
+  | 'web_fetch'
+  | 'document_extract'
+  | 'agent_context'
+  | 'manual'
 
 export interface ProjectReferenceProposalCandidate {
   kind: ProjectReferenceKind
@@ -20,6 +29,10 @@ export interface ProjectReferenceProposalCandidate {
  * Append-only proposal evidence. It intentionally carries no ProjectReference
  * provenance or review state: the Project registry remains user-owned, while
  * this candidate lives only in a `reference_context` run event.
+ *
+ * Optional previewSnippet / previewSource are untrusted agent-claimed review
+ * evidence only. Approving a proposal materializes catalogue metadata and
+ * never copies preview fields onto ProjectReference.
  */
 export interface ProjectReferenceProposedPayload {
   schemaVersion: 1
@@ -30,6 +43,8 @@ export interface ProjectReferenceProposedPayload {
   materializationReferenceId: string
   candidate: ProjectReferenceProposalCandidate
   reason?: string
+  previewSnippet?: string
+  previewSource?: ProjectReferenceProposalPreviewSource
   proposedAt: number
 }
 
@@ -104,6 +119,16 @@ function isReferenceKind(value: unknown): value is ProjectReferenceKind {
   return value === 'file' || value === 'folder' || value === 'url'
 }
 
+function isPreviewSource(value: unknown): value is ProjectReferenceProposalPreviewSource {
+  return (
+    value === 'web_search' ||
+    value === 'web_fetch' ||
+    value === 'document_extract' ||
+    value === 'agent_context' ||
+    value === 'manual'
+  )
+}
+
 function isPortableAbsolutePath(value: string): boolean {
   return (
     value.startsWith('/') ||
@@ -154,6 +179,8 @@ export function parseProjectReferenceProposedPayload(
       'materializationReferenceId',
       'candidate',
       'reason',
+      'previewSnippet',
+      'previewSource',
       'proposedAt'
     ]) ||
     value.schemaVersion !== PROJECT_REFERENCE_PROPOSAL_SCHEMA_VERSION ||
@@ -174,6 +201,17 @@ export function parseProjectReferenceProposedPayload(
     'reason',
     MAX_PROJECT_REFERENCE_PROPOSAL_REASON_LENGTH
   )
+  const previewSnippet = boundedOptionalString(
+    value,
+    'previewSnippet',
+    MAX_PROJECT_REFERENCE_PROPOSAL_PREVIEW_LENGTH
+  )
+  const hasPreviewSource = 'previewSource' in value
+  const previewSource = hasPreviewSource
+    ? isPreviewSource(value.previewSource)
+      ? value.previewSource
+      : null
+    : undefined
   const proposedAt = boundedTimestamp(value.proposedAt)
   if (
     !proposalId ||
@@ -181,8 +219,14 @@ export function parseProjectReferenceProposedPayload(
     !materializationReferenceId ||
     !candidate ||
     reason === null ||
+    previewSnippet === null ||
+    previewSource === null ||
     proposedAt === null
   ) {
+    return null
+  }
+  // Preview fields are paired: source without snippet (or the reverse) is corrupt.
+  if ((previewSnippet !== undefined) !== (previewSource !== undefined)) {
     return null
   }
   return {
@@ -194,6 +238,7 @@ export function parseProjectReferenceProposedPayload(
     materializationReferenceId,
     candidate,
     ...(reason ? { reason } : {}),
+    ...(previewSnippet && previewSource ? { previewSnippet, previewSource } : {}),
     proposedAt
   }
 }

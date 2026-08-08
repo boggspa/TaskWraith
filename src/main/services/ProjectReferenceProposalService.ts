@@ -1,6 +1,7 @@
 import {
   MAX_PROJECT_REFERENCE_PROPOSAL_ID_LENGTH,
   MAX_PROJECT_REFERENCE_PROPOSAL_LOCATOR_LENGTH,
+  MAX_PROJECT_REFERENCE_PROPOSAL_PREVIEW_LENGTH,
   MAX_PROJECT_REFERENCE_PROPOSAL_REASON_LENGTH,
   MAX_PROJECT_REFERENCE_PROPOSAL_TITLE_LENGTH,
   PROJECT_REFERENCE_PROPOSAL_PURPOSE,
@@ -11,6 +12,7 @@ import {
   parseProjectReferenceReviewedPayload,
   type ProjectReferenceProposalCandidate,
   type ProjectReferenceProposalDecision,
+  type ProjectReferenceProposalPreviewSource,
   type ProjectReferenceProposedPayload,
   type ProjectReferenceReviewedPayload
 } from '../../shared/projectReferenceProposal'
@@ -54,6 +56,9 @@ export interface ProposeProjectReferenceInput {
   locator: string
   title?: string
   reason?: string
+  /** Untrusted agent-claimed review evidence; never fetched by main. */
+  previewSnippet?: string
+  previewSource?: ProjectReferenceProposalPreviewSource
   provider?: ProviderId
   toolCallId?: string
 }
@@ -166,6 +171,25 @@ export class ProjectReferenceProposalService {
       'Proposal reason',
       MAX_PROJECT_REFERENCE_PROPOSAL_REASON_LENGTH
     )
+    const previewSnippet = boundedOptionalString(
+      input.previewSnippet,
+      'Proposal preview snippet',
+      MAX_PROJECT_REFERENCE_PROPOSAL_PREVIEW_LENGTH
+    )
+    const previewSource = input.previewSource
+    if ((previewSnippet !== undefined) !== (previewSource !== undefined)) {
+      throw new Error('Proposal preview snippet and source must be provided together.')
+    }
+    if (
+      previewSource !== undefined &&
+      previewSource !== 'web_search' &&
+      previewSource !== 'web_fetch' &&
+      previewSource !== 'document_extract' &&
+      previewSource !== 'agent_context' &&
+      previewSource !== 'manual'
+    ) {
+      throw new Error('Proposal preview source is invalid.')
+    }
     const project = this.resolveProjectForChat(chatId, input.projectId)
     const runIds = this.exactRunIdsForChat(chatId)
     if (!runIds.includes(runId)) {
@@ -210,6 +234,7 @@ export class ProjectReferenceProposalService {
       materializationReferenceId,
       candidate,
       ...(reason ? { reason } : {}),
+      ...(previewSnippet && previewSource ? { previewSnippet, previewSource } : {}),
       proposedAt
     }
     const payload = parseProjectReferenceProposedPayload(proposedPayload)

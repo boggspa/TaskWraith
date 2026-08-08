@@ -131,6 +131,41 @@ describe('ProjectReferenceProposalService', () => {
     })
   })
 
+  it('persists agent-claimed preview evidence on propose and never copies it onto an approved reference', () => {
+    const { service } = fixture()
+    const proposed = proposeBrief(service, {
+      kind: 'url',
+      locator: 'https://example.com/brief',
+      title: 'Example',
+      previewSnippet: 'A short quote from an already-fetched page.',
+      previewSource: 'web_fetch'
+    })
+    expect(proposed.proposal.payload).toMatchObject({
+      previewSnippet: 'A short quote from an already-fetched page.',
+      previewSource: 'web_fetch'
+    })
+    expect(() =>
+      proposeBrief(service, {
+        kind: 'url',
+        locator: 'https://example.com/other',
+        title: 'Other',
+        previewSnippet: 'orphan snippet'
+      })
+    ).toThrow(/together/)
+    const reviewed = service.review({
+      projectId: 'project-a',
+      proposalId: proposed.proposal.payload.proposalId,
+      decision: 'approve'
+    })
+    expect(reviewed.reference).toMatchObject({
+      kind: 'url',
+      locator: 'https://example.com/brief',
+      title: 'Example'
+    })
+    expect(reviewed.reference).not.toHaveProperty('previewSnippet')
+    expect(reviewed.reference).not.toHaveProperty('previewSource')
+  })
+
   it('requires an explicit Project when the current chat has ambiguous membership', () => {
     const { service } = fixture({ projects: [projectA, projectB] })
     expect(() => proposeBrief(service)).toThrow(/multiple Projects/)
