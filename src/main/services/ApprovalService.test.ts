@@ -1324,6 +1324,63 @@ describe('ApprovalService — resolve dispatch', () => {
     )
   })
 
+  it('Codex deferred native ask: fires PostToolUse ok/deny on resolve', async () => {
+    const fireCodexNativePostToolUseHook = vi.fn()
+    const { deps, spies } = makeDeps({ fireCodexNativePostToolUseHook })
+    const svc = new ApprovalService(deps)
+    svc.registerCodex('c-native-ask', {
+      rpcId: 42,
+      method: 'item/commandExecution/requestApproval',
+      params: { command: 'git status' },
+      service: 'shellCommands',
+      workspacePath: '/ws',
+      runId: 'r-1',
+      hostHookToolName: 'run_shell_command'
+    })
+    await svc.resolve('c-native-ask', 'accept')
+    expect(spies.codexClient.respond).toHaveBeenCalledWith(42, { decision: 'accept' })
+    expect(fireCodexNativePostToolUseHook).toHaveBeenCalledWith({
+      workspacePath: '/ws',
+      toolName: 'run_shell_command',
+      outcome: 'ok',
+      runId: 'r-1'
+    })
+
+    fireCodexNativePostToolUseHook.mockClear()
+    svc.registerCodex('c-native-deny', {
+      rpcId: 43,
+      method: 'item/fileChange/requestApproval',
+      params: { changes: [{ path: 'a.ts' }] },
+      service: 'fileChanges',
+      workspacePath: '/ws',
+      runId: 'r-2',
+      hostHookToolName: 'apply_patch'
+    })
+    await svc.resolve('c-native-deny', 'decline')
+    expect(spies.codexClient.respond).toHaveBeenCalledWith(43, { decision: 'decline' })
+    expect(fireCodexNativePostToolUseHook).toHaveBeenCalledWith({
+      workspacePath: '/ws',
+      toolName: 'apply_patch',
+      outcome: 'deny',
+      runId: 'r-2'
+    })
+  })
+
+  it('Codex MCP elicitation resolve does not fire native PostToolUse without hostHookToolName', async () => {
+    const fireCodexNativePostToolUseHook = vi.fn()
+    const { deps } = makeDeps({ fireCodexNativePostToolUseHook })
+    const svc = new ApprovalService(deps)
+    svc.registerCodex('c-mcp', {
+      rpcId: 7,
+      method: 'mcpServer/elicitation/request',
+      params: {},
+      workspacePath: '/ws',
+      runId: 'r-1'
+    })
+    await svc.resolve('c-mcp', 'accept')
+    expect(fireCodexNativePostToolUseHook).not.toHaveBeenCalled()
+  })
+
   it('Codex elicitation: respond with action + content', async () => {
     const { deps, spies } = makeDeps()
     const svc = new ApprovalService(deps)

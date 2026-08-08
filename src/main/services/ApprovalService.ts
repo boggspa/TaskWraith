@@ -150,6 +150,12 @@ export interface PendingCodexApproval {
   runId?: string
   allowedActions?: AgentApprovalAction[]
   /**
+   * Provider-native Codex tool name for deferred PostToolUse. Set only when
+   * PreToolUse already ran at registration and Post was skipped because the
+   * ask path returned `deferred`; `resolve` fires Post with ok/deny.
+   */
+  hostHookToolName?: string
+  /**
    * Slice 5 of the external-path-redesign arc. Populated by the
    * registration site (`main/index.ts` Codex elicitation handler)
    * when `detectExternalPath` flagged the tool call as referencing
@@ -315,6 +321,16 @@ export interface ApprovalServiceDeps {
     perProviderMs: Record<ProviderId, number>
     mainAuthorityMs: number
   }
+  /**
+   * Deferred PostToolUse for Codex native ask-path approvals. Wired from main
+   * to `runPostToolUseHooks`; optional so unit tests can omit it.
+   */
+  fireCodexNativePostToolUseHook?: (input: {
+    workspacePath: string
+    toolName: string
+    outcome: 'ok' | 'deny'
+    runId?: string
+  }) => void
   /** Logger sink. */
   log: (line: string) => void
 }
@@ -1132,6 +1148,27 @@ export class ApprovalService {
     })
     this.pendingCodex.delete(requestId)
     this.deps.runManager.clearApproval(requestId)
+
+    const deferredHostHookTool =
+      typeof pending.hostHookToolName === 'string' ? pending.hostHookToolName.trim() : ''
+    const deferredHostHookWorkspace =
+      typeof pending.workspacePath === 'string' ? pending.workspacePath.trim() : ''
+    if (
+      deferredHostHookTool &&
+      deferredHostHookWorkspace &&
+      this.deps.fireCodexNativePostToolUseHook
+    ) {
+      try {
+        this.deps.fireCodexNativePostToolUseHook({
+          workspacePath: deferredHostHookWorkspace,
+          toolName: deferredHostHookTool,
+          outcome: approvalActionResumesExecution(action) ? 'ok' : 'deny',
+          ...(pending.runId ? { runId: pending.runId } : {})
+        })
+      } catch {
+        // PostToolUse must never block approval RPC completion.
+      }
+    }
 
     const params = pending.params as { permissions?: unknown } | null
 

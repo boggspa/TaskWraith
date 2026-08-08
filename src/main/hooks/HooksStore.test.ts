@@ -121,6 +121,10 @@ describe('HooksStore resolveEffectiveHooks', () => {
 
     expect(fs.existsSync(path.join(userDataPath, 'hooks.json'))).toBe(true)
     expect(fs.existsSync(path.join(workspacePath, '.taskwraith', 'hooks.json'))).toBe(true)
+    expect(store.userHooksFilePath()).toBe(path.join(userDataPath, 'hooks.json'))
+    expect(store.workspaceHooksFilePath(workspacePath)).toBe(
+      path.join(workspacePath, '.taskwraith', 'hooks.json')
+    )
 
     const userSnap = store.getUserHooks()
     const workspaceSnap = store.getWorkspaceHooks(workspacePath)

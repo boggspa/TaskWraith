@@ -1,8 +1,11 @@
+import { mkdirSync } from 'fs'
+import { dirname } from 'path'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type {
   DeleteHookRequest,
   HooksConfigSnapshot,
   EffectiveHooksSnapshot,
+  HookScope,
   SetHookEnabledRequest,
   UpsertHookRequest
 } from '../../shared/hooks/HookTypes'
@@ -17,11 +20,23 @@ export interface HooksHandlerDeps {
     | 'upsertHook'
     | 'deleteHook'
     | 'setEnabled'
+    | 'userHooksFilePath'
+    | 'workspaceHooksFilePath'
   >
+  revealPathInFinder: (absolutePath: string) => Promise<{ ok: boolean; error?: string }>
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
   assertSenderScope: (event: IpcMainInvokeEvent, workspacePath: string) => void
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
   requireNonEmptyString: (value: unknown, label: string) => string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseScope(value: unknown): HookScope {
+  if (value === 'user' || value === 'workspace') return value
+  throw new Error('scope must be "user" or "workspace".')
 }
 
 function assertMainRenderer(deps: HooksHandlerDeps, event: IpcMainInvokeEvent): void {
@@ -97,6 +112,33 @@ export function registerHooksHandlers(deps: HooksHandlerDeps): void {
         return deps.hooksStore.setEnabled({ ...request, workspacePath: authorized })
       }
       return deps.hooksStore.setEnabled(request)
+    }
+  )
+
+  ipcMain.handle(
+    'hooks:reveal-root',
+    async (event, payload: unknown): Promise<{ ok: boolean; error?: string; path?: string }> => {
+      assertMainRenderer(deps, event)
+      if (!isRecord(payload)) throw new Error('Invalid hooks:reveal-root payload.')
+      const scope = parseScope(payload.scope)
+      let filePath: string
+      if (scope === 'user') {
+        filePath = deps.hooksStore.userHooksFilePath()
+      } else {
+        const workspacePath = authorizeWorkspace(deps, event, payload.workspacePath)
+        filePath = deps.hooksStore.workspaceHooksFilePath(workspacePath)
+      }
+      try {
+        mkdirSync(dirname(filePath), { recursive: true })
+      } catch {
+        // Reveal still attempts even if mkdir fails.
+      }
+      const result = await deps.revealPathInFinder(filePath)
+      if (result.ok) return { ...result, path: filePath }
+      // File may not exist yet — reveal the containing directory instead.
+      const parent = dirname(filePath)
+      const parentResult = await deps.revealPathInFinder(parent)
+      return { ...parentResult, path: filePath }
     }
   )
 }

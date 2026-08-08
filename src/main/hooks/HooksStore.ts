@@ -200,6 +200,16 @@ export class HooksStore {
     this.log = options.log ?? (() => {})
   }
 
+  /** Absolute PathScope-safe path to `{userData}/hooks.json`. */
+  userHooksFilePath(): string {
+    return this.userHooksPath
+  }
+
+  /** Absolute PathScope-safe path to `{workspace}/.taskwraith/hooks.json`. */
+  workspaceHooksFilePath(workspacePath: string): string {
+    return resolveWorkspaceHooksPath(workspacePath)
+  }
+
   getUserHooks(): HooksConfigSnapshot {
     return normalizeHooksConfig(readJson(this.userHooksPath, this.log), 'user')
   }
