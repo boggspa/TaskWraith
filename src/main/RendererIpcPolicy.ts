@@ -401,6 +401,14 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:import-legacy',
   'projects:list-reference-proposals',
   'projects:review-reference-proposal',
+  'projects:studio-generate',
+  'projects:studio-save',
+  'projects:studio-discard',
+  'projects:studio-list',
+  'projects:extract-reference',
+  'projects:get-reference-extract',
+  'projects:revoke-reference-extract',
+  'projects:read-reference-extract-text',
 
   // Execution graphs are app-level orchestration state. Their domain handlers
   // repeat this assertion and resolve all workspace/chat authority in main.

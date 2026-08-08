@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
-import { GATEWAY_V9_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { ollamaAdvertisedToolNames } from './OllamaToolTiers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { RunManager } from '../RunManager'
 import { TOKEN_COUNT_CONFIDENCE_KEY, TOKEN_COUNT_ESTIMATED } from '../../shared/tokenEstimate'
@@ -2916,12 +2916,15 @@ describe('runOllamaProvider streaming', () => {
     const enumNames: string[] = format?.properties?.taskwraith_tool?.properties?.name?.enum
     expect(Array.isArray(enumNames)).toBe(true)
     expect(enumNames).toEqual([
-      ...GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread'),
+      ...ollamaAdvertisedToolNames(),
       ...CAPABILITY_GATEWAY_TOOL_NAMES,
       'tool_help'
     ])
     expect(enumNames).not.toContain('delegate_to_subthread')
+    expect(enumNames).not.toContain('delegate_wave')
     expect(enumNames).not.toContain('git_blame')
+    expect(enumNames).not.toContain('skill_list')
+    expect(enumNames).not.toContain('skill_read')
   })
 
   it('does not advertise edit/shell native tools to a read-only seat', async () => {
@@ -4062,12 +4065,15 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(compact.length).toBeLessThan(full.length)
     expect(compact).not.toContain('maxResults')
   })
-  it('exposes the exact fresh gateway-v9 canonical surface plus virtual helpers', () => {
+  it('exposes the exact fresh gateway-v14 canonical surface plus virtual helpers', () => {
     const defs = ollamaNativeToolDefinitions('read_only')
     const names = defs.map((def) => def.function.name)
-    const direct = GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread')
+    const direct = ollamaAdvertisedToolNames()
     expect(names.slice(0, direct.length)).toEqual([...direct])
     expect(names).not.toContain('delegate_to_subthread')
+    expect(names).not.toContain('delegate_wave')
+    expect(names).not.toContain('skill_list')
+    expect(names).not.toContain('skill_read')
     expect(names.slice(direct.length)).toEqual([...CAPABILITY_GATEWAY_TOOL_NAMES, 'tool_help'])
   })
 
@@ -4231,12 +4237,15 @@ describe('Ollama tool surface (tier retired)', () => {
     // the standard permission role at the approval gate.
     expect(normalizeOllamaToolControlTier('bad-value')).toBe('read_only')
     const readOnly = ollamaToolNamesForTier('read_only')
-    const expected = GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread')
+    const expected = ollamaAdvertisedToolNames()
     expect(readOnly).toEqual(ollamaToolNamesForTier('provider_parity'))
     expect(readOnly).toEqual(expected)
     expect(readOnly).not.toContain('delegate_to_subthread')
+    expect(readOnly).not.toContain('delegate_wave')
     expect(readOnly).not.toContain('web_search')
     expect(readOnly).not.toContain('git_push')
+    expect(readOnly).not.toContain('skill_list')
+    expect(readOnly).not.toContain('skill_read')
   })
 
   it('still marks mutating / remote-git / process-control tools as intent-required', () => {
@@ -4251,7 +4260,7 @@ describe('Ollama tool surface (tier retired)', () => {
 
   it('keeps every legacy tier value on the same compact direct profile', () => {
     const tools = ollamaToolNamesForTier('provider_parity')
-    const expected = GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => name !== 'delegate_to_subthread')
+    const expected = ollamaAdvertisedToolNames()
     expect(tools).toEqual(expected)
     expect(ollamaToolNamesForTier('read_only')).toEqual(tools)
   })

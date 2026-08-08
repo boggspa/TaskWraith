@@ -2500,7 +2500,9 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'appwatch_stop',
     'appwatch_status',
     'appwatch_latest_frame',
-    'appwatch_frames'
+    'appwatch_frames',
+    'appshots',
+    'appshots_status'
   ],
   canvas: [
     'launch_list_targets',
@@ -2537,10 +2539,24 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'mesh_scene_set_material',
     'mesh_scene_present',
     'mesh_scene_close',
-    'mesh_scene_delete'
+    'mesh_scene_delete',
+    'simulator_status',
+    'simulator_open',
+    'simulator_boot',
+    'simulator_install',
+    'simulator_launch',
+    'simulator_screenshot',
+    'simulator_terminate',
+    'simulator_inspect',
+    'simulator_button',
+    'simulator_rotate',
+    'simulator_tap',
+    'simulator_type',
+    'simulator_scroll'
   ],
   ensemble: [
     'delegate_to_subthread',
+    'delegate_wave',
     'list_subthreads',
     'read_subthread_result',
     'cancel_subthread',
@@ -2592,7 +2608,9 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'tw_introspection_run',
     'tw_introspection_list',
     'tw_introspection_read',
-    'tw_introspection_review'
+    'tw_introspection_review',
+    'skill_list',
+    'skill_read'
   ],
   media: [
     'image_edit',

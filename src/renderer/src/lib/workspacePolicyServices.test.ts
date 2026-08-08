@@ -15,6 +15,7 @@ describe('workspacePolicyServices', () => {
       'Canvas interaction',
       'Sketch Canvas',
       'Mesh Canvas',
+      'Simulator Canvas',
       'Media editing',
       'Browser navigation'
     ])

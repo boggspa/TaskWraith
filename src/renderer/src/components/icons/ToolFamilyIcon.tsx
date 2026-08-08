@@ -151,6 +151,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'cistatus':
       return 'ci'
     case 'delegate_to_subthread':
+    case 'delegate_wave':
       return 'delegate'
     case 'ensemble_yield':
       return 'yield'
@@ -375,6 +376,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   if (normalised.startsWith('git_') || normalised === 'git' || normalised === 'github_ci_status') return 'git'
   if (normalised.startsWith('browser_')) return 'browser'
   if (normalised.startsWith('canvas_')) return 'canvas'
+  if (normalised.startsWith('simulator_')) return 'canvas'
   if (normalised.startsWith('tw_recall_')) return 'memory'
   if (normalised.startsWith('tw_introspection_')) return 'audit'
   if (normalised.startsWith('workspace_board_')) return 'plan'
