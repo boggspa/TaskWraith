@@ -42,7 +42,7 @@ export function buildRunCloseoutSummaryDigest(input: {
     ...promptField(chat, run.promptMessageId),
     ...finalTextField(runMessages, DIGEST_FINAL_TEXT_MAX_CHARS),
     ...fileChangesField(runMessages),
-    ...commitsField(chat.messages || [], (message) => message.runId === run.runId),
+    ...commitsField(chat, chat.messages || [], (message) => message.runId === run.runId),
     ...toolCountsField(runMessages),
     ...validationsField(chat.messages || [], runIds),
     ...warningsField(run.warnings, runMessages)
@@ -72,7 +72,7 @@ export function buildRoundCloseoutSummaryDigest(input: {
     ...promptField(chat, promptMessageId),
     ...finalTextField(roundMessages, DIGEST_FINAL_TEXT_MAX_CHARS),
     ...fileChangesField(roundMessages),
-    ...commitsField(chat.messages || [], includeMessage),
+    ...commitsField(chat, chat.messages || [], includeMessage),
     ...toolCountsField(roundMessages),
     ...validationsField(chat.messages || [], roundRunIds),
     ...warningsField(
@@ -152,10 +152,11 @@ function fileChangesField(messages: ChatMessage[]): Pick<CloseoutSummaryRequest,
 }
 
 function commitsField(
+  chat: ChatRecord,
   messages: ChatMessage[],
   includeMessage: (message: ChatMessage) => boolean
 ): Pick<CloseoutSummaryRequest, 'commits'> {
-  const commits = collectCloseoutCommits(messages, includeMessage)
+  const commits = collectCloseoutCommits(messages, includeMessage, { chat })
   if (commits.length === 0) return {}
   return {
     commits: commits.slice(0, DIGEST_MAX_COMMITS).map((commit) => ({

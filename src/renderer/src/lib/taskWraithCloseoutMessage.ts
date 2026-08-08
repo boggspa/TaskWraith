@@ -22,6 +22,7 @@ import {
   taskWraithRoundCloseoutId,
   taskWraithRunCloseoutId
 } from '../../../shared/taskWraithCloseout'
+import { resolveCatalogToolName } from '../../../shared/canonicalToolCoalesce'
 import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
 import { formatContextTokens } from './contextWindows'
 import { reasoningDisplayLabel } from './composerChipFormat'
@@ -1851,8 +1852,17 @@ export function collectCloseoutCommits(
         ? message.metadata.ensembleParticipantId
         : undefined
     for (const activity of message.toolActivities || []) {
-      if (!isGitCommitActivity(activity)) continue
-      for (const commit of extractCommitsFromActivity(activity)) {
+      const activityKind = closeoutCommitActivityKind(activity)
+      if (!activityKind) continue
+      if (
+        activityKind === 'shell' &&
+        (activity.status !== 'success' ||
+          !options?.chat ||
+          !shellActivityCommitsInChatWorkspace(activity, message, options.chat))
+      ) {
+        continue
+      }
+      for (const commit of extractCommitsFromActivity(activity, activityKind === 'shell')) {
         const attributed: CloseoutCommit = {
           ...commit,
           ...(seatLink ? { seatLink } : {}),
@@ -1950,17 +1960,341 @@ function formatCommitStats(raw: string): string {
   return filePart
 }
 
-function isGitCommitActivity(activity: ToolActivity): boolean {
+function closeoutCommitActivityKind(activity: ToolActivity): 'dedicated' | 'shell' | null {
+  const catalogTool = resolveCatalogToolName(activity.toolName || '')
+  if (catalogTool === 'git_commit') return 'dedicated'
+  if (catalogTool === 'run_shell_command' || activity.category?.toLowerCase() === 'shell') {
+    return 'shell'
+  }
   const text = `${activity.toolName || ''} ${activity.displayName || ''}`.toLowerCase()
-  return text.includes('git_commit') || text.includes('git commit')
+  return text.includes('git_commit') || text.includes('git commit') ? 'dedicated' : null
 }
 
-function extractCommitsFromActivity(activity: ToolActivity): CloseoutCommit[] {
+function extractCommitsFromActivity(
+  activity: ToolActivity,
+  requireGitReceipt = false
+): CloseoutCommit[] {
   const fragments: string[] = []
   collectCommitTextFragments(activity.resultSummary, fragments)
   collectCommitTextFragments(activity.outputPreview, fragments)
   collectCommitTextFragments(activity.rawResultEvent, fragments)
-  return extractCommitsFromText(fragments.join('\n'))
+  return extractCommitsFromText(fragments.join('\n'), requireGitReceipt)
+}
+
+function shellActivityCommitsInChatWorkspace(
+  activity: ToolActivity,
+  message: ChatMessage,
+  chat: ChatRecord
+): boolean {
+  // Shell telemetry is generic enough to contain documentation, fixture data,
+  // and stale object ids. Require two independent signals: argv-like evidence
+  // that git commit ran, and (later) Git's bracketed success receipt.
+  const command = shellActivityString(activity, ['command', 'cmd', 'script'])
+  if (!command || command.includes('<<')) return false
+
+  const allowedRoots = shellCommitAllowedRoots(chat, message)
+  if (allowedRoots.length === 0) return false
+  const fallbackCwd = allowedRoots[0]
+  const requestedCwd = shellActivityString(activity, ['cwd', 'workdir', 'workingDirectory'])
+  const initialCwd = normalizeShellPath(requestedCwd || fallbackCwd, fallbackCwd)
+  if (!initialCwd) return false
+
+  const targets = shellGitCommitTargets(command, initialCwd)
+  return (
+    targets.length > 0 &&
+    targets.every(
+      (target) => target !== null && allowedRoots.some((root) => shellPathIsWithin(target, root))
+    )
+  )
+}
+
+function shellCommitAllowedRoots(chat: ChatRecord, message: ChatMessage): string[] {
+  const roots = new Set<string>()
+  const addRoot = (value: unknown): void => {
+    if (typeof value !== 'string') return
+    const normalized = normalizeShellPath(value)
+    if (normalized) roots.add(normalized)
+  }
+  const matchingRun = (chat.runs || []).find((run) => run.runId === message.runId)
+  addRoot(matchingRun?.effectiveWorkspacePath)
+  if (roots.size > 0) return Array.from(roots)
+  for (const candidate of chat.fanoutWorktreeCandidates || []) {
+    if (message.runId && candidate.runId === message.runId) addRoot(candidate.worktreePath)
+  }
+  if (roots.size > 0) return Array.from(roots)
+  addRoot(chat.threadWorktreeBinding?.effectiveWorkspacePath)
+  if (roots.size > 0) return Array.from(roots)
+  addRoot(chat.workspacePath)
+  return Array.from(roots)
+}
+
+function shellActivityString(activity: ToolActivity, keys: string[]): string | null {
+  const parameters =
+    activity.parameters && typeof activity.parameters === 'object'
+      ? (activity.parameters as Record<string, unknown>)
+      : null
+  for (const key of keys) {
+    const value = parameters?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+
+  const rawUse =
+    activity.rawUseEvent && typeof activity.rawUseEvent === 'object'
+      ? (activity.rawUseEvent as Record<string, unknown>)
+      : null
+  const rawContainers = [rawUse?.input, rawUse?.args, rawUse?.parameters]
+  for (const container of rawContainers) {
+    if (!container || typeof container !== 'object') continue
+    for (const key of keys) {
+      const value = (container as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.trim()) return value
+    }
+  }
+  return null
+}
+
+type ShellCommandSegment = {
+  text: string
+  separator: '&&' | '||' | ';' | '|' | '\n' | null
+}
+
+function shellGitCommitTargets(
+  command: string,
+  initialCwd: string,
+  depth = 0
+): Array<string | null> {
+  if (depth > 2) return []
+  const targets: Array<string | null> = []
+  let cwd: string | null = initialCwd
+  for (const segment of splitShellCommand(command)) {
+    const tokens = tokenizeShellWords(segment.text)
+    const executable = tokens?.length ? unwrapShellPrefixes(tokens) : null
+    if (executable) {
+      const program = shellProgramBasename(executable.tokens[0])
+      if (['bash', 'sh', 'zsh'].includes(program)) {
+        const payloadIndex = executable.tokens.findIndex(
+          (token, index) => index > 0 && (token === '-c' || token === '-lc')
+        )
+        const payload = payloadIndex >= 0 ? executable.tokens[payloadIndex + 1] : undefined
+        if (payload && cwd) targets.push(...shellGitCommitTargets(payload, cwd, depth + 1))
+      } else if (program === 'cd') {
+        const pathToken =
+          executable.tokens[1] === '--' ? executable.tokens[2] : executable.tokens[1]
+        cwd = pathToken && cwd ? normalizeShellPath(pathToken, cwd) : null
+      } else if (program === 'git') {
+        const target = gitCommitTarget(executable.tokens, cwd, executable.hasRepositoryOverride)
+        if (target !== undefined) targets.push(target)
+      }
+    }
+    if (segment.separator === '|') cwd = null
+  }
+  return targets
+}
+
+function splitShellCommand(command: string): ShellCommandSegment[] {
+  const segments: ShellCommandSegment[] = []
+  let quote: "'" | '"' | null = null
+  let escaped = false
+  let start = 0
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      continue
+    }
+
+    let separator: ShellCommandSegment['separator'] = null
+    let width = 1
+    if (char === '&' && command[index + 1] === '&') {
+      separator = '&&'
+      width = 2
+    } else if (char === '|' && command[index + 1] === '|') {
+      separator = '||'
+      width = 2
+    } else if (char === '|') {
+      separator = '|'
+    } else if (char === ';') {
+      separator = ';'
+    } else if (char === '\n') {
+      separator = '\n'
+    }
+    if (!separator) continue
+    segments.push({ text: command.slice(start, index), separator })
+    start = index + width
+    index += width - 1
+  }
+  segments.push({ text: command.slice(start), separator: null })
+  return segments
+}
+
+function tokenizeShellWords(command: string): string[] | null {
+  const tokens: string[] = []
+  let token = ''
+  let tokenStarted = false
+  let quote: "'" | '"' | null = null
+  let escaped = false
+  for (const char of command.trim()) {
+    if (escaped) {
+      token += char
+      tokenStarted = true
+      escaped = false
+      continue
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true
+      tokenStarted = true
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = null
+      else token += char
+      tokenStarted = true
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      tokenStarted = true
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (tokenStarted) {
+        tokens.push(token)
+        token = ''
+        tokenStarted = false
+      }
+      continue
+    }
+    token += char
+    tokenStarted = true
+  }
+  if (quote || escaped) return null
+  if (tokenStarted) tokens.push(token)
+  return tokens
+}
+
+function unwrapShellPrefixes(
+  tokens: string[]
+): { tokens: string[]; hasRepositoryOverride: boolean } | null {
+  let index = 0
+  let hasRepositoryOverride = false
+  while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index])) {
+    if (/^(?:GIT_DIR|GIT_WORK_TREE)=/.test(tokens[index])) hasRepositoryOverride = true
+    index += 1
+  }
+  if (shellProgramBasename(tokens[index] || '') === 'env') {
+    index += 1
+    while (index < tokens.length) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index])) {
+        if (/^(?:GIT_DIR|GIT_WORK_TREE)=/.test(tokens[index])) hasRepositoryOverride = true
+        index += 1
+        continue
+      }
+      if (tokens[index] === '-u' || tokens[index] === '--unset') {
+        index += 2
+        continue
+      }
+      if (tokens[index].startsWith('-')) {
+        index += 1
+        continue
+      }
+      break
+    }
+  }
+  if (shellProgramBasename(tokens[index] || '') === 'command') index += 1
+  return index < tokens.length ? { tokens: tokens.slice(index), hasRepositoryOverride } : null
+}
+
+function gitCommitTarget(
+  tokens: string[],
+  cwd: string | null,
+  hasRepositoryOverride: boolean
+): string | null | undefined {
+  let target: string | null = hasRepositoryOverride ? null : cwd
+  let index = 1
+  while (index < tokens.length) {
+    const token = tokens[index]
+    if (token === '-C') {
+      const nextTarget = tokens[index + 1]
+      target = nextTarget && target ? normalizeShellPath(nextTarget, target) : null
+      index += 2
+      continue
+    }
+    if (token.startsWith('-C') && token.length > 2) {
+      target = target ? normalizeShellPath(token.slice(2), target) : null
+      index += 1
+      continue
+    }
+    if (/^--(?:git-dir|work-tree)(?:=|$)/.test(token)) {
+      target = null
+      index += token.includes('=') ? 1 : 2
+      continue
+    }
+    if (token === '-c' || token === '--config-env') {
+      index += 2
+      continue
+    }
+    if (token.startsWith('-')) {
+      if (token === '--help' || token === '-h' || token === '--version') return undefined
+      index += 1
+      continue
+    }
+    break
+  }
+  if (tokens[index] !== 'commit') return undefined
+  const commitArgs = tokens.slice(index + 1)
+  if (
+    commitArgs.some(
+      (token) => token === '-h' || token === '--help' || token.startsWith('--dry-run')
+    )
+  ) {
+    return undefined
+  }
+  return target
+}
+
+function shellProgramBasename(program: string): string {
+  return program.replace(/\\/g, '/').split('/').pop()?.toLowerCase() || ''
+}
+
+function normalizeShellPath(value: string, base?: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.startsWith('~') || /[$`*?[\]{}]/.test(trimmed)) return null
+  let candidate = trimmed.replace(/\\/g, '/')
+  const hasDrive = /^[A-Za-z]:\//.test(candidate)
+  if (!candidate.startsWith('/') && !hasDrive) {
+    if (!base) return null
+    candidate = `${base.replace(/\/$/, '')}/${candidate}`
+  }
+  const drive = candidate.match(/^([A-Za-z]:)\//)?.[1]
+  const rest = drive ? candidate.slice(drive.length + 1) : candidate.slice(1)
+  const parts: string[] = []
+  for (const part of rest.split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (parts.length === 0) return null
+      parts.pop()
+      continue
+    }
+    parts.push(part)
+  }
+  const normalized = drive ? `${drive.toLowerCase()}/${parts.join('/')}` : `/${parts.join('/')}`
+  return drive ? normalized.toLowerCase() : normalized
+}
+
+function shellPathIsWithin(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(`${root.replace(/\/$/, '')}/`)
 }
 
 function collectCommitTextFragments(value: unknown, fragments: string[], depth = 0): void {
@@ -1979,11 +2313,13 @@ function collectCommitTextFragments(value: unknown, fragments: string[], depth =
   }
 }
 
-function extractCommitsFromText(text: string): CloseoutCommit[] {
+function extractCommitsFromText(text: string, requireGitReceipt = false): CloseoutCommit[] {
   const normalized = normalizeCommitText(text)
   const commits = new Map<string, CloseoutCommit>()
   const claimedSpans: Array<[number, number]> = []
-  const bracketPattern = /\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n[]+))?/gi
+  const bracketPattern = requireGitReceipt
+    ? /^[ \t]*\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n[]+))?/gim
+    : /\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n[]+))?/gi
   let match: RegExpExecArray | null
   while ((match = bracketPattern.exec(normalized)) !== null) {
     claimedSpans.push([match.index, match.index + match[0].length])
@@ -1998,6 +2334,11 @@ function extractCommitsFromText(text: string): CloseoutCommit[] {
       ...(stats ? { stats } : {})
     })
   }
+  // Generic shell output contains unrelated object ids (for example from
+  // rev-parse after a failed commit). Only Git's own bracket receipt is
+  // authoritative enough here; dedicated git_commit tools retain the legacy
+  // commit-line and bare-hash fallbacks below.
+  if (requireGitReceipt) return Array.from(commits.values())
   const commitLinePattern = /^commit\s+([0-9a-f]{7,40})\b.*$/gim
   while ((match = commitLinePattern.exec(normalized)) !== null) {
     claimedSpans.push([match.index, match.index + match[0].length])

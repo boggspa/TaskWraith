@@ -68,9 +68,11 @@ describe('closeoutSummaryDigest', () => {
       status: 'success',
       promptMessageId: 'p1',
       actualModel: 'gpt-5.6-sol',
+      effectiveWorkspacePath: '/repo',
       warnings: [{ message: 'Sandbox denied one command.', timestamp: '2026-07-07T12:00:10.000Z' }]
     }
     const source = chat({
+      workspacePath: '/repo',
       messages: [
         message('p1', 'user', 'Please fix the login bug.'),
         message('t1', 'tool', '', {
@@ -79,10 +81,14 @@ describe('closeoutSummaryDigest', () => {
             editActivity('src/auth/login.ts', 12, 4),
             {
               id: 'commit-1',
-              toolName: 'git_commit',
-              displayName: 'git commit',
-              category: 'write',
+              toolName: 'Bash',
+              displayName: 'Bash',
+              category: 'shell',
               status: 'success',
+              parameters: {
+                cwd: '/repo',
+                command: 'git commit -m "Fix login redirect"'
+              },
               outputPreview: '[master abc1234def] Fix login redirect\n 2 files changed'
             } as ToolActivity
           ]
@@ -110,7 +116,7 @@ describe('closeoutSummaryDigest', () => {
     expect(digest.finalText).toBe('Fixed the login redirect bug and committed the change.')
     expect(digest.fileChanges).toEqual([{ path: 'src/auth/login.ts', additions: 12, deletions: 4 }])
     expect(digest.commits).toEqual([{ hash: 'abc1234def', subject: 'Fix login redirect' }])
-    expect(digest.toolCounts).toEqual({ write: 2 })
+    expect(digest.toolCounts).toEqual({ write: 1, shell: 1 })
     expect(digest.warnings).toEqual(['Sandbox denied one command.'])
   })
 

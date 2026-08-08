@@ -749,6 +749,262 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.content).not.toContain('\\n')
   })
 
+  it.each([
+    'Shell',
+    'Bash',
+    'run_terminal_command',
+    'run_shell_command',
+    'exec_command',
+    'mcp__TaskWraith__run_shell_command'
+  ])('harvests a real git receipt from the %s terminal alias', (toolName) => {
+    const run: ChatRun = {
+      runId: `run-shell-commit-${toolName}`,
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success',
+      effectiveWorkspacePath: '/repo'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('terminal-commit', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName,
+                displayName: 'Shell command',
+                category: 'shell',
+                parameters: {
+                  cwd: '/repo',
+                  command: 'git add src/closeout.ts && git commit -m "fix: keep commits visible"'
+                },
+                resultSummary:
+                  'Exit code: 0\n\nstdout:\n[main a16d0b9e2] fix: keep commits visible\n 2 files changed, 24 insertions(+), 3 deletions(-)'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits).toEqual([
+      {
+        hash: 'a16d0b9e2',
+        subject: 'fix: keep commits visible',
+        stats: '2 files, +24 −3'
+      }
+    ])
+  })
+
+  it('accepts a commit targeted at the run effective worktree', () => {
+    const run: ChatRun = {
+      runId: 'run-shell-worktree-commit',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success',
+      effectiveWorkspacePath: '/repo-worktree'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('worktree-commit', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'run_terminal_command',
+                parameters: {
+                  cwd: '/repo',
+                  command: 'git -C /repo-worktree commit -m "fix: isolate the closeout"'
+                },
+                outputPreview:
+                  '[codex/closeout 51de7a11b] fix: isolate the closeout\n 1 file changed, 8 insertions(+)'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits?.map((commit) => commit.hash)).toEqual(['51de7a11b'])
+  })
+
+  it('does not attribute a base-checkout commit to an isolated worktree run', () => {
+    const run: ChatRun = {
+      runId: 'run-shell-worktree-base-commit',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success',
+      effectiveWorkspacePath: '/repo-worktree'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('base-checkout-commit', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'run_shell_command',
+                parameters: {
+                  cwd: '/repo-worktree',
+                  command: 'git -C /repo commit -m "fix: belongs to the base checkout"'
+                },
+                resultSummary: '[master 52ba5e111] fix: belongs to the base checkout'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits).toBeUndefined()
+  })
+
+  it.each([
+    'cd /repo && git commit -m "fix: commit after changing directory"',
+    'env CI=1 git commit -m "fix: commit through env"',
+    'bash -lc \'git commit -m "fix: commit through a shell wrapper"\''
+  ])('recognizes the common shell commit layout: %s', (command) => {
+    const run: ChatRun = {
+      runId: 'run-shell-layout',
+      provider: 'claude',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success',
+      effectiveWorkspacePath: '/repo'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('shell-layout', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'Bash',
+                parameters: { cwd: '/repo', command },
+                resultSummary: '[main 61c0ffee1] fix: recognize shell layout'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits?.map((commit) => commit.hash)).toEqual(['61c0ffee1'])
+  })
+
+  it('rejects shell mentions, dry runs, stale hashes, and commits in another repository', () => {
+    const run: ChatRun = {
+      runId: 'run-shell-commit-false-positives',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success',
+      effectiveWorkspacePath: '/repo'
+    }
+    const toolActivities = [
+      activity({
+        id: 'search-mention',
+        toolName: 'Shell',
+        parameters: { cwd: '/repo', command: 'rg -n "git commit" docs' },
+        resultSummary: '[main 1111111aa] example receipt in a fixture'
+      }),
+      activity({
+        id: 'status-advice',
+        toolName: 'Bash',
+        parameters: { cwd: '/repo', command: 'git status' },
+        resultSummary: 'use "git commit" to record changes\n2222222bb'
+      }),
+      activity({
+        id: 'dry-run',
+        toolName: 'run_terminal_command',
+        parameters: { cwd: '/repo', command: 'git commit --dry-run -m "inspect only"' },
+        resultSummary: '[main 3333333cc] fabricated dry-run receipt'
+      }),
+      activity({
+        id: 'failed-old-head',
+        toolName: 'run_shell_command',
+        parameters: {
+          cwd: '/repo',
+          command: 'git commit -m "blocked"; git rev-parse HEAD'
+        },
+        resultSummary: 'fatal: commit blocked by hook\n4444444dd'
+      }),
+      activity({
+        id: 'failed-fake-receipt',
+        toolName: 'run_shell_command',
+        status: 'error',
+        parameters: {
+          cwd: '/repo',
+          command: 'git commit -m "blocked"; printf "[main 4545454ee] fake receipt\\n"'
+        },
+        resultSummary: 'fatal: commit blocked by hook\n[main 4545454ee] fake receipt'
+      }),
+      activity({
+        id: 'other-repository',
+        toolName: 'exec_command',
+        parameters: {
+          cwd: '/repo',
+          command: 'git -C /tmp/fixture-repo commit -m "fixture commit"'
+        },
+        resultSummary: '[main 5555555ee] fixture commit\n 1 file changed'
+      }),
+      activity({
+        id: 'mixed-dynamic-repository',
+        toolName: 'Bash',
+        parameters: {
+          cwd: '/repo',
+          command: 'git commit -m "workspace" && git -C "$fixture" commit -m "fixture"'
+        },
+        resultSummary: '[main 6666666ff] workspace commit\n 1 file changed'
+      })
+    ]
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('false-positive-tools', 'tool', ''),
+            runId: run.runId,
+            toolActivities
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits).toBeUndefined()
+  })
+
   it('notes when more commits exist than the table shows', () => {
     const run: ChatRun = {
       runId: 'run-3',
