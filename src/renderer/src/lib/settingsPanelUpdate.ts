@@ -52,6 +52,8 @@ export type SettingsPanelUpdate = {
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+  /** Settings → General: max workers accepted by `delegate_wave` (2–20, default 8). */
+  maxWaveAgents?: AppSettings['maxWaveAgents']
   /** Sidebar Model Usage card view ('plan' quota meters | 'spend' API cost). */
   modelUsagePanelView?: AppSettings['modelUsagePanelView']
   /** Settings → Model usage table "External Usage" toggle (provider-wide vs

@@ -32,7 +32,8 @@ import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
 import {
   isCoreTaskWraithMcpProfile,
-  isGatewayTaskWraithMcpProfile
+  isGatewayTaskWraithMcpProfile,
+  isGatewayV13DirectTaskWraithMcpProfile
 } from './mcp/McpSessionProfileFence'
 import { normalizeCliProviderModel } from './providers/StaticProviderModels'
 import {
@@ -149,7 +150,14 @@ export function resolveContextBudget(
 // routing rule. A native terminal refusal can be a containment boundary, not a
 // rejection of a user-granted shell operation; the exact host-mediated tool is
 // now named before a model can dead-end on the native refusal.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v7'
+//
+// Bumped v7 -> v8 so resumed sessions learn `delegate_wave` for batch spawn
+// (workers array + wave join). Recall stays on `delegate_to_subthread`.
+//
+// Bumped v8 -> v9 so pre-v13 gateway seats stop being taught `delegate_wave`
+// (birth-direct on v13+ only; not discoverable via capability_search on older
+// profiles). Fresh/resumed v13 seats keep the wave teaching.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v9'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
@@ -368,8 +376,11 @@ function buildTaskWraithRuntimePreamble(args: {
   nativeSubAgentInstruction: string | null
   coreMcpProfile: boolean
   gatewayMcpProfile: boolean
+  /** True only when the seat's birth profile directly advertises delegate_wave. */
+  advertiseDelegateWave: boolean
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
+  const delegateWaveTool = taskWraithToolNameForProvider(args.provider, 'delegate_wave')
   const searchTool = taskWraithToolNameForProvider(args.provider, 'workspace_search')
   const patchTool = taskWraithToolNameForProvider(args.provider, 'apply_patch')
   const statusTool = taskWraithToolNameForProvider(args.provider, 'git_status')
@@ -377,10 +388,17 @@ function buildTaskWraithRuntimePreamble(args: {
   const questionTool = taskWraithToolNameForProvider(args.provider, 'ask_user_question')
   const shellTool = taskWraithToolNameForProvider(args.provider, 'run_shell_command')
   const followupProvider = exampleDelegationProvider(args.provider)
+  const wavePeerProvider = followupProvider === 'claude' ? 'codex' : 'claude'
+  const exampleTools = args.advertiseDelegateWave
+    ? `${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}, ${delegateWaveTool}`
+    : `${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}`
+  const crossProviderLine = args.advertiseDelegateWave
+    ? `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) for a single spawn or recall, or ${delegateWaveTool}({ workers: [{ provider, prompt }, ...], join? }) for a batch spawn with one wave join; do not use provider-native multi-agent orchestration paths.`
+    : `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }); do not use provider-native multi-agent orchestration paths.`
   const lines = [
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Route workspace reads, edits, git, and checks through TaskWraith MCP so its approval, path checks, and audit logging govern side effects.',
-    `${taskWraithToolNamespaceHint(args.provider)} Examples: ${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}.`,
+    `${taskWraithToolNamespaceHint(args.provider)} Examples: ${exampleTools}.`,
     `For tests, builds, Git, npm, and other shell work, call ${shellTool} when it is listed. A native Bash/Shell/terminal refusal can be a containment route rather than a denial of the current shell permission: do not retry the native tool; call ${shellTool} once. Only if that MCP call is unavailable or denied should you report the exact blocker.`,
     ...(args.coreMcpProfile ? [TASKWRAITH_CORE_MCP_PROFILE_NOTE] : []),
     ...(args.gatewayMcpProfile ? [TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE] : []),
@@ -390,15 +408,26 @@ function buildTaskWraithRuntimePreamble(args: {
       ? [TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE]
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
-    `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native multi-agent orchestration paths.`,
+    crossProviderLine,
     `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
     ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
   ]
 
   if (promptNeedsDelegationExpansion(args.finalPrompt)) {
     lines.push(
-      `Spawn example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Run a focused review and summarize findings.', returnResult: true }).`,
-      'IMPORTANT - RECALL: when following up on a completed or returned sub-thread you already spawned, pass the id from the first tool_result as `subThreadId`. Omitting `subThreadId` always spawns a fresh isolated sub-thread with no memory of prior turns.',
+      `Spawn example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Run a focused review and summarize findings.', returnResult: true }).`
+    )
+    if (args.advertiseDelegateWave) {
+      lines.push(
+        `Batch wave example: ${delegateWaveTool}({ workers: [{ provider: '${followupProvider}', prompt: 'Review path A and summarize findings.' }, { provider: '${wavePeerProvider}', prompt: 'Review path B and summarize findings.' }], join: { quorum: 2 } }). Waves are spawn-only (no subThreadId); use ${delegateTool} with subThreadId to recall a worker.`,
+        `IMPORTANT - RECALL: when following up on a completed or returned sub-thread you already spawned, pass the id from the first tool_result as \`subThreadId\` on ${delegateTool}. Omitting \`subThreadId\` always spawns a fresh isolated sub-thread with no memory of prior turns. Do not use ${delegateWaveTool} for recall — waves are spawn-only.`
+      )
+    } else {
+      lines.push(
+        `IMPORTANT - RECALL: when following up on a completed or returned sub-thread you already spawned, pass the id from the first tool_result as \`subThreadId\` on ${delegateTool}. Omitting \`subThreadId\` always spawns a fresh isolated sub-thread with no memory of prior turns.`
+      )
+    }
+    lines.push(
       `Recall example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Continue from the previous result and report current status.', subThreadId: '<id-from-prior-result>', returnResult: true }).`,
       'If recall is rejected or status is unclear, inspect lifecycle with list_subthreads or read_subthread_result before retrying.'
     )
@@ -989,6 +1018,9 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     ? isCoreTaskWraithMcpProfile(input.taskWraithMcpProfileId)
     : shouldUseCoreMcpProfile(provider, normalizeCliProviderModel(provider, nextModel))
   const gatewayMcpProfile = isGatewayTaskWraithMcpProfile(input.taskWraithMcpProfileId)
+  const advertiseDelegateWave = isGatewayV13DirectTaskWraithMcpProfile(
+    input.taskWraithMcpProfileId
+  )
   const taskWraithMcpAdvertised = input.taskWraithMcpAdvertised !== false
   const nativeKimiSessionResume =
     provider === 'kimi' && Boolean(input.nativeSessionResume && resumeSessionId)
@@ -1238,7 +1270,8 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       finalPrompt,
       nativeSubAgentInstruction,
       coreMcpProfile,
-      gatewayMcpProfile
+      gatewayMcpProfile,
+      advertiseDelegateWave
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true

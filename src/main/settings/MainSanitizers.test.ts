@@ -994,6 +994,18 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(false)
   })
 
+  it('persists and clamps maxWaveAgents (SETTINGS_PATCH_KEYS guard)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ maxWaveAgents: 8 }).maxWaveAgents).toBe(8)
+    expect(sanitizeSettingsPatch({ maxWaveAgents: 1 }).maxWaveAgents).toBe(2)
+    expect(sanitizeSettingsPatch({ maxWaveAgents: 99 }).maxWaveAgents).toBe(20)
+    expect(sanitizeSettingsPatch({ maxWaveAgents: 8.9 }).maxWaveAgents).toBe(8)
+    expect(
+      'maxWaveAgents' in sanitizeSettingsPatch({ maxWaveAgents: 'nope' as unknown as number })
+    ).toBe(false)
+  })
+
   it('persists and normalizes cliPathDirectories (SETTINGS_PATCH_KEYS guard)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

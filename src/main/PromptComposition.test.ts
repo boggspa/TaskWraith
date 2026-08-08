@@ -15,7 +15,9 @@ import {
 } from './PromptComposition'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import type { ChatMessage } from './store/types'
@@ -730,14 +732,29 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('keeps the compact runtime contract intact across providers', () => {
     const cases = [
-      ['gemini', 'TaskWraith__delegate_to_subthread'],
-      ['claude', 'mcp__TaskWraith__delegate_to_subthread'],
-      ['kimi', 'TaskWraith__delegate_to_subthread'],
-      ['codex', 'TaskWraith__delegate_to_subthread'],
-      ['grok', 'TaskWraith__delegate_to_subthread']
+      ['gemini', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
+      ['claude', 'mcp__TaskWraith__delegate_to_subthread', 'mcp__TaskWraith__delegate_wave'],
+      ['kimi', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
+      ['codex', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
+      ['grok', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave']
     ] as const
 
-    for (const [provider, delegateTool] of cases) {
+    for (const [provider, delegateTool, delegateWaveTool] of cases) {
+      const withoutWave = composeRunPrompt({
+        provider,
+        finalPrompt: 'Make the change.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: provider,
+        taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID
+      })
+      expect(withoutWave.contextualPrompt).toContain(delegateTool)
+      expect(withoutWave.contextualPrompt).not.toContain(delegateWaveTool)
+      expect(withoutWave.contextualPrompt).not.toContain('wave join')
+
       const result = composeRunPrompt({
         provider,
         finalPrompt: 'Make the change.',
@@ -746,13 +763,17 @@ describe('composeRunPrompt sub-thread returns', () => {
         codexHandoffsApplied: [],
         isGlobalRun: false,
         approvalMode: 'default',
-        providerLabel: provider
+        providerLabel: provider,
+        taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
       })
 
       expect(result.contextualPrompt).toContain(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
       expect(result.runtimePreambleVersion).toBe(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
       expect(result.runtimePreambleProvider).toBe(provider)
       expect(result.contextualPrompt).toContain(delegateTool)
+      expect(result.contextualPrompt).toContain(delegateWaveTool)
+      expect(result.contextualPrompt).toContain('workers')
+      expect(result.contextualPrompt).toContain('wave join')
       expect(result.contextualPrompt).toContain('TaskWraith tools as')
       expect(result.contextualPrompt).toContain('approval, path checks, and audit logging')
       expect(result.contextualPrompt).toContain('CROSS-PROVIDER delegation')
@@ -765,6 +786,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(result.contextualPrompt).not.toContain('workspace/file tools:')
       expect(result.contextualPrompt).not.toContain('creative_midi_dispatch')
       expect(result.contextualPrompt).not.toContain('Spawn example')
+      expect(result.contextualPrompt).not.toContain('Batch wave example')
       expect(result.contextualPrompt).not.toContain('RECALL')
     }
   })
@@ -778,14 +800,44 @@ describe('composeRunPrompt sub-thread returns', () => {
       codexHandoffsApplied: [],
       isGlobalRun: false,
       approvalMode: 'default',
-      providerLabel: 'Codex'
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
     })
 
     expect(requested.contextualPrompt).toContain('Spawn example')
+    expect(requested.contextualPrompt).toContain('Batch wave example')
+    expect(requested.contextualPrompt).toContain('TaskWraith__delegate_wave')
+    expect(requested.contextualPrompt).toContain('workers')
+    expect(requested.contextualPrompt).toContain('join')
+    expect(requested.contextualPrompt).toContain('spawn-only')
     expect(requested.contextualPrompt).toContain('RECALL')
     expect(requested.contextualPrompt).toContain('subThreadId')
+    expect(requested.contextualPrompt).toContain('TaskWraith__delegate_to_subthread')
     expect(requested.contextualPrompt).toContain('list_subthreads')
     expect(requested.contextualPrompt).toContain('read_subthread_result')
+    // Recall must stay on delegate_to_subthread, never on the wave tool.
+    expect(requested.contextualPrompt).toMatch(
+      /Recall example:\s*TaskWraith__delegate_to_subthread\(\{[^}]*subThreadId/
+    )
+    expect(requested.contextualPrompt).not.toMatch(
+      /Recall example:\s*TaskWraith__delegate_wave/
+    )
+
+    const preV13 = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Use two review agents and delegate one to Claude.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID
+    })
+    expect(preV13.contextualPrompt).toContain('Spawn example')
+    expect(preV13.contextualPrompt).toContain('RECALL')
+    expect(preV13.contextualPrompt).not.toContain('Batch wave example')
+    expect(preV13.contextualPrompt).not.toContain('TaskWraith__delegate_wave')
 
     const negated = composeRunPrompt({
       provider: 'codex',
@@ -795,10 +847,12 @@ describe('composeRunPrompt sub-thread returns', () => {
       codexHandoffsApplied: [],
       isGlobalRun: false,
       approvalMode: 'default',
-      providerLabel: 'Codex'
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
     })
 
     expect(negated.contextualPrompt).not.toContain('Spawn example')
+    expect(negated.contextualPrompt).not.toContain('Batch wave example')
     expect(negated.contextualPrompt).not.toContain('RECALL')
   })
 
@@ -846,9 +900,11 @@ describe('composeRunPrompt sub-thread returns', () => {
       resumeSessionId: 'claude-thread-1',
       runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
       runtimePreambleProvider: 'codex',
-      providerLabel: 'Claude'
+      providerLabel: 'Claude',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
     })
     expect(wrongProvider.contextualPrompt).toContain('mcp__TaskWraith__delegate_to_subthread')
+    expect(wrongProvider.contextualPrompt).toContain('mcp__TaskWraith__delegate_wave')
     expect(wrongProvider.runtimePreambleProvider).toBe('claude')
   })
 

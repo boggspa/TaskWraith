@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { TASKWRAITH_RUNTIME_PREAMBLE_VERSION, composeRunPrompt } from './PromptComposition'
+import { TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID } from './mcp/McpSessionProfileFence'
 import type { ChatMessage } from './store/types'
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
@@ -115,9 +116,13 @@ describe('composeRunPrompt — Mistral runtime preamble', () => {
   })
 
   it('uses the unprefixed TaskWraith delegate tool name', () => {
-    const result = composeMistral()
+    const result = composeMistral({
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+    })
     expect(result.contextualPrompt).toContain('TaskWraith__delegate_to_subthread')
+    expect(result.contextualPrompt).toContain('TaskWraith__delegate_wave')
     expect(result.contextualPrompt).not.toContain('mcp__TaskWraith__delegate_to_subthread')
+    expect(result.contextualPrompt).not.toContain('mcp__TaskWraith__delegate_wave')
   })
 
   it('suppresses the preamble in plan mode and on a global run', () => {

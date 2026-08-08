@@ -3570,6 +3570,72 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'delegate_wave',
+      description:
+        'Spawn a wave of 2+ fresh context-isolated sub-threads in one call. ' +
+        'Each worker needs provider + prompt (optional model / reasoningEffort / kimiThinking). ' +
+        'Waves are spawn-only (no subThreadId / recall). Results always return to the parent; ' +
+        'optional join knobs (required/quorum/deadlineMs/debounceMs) bind to a host-allocated waveId group — never the parent run id. ' +
+        'One approval covers the whole wave when required; worker count is capped by Settings → General → Max Wave Agents.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workers: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 20,
+            items: {
+              type: 'object',
+              properties: {
+                provider: {
+                  type: 'string',
+                  enum: selectableProviderIds(),
+                  description: 'Selectable provider for this worker (runtime admission still applies).'
+                },
+                prompt: {
+                  type: 'string',
+                  description: 'First-turn prompt for this fresh worker seat.'
+                },
+                model: {
+                  type: 'string',
+                  description: 'Optional target model id for this worker.'
+                },
+                reasoningEffort: {
+                  type: 'string',
+                  enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
+                  description: 'Optional reasoning tier for this worker.'
+                },
+                kimiThinking: {
+                  type: 'boolean',
+                  description: 'Legacy Kimi flag; only true is accepted when present.'
+                }
+              },
+              required: ['provider', 'prompt']
+            },
+            description: 'Two or more spawn-only worker specs (capped by Max Wave Agents).'
+          },
+          join: {
+            type: 'object',
+            description:
+              'Optional join policy. groupId is ignored — the host always binds join.groupId to the allocated waveId.',
+            properties: {
+              required: { type: 'boolean' },
+              quorum: { type: 'number' },
+              deadlineMs: { type: 'number' },
+              debounceMs: { type: 'number' }
+            }
+          }
+        },
+        required: ['workers']
+      }
+    },
+    {
       name: 'scout_brief',
       description:
         'Emit a structured brief from a parallel fan-out lane. The next serial writer/synthesizer receives the collected briefs in its prompt. Returns an error outside an active fan-out lane.',

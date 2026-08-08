@@ -1388,6 +1388,7 @@ import {
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
+  isGatewayV13DirectTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile,
@@ -1931,7 +1932,17 @@ import {
   buildBridgeRunFailureMetadata,
   describeUnexplainedBridgeRunFailure
 } from './RunFailureNotice'
-import { resolveSubThreadDelegationRunSettings } from './SubThreadDelegationRunSettings'
+import {
+  resolveSubThreadDelegationRunSettings,
+  type DelegatedSubThreadRunPayloadSettings
+} from './SubThreadDelegationRunSettings'
+import {
+  clampMaxWaveAgents,
+  executeDelegateWaveTool,
+  isDelegateWaveBossOrCaptain,
+  shouldSkipDelegateWaveApproval,
+  stripParentWaveDelegationCard
+} from './SubThreadDelegateWave'
 import { newProjectReferenceId } from '../shared/projects'
 import {
   delegationApprovalBudget,
@@ -3060,6 +3071,7 @@ interface TaskWraithMcpBridgeArgOptions {
   portableEnsembleControl?: boolean
   meshDirect?: boolean
   sketchDirect?: boolean
+  orchestrationDirect?: boolean
   auditSubset?: boolean
 }
 
@@ -3076,6 +3088,7 @@ function taskwraithMcpBridgeArgs(
     options.portableEnsembleControl === true,
     options.meshDirect === true,
     options.sketchDirect === true,
+    options.orchestrationDirect === true,
     options.auditSubset === true
   )
 }
@@ -21055,6 +21068,9 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           ),
           meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
           sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
           auditSubset: Boolean(payload.auditRun)
         },
         isolatedInstanceId:
@@ -22015,7 +22031,8 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       grokMcpServers = [
         {
@@ -22885,7 +22902,8 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       mistralMcpServers = [
         {
@@ -24497,7 +24515,8 @@ function resolveCodexClientStartupConfiguration(
             gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
             portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
             meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
-            sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId)
+            sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId),
+            orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(mcpProfileId)
           }),
           parentProvider: 'codex',
           userMcpServers
@@ -32127,6 +32146,9 @@ async function runGeminiProvider(
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
         auditSubset: Boolean(payload.auditRun)
       },
       isolatedInstanceId:
@@ -35506,14 +35528,16 @@ async function executeGeminiMcpTool(
     context.effectivePermissions,
     { appRunId: context.appRunId, appChatId: context.appChatId }
   )
-  // Phase J3: delegate_to_subthread runs its OWN approval gate further
-  // down (using the richer `subThreadDelegation` service with delegation
-  // prompt + target provider in the preview). Without this short-circuit
-  // the generic `mcpTools` gate prompts the user first, then the
-  // delegation gate prompts them again — TWO modals for the same logical
-  // action. Skip the generic one; the delegation gate is authoritative.
+  // Phase J3: delegate_to_subthread / delegate_wave run their OWN approval
+  // gate further down (using the richer `subThreadDelegation` service with
+  // delegation prompt + target provider in the preview). Without this
+  // short-circuit the generic `mcpTools` gate prompts the user first, then
+  // the delegation gate prompts them again — TWO modals for the same
+  // logical action. Skip the generic one; the delegation gate is
+  // authoritative.
   const skipGenericApproval =
     toolName === 'delegate_to_subthread' ||
+    toolName === 'delegate_wave' ||
     isRecallMcpToolName(toolName) ||
     // Self-gates through the dedicated `threadMessage` service; the generic
     // mcpTools gate would both double-prompt and imply the wrong authority.
@@ -38524,6 +38548,424 @@ async function executeGeminiMcpTool(
             ? '; its final result will return to this parent transcript as an untrusted sub-thread result on completion.'
             : '. Navigate to the sub-thread in the sidebar to follow progress.') +
           `\nReuse this id by passing subThreadId="${subThread.appChatId}" on the next delegate_to_subthread call if you want to continue the conversation with this same sub-agent.`
+    } else if (toolName === 'delegate_wave') {
+      markDispatchHandled('subthread-control')
+      // Batch spawn-only wave. Business logic lives in SubThreadDelegateWave;
+      // this branch is composition-root wiring (context, approval, spawn ports).
+      if (parentProvider === 'ollama') {
+        throw new Error(
+          'Ollama local mode cannot use TaskWraith sub-thread tools (delegate_wave).'
+        )
+      }
+      const parentChatId = context.appChatId
+      if (!parentChatId) {
+        throw new Error('delegate_wave requires an active parent chat context.')
+      }
+      if (context.appRunId && wasScheduledOccurrenceRunIdObserved(context.appRunId)) {
+        throw new Error(
+          'Scheduled occurrences cannot launch detached sub-threads; use an owned ensemble lane or wait for user control.'
+        )
+      }
+      const parentChatForWave = AppStore.getChat(parentChatId)
+      if (!parentChatForWave) {
+        throw new Error(`delegate_wave: parent chat "${parentChatId}" was not found.`)
+      }
+      const parentChatRelation = (parentChatForWave as { parentChatRelation?: unknown })
+        .parentChatRelation
+      if (
+        parentChatForWave.parentChatId &&
+        (parentChatRelation === undefined || parentChatRelation === 'subThread')
+      ) {
+        throw new Error(
+          `delegate_wave: parent "${parentChatId}" is itself a sub-thread (max depth 1 in v1).`
+        )
+      }
+
+      const parentProviderLabel = providerLabel(parentProvider)
+      const settings = AppStore.getSettings()
+      const maxWorkers = clampMaxWaveAgents(settings.maxWaveAgents)
+      const waveAllowedProviders = selectableProviderIds(settings).filter(
+        (provider) => provider !== 'ollama'
+      )
+      const waveAllowedProviderSet = new Set<string>(waveAllowedProviders)
+      const callerParticipantId =
+        context.ensembleRun?.participantId ||
+        (context.appRunId
+          ? ((runManager.get(context.appRunId)?.state as { ensembleRun?: { participantId?: string } })
+              ?.ensembleRun?.participantId ??
+            (parentChatForWave.runs || []).find((run) => run.runId === context.appRunId)
+              ?.ensembleParticipantId)
+          : undefined)
+      const ensemble = parentChatForWave.ensemble
+      const callingParticipant = ensemble?.participants?.find(
+        (participant) => participant.id === callerParticipantId
+      )
+      const permissionPresetId =
+        callingParticipant?.permissionPresetId ?? context.effectivePermissions?.presetId
+      const isBossOrCaptain = isDelegateWaveBossOrCaptain({
+        callerParticipantId,
+        bossmanParticipantId: ensemble?.bossmanParticipantId,
+        captainParticipantIds: ensemble?.captainParticipantIds,
+        secondInCommandParticipantId: ensemble?.secondInCommandParticipantId
+      })
+      const delegationBudgetKey = context.appRunId || parentChatId
+
+      const waveOutcome = await executeDelegateWaveTool({
+        args,
+        parentChatId,
+        parentAppRunId: context.appRunId,
+        parentProviderLabel,
+        maxWorkers,
+        isAllowedProvider: (provider) => waveAllowedProviderSet.has(provider),
+        allowedProvidersLabel: `${waveAllowedProviders.join('/')} (ollama excluded)`,
+        isBossOrCaptain,
+        permissionPresetId,
+        budgetRemaining: delegationApprovalBudget.remaining(delegationBudgetKey),
+        tryConsumeBudgetSlot: () => delegationApprovalBudget.tryConsume(delegationBudgetKey),
+        budgetCap: delegationApprovalBudget.cap(),
+        subThreadDelegationPolicy:
+          context.effectivePermissions?.agenticServices?.subThreadDelegation,
+        requestApproval: async (preview) =>
+          requestAgenticServiceApproval(
+            context.sender,
+            parentProvider,
+            'subThreadDelegation',
+            context.scope === 'global' ? undefined : context.workspacePath,
+            {
+              method: `${parentProvider}-mcp/delegate_wave`,
+              title: preview.title,
+              body: preview.body,
+              preview: {
+                kind: 'subthread-delegation-wave',
+                parentProvider,
+                waveId: preview.waveId,
+                workers: preview.workers,
+                returnResultToParent: true,
+                joinPolicy: preview.joinPolicy,
+                workspacePath: context.scope === 'global' ? undefined : context.workspacePath
+              },
+              runId: context.appRunId,
+              forcePrompt: false
+            }
+          ),
+        assertParentStillValid: () => {
+          const parentAfterApproval = AppStore.getChat(parentChatId)
+          const runAfterApproval = context.appRunId ? runManager.get(context.appRunId) : undefined
+          if (
+            !parentAfterApproval ||
+            !runAfterApproval ||
+            runAfterApproval.appChatId !== parentChatId ||
+            runManager.getClaimedTerminalStatus(context.appRunId) ||
+            isTerminalRunSessionStatus(runAfterApproval.status) ||
+            historyClearAdmissionBlocked(context.appRunId, context.workspacePath, parentChatId)
+          ) {
+            throw new Error('Sub-thread wave delegation was cancelled because the parent chat changed.')
+          }
+          assertParentChatRelationshipCreationAllowed(parentChatId)
+        },
+        resolveWorkerSettings: (worker) => {
+          const delegationSettings = resolveSubThreadDelegationRunSettings({
+            provider: worker.provider,
+            model: worker.model,
+            reasoningEffort: worker.reasoningEffort,
+            kimiThinking: worker.kimiThinking
+          })
+          if (!delegationSettings.ok) {
+            return { ok: false, message: delegationSettings.message }
+          }
+          return {
+            ok: true,
+            value: {
+              requestedModel: delegationSettings.requestedModel,
+              reasoningEffort: delegationSettings.reasoningEffort,
+              kimiThinking: delegationSettings.kimiThinking,
+              runPayload: delegationSettings.runPayload as unknown as Record<string, unknown>,
+              providerMetadataPatch: delegationSettings.providerMetadataPatch
+            }
+          }
+        },
+        spawnWorker: async ({ worker, settings: workerSettings, joinPolicy, waveId }) => {
+          const subThread = AppStore.createSubThread({
+            parentChatId,
+            provider: worker.provider,
+            delegationPrompt: worker.prompt,
+            returnResultToParent: true,
+            joinPolicy
+          })
+          const readOnlyPermissions = resolveEffectiveRunPermissions({
+            provider: worker.provider,
+            workspacePath: subThread.workspacePath,
+            model: workerSettings.requestedModel,
+            settings: AppStore.getSettings(),
+            presetId: 'read_only'
+          })
+          const workerPermissions = resolveSubThreadWorkerPermissions({
+            parentPermissions: context.effectivePermissions,
+            readOnlyPermissions
+          })
+          if (!workerPermissions.ok) {
+            AppStore.deleteChat(subThread.appChatId)
+            throw new Error(`delegate_wave: ${workerPermissions.reason}`)
+          }
+          const subThreadEffectivePermissions = workerPermissions.effectivePermissions
+          const delegatedApprovalMode = subThreadEffectivePermissions.approvalMode
+          const inheritableRuntimeProfileId =
+            worker.provider === parentProvider ? context.runtimeProfileId : undefined
+          try {
+            const parentChat = AppStore.getChat(parentChatId)
+            if (parentChat) {
+              const promptCardPreview =
+                worker.prompt.length > 240 ? `${worker.prompt.slice(0, 240)}…` : worker.prompt
+              const cardMessage: ChatMessage = {
+                id: `subthread-delegation-${subThread.appChatId}-${Date.now()}`,
+                role: 'system',
+                content: `↪ Wave ${waveId}: delegated to ${providerLabel(worker.provider)} sub-thread (${subThread.title}).`,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  kind: 'subThreadDelegation',
+                  subThreadId: subThread.appChatId,
+                  subThreadProvider: worker.provider,
+                  subThreadTitle: subThread.title,
+                  parentProvider,
+                  delegationPrompt: worker.prompt,
+                  delegationPromptPreview: promptCardPreview,
+                  returnResultToParent: true,
+                  joinPolicy,
+                  waveId,
+                  requestedModel: workerSettings.requestedModel,
+                  reasoningEffort: workerSettings.reasoningEffort,
+                  kimiThinking: workerSettings.kimiThinking,
+                  recall: false,
+                  providerContextVisibility: 'projection-only'
+                }
+              }
+              const updatedParent: ChatRecord = {
+                ...parentChat,
+                messages: [...parentChat.messages, cardMessage],
+                updatedAt: Date.now()
+              }
+              AppStore.saveChat(updatedParent)
+              broadcastChatUpdated(updatedParent)
+            }
+          } catch {
+            // Best-effort; missing card is non-fatal vs missing run.
+          }
+          try {
+            appendDurableRunEventForRoute(
+              parentProvider,
+              { appRunId: context.appRunId, appChatId: parentChatId },
+              'subthread_spawned',
+              'control',
+              `${parentProviderLabel} agent delegated wave ${waveId} worker to ${worker.provider} sub-thread`,
+              {
+                subThreadId: subThread.appChatId,
+                parentProvider,
+                provider: worker.provider,
+                delegationPrompt: worker.prompt,
+                returnResultToParent: true,
+                joinPolicy,
+                waveId,
+                requestedModel: workerSettings.requestedModel,
+                reasoningEffort: workerSettings.reasoningEffort,
+                kimiThinking: workerSettings.kimiThinking,
+                source: 'mcp:delegate_wave',
+                recall: false
+              }
+            )
+          } catch {
+            // Best-effort.
+          }
+          const providerPrompts = composeDelegatedProviderPrompts({
+            provider: worker.provider,
+            subThread,
+            prompt: worker.prompt,
+            approvalMode: delegatedApprovalMode,
+            model: workerSettings.requestedModel
+          })
+          const subThreadRunId = seedAgentDrivenSubThreadTranscript({
+            subThread,
+            parentProvider,
+            provider: worker.provider,
+            prompt: worker.prompt,
+            returnResultToParent: true,
+            requestedModel: workerSettings.requestedModel,
+            providerMetadataPatch: workerSettings.providerMetadataPatch,
+            approvalMode: delegatedApprovalMode,
+            runtimeProfileId: inheritableRuntimeProfileId,
+            joinPolicy
+          })
+          scheduleSubThreadJoinEvaluation(parentChatId, joinPolicy.groupId)
+          const runPayload: AgentRunPayload = {
+            provider: worker.provider,
+            scope: context.scope ?? 'workspace',
+            workspace: subThread.workspacePath,
+            prompt: providerPrompts.prompt,
+            ...(providerPrompts.resumeFallbackPrompt
+              ? { resumeFallbackPrompt: providerPrompts.resumeFallbackPrompt }
+              : {}),
+            appRunId: subThreadRunId,
+            appChatId: subThread.appChatId,
+            approvalMode: delegatedApprovalMode,
+            ...(workerSettings.runPayload as unknown as DelegatedSubThreadRunPayloadSettings),
+            sessionTrust: false,
+            externalPathGrants: subThreadEffectivePermissions.externalPathGrants,
+            runtimeProfileId: inheritableRuntimeProfileId,
+            effectivePermissions: subThreadEffectivePermissions
+          }
+          runPayload.effectivePermissionsSignature = signRunPosture(
+            delegatedApprovalMode,
+            subThreadEffectivePermissions,
+            runPostureContextFromPayload(runPayload)
+          )
+          const dispatchEvent: { sender: Electron.WebContents } = { sender: context.sender }
+          void (async () => {
+            if (!runCoordinatorRef) {
+              finalizeBackgroundSubThreadTranscript(
+                subThreadRunId,
+                'failed',
+                'RunCoordinator is not initialised yet — the app may still be starting up.'
+              )
+              surfaceSubThreadDispatchFailure({
+                subThread,
+                parentChatId,
+                parentProvider,
+                parentRunId: context.appRunId,
+                parentSender: context.sender,
+                reason: 'RunCoordinator is not initialised yet — the app may still be starting up.'
+              })
+              return
+            }
+            try {
+              const result = await runCoordinatorRef.dispatch(runPayload, dispatchEvent)
+              if (!result.dispatched) {
+                finalizeBackgroundSubThreadTranscript(
+                  subThreadRunId,
+                  'failed',
+                  'RunCoordinator completed preflight without dispatching the provider run.'
+                )
+                surfaceSubThreadDispatchFailure({
+                  subThread,
+                  parentChatId,
+                  parentProvider,
+                  parentRunId: context.appRunId,
+                  parentSender: context.sender,
+                  reason: 'RunCoordinator completed preflight without dispatching the provider run.'
+                })
+              }
+            } catch (err) {
+              finalizeBackgroundSubThreadTranscript(
+                subThreadRunId,
+                'failed',
+                err instanceof Error ? err.message : String(err)
+              )
+              surfaceSubThreadDispatchFailure({
+                subThread,
+                parentChatId,
+                parentProvider,
+                parentRunId: context.appRunId,
+                parentSender: context.sender,
+                reason: err instanceof Error ? err.message : String(err)
+              })
+            }
+          })()
+          broadcastChatUpdated(AppStore.getChat(subThread.appChatId) ?? subThread)
+          return {
+            subThreadId: subThread.appChatId,
+            provider: worker.provider,
+            title: subThread.title,
+            runId: subThreadRunId
+          }
+        },
+        rollbackWorker: (child) => {
+          // Cancel before delete so a fire-and-forget dispatch cannot keep running
+          // after the wave rolls back a later spawn failure.
+          try {
+            if (child.runId) {
+              cancelPendingAgentQuestionsForRun(child.runId, 'delegate-wave-rollback')
+              void providerAdapters.require(child.provider).cancel(child.runId)
+            }
+          } catch {
+            // Best-effort cancel.
+          }
+          try {
+            const parentChat = AppStore.getChat(parentChatId)
+            if (parentChat) {
+              const nextMessages = stripParentWaveDelegationCard(
+                parentChat.messages,
+                child.subThreadId
+              )
+              if (nextMessages.length !== parentChat.messages.length) {
+                const updatedParent: ChatRecord = {
+                  ...parentChat,
+                  messages: nextMessages,
+                  updatedAt: Date.now()
+                }
+                AppStore.saveChat(updatedParent)
+                broadcastChatUpdated(updatedParent)
+              }
+            }
+          } catch {
+            // Best-effort card cleanup.
+          }
+          AppStore.deleteChat(child.subThreadId)
+        },
+        providerLabel
+      })
+
+      if (!waveOutcome.ok) {
+        emitMcpToolTranscriptEvent({
+          type: 'tool_result',
+          tool_id: toolId,
+          tool_name: toolName,
+          status: 'error',
+          output: waveOutcome.text,
+          provider: parentProvider,
+          server: GEMINI_MCP_SERVER_NAME
+        })
+        return { text: waveOutcome.text, isError: true }
+      }
+      if (
+        shouldSkipDelegateWaveApproval({
+          isBossOrCaptain,
+          permissionPresetId
+        })
+      ) {
+        try {
+          auditService.recordAutomaticApprovalDecision(
+            parentProvider,
+            { appRunId: context.appRunId, appChatId: parentChatId },
+            'subThreadDelegation',
+            context.scope === 'global' ? undefined : context.workspacePath,
+            {
+              method: `${parentProvider}-mcp/delegate_wave`,
+              title: `${parentProviderLabel} delegated a wave without a prompt card`,
+              body: waveOutcome.text,
+              preview: {
+                kind: 'subthread-delegation-wave',
+                parentProvider,
+                waveId: waveOutcome.result.waveId,
+                workers: waveOutcome.result.children,
+                returnResultToParent: true,
+                skippedApproval: true,
+                isBossOrCaptain,
+                permissionPresetId
+              }
+            },
+            'autoAllow',
+            'bossman_auto',
+            'request',
+            {
+              policy: 'allow',
+              waveId: waveOutcome.result.waveId,
+              workerCount: waveOutcome.result.children.length,
+              reason: 'delegate_wave_authority_skip'
+            }
+          )
+        } catch {
+          // Best-effort audit.
+        }
+      }
+      text = waveOutcome.text
     }
 
     if (!handledDispatchOwner) {
@@ -54854,7 +55296,8 @@ if (isGeminiMcpBridgeProcess) {
             profile: {
               safeSubset: geminiReadOnlyAdvertise,
               portableEnsembleControl: true,
-              sketchDirect: true
+              sketchDirect: true,
+              orchestrationDirect: true
             },
             isolatedInstanceId:
               instanceLaunchPosture.kind === 'packaged-isolated'

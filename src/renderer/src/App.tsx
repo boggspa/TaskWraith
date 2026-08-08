@@ -7313,6 +7313,9 @@ function App(): React.JSX.Element {
     if (next.ensembleCollapseOlderRounds !== undefined) {
       settingsPatch.ensembleCollapseOlderRounds = next.ensembleCollapseOlderRounds
     }
+    if (next.maxWaveAgents !== undefined) {
+      settingsPatch.maxWaveAgents = next.maxWaveAgents
+    }
     // Sidebar Model Usage card view toggle (plan quota meters vs API
     // spend). Persist-only — the sidebar reads `settings.modelUsagePanelView`
     // directly when rendering the card.

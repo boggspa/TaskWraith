@@ -1061,6 +1061,15 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 - Optional args: model, reasoningEffort, kimiThinking, returnResult, subThreadId
 - Example: `{"taskwraith_tool":{"name":"delegate_to_subthread","arguments":{"provider":"text","prompt":"text"}}}`
 
+## delegate_wave
+
+Spawn a wave of 2–20 fresh context-isolated sub-threads in one call (spawn-only; no recall / subThreadId). Each worker needs provider + prompt; optional model / reasoningEffort / kimiThinking per worker. Results always return to the parent. Optional join knobs bind to a host-allocated waveId. One approval covers the whole wave when required; worker count is also capped by Settings → General → Max Wave Agents. Not auto-allowed; Ollama excludes it like other sub-thread tools.
+
+- Access: governed by your run permission role (subThreadDelegation)
+- Required args: workers
+- Optional args: join
+- Example: `{"taskwraith_tool":{"name":"delegate_wave","arguments":{"workers":[{"provider":"text","prompt":"text"},{"provider":"text","prompt":"text"}]}}}`
+
 ## scout_brief
 
 Emit a structured brief from a parallel fan-out lane. The next serial writer/synthesizer receives the collected briefs in its prompt. Returns an error outside an active fan-out lane.

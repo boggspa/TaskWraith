@@ -304,6 +304,8 @@ interface SettingsPanelProps {
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+  /** Settings → General: max workers accepted by `delegate_wave` (2–20, default 8). */
+  maxWaveAgents?: AppSettings['maxWaveAgents']
   /**
    * 1.0.5-EW49 — Dashboard statistics preferences. Per-stat
    * show/hide map + a global "reset all" timestamp. See
@@ -442,6 +444,8 @@ interface SettingsPanelProps {
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+    /** Settings → General: max workers accepted by `delegate_wave` (2–20, default 8). */
+    maxWaveAgents?: AppSettings['maxWaveAgents']
     /**
      * 1.0.5-EW49 — Per-stat visibility map / global "reset all"
      * timestamp. Patches merge into AppSettings; passing a
@@ -3867,6 +3871,7 @@ export function SettingsPanel({
   composerContinuationAiEnabled,
   hostAutoCompactEnabled,
   ensembleCollapseOlderRounds,
+  maxWaveAgents,
   dashboardStatPrefs,
   welcomeHeatmapPrefs,
   providerRunPauses,
@@ -4815,6 +4820,11 @@ export function SettingsPanel({
     ? Math.max(0, Math.trunc(chatContextTurns))
     : 6
   const boundedTurns = Math.min(20, safeTurns)
+  const safeMaxWaveAgents = (() => {
+    const n = Number(maxWaveAgents)
+    if (!Number.isFinite(n)) return 8
+    return Math.max(2, Math.min(20, Math.floor(n)))
+  })()
   const transcriptFontOptions = [...TRANSCRIPT_FONT_OPTIONS, ...installedFontOptions]
   const composerFontOptions = [...COMPOSER_FONT_OPTIONS, ...installedFontOptions]
   const transcriptFontSelectValue = getFontSelectValue(
@@ -6527,6 +6537,39 @@ export function SettingsPanel({
                   most recent and any in-progress round stay open). Click a round card to reveal its
                   full transcript. Turn this off to always show every round expanded, like the
                   classic flat transcript.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-label">
+                  Max Wave Agents
+                  <span style={{ marginLeft: 'var(--space-sm)', opacity: 0.7 }}>
+                    {safeMaxWaveAgents}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  className="composer-ensemble-context-slider"
+                  min={2}
+                  max={20}
+                  step={1}
+                  value={safeMaxWaveAgents}
+                  onChange={(e) =>
+                    onChange({
+                      maxWaveAgents: Math.max(
+                        2,
+                        Math.min(20, Math.floor(Number(e.target.value) || 8))
+                      )
+                    })
+                  }
+                  style={{
+                    width: '100%',
+                    ...rangeFillStyle(safeMaxWaveAgents, 2, 20)
+                  }}
+                />
+                <p className="settings-hint">
+                  Caps how many workers a single <code>delegate_wave</code> batch may spawn (2–20).
+                  Default is 8. Structural join quorum still cannot exceed 20.
                 </p>
               </div>
 

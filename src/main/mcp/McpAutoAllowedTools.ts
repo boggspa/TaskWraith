@@ -253,6 +253,7 @@ export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNa
     (tool) =>
       tool === 'canvas_navigate' ||
       tool === 'delegate_to_subthread' ||
+      tool === 'delegate_wave' ||
       tool === 'cancel_subthread' ||
       (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool)
   )

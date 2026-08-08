@@ -320,7 +320,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         return {
           ok: false,
           output:
-            'Ollama local mode cannot use TaskWraith sub-thread tools (delegate_to_subthread / list_subthreads / read_subthread_result / cancel_subthread).'
+            'Ollama local mode cannot use TaskWraith sub-thread tools (delegate_to_subthread / delegate_wave / list_subthreads / read_subthread_result / cancel_subthread).'
         }
       }
       if (

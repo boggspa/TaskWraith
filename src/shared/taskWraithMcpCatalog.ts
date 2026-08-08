@@ -234,6 +234,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // card (and pins the current step in the live activity viewport).
   'todo_write',
   'delegate_to_subthread',
+  // Spawn-only batch of ≥2 sub-threads sharing one wave join group.
+  // Approval-gated via subThreadDelegation (Boss/Captain Full Access /
+  // Full WS Access may skip the card); Ollama excluded like other
+  // sub-thread tools.
+  'delegate_wave',
   // 1.0.4-AK6 — structured brief emitted by a participant at the
   // end of their parallel fan-out lane. Threaded into the
   // serial writer's prompt context so the writer can synthesize

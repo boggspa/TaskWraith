@@ -1584,6 +1584,16 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
+  // Batch spawn-only wave: same service/gate family as delegate_to_subthread.
+  // Not auto-allowed; one approval card covers the whole wave when required.
+  delegate_wave: tool(
+    'orchestration',
+    'subThreadDelegation',
+    'control.mutate',
+    'subthread-control',
+    'host-state',
+    'host-resource'
+  ),
   scout_brief: tool(
     'orchestration',
     'mcpTools',

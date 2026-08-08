@@ -231,6 +231,7 @@ function rendererChatSettings(
     ...(settings.ensembleCollapseOlderRounds !== undefined
       ? { ensembleCollapseOlderRounds: settings.ensembleCollapseOlderRounds }
       : {}),
+    ...(settings.maxWaveAgents !== undefined ? { maxWaveAgents: settings.maxWaveAgents } : {}),
     ...(settings.modelUsagePanelView
       ? { modelUsagePanelView: settings.modelUsagePanelView }
       : {}),

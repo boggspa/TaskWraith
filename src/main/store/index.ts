@@ -2238,6 +2238,8 @@ const defaultSettings: AppSettings = {
   closeoutAiSummaryEnabled: true,
   hostAutoCompactEnabled: true,
   ensembleCollapseOlderRounds: true,
+  /** Settings → General Max Wave Agents (clamped 2–20 on read/write). */
+  maxWaveAgents: 8,
   dashboardStatPrefs: {
     dashboardSize: 'small'
   },
@@ -4809,6 +4811,11 @@ export class AppStore {
         typeof stored.autoResumeParentOnSubThreadCompletion === 'boolean'
           ? stored.autoResumeParentOnSubThreadCompletion
           : defaultSettings.autoResumeParentOnSubThreadCompletion,
+      // Settings → General Max Wave Agents: clamp 2–20; malformed/missing → 8.
+      maxWaveAgents:
+        typeof stored.maxWaveAgents === 'number' && Number.isFinite(stored.maxWaveAgents)
+          ? Math.max(2, Math.min(20, Math.floor(stored.maxWaveAgents)))
+          : (defaultSettings.maxWaveAgents ?? 8),
       autoUpdateEnabled:
         typeof stored.autoUpdateEnabled === 'boolean'
           ? stored.autoUpdateEnabled

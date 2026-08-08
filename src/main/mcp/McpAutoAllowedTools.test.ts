@@ -216,6 +216,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'cancel_subthread',
         'canvas_navigate',
         'delegate_to_subthread',
+        'delegate_wave',
         'simulator_boot',
         'simulator_button',
         'simulator_install',
@@ -232,6 +233,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_navigate.service).toBe('webBrowsing')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_to_subthread.service).toBe('subThreadDelegation')
+    expect(TASKWRAITH_TOOL_ACTIONS.delegate_wave.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.cancel_subthread.service).toBe('subThreadDelegation')
     for (const tool of [
       'simulator_open',
@@ -351,11 +353,18 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
 
   it('advertises sub-thread delegation as an approval-queued Ask instrument', () => {
     expect(isReadOnlyAdvertisedTool('delegate_to_subthread')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('delegate_wave')).toBe(true)
     expect(isReadOnlyAdvertisedTool('cancel_subthread')).toBe(true)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_to_subthread')).toBe(false)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_wave')).toBe(false)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('cancel_subthread')).toBe(false)
     expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toEqual(
-      expect.arrayContaining(['delegate_to_subthread', 'cancel_subthread', 'canvas_navigate'])
+      expect.arrayContaining([
+        'delegate_to_subthread',
+        'delegate_wave',
+        'cancel_subthread',
+        'canvas_navigate'
+      ])
     )
   })
 
@@ -442,7 +451,9 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
 
   it('inherits Ask sub-thread instruments on plan seats (modal-gated, not auto-allowed)', () => {
     expect(isPlanAdvertisedTool('delegate_to_subthread')).toBe(true)
+    expect(isPlanAdvertisedTool('delegate_wave')).toBe(true)
     expect(isPlanAdvertisedTool('cancel_subthread')).toBe(true)
     expect(autoAllowedTools.has('delegate_to_subthread')).toBe(false)
+    expect(autoAllowedTools.has('delegate_wave')).toBe(false)
   })
 })

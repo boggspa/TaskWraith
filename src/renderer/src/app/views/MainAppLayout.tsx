@@ -1500,6 +1500,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               composerContinuationAiEnabled={settings?.composerContinuationAiEnabled}
               hostAutoCompactEnabled={settings?.hostAutoCompactEnabled}
               ensembleCollapseOlderRounds={settings?.ensembleCollapseOlderRounds}
+              maxWaveAgents={settings?.maxWaveAgents}
               dashboardStatPrefs={settings?.dashboardStatPrefs}
               welcomeHeatmapPrefs={settings?.welcomeHeatmapPrefs}
               providerRunPauses={settings?.providerRunPauses}
