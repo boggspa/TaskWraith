@@ -40,7 +40,11 @@ describe('project reference context dispatch acceptance', () => {
   })
 
   it('claims the owning chat selection for side-panel and multiview sends', () => {
-    const sideRun = sourceBetween(appSource, 'const handleSideRun =', 'const cancelRunningScheduledTaskForChat =')
+    const sideRun = sourceBetween(
+      appSource,
+      'const handleSideRun =',
+      'const cancelRunningScheduledTaskForChat ='
+    )
     const paneRun = sourceBetween(
       appSource,
       'const handleRunMultiviewPane =',
@@ -53,22 +57,19 @@ describe('project reference context dispatch acceptance', () => {
     expect(paneRun).toContain('runRequestHasContent(request)')
   })
 
-  it('enables the Composer for an explicit reference-only solo send', () => {
+  it('enables the Composer for an explicit reference-only solo or ensemble send', () => {
     expect(composerSource).toContain('hasProjectReferenceContext = false')
     expect(composerSource).toContain(
       'hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext'
     )
-    expect(appSource).toContain(
+    expect(appSource).toContain('currentProjectReferenceContextSelection?.referenceIds.length')
+    expect(appSource).not.toContain(
       'currentProjectReferenceContextSelection?.referenceIds.length && !isCurrentEnsembleChat'
     )
   })
 
   it('settles a queued claim only after durable queue persistence succeeds', () => {
-    const queue = sourceBetween(
-      appSource,
-      'const queueRunRequest =',
-      'const queueRunRequestRef ='
-    )
+    const queue = sourceBetween(appSource, 'const queueRunRequest =', 'const queueRunRequestRef =')
     const persistIndex = queue.indexOf('persistRunQueueJobForRequest')
     const acceptedIndex = queue.indexOf(
       "settleProjectReferenceContextForRequest(queuedRequest, 'accepted')"
@@ -100,9 +101,7 @@ describe('project reference context dispatch acceptance', () => {
     expect(receiptIndex).toBeGreaterThanOrEqual(0)
     expect(receiptBlock).toContain('dispatchAccepted = dispatchResult.dispatched')
     expect(receiptBlock).toContain('settleProjectReferenceContextForRequest(')
-    expect(receiptBlock).toContain(
-      "dispatchResult.dispatched ? 'accepted' : 'rejected'"
-    )
+    expect(receiptBlock).toContain("dispatchResult.dispatched ? 'accepted' : 'rejected'")
   })
 
   it('returns the main dispatch receipt through the run-agent IPC contract', () => {
@@ -130,9 +129,7 @@ describe('project reference context dispatch acceptance', () => {
     // onto the card (added with the grant-card dead-end fix), and before
     // clearing the prompt to dispatch. A newer prompt must survive all three.
     expect(
-      persistence.match(
-        /externalPathGrantPromptByChatIdRef\.current\[chatId\] !== prompt/g
-      )
+      persistence.match(/externalPathGrantPromptByChatIdRef\.current\[chatId\] !== prompt/g)
     ).toHaveLength(3)
     expect(persistence).toContain('prev[chatId] === prompt')
     expect(persistence.indexOf('prev[chatId] === prompt')).toBeLessThan(
@@ -154,9 +151,7 @@ describe('project reference context dispatch acceptance', () => {
 
     expect(deleteChat).toContain('clearExternalPathGrantPrompt(chatId)')
     expect(deleteChat).toContain('clearProjectReferenceContextSelection(chatId)')
-    expect(deleteAll).toContain(
-      'prompt?.pendingRun?.projectReferenceContextClaim'
-    )
+    expect(deleteAll).toContain('prompt?.pendingRun?.projectReferenceContextClaim')
     expect(deleteAll).toContain('externalPathGrantPromptByChatIdRef.current = {}')
     expect(deleteAll).toContain('clearProjectReferenceContextSelection(chatId)')
   })

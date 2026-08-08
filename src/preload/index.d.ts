@@ -114,6 +114,10 @@ import type {
   ProjectReferenceContextSelection,
   ResolvedProjectReferenceContext
 } from '../shared/projectReferenceContext'
+import type {
+  ProjectReferenceExtract,
+  ProjectReferenceExtractConsent
+} from '../shared/projectReferenceExtract'
 import type { DispatchResult } from '../main/services/RunCoordinator'
 import type {
   ProjectLegacyImportMarker,
@@ -1855,6 +1859,32 @@ declare global {
         proposalId: string
         decision: 'approve' | 'reject'
       }) => Promise<{ created: boolean; referenceId?: string }>
+      extractProjectReference: (input: {
+        projectId: string
+        referenceId: string
+        chatId?: string
+        consent: ProjectReferenceExtractConsent
+      }) => Promise<
+        | { ok: true; extract: ProjectReferenceExtract }
+        | { ok: false; code: string; message: string; extract?: ProjectReferenceExtract }
+      >
+      getProjectReferenceExtract: (input: {
+        projectId: string
+        referenceId: string
+      }) => Promise<ProjectReferenceExtract | null>
+      revokeProjectReferenceExtract: (
+        input: { extractId: string } | string
+      ) => Promise<
+        | { ok: true; extract: ProjectReferenceExtract }
+        | { ok: false; code: string; message: string; extract?: ProjectReferenceExtract }
+      >
+      readProjectReferenceExtractText: (input: {
+        extractId: string
+        maxChars?: number
+      }) => Promise<
+        | { ok: true; text: string; truncated: boolean; charCount: number }
+        | { ok: false; code: string; message: string }
+      >
       clearWorkspaces: () => Promise<void>
       getChats: (workspaceId?: string) => Promise<ChatRecord[]>
       getChatList: (workspaceId?: string) => Promise<ChatListItem[]>
@@ -1912,6 +1942,8 @@ declare global {
         dmTargetParticipantId?: string
         /** Exact participant selected through the composer @ picker. */
         exactPickerParticipantId?: string
+        /** P1 F6 — Use-next Project reference selection for this round. */
+        projectReferenceContextSelection?: ProjectReferenceContextSelection
       }) => Promise<{ status: string; roundId?: string }>
       steerQueuedEnsemblePrompt: (payload: {
         chatId: string

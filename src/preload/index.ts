@@ -1838,6 +1838,23 @@ const api = {
     proposalId: string
     decision: 'approve' | 'reject'
   }) => ipcRenderer.invoke('projects:review-reference-proposal', input),
+  extractProjectReference: (input: {
+    projectId: string
+    referenceId: string
+    chatId?: string
+    consent: {
+      at: number
+      actor: 'user'
+      scope: 'this-reference'
+      chatId?: string
+    }
+  }) => ipcRenderer.invoke('projects:extract-reference', input),
+  getProjectReferenceExtract: (input: { projectId: string; referenceId: string }) =>
+    ipcRenderer.invoke('projects:get-reference-extract', input),
+  revokeProjectReferenceExtract: (input: { extractId: string } | string) =>
+    ipcRenderer.invoke('projects:revoke-reference-extract', input),
+  readProjectReferenceExtractText: (input: { extractId: string; maxChars?: number }) =>
+    ipcRenderer.invoke('projects:read-reference-extract-text', input),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
   getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
   getPinnedMessages: (workspaceId?: string) =>
@@ -1907,6 +1924,12 @@ const api = {
       kind?: string
       grantedAt?: string
     }>
+    /** P1 F6 — Use-next Project reference selection for this round. */
+    projectReferenceContextSelection?: {
+      schemaVersion: 1
+      projectId: string
+      referenceIds: string[]
+    }
   }) => ipcRenderer.invoke('run-ensemble-round', payload),
   steerQueuedEnsemblePrompt: (payload: {
     chatId: string
