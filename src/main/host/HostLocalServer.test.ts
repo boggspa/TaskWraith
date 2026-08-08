@@ -746,7 +746,9 @@ describe('HostLocalServer', () => {
         expect(frame.ok).toBe(true)
         if (frame.ok) {
           expect(frame.result.kind).toBe('twmission.export')
-          expect(frame.result.result.ok).toBe(true)
+          if (frame.result.kind === 'twmission.export') {
+            expect(frame.result.result.ok).toBe(true)
+          }
         }
       }
       client.close()

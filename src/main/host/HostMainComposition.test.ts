@@ -36,8 +36,7 @@ import {
   HOST_RUNTIME_DATA_DIR_NAME,
   hostRuntimeDataDir,
   type HostMainComposition,
-  type HostMainCompositionInput,
-  type TwMissionHostCaptureResult
+  type HostMainCompositionInput
 } from './HostMainComposition'
 
 const ACTOR_A: HostActorIdentity = {

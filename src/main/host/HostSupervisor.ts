@@ -151,20 +151,25 @@ export function createHostSupervisor(input: HostSupervisorInput): HostSupervisor
     // throws (stores corrupted, data-dir unwritable, etc.).
     // Await: the factory may be async in tests; in production it is
     // synchronous, but awaiting a sync value is a no-op.
-    composition = await input.createComposition(input.compositionInput)
+    const builtComposition = await input.createComposition(input.compositionInput)
+    composition = builtComposition
     const { hostId, hostVersion } = input.compositionInput.host
 
     server = input.createServer({
       userDataPath: input.compositionInput.userDataPath,
       hostId,
       hostVersion,
-      session: composition.session,
-      authority: new Proxy(composition.authority as HostAuthority & Record<string | symbol, unknown>, {
-        get(target, prop, receiver) {
-          if (prop === 'exportTwMission') return composition.exportTwMission.bind(composition)
-          return Reflect.get(target, prop, receiver)
+      session: builtComposition.session,
+      authority: new Proxy(
+        builtComposition.authority as HostAuthority & Record<string | symbol, unknown>,
+        {
+          get(target, prop, receiver) {
+            if (prop === 'exportTwMission')
+              return builtComposition.exportTwMission.bind(builtComposition)
+            return Reflect.get(target, prop, receiver)
+          }
         }
-      }) as unknown as HostAuthority & { exportTwMission: typeof composition.exportTwMission },
+      ) as unknown as HostAuthority & { exportTwMission: typeof builtComposition.exportTwMission },
       log: log ? (line: string) => log(`[host-supervisor] ${line}`) : undefined,
       now
     })

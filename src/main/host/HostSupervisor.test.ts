@@ -97,7 +97,14 @@ function mockServer(): MockServer & HostLocalServer {
  * (which become own properties and defeat the regression pin).
  */
 class MockHostAuthority {
-  // placeholder — methods assigned on prototype below
+  // Declarations keep these members type-visible without emitting own fields;
+  // the prototype assignments below are the regression fixture.
+  declare snapshot: ReturnType<typeof vi.fn>
+  declare deltas: ReturnType<typeof vi.fn>
+  declare command: ReturnType<typeof vi.fn>
+  declare receipt: ReturnType<typeof vi.fn>
+  declare health: ReturnType<typeof vi.fn>
+  declare shutdown: ReturnType<typeof vi.fn>
 }
 MockHostAuthority.prototype.snapshot = vi.fn()
 MockHostAuthority.prototype.deltas = vi.fn()
@@ -111,7 +118,10 @@ function mockComposition(): MockComposition & HostMainComposition {
     authority: new MockHostAuthority() as unknown as HostAuthority,
     exportTwMission: vi.fn().mockResolvedValue({
       ok: true as const,
-      bundle: { manifest: { hostId: 'test', exportedAt: new Date().toISOString() }, snapshot: {} as Record<string, unknown> }
+      bundle: {
+        manifest: { hostId: 'test', exportedAt: new Date().toISOString() },
+        snapshot: {} as Record<string, unknown>
+      }
     }),
     session: {
       bind: vi.fn(),
@@ -255,7 +265,15 @@ describe('HostSupervisor', () => {
       const auth = serverOptions.authority as Record<string, unknown>
       // P0 regression pin: all HostAuthority prototype methods MUST survive the facade.
       // Object spread loses prototype members; Proxy preserves them.
-      for (const method of ['snapshot', 'deltas', 'command', 'receipt', 'health', 'shutdown', 'exportTwMission']) {
+      for (const method of [
+        'snapshot',
+        'deltas',
+        'command',
+        'receipt',
+        'health',
+        'shutdown',
+        'exportTwMission'
+      ]) {
         expect(typeof auth[method]).toBe('function')
       }
       expect(supervisor.isRunning).toBe(true)

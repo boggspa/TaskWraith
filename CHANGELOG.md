@@ -6,9 +6,9 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## Unreleased
+## 1.9.4 - 2026-08-08
 
-### Work Project references (source-ahead)
+### Work Project references
 
 - **Discover → review → import.** Agents can `project_reference_list` and propose sources with optional claimed preview snippets; the Work Refs dock accepts drag/drop, paste, and GitHub connectors for human-owned catalogue adds.
 - **Consentful extracts.** Explicit Extract… saves a readable URL/PDF/Office text copy into the Project; Use next can inject bounded extract bodies. Catalogue rows still grant no live access; revoke deletes the local extract (provider history may retain disclosed text).
@@ -16,12 +16,13 @@ to answer.
 - **Studio-lite keepables.** Briefing / FAQ / Decision log drafts from ready extracts save into the Project library as ordinary file references.
 - **Citation chips.** Assistant `⟦pref:…⟧` tokens render as chips in markdown (open-to-viewer wiring optional).
 
+### Host authority and companion parity
 
-Post-`v1.9.3` source-ahead. Ensemble Continuous routing landed here after the
-tagged tip; treat the Ensemble / lock floor as **done until real issues hit** —
-do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
+- **Host Arc capture and export.** The production Host path now exposes authenticated transport, durable command/receipt routing, and `.twmission` capture/export with redacted, fail-closed bundles.
+- **Swift protocol parity.** TaskWraithKit gains the Host protocol's full family of frames and bounded decoders, keeping the companion aligned with the desktop Host contract.
+- **Lifecycle and projection honesty.** Host supervision preserves prototype authority methods, reports offline/connecting health accurately, and keeps malformed or unavailable Host data out of projections.
 
-### Skills, Hooks, and harness posture (source-ahead)
+### Skills, Hooks, and harness posture
 
 - **Skills / Hooks Settings.** User- and workspace-scoped skill libraries and host shell hook configs are editable in Settings, with IPC + preload bridges (`skills:*` / `hooks:*`) over `SkillsStore` / `HooksStore`.
 - **Host shell hooks.** Settings-authored SessionStart / PreToolUse / PostToolUse / Stop commands run through `HostShellHookRunner` (capped SessionStart stdout for prompt injection). Compose awaits SessionStart once per workspace into the same turn; Stop fires on run terminal. User-scoped hooks run by default; workspace `.taskwraith/hooks.json` stays off until Settings → Hooks → Trust workspace hooks (`trustWorkspaceHooks`). Optional Ask before hook commands (`askBeforeHookCommands`, default off) gates Pre/Post/Stop via shell-command approval; SessionStart ask-before currently deny-closes. Hook lifecycle events append durable run-events when a run id is known. Hook env is scrubbed; PreToolUse exceptions fail closed.
@@ -29,7 +30,7 @@ do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
 - **Skill Patch Manager.** Approved Thread Introspection `skill_patch` proposals can apply into TaskWraith-owned skills (user/workspace) with rollback via the Settings apply path — still no MCP apply tool.
 - **Provider harness posture.** Per-provider passthrough controls for native skill/hook harness surfaces (Claude / Cursor / Pi / Kimi) so TaskWraith-owned skills/hooks and provider-native ones can coexist without silent double-injection.
 
-### Ensemble Continuous ownership (source-ahead)
+### Ensemble Continuous ownership
 
 - **Continuous Boss ownership.** In Continuous mode, an acting Boss/Captain with remaining serial seats must make an explicit routing decision (`select_participants` / skip / summon, targeted yield, unique foreground `@mention`, or accepted fan-out) before ordinary writers advance; a quiet answer re-summons authority. Continuous pass 1 may select/skip; Turn-bound still preserves the full first pass.
 - **Review wave Continuous continue.** A closing Review wave no longer Task-Completes a Continuous round while hops remain when the pass produced only skipped/empty lane output; the next pass returns to authority, and completed fan-out markers are cleared at each Continuous pass boundary so prior wave seats are not skipped as permanently handled.
@@ -38,16 +39,9 @@ do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
 - **User Fan-Out steer / retry.** Composer steer and participant Retry open or continue a User Fan-Out lane instead of rewriting the active round or spawning a fresh round.
 - **Transcript / close-out polish.** Task Complete epic nesting, per-seat working rows, stream-reveal and paint fencing, iPad transcript/composer/fan-out fixes, ACP transient prompt retry, and history-deletion / reap performance.
 
-### Simulator Canvas (source-ahead)
+### Simulator Canvas
 
 - **Simulator Canvas dock.** Optional chat-owned iOS Simulator preview via Composer → Canvas → Open Simulator Canvas; `simctl` screenshots for the bezel; human tap/type/swipe and Home/Lock/Rotate via idb when a controller lease is held and idb is ready; agent HID tools (`simulator_tap` / `type` / `scroll` / `button` / `rotate`) under the `simulatorCanvas` policy; absolute orientations (`PORTRAIT` / `PORTRAIT_UPSIDE_DOWN` / `LANDSCAPE_LEFT` / `LANDSCAPE_RIGHT`); human lease release on dock close (see `ADVANCED_OPTIONAL_SETUP.md`).
-
-### Remaining focus for 1.9.4 (not feature construction)
-
-- **Host Arc** — Wave 4 source population Cap-landed (Track3+Track4: 13 real Host families) + AC9 `.twmission` capture + export seam landed (`742fdbf56`/`fd4b5883f`/`9a7adfa07`, K3-PASS) + iOS HostProtocol Swift port (`20311f19a`) + P0 Proxy facade fix; renderer consumption (counts-only for runs/missions/rounds/schedules/participants/artifacts), broader AppStore retirement, and AC1–6 PASS remain open. Live tracker local-only `docs/HOST_ARC_STATUS.md`.
-- **Channels** — P1 product path still behind the two-real-Mac People transport proof; no P2 human Chat UI yet.
-- **Real-world QA** — soak the landed Ensemble / lock / Canvas / Host surfaces; fix only what breaks.
-- **App Store** — maintainer-owned submission / review loop (not an engineering reopen).
 
 ## 1.9.3 - 2026-08-07
 
