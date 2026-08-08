@@ -408,4 +408,25 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('orphan-ref')
     expect(html).not.toContain('⟦pref:orphan-ref:0-4⟧')
   })
+
+  it('marks citation chips interactive when onOpenProjectReferenceCitation is provided', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'Claim grounded here ⟦pref:ref-brief:0-5⟧.'}
+        resolveProjectReferenceExtract={(referenceId) =>
+          referenceId === 'ref-brief'
+            ? {
+                extractId: 'extract-1',
+                title: 'Research Brief',
+                extractText: 'hello world'
+              }
+            : null
+        }
+        onOpenProjectReferenceCitation={() => undefined}
+      />
+    )
+    expect(html).toContain('project-reference-citation-chip')
+    expect(html).toContain('is-interactive')
+    expect(html).toContain('type="button"')
+  })
 })

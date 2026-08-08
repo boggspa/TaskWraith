@@ -63,6 +63,8 @@ export type TranscriptPanelMemoComparable = {
   onJumpToLatest?: unknown
   onPreviewImage: unknown
   onDetachToPane?: unknown
+  onOpenProjectReferenceCitation?: unknown
+  resolveProjectReferenceExtract?: unknown
   copiedId: unknown
   copy: unknown
   virtualize?: unknown
@@ -190,6 +192,8 @@ export function transcriptPanelPropsEqual(
     previous.onJumpToLatest === next.onJumpToLatest &&
     previous.onPreviewImage === next.onPreviewImage &&
     previous.onDetachToPane === next.onDetachToPane &&
+    previous.onOpenProjectReferenceCitation === next.onOpenProjectReferenceCitation &&
+    previous.resolveProjectReferenceExtract === next.resolveProjectReferenceExtract &&
     previous.copiedId === next.copiedId &&
     previous.copy === next.copy &&
     previous.virtualize === next.virtualize &&

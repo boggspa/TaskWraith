@@ -21,7 +21,7 @@ import type { ChatMediaRef } from './ChatMediaPanel'
 import type { ChatRecord } from '../../../main/store/types'
 
 /** Turn `\uFFFC` chip slots into indexed markdown links StableMarkdownBlock can chip-render. */
-function embedProjectReferenceCitationLinks(displayText: string): string {
+export function embedProjectReferenceCitationLinks(displayText: string): string {
   let index = 0
   return displayText.split(PROJECT_REFERENCE_CITATION_CHIP_PLACEHOLDER).reduce((acc, part, i) => {
     if (i === 0) return part

@@ -38,7 +38,9 @@ import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
 import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
 import { shortModelName } from '../lib/composerChipFormat'
+import type { ProjectReferenceCitationOpenTarget } from '../lib/projectReferenceCitations'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
+import type { ProjectReferenceCitationExtractResolution } from '../../../shared/projectReferenceCitation'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
 import {
@@ -607,6 +609,19 @@ export type TranscriptPanelProps = {
   /** Pop an A/V attachment out into its own Multiview pane (the docked media
    *  player). Optional — omitted when Multiview isn't available to the host. */
   onDetachToPane?: (ref: ChatMediaRef) => void
+  /**
+   * Project-reference citation chips: open the Work Refs extract viewer.
+   * When omitted, chips still render (degraded) but stay non-interactive.
+   */
+  onOpenProjectReferenceCitation?: (target: ProjectReferenceCitationOpenTarget) => void
+  /**
+   * Optional sync extract resolver for citation title/quote validation.
+   * When omitted, MarkdownMessage degrades missing extracts to referenceId chips.
+   */
+  resolveProjectReferenceExtract?: (
+    referenceId: string
+  ) => ProjectReferenceCitationExtractResolution | null
+
   /**
    * 1.0.8 — shared copy-to-clipboard feedback (see {@link useCopyFeedback}).
    * `copiedId` is the id currently showing its "Copied" confirmation;
@@ -2223,6 +2238,8 @@ export const TranscriptPanel = memo(
     onJumpToLatest,
     onPreviewImage,
     onDetachToPane,
+    onOpenProjectReferenceCitation,
+    resolveProjectReferenceExtract,
     copiedId,
     copy,
     virtualize,
@@ -5267,6 +5284,8 @@ export const TranscriptPanel = memo(
                                   onRevealUnmounted={() =>
                                     finishRevealLifecycle(revealLifecycleKey)
                                   }
+                                  resolveProjectReferenceExtract={resolveProjectReferenceExtract}
+                                  onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
                                 />
                               ) : (
                                 <MarkdownMessage
@@ -5276,6 +5295,8 @@ export const TranscriptPanel = memo(
                                   workspacePath={currentChat?.workspacePath}
                                   onPreviewImage={onPreviewImage}
                                   streamRunId={messageStreamRunId}
+                                  resolveProjectReferenceExtract={resolveProjectReferenceExtract}
+                                  onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
                                 />
                               )
                             ) : (

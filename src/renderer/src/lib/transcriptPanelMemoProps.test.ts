@@ -93,4 +93,30 @@ describe('transcriptPanelMemoProps', () => {
     expect(source).toContain('transcriptPanelPropsEqual')
     expect(source).not.toMatch(/previous\.currentChat === next\.currentChat/)
   })
+
+  it('invalidates when citation open or extract-resolve handler identity changes', () => {
+    const shared = baseProps()
+    const openA = () => undefined
+    const openB = () => undefined
+    const resolveA = () => null
+    expect(
+      transcriptPanelPropsEqual(shared, {
+        ...shared,
+        onOpenProjectReferenceCitation: openA,
+        resolveProjectReferenceExtract: resolveA
+      })
+    ).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, onOpenProjectReferenceCitation: openA },
+        { ...shared, onOpenProjectReferenceCitation: openB }
+      )
+    ).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, onOpenProjectReferenceCitation: openA, resolveProjectReferenceExtract: resolveA },
+        { ...shared, onOpenProjectReferenceCitation: openA, resolveProjectReferenceExtract: resolveA }
+      )
+    ).toBe(true)
+  })
 })

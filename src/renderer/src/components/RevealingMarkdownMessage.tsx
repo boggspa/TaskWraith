@@ -2,7 +2,12 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'rea
 import type { CSSProperties } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
-import { identityContextEqual, useStableMarkdownMediaValue } from './MarkdownMessage'
+import {
+  embedProjectReferenceCitationLinks,
+  identityContextEqual,
+  useStableMarkdownMediaValue
+} from './MarkdownMessage'
+import { ProjectReferenceCitationContext } from './ProjectReferenceCitationContext'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks, type MarkdownBlockType } from '../lib/MarkdownBlockSplit'
 import { graphemeCount, sliceGraphemes, toGraphemes } from '../lib/advanceReveal'
@@ -15,6 +20,10 @@ import {
   resolveAdaptiveRevealPresentation,
   revealCadenceSnapshot
 } from '../lib/adaptiveReveal'
+import {
+  prepareProjectReferenceCitationsForRender,
+  type ProjectReferenceCitationOpenTarget
+} from '../lib/projectReferenceCitations'
 import { readRevealCadencePrior, recordRevealCadencePrior } from '../lib/revealCadenceRegistry'
 import {
   clearRevealSession,
@@ -25,6 +34,10 @@ import {
 import { useRevealClock } from '../lib/useRevealClock'
 import type { ChatMediaRef } from './ChatMediaPanel'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
+import {
+  PROJECT_REFERENCE_CITATION_OPEN,
+  type ProjectReferenceCitationExtractResolution
+} from '../../../shared/projectReferenceCitation'
 
 /*
  * RevealingMarkdownMessage decouples ARRIVAL from DISPLAY for the one live
@@ -60,6 +73,12 @@ interface RevealingMarkdownMessageProps {
   streamRunId?: string
   /** Prunes lifecycle state after a settled row naturally leaves the viewport. */
   onRevealUnmounted?: () => void
+  /** Resolve consentful extract text for `⟦pref:…⟧` citation chips. */
+  resolveProjectReferenceExtract?: (
+    referenceId: string
+  ) => ProjectReferenceCitationExtractResolution | null
+  /** Optional Refs-viewer open handler for citation chip clicks. */
+  onOpenProjectReferenceCitation?: (target: ProjectReferenceCitationOpenTarget) => void
 }
 
 const FRESH_LIVE_MOUNT_MS = 4_000
@@ -372,8 +391,14 @@ function RevealingMarkdownMessageImpl({
   workspacePath,
   onPreviewImage,
   streamRunId,
-  onRevealUnmounted
+  onRevealUnmounted,
+  resolveProjectReferenceExtract,
+  onOpenProjectReferenceCitation
 }: RevealingMarkdownMessageProps) {
+  const resolveExtractRef = useRef(resolveProjectReferenceExtract)
+  resolveExtractRef.current = resolveProjectReferenceExtract
+  const onOpenCitationRef = useRef(onOpenProjectReferenceCitation)
+  onOpenCitationRef.current = onOpenProjectReferenceCitation
   const targetGraphemes = useMemo(() => toGraphemes(content), [content])
   const targetLen = targetGraphemes.length
   const codeRanges = useMemo(
@@ -657,7 +682,37 @@ function RevealingMarkdownMessageImpl({
       ? previousProjection.displayContent
       : projectedDisplayContent
   monotonicProjectionRef.current = { content, displayContent }
-  const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(displayContent), [displayContent])
+
+  const projectReferenceCitations = useMemo(() => {
+    if (!displayContent.includes(PROJECT_REFERENCE_CITATION_OPEN)) return null
+    return prepareProjectReferenceCitationsForRender({
+      assistantText: displayContent,
+      resolveExtract: (referenceId) => resolveExtractRef.current?.(referenceId) ?? null,
+      degradeMissingExtracts: true
+    })
+  }, [displayContent])
+
+  const markdownContent = useMemo(() => {
+    if (!projectReferenceCitations) return displayContent
+    return embedProjectReferenceCitationLinks(projectReferenceCitations.displayText)
+  }, [displayContent, projectReferenceCitations])
+
+  const citationContext = useMemo(() => {
+    if (!projectReferenceCitations || projectReferenceCitations.citations.length === 0) {
+      return null
+    }
+    return {
+      citations: projectReferenceCitations.citations,
+      ...(onOpenProjectReferenceCitation
+        ? {
+            onOpen: (target: ProjectReferenceCitationOpenTarget) =>
+              onOpenCitationRef.current?.(target)
+          }
+        : {})
+    }
+  }, [projectReferenceCitations, onOpenProjectReferenceCitation])
+
+  const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(markdownContent), [markdownContent])
   const displayBlocks = useMemo(() => (tail ? [...stable, tail] : stable), [stable, tail])
   const revealing = !reduced && revealLifecycleActive && revealedLen < targetLen
   const revealStyle: RevealCssProperties = {
@@ -673,30 +728,32 @@ function RevealingMarkdownMessageImpl({
   return (
     <AgentIdentityContext.Provider value={identityCtxRef.current}>
       <MarkdownMediaContext.Provider value={mediaCtx}>
-        <div
-          className={`message-markdown message-markdown-pro stream-reveal-message speed-${presentation.band}`}
-          data-reveal-speed={presentation.band}
-          data-reveal-active={revealing ? 'true' : 'false'}
-          aria-busy={isLive || revealing ? 'true' : undefined}
-          style={revealStyle}
-        >
-          {displayBlocks.map((block, index) => (
-            <StableMarkdownBlock
-              key={`block-${index}`}
-              raw={block.raw}
-              streamRunId={streamRunId}
-              revealTokens={
-                tokenFadeEnabled &&
-                !reduced &&
-                revealLifecycleActive &&
-                index >= displayBlocks.length - 1 &&
-                (block.type === 'paragraph' || block.type === 'heading')
-              }
-              animatedWordWindow={presentation.animatedWordWindow}
-              revealDurationMs={presentation.fadeDurationMs}
-            />
-          ))}
-        </div>
+        <ProjectReferenceCitationContext.Provider value={citationContext}>
+          <div
+            className={`message-markdown message-markdown-pro stream-reveal-message speed-${presentation.band}`}
+            data-reveal-speed={presentation.band}
+            data-reveal-active={revealing ? 'true' : 'false'}
+            aria-busy={isLive || revealing ? 'true' : undefined}
+            style={revealStyle}
+          >
+            {displayBlocks.map((block, index) => (
+              <StableMarkdownBlock
+                key={`block-${index}`}
+                raw={block.raw}
+                streamRunId={streamRunId}
+                revealTokens={
+                  tokenFadeEnabled &&
+                  !reduced &&
+                  revealLifecycleActive &&
+                  index >= displayBlocks.length - 1 &&
+                  (block.type === 'paragraph' || block.type === 'heading')
+                }
+                animatedWordWindow={presentation.animatedWordWindow}
+                revealDurationMs={presentation.fadeDurationMs}
+              />
+            ))}
+          </div>
+        </ProjectReferenceCitationContext.Provider>
       </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>
   )
