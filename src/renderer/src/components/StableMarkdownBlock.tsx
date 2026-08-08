@@ -22,6 +22,11 @@ import { HighlightedCodeBlock } from './HighlightedCodeBlock'
 import { AgentMention } from './AgentMention'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { ParticipantMention } from './ParticipantMention'
+import { ProjectReferenceCitationChip } from './ProjectReferenceCitationChip'
+import {
+  PROJECT_REFERENCE_CITATION_LINK_PREFIX,
+  ProjectReferenceCitationContext
+} from './ProjectReferenceCitationContext'
 import { SeatChangeInlineStrip } from './SeatChangeRow'
 import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SEAT_CHANGE_LINK_PREFIX, decodeSeatChangeLink } from '../../../shared/seatChange'
@@ -448,6 +453,21 @@ function EnsembleStatusGlyph({ status }: { status: string }): React.JSX.Element 
   )
 }
 
+function ProjectReferenceCitationMarkdownChip({
+  href,
+  children
+}: {
+  href: string
+  children: ReactNode
+}): ReactNode {
+  const ctx = useContext(ProjectReferenceCitationContext)
+  const index = Number(href.slice(PROJECT_REFERENCE_CITATION_LINK_PREFIX.length).trim())
+  const citation =
+    ctx && Number.isInteger(index) && index >= 0 ? ctx.citations[index] : undefined
+  if (!citation) return <>{children}</>
+  return <ProjectReferenceCitationChip citation={citation} onOpen={ctx?.onOpen} />
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   a({ href, children }) {
     if (typeof href === 'string' && href.startsWith('agent://')) {
@@ -457,6 +477,13 @@ const MARKDOWN_COMPONENTS: Components = {
     if (typeof href === 'string' && href.startsWith('ensemble-dm://')) {
       const participantId = href.slice('ensemble-dm://'.length).trim()
       return <ParticipantMention reference={participantId}>{children}</ParticipantMention>
+    }
+    if (typeof href === 'string' && href.startsWith(PROJECT_REFERENCE_CITATION_LINK_PREFIX)) {
+      return (
+        <ProjectReferenceCitationMarkdownChip href={href}>
+          {children}
+        </ProjectReferenceCitationMarkdownChip>
+      )
     }
     // Round close-out table: one seat element per participant in place of the
     // five plain-text columns it replaced. The link TEXT is the full
@@ -605,7 +632,8 @@ const SAFE_HTML_SCHEMA = {
       'agent',
       'ensemble-dm',
       'ensemble-seat',
-      'ensemble-status'
+      'ensemble-status',
+      'project-ref-cite'
     ]
   }
 }
@@ -625,6 +653,7 @@ function markdownUrlTransform(value: string): string {
   if (
     value.startsWith('agent://') ||
     value.startsWith('ensemble-dm://') ||
+    value.startsWith(PROJECT_REFERENCE_CITATION_LINK_PREFIX) ||
     value.startsWith(SEAT_CHANGE_LINK_PREFIX) ||
     value.startsWith(ENSEMBLE_STATUS_LINK_PREFIX)
   ) {
