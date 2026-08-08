@@ -221,9 +221,9 @@ describe('successful Gemini API mutation refresh signal', () => {
     await act(async () => {
       mountedRoot = createRoot(container)
       mountedRoot.render(
+        // eslint-disable-next-line react/no-children-prop -- props.children required by HostProjectionProviderProps for tsc
         createElement(HostProjectionProvider, {
           store,
-          // eslint-disable-next-line react/no-children-prop -- HostProjectionProviderProps requires children in props for tsc
           children: createElement(Harness)
         })
       )
