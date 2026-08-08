@@ -52,7 +52,10 @@ import {
   classifyPastedReferenceText,
   type DockIngestCandidate
 } from '../lib/projectReferencesDockIngest'
-import type { ProjectReferenceCitationOpenRequest } from '../lib/projectReferenceCitationOpen'
+import {
+  decideProjectReferenceCitationOpen,
+  type ProjectReferenceCitationOpenRequest
+} from '../lib/projectReferenceCitationOpen'
 import { ProjectReferenceSourceViewer } from './ProjectReferenceSourceViewer'
 
 /** Consent dialog copy for one-shot Project-reference extracts (P1 doctrine). */
@@ -885,9 +888,9 @@ export function ProjectReferencesDockPanel({
       if (key.slice(0, separator) !== projectId) continue
       seeded[key.slice(separator + 1)] = extract
     }
-    if (Object.keys(seeded).length > 0) {
-      setExtractsByReferenceId((prev) => ({ ...seeded, ...prev }))
-    }
+    // Drop extracts from a previous project so citation open cannot read a
+    // stale ready id after a fast Work-project switch.
+    setExtractsByReferenceId(seeded)
 
     const api = extractBridge()
     if (typeof api?.getProjectReferenceExtract !== 'function') return
@@ -1423,13 +1426,46 @@ export function ProjectReferencesDockPanel({
     if (!citationOpenRequest) return
     if (citationOpenRequest.nonce === lastCitationOpenNonceRef.current) return
     if (citationOpenRequest.projectId && citationOpenRequest.projectId !== projectId) return
-    lastCitationOpenNonceRef.current = citationOpenRequest.nonce
     const reference = references.find((entry) => entry.id === citationOpenRequest.referenceId)
-    const extractId = citationOpenRequest.extractId
-    const cached = reference ? extractsByReferenceId[reference.id] : null
+    const cachedLookup = reference
+      ? Object.prototype.hasOwnProperty.call(extractsByReferenceId, reference.id)
+        ? extractsByReferenceId[reference.id]
+        : undefined
+      : undefined
+    const decision = decideProjectReferenceCitationOpen({
+      referenceId: citationOpenRequest.referenceId,
+      requestExtractId: citationOpenRequest.extractId,
+      referenceFound: Boolean(reference),
+      cached: cachedLookup
+        ? { id: cachedLookup.id, status: cachedLookup.status }
+        : cachedLookup === null
+          ? null
+          : undefined
+    })
+    if (decision.action === 'wait') return
+    lastCitationOpenNonceRef.current = citationOpenRequest.nonce
     onCitationOpenRequestConsumedRef.current?.()
+    const requestProjectId = citationOpenRequest.projectId
+    const requestNonce = citationOpenRequest.nonce
+    if (decision.action === 'missing' || decision.action === 'unavailable') {
+      queueMicrotask(() => {
+        if (projectIdRef.current !== projectId) return
+        if (requestProjectId && projectIdRef.current !== requestProjectId) return
+        window.alert(
+          decision.action === 'missing'
+            ? 'That reference is not in this project library.'
+            : 'Extract text is unavailable.'
+        )
+      })
+      return
+    }
+    const openCached =
+      cachedLookup && cachedLookup.id === decision.extractId ? cachedLookup : cachedLookup ?? null
     queueMicrotask(() => {
-      openExtractViewer(reference, extractId, cached)
+      if (projectIdRef.current !== projectId) return
+      if (requestProjectId && projectIdRef.current !== requestProjectId) return
+      if (lastCitationOpenNonceRef.current !== requestNonce) return
+      openExtractViewer(reference, decision.extractId, openCached)
     })
     // openExtractViewer closes over the latest bridge/extracts; nonce gates re-entry.
     // eslint-disable-next-line react-hooks/exhaustive-deps

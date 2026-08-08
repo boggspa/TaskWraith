@@ -809,7 +809,8 @@ it('wires citationOpenRequest into the extract viewer open path', () => {
   )
   expect(source).toContain('citationOpenRequest')
   expect(source).toContain('onCitationOpenRequestConsumed')
-  // Consume path must read by the request extractId (not only the View button cache).
-  expect(source).toMatch(/citationOpenRequest\.extractId/)
+  expect(source).toContain('decideProjectReferenceCitationOpen')
+  // Prefer ready cache / wait-for-hydrate before consuming the nonce.
+  expect(source).toMatch(/decideProjectReferenceCitationOpen\(/)
   expect(source).toContain('readProjectReferenceExtractText')
 })
