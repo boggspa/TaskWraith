@@ -6620,23 +6620,25 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .subthread-return-card {
   width: min(100%, 860px);
   position: relative;
-  /* Agent-tinted rim highlight: the FULL border carries the per-agent identity
-   * accent (--agent-rim, set inline from agentIdentity.accent) so each
-   * delegation surface reads as one cohesive "this agent" colour — a full
-   * perimeter, NOT a left-edge sliver. 2px (1px thicker than the stock hairline)
-   * for accent readability; neutral fallback when no identity is present. Same
-   * treatment on the Agent-Invocation card + the inspector timeline row. */
-  border: 2px solid color-mix(in srgb, var(--agent-rim, rgb(255 255 255 / 0.22)) 60%, transparent);
+  /* Provider-hue --accent (pinned per child on SubThreadReturnCard), matching
+   * EnsembleFanoutResultCard: frame + wash derive from the child's provider
+   * brand rather than the surrounding transcript. --agent-rim remains available
+   * for the viewport rail / agent identity accent without pill clutter. */
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgb(var(--agent-accent-rgb) / 0.12), transparent 58%),
-    rgb(255 255 255 / 0.035);
-  box-shadow: 0 14px 34px rgb(0 0 0 / 0.16);
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 56%),
+    rgb(255 255 255 / 0.032);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.13);
   color: var(--text-primary);
   padding: 0.78rem 0.9rem 0.9rem;
 }
 
-.subthread-return-header {
+/* Shared header chrome with fan-out lane cards — keep layout lockstep so a
+ * paired Sub-thread / Fan-Out wave reads as one family. Fan-out keeps its own
+ * width/overflow extras and working rim below; do not fold those in here. */
+.subthread-return-header,
+.ensemble-fanout-result-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -6644,7 +6646,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   margin-bottom: 0.72rem;
 }
 
-.subthread-return-heading {
+.subthread-return-heading,
+.ensemble-fanout-result-heading {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -6654,13 +6657,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   font-size: var(--font-size-sm);
 }
 
-.subthread-return-glyph {
+.subthread-return-glyph,
+.ensemble-fanout-result-glyph {
   color: var(--accent);
   font-size: 1rem;
   line-height: 1;
 }
 
-.subthread-return-label {
+.subthread-return-label,
+.ensemble-fanout-result-label {
   white-space: nowrap;
 }
 
@@ -6876,36 +6881,16 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   animation: none;
 }
 
+/* Fan-out-only header/heading extras on top of the dual-select shared rules
+ * with .subthread-return-* above. Working rim/chase stays untouched. */
 .ensemble-fanout-result-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  margin-bottom: 0.72rem;
   min-width: 0;
   width: 100%;
 }
 
 .ensemble-fanout-result-heading {
-  min-width: 0;
   width: 100%;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
-
-.ensemble-fanout-result-glyph {
-  color: var(--accent);
-  font-size: 1rem;
-  line-height: 1;
-}
-
-.ensemble-fanout-result-label {
-  white-space: nowrap;
 }
 
 /* Provider/role/model/order chips reuse the shared segmented-control-action

@@ -11,6 +11,11 @@ export function linkedChildReturnRelation(message: ChatMessage): 'subThread' | '
   return message.metadata?.linkedChildRelation === 'sideChat' ? 'sideChat' : 'subThread'
 }
 
+/** Fan-Out-style short meta noun for a linked-child return card header. */
+export function linkedChildReturnMetaLabel(message: ChatMessage): 'Sub-thread' | 'Side-chat' {
+  return linkedChildReturnRelation(message) === 'sideChat' ? 'Side-chat' : 'Sub-thread'
+}
+
 export function subThreadReturnBody(content: string): string {
   const tagged = content.match(
     /<(?:subthread_result|side_chat_result)(?:\s[^>]*)?>\n?([\s\S]*)\n?<\/(?:subthread_result|side_chat_result)>/

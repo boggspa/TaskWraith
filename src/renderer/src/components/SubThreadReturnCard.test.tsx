@@ -4,6 +4,7 @@ import type { ChatMessage } from '../../../main/store/types'
 import { findClickableByClassName } from '../test/reactElementTree'
 import {
   isSubThreadReturnMessage,
+  linkedChildReturnMetaLabel,
   linkedChildReturnRelation,
   subThreadReturnBody
 } from './SubThreadReturnCardModel'
@@ -23,6 +24,14 @@ function subThreadMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
     },
     ...overrides
   }
+}
+
+const SEAT = {
+  provider: 'codex',
+  model: 'gpt-5.3-codex',
+  role: 'Builder',
+  reasoningEffort: 'high',
+  permissionPresetId: 'workspace_write'
 }
 
 describe('SubThreadReturnCard', () => {
@@ -48,7 +57,21 @@ describe('SubThreadReturnCard', () => {
     ).toBe('**Async done**')
   })
 
-  it('renders opted-in side-chat returns with truthful relationship labels', () => {
+  it('names the short meta label from the linked-child relation', () => {
+    expect(linkedChildReturnMetaLabel(subThreadMessage())).toBe('Sub-thread')
+    expect(
+      linkedChildReturnMetaLabel(
+        subThreadMessage({
+          metadata: {
+            kind: 'subThreadReturn',
+            linkedChildRelation: 'sideChat'
+          }
+        })
+      )
+    ).toBe('Side-chat')
+  })
+
+  it('renders opted-in side-chat returns with Fan-Out-style short meta', () => {
     const message = subThreadMessage({
       content: '<side_chat_result>\nAsync finding.\n</side_chat_result>',
       metadata: {
@@ -64,13 +87,16 @@ describe('SubThreadReturnCard', () => {
     )
 
     expect(linkedChildReturnRelation(message)).toBe('sideChat')
-    expect(html).toContain('Side-chat result from')
+    expect(linkedChildReturnMetaLabel(message)).toBe('Side-chat')
+    expect(html).toContain('>Side-chat<')
+    expect(html).not.toContain('Side-chat result from')
+    expect(html).not.toContain('Invocation result from')
     expect(html).toContain('Async design room')
     expect(html).toContain('aria-label="Side-chat result"')
     expect(html).toContain('title="Open this side chat"')
   })
 
-  it('renders provider satellite identity, title, markdown body, and one side-chat control', () => {
+  it('renders Fan-Out-style short meta, provider-hue accent, title, markdown body, and one side-chat control', () => {
     const html = renderToStaticMarkup(
       <SubThreadReturnCard
         message={subThreadMessage()}
@@ -79,8 +105,11 @@ describe('SubThreadReturnCard', () => {
       />
     )
 
-    expect(html).toContain('subthread-return-card')
-    expect(html).toContain('Invocation result from')
+    expect(html).toContain('subthread-return-card provider-codex')
+    expect(html).toContain('--accent:var(--provider-codex-color, var(--accent))')
+    expect(html).toContain('>Sub-thread<')
+    expect(html).not.toContain('Invocation result from')
+    expect(html).not.toContain('Side-chat result from')
     expect(html).not.toContain('TaskWraith Sub-thread')
     expect(html).toContain('Codex')
     expect(html).toContain('provider-satellite-label provider-codex')
@@ -96,6 +125,42 @@ describe('SubThreadReturnCard', () => {
     expect(html).not.toContain('Open beside')
     expect(html).not.toContain('Open drawer')
     expect(html).not.toContain('Open sub-thread')
+  })
+
+  it('renders seat-first heading when a sub-thread seat snapshot is present', () => {
+    const html = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={subThreadMessage({
+          metadata: {
+            kind: 'subThreadReturn',
+            subThreadId: 'chat-child-1',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'Build agent',
+            subThreadSeat: SEAT
+          }
+        })}
+      />
+    )
+
+    const labelIdx = html.indexOf('>Sub-thread<')
+    const seatRoleIdx = html.indexOf('subthread-return-seat-role')
+    // Class token is `subthread-return-seat` (not the longer seat-role class).
+    const seatChipsIdx = html.search(/\bsubthread-return-seat\b(?!-)/)
+    const titleIdx = html.indexOf('>Build agent<')
+    const agentIdx = html.indexOf('subthread-return-agent')
+
+    expect(labelIdx).toBeGreaterThan(-1)
+    expect(seatRoleIdx).toBeGreaterThan(labelIdx)
+    expect(seatChipsIdx).toBeGreaterThan(seatRoleIdx)
+    expect(titleIdx).toBeGreaterThan(seatChipsIdx)
+    expect(agentIdx).toBeGreaterThan(titleIdx)
+    expect(html).toContain('seat-state-chips')
+    expect(html).toContain('Builder')
+    expect(html).not.toContain('provider-satellite-label')
+    expect(html).not.toContain('Invocation result from')
+    // Agent identity stays as icon+name, not segmented pill chrome.
+    expect(html).toContain('subthread-return-agent-icon')
+    expect(html).not.toContain('segmented-control-action')
   })
 
   it('renders the return viewport with controlled expanded copy', () => {

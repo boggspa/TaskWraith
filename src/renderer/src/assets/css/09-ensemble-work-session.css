@@ -4855,15 +4855,19 @@
   white-space: nowrap;
 }
 
-/* Completed-round fan-out disclosure. The durable lane cards remain ordinary
- * virtual rows; this satellite one-liner is the compact round-level handle
- * that re-inserts them without opening the rest of the round. */
-.ensemble-fanout-viewport-header {
+/* Completed-round fan-out / parallel-result disclosure. The durable lane
+ * cards remain ordinary virtual rows; this satellite one-liner is the
+ * compact round-level handle that re-inserts them without opening the rest
+ * of the round. `.parallel-result-viewport-header` shares the collapsed-
+ * stack lift; fan-out stage chrome stays fan-out-only below. */
+.ensemble-fanout-viewport-header,
+.parallel-result-viewport-header {
   width: 100%;
   margin: 2px 0 8px;
 }
 
-.ensemble-fanout-viewport-header .collapsed-activity-stack-label {
+.ensemble-fanout-viewport-header .collapsed-activity-stack-label,
+.parallel-result-viewport-header .collapsed-activity-stack-label {
   display: -webkit-box;
   min-width: 0;
   overflow: hidden;
@@ -4873,10 +4877,14 @@
   -webkit-line-clamp: 3;
 }
 
-/* Fan-out is an actioned transcript summary, not a low-priority system
- * notice. It deliberately overrides the generic compact 12px treatment so
- * the round-level control can be read alongside its full-size lane cards. */
+/* Fan-out / parallel-result are actioned transcript summaries, not
+ * low-priority system notices. They deliberately override the generic
+ * compact 12px treatment so the round-level control can be read alongside
+ * its full-size lane cards. */
 .ensemble-fanout-viewport-header
+  .collapsed-activity-stack.is-compact
+  .collapsed-activity-stack-summary,
+.parallel-result-viewport-header
   .collapsed-activity-stack.is-compact
   .collapsed-activity-stack-summary {
   gap: 0.45rem;
@@ -4887,7 +4895,8 @@
   line-height: 1.35;
 }
 
-.ensemble-fanout-viewport-header .collapsed-activity-stack-meta {
+.ensemble-fanout-viewport-header .collapsed-activity-stack-meta,
+.parallel-result-viewport-header .collapsed-activity-stack-meta {
   font-size: 0.72em;
   letter-spacing: 0.02em;
 }

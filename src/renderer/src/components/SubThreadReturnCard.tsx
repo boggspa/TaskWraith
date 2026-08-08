@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react'
-import type { ChatMessage, ChatRecord } from '../../../main/store/types'
+import type { ChatMessage, ChatRecord, ProviderId } from '../../../main/store/types'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
 import { MessageActionsChip } from './MessageActionsChip'
@@ -10,7 +11,11 @@ import { ProviderSatelliteLabel } from './ProviderSatelliteLabel'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 import { composedSeatRole, seatFromSubThreadMetadata } from '../lib/transcriptSeat'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
-import { linkedChildReturnRelation, subThreadReturnBody } from './SubThreadReturnCardModel'
+import {
+  linkedChildReturnMetaLabel,
+  linkedChildReturnRelation,
+  subThreadReturnBody
+} from './SubThreadReturnCardModel'
 
 interface SubThreadReturnCardProps {
   message: ChatMessage
@@ -53,7 +58,8 @@ export function SubThreadReturnCard({
   const metadata = message.metadata || {}
   const relation = linkedChildReturnRelation(message)
   const isSideChatReturn = relation === 'sideChat'
-  const provider = metadata.subThreadProvider
+  const metaLabel = linkedChildReturnMetaLabel(message)
+  const provider = textValue(metadata.subThreadProvider) as ProviderId | undefined
   const title =
     textValue(metadata.subThreadTitle) ||
     (isSideChatReturn ? 'Untitled side chat' : 'Untitled sub-thread')
@@ -66,6 +72,14 @@ export function SubThreadReturnCard({
   // every delegation surface: this card, the Agent-Invocation card, the
   // delegation timeline). Seeded by the sub-thread chat id.
   const agentIdentity = subThreadId ? assignAgentIdentityFromSeed(subThreadId) : null
+  // Prefer the Fan-Out provider-hue --accent pattern so the frame/glyph tint
+  // from the child's provider (and seat model when present) rather than the
+  // surrounding transcript. Agent identity stays as icon+name, not pill chrome.
+  const hueClass = resolveProviderHueClass(provider, seat?.model) || 'unknown'
+  const cardAccentStyle = {
+    '--accent': `var(--provider-${hueClass}-color, var(--accent))`,
+    ...(agentIdentity ? { ['--agent-rim']: agentIdentity.accent } : {})
+  } as CSSProperties
   const body = subThreadReturnBody(message.content)
   const renderFullBody = Boolean(resultExpanded) || body.length <= COLLAPSED_RESULT_MARKDOWN_LIMIT
   const previewBody =
@@ -83,36 +97,19 @@ export function SubThreadReturnCard({
 
   return (
     <article
-      className="subthread-return-card"
-      style={
-        agentIdentity ? ({ ['--agent-rim']: agentIdentity.accent } as CSSProperties) : undefined
-      }
+      className={`subthread-return-card provider-${hueClass}`}
+      style={cardAccentStyle}
     >
       <header className="subthread-return-header">
         <div className="subthread-return-heading">
           <span aria-hidden="true" className="subthread-return-glyph">
             ↩
           </span>
-          <span className="subthread-return-label">
-            {isSideChatReturn ? 'Side-chat result from' : 'Invocation result from'}
-          </span>
-          {agentIdentity && (
-            <span className="subthread-return-agent" title={agentIdentity.name}>
-              <AgentIdentityIcon
-                name={agentIdentity.key}
-                color={agentIdentity.accent}
-                size={36}
-                className="subthread-return-agent-icon"
-                title={agentIdentity.name}
-              />
-              <span className="subthread-return-agent-name">{agentIdentity.name}</span>
-            </span>
-          )}
+          <span className="subthread-return-label">{metaLabel}</span>
           {seat ? (
-            // The seat element, same as the fan-out lane and peer-message cards:
-            // a child result is worth weighing by what produced it, and a bare
-            // provider label cannot tell a read-only Sonnet from a full-access
-            // Opus. Role leads, in the seat's own accent, then the config.
+            // Seat-first, same order as EnsembleFanoutResultCard: WHO before
+            // the child title / agent character. Role leads in the seat accent,
+            // then the config chips.
             <>
               {seatRole && (
                 <strong
@@ -132,14 +129,26 @@ export function SubThreadReturnCard({
             </>
           ) : (
             // No seat captured — a record written before capture existed, or a
-            // child whose provider and model did not both resolve. The original
-            // provider label is honest about knowing less.
+            // child whose provider and model did not both resolve. Honest about
+            // knowing less: provider satellite + plain title (no legacy pills).
             <ProviderSatelliteLabel
-              provider={typeof provider === 'string' ? provider : undefined}
+              provider={provider}
               className="subthread-return-provider"
             />
           )}
           <strong className="subthread-return-title">{title}</strong>
+          {agentIdentity && (
+            <span className="subthread-return-agent" title={agentIdentity.name}>
+              <AgentIdentityIcon
+                name={agentIdentity.key}
+                color={agentIdentity.accent}
+                size={36}
+                className="subthread-return-agent-icon"
+                title={agentIdentity.name}
+              />
+              <span className="subthread-return-agent-name">{agentIdentity.name}</span>
+            </span>
+          )}
         </div>
         {subThreadId && (onOpenSubThread || onOpenSubThreadInSidePanel) && (
           <div className="subthread-return-actions">
