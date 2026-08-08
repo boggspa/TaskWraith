@@ -1855,6 +1855,20 @@ const api = {
     ipcRenderer.invoke('projects:revoke-reference-extract', input),
   readProjectReferenceExtractText: (input: { extractId: string; maxChars?: number }) =>
     ipcRenderer.invoke('projects:read-reference-extract-text', input),
+  generateProjectStudioDraft: (input: {
+    projectId: string
+    kind: string
+    referenceIds: string[]
+    title?: string
+    chatId: string
+    workspacePath: string
+  }) => ipcRenderer.invoke('projects:studio-generate', input),
+  saveProjectStudioDraft: (input: { projectId: string; draftId: string; title?: string }) =>
+    ipcRenderer.invoke('projects:studio-save', input),
+  discardProjectStudioDraft: (input: { projectId: string; draftId: string }) =>
+    ipcRenderer.invoke('projects:studio-discard', input),
+  listProjectStudioArtifacts: (input: { projectId: string; includeDiscarded?: boolean }) =>
+    ipcRenderer.invoke('projects:studio-list', input),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
   getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
   getPinnedMessages: (workspaceId?: string) =>

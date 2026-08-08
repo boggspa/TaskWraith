@@ -118,6 +118,10 @@ import type {
   ProjectReferenceExtract,
   ProjectReferenceExtractConsent
 } from '../shared/projectReferenceExtract'
+import type {
+  ProjectStudioCompanionMeta,
+  ProjectStudioKind
+} from '../shared/projectStudio'
 import type { DispatchResult } from '../main/services/RunCoordinator'
 import type {
   ProjectLegacyImportMarker,
@@ -1883,6 +1887,39 @@ declare global {
         maxChars?: number
       }) => Promise<
         | { ok: true; text: string; truncated: boolean; charCount: number }
+        | { ok: false; code: string; message: string }
+      >
+      generateProjectStudioDraft: (input: {
+        projectId: string
+        kind: ProjectStudioKind
+        referenceIds: string[]
+        title?: string
+        chatId: string
+        workspacePath: string
+      }) => Promise<
+        | { ok: true; artifact: ProjectStudioCompanionMeta }
+        | { ok: false; code: string; message: string; referenceId?: string }
+      >
+      saveProjectStudioDraft: (input: {
+        projectId: string
+        draftId: string
+        title?: string
+      }) => Promise<
+        | { ok: true; artifact: ProjectStudioCompanionMeta }
+        | { ok: false; code: string; message: string; referenceId?: string }
+      >
+      discardProjectStudioDraft: (input: {
+        projectId: string
+        draftId: string
+      }) => Promise<
+        | { ok: true; artifact: ProjectStudioCompanionMeta }
+        | { ok: false; code: string; message: string; referenceId?: string }
+      >
+      listProjectStudioArtifacts: (input: {
+        projectId: string
+        includeDiscarded?: boolean
+      }) => Promise<
+        | { ok: true; artifacts: ProjectStudioCompanionMeta[] }
         | { ok: false; code: string; message: string }
       >
       clearWorkspaces: () => Promise<void>
