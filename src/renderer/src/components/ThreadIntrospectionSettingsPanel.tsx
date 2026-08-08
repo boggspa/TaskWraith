@@ -47,6 +47,7 @@ interface ThreadIntrospectionApi {
     blocked?: string
     pack?: MemoryProposalPack
     conventionEntryId?: string
+    skillId?: string
   }>
   runManualIntrospection?: (
     input: RunManualIntrospectionRequest

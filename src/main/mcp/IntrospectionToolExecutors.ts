@@ -6,7 +6,7 @@
  * - `tw_introspection_list` / `tw_introspection_read` — read-only pack access
  * - `tw_introspection_review` — approve/reject/expire proposals (no apply path)
  *
- * Apply (`applyMemoryProposal` → RepoConventionIndex) stays Settings-only in
+ * Apply (`applyMemoryProposal` → RepoConventionIndex / TW skills) stays Settings-only in
  * phase 1; skill/instruction writes remain blocked.
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'

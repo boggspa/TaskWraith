@@ -147,18 +147,71 @@ export function normalizeMemoryProposalApplyReceipt(
   if (!value || typeof value !== 'object') return null
   const input = value as Partial<MemoryProposalApplyReceipt>
   const appliedAt = text(input.appliedAt, 64)
-  const conventionEntryId = text(input.conventionEntryId, 120)
   const packId = text(input.packId, 120)
   const proposalId = text(input.proposalId, 120)
-  if (!appliedAt || !conventionEntryId || !packId || !proposalId) return null
-  if (input.target !== 'RepoConventionIndex') return null
-  return {
-    appliedAt,
-    target: 'RepoConventionIndex',
-    conventionEntryId,
-    packId,
-    proposalId
+  if (!appliedAt || !packId || !proposalId) return null
+
+  if (input.target === 'RepoConventionIndex') {
+    const conventionEntryId = text(input.conventionEntryId, 120)
+    if (!conventionEntryId) return null
+    return {
+      appliedAt,
+      target: 'RepoConventionIndex',
+      conventionEntryId,
+      packId,
+      proposalId
+    }
   }
+
+  if (input.target === 'TaskWraithSkill') {
+    const skillId = text(input.skillId, 128)
+    const skillScope = input.skillScope === 'user' || input.skillScope === 'workspace'
+      ? input.skillScope
+      : null
+    if (!skillId || !skillScope) return null
+    const rollbackRaw =
+      input.rollbackSnapshot && typeof input.rollbackSnapshot === 'object'
+        ? input.rollbackSnapshot
+        : null
+    const previousBody =
+      rollbackRaw && typeof rollbackRaw.previousBody === 'string'
+        ? rollbackRaw.previousBody
+        : rollbackRaw && rollbackRaw.previousBody === null
+          ? null
+          : undefined
+    return {
+      appliedAt,
+      target: 'TaskWraithSkill',
+      skillId,
+      skillScope,
+      ...(text(input.skillRelativePath, 240)
+        ? { skillRelativePath: text(input.skillRelativePath, 240) }
+        : {}),
+      ...(previousBody !== undefined
+        ? {
+            rollbackSnapshot: {
+              previousBody,
+              ...(typeof rollbackRaw?.previousName === 'string' ||
+              rollbackRaw?.previousName === null
+                ? { previousName: rollbackRaw.previousName }
+                : {}),
+              ...(typeof rollbackRaw?.previousDescription === 'string' ||
+              rollbackRaw?.previousDescription === null
+                ? { previousDescription: rollbackRaw.previousDescription }
+                : {}),
+              ...(typeof rollbackRaw?.previousEnabled === 'boolean' ||
+              rollbackRaw?.previousEnabled === null
+                ? { previousEnabled: rollbackRaw.previousEnabled }
+                : {})
+            }
+          }
+        : {}),
+      packId,
+      proposalId
+    }
+  }
+
+  return null
 }
 
 export function normalizeIntrospectionEvidenceRef(value: unknown): IntrospectionEvidenceRef | null {

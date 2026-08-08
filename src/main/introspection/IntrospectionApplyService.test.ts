@@ -1,10 +1,29 @@
-import { describe, expect, it, vi } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyMemoryProposal } from './IntrospectionApplyService'
+import { SkillsStore } from '../skills/SkillsStore'
 import type {
   MemoryProposal,
   MemoryProposalPack,
   RepoConventionIndexSnapshot
 } from '../store/types'
+
+let skillUserDataPath = ''
+let skillWorkspacePath = ''
+
+beforeEach(() => {
+  skillUserDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-apply-skills-user-'))
+  skillWorkspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-apply-skills-ws-'))
+})
+
+afterEach(() => {
+  if (skillUserDataPath) fs.rmSync(skillUserDataPath, { recursive: true, force: true })
+  if (skillWorkspacePath) fs.rmSync(skillWorkspacePath, { recursive: true, force: true })
+  skillUserDataPath = ''
+  skillWorkspacePath = ''
+})
 
 const NOW = '2026-07-05T18:00:00.000Z'
 
@@ -129,22 +148,83 @@ describe('applyMemoryProposal', () => {
     expect(store.updateMemoryProposal).not.toHaveBeenCalled()
   })
 
-  it('blocks approved skill_patch proposals in phase 1', () => {
+  it('applies an approved skill_patch into TaskWraith skill roots with rollback snapshot', () => {
+    const skillsStore = new SkillsStore({
+      userDataPath: skillUserDataPath,
+      now: () => new Date(NOW)
+    })
     const store = makeStore({
       pack: pack({
+        workspacePath: skillWorkspacePath,
         proposals: [
           proposal({
             kind: 'skill_patch',
             scope: 'skill',
-            skillPatchDiff: '+++ skill\n+rule'
+            skillPatchDiff: JSON.stringify({
+              skillId: 'intro-rule',
+              skillScope: 'workspace',
+              name: 'Intro Rule',
+              body: 'Always stage by explicit path.'
+            })
           })
         ]
       })
     })
-    const result = applyMemoryProposal({ store, now: () => NOW }, 'pack-1', 'prop-1')
+    const result = applyMemoryProposal(
+      { store, skillsStore, now: () => NOW },
+      'pack-1',
+      'prop-1'
+    )
 
-    expect(result).toEqual({ ok: false, blocked: 'skill_patch_not_supported_phase1' })
+    expect(result.ok).toBe(true)
+    expect(result.skillId).toBe('intro-rule')
     expect(store.saveRepoConventionIndex).not.toHaveBeenCalled()
+    expect(store.updateMemoryProposal).toHaveBeenCalledWith(
+      'pack-1',
+      'prop-1',
+      expect.objectContaining({
+        status: 'applied',
+        applyReceipt: expect.objectContaining({
+          target: 'TaskWraithSkill',
+          skillId: 'intro-rule',
+          skillScope: 'workspace',
+          rollbackSnapshot: expect.objectContaining({ previousBody: null })
+        })
+      })
+    )
+    expect(
+      skillsStore.listWorkspaceSkills(skillWorkspacePath, 'ws-1').map((s) => s.body)
+    ).toEqual(['Always stage by explicit path.'])
+  })
+
+  it('blocks skill_patch when the skill id escapes the TaskWraith skill root', () => {
+    const skillsStore = new SkillsStore({
+      userDataPath: skillUserDataPath,
+      now: () => new Date(NOW)
+    })
+    const store = makeStore({
+      pack: pack({
+        workspacePath: skillWorkspacePath,
+        proposals: [
+          proposal({
+            kind: 'skill_patch',
+            scope: 'skill',
+            skillPatchDiff: JSON.stringify({
+              skillId: '../escape',
+              skillScope: 'user',
+              body: 'nope'
+            })
+          })
+        ]
+      })
+    })
+    const result = applyMemoryProposal(
+      { store, skillsStore, now: () => NOW },
+      'pack-1',
+      'prop-1'
+    )
+    expect(result).toEqual({ ok: false, blocked: 'skill_patch_path_escape' })
+    expect(store.updateMemoryProposal).not.toHaveBeenCalled()
   })
 
   it('is idempotent when the proposal is already applied', () => {

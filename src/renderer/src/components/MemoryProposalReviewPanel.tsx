@@ -61,6 +61,7 @@ export interface MemoryProposalReviewPanelProps {
     blocked?: string
     pack?: MemoryProposalPack
     conventionEntryId?: string
+    skillId?: string
   }>
   /** Test/SSR helper — expands a proposal row on first render. */
   initialExpandedProposalId?: string | null
@@ -292,14 +293,24 @@ export function MemoryProposalReviewPanel({
         } else {
           await loadPacks()
         }
-        const entryId = result.conventionEntryId ?? result.pack?.proposals.find(
-          (item) => item.id === proposal.id
-        )?.applyReceipt?.conventionEntryId
-        setApplyNotice(
-          entryId
-            ? `Applied to repo conventions (${entryId}).`
-            : 'Applied to repo conventions.'
-        )
+        const appliedProposal =
+          result.pack?.proposals.find((item) => item.id === proposal.id) ?? proposal
+        const receipt = appliedProposal.applyReceipt
+        if (receipt?.target === 'TaskWraithSkill' || proposal.kind === 'skill_patch') {
+          const skillId = result.skillId ?? receipt?.skillId
+          setApplyNotice(
+            skillId
+              ? `Applied to TaskWraith skills (${skillId}).`
+              : 'Applied to TaskWraith skills.'
+          )
+        } else {
+          const entryId = result.conventionEntryId ?? receipt?.conventionEntryId
+          setApplyNotice(
+            entryId
+              ? `Applied to repo conventions (${entryId}).`
+              : 'Applied to repo conventions.'
+          )
+        }
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err))
       } finally {

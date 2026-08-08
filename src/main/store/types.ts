@@ -30,6 +30,12 @@ export type {
   EnsembleFanoutIsolationPolicy
 } from '../../shared/ensembleFanoutIsolation'
 export { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
+import type { ProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
+export type {
+  HarnessPassthroughMode,
+  ProviderHarnessPosture,
+  ProviderHarnessPostureMap
+} from '../../shared/providerHarnessPosture'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -2396,6 +2402,12 @@ export interface AppSettings {
    * request cache behavior only on transports TaskWraith owns and otherwise
    * records the provider/CLI-reported cache usage when available. */
   promptCache?: PromptCacheSettings
+  /**
+   * Sparse per-provider overrides for skills/hooks harness passthrough
+   * (`tw-only` | `allow-native` | `suppress`). Normalized on read against
+   * `DEFAULT_PROVIDER_HARNESS_POSTURES` in `shared/providerHarnessPosture.ts`.
+   */
+  providerHarnessPosture?: ProviderHarnessPostureMap
   userMcpServers?: UserMcpServerConfig[]
   codexUsageCredential?: {
     encryptedAccessToken?: string
@@ -5562,11 +5574,26 @@ export interface IntrospectionEvidenceItem {
   citationToken?: string
 }
 
+/** Rollback snapshot retained when a skill_patch is applied to a TW skill root. */
+export interface MemoryProposalSkillRollbackSnapshot {
+  /** Previous skill body, or null when the skill did not exist before apply. */
+  previousBody: string | null
+  previousName?: string | null
+  previousDescription?: string | null
+  previousEnabled?: boolean | null
+}
+
 /** Receipt written when a reviewed proposal is applied to a durable target. */
 export interface MemoryProposalApplyReceipt {
   appliedAt: string
-  target: 'RepoConventionIndex'
-  conventionEntryId: string
+  target: 'RepoConventionIndex' | 'TaskWraithSkill'
+  /** Present when target is RepoConventionIndex. */
+  conventionEntryId?: string
+  /** Present when target is TaskWraithSkill. */
+  skillId?: string
+  skillScope?: 'user' | 'workspace'
+  skillRelativePath?: string
+  rollbackSnapshot?: MemoryProposalSkillRollbackSnapshot
   packId: string
   proposalId: string
 }

@@ -41,7 +41,7 @@ describe('memoryProposalDisplay', () => {
     expect(canReviewMemoryProposal(proposal({ requiresReview: false }))).toBe(false)
   })
 
-  it('detects phase-1 applyable proposals and formats blocked reasons', () => {
+  it('detects applyable proposals including approved skill_patch', () => {
     expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'repo_convention' }))).toBe(
       true
     )
@@ -49,14 +49,15 @@ describe('memoryProposalDisplay', () => {
       true
     )
     expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'skill_patch' }))).toBe(
-      false
+      true
     )
     expect(canApplyMemoryProposal(proposal({ status: 'proposed', kind: 'repo_convention' }))).toBe(
       false
     )
-    expect(formatApplyMemoryProposalBlocked('skill_patch_not_supported_phase1')).toContain(
-      'Skill Patch Manager'
+    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'preference' }))).toBe(
+      false
     )
+    expect(formatApplyMemoryProposalBlocked('skill_patch_path_escape')).toContain('escape')
   })
 
   it('renders apply hints by status and kind', () => {
@@ -64,7 +65,7 @@ describe('memoryProposalDisplay', () => {
       'Approved — ready to apply to repo conventions.'
     )
     expect(memoryProposalApplyHint(proposal({ status: 'approved', kind: 'skill_patch' }))).toBe(
-      'Apply is not available for this kind in phase 1.'
+      'Approved — ready to apply to TaskWraith skills.'
     )
     expect(
       memoryProposalApplyHint(
@@ -81,6 +82,23 @@ describe('memoryProposalDisplay', () => {
         })
       )
     ).toContain('intro-prop-1')
+    expect(
+      memoryProposalApplyHint(
+        proposal({
+          status: 'applied',
+          kind: 'skill_patch',
+          applyReceipt: {
+            appliedAt: '2026-07-05T20:10:00.000Z',
+            target: 'TaskWraithSkill',
+            skillId: 'intro-p1',
+            skillScope: 'user',
+            packId: 'pack-1',
+            proposalId: 'p1',
+            rollbackSnapshot: { previousBody: null }
+          }
+        })
+      )
+    ).toContain('intro-p1')
   })
 
   it('filters proposals by kind, scope, status, and search', () => {

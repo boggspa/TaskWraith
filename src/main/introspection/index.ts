@@ -50,6 +50,22 @@ export {
 } from './IntrospectionApplyService'
 
 export {
+  applySkillPatch,
+  buildSkillPatchDiffForProposal,
+  parseSkillPatchDiff,
+  resolveSkillPatchTarget,
+  rollbackSkillPatch,
+  sanitizeSkillIdCandidate,
+  skillIdForProposal,
+  type ApplySkillPatchResult,
+  type ResolvedSkillPatchTarget,
+  type RollbackSkillPatchResult,
+  type SkillPatchApplyBlockReason,
+  type SkillPatchApplyDeps,
+  type SkillPatchDiffSpec
+} from './SkillPatchApply'
+
+export {
   expireDueMemoryProposals,
   supersedeMemoryProposal,
   type ExpireDueMemoryProposalsInput,

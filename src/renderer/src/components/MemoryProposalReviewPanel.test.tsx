@@ -88,7 +88,7 @@ describe('MemoryProposalReviewPanel', () => {
     expect(html).toContain('awaiting review')
   })
 
-  it('shows Apply for approved repo_convention proposals only', () => {
+  it('shows Apply for approved repo_convention proposals', () => {
     const pack = makePack({
       proposals: [
         {
@@ -101,21 +101,6 @@ describe('MemoryProposalReviewPanel', () => {
           confidence: 0.93,
           evidenceRefs: [],
           dedupKey: 'repo_convention:prettier',
-          requiresReview: true,
-          createdAt: '2026-07-05T20:05:00.000Z',
-          updatedAt: '2026-07-05T20:05:00.000Z'
-        },
-        {
-          id: 'prop-skill',
-          kind: 'skill_patch',
-          scope: 'skill',
-          status: 'approved',
-          title: 'Skill patch blocked',
-          lesson: 'Patch formatting skill.',
-          confidence: 0.88,
-          evidenceRefs: [],
-          skillPatchDiff: '---\n+++',
-          dedupKey: 'skill_patch:blocked',
           requiresReview: true,
           createdAt: '2026-07-05T20:05:00.000Z',
           updatedAt: '2026-07-05T20:05:00.000Z'
@@ -134,10 +119,9 @@ describe('MemoryProposalReviewPanel', () => {
     expect(html).toContain('memory-proposal-review-action-button--apply')
     expect(html).toContain('Apply')
     expect(html).toContain('ready to apply to repo conventions')
-    expect(html).not.toContain('Apply is not available for this kind in phase 1.')
   })
 
-  it('hides Apply for approved skill_patch proposals', () => {
+  it('shows Apply for approved skill_patch proposals', () => {
     const pack = makePack({
       proposals: [
         {
@@ -145,12 +129,12 @@ describe('MemoryProposalReviewPanel', () => {
           kind: 'skill_patch',
           scope: 'skill',
           status: 'approved',
-          title: 'Skill patch blocked',
+          title: 'Skill patch ready',
           lesson: 'Patch formatting skill.',
           confidence: 0.88,
           evidenceRefs: [],
           skillPatchDiff: '---\n+++',
-          dedupKey: 'skill_patch:blocked',
+          dedupKey: 'skill_patch:ready',
           requiresReview: true,
           createdAt: '2026-07-05T20:05:00.000Z',
           updatedAt: '2026-07-05T20:05:00.000Z'
@@ -166,7 +150,7 @@ describe('MemoryProposalReviewPanel', () => {
       />
     )
 
-    expect(html).not.toContain('memory-proposal-review-action-button--apply')
-    expect(html).toContain('Apply is not available for this kind in phase 1.')
+    expect(html).toContain('memory-proposal-review-action-button--apply')
+    expect(html).toContain('ready to apply to TaskWraith skills')
   })
 })

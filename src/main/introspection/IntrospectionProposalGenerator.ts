@@ -11,6 +11,7 @@ import {
   evidenceItemToRef,
   proposalRequiresReview
 } from './IntrospectionModel'
+import { buildSkillPatchDiffForProposal } from './SkillPatchApply'
 import type {
   IntrospectionEvidenceItem,
   MemoryProposal,
@@ -196,13 +197,16 @@ export function proposalFromEvidenceItem(
   const kind = classification.kind
   const resolvedScope: MemoryProposalScope =
     scope === 'provider' ? 'provider' : classification.scope
+  const id = idFactory()
+  const title = proposalTitle(item, kind)
+  const lesson = distillLesson(item, kind)
   return {
-    id: idFactory(),
+    id,
     kind,
     scope: resolvedScope,
     status: 'proposed',
-    title: proposalTitle(item, kind),
-    lesson: distillLesson(item, kind),
+    title,
+    lesson,
     confidence,
     evidenceRefs: [evidenceItemToRef(item)],
     dedupKey: buildProposalDedupKey(kind, item.signal, item.chatId),
@@ -211,6 +215,16 @@ export function proposalFromEvidenceItem(
     updatedAt: nowIso,
     ...(classification.suggestedApplyTarget
       ? { suggestedApplyTarget: classification.suggestedApplyTarget }
+      : {}),
+    ...(kind === 'skill_patch'
+      ? {
+          skillPatchDiff: buildSkillPatchDiffForProposal({
+            proposalId: id,
+            title,
+            lesson,
+            skillScope: 'user'
+          })
+        }
       : {}),
     ...(item.provider ? { providerId: item.provider } : {})
   }

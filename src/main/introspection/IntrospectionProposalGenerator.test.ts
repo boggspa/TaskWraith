@@ -43,6 +43,15 @@ describe('IntrospectionProposalGenerator', () => {
     expect(proposal?.kind).toBe('skill_patch')
     expect(proposal?.requiresReview).toBe(true)
     expect(proposal?.lesson).toContain('scoped Prettier')
+    expect(proposal?.skillPatchDiff).toBeTruthy()
+    const parsed = JSON.parse(String(proposal?.skillPatchDiff)) as {
+      skillId: string
+      body: string
+      skillScope: string
+    }
+    expect(parsed.skillId).toBe('intro-proposal-1')
+    expect(parsed.body).toContain('scoped Prettier')
+    expect(parsed.skillScope).toBe('user')
   })
 
   it('dedupes repeated signals across evidence items', () => {

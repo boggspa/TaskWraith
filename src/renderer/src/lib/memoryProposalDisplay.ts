@@ -94,10 +94,19 @@ export function memoryProposalConfidenceClass(confidence: number): string {
   return 'memory-proposal-confidence memory-proposal-confidence--low'
 }
 
-const PHASE1_APPLYABLE_KINDS = new Set<MemoryProposalKind>(['repo_convention', 'do_not_repeat'])
+const APPLYABLE_KINDS = new Set<MemoryProposalKind>([
+  'repo_convention',
+  'do_not_repeat',
+  'skill_patch'
+])
 
+/** @deprecated Use isApplyableMemoryProposalKind — kept for callers that still say “phase 1”. */
 export function isPhase1ApplyableKind(kind: MemoryProposalKind): boolean {
-  return PHASE1_APPLYABLE_KINDS.has(kind)
+  return kind === 'repo_convention' || kind === 'do_not_repeat'
+}
+
+export function isApplyableMemoryProposalKind(kind: MemoryProposalKind): boolean {
+  return APPLYABLE_KINDS.has(kind)
 }
 
 export function canReviewMemoryProposal(proposal: MemoryProposal): boolean {
@@ -105,7 +114,7 @@ export function canReviewMemoryProposal(proposal: MemoryProposal): boolean {
 }
 
 export function canApplyMemoryProposal(proposal: MemoryProposal): boolean {
-  return proposal.status === 'approved' && isPhase1ApplyableKind(proposal.kind)
+  return proposal.status === 'approved' && isApplyableMemoryProposalKind(proposal.kind)
 }
 
 const APPLY_BLOCKED_LABELS: Record<string, string> = {
@@ -113,13 +122,17 @@ const APPLY_BLOCKED_LABELS: Record<string, string> = {
   proposal_not_found: 'Proposal not found.',
   proposal_not_approved: 'Proposal must be approved before apply.',
   workspace_required: 'Pack must be scoped to a workspace before apply.',
-  kind_not_supported_phase1: 'This proposal kind cannot be applied in phase 1.',
+  workspace_path_required: 'Pack must include a workspace path for workspace skill apply.',
+  kind_not_supported_phase1: 'This proposal kind cannot be applied yet.',
   skill_patch_not_supported_phase1:
     'Skill patches remain review-only until the Skill Patch Manager ships.',
-  bug_not_supported_phase1: 'Bug proposals cannot be applied in phase 1.',
-  preference_not_supported_phase1: 'User preferences cannot be applied in phase 1.',
-  provider_hint_not_supported_phase1: 'Provider hints cannot be applied in phase 1.',
-  failure_mode_not_supported_phase1: 'Failure-mode proposals cannot be applied in phase 1.'
+  skill_patch_invalid_target: 'Skill patch is missing a valid TaskWraith skill target.',
+  skill_patch_path_escape: 'Skill patch skill id would escape the TaskWraith skill root.',
+  skills_store_unavailable: 'TaskWraith skills store is unavailable for apply.',
+  bug_not_supported_phase1: 'Bug proposals cannot be applied yet.',
+  preference_not_supported_phase1: 'User preferences cannot be applied yet.',
+  provider_hint_not_supported_phase1: 'Provider hints cannot be applied yet.',
+  failure_mode_not_supported_phase1: 'Failure-mode proposals cannot be applied yet.'
 }
 
 export function formatApplyMemoryProposalBlocked(blocked: string): string {
@@ -128,16 +141,25 @@ export function formatApplyMemoryProposalBlocked(blocked: string): string {
 
 export function memoryProposalApplyHint(proposal: MemoryProposal): string {
   if (proposal.status === 'applied') {
+    if (proposal.applyReceipt?.target === 'TaskWraithSkill') {
+      const skillId = proposal.applyReceipt.skillId
+      return skillId
+        ? `Applied to TaskWraith skills (${skillId}).`
+        : 'Applied to TaskWraith skills.'
+    }
     const entryId = proposal.applyReceipt?.conventionEntryId
     return entryId
       ? `Applied to repo conventions (${entryId}).`
       : 'Applied to repo conventions.'
   }
   if (canApplyMemoryProposal(proposal)) {
+    if (proposal.kind === 'skill_patch') {
+      return 'Approved — ready to apply to TaskWraith skills.'
+    }
     return 'Approved — ready to apply to repo conventions.'
   }
-  if (proposal.status === 'approved' && !isPhase1ApplyableKind(proposal.kind)) {
-    return 'Apply is not available for this kind in phase 1.'
+  if (proposal.status === 'approved' && !isApplyableMemoryProposalKind(proposal.kind)) {
+    return 'Apply is not available for this kind yet.'
   }
   if (proposal.requiresReview) {
     return 'Requires review before apply.'
