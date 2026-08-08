@@ -44,8 +44,12 @@ import {
   type AppStoreHostAuthorityShutdownCallback,
   type AppStoreHostAuthoritySnapshotDonor
 } from './AppStoreHostAuthority'
-import type { HostAuthority } from './HostAuthority'
+import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
 import type { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
+import {
+  captureTwMissionFromHostSnapshot,
+  type TwMissionHostCaptureResult
+} from './twmission/TwMissionHostCapture'
 import {
   HostDeferredCommandBridge,
   type HostDeferredCommandBridgePorts
@@ -168,6 +172,19 @@ export interface HostMainComposition {
   getPosition(): ReturnType<HostRuntimeBootstrap['getPosition']>
   /** Body-free recovery summary passthrough — counts and availability only. */
   getRecoverySummary(): HostRuntimeRecoverySummaryWithDeferred
+  /**
+   * Wave 5 next-slice — export a privacy-safe `.twmission` bundle from the
+   * live Host snapshot (authority.snapshot → capture). Read-only; does not
+   * mutate Host journals. Import remains detached via importTwMissionBundleBytes.
+   * Not AC9 PASS.
+   */
+  exportTwMission(
+    context: HostAuthorityCallContext,
+    options?: {
+      readonly exportedAt?: string
+      readonly redactionNotes?: readonly string[]
+    }
+  ): Promise<TwMissionHostCaptureResult>
   /** Idempotent durable flush. Listener lifecycle belongs to the supervisor. */
   shutdown(): Promise<void>
 }
@@ -382,6 +399,19 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     session,
     getPosition: () => runtime.getPosition(),
     getRecoverySummary: () => runtime.getRecoverySummary(),
+    exportTwMission: async (context, options) => {
+      const snap = await authority.snapshot(context)
+      if (!snap.ok) {
+        return { ok: false, error: snap.error }
+      }
+      return captureTwMissionFromHostSnapshot({
+        snapshot: snap.value,
+        hostId: input.host.hostId,
+        ...(options?.exportedAt ? { exportedAt: options.exportedAt } : {}),
+        ...(options?.redactionNotes ? { redactionNotes: options.redactionNotes } : {}),
+        ...(now ? { now } : {})
+      })
+    },
     shutdown: flushDurableState
   }
 }

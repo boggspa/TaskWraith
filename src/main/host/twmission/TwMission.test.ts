@@ -1,5 +1,5 @@
 /**
- * Host Arc Wave 5 — `.twmission` scaffold pins (not AC9 PASS).
+ * Host Arc Wave 5 — `.twmission` scaffold + capture next-slice pins (not AC9 PASS).
  */
 
 import { describe, expect, it } from 'vitest'
@@ -8,6 +8,7 @@ import {
   HOST_PROTOCOL_VERSION,
   type HostSnapshot
 } from '../../../shared/hostProtocol'
+import { captureTwMissionFromHostSnapshot } from './TwMissionHostCapture'
 import { exportTwMissionBundle } from './TwMissionExport'
 import { importTwMissionBundleBytes } from './TwMissionImport'
 import { TW_MISSION_MAX_BUNDLE_BYTES } from './TwMissionTypes'
@@ -179,5 +180,74 @@ describe('twmission scaffold', () => {
     if (!imported.ok) return
     // Structural pin: only manifest + snapshot — no authority/journal handles.
     expect(Object.keys(imported.replay).sort()).toEqual(['manifest', 'snapshot'])
+  })
+})
+
+describe('twmission capture next-slice (not AC9 PASS)', () => {
+  it('derives cursorRange from live snapshot generation/cursor', () => {
+    const snapshot = minimalSnapshot({ generation: 7, cursor: 42 })
+    const captured = captureTwMissionFromHostSnapshot({
+      snapshot,
+      hostId: 'host-live',
+      exportedAt: '2026-08-08T07:00:00.000Z'
+    })
+    expect(captured.ok).toBe(true)
+    if (!captured.ok) return
+    expect(captured.bundle.manifest.cursorRange).toEqual({
+      generation: 7,
+      fromCursor: 0,
+      toCursor: 42
+    })
+    expect(captured.bundle.manifest.hostId).toBe('host-live')
+
+    const imported = importTwMissionBundleBytes(captured.bytes)
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    expect(imported.replay.snapshot.generation).toBe(7)
+    expect(imported.replay.snapshot.cursor).toBe(42)
+    expect(Object.keys(imported.replay).sort()).toEqual(['manifest', 'snapshot'])
+  })
+
+  it('strips smuggled schedule prompt fields on capture export (privacy pin)', () => {
+    const snapshot = minimalSnapshot({
+      schedules: [
+        {
+          scheduleId: 'sched-1',
+          title: 'daily',
+          enabled: true,
+          // Smuggled body — must not survive decodeHostSnapshot on export.
+          prompt: 'SECRET_PROMPT_BODY_NEVER_EXPORT',
+          displayPrompt: 'also-secret'
+        } as unknown as HostSnapshot['schedules'][number]
+      ]
+    })
+    const captured = captureTwMissionFromHostSnapshot({
+      snapshot,
+      exportedAt: '2026-08-08T08:00:00.000Z'
+    })
+    expect(captured.ok).toBe(true)
+    if (!captured.ok) return
+    const schedule = captured.bundle.snapshot.schedules[0]
+    expect(schedule).toBeDefined()
+    expect(Object.keys(schedule).sort()).toEqual(['enabled', 'scheduleId', 'title'])
+    expect(JSON.stringify(captured.bundle)).not.toContain('SECRET_PROMPT_BODY_NEVER_EXPORT')
+    expect(JSON.stringify(captured.bundle)).not.toContain('also-secret')
+
+    const imported = importTwMissionBundleBytes(captured.bytes)
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    expect(JSON.stringify(imported.replay.snapshot.schedules)).not.toContain(
+      'SECRET_PROMPT_BODY_NEVER_EXPORT'
+    )
+  })
+
+  it('rejects capture when snapshot position is invalid', () => {
+    const bad = captureTwMissionFromHostSnapshot({
+      snapshot: minimalSnapshot({ generation: -1 as unknown as number }),
+      exportedAt: '2026-08-08T09:00:00.000Z'
+    })
+    expect(bad.ok).toBe(false)
+    if (bad.ok) return
+    expect(bad.error).toMatch(/position invalid/)
   })
 })

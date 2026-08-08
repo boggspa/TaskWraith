@@ -1,5 +1,8 @@
 /**
- * Host Arc Wave 5 — `.twmission` public surface (scaffold).
+ * Host Arc Wave 5 — `.twmission` public surface (scaffold + capture next-slice).
+ *
+ * Not AC9 PASS. Capture derives export input from a live HostSnapshot;
+ * import remains detached (never mutates live Host state).
  */
 
 export {
@@ -17,3 +20,8 @@ export { exportTwMissionBundle, type TwMissionExportResult } from './TwMissionEx
 export { importTwMissionBundleBytes, type TwMissionImportResult } from './TwMissionImport'
 export { encodeTwMissionBundle, decodeTwMissionBundleBytes } from './TwMissionCodec'
 export { canonicalJsonStringify, digestTwMissionPayload, sha256HexUtf8 } from './TwMissionDigest'
+export {
+  captureTwMissionFromHostSnapshot,
+  type TwMissionHostCaptureInput,
+  type TwMissionHostCaptureResult
+} from './TwMissionHostCapture'
