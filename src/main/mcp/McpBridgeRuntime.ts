@@ -27,7 +27,9 @@ import {
 } from './McpToolGateway'
 import {
   compactGatewayV8MeshToolDefinitionsForTransport,
+  compactGatewayV13ToolDefinitionsForTransport,
   GATEWAY_V8_ADDED_TOOL_NAMES,
+  GATEWAY_V13_ADDED_TOOL_NAMES,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool
 } from './McpToolProfiles'
@@ -134,6 +136,11 @@ export const GEMINI_MCP_MESH_DIRECT_ARG = '--mesh-direct'
 // whole lifetime; older pinned gateway receipts omit it and keep Sketch behind
 // capability discovery.
 export const GEMINI_MCP_SKETCH_DIRECT_ARG = '--sketch-direct'
+// Gateway-v13 orchestration direct-discovery profile flag. Fresh v13 / v13-mesh
+// sessions carry it for their whole lifetime; older pinned gateway receipts omit
+// it and keep scout_brief / ensemble_await / ensemble_lane_result / delegate_wave
+// behind capability discovery. Also gates v13 transport compaction.
+export const GEMINI_MCP_ORCHESTRATION_DIRECT_ARG = '--orchestration-direct'
 // Audit scope flag. Direct bridge children carry this in argv; static helpers
 // carry the complete profile receipt in their route environment. Unlike
 // safe-subset this does NOT restrict tools/call — audit tools route through the
@@ -170,6 +177,9 @@ export function applyMcpBridgeProfileArgvToEnv(
   }
   if (argv.includes(GEMINI_MCP_MESH_DIRECT_ARG)) env.TASKWRAITH_MCP_MESH_DIRECT = '1'
   if (argv.includes(GEMINI_MCP_SKETCH_DIRECT_ARG)) env.TASKWRAITH_MCP_SKETCH_DIRECT = '1'
+  if (argv.includes(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)) {
+    env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT = '1'
+  }
   if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
 }
 
@@ -946,14 +956,16 @@ function isGatewayMcpAdvertisedForSeat(
   name: string,
   portableEnsembleControl = false,
   meshDirect = false,
-  sketchDirect = false
+  sketchDirect = false,
+  orchestrationDirect = false
 ): boolean {
   return (
     (isGatewayMcpAdvertisedTool(name) &&
       (!portableEnsembleControl || name !== 'ensemble_bossman_control')) ||
     (portableEnsembleControl && name === 'ensemble_control') ||
     (meshDirect && (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
-    (sketchDirect && (GATEWAY_V8_ADDED_TOOL_NAMES as readonly string[]).includes(name))
+    (sketchDirect && (GATEWAY_V8_ADDED_TOOL_NAMES as readonly string[]).includes(name)) ||
+    (orchestrationDirect && (GATEWAY_V13_ADDED_TOOL_NAMES as readonly string[]).includes(name))
   )
 }
 
@@ -1187,6 +1199,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
+  GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
 ])
 
@@ -1703,6 +1716,9 @@ export function handleMcpJsonRpcMessage(
     const sketchDirect =
       (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
         process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
+    const orchestrationDirect =
+      (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
+        process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -1729,14 +1745,22 @@ export function handleMcpJsonRpcMessage(
                   tool.name,
                   portableEnsembleControl,
                   meshDirect,
-                  sketchDirect
+                  sketchDirect,
+                  orchestrationDirect
                 ))
           )
         : allTools
-    const transportDirectTools =
+    const meshCompacted =
       gatewaySubsetOnly && meshDirect && sketchDirect
         ? compactGatewayV8MeshToolDefinitionsForTransport(directTools)
         : directTools
+    // Fresh gateway-v13 (and mesh) compact the four direct-promoted
+    // orchestration tools so tools/list stays under the 40k ceiling. Pre-v13
+    // gateway seats must keep canonical prose — compaction is receipt-gated.
+    const transportDirectTools =
+      gatewaySubsetOnly && orchestrationDirect
+        ? compactGatewayV13ToolDefinitionsForTransport(meshCompacted)
+        : meshCompacted
     const baseTools = gatewaySubsetOnly
       ? [...transportDirectTools, ...gatewayToolDefinitions()]
       : transportDirectTools
@@ -1802,6 +1826,9 @@ export function handleMcpJsonRpcMessage(
     const sketchDirect =
       (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
         process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
+    const orchestrationDirect =
+      (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
+        process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
     if (portableEnsembleControlRequested && !portableEnsembleControl) {
       writeMcpError(
         id,
@@ -1903,7 +1930,8 @@ export function handleMcpJsonRpcMessage(
         advertisedToolName,
         portableEnsembleControl,
         meshDirect,
-        sketchDirect
+        sketchDirect,
+        orchestrationDirect
       ) &&
       !auditToolRequested
     ) {
@@ -2019,6 +2047,8 @@ function profileEnvironmentForBridgeRoute(
       ? '1'
       : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: profile.meshDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: profile.sketchDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: profile.orchestrationDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
   }
 }
@@ -2380,6 +2410,7 @@ export class McpBridgeRuntime {
     portableEnsembleControl = false,
     meshDirect = false,
     sketchDirect = false,
+    orchestrationDirect = false,
     auditSubset = false
   ): string[] {
     const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
@@ -2433,6 +2464,7 @@ export class McpBridgeRuntime {
       ...(portableEnsembleControl ? [GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG] : []),
       ...(meshDirect ? [GEMINI_MCP_MESH_DIRECT_ARG] : []),
       ...(sketchDirect ? [GEMINI_MCP_SKETCH_DIRECT_ARG] : []),
+      ...(orchestrationDirect ? [GEMINI_MCP_ORCHESTRATION_DIRECT_ARG] : []),
       ...(auditSubset ? [GEMINI_MCP_AUDIT_SUBSET_ARG] : []),
       ...bootstrapArgs
     ]

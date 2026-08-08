@@ -6,6 +6,7 @@ import {
 } from '../mcp/McpBridgeRuntime'
 import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
 import {
+  isGatewayV13DirectTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
@@ -45,6 +46,9 @@ function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJ
   )
   const meshDirect = isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
   const sketchDirect = isSketchCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
+  const orchestrationDirect = isGatewayV13DirectTaskWraithMcpProfile(
+    options.taskWraithMcpProfileId
+  )
 
   return {
     // This legacy opt-in is not consumed by the bridge, but must not leak as a
@@ -57,6 +61,7 @@ function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJ
     [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: portableEnsembleControl ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: meshDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: sketchDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: orchestrationDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: options.auditSubset ? '1' : '0',
     [MCP_BRIDGE_ROUTE_ENV_KEYS.parentProvider]: 'kimi',
     [MCP_BRIDGE_ROUTE_ENV_KEYS.runId]: options.route.appRunId || '',

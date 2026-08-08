@@ -11,11 +11,12 @@ import {
 import {
   CORE_MCP_ADVERTISE_TOOLS,
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V9_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS
+  GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V13_MCP_ADVERTISE_TOOLS
 } from './mcp/McpToolProfiles'
 import {
   GEMINI_MCP_MESH_DIRECT_ARG,
+  GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG
 } from './mcp/McpBridgeRuntime'
@@ -141,18 +142,23 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).toContain(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
     expect(taskWraith.args).toContain(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)
-    expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     expect(taskWraith.args).not.toContain('--core-subset')
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
-    expect(allowed).toHaveLength(GATEWAY_V9_MCP_ADVERTISE_TOOLS.length * 2)
-    for (const tool of GATEWAY_V9_MCP_ADVERTISE_TOOLS) {
+    expect(allowed).toHaveLength(GATEWAY_V13_MCP_ADVERTISE_TOOLS.length * 2)
+    for (const tool of GATEWAY_V13_MCP_ADVERTISE_TOOLS) {
       expect(allowed).toContain(tool)
       expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
     }
     expect(allowed).toContain('canvas_sketch_open')
     expect(allowed).toContain('canvas_sketch_get')
     expect(allowed).toContain('canvas_sketch_update')
+    expect(allowed).toContain('scout_brief')
+    expect(allowed).toContain('ensemble_await')
+    expect(allowed).toContain('ensemble_lane_result')
+    expect(allowed).toContain('delegate_wave')
     expect(allowed).toContain('ensemble_control')
     expect(allowed).not.toContain('ensemble_bossman_control')
     expect(allowed).not.toContain('image_generate')
@@ -169,6 +175,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).toContain(GEMINI_MCP_MESH_DIRECT_ARG)
     expect(taskWraith.args).toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(taskWraith.args).not.toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(
@@ -190,6 +197,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith?.type).toBe('stdio')
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).not.toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(taskWraith.args).not.toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)
     expect(allowed).toHaveLength(GATEWAY_V7_MCP_ADVERTISE_TOOLS.length * 2)
     expect(allowed).not.toContain('canvas_sketch_update')

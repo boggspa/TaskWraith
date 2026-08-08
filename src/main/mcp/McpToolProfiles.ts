@@ -563,6 +563,43 @@ export const GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v13 promotes orchestration join/brief/wave tools to the fresh
+ * DIRECT birth catalogue (v8 Sketch shape): ADDED grows DIRECT; HIDDEN is an
+ * exact clone of v12 (no remove) so previously discoverable names stay
+ * discoverable. `delegate_wave` is new to the catalogue and therefore only
+ * appears on DIRECT for v13+ seats.
+ *
+ * Naive full-prose promotion breaches the 40k transport ceiling — see
+ * GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS + compactGatewayV13ToolDefinitionsForTransport.
+ */
+export const GATEWAY_V13_ADDED_TOOL_NAMES = Object.freeze([
+  'scout_brief',
+  'ensemble_await',
+  'ensemble_lane_result',
+  'delegate_wave'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V13_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V12_MCP_DIRECT_TOOLS,
+  ...GATEWAY_V13_ADDED_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V13_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V13_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V13_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V12_MESH_MCP_DIRECT_TOOLS,
+  ...GATEWAY_V13_ADDED_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V13_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -593,6 +630,24 @@ const GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
     'Append/replace/clear/delete rect/ellipse/line/arrow/text/path elements. Respect expectedUpdatedAt; retry user_busy, reread on stale_document. Gated.'
 } satisfies Partial<Record<TaskWraithMcpToolName, string>>)
 
+/**
+ * Fresh gateway-v13 adds four orchestration tools whose schemas alone (~2.2k)
+ * would push the direct transport over 40k even with tiny top-level prose.
+ * Compact those four plus `ensemble_fanout` (largest pre-existing DIRECT
+ * payload) on the v13 wire only. Names, typed schemas, required fields, enums,
+ * annotations, and tools/call behavior stay intact — same contract as the
+ * v8-mesh Mesh/Sketch compactor. Canonical catalogue prose is untouched.
+ */
+const GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
+  scout_brief: 'Fan-out lane brief (findings+confidence). Lane-only.',
+  ensemble_await: 'JOIN wait on fan-out lanes; timeout≤600s. Then lane_result.',
+  ensemble_lane_result: 'READ one fan-out lane output (status+text). Partial ok.',
+  delegate_wave: 'Spawn 2+ sub-threads (workers[{provider,prompt,…}]). Spawn-only; join→waveId. Gated.',
+  // Budget companion: long DIRECT fan-out prose + schema descriptions would
+  // leave the four promotions structurally unable to fit under 40k.
+  ensemble_fanout: 'Fan-out Ensemble lanes (concurrent; capped). Then await / lane_result.'
+} satisfies Partial<Record<TaskWraithMcpToolName, string>>)
+
 function stripSchemaDescriptionFields(value: unknown, inPropertyNameBag = false): unknown {
   if (Array.isArray(value)) return value.map((entry) => stripSchemaDescriptionFields(entry))
   if (!value || typeof value !== 'object') return value
@@ -612,12 +667,10 @@ function stripSchemaDescriptionFields(value: unknown, inPropertyNameBag = false)
   )
 }
 
-export function compactGatewayV8MeshToolDefinitionsForTransport<
-  T extends GatewayV8MeshTransportToolDefinition
->(definitions: readonly T[]): T[] {
-  const descriptions = GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS as Readonly<
-    Record<string, string | undefined>
-  >
+function compactToolDefinitionsForTransport<T extends GatewayV8MeshTransportToolDefinition>(
+  definitions: readonly T[],
+  descriptions: Readonly<Record<string, string | undefined>>
+): T[] {
   return definitions.map((definition) => {
     const description = descriptions[definition.name]
     if (!description) return definition
@@ -634,6 +687,25 @@ export function compactGatewayV8MeshToolDefinitionsForTransport<
         : {})
     }
   })
+}
+
+export function compactGatewayV8MeshToolDefinitionsForTransport<
+  T extends GatewayV8MeshTransportToolDefinition
+>(definitions: readonly T[]): T[] {
+  return compactToolDefinitionsForTransport(
+    definitions,
+    GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS as Readonly<Record<string, string | undefined>>
+  )
+}
+
+/** Compact the four gateway-v13 direct-promotion tools for the 40k transport ceiling. */
+export function compactGatewayV13ToolDefinitionsForTransport<
+  T extends GatewayV8MeshTransportToolDefinition
+>(definitions: readonly T[]): T[] {
+  return compactToolDefinitionsForTransport(
+    definitions,
+    GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS as Readonly<Record<string, string | undefined>>
+  )
 }
 
 const GATEWAY_MCP_TOOL_SET: ReadonlySet<string> = new Set(GATEWAY_MCP_ADVERTISE_TOOLS)
@@ -803,6 +875,20 @@ export const GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V12_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+/**
+ * Direct promotion does not mutate the hidden capability universe: await /
+ * lane_result / scout_brief were already discoverable there, and staying on
+ * the exact v12 array preserves capability-search compatibility (v8 Sketch
+ * pattern). `delegate_wave` is birth-direct only for v13+.
+ */
+export const GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -815,6 +901,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v13-mesh') return GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v13') return GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v12-mesh') return GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v12') return GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v11-mesh') return GATEWAY_V11_MESH_MCP_HIDDEN_TOOL_NAMES
@@ -840,6 +928,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v13-mesh') return GATEWAY_V13_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v13') return GATEWAY_V13_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v12-mesh') return GATEWAY_V12_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v12') return GATEWAY_V12_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v11-mesh') return GATEWAY_V11_MESH_MCP_DIRECT_TOOLS
@@ -916,7 +1006,11 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v12 adds project_reference_list through discovery without growing either
   // direct catalogue. ADDED is list-only — Skills surface growth needs v13+.
   'taskwraith-gateway-v12': GATEWAY_V12_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v12-mesh': GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v12-mesh': GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS,
+  // v13 promotes scout_brief / ensemble_await / ensemble_lane_result /
+  // delegate_wave to the fresh direct birth catalogue (compact transport).
+  'taskwraith-gateway-v13': GATEWAY_V13_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v13-mesh': GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */

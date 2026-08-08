@@ -65,9 +65,17 @@ import {
   GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V12_MESH_MCP_DIRECT_TOOLS,
   GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V13_ADDED_TOOL_NAMES,
+  GATEWAY_V13_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V13_MCP_DIRECT_TOOLS,
+  GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V13_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   compactGatewayV8MeshToolDefinitionsForTransport,
+  compactGatewayV13ToolDefinitionsForTransport,
   filterTaskWraithMcpToolDefinitionsForProfile,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
@@ -308,13 +316,17 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
     const freshGatewayChars = serializedChars(
-      GATEWAY_V12_MCP_DIRECT_TOOLS,
-      gatewayToolDefinitions()
+      GATEWAY_V13_MCP_DIRECT_TOOLS,
+      gatewayToolDefinitions(),
+      compactGatewayV13ToolDefinitionsForTransport
     )
     const freshMeshGatewayChars = serializedChars(
-      GATEWAY_V12_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V13_MESH_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
-      compactGatewayV8MeshToolDefinitionsForTransport
+      (selected) =>
+        compactGatewayV13ToolDefinitionsForTransport(
+          compactGatewayV8MeshToolDefinitionsForTransport(selected)
+        )
     )
 
     // Measured 2026-07-19 baseline after correcting delegation's advertised
@@ -441,11 +453,17 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // byte-identical to v10.
     // Re-measured 2026-08-08 again after canvas_open / device-driver prose
     // pointed operators at simulator_* (+96 on FULL only; gateway pins unchanged).
+    // Re-measured 2026-08-08 for gateway-v13: promotes scout_brief /
+    // ensemble_await / ensemble_lane_result / delegate_wave to DIRECT (v8 Sketch
+    // shape). Four schemas alone overshoot 40k, so the v13 wire compactor also
+    // shortens ensemble_fanout prose (canonical catalogue unchanged). Fresh
+    // direct lands under the ceiling; fresh mesh remains over (ratchet below).
     expect(fullChars).toBe(143_235)
     expect(gatewayChars).toBe(41_748)
-    expect(freshGatewayChars).toBe(38_692)
-    expect(freshMeshGatewayChars).toBe(41_496)
+    expect(freshGatewayChars).toBe(37_796)
+    expect(freshMeshGatewayChars).toBe(40_600)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
+    expect(freshGatewayChars).toBeLessThan(40_000)
 
     // Transports currently over the hard 40,000-char transport ceiling. This
     // list may SHRINK, never grow — same ratchet the control-byte and
@@ -659,7 +677,11 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V12_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES,
-      ...GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V13_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -694,6 +716,37 @@ describe('catalogue reachability', () => {
     expect(GATEWAY_MCP_ADVERTISE_TOOLS).not.toContain('project_reference_list')
     expect(GATEWAY_V12_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V11_MCP_DIRECT_TOOLS)
     expect(GATEWAY_V12_MESH_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V11_MESH_MCP_DIRECT_TOOLS)
+  })
+
+  it('promotes orchestration join/brief/wave tools to gateway-v13 DIRECT without shrinking HIDDEN', () => {
+    expect(GATEWAY_V13_ADDED_TOOL_NAMES).toEqual([
+      'scout_brief',
+      'ensemble_await',
+      'ensemble_lane_result',
+      'delegate_wave'
+    ])
+    expect(GATEWAY_V13_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_V12_MCP_DIRECT_TOOLS,
+      ...GATEWAY_V13_ADDED_TOOL_NAMES
+    ])
+    expect(GATEWAY_V13_MESH_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_V12_MESH_MCP_DIRECT_TOOLS,
+      ...GATEWAY_V13_ADDED_TOOL_NAMES
+    ])
+    // v8 Sketch shape: HIDDEN is an exact clone (await/lane/scout stay
+    // discoverable); delegate_wave is birth-direct only for v13+.
+    expect(GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES)
+    for (const tool of ['scout_brief', 'ensemble_await', 'ensemble_lane_result'] as const) {
+      expect(GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_V12_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V13_MCP_DIRECT_TOOLS).toContain(tool)
+    }
+    expect(GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES).not.toContain('delegate_wave')
+    expect(GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES).not.toContain('delegate_wave')
+    expect(GATEWAY_V13_MCP_DIRECT_TOOLS).toContain('delegate_wave')
+    expect(TASKWRAITH_MCP_TOOLS).toContain('delegate_wave')
   })
 
   it('grows the newest gateway generation rather than mutating a frozen one', () => {
@@ -748,6 +801,8 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V11_MESH_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_V12_ADDED_TOOL_NAMES
     ])
+    expect(GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES)
     for (const tool of [
       ...GATEWAY_V3_ADDED_TOOL_NAMES,
       ...GATEWAY_V4_ADDED_TOOL_NAMES,
@@ -759,6 +814,13 @@ describe('catalogue reachability', () => {
       expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
       // Additions are discoverable capabilities, never new direct surface.
       expect(GATEWAY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+    }
+    // v13 ADDED grows DIRECT (not HIDDEN); still absent from the frozen v1
+    // advertise snapshot.
+    for (const tool of GATEWAY_V13_ADDED_TOOL_NAMES) {
+      expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
+      expect(GATEWAY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V13_MCP_DIRECT_TOOLS).toContain(tool)
     }
   })
 
@@ -817,6 +879,12 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v12-mesh')).toBe(
       GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES
     )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v13')).toBe(
+      GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v13-mesh')).toBe(
+      GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES
+    )
     // An unknown or missing id must not inherit a newer surface.
     expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v5')).toBe(
@@ -860,6 +928,18 @@ describe('catalogue reachability', () => {
     )
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v12-mesh')).toBe(
       GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v13')).toBe(
+      GATEWAY_V13_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v13-mesh')).toBe(
+      GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v13')).toBe(
+      GATEWAY_V13_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v13-mesh')).toBe(
+      GATEWAY_V13_MESH_MCP_DIRECT_TOOLS
     )
   })
 

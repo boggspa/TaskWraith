@@ -23,6 +23,7 @@ import {
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_LOG_EPOCH_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
+  GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
   McpBridgeRuntime,
   brokerRequest,
@@ -33,6 +34,7 @@ import {
   writeMcpFrame,
   writeMcpPayload
 } from './McpBridgeRuntime'
+import { GATEWAY_V13_ADDED_TOOL_NAMES } from './McpToolProfiles'
 
 const TEST_INSTANCE_EPOCH = 'f'.repeat(32)
 
@@ -1611,6 +1613,117 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  it('adds GATEWAY_V13_ADDED tools only for an orchestration-direct gateway receipt', () => {
+    const longFanoutDescription =
+      'Fan-out Ensemble lanes with a long prose body that must survive on pre-v13 gateway seats.'
+    const tools = [
+      { name: 'read_file' },
+      { name: 'ensemble_fanout', description: longFanoutDescription },
+      { name: 'scout_brief', description: 'Canonical scout_brief prose kept for non-v13 seats.' },
+      { name: 'ensemble_await', description: 'Canonical ensemble_await prose kept for non-v13 seats.' },
+      {
+        name: 'ensemble_lane_result',
+        description: 'Canonical ensemble_lane_result prose kept for non-v13 seats.'
+      },
+      {
+        name: 'delegate_wave',
+        description: 'Canonical delegate_wave prose kept for non-v13 seats.'
+      },
+      { name: 'ensemble_roster_edit' }
+    ]
+    const list = (env: Record<string, string>) => {
+      const chunks: string[] = []
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => tools,
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        { jsonrpc: '2.0', id: 27, method: 'tools/list' },
+        'line'
+      )
+      return (
+        JSON.parse(chunks.join('').trim()) as {
+          result: { tools: Array<{ name: string; description?: string }> }
+        }
+      ).result.tools
+    }
+
+    const legacy = list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    const legacyNames = legacy.map((tool) => tool.name)
+    for (const tool of GATEWAY_V13_ADDED_TOOL_NAMES) {
+      expect(legacyNames).not.toContain(tool)
+    }
+    expect(legacy.find((tool) => tool.name === 'ensemble_fanout')?.description).toBe(
+      longFanoutDescription
+    )
+
+    const fresh = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '1'
+    })
+    const freshNames = fresh.map((tool) => tool.name)
+    for (const tool of GATEWAY_V13_ADDED_TOOL_NAMES) {
+      expect(freshNames).toContain(tool)
+    }
+    expect(fresh.find((tool) => tool.name === 'ensemble_fanout')?.description).toBe(
+      'Fan-out Ensemble lanes (concurrent; capped). Then await / lane_result.'
+    )
+    expect(fresh.find((tool) => tool.name === 'scout_brief')?.description).toBe(
+      'Fan-out lane brief (findings+confidence). Lane-only.'
+    )
+    expect(freshNames).toContain('ensemble_roster_edit')
+  })
+
+  it('forwards direct orchestration calls only when the v13 receipt flag is present', async () => {
+    const call = async (env: Record<string, string>) => {
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'awaited' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          env,
+          stdout: { write: vi.fn(() => true) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 28,
+          method: 'tools/call',
+          params: {
+            name: 'ensemble_await',
+            arguments: { joinGroupId: 'jg-1', timeoutSeconds: 30 }
+          }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return brokerRequest
+    }
+
+    const legacy = await call({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    expect(legacy).not.toHaveBeenCalled()
+
+    const fresh = await call({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '1'
+    })
+    expect(fresh).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({
+        tool: 'ensemble_await',
+        arguments: { joinGroupId: 'jg-1', timeoutSeconds: 30 }
+      })
+    )
+  })
+
   it('allows a hidden read-only target through capability_invoke without unwrapping it', async () => {
     const brokerRequest = vi.fn(async () => ({ ok: true, text: 'found' }))
     const chunks: string[] = []
@@ -2143,6 +2256,32 @@ describe('MCP bridge stream writes', () => {
     expect(env.TASKWRAITH_MCP_SKETCH_DIRECT).toBe('1')
   })
 
+  it('carries the orchestration-direct v13 receipt atomically beside the gateway profile', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+    const args = runtime.taskwraithMcpBridgeArgs(
+      SOCKET_PATH,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true
+    )
+    expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(args).toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
+    expect(args.at(-1)).toBe(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
+
+    const env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(args, env)
+    expect(env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT).toBe('1')
+  })
+
   it('translates the gateway argv receipt into the child catalogue guard', () => {
     const explicitFullProfile = {
       TASKWRAITH_MCP_SAFE_SUBSET: '0',
@@ -2152,6 +2291,7 @@ describe('MCP bridge stream writes', () => {
       TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '0',
       TASKWRAITH_MCP_MESH_DIRECT: '0',
       TASKWRAITH_MCP_SKETCH_DIRECT: '0',
+      TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '0',
       TASKWRAITH_MCP_AUDIT: '0'
     }
     const gatewayEnv: Record<string, string | undefined> = {}

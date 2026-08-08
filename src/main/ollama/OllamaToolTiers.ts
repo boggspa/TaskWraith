@@ -4,7 +4,7 @@ import {
   READ_ONLY_MCP_ADVERTISE_TOOLS
 } from '../mcp/McpAutoAllowedTools'
 import {
-  GATEWAY_V12_MCP_DIRECT_TOOLS,
+  GATEWAY_V13_MCP_DIRECT_TOOLS,
   taskWraithGatewayDirectToolNamesForProfile
 } from '../mcp/McpToolProfiles'
 import type { OllamaToolControlTier, TaskWraithMcpProfileId } from '../store/types'
@@ -80,14 +80,14 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
 
 /**
  * Ollama shares the exact immutable direct membership of
- * `taskwraith-gateway-v12` (an exact clone of v11's direct surface). Keep this
- * as an alias, not a copied list: the profile declaration is the single
- * authority for the compact tools every fresh gateway session sees. The full
- * catalogue remains callable through the two capability gateway tools, with
- * Ollama's legacy `tool_help` kept alongside. Resumed seats pass their pinned
- * profile id to retain older direct membership.
+ * `taskwraith-gateway-v13`. Keep this as an alias, not a copied list: the
+ * profile declaration is the single authority for the compact tools every
+ * fresh gateway session sees. The full catalogue remains callable through the
+ * two capability gateway tools, with Ollama's legacy `tool_help` kept
+ * alongside. Resumed seats pass their pinned profile id to retain older direct
+ * membership. Sub-thread tools (including `delegate_wave`) are stripped below.
  */
-export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V12_MCP_DIRECT_TOOLS
+export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V13_MCP_DIRECT_TOOLS
 
 /**
  * Sub-thread control is a remote/brokered seat capability. Ollama's local tool
@@ -97,6 +97,7 @@ export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V12_MCP_DIRECT_TOOLS
  */
 export const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES = Object.freeze([
   'delegate_to_subthread',
+  'delegate_wave',
   'list_subthreads',
   'read_subthread_result',
   'cancel_subthread'
@@ -149,7 +150,9 @@ export function ollamaAdvertisedToolNames(
               ? 'taskwraith-gateway-v11'
               : options.taskWraithMcpProfileId === 'taskwraith-gateway-v12-mesh'
                 ? 'taskwraith-gateway-v12'
-                : options.taskWraithMcpProfileId
+                : options.taskWraithMcpProfileId === 'taskwraith-gateway-v13-mesh'
+                  ? 'taskwraith-gateway-v13'
+                  : options.taskWraithMcpProfileId
   const directNames = localProfileId
     ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
     : OLLAMA_ADVERTISED_TOOL_NAMES

@@ -853,6 +853,10 @@ export type TaskWraithMcpProfileId =
   // changing either v11 direct birth catalogue. ADDED is list-only.
   | 'taskwraith-gateway-v12'
   | 'taskwraith-gateway-v12-mesh'
+  // v13 promotes scout_brief / ensemble_await / ensemble_lane_result /
+  // delegate_wave to the fresh direct birth catalogue.
+  | 'taskwraith-gateway-v13'
+  | 'taskwraith-gateway-v13-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born
@@ -2481,6 +2485,11 @@ export interface AppSettings {
    * files default to the collapsed-card behaviour. Set false to restore
    * the flat per-message transcript. */
   ensembleCollapseOlderRounds?: boolean
+  /**
+   * Settings → General: max workers accepted by `delegate_wave` (clamped
+   * 2–20; default 8). Structural ceiling is MAX_SUBTHREAD_JOIN_QUORUM.
+   */
+  maxWaveAgents?: number
   /**
    * Sidebar Model Usage card view toggle. `'plan'` (default) shows the
    * PLAN-subsidised quota meters; `'spend'` shows per-provider API/SDK
