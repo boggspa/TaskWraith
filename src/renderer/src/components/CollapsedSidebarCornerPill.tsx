@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import type { ChatRecord } from '../../../main/store/types'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { AgentQuestionState } from './AgentQuestionCard'
-import { flattenPendingAgentQuestions } from '../lib/agentQuestionQueue'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 import {
@@ -20,6 +19,7 @@ import {
 import { useHostProjectionStore } from './HostProjectionProvider'
 import { useHostProjection } from '../hooks/useHostProjection'
 import { joinHostPendingApprovals } from '../hooks/usePendingApprovalsProjection'
+import { joinHostPendingQuestions } from '../hooks/usePendingQuestionsProjection'
 
 type CornerPillPanel = 'settings' | 'approvals' | 'shares' | 'devices'
 
@@ -157,8 +157,12 @@ export function CollapsedSidebarCornerPill({
     [hostProjectionState, pendingAgentApprovalByChatId, pendingApprovalQueueByChatId]
   )
   const pendingQuestionsFlat = useMemo(
-    () => flattenPendingAgentQuestions(pendingAgentQuestionsByChatId),
-    [pendingAgentQuestionsByChatId]
+    () =>
+      joinHostPendingQuestions(
+        hostProjectionState,
+        pendingAgentQuestionsByChatId
+      ),
+    [hostProjectionState, pendingAgentQuestionsByChatId]
   )
   const hasPendingApprovals = pendingApprovalsFlat.length > 0
   const hasPendingQuestions = pendingQuestionsFlat.length > 0

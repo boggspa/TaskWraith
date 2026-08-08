@@ -18,6 +18,7 @@ import { HostStatusRow } from './HostStatusRow'
 import { useHostProjectionStore } from './HostProjectionProvider'
 import { useHostProjection } from '../hooks/useHostProjection'
 import { joinHostPendingApprovals } from '../hooks/usePendingApprovalsProjection'
+import { joinHostPendingQuestions } from '../hooks/usePendingQuestionsProjection'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 import { isUpdatePillVisible, UpdatePill } from './UpdatePill'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
@@ -84,10 +85,7 @@ import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { AgentQuestionState } from './AgentQuestionCard'
-import {
-  chatHasPendingAgentQuestion,
-  flattenPendingAgentQuestions
-} from '../lib/agentQuestionQueue'
+import { chatHasPendingAgentQuestion } from '../lib/agentQuestionQueue'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../../main/localServers/types'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
@@ -3165,8 +3163,12 @@ export function Sidebar({
     [hostProjectionState, pendingAgentApprovalByChatId, pendingApprovalQueueByChatId]
   )
   const pendingQuestionsFlat = useMemo(
-    () => flattenPendingAgentQuestions(pendingAgentQuestionsByChatId),
-    [pendingAgentQuestionsByChatId]
+    () =>
+      joinHostPendingQuestions(
+        hostProjectionState,
+        pendingAgentQuestionsByChatId
+      ),
+    [hostProjectionState, pendingAgentQuestionsByChatId]
   )
   const hasPendingApprovals = pendingApprovalsFlat.length > 0
   const hasPendingQuestions = pendingQuestionsFlat.length > 0
