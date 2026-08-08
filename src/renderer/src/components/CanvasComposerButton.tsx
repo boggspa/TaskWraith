@@ -272,7 +272,7 @@ export function CanvasComposerButton({
                     Simulator Canvas
                   </div>
                   <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                    Preview and drive an iOS Simulator in this chat.
+                    Preview an iOS Simulator in this chat.
                   </div>
                 </div>
                 <PillButton

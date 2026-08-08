@@ -3,6 +3,7 @@
  * Maps pointer events to normalized 0..1 coords; never invents a control grant.
  */
 import {
+  SIMULATOR_GESTURE_ACTUATION_DEFERRED,
   SIMULATOR_PREVIEW_ONLY_BANNER,
   type SimulatorInteractionStatus,
   type SimulatorScrollGesture,
@@ -40,19 +41,42 @@ export function mapPointerToBezelNorm(
   return { x: clamp01(relX), y: clamp01(relY) }
 }
 
-/** True only when main reports an active View & Control lease for this chat. */
+/**
+ * True only when main reports a control lease AND device actuation is wired.
+ * A View & Control lease alone is not enough while idb is deferred.
+ */
 export function canSendSimulatorGestures(
   status: SimulatorInteractionStatus | null | undefined
 ): boolean {
-  return Boolean(status?.canControl)
+  return Boolean(status?.canControl && status.actuationReady)
 }
 
 export function previewOnlyBannerText(
   status: SimulatorInteractionStatus | null | undefined
 ): string {
   if (!status) return SIMULATOR_PREVIEW_ONLY_BANNER
-  if (status.canControl) return ''
-  return status.reason || SIMULATOR_PREVIEW_ONLY_BANNER
+  if (!status.canControl) {
+    return status.reason || SIMULATOR_PREVIEW_ONLY_BANNER
+  }
+  if (!status.actuationReady) {
+    return status.reason || SIMULATOR_GESTURE_ACTUATION_DEFERRED
+  }
+  return ''
+}
+
+/** Subtle dock chip when a controller lease is held (agent run vs human). */
+export function simulatorControllerBadgeText(
+  status:
+    | Pick<SimulatorInteractionStatus, 'controllerKind' | 'controllerLeaseHeld'>
+    | null
+    | undefined
+): string | null {
+  if (!status) return null
+  if (status.controllerKind === 'run') return 'Agent is using this device'
+  if (status.controllerKind === 'human' || status.controllerLeaseHeld) {
+    return 'You control this device'
+  }
+  return null
 }
 
 export function buildTapGesture(

@@ -649,7 +649,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
           <div className="canvas-dock-launcher-group">
             <div className="canvas-dock-launcher-title">Simulator Canvas</div>
             <div className="canvas-dock-launcher-hint">
-              Preview and drive an iOS Simulator in this chat.
+              Preview an iOS Simulator in this chat.
             </div>
             <button
               type="button"

@@ -49,6 +49,10 @@ export interface SimulatorCapabilityStatus {
   availableDevices: SimulatorDeviceInfo[]
   installHint: string
   docsUrl: string
+  /** True when the `idb` client resolves on PATH (opt-in actuation). */
+  idbAvailable?: boolean
+  /** True when `idb_companion` resolves on PATH. */
+  idbCompanionAvailable?: boolean
 }
 
 export interface SimulatorScreenshotFrame {
@@ -71,23 +75,42 @@ export interface SimulatorHostActionResult {
 export const SIMULATOR_VIEW_CONTROL_REQUIRED = 'View & Control required' as const
 
 export const SIMULATOR_PREVIEW_ONLY_BANNER =
-  'Preview only — attach Simulator in Screen Watch and approve View & Control for tap/type/scroll' as const
+  'Preview only — install idb to drive the Simulator.' as const
 
-/** Actuation through App Drive / NativeWindowCoordinator is a later slice. */
+/**
+ * Recorded under a control lease but not actuated — typically idb missing, or no
+ * session frame/udid yet for coordinate mapping.
+ */
 export const SIMULATOR_GESTURE_ACTUATION_DEFERRED =
-  'View & Control lease is present, but Simulator Canvas tap/type/scroll actuation is not wired yet' as const
+  'Gestures recorded but not actuated — install idb (and claim Simulator control) to drive' as const
+
+export type SimulatorControllerKind = 'human' | 'run'
 
 export interface SimulatorInteractionStatus {
   canControl: boolean
+  /**
+   * True only when idb is on PATH and a controller lease is held for the chat.
+   * View & Control / preview alone never implies device drive.
+   */
+  actuationReady: boolean
   reason: string
   /** Screen Watch observation attached for this chat (preview path). */
   hasObservation: boolean
+  /** Whether the `idb` client binary is available on this host. */
+  idbAvailable?: boolean
+  /** Whether SimulatorControllerLease currently holds this chat. */
+  controllerLeaseHeld?: boolean
+  /**
+   * Who holds the controller lease when known (`human` dock vs agent `run`).
+   * Absent/null when no lease is held.
+   */
+  controllerKind?: SimulatorControllerKind | null
 }
 
 export interface SimulatorGestureResult {
   ok: boolean
   error?: string
-  /** True when intent was accepted under an active lease (no desktop actuation yet). */
+  /** True when intent was accepted under an active lease (may still be deferred). */
   recorded?: boolean
 }
 

@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { SIMULATOR_PREVIEW_ONLY_BANNER, SIMULATOR_VIEW_CONTROL_REQUIRED } from '../../../shared/simulatorCanvas'
+import {
+  SIMULATOR_GESTURE_ACTUATION_DEFERRED,
+  SIMULATOR_PREVIEW_ONLY_BANNER,
+  SIMULATOR_VIEW_CONTROL_REQUIRED
+} from '../../../shared/simulatorCanvas'
 import {
   buildScrollGesture,
   buildTapGesture,
   buildTypeGesture,
   canSendSimulatorGestures,
   mapPointerToBezelNorm,
-  previewOnlyBannerText
+  previewOnlyBannerText,
+  simulatorControllerBadgeText
 } from './simulatorCanvasGestures'
 
 describe('mapPointerToBezelNorm', () => {
@@ -32,6 +37,7 @@ describe('gesture gate helpers', () => {
     expect(
       canSendSimulatorGestures({
         canControl: false,
+        actuationReady: false,
         reason: SIMULATOR_PREVIEW_ONLY_BANNER,
         hasObservation: false
       })
@@ -39,24 +45,46 @@ describe('gesture gate helpers', () => {
     expect(
       previewOnlyBannerText({
         canControl: false,
+        actuationReady: false,
         reason: SIMULATOR_VIEW_CONTROL_REQUIRED,
         hasObservation: true
       })
     ).toBe(SIMULATOR_VIEW_CONTROL_REQUIRED)
   })
 
-  it('allows sends only when canControl is true and hides the banner', () => {
+  it('keeps gestures disabled and shows deferred reason when canControl but actuation is not ready', () => {
     expect(
       canSendSimulatorGestures({
         canControl: true,
-        reason: 'deferred',
+        actuationReady: false,
+        reason: SIMULATOR_GESTURE_ACTUATION_DEFERRED,
+        hasObservation: true
+      })
+    ).toBe(false)
+    expect(
+      previewOnlyBannerText({
+        canControl: true,
+        actuationReady: false,
+        reason: SIMULATOR_GESTURE_ACTUATION_DEFERRED,
+        hasObservation: true
+      })
+    ).toBe(SIMULATOR_GESTURE_ACTUATION_DEFERRED)
+  })
+
+  it('allows sends only when canControl and actuationReady are true and hides the banner', () => {
+    expect(
+      canSendSimulatorGestures({
+        canControl: true,
+        actuationReady: true,
+        reason: '',
         hasObservation: true
       })
     ).toBe(true)
     expect(
       previewOnlyBannerText({
         canControl: true,
-        reason: 'deferred',
+        actuationReady: true,
+        reason: '',
         hasObservation: true
       })
     ).toBe('')
@@ -76,5 +104,41 @@ describe('gesture gate helpers', () => {
       deltaX: 2,
       deltaY: -10
     })
+  })
+})
+
+describe('simulatorControllerBadgeText', () => {
+  it('shows the agent chip when a run holds the controller lease', () => {
+    expect(
+      simulatorControllerBadgeText({
+        controllerKind: 'run',
+        controllerLeaseHeld: true
+      })
+    ).toBe('Agent is using this device')
+  })
+
+  it('shows the human chip when the dock holds control', () => {
+    expect(
+      simulatorControllerBadgeText({
+        controllerKind: 'human',
+        controllerLeaseHeld: true
+      })
+    ).toBe('You control this device')
+    expect(
+      simulatorControllerBadgeText({
+        controllerKind: null,
+        controllerLeaseHeld: true
+      })
+    ).toBe('You control this device')
+  })
+
+  it('hides the chip when no controller is held', () => {
+    expect(simulatorControllerBadgeText(null)).toBeNull()
+    expect(
+      simulatorControllerBadgeText({
+        controllerKind: null,
+        controllerLeaseHeld: false
+      })
+    ).toBeNull()
   })
 })

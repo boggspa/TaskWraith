@@ -1,16 +1,12 @@
 /**
- * Honest View & Control gate for Simulator Canvas human gestures.
+ * Honest View & Control / controller-lease gate for Simulator Canvas gestures.
  *
- * App Drive / CanvasWindowDriver click+fill require observation refs, opaque
- * click receipts, and a run-owned native lease — too entangled for Slice 5.
- * This bridge:
- *  - reports whether a View & Control lease is present for the chat
- *  - refuses tap/type/scroll without that lease
- *  - records intent only when a lease is present (no silent desktop control)
+ * actuationReady is true only when:
+ *   - the `idb` client is available on PATH, and
+ *   - a SimulatorControllerLease is held for the chat (when the lease probe is wired)
  *
- * TODO(simulator-canvas): when lease wiring lands, forward recorded intents
- * through NativeWindowCoordinator / App Drive click|fill (and a scroll path
- * if one ships) for the attached Simulator window — never invent Full Access.
+ * Without idb (or without a lease), tap/type/scroll record intent and stay deferred.
+ * Never invents Full Access.
  */
 import {
   SIMULATOR_GESTURE_ACTUATION_DEFERRED,
@@ -22,15 +18,33 @@ import {
   type SimulatorTapGesture,
   type SimulatorTypeGesture
 } from '../../shared/simulatorCanvas'
+import type { IdbClient } from './IdbClient'
 
 export type SimulatorControlProbe = (chatId: string) => {
   canControl: boolean
   hasObservation: boolean
 }
 
+export type SimulatorActuationTarget = {
+  udid: string
+  width: number
+  height: number
+}
+
+export type SimulatorIdbSurface = Pick<IdbClient, 'isAvailable' | 'tap' | 'text' | 'swipe'>
+
 export interface SimulatorInteractionBridgeDeps {
   /** Optional probe into NativeWindowCoordinator.statusForChat (or a test double). */
   getControlStatus?: SimulatorControlProbe
+  /**
+   * Controller lease probe (SimulatorControllerLease.peek). When omitted, actuation
+   * gates on idb + canControl only — TODO(simulator-canvas): always wire lease&&idb
+   * from the composition root.
+   */
+  hasControllerLease?: (chatId: string) => boolean
+  idb?: SimulatorIdbSurface
+  /** Session/frame target for normalizing bezel coords → device points. */
+  getActuationTarget?: (chatId: string) => SimulatorActuationTarget | null
   now?: () => number
 }
 
@@ -50,6 +64,11 @@ function clamp01(value: number): number {
   return value
 }
 
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return min
+  return Math.min(max, Math.max(min, value))
+}
+
 function requireChatId(chatId: unknown): string {
   if (typeof chatId !== 'string' || !chatId.trim() || chatId.trim() !== chatId) {
     throw new Error('Simulator Canvas chatId is invalid.')
@@ -64,8 +83,15 @@ function requireFiniteNumber(value: unknown, label: string): number {
   return value
 }
 
+function toDevicePoint(norm: number, extent: number): number {
+  return Math.round(clamp01(norm) * Math.max(0, extent))
+}
+
 export class SimulatorInteractionBridge {
   private readonly getControlStatus: SimulatorControlProbe
+  private readonly hasControllerLease: ((chatId: string) => boolean) | null
+  private readonly idb: SimulatorIdbSurface | null
+  private readonly getActuationTarget: ((chatId: string) => SimulatorActuationTarget | null) | null
   private readonly now: () => number
   private readonly recorded: SimulatorRecordedGesture[] = []
 
@@ -76,25 +102,53 @@ export class SimulatorInteractionBridge {
         canControl: false,
         hasObservation: false
       }))
+    this.hasControllerLease = deps.hasControllerLease ?? null
+    this.idb = deps.idb ?? null
+    this.getActuationTarget = deps.getActuationTarget ?? null
     this.now = deps.now ?? (() => Date.now())
+  }
+
+  private idbAvailable(): boolean {
+    return Boolean(this.idb?.isAvailable())
+  }
+
+  private controllerLeaseHeld(chatId: string): boolean {
+    if (this.hasControllerLease) return Boolean(this.hasControllerLease(chatId))
+    // TODO(simulator-canvas): composition root should always inject hasControllerLease
+    // so actuationReady is lease&&idb rather than canControl&&idb.
+    return false
   }
 
   interactionStatus(chatId: string): SimulatorInteractionStatus {
     const id = requireChatId(chatId)
     const probe = this.getControlStatus(id)
-    if (probe.canControl) {
+    const leaseHeld = this.hasControllerLease ? this.controllerLeaseHeld(id) : probe.canControl
+    const idbAvailable = this.idbAvailable()
+    const canControl = probe.canControl || leaseHeld
+    const actuationReady = Boolean(leaseHeld && idbAvailable)
+
+    if (!canControl) {
       return {
-        canControl: true,
-        reason: SIMULATOR_GESTURE_ACTUATION_DEFERRED,
-        hasObservation: probe.hasObservation
+        canControl: false,
+        actuationReady: false,
+        reason: probe.hasObservation
+          ? SIMULATOR_VIEW_CONTROL_REQUIRED
+          : SIMULATOR_PREVIEW_ONLY_BANNER,
+        hasObservation: probe.hasObservation,
+        idbAvailable,
+        controllerLeaseHeld: leaseHeld
       }
     }
+
     return {
-      canControl: false,
-      reason: probe.hasObservation
-        ? SIMULATOR_VIEW_CONTROL_REQUIRED
-        : SIMULATOR_PREVIEW_ONLY_BANNER,
-      hasObservation: probe.hasObservation
+      canControl: true,
+      actuationReady,
+      reason: actuationReady
+        ? 'Simulator Canvas can drive the device via idb.'
+        : SIMULATOR_GESTURE_ACTUATION_DEFERRED,
+      hasObservation: probe.hasObservation,
+      idbAvailable,
+      controllerLeaseHeld: leaseHeld
     }
   }
 
@@ -107,7 +161,7 @@ export class SimulatorInteractionBridge {
     this.recorded.length = 0
   }
 
-  tap(input: SimulatorTapGesture): SimulatorGestureResult {
+  async tap(input: SimulatorTapGesture): Promise<SimulatorGestureResult> {
     const chatId = requireChatId(input.chatId)
     const status = this.interactionStatus(chatId)
     if (!status.canControl) {
@@ -119,11 +173,24 @@ export class SimulatorInteractionBridge {
       y: clamp01(requireFiniteNumber(input.y, 'y'))
     }
     this.record('tap', gesture)
-    // TODO(simulator-canvas): forward to App Drive click at mapped window coords.
-    return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    if (!status.actuationReady || !this.idb) {
+      return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    }
+    const target = this.getActuationTarget?.(chatId) ?? null
+    if (!target) {
+      return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    }
+    const result = await this.idb.tap(
+      target.udid,
+      toDevicePoint(gesture.x, target.width),
+      toDevicePoint(gesture.y, target.height)
+    )
+    return result.ok
+      ? { ok: true, recorded: true }
+      : { ok: false, error: result.error || SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
   }
 
-  type(input: SimulatorTypeGesture): SimulatorGestureResult {
+  async type(input: SimulatorTypeGesture): Promise<SimulatorGestureResult> {
     const chatId = requireChatId(input.chatId)
     const status = this.interactionStatus(chatId)
     if (!status.canControl) {
@@ -134,11 +201,20 @@ export class SimulatorInteractionBridge {
     }
     const gesture: SimulatorTypeGesture = { chatId, text: input.text }
     this.record('type', gesture)
-    // TODO(simulator-canvas): forward to App Drive fill for the focused field.
-    return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    if (!status.actuationReady || !this.idb) {
+      return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    }
+    const target = this.getActuationTarget?.(chatId) ?? null
+    if (!target) {
+      return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    }
+    const result = await this.idb.text(target.udid, gesture.text)
+    return result.ok
+      ? { ok: true, recorded: true }
+      : { ok: false, error: result.error || SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
   }
 
-  scroll(input: SimulatorScrollGesture): SimulatorGestureResult {
+  async scroll(input: SimulatorScrollGesture): Promise<SimulatorGestureResult> {
     const chatId = requireChatId(input.chatId)
     const status = this.interactionStatus(chatId)
     if (!status.canControl) {
@@ -152,8 +228,21 @@ export class SimulatorInteractionBridge {
       deltaY: requireFiniteNumber(input.deltaY, 'deltaY')
     }
     this.record('scroll', gesture)
-    // TODO(simulator-canvas): forward mapped scroll deltas once a native scroll verb exists.
-    return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    if (!status.actuationReady || !this.idb) {
+      return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    }
+    const target = this.getActuationTarget?.(chatId) ?? null
+    if (!target) {
+      return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
+    }
+    const startX = toDevicePoint(gesture.x, target.width)
+    const startY = toDevicePoint(gesture.y, target.height)
+    const endX = Math.round(clamp(startX - gesture.deltaX, 0, target.width))
+    const endY = Math.round(clamp(startY - gesture.deltaY, 0, target.height))
+    const result = await this.idb.swipe(target.udid, startX, startY, endX, endY)
+    return result.ok
+      ? { ok: true, recorded: true }
+      : { ok: false, error: result.error || SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
   }
 
   private record(

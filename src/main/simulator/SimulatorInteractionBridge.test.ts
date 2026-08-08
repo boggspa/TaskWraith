@@ -1,10 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   SIMULATOR_GESTURE_ACTUATION_DEFERRED,
   SIMULATOR_PREVIEW_ONLY_BANNER,
   SIMULATOR_VIEW_CONTROL_REQUIRED
 } from '../../shared/simulatorCanvas'
 import { SimulatorInteractionBridge } from './SimulatorInteractionBridge'
+import type { IdbClient } from './IdbClient'
+
+function mockIdb(
+  overrides: Partial<IdbClient> = {}
+): Pick<IdbClient, 'isAvailable' | 'tap' | 'text' | 'swipe'> {
+  return {
+    isAvailable: () => true,
+    tap: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+    text: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+    swipe: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+    ...overrides
+  }
+}
 
 describe('SimulatorInteractionBridge', () => {
   it('reports preview-only when there is no Screen Watch attachment', () => {
@@ -13,8 +26,11 @@ describe('SimulatorInteractionBridge', () => {
     })
     expect(bridge.interactionStatus('chat-1')).toEqual({
       canControl: false,
+      actuationReady: false,
       reason: SIMULATOR_PREVIEW_ONLY_BANNER,
-      hasObservation: false
+      hasObservation: false,
+      idbAvailable: false,
+      controllerLeaseHeld: false
     })
   })
 
@@ -24,46 +40,58 @@ describe('SimulatorInteractionBridge', () => {
     })
     expect(bridge.interactionStatus('chat-1')).toEqual({
       canControl: false,
+      actuationReady: false,
       reason: SIMULATOR_VIEW_CONTROL_REQUIRED,
-      hasObservation: true
+      hasObservation: true,
+      idbAvailable: false,
+      controllerLeaseHeld: false
     })
   })
 
-  it('refuses tap/type/scroll without a control lease and does not record intent', () => {
+  it('refuses tap/type/scroll without a control lease and does not record intent', async () => {
     const bridge = new SimulatorInteractionBridge({
       getControlStatus: () => ({ canControl: false, hasObservation: true })
     })
-    expect(bridge.tap({ chatId: 'chat-1', x: 0.5, y: 0.5 })).toEqual({
+    expect(await bridge.tap({ chatId: 'chat-1', x: 0.5, y: 0.5 })).toEqual({
       ok: false,
       error: SIMULATOR_VIEW_CONTROL_REQUIRED
     })
-    expect(bridge.type({ chatId: 'chat-1', text: 'hello' })).toEqual({
+    expect(await bridge.type({ chatId: 'chat-1', text: 'hello' })).toEqual({
       ok: false,
       error: SIMULATOR_VIEW_CONTROL_REQUIRED
     })
-    expect(bridge.scroll({ chatId: 'chat-1', x: 0.5, y: 0.5, deltaX: 0, deltaY: -40 })).toEqual({
+    expect(
+      await bridge.scroll({ chatId: 'chat-1', x: 0.5, y: 0.5, deltaX: 0, deltaY: -40 })
+    ).toEqual({
       ok: false,
       error: SIMULATOR_VIEW_CONTROL_REQUIRED
     })
     expect(bridge.recordedGestures()).toEqual([])
   })
 
-  it('records intent under a lease but does not claim desktop actuation', () => {
+  it('records intent under a lease but stays deferred when idb is missing', async () => {
     const bridge = new SimulatorInteractionBridge({
       getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb: mockIdb({ isAvailable: () => false }),
       now: () => 1000
     })
-    expect(bridge.interactionStatus('chat-1').canControl).toBe(true)
+    const status = bridge.interactionStatus('chat-1')
+    expect(status.canControl).toBe(true)
+    expect(status.actuationReady).toBe(false)
+    expect(status.idbAvailable).toBe(false)
+    expect(status.controllerLeaseHeld).toBe(true)
+    expect(status.reason).toBe(SIMULATOR_GESTURE_ACTUATION_DEFERRED)
 
-    const tap = bridge.tap({ chatId: 'chat-1', x: 1.5, y: -0.2 })
+    const tap = await bridge.tap({ chatId: 'chat-1', x: 1.5, y: -0.2 })
     expect(tap).toEqual({
       ok: false,
       error: SIMULATOR_GESTURE_ACTUATION_DEFERRED,
       recorded: true
     })
-    expect(bridge.type({ chatId: 'chat-1', text: 'hi' }).recorded).toBe(true)
+    expect((await bridge.type({ chatId: 'chat-1', text: 'hi' })).recorded).toBe(true)
     expect(
-      bridge.scroll({ chatId: 'chat-1', x: 0.25, y: 0.75, deltaX: 3, deltaY: -12 }).recorded
+      (await bridge.scroll({ chatId: 'chat-1', x: 0.25, y: 0.75, deltaX: 3, deltaY: -12 })).recorded
     ).toBe(true)
 
     expect(bridge.recordedGestures()).toEqual([
@@ -86,5 +114,89 @@ describe('SimulatorInteractionBridge', () => {
         payload: { chatId: 'chat-1', x: 0.25, y: 0.75, deltaX: 3, deltaY: -12 }
       }
     ])
+  })
+
+  it('sets actuationReady only when idb is available AND controller lease is held', () => {
+    const idb = mockIdb()
+    const withLeaseNoIdb = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb: mockIdb({ isAvailable: () => false })
+    })
+    expect(withLeaseNoIdb.interactionStatus('chat-1').actuationReady).toBe(false)
+
+    const withIdbNoLease = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => false,
+      idb
+    })
+    expect(withIdbNoLease.interactionStatus('chat-1').actuationReady).toBe(false)
+
+    const ready = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb
+    })
+    expect(ready.interactionStatus('chat-1')).toMatchObject({
+      canControl: true,
+      actuationReady: true,
+      idbAvailable: true,
+      controllerLeaseHeld: true
+    })
+  })
+
+  it('forwards tap/type/scroll through mocked idb when actuationReady', async () => {
+    const idb = mockIdb()
+    const bridge = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb,
+      getActuationTarget: () => ({
+        udid: 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        width: 390,
+        height: 844
+      }),
+      now: () => 42
+    })
+
+    expect(await bridge.tap({ chatId: 'chat-1', x: 0.5, y: 0.25 })).toEqual({
+      ok: true,
+      recorded: true
+    })
+    expect(idb.tap).toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 195, 211)
+
+    expect(await bridge.type({ chatId: 'chat-1', text: 'hello' })).toEqual({
+      ok: true,
+      recorded: true
+    })
+    expect(idb.text).toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'hello')
+
+    expect(
+      await bridge.scroll({ chatId: 'chat-1', x: 0.5, y: 0.5, deltaX: 0, deltaY: -80 })
+    ).toEqual({ ok: true, recorded: true })
+    expect(idb.swipe).toHaveBeenCalledWith(
+      'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+      195,
+      422,
+      195,
+      502
+    )
+  })
+
+  it('stays deferred when idb is ready but no session actuation target exists', async () => {
+    const idb = mockIdb()
+    const bridge = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb,
+      getActuationTarget: () => null
+    })
+    expect(bridge.interactionStatus('chat-1').actuationReady).toBe(true)
+    expect(await bridge.tap({ chatId: 'chat-1', x: 0.2, y: 0.3 })).toEqual({
+      ok: false,
+      error: SIMULATOR_GESTURE_ACTUATION_DEFERRED,
+      recorded: true
+    })
+    expect(idb.tap).not.toHaveBeenCalled()
   })
 })
