@@ -817,6 +817,10 @@ import {
   type CloseoutAiSummary
 } from './lib/taskWraithCloseoutMessage'
 import {
+  childChatsForCloseout,
+  closeoutSubagentRefreshFingerprint
+} from './lib/closeoutSubagentRefresh'
+import {
   buildRoundCloseoutSummaryDigest,
   buildRunCloseoutSummaryDigest
 } from './lib/closeoutSummaryDigest'
@@ -24860,6 +24864,57 @@ function App(): React.JSX.Element {
   useEffect(() => {
     closeoutAiEnabledRef.current = settings?.closeoutAiSummaryEnabled !== false
   }, [settings?.closeoutAiSummaryEnabled])
+  // Fingerprint of in-scope Sub-threads evidence so late returns / child status
+  // flips rebuild the Task-complete card without depending on every message.
+  const closeoutChildChats = useMemo(
+    () => childChatsForCloseout(currentChat?.appChatId, chats),
+    [chats, currentChat?.appChatId]
+  )
+  const closeoutChildChatsRef = useRef(closeoutChildChats)
+  closeoutChildChatsRef.current = closeoutChildChats
+  const closeoutSubagentRefreshKey = useMemo(() => {
+    if (!currentChat || !visibleRunCompleteNotice || settings?.showRunCompleteSummary === false) {
+      return ''
+    }
+    const completedAt = visibleRunCompleteNotice.timestamp
+    if (currentChat.chatKind === 'ensemble') {
+      const round = currentChat.ensemble?.activeRound
+      if (
+        !round ||
+        (round.status !== 'completed' &&
+          round.status !== 'cancelled' &&
+          round.status !== 'failed')
+      ) {
+        return ''
+      }
+      const roundCompletedAt = round.endedAt || completedAt
+      const roundRuns = (currentChat.runs || []).filter(
+        (run) => run.ensembleRoundId === round.roundId
+      )
+      return closeoutSubagentRefreshFingerprint({
+        messages: currentChat.messages,
+        parentRunIds: roundRuns.map((run) => run.runId),
+        window: { startedAt: round.startedAt, completedAt: roundCompletedAt },
+        childChats: closeoutChildChats
+      })
+    }
+    const run = currentRun?.runId
+      ? (currentChat.runs || []).find((item) => item.runId === currentRun.runId) || currentRun
+      : currentRun
+    if (!run?.runId || !run.endedAt) return ''
+    return closeoutSubagentRefreshFingerprint({
+      messages: currentChat.messages,
+      parentRunIds: [run.runId],
+      window: { startedAt: run.startedAt, completedAt },
+      childChats: closeoutChildChats
+    })
+  }, [
+    closeoutChildChats,
+    currentChat,
+    currentRun,
+    settings?.showRunCompleteSummary,
+    visibleRunCompleteNotice
+  ])
   useEffect(() => {
     if (
       !currentChat?.appChatId ||
@@ -24870,6 +24925,7 @@ function App(): React.JSX.Element {
       return
     }
     const completedAt = visibleRunCompleteNotice.timestamp
+    const childChats = closeoutChildChats
     updateChatById(currentChat.appChatId, (source) => {
       if (source.chatKind === 'ensemble') {
         const round = source.ensemble?.activeRound
@@ -24887,6 +24943,7 @@ function App(): React.JSX.Element {
           chat: source,
           round,
           completedAt: roundCompletedAt,
+          childChats,
           aiSummary:
             closeoutAiSummaries[`${closeoutId}@${roundCompletedAt}`] ||
             (existing?.timestamp === roundCompletedAt
@@ -24920,6 +24977,7 @@ function App(): React.JSX.Element {
         run,
         completedAt,
         exitCode: visibleRunCompleteNotice.exitCode,
+        childChats,
         aiSummary:
           closeoutAiSummaries[closeoutId] ||
           closeoutAiSummaryFromMetadata(existing?.metadata) ||
@@ -24939,6 +24997,7 @@ function App(): React.JSX.Element {
     })
   }, [
     closeoutAiSummaries,
+    closeoutSubagentRefreshKey,
     currentChat?.appChatId,
     currentChat?.chatKind,
     currentChat?.ensemble?.activeRound?.roundId,
@@ -25019,6 +25078,8 @@ function App(): React.JSX.Element {
             chat: source,
             round,
             completedAt: roundCompletedAt,
+            // Read latest children — this closure can resolve after late returns.
+            childChats: closeoutChildChatsRef.current,
             aiSummary
           })
           if (isSameTaskWraithCloseout(existing, closeout)) {
@@ -25051,6 +25112,7 @@ function App(): React.JSX.Element {
             run: sourceRun,
             completedAt,
             exitCode,
+            childChats: closeoutChildChatsRef.current,
             aiSummary
           })
           if (isSameTaskWraithCloseout(existing, closeout)) {

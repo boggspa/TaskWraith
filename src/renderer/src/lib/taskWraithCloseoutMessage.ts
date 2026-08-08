@@ -69,6 +69,8 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   exitCode?: number
   aiSummary?: CloseoutAiSummary
   fileChanges?: CloseoutFileChange[]
+  /** Optional live children — status enrichment without waiting on return cards. */
+  childChats?: ChatRecord[]
   now?: Date
 }): ChatMessage {
   const { chat, run, completedAt, exitCode } = input
@@ -107,7 +109,8 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
     messages: chat.messages,
     parentRunIds: runIds,
-    window: { startedAt: run.startedAt, completedAt }
+    window: { startedAt: run.startedAt, completedAt },
+    childChats: input.childChats
   })
   // Commits + File Changes + Sub-threads render in the Task-complete epic stack
   // from metadata — keep the close-out bubble to Worked-for + prose.
@@ -142,6 +145,8 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   completedAt: string
   aiSummary?: CloseoutAiSummary
   fileChanges?: CloseoutFileChange[]
+  /** Optional live children — status enrichment without waiting on return cards. */
+  childChats?: ChatRecord[]
   now?: Date
 }): ChatMessage {
   const { chat, round, completedAt } = input
@@ -177,7 +182,8 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
     messages: chat.messages,
     parentRunIds: roundRunIds,
-    window: { startedAt: round.startedAt, completedAt }
+    window: { startedAt: round.startedAt, completedAt },
+    childChats: input.childChats
   })
   // Participants + Sub-threads + Commits + File Changes render in the
   // Task-complete epic stack. The close-out bubble keeps Worked-for + prose.
@@ -1757,10 +1763,10 @@ function resolveCloseoutSubagentStatus(input: {
   child?: ChatRecord
   fallback: CloseoutSubagentDelegationStatus
 }): CloseoutSubagentDelegationStatus {
-  if (input.child) {
-    const fromChild = statusFromChildChat(input.child)
-    if (fromChild) return fromChild
-  }
+  // Durable terminal signals first — a return card (or resultReturnedAt) must
+  // win over a still-running lastRun so late returns refresh the fingerprint.
+  if (input.child?.delegationContext?.dispatchError) return 'failed'
+  if (input.child?.delegationContext?.resultReturnedAt) return 'returned'
   if (input.isReturn) {
     const outcome =
       typeof input.outcome === 'string' ? input.outcome.trim().toLowerCase() : ''
@@ -1769,14 +1775,25 @@ function resolveCloseoutSubagentStatus(input: {
     if (outcome === 'success' || outcome === 'completed' || outcome === 'done') return 'returned'
     return 'returned'
   }
+  if (input.child) {
+    const fromChild = statusFromChildChat(input.child)
+    if (fromChild) return fromChild
+  }
   return input.fallback
 }
 
 function statusFromChildChat(child: ChatRecord): CloseoutSubagentDelegationStatus | null {
   if (child.delegationContext?.dispatchError) return 'failed'
   if (child.delegationContext?.resultReturnedAt) return 'returned'
-  const lastRun = child.runs?.[child.runs.length - 1]
-  if (!lastRun) return 'created'
+  // List-summary hydration often leaves `runs: []` but stamps `lastRun`.
+  const lastRun =
+    child.runs && child.runs.length > 0
+      ? child.runs[child.runs.length - 1]
+      : child.lastRun
+  if (!lastRun) {
+    // No live signal — do not force 'created' over a return-card outcome.
+    return null
+  }
   if (
     lastRun.status === 'running' ||
     lastRun.status === 'queued' ||
@@ -1788,7 +1805,13 @@ function statusFromChildChat(child: ChatRecord): CloseoutSubagentDelegationStatu
   }
   if (lastRun.status === 'failed' || lastRun.status === 'error') return 'failed'
   if (lastRun.status === 'cancelled' || lastRun.status === 'canceled') return 'cancelled'
-  if (lastRun.status === 'success' || lastRun.status === 'completed') return 'completed'
+  if (
+    lastRun.status === 'success' ||
+    lastRun.status === 'completed' ||
+    lastRun.status === 'success_with_warnings'
+  ) {
+    return 'completed'
+  }
   return null
 }
 

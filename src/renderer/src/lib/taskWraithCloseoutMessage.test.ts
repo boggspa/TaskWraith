@@ -10,6 +10,8 @@ import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
 import {
   buildTaskWraithRoundCloseoutMessage,
   buildTaskWraithRunCloseoutMessage,
+  collectCloseoutSubagentDelegations,
+  isSameTaskWraithCloseout,
   upsertTaskWraithCloseoutMessage
 } from './taskWraithCloseoutMessage'
 
@@ -1885,5 +1887,246 @@ Next action:
     expect(updated[0].metadata?.closeoutSubagentDelegations).toEqual([
       expect.objectContaining({ subThreadId: 'kept' })
     ])
+  })
+
+  it('late return flips created→returned and isSameTaskWraithCloseout detects the change', () => {
+    const run: ChatRun = {
+      runId: 'run-late-return',
+      provider: 'claude',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:01:00.000Z',
+      status: 'success'
+    }
+    const delegation = {
+      ...message('del', 'system', '↪ Delegated.', {
+        kind: 'subThreadDelegation',
+        subThreadId: 'child-late',
+        subThreadProvider: 'codex',
+        subThreadTitle: 'Late child',
+        joinPolicy: { groupId: run.runId }
+      }),
+      timestamp: '2026-08-08T12:00:10.000Z'
+    }
+    const early = buildTaskWraithRunCloseoutMessage({
+      chat: chat({ messages: [delegation], runs: [run] }),
+      run,
+      completedAt: run.endedAt!
+    })
+    expect(early.metadata?.closeoutSubagentDelegations?.[0]?.status).toBe('created')
+
+    const late = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          delegation,
+          {
+            ...message('ret', 'tool', '↩ Result', {
+              kind: 'subThreadReturn',
+              subThreadId: 'child-late',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Late child',
+              subThreadOutcome: 'success',
+              parallelResultWaveId: run.runId
+            }),
+            timestamp: '2026-08-08T12:02:00.000Z'
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!
+    })
+    expect(late.metadata?.closeoutSubagentDelegations?.[0]?.status).toBe('returned')
+    expect(isSameTaskWraithCloseout(early, late)).toBe(false)
+  })
+
+  it('passes childChats through run closeout to promote created→running without a return', () => {
+    const run: ChatRun = {
+      runId: 'run-child-status',
+      provider: 'claude',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:01:00.000Z',
+      status: 'success'
+    }
+    const messages = [
+      {
+        ...message('del', 'system', '↪ Delegated.', {
+          kind: 'subThreadDelegation',
+          subThreadId: 'child-live',
+          subThreadProvider: 'codex',
+          subThreadTitle: 'Live child',
+          joinPolicy: { groupId: run.runId }
+        }),
+        timestamp: '2026-08-08T12:00:10.000Z'
+      }
+    ]
+    const childChats: ChatRecord[] = [
+      chat({
+        appChatId: 'child-live',
+        parentChatId: 'chat-1',
+        provider: 'codex',
+        runs: [
+          {
+            runId: 'child-run-1',
+            provider: 'codex',
+            startedAt: '2026-08-08T12:00:15.000Z',
+            status: 'running'
+          }
+        ]
+      })
+    ]
+    const without = buildTaskWraithRunCloseoutMessage({
+      chat: chat({ messages, runs: [run] }),
+      run,
+      completedAt: run.endedAt!
+    })
+    expect(without.metadata?.closeoutSubagentDelegations?.[0]?.status).toBe('created')
+
+    const withChild = buildTaskWraithRunCloseoutMessage({
+      chat: chat({ messages, runs: [run] }),
+      run,
+      completedAt: run.endedAt!,
+      childChats
+    })
+    expect(withChild.metadata?.closeoutSubagentDelegations?.[0]?.status).toBe('running')
+  })
+
+  it('maps success_with_warnings child runs to completed', () => {
+    const rows = collectCloseoutSubagentDelegations({
+      messages: [
+        {
+          ...message('del', 'system', '↪ Delegated.', {
+            kind: 'subThreadDelegation',
+            subThreadId: 'child-warn',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'Warn child',
+            joinPolicy: { groupId: 'run-warn' }
+          }),
+          timestamp: '2026-08-08T12:00:10.000Z'
+        }
+      ],
+      parentRunIds: new Set(['run-warn']),
+      childChats: [
+        chat({
+          appChatId: 'child-warn',
+          parentChatId: 'chat-1',
+          runs: [
+            {
+              runId: 'child-run-warn',
+              provider: 'codex',
+              startedAt: '2026-08-08T12:00:15.000Z',
+              endedAt: '2026-08-08T12:00:50.000Z',
+              status: 'success_with_warnings'
+            }
+          ]
+        })
+      ]
+    })
+    expect(rows).toEqual([
+      expect.objectContaining({ subThreadId: 'child-warn', status: 'completed' })
+    ])
+  })
+
+  it('does not let a summary-only child force created over a returned card', () => {
+    const rows = collectCloseoutSubagentDelegations({
+      messages: [
+        {
+          ...message('ret', 'tool', '↩ Result', {
+            kind: 'subThreadReturn',
+            subThreadId: 'child-summary',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'Summary child',
+            subThreadOutcome: 'success',
+            parallelResultWaveId: 'run-summary'
+          }),
+          timestamp: '2026-08-08T12:00:40.000Z'
+        }
+      ],
+      parentRunIds: new Set(['run-summary']),
+      childChats: [
+        chat({
+          appChatId: 'child-summary',
+          parentChatId: 'chat-1',
+          runs: [],
+          lastRun: undefined
+        })
+      ]
+    })
+    expect(rows[0]?.status).toBe('returned')
+  })
+
+  it('prefers a return card over a still-running child lastRun (App-shaped inputs)', () => {
+    const rows = collectCloseoutSubagentDelegations({
+      messages: [
+        {
+          ...message('del', 'system', '↪ Delegated.', {
+            kind: 'subThreadDelegation',
+            subThreadId: 'child-race',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'Race child',
+            joinPolicy: { groupId: 'run-race' }
+          }),
+          timestamp: '2026-08-08T12:00:10.000Z'
+        },
+        {
+          ...message('ret', 'tool', '↩ Result', {
+            kind: 'subThreadReturn',
+            subThreadId: 'child-race',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'Race child',
+            subThreadOutcome: 'success',
+            parallelResultWaveId: 'run-race'
+          }),
+          timestamp: '2026-08-08T12:02:00.000Z'
+        }
+      ],
+      parentRunIds: new Set(['run-race']),
+      childChats: [
+        chat({
+          appChatId: 'child-race',
+          parentChatId: 'chat-1',
+          runs: [
+            {
+              runId: 'child-run-race',
+              provider: 'codex',
+              startedAt: '2026-08-08T12:00:15.000Z',
+              status: 'running'
+            }
+          ]
+        })
+      ]
+    })
+    expect(rows[0]?.status).toBe('returned')
+  })
+
+  it('reads lastRun when runs[] is empty (list-summary hydration)', () => {
+    const rows = collectCloseoutSubagentDelegations({
+      messages: [
+        {
+          ...message('del', 'system', '↪ Delegated.', {
+            kind: 'subThreadDelegation',
+            subThreadId: 'child-last-run',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'LastRun child',
+            joinPolicy: { groupId: 'run-last' }
+          }),
+          timestamp: '2026-08-08T12:00:10.000Z'
+        }
+      ],
+      parentRunIds: new Set(['run-last']),
+      childChats: [
+        chat({
+          appChatId: 'child-last-run',
+          parentChatId: 'chat-1',
+          runs: [],
+          lastRun: {
+            runId: 'child-run-lr',
+            provider: 'codex',
+            startedAt: '2026-08-08T12:00:15.000Z',
+            status: 'running'
+          }
+        })
+      ]
+    })
+    expect(rows[0]?.status).toBe('running')
   })
 })
