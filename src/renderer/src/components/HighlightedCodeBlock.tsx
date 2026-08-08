@@ -182,6 +182,26 @@ export function resetHighlightToNodesCacheForTest(): void {
 
 function rememberHighlightNodes(key: string, nodes: ReactNode, contentLength: number): void {
   if (contentLength > HIGHLIGHT_CACHE_MAX_CHARS) return
+
+  // Recipe C (P2): drop same-lang keys whose content is a strict prefix of the
+  // new entry so streamed fence growth does not thrash the LRU with orphans.
+  const sep = key.indexOf('\0')
+  if (sep >= 0) {
+    const lang = key.slice(0, sep)
+    const content = key.slice(sep + 1)
+    const langPrefix = `${lang}\0`
+    for (const existing of highlightToNodesCache.keys()) {
+      if (!existing.startsWith(langPrefix)) continue
+      const existingContent = existing.slice(langPrefix.length)
+      if (
+        existingContent.length < content.length &&
+        content.startsWith(existingContent)
+      ) {
+        highlightToNodesCache.delete(existing)
+      }
+    }
+  }
+
   highlightToNodesCache.set(key, nodes)
   while (highlightToNodesCache.size > HIGHLIGHT_CACHE_MAX) {
     const oldest = highlightToNodesCache.keys().next().value

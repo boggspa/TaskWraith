@@ -131,9 +131,12 @@ describe('HighlightedCodeBlock', () => {
   })
 
   it('evicts the oldest entry once the cache exceeds 64 keys', () => {
+    // Zero-pad so later indices are not strict prefixes of earlier ones
+    // (recipe C would otherwise collapse `const n = 1` under `const n = 10`).
+    const snippet = (i: number) => `const n = ${String(i).padStart(3, '0')}`
     for (let i = 0; i < 65; i += 1) {
       renderToStaticMarkup(
-        <HighlightedCodeBlock content={`const n = ${i}`} language="javascript" />
+        <HighlightedCodeBlock content={snippet(i)} language="javascript" />
       )
     }
     expect(highlightToNodesCacheSizeForTest()).toBe(64)
@@ -141,9 +144,85 @@ describe('HighlightedCodeBlock', () => {
 
     // Oldest key (n = 0) was evicted — remount re-parses.
     renderToStaticMarkup(
-      <HighlightedCodeBlock content={'const n = 0'} language="javascript" />
+      <HighlightedCodeBlock content={snippet(0)} language="javascript" />
     )
     expect(getHighlightParseCountForTest()).toBe(66)
     expect(highlightToNodesCacheSizeForTest()).toBe(64)
+  })
+
+  it('drops strict-prefix keys while a fence streams so settled remounts stay cached', () => {
+    const settled = Array.from({ length: 5 }, (_, i) => `const settled_${i} = ${i}`)
+    for (const content of settled) {
+      renderToStaticMarkup(<HighlightedCodeBlock content={content} language="javascript" />)
+    }
+    expect(highlightToNodesCacheSizeForTest()).toBe(5)
+    const afterSeedParses = getHighlightParseCountForTest()
+    expect(afterSeedParses).toBe(5)
+
+    // Append-only growth: each step is a strict prefix of the next.
+    let growing = 'function streamFence() {\n'
+    for (let i = 1; i <= 70; i += 1) {
+      growing += '  x++;\n'
+      renderToStaticMarkup(<HighlightedCodeBlock content={growing} language="javascript" />)
+    }
+
+    // 5 settled + 1 final stream entry; prefixes must not accumulate.
+    expect(highlightToNodesCacheSizeForTest()).toBe(6)
+    expect(getHighlightParseCountForTest()).toBe(afterSeedParses + 70)
+
+    const afterStreamParses = getHighlightParseCountForTest()
+    for (const content of settled) {
+      renderToStaticMarkup(<HighlightedCodeBlock content={content} language="javascript" />)
+    }
+    expect(getHighlightParseCountForTest()).toBe(afterStreamParses)
+  })
+
+  it('promotes a touched entry so LRU eviction spares it', () => {
+    const snippet = (i: number) => `const n = ${String(i).padStart(3, '0')}`
+    for (let i = 0; i < 64; i += 1) {
+      renderToStaticMarkup(
+        <HighlightedCodeBlock content={snippet(i)} language="javascript" />
+      )
+    }
+    expect(highlightToNodesCacheSizeForTest()).toBe(64)
+    expect(getHighlightParseCountForTest()).toBe(64)
+
+    // Touch n=0 → most-recent; n=1 becomes the oldest.
+    renderToStaticMarkup(
+      <HighlightedCodeBlock content={snippet(0)} language="javascript" />
+    )
+    expect(getHighlightParseCountForTest()).toBe(64)
+
+    renderToStaticMarkup(
+      <HighlightedCodeBlock content={snippet(64)} language="javascript" />
+    )
+    expect(highlightToNodesCacheSizeForTest()).toBe(64)
+    expect(getHighlightParseCountForTest()).toBe(65)
+
+    const afterInsert = getHighlightParseCountForTest()
+    renderToStaticMarkup(
+      <HighlightedCodeBlock content={snippet(0)} language="javascript" />
+    )
+    expect(getHighlightParseCountForTest()).toBe(afterInsert)
+
+    renderToStaticMarkup(
+      <HighlightedCodeBlock content={snippet(1)} language="javascript" />
+    )
+    expect(getHighlightParseCountForTest()).toBe(afterInsert + 1)
+  })
+
+  it('hits the cache on remount of the exact final streamed content', () => {
+    let final = 'function finalFence() {\n'
+    for (let i = 1; i <= 40; i += 1) {
+      final += '  y++;\n'
+      renderToStaticMarkup(<HighlightedCodeBlock content={final} language="javascript" />)
+    }
+    expect(highlightToNodesCacheSizeForTest()).toBe(1)
+    const afterStream = getHighlightParseCountForTest()
+    expect(afterStream).toBe(40)
+
+    renderToStaticMarkup(<HighlightedCodeBlock content={final} language="javascript" />)
+    expect(getHighlightParseCountForTest()).toBe(afterStream)
+    expect(highlightToNodesCacheSizeForTest()).toBe(1)
   })
 })
