@@ -10,7 +10,12 @@ import {
   type ClipboardEvent
 } from 'react'
 
-import { normalizeGitHubReferenceInput } from '../../../shared/projects'
+import {
+  parseProjectReferenceExtract,
+  type ProjectReferenceExtract,
+  type ProjectReferenceExtractPageSpan
+} from '../../../shared/projectReferenceExtract'
+import { normalizeGitHubReferenceInput, type ProjectReference } from '../../../shared/projects'
 import {
   addProjectReference,
   listProjectReferences,
@@ -41,6 +46,80 @@ import {
   classifyPastedReferenceText,
   type DockIngestCandidate
 } from '../lib/projectReferencesDockIngest'
+import { ProjectReferenceSourceViewer } from './ProjectReferenceSourceViewer'
+
+/** Consent dialog copy for one-shot Project-reference extracts (P1 doctrine). */
+export const PROJECT_REFERENCE_EXTRACT_CONSENT_COPY =
+  'Save a readable text copy into this Project. Agents see it only if you Use next. You can revoke anytime. Does not grant ongoing access.'
+
+const EXTRACTABLE_FILE_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'pptx', 'md', 'csv', 'tsv'])
+
+/** URL / PDF / Office (and plain markdown/csv) rows that can request a consentful extract. */
+export function isProjectReferenceExtractCandidate(
+  reference: Pick<ProjectReference, 'kind' | 'locator'>
+): boolean {
+  if (reference.kind === 'url') return true
+  if (reference.kind !== 'file') return false
+  const filename = reference.locator.split(/[\\/]/).pop()?.toLowerCase() ?? ''
+  const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : ''
+  return EXTRACTABLE_FILE_EXTENSIONS.has(extension)
+}
+
+const extractSeedsForTests = new Map<string, ProjectReferenceExtract>()
+
+function extractCacheKey(projectId: string, referenceId: string): string {
+  return `${projectId}\u0000${referenceId}`
+}
+
+/** Test-only: seed a ready extract so static markup can assert badges/actions. */
+export function seedProjectReferenceExtractForTests(
+  projectId: string,
+  referenceId: string,
+  extract: unknown
+): void {
+  const parsed = parseProjectReferenceExtract(extract)
+  if (!parsed) {
+    extractSeedsForTests.delete(extractCacheKey(projectId, referenceId))
+    return
+  }
+  extractSeedsForTests.set(extractCacheKey(projectId, referenceId), parsed)
+}
+
+export function clearProjectReferenceExtractSeedsForTests(): void {
+  extractSeedsForTests.clear()
+}
+
+interface ProjectReferenceExtractBridge {
+  extractProjectReference?: (input: {
+    projectId: string
+    referenceId: string
+    chatId?: string
+    consent: {
+      at: number
+      actor: 'user'
+      scope: 'this-reference'
+      chatId?: string
+    }
+  }) => Promise<unknown>
+  getProjectReferenceExtract?: (input: {
+    projectId: string
+    referenceId: string
+  }) => Promise<unknown>
+  revokeProjectReferenceExtract?: (input: { extractId: string } | string) => Promise<unknown>
+  readProjectReferenceExtractText?: (input: {
+    extractId: string
+    maxChars?: number
+  }) => Promise<unknown>
+}
+
+function extractBridge(): ProjectReferenceExtractBridge | undefined {
+  if (typeof window === 'undefined') return undefined
+  return window.api as unknown as ProjectReferenceExtractBridge
+}
+
+function extractApiAvailable(api: ProjectReferenceExtractBridge | undefined): boolean {
+  return typeof api?.extractProjectReference === 'function'
+}
 
 interface ProjectReferencesDockPanelProps {
   projectId: string
@@ -185,6 +264,61 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
+}
+
+function extractFromRequestResult(value: unknown): ProjectReferenceExtract | null {
+  if (!isRecord(value)) return parseProjectReferenceExtract(value)
+  if ('extract' in value) {
+    const nested = parseProjectReferenceExtract(value.extract)
+    if (nested) return nested
+  }
+  return parseProjectReferenceExtract(value)
+}
+
+function extractRequestFailedMessage(value: unknown): string | null {
+  if (!isRecord(value) || value.ok !== false) return null
+  return text(value.message) ?? 'Extract failed.'
+}
+
+function extractTextFromUnknown(value: unknown): {
+  text: string
+  pages?: ProjectReferenceExtractPageSpan[]
+} | null {
+  if (typeof value === 'string') return { text: value }
+  if (!isRecord(value)) return null
+  if (value.ok === false) return null
+  const textValue = text(value.text)
+  if (!textValue) return null
+  const pagesRaw = value.pages
+  if (!Array.isArray(pagesRaw)) return { text: textValue }
+  const pages: ProjectReferenceExtractPageSpan[] = []
+  for (const entry of pagesRaw) {
+    if (!isRecord(entry)) continue
+    const pageNumber =
+      typeof entry.pageNumber === 'number' && Number.isSafeInteger(entry.pageNumber)
+        ? entry.pageNumber
+        : null
+    const startOffset =
+      typeof entry.startOffset === 'number' && Number.isSafeInteger(entry.startOffset)
+        ? entry.startOffset
+        : null
+    const endOffset =
+      typeof entry.endOffset === 'number' && Number.isSafeInteger(entry.endOffset)
+        ? entry.endOffset
+        : null
+    if (
+      pageNumber === null ||
+      startOffset === null ||
+      endOffset === null ||
+      pageNumber < 1 ||
+      startOffset < 0 ||
+      endOffset < startOffset
+    ) {
+      continue
+    }
+    pages.push({ pageNumber, startOffset, endOffset })
+  }
+  return pages.length > 0 ? { text: textValue, pages } : { text: textValue }
 }
 
 function proposalPreviewFromUnknown(item: Record<string, unknown>): {
@@ -406,6 +540,30 @@ export function ProjectReferencesDockPanel({
   const busy = busyProjectId === projectId
   const [dragOver, setDragOver] = useState(false)
   const dragDepthRef = useRef(0)
+  const [extractsByReferenceId, setExtractsByReferenceId] = useState<
+    Record<string, ProjectReferenceExtract | null>
+  >(() => {
+    const seeded: Record<string, ProjectReferenceExtract | null> = {}
+    for (const [key, extract] of extractSeedsForTests) {
+      const separator = key.indexOf('\u0000')
+      if (separator < 0) continue
+      if (key.slice(0, separator) !== projectId) continue
+      seeded[key.slice(separator + 1)] = extract
+    }
+    return seeded
+  })
+  const [extractActingReferenceId, setExtractActingReferenceId] = useState<string | null>(null)
+  const [viewerState, setViewerState] = useState<{
+    title: string
+    text: string
+    pages?: ProjectReferenceExtractPageSpan[]
+  } | null>(null)
+  const extractBridgeApi = extractBridge()
+  const canExtractViaApi = extractApiAvailable(extractBridgeApi)
+  const canReadExtractViaApi =
+    typeof extractBridgeApi?.readProjectReferenceExtractText === 'function'
+  const canRevokeExtractViaApi =
+    typeof extractBridgeApi?.revokeProjectReferenceExtract === 'function'
   const contextSelection = useSyncExternalStore(
     useCallback(
       (listener) => subscribeProjectReferenceContextSelection(chatId, listener),
@@ -425,6 +583,13 @@ export function ProjectReferencesDockPanel({
   const canSelectForNextSend = Boolean(
     contextSelectionEnabled && chatId && project?.memberChatIds.includes(chatId)
   )
+  const selectedExtractCount = useMemo(() => {
+    let count = 0
+    for (const referenceId of selectedReferenceIds) {
+      if (extractsByReferenceId[referenceId]?.status === 'ready') count += 1
+    }
+    return count
+  }, [extractsByReferenceId, selectedReferenceIds])
 
   useEffect(() => {
     const refresh = (): void =>
@@ -432,6 +597,56 @@ export function ProjectReferencesDockPanel({
     refresh()
     return subscribeProjects(refresh)
   }, [projectId])
+
+  useEffect(() => {
+    const seeded: Record<string, ProjectReferenceExtract | null> = {}
+    for (const [key, extract] of extractSeedsForTests) {
+      const separator = key.indexOf('\u0000')
+      if (separator < 0) continue
+      if (key.slice(0, separator) !== projectId) continue
+      seeded[key.slice(separator + 1)] = extract
+    }
+    if (Object.keys(seeded).length > 0) {
+      setExtractsByReferenceId((prev) => ({ ...seeded, ...prev }))
+    }
+
+    const api = extractBridge()
+    if (typeof api?.getProjectReferenceExtract !== 'function') return
+
+    let cancelled = false
+    const loadable = referencesForActiveProject(
+      { projectId, references: listProjectReferences(projectId) },
+      projectId,
+      listProjectReferences
+    ).filter((reference) => isProjectReferenceExtractCandidate(reference))
+
+    void Promise.all(
+      loadable.map(async (reference) => {
+        try {
+          const result = await api.getProjectReferenceExtract?.({
+            projectId,
+            referenceId: reference.id
+          })
+          return [reference.id, parseProjectReferenceExtract(result)] as const
+        } catch {
+          return [reference.id, null] as const
+        }
+      })
+    ).then((entries) => {
+      if (cancelled) return
+      setExtractsByReferenceId((prev) => {
+        const next = { ...prev }
+        for (const [referenceId, extract] of entries) {
+          next[referenceId] = extract
+        }
+        return next
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, references.length])
 
   const refreshProjectReferenceProposals = useCallback(
     (requestedProjectId: string): Promise<void> => {
@@ -678,6 +893,138 @@ export function ProjectReferencesDockPanel({
     ingestCandidate(candidate)
   }
 
+  const requestExtract = (reference: ProjectReference): void => {
+    const api = extractBridge()
+    if (typeof api?.extractProjectReference !== 'function') {
+      window.alert('Extract is unavailable in this build.')
+      return
+    }
+    const confirmed =
+      typeof window.confirm === 'function'
+        ? window.confirm(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY)
+        : false
+    if (!confirmed) return
+    const consentAt = Date.now()
+    const consent = {
+      at: consentAt,
+      actor: 'user' as const,
+      scope: 'this-reference' as const,
+      ...(chatId ? { chatId } : {})
+    }
+    setExtractActingReferenceId(reference.id)
+    void Promise.resolve()
+      .then(() =>
+        api.extractProjectReference?.({
+          projectId,
+          referenceId: reference.id,
+          ...(chatId ? { chatId } : {}),
+          consent
+        })
+      )
+      .then((result) => {
+        const parsed = extractFromRequestResult(result)
+        setExtractsByReferenceId((prev) => ({
+          ...prev,
+          [reference.id]: parsed
+        }))
+        const failure = extractRequestFailedMessage(result)
+        if (failure) {
+          window.alert(failure)
+        } else if (!parsed) {
+          window.alert('Extract failed.')
+        } else if (parsed.status === 'failed') {
+          window.alert(parsed.error?.message || 'Extract failed.')
+        }
+      })
+      .catch((error: unknown) => {
+        window.alert(error instanceof Error ? error.message : 'Extract failed.')
+      })
+      .finally(() => {
+        setExtractActingReferenceId((current) => (current === reference.id ? null : current))
+      })
+  }
+
+  const viewExtract = (reference: ProjectReference): void => {
+    const api = extractBridge()
+    const extract = extractsByReferenceId[reference.id]
+    if (
+      !extract ||
+      extract.status !== 'ready' ||
+      typeof api?.readProjectReferenceExtractText !== 'function'
+    ) {
+      window.alert('Extract text is unavailable.')
+      return
+    }
+    setExtractActingReferenceId(reference.id)
+    void Promise.resolve()
+      .then(() =>
+        api.readProjectReferenceExtractText?.({
+          extractId: extract.id
+        })
+      )
+      .then((result) => {
+        const failure = extractRequestFailedMessage(result)
+        if (failure) {
+          window.alert(failure)
+          return
+        }
+        const parsed = extractTextFromUnknown(result)
+        if (!parsed) {
+          window.alert('Extract text is unavailable.')
+          return
+        }
+        setViewerState({
+          title: reference.title,
+          text: parsed.text,
+          ...(parsed.pages
+            ? { pages: parsed.pages }
+            : extract.text?.pages
+              ? { pages: extract.text.pages }
+              : {})
+        })
+      })
+      .catch((error: unknown) => {
+        window.alert(error instanceof Error ? error.message : 'Could not read extract text.')
+      })
+      .finally(() => {
+        setExtractActingReferenceId((current) => (current === reference.id ? null : current))
+      })
+  }
+
+  const revokeExtract = (reference: ProjectReference): void => {
+    const api = extractBridge()
+    const extract = extractsByReferenceId[reference.id]
+    if (typeof api?.revokeProjectReferenceExtract !== 'function' || !extract) {
+      window.alert('Revoke extract is unavailable in this build.')
+      return
+    }
+    const confirmed =
+      typeof window.confirm === 'function'
+        ? window.confirm(
+            'Revoke this extract? Agents will no longer see the saved text on Use next.'
+          )
+        : false
+    if (!confirmed) return
+    setExtractActingReferenceId(reference.id)
+    void Promise.resolve()
+      .then(() => api.revokeProjectReferenceExtract?.({ extractId: extract.id }))
+      .then((result) => {
+        const failure = extractRequestFailedMessage(result)
+        if (failure) {
+          window.alert(failure)
+          return
+        }
+        setExtractsByReferenceId((prev) => ({ ...prev, [reference.id]: null }))
+        setViewerState(null)
+      })
+      .catch((error: unknown) => {
+        window.alert(error instanceof Error ? error.message : 'Could not revoke extract.')
+      })
+      .finally(() => {
+        setExtractActingReferenceId((current) => (current === reference.id ? null : current))
+      })
+  }
+
   const reviewProposal = (
     proposal: ProjectReferenceProposalView,
     decision: 'approve' | 'reject'
@@ -786,7 +1133,10 @@ export function ProjectReferencesDockPanel({
 
       {selectedReferenceIds.size > 0 && (
         <div className="project-references-dock-selection">
-          <span>{selectedReferenceIds.size} selected for the next send</span>
+          <span>
+            {selectedReferenceIds.size} selected for the next send
+            {selectedExtractCount > 0 ? ` · ${selectedExtractCount} with extract` : ''}
+          </span>
           <button type="button" onClick={() => clearProjectReferenceContextSelection(chatId)}>
             Clear
           </button>
@@ -858,6 +1208,11 @@ export function ProjectReferencesDockPanel({
         ) : (
           references.map((reference) => {
             const presentation = projectReferencePresentation(reference)
+            const extractable = isProjectReferenceExtractCandidate(reference)
+            const extract = extractsByReferenceId[reference.id] ?? null
+            const extractReady = extract?.status === 'ready'
+            const extractBusy = extractActingReferenceId === reference.id
+            const selected = selectedReferenceIds.has(reference.id)
             return (
               <article
                 key={reference.id}
@@ -869,7 +1224,12 @@ export function ProjectReferencesDockPanel({
                   {presentation.label}
                 </div>
                 <div className="project-references-dock-copy">
-                  <strong>{reference.title}</strong>
+                  <strong>
+                    {reference.title}
+                    {extractReady ? (
+                      <span className="project-references-dock-extract-badge">Extracted</span>
+                    ) : null}
+                  </strong>
                   <span title={reference.locator}>{reference.locator}</span>
                 </div>
                 {reference.lastVerified && (
@@ -889,14 +1249,21 @@ export function ProjectReferencesDockPanel({
                   <button
                     type="button"
                     disabled={busy || !canSelectForNextSend || reference.contextPolicy === 'off'}
-                    aria-pressed={selectedReferenceIds.has(reference.id)}
+                    aria-pressed={selected}
                     onClick={() =>
                       toggleProjectReferenceContextSelection(chatId, projectId, reference.id)
                     }
-                    title="Attach this catalogue entry to the next send"
+                    title={
+                      selected && extractReady
+                        ? 'Selected for next send (includes extract)'
+                        : 'Attach this catalogue entry to the next send'
+                    }
                   >
-                    {selectedReferenceIds.has(reference.id) ? 'Selected' : 'Use next'}
+                    {selected ? (extractReady ? 'Selected · extract' : 'Selected') : 'Use next'}
                   </button>
+                  {selected && extractReady ? (
+                    <span className="project-references-dock-extract-chip">includes extract</span>
+                  ) : null}
                   {reference.kind !== 'url' && (
                     <button
                       type="button"
@@ -907,6 +1274,50 @@ export function ProjectReferencesDockPanel({
                       Verify
                     </button>
                   )}
+                  {extractable ? (
+                    extractReady ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={busy || extractBusy || !canReadExtractViaApi}
+                          onClick={() => viewExtract(reference)}
+                          title={
+                            canReadExtractViaApi
+                              ? 'View the saved extract text'
+                              : 'Extract is unavailable in this build'
+                          }
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          disabled={busy || extractBusy || !canRevokeExtractViaApi}
+                          onClick={() => revokeExtract(reference)}
+                          title={
+                            canRevokeExtractViaApi
+                              ? 'Revoke the saved extract'
+                              : 'Extract is unavailable in this build'
+                          }
+                        >
+                          Revoke extract
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy || extractBusy || !canExtractViaApi}
+                        onClick={() => requestExtract(reference)}
+                        title={
+                          canExtractViaApi
+                            ? PROJECT_REFERENCE_EXTRACT_CONSENT_COPY
+                            : 'Extract is unavailable in this build'
+                        }
+                      >
+                        {extractBusy ? 'Extracting…' : 'Extract…'}
+                      </button>
+                    )
+                  ) : null}
                   {(() => {
                     if (reference.kind !== 'file' || !onOpenInOffice || !resolveOfficeTarget) {
                       return null
@@ -956,6 +1367,16 @@ export function ProjectReferencesDockPanel({
           })
         )}
       </div>
+      {viewerState ? (
+        <div className="project-reference-source-viewer-shell">
+          <ProjectReferenceSourceViewer
+            title={viewerState.title}
+            text={viewerState.text}
+            pages={viewerState.pages}
+            onClose={() => setViewerState(null)}
+          />
+        </div>
+      ) : null}
     </section>
   )
 }

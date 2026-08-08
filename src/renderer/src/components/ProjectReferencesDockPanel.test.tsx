@@ -22,21 +22,35 @@ const fake = vi.hoisted(() => {
   return { api, broadcast }
 })
 
+import {
+  resetProjectReferenceContextSelectionForTests,
+  setProjectReferenceContextSelection
+} from '../lib/projectReferenceContextSelection'
 import { listProjects, resetProjectsStoreForTests } from '../lib/projectsStore'
 import {
+  PROJECT_REFERENCE_EXTRACT_CONSENT_COPY,
   ProjectReferenceSuggestions,
   ProjectReferencesDockPanel,
+  clearProjectReferenceExtractSeedsForTests,
+  isProjectReferenceExtractCandidate,
   projectReferenceProposalViewsFromUnknown,
   resolveDockDroppedFilePath,
+  seedProjectReferenceExtractForTests,
   shouldHandleProjectReferencesDockPaste
 } from './ProjectReferencesDockPanel'
 
 beforeEach(() => {
   resetProjectsStoreForTests()
+  resetProjectReferenceContextSelectionForTests()
+  clearProjectReferenceExtractSeedsForTests()
   fake.broadcast.cb = null
   fake.api.getProjectsSnapshot.mockReset()
   fake.api.onProjectsChanged.mockReset()
   fake.api.getPathForFile.mockReset()
+  delete (fake.api as { extractProjectReference?: unknown }).extractProjectReference
+  delete (fake.api as { getProjectReferenceExtract?: unknown }).getProjectReferenceExtract
+  delete (fake.api as { revokeProjectReferenceExtract?: unknown }).revokeProjectReferenceExtract
+  delete (fake.api as { readProjectReferenceExtractText?: unknown }).readProjectReferenceExtractText
   fake.api.getProjectsSnapshot.mockResolvedValue({
     projects: [],
     workProfiles: [],
@@ -410,4 +424,174 @@ it('accepts paste only on the dock surface outside editable/composer targets', (
       activeElement: null
     })
   ).toBe(false)
+})
+
+it('treats url, pdf, and office files as extract candidates', () => {
+  expect(isProjectReferenceExtractCandidate({ kind: 'url', locator: 'https://example.test' })).toBe(
+    true
+  )
+  expect(isProjectReferenceExtractCandidate({ kind: 'file', locator: '/tmp/brief.pdf' })).toBe(true)
+  expect(isProjectReferenceExtractCandidate({ kind: 'file', locator: '/tmp/brief.docx' })).toBe(
+    true
+  )
+  expect(isProjectReferenceExtractCandidate({ kind: 'file', locator: '/tmp/sheet.xlsx' })).toBe(
+    true
+  )
+  expect(isProjectReferenceExtractCandidate({ kind: 'file', locator: '/tmp/deck.pptx' })).toBe(true)
+  expect(isProjectReferenceExtractCandidate({ kind: 'folder', locator: '/tmp/docs' })).toBe(false)
+  expect(isProjectReferenceExtractCandidate({ kind: 'file', locator: '/tmp/notes.txt' })).toBe(
+    false
+  )
+  expect(
+    isProjectReferenceExtractCandidate({ kind: 'connector', locator: 'github://acme/repo' })
+  ).toBe(false)
+})
+
+it('offers Extract… for url/pdf/office rows and disables it when extract IPC is unavailable', () => {
+  listProjects()
+  fake.broadcast.cb?.({
+    projects: [
+      {
+        schemaVersion: 1,
+        id: 'project-a',
+        name: 'Alpha',
+        icon: { iconKind: 'seed', seed: 'a' },
+        hue: 1,
+        parentId: null,
+        order: 1,
+        memberChatIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    workProfiles: [],
+    references: [
+      {
+        id: 'ref-url',
+        projectId: 'project-a',
+        kind: 'url',
+        locator: 'https://example.test/brief',
+        title: 'Brief',
+        provenance: { addedBy: 'user', addedAt: 1 },
+        contextPolicy: 'available',
+        updatedAt: 2
+      },
+      {
+        id: 'ref-pdf',
+        projectId: 'project-a',
+        kind: 'file',
+        locator: '/tmp/spec.pdf',
+        title: 'spec.pdf',
+        provenance: { addedBy: 'user', addedAt: 1 },
+        contextPolicy: 'available',
+        updatedAt: 2
+      },
+      {
+        id: 'ref-txt',
+        projectId: 'project-a',
+        kind: 'file',
+        locator: '/tmp/notes.txt',
+        title: 'notes.txt',
+        provenance: { addedBy: 'user', addedAt: 1 },
+        contextPolicy: 'available',
+        updatedAt: 2
+      }
+    ]
+  })
+
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel projectId="project-a" onClose={() => undefined} />
+  )
+
+  expect(html.match(/>Extract…</g)).toHaveLength(2)
+  expect(html).toContain('Extract is unavailable in this build')
+  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/Save a readable text copy/)
+  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/Use next/)
+  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/revoke/i)
+  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/Does not grant ongoing access/)
+})
+
+it('shows Extracted badge, View, and Revoke extract when a ready extract is present', () => {
+  const extractApi = {
+    extractProjectReference: vi.fn(),
+    getProjectReferenceExtract: vi.fn(async ({ referenceId }: { referenceId: string }) =>
+      referenceId === 'ref-pdf'
+        ? {
+            schemaVersion: 1,
+            id: 'extract-1',
+            projectId: 'project-a',
+            referenceId: 'ref-pdf',
+            kind: 'pdf-text',
+            status: 'ready',
+            consent: { at: 1, actor: 'user', scope: 'this-reference' },
+            source: { locator: '/tmp/spec.pdf' },
+            text: {
+              charCount: 12,
+              truncated: false,
+              artifactSha256: 'a'.repeat(64)
+            },
+            createdAt: 1,
+            updatedAt: 2
+          }
+        : null
+    ),
+    revokeProjectReferenceExtract: vi.fn(),
+    readProjectReferenceExtractText: vi.fn()
+  }
+  Object.assign(fake.api, extractApi)
+
+  listProjects()
+  fake.broadcast.cb?.({
+    projects: [
+      {
+        schemaVersion: 1,
+        id: 'project-a',
+        name: 'Alpha',
+        icon: { iconKind: 'seed', seed: 'a' },
+        hue: 1,
+        parentId: null,
+        order: 1,
+        memberChatIds: ['chat-a'],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    workProfiles: [],
+    references: [
+      {
+        id: 'ref-pdf',
+        projectId: 'project-a',
+        kind: 'file',
+        locator: '/tmp/spec.pdf',
+        title: 'spec.pdf',
+        provenance: { addedBy: 'user', addedAt: 1 },
+        contextPolicy: 'available',
+        updatedAt: 2
+      }
+    ]
+  })
+
+  seedProjectReferenceExtractForTests('project-a', 'ref-pdf', {
+    schemaVersion: 1,
+    id: 'extract-1',
+    projectId: 'project-a',
+    referenceId: 'ref-pdf',
+    kind: 'pdf-text',
+    status: 'ready',
+    consent: { at: 1, actor: 'user', scope: 'this-reference' },
+    source: { locator: '/tmp/spec.pdf' },
+    text: { charCount: 12, truncated: false, artifactSha256: 'a'.repeat(64) },
+    createdAt: 1,
+    updatedAt: 2
+  })
+  setProjectReferenceContextSelection('chat-a', 'project-a', ['ref-pdf'])
+
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel projectId="project-a" chatId="chat-a" onClose={() => undefined} />
+  )
+
+  expect(html).toContain('Extracted')
+  expect(html).toContain('>View<')
+  expect(html).toContain('Revoke extract')
+  expect(html).toContain('includes extract')
 })
