@@ -104,6 +104,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   // to the current run ledger; only the human review surface can materialize a
   // normal ProjectReference, and proposal never reads/fetches/grants access.
   'project_reference_propose',
+  // Read-only Project library catalogue browse (metadata only; never fetch/stat).
+  'project_reference_list',
   'test_result_summary',
   'prompt_task_normalize',
   'scope_radar',

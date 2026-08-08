@@ -2406,6 +2406,15 @@ const MCP_TOOL_OVERRIDES: Partial<
     policyKey: 'mcpTools',
     description:
       'Adds an untrusted file, folder, or link suggestion to the human review inbox without reading it or granting access.'
+  },
+  project_reference_list: {
+    label: 'List Project references',
+    transcript: 'Listed Project references',
+    group: 'goals',
+    iconRef: 'tool:plan',
+    policyKey: 'mcpTools',
+    description:
+      'Lists Project reference catalogue metadata for the active chat without fetching, statting, or probing locators.'
   }
 }
 
@@ -2560,6 +2569,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'workspace_board_preview_plan',
     'workspace_board_apply_plan',
     'project_reference_propose',
+    'project_reference_list',
     'prompt_task_normalize',
     'scope_radar',
     'repo_convention_scan',

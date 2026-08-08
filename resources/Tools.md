@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 198 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 199 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -399,8 +399,17 @@ Propose a file, folder, or website for a Project reference library. This creates
 
 - Access: governed by your run permission role
 - Required args: referenceKind, locator, reason
-- Optional args: projectId, title
+- Optional args: projectId, title, previewSnippet, previewSource
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"project_reference_propose","arguments":{"referenceKind":"text","locator":"text","reason":"text"}}}}`
+
+## project_reference_list
+
+List Project reference library catalogue metadata for the active chat membership. Returns id/kind/locator/title/contextPolicy/lastVerified/updatedAt only — never fetches, stats, or probes locators.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Optional args: projectId, includeOff, kind
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"project_reference_list","arguments":{"projectId":"text"}}}}`
 
 ## test_result_summary
 

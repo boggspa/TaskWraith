@@ -983,6 +983,14 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
+  project_reference_list: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'project-reference',
+    'host-state',
+    'host-resource'
+  ),
   test_result_summary: tool(
     'orchestration',
     'mcpTools',

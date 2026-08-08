@@ -531,6 +531,38 @@ export const GATEWAY_V11_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v12 makes `project_reference_list` discoverable without enlarging the
+ * normal direct catalogue — same shape as Simulator on v11 / Outlook on v3.
+ *
+ * ADDED is intentionally ONLY `project_reference_list`. A concurrent Skills
+ * worktree that later needs gateway surface growth must mint v13 (or later)
+ * rather than appending into this frozen v12 ADDED set — keep this birth
+ * catalogue clean so receipted v12 sessions never see mid-session drift.
+ * Direct catalogues remain exact clones of their immutable v11 predecessors.
+ */
+export const GATEWAY_V12_ADDED_TOOL_NAMES = Object.freeze([
+  'project_reference_list'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V12_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V11_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V12_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V12_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V12_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V11_MESH_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V12_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -761,6 +793,16 @@ export const GATEWAY_V11_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V11_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+export const GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V11_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V12_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V11_MESH_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V12_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -773,6 +815,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v12-mesh') return GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v12') return GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v11-mesh') return GATEWAY_V11_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v11') return GATEWAY_V11_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v10-mesh') return GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES
@@ -796,6 +840,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v12-mesh') return GATEWAY_V12_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v12') return GATEWAY_V12_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v11-mesh') return GATEWAY_V11_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v11') return GATEWAY_V11_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v10-mesh') return GATEWAY_V10_MESH_MCP_DIRECT_TOOLS
@@ -866,7 +912,11 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v11 adds Simulator Canvas through discovery without growing either direct
   // catalogue (status auto-allowed; mutators stay on simulatorCanvas).
   'taskwraith-gateway-v11': GATEWAY_V11_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v11-mesh': GATEWAY_V11_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v11-mesh': GATEWAY_V11_MESH_MCP_ADVERTISE_TOOLS,
+  // v12 adds project_reference_list through discovery without growing either
+  // direct catalogue. ADDED is list-only — Skills surface growth needs v13+.
+  'taskwraith-gateway-v12': GATEWAY_V12_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v12-mesh': GATEWAY_V12_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */

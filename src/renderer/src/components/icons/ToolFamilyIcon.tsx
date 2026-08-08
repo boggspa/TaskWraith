@@ -272,6 +272,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     // and persist the capability-cell + claims checklist (task).
     case 'prompt_task_normalize':
     case 'project_reference_propose':
+    case 'project_reference_list':
       return 'plan'
     case 'scope_radar':
     case 'repo_convention_scan':

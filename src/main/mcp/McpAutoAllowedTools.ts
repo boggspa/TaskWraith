@@ -128,6 +128,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // sole path that mutates the Project library; proposing performs no I/O,
   // fetch, grant, or workspace write.
   'project_reference_propose',
+  // Metadata-only Project library browse. Never fetch/stat/probe; auto-allowed
+  // like propose so read-only seats can inspect the catalogue.
+  'project_reference_list',
   'completion_claim_check',
   // 1.0.71+ — workspace READ tools (see header). Read-only + host-gate-safe:
   // writes/shell are NOT here, so they still hit the gate and are denied under

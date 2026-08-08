@@ -232,8 +232,9 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('evidence_pack_write')).toBe('audit')
   })
 
-  it('maps Project reference proposals to the plan family', () => {
+  it('maps Project reference proposals and lists to the plan family', () => {
     expect(toolNameToFamily('project_reference_propose')).toBe('plan')
+    expect(toolNameToFamily('project_reference_list')).toBe('plan')
   })
 
   it('maps thinking/reasoning traces and codex_plan to their dedicated families', () => {

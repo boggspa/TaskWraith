@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
-import { GATEWAY_V9_MCP_DIRECT_TOOLS, GATEWAY_V11_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V9_MCP_DIRECT_TOOLS, GATEWAY_V12_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
   isOllamaToolControlTier,
@@ -14,10 +14,10 @@ import {
 } from './OllamaToolTiers'
 
 describe('Ollama tool surface governance', () => {
-  it('uses the exact immutable fresh gateway-v11 direct membership as the catalog alias', () => {
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V11_MCP_DIRECT_TOOLS)
+  it('uses the exact immutable fresh gateway-v12 direct membership as the catalog alias', () => {
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V12_MCP_DIRECT_TOOLS)
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(41)
-    for (const name of GATEWAY_V11_MCP_DIRECT_TOOLS) {
+    for (const name of GATEWAY_V12_MCP_DIRECT_TOOLS) {
       expect(isOllamaAdvertisedTool(name)).toBe(true)
     }
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toEqual(
@@ -27,6 +27,7 @@ describe('Ollama tool surface governance', () => {
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).not.toContain('ensemble_bossman_control')
     expect(isOllamaAdvertisedTool('video_thumbnail')).toBe(false)
     expect(isOllamaAdvertisedTool('simulator_status')).toBe(false)
+    expect(isOllamaAdvertisedTool('project_reference_list')).toBe(false)
   })
 
   it('hard-excludes sub-thread tools from the live Ollama advertise/callable surface', () => {
@@ -35,7 +36,7 @@ describe('Ollama tool surface governance', () => {
     expect(advertised).not.toContain('list_subthreads')
     expect(advertised).not.toContain('read_subthread_result')
     expect(advertised).not.toContain('cancel_subthread')
-    expect(advertised).toHaveLength(GATEWAY_V11_MCP_DIRECT_TOOLS.length - 1)
+    expect(advertised).toHaveLength(GATEWAY_V12_MCP_DIRECT_TOOLS.length - 1)
     expect(isOllamaExcludedSubthreadTool('delegate_to_subthread')).toBe(true)
     expect(ollamaCallableToolNames()).not.toContain('delegate_to_subthread')
   })

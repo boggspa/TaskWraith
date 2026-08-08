@@ -8083,6 +8083,8 @@ const projectReferenceProposalService = new ProjectReferenceProposalService({
 
 const projectReferenceToolExecutors = createProjectReferenceToolExecutors({
   proposalService: projectReferenceProposalService,
+  getProjects: () => AppStore.getProjects(),
+  getReferences: () => AppStore.getProjectReferences(),
   notifyChanged: emitProjectReferenceProposalsChanged
 })
 

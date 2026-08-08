@@ -648,9 +648,53 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             maxLength: 2000,
             description: 'Why this source would be useful to the Project.'
+          },
+          previewSnippet: {
+            type: 'string',
+            maxLength: 800,
+            description:
+              'Optional untrusted agent-claimed review excerpt. Never fetched by main; both previewSnippet and previewSource are required together.'
+          },
+          previewSource: {
+            type: 'string',
+            enum: ['web_search', 'web_fetch', 'document_extract', 'agent_context', 'manual'],
+            description: 'Provenance label for previewSnippet; required when a snippet is supplied.'
           }
         },
         required: ['referenceKind', 'locator', 'reason']
+      }
+    },
+    {
+      name: 'project_reference_list',
+      description:
+        'List Project reference library catalogue metadata for the active chat membership. Returns id/kind/locator/title/contextPolicy/lastVerified/updatedAt only — never fetches, stats, or probes locators.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          projectId: {
+            type: 'string',
+            maxLength: 256,
+            description:
+              'Required when the active chat belongs to more than one Project; otherwise inferred from exact chat membership.'
+          },
+          includeOff: {
+            type: 'boolean',
+            description:
+              'When false, omit references whose contextPolicy is off. Defaults to true (include off entries).'
+          },
+          kind: {
+            type: 'string',
+            enum: ['file', 'folder', 'url', 'connector'],
+            description: 'Optional kind filter.'
+          }
+        }
       }
     },
     {

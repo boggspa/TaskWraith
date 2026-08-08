@@ -849,6 +849,10 @@ export type TaskWraithMcpProfileId =
   // either v10 direct birth catalogue.
   | 'taskwraith-gateway-v11'
   | 'taskwraith-gateway-v11-mesh'
+  // v12 adds project_reference_list through capability discovery without
+  // changing either v11 direct birth catalogue. ADDED is list-only.
+  | 'taskwraith-gateway-v12'
+  | 'taskwraith-gateway-v12-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

@@ -93,6 +93,7 @@ describe('classifyTool', () => {
     expect(classifyTool('workspace_board_preview_plan')).toBe('orchestration')
     expect(classifyTool('workspace_board_apply_plan')).toBe('orchestration')
     expect(classifyTool('project_reference_propose')).toBe('orchestration')
+    expect(classifyTool('project_reference_list')).toBe('orchestration')
     expect(classifyTool('list_background_processes')).toBe('orchestration')
     expect(classifyTool('read_background_process')).toBe('orchestration')
     expect(classifyTool('web_search')).toBe('web_read')
