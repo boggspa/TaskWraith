@@ -60,7 +60,9 @@ import type {
 } from '../../shared/projectReferenceContext'
 import {
   formatProjectReferenceContextPromptAppendix,
-  resolveProjectReferenceContext
+  formatProjectReferenceExtractsPromptAppendix,
+  resolveProjectReferenceContext,
+  type ProjectReferenceExtractLoader
 } from './ProjectReferenceContextService'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
@@ -190,6 +192,11 @@ export interface ComposerServiceStore {
 export interface ComposerServiceDeps {
   appStore: ComposerServiceStore
   getSettings: () => AppSettings
+  /**
+   * Optional consentful Project reference extract loader for Use-next body
+   * injection. Absent → catalogue disclosure only (no extract bodies).
+   */
+  projectReferenceExtractLoader?: ProjectReferenceExtractLoader
   /**
    * Stamp the run's permission posture (`approvalMode` +
    * `effectivePermissions`) so the `normalizeAgentRunPayload` clamp trusts
@@ -447,11 +454,17 @@ export class ComposerService {
           references:
             this.deps.appStore.getProjectReferences?.() ??
             missingProjectReferenceContextAuthority(),
-          externalPathGrants
+          externalPathGrants,
+          ...(this.deps.projectReferenceExtractLoader
+            ? { extractLoader: this.deps.projectReferenceExtractLoader }
+            : {})
         })
       : undefined
     const discordContextSnapshots = normalizeDiscordContextSnapshots(input.discordContextSnapshots)
-    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(imagePaths)}${externalPathGrantPromptAppendix(externalPathGrants)}${formatProjectReferenceContextPromptAppendix(projectReferenceContext)}`
+    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(imagePaths)}${externalPathGrantPromptAppendix(externalPathGrants)}${formatProjectReferenceContextPromptAppendix(projectReferenceContext)}${formatProjectReferenceExtractsPromptAppendix(
+      projectReferenceContext,
+      this.deps.projectReferenceExtractLoader
+    )}`
     const contextualFinalPrompt = `${finalPrompt}${formatDiscordContextPromptAppendix(discordContextSnapshots)}`
     const geminiAuthProfileId =
       provider === 'gemini'
