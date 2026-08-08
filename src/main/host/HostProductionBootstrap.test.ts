@@ -320,14 +320,25 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
       'commands',
       'receipts',
       'health',
+      'missions',
+      'ensemble',
+      'approvals',
+      'questions',
+      'schedules',
+      'artifacts',
       'recovery'
     ])
   })
 
   it('withholds capabilities the donor cannot honestly populate', () => {
     const { compositionInput } = captureSupervisorInput()
-    for (const withheld of ['missions', 'ensemble', 'schedules', 'artifacts', 'usage']) {
+    // usage stays unavailable; compact-export has no production consumer yet.
+    for (const withheld of ['usage', 'compact-export']) {
       expect(compositionInput.hostCapabilityOffer).not.toContain(withheld)
+    }
+    // Track3/Track4 + Phase 2/3 shadows make these honest to advertise.
+    for (const offered of ['missions', 'ensemble', 'schedules', 'artifacts', 'approvals', 'questions']) {
+      expect(compositionInput.hostCapabilityOffer).toContain(offered)
     }
   })
 

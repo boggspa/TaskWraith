@@ -72,8 +72,10 @@ import { createHostProductionAuthorityEvaluator } from './HostProductionAuthorit
 import {
   createHostProductionSuppliers,
   type HostProductionApprovalListPort,
+  type HostProductionArtifactListPort,
   type HostProductionChatListPort,
   type HostProductionMissionListPort,
+  type HostProductionParticipantListPort,
   type HostProductionProviderListPort,
   type HostProductionQuestionListPort,
   type HostProductionRoundListPort,
@@ -124,16 +126,11 @@ const HOST_INTERNAL_CONTEXT: HostAuthorityCallContext = {
 /**
  * The capability offer a production Host advertises.
  *
- * Mirrors DEFAULT_CLIENT_CAPABILITIES in HostProjectionClient.ts verbatim —
- * an existing in-repo authority rather than a fresh list invented here.
- *
- * The wider HOST_CAPABILITY_ORDER union is deliberately NOT offered:
- * `missions`, `ensemble`, `schedules` and `artifacts` are families the 3.6b
- * donor returns empty because no store port feeds them yet; `usage` reports
- * `availability: 'unavailable'`; `questions` is held by PIN S4-Q until
- * question answer-payload semantics land. Advertising any of those would be
- * fabricated telemetry, which the arc goal forbids outright. Each is a named
- * gap a later slice must consciously open.
+ * Base transport caps always offered. Domain families are advertised only
+ * when a real production port feeds them (Track3/Track4 shadows + Phase 2/3
+ * approvals/questions). Still withheld: `usage` (availability unavailable)
+ * and `compact-export` (no production consumer yet). Advertising an empty
+ * or unavailable family is fabricated telemetry — forbidden by the arc goal.
  */
 const HOST_PRODUCTION_CAPABILITY_OFFER: readonly HostCapability[] = [
   'bootstrap',
@@ -142,6 +139,12 @@ const HOST_PRODUCTION_CAPABILITY_OFFER: readonly HostCapability[] = [
   'commands',
   'receipts',
   'health',
+  'missions',
+  'ensemble',
+  'approvals',
+  'questions',
+  'schedules',
+  'artifacts',
   'recovery'
 ]
 
@@ -227,6 +230,9 @@ export interface HostProductionBootstrapOptions {
   readonly missions?: HostProductionMissionListPort
   readonly rounds?: HostProductionRoundListPort
   readonly schedules?: HostProductionScheduleListPort
+  /** Track4 Mixed — optional family shadows. Omitted → honest empty arrays. */
+  readonly participants?: HostProductionParticipantListPort
+  readonly artifacts?: HostProductionArtifactListPort
   /**
    * Live Bridge action surface. The root passes its BridgeActionExecutor
    * singleton directly; this module builds the HostBridgeCommandExecutor
@@ -347,6 +353,17 @@ export function createHostProductionBootstrap(
     throw new Error('HostProductionBootstrap requires schedules.listSchedules to be a function')
   }
   if (
+    options.participants !== undefined &&
+    typeof options.participants.listParticipants !== 'function'
+  ) {
+    throw new Error(
+      'HostProductionBootstrap requires participants.listParticipants to be a function'
+    )
+  }
+  if (options.artifacts !== undefined && typeof options.artifacts.listArtifacts !== 'function') {
+    throw new Error('HostProductionBootstrap requires artifacts.listArtifacts to be a function')
+  }
+  if (
     !options.host ||
     typeof options.host.hostId !== 'string' ||
     options.host.hostId.length === 0 ||
@@ -377,7 +394,9 @@ export function createHostProductionBootstrap(
     ...(options.runs ? { runs: options.runs } : {}),
     ...(options.missions ? { missions: options.missions } : {}),
     ...(options.rounds ? { rounds: options.rounds } : {}),
-    ...(options.schedules ? { schedules: options.schedules } : {})
+    ...(options.schedules ? { schedules: options.schedules } : {}),
+    ...(options.participants ? { participants: options.participants } : {}),
+    ...(options.artifacts ? { artifacts: options.artifacts } : {})
   })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
 

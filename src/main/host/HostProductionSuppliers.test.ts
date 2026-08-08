@@ -342,6 +342,58 @@ describe('HostProductionSuppliers Track3 Mixed family shadow ports', () => {
   })
 })
 
+describe('HostProductionSuppliers Track4 Mixed family shadow ports', () => {
+  it('publishes participants/artifacts from injected ports', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      participants: {
+        listParticipants: () => [
+          {
+            id: 'p1',
+            providerId: 'codex',
+            role: 'Worker',
+            order: 0,
+            enabled: true,
+            active: false
+          }
+        ]
+      },
+      artifacts: {
+        listArtifacts: () => [
+          {
+            artifactId: 'canvas-1',
+            kind: 'canvas:web',
+            title: 'Preview',
+            createdAt: 1
+          }
+        ]
+      }
+    })
+    const families = await donor()
+    expect(families.participants).toHaveLength(1)
+    expect(families.artifacts).toHaveLength(1)
+  })
+
+  it('keeps Track4 families empty when ports are omitted', async () => {
+    const donor = createHostProductionSuppliers({ chatList: makePort([]) })
+    const families = await donor()
+    expect(families.participants).toEqual([])
+    expect(families.artifacts).toEqual([])
+  })
+
+  it('fails closed when a Track4 family port throws', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      participants: {
+        listParticipants: () => {
+          throw new Error('roster unavailable')
+        }
+      }
+    })
+    await expect(donor()).rejects.toThrow('roster unavailable')
+  })
+})
+
 /* ------------------------------------------------------------------ */
 /*  Thread mapping — single entry                                     */
 /* ------------------------------------------------------------------ */

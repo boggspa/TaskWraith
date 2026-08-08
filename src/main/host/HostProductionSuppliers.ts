@@ -31,8 +31,10 @@
 
 import type {
   HostApprovalProjection,
+  HostArtifactProjection,
   HostHealthProjection,
   HostMissionProjection,
+  HostParticipantProjection,
   HostProviderModelProjection,
   HostQuestionProjection,
   HostRoundProjection,
@@ -48,12 +50,16 @@ import type {
 } from './AppStoreHostAuthority'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
 import type { HostWarningProjection } from '../../shared/hostProtocol'
+import type { HostProductionArtifactListPort } from './HostProductionArtifactShadow'
 import type { HostProductionMissionListPort } from './HostProductionMissionShadow'
+import type { HostProductionParticipantListPort } from './HostProductionParticipantShadow'
 import type { HostProductionRoundListPort } from './HostProductionRoundShadow'
 import type { HostProductionRunListPort } from './HostProductionRunShadow'
 import type { HostProductionScheduleListPort } from './HostProductionScheduleShadow'
 
+export type { HostProductionArtifactListPort } from './HostProductionArtifactShadow'
 export type { HostProductionMissionListPort } from './HostProductionMissionShadow'
+export type { HostProductionParticipantListPort } from './HostProductionParticipantShadow'
 export type { HostProductionRoundListPort } from './HostProductionRoundShadow'
 export type { HostProductionRunListPort } from './HostProductionRunShadow'
 export type { HostProductionScheduleListPort } from './HostProductionScheduleShadow'
@@ -195,6 +201,10 @@ export interface HostProductionSuppliersOptions {
   readonly rounds?: HostProductionRoundListPort
   /** Track3 Mixed — optional schedule shadow. Omitted → honest []. */
   readonly schedules?: HostProductionScheduleListPort
+  /** Track4 Mixed — optional ensemble-participant shadow. Omitted → honest []. */
+  readonly participants?: HostProductionParticipantListPort
+  /** Track4 Mixed — optional canvas/artifact-index shadow. Omitted → honest []. */
+  readonly artifacts?: HostProductionArtifactListPort
 }
 
 /* ------------------------------------------------------------------ */
@@ -364,6 +374,15 @@ export function createHostProductionSuppliers(
       ? options.schedules.listSchedules()
       : []
 
+    /* ---- Track4 Mixed family shadows (participants/artifacts) ----
+     * Same fail-closed contract: omitted → honest []; throw propagates. */
+    const participants: HostParticipantProjection[] = options.participants
+      ? options.participants.listParticipants()
+      : []
+    const artifacts: HostArtifactProjection[] = options.artifacts
+      ? options.artifacts.listArtifacts()
+      : []
+
     return {
       health: HONEST_HEALTH,
       workspaces,
@@ -371,13 +390,13 @@ export function createHostProductionSuppliers(
       runs,
       missions,
       rounds,
-      participants: [],
+      participants,
       providers,
       questions,
       approvals,
       schedules,
       usage: HONEST_USAGE,
-      artifacts: [],
+      artifacts,
       warnings
     }
   }
