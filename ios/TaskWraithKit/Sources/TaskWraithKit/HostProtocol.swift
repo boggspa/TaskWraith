@@ -12,7 +12,11 @@
 //   - participants never invent lifecycle vocabulary
 //
 // Fail-closed: any unrecognised enum value, missing required field, or
-// out-of-bounds string → decode failure. Never silently drops unknown data.
+// out-of-bounds collection → decode failure. Per-field string bounds
+// (maxID/maxString/maxShort) are enforced in decodeHostCommand; the
+// snapshot decoder enforces collection caps and structural shape.
+// Codable silently ignores unknown JSON keys (privacy-safe for the
+// Host shape — schedule prompt fields are absent from the Swift types).
 
 import Foundation
 
@@ -1328,7 +1332,11 @@ public func evaluateHostIdempotencyReplay(
 }
 
 /// Fail-closed HostSnapshot decode: validate all enum values, required fields,
-/// and bounded strings. Returns `.error` with a diagnostic on any mismatch.
+/// collection size caps (≤maxCollection), and structural shape.
+/// Per-field string bounds (maxID/maxString/maxShort) are NOT enforced here —
+/// they are enforced in decodeHostCommand only. Codable silently ignores
+/// unknown JSON keys, which is privacy-safe for the Host shape.
+/// Returns `.error` with a diagnostic on any mismatch.
 public func decodeHostSnapshot(from data: Data) -> HostDecodeResult<HostSnapshot> {
     let decoder = JSONDecoder()
     guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

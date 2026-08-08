@@ -36,7 +36,8 @@ import {
   HOST_RUNTIME_DATA_DIR_NAME,
   hostRuntimeDataDir,
   type HostMainComposition,
-  type HostMainCompositionInput
+  type HostMainCompositionInput,
+  type TwMissionHostCaptureResult
 } from './HostMainComposition'
 
 const ACTOR_A: HostActorIdentity = {
@@ -802,6 +803,56 @@ describe('HostMainComposition', () => {
     it('constructs no HostLocalServer — the supervisor owns listener lifecycle', () => {
       const source = readFileSync(join(__dirname, 'HostMainComposition.ts'), 'utf8')
       expect(source).not.toMatch(/new HostLocalServer/)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Wave 5 — AC9 capture seam (composition-level pin)
+  // -----------------------------------------------------------------------
+
+  describe('exportTwMission', () => {
+    it('exports a privacy-safe bundle from the live snapshot', async () => {
+      composition = open()
+      const result = await composition.exportTwMission(contextFor(ACTOR_A))
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.bundle.manifest.hostId).toBe('host-1')
+      const position = composition.getPosition()
+      expect(result.bundle.manifest.cursorRange).toEqual({
+        generation: position.generation,
+        fromCursor: 0,
+        toCursor: position.cursor
+      })
+      expect(result.bundle.manifest.redaction.transcriptsOmitted).toBe(true)
+      expect(result.bundle.manifest.redaction.artifactBodiesOmitted).toBe(true)
+    })
+
+    it('accepts exportedAt and redactionNotes options', async () => {
+      composition = open()
+      const result = await composition.exportTwMission(contextFor(ACTOR_A), {
+        exportedAt: NOW,
+        redactionNotes: ['twmission-export-note']
+      })
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.bundle.manifest.exportedAt).toBe(NOW)
+      expect(result.bundle.manifest.redaction.notes).toEqual(['twmission-export-note'])
+    })
+
+    it('does not advance the sole journal position', async () => {
+      composition = open()
+      const before = composition.getPosition()
+      const result = await composition.exportTwMission(contextFor(ACTOR_A))
+
+      expect(result.ok).toBe(true)
+      expect(composition.getPosition()).toEqual(before)
+    })
+
+    it('is absent from the HostAuthority surface (composition-only seam)', () => {
+      composition = open()
+      expect('exportTwMission' in composition.authority).toBe(false)
     })
   })
 })
