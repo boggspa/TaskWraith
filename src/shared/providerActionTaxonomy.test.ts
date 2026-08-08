@@ -382,6 +382,39 @@ describe('provider action taxonomy', () => {
     }
   })
 
+  it('routes canvas_open(driver=device) to simulatorCanvas (arg-dependent service)', () => {
+    expect(resolveToolDispatchContractStrict('canvas_open')).toMatchObject({
+      ok: true,
+      service: 'mcpTools'
+    })
+    expect(
+      resolveToolDispatchContractStrict('canvas_open', { url: 'http://localhost:3000' })
+    ).toMatchObject({ ok: true, service: 'mcpTools' })
+    expect(
+      resolveToolDispatchContractStrict('canvas_open', {
+        driver: 'device',
+        bundleId: 'com.example.App'
+      })
+    ).toMatchObject({ ok: true, service: 'simulatorCanvas' })
+    expect(
+      resolveToolDispatchContractStrict('capability_invoke', {
+        name: 'canvas_open',
+        arguments: { driver: 'device', bundleId: 'com.example.App' }
+      })
+    ).toMatchObject({
+      ok: true,
+      effectiveToolName: 'canvas_open',
+      resolution: 'target-derived',
+      service: 'simulatorCanvas'
+    })
+    expect(
+      resolveToolDispatchContractStrict('capability_invoke', {
+        name: 'canvas_open',
+        rawInput: { driver: 'web', url: 'http://localhost:3000' }
+      })
+    ).toMatchObject({ ok: true, service: 'mcpTools' })
+  })
+
   it('gives every mutation scope an explicit matching lock policy', () => {
     for (const [toolName, metadata] of Object.entries(TASKWRAITH_OWNED_MCP_ACTIONS)) {
       if (metadata.mutation === 'target-derived') continue

@@ -754,6 +754,22 @@ export function createMcpToolApprovalPreviewer(
       }
     }
 
+    // canvas_open(driver=device) boots/installs/launches via simctl — same
+    // simulatorCanvas bucket as simulator_* mutators (not bare mcpTools).
+    if (toolName === 'canvas_open' && args.driver === 'device') {
+      return {
+        title: `Approve ${providerName} Simulator Canvas action`,
+        body: `${intentBody}canvas_open (device)`.trim(),
+        service: 'simulatorCanvas',
+        preview: {
+          kind: 'tool',
+          toolName,
+          params: args,
+          ...intentPreview
+        }
+      }
+    }
+
     if (
       toolName === 'tw_recall_find' ||
       toolName === 'tw_recall_read' ||

@@ -360,6 +360,28 @@ describe('createMcpToolApprovalPreviewer', () => {
     expect(preview.service).toBe(service)
   })
 
+  it('routes canvas_open(driver=device) to simulatorCanvas, not mcpTools', () => {
+    const previewer = createMcpToolApprovalPreviewer(dependencies())
+    expect(
+      previewer(
+        'canvas_open',
+        { url: 'http://localhost:3000' },
+        '/repo',
+        context,
+        'claude'
+      ).service
+    ).toBe('mcpTools')
+    expect(
+      previewer(
+        'canvas_open',
+        { driver: 'device', bundleId: 'com.example.App' },
+        '/repo',
+        context,
+        'claude'
+      ).service
+    ).toBe('simulatorCanvas')
+  })
+
   it('falls back to a provider-labelled generic MCP approval', () => {
     const preview = createMcpToolApprovalPreviewer(dependencies())(
       'git_status' as TaskWraithMcpToolName,

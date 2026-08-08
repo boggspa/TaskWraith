@@ -8,6 +8,8 @@ import {
   taskWraithToolAgenticService,
   taskWraithToolServiceIfKnown
 } from './NativeApprovalPolicy'
+import { resolveAgenticPermission } from './AgenticPolicy'
+import { applyUnattendedSimulatorCanvasOverride } from './UnattendedPostureGate'
 import type {
   AgenticServiceId,
   AgenticServicePolicy,
@@ -108,6 +110,53 @@ describe('taskWraithToolServiceIfKnown', () => {
   it('leaves non-TaskWraith tool names unclassified', () => {
     expect(taskWraithToolServiceIfKnown('mcp__other_server__totally_unknown')).toBeNull()
     expect(taskWraithToolServiceIfKnown('totally_unknown')).toBeNull()
+  })
+
+  it('P0: canvas_open device cannot ride mcpTools when simulatorCanvas is deny', () => {
+    const services = {
+      ...effectivePermissions(false).agenticServices,
+      mcpTools: 'allow' as AgenticServicePolicy,
+      simulatorCanvas: 'deny' as AgenticServicePolicy
+    }
+
+    const deviceService = taskWraithToolServiceIfKnown('canvas_open', {
+      driver: 'device',
+      bundleId: 'com.example.App'
+    })
+    expect(deviceService).toBe('simulatorCanvas')
+    expect(resolveAgenticPermission(services[deviceService!])).toBe('deny')
+
+    // Web canvas_open still uses mcpTools and would allow — the device path must not.
+    const webService = taskWraithToolServiceIfKnown('canvas_open', {
+      url: 'http://localhost:3000'
+    })
+    expect(webService).toBe('mcpTools')
+    expect(resolveAgenticPermission(services[webService!])).toBe('allow')
+  })
+
+  it('P0: fork 4B demoted simulatorCanvas does not auto-allow device open via mcpTools', () => {
+    const elevated = {
+      presetId: 'workspace_write',
+      readOnly: false,
+      workspaceGrantServiceIds: [] as string[],
+      agenticServices: {
+        ...effectivePermissions(false).agenticServices,
+        mcpTools: 'allow' as AgenticServicePolicy,
+        simulatorCanvas: 'allow' as AgenticServicePolicy
+      }
+    }
+    const demoted = applyUnattendedSimulatorCanvasOverride(elevated)
+    expect(demoted.agenticServices.simulatorCanvas).toBe('ask')
+    expect(demoted.agenticServices.mcpTools).toBe('allow')
+
+    const deviceService = taskWraithToolServiceIfKnown('canvas_open', {
+      driver: 'device',
+      bundleId: 'com.example.App'
+    })
+    expect(deviceService).toBe('simulatorCanvas')
+    // Must ASK (timer-deny in unattended), never silent allow via mcpTools alone.
+    expect(resolveAgenticPermission(demoted.agenticServices[deviceService!])).toBe('ask')
+    expect(resolveAgenticPermission(demoted.agenticServices.mcpTools)).toBe('allow')
   })
 })
 

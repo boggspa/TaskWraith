@@ -315,19 +315,34 @@ describe('CanvasService', () => {
     expect(lastDriverOpts?.embedded).toBe(false)
   })
 
-  it('device open requires a valid bundleId, rejected before the driver runs', async () => {
-    await expect(service.open({ driver: 'device' }, {})).rejects.toThrow(/bundleId/)
-    await expect(service.open({ driver: 'device', bundleId: 'com.x; rm -rf /' }, {})).rejects.toThrow(
-      /bundleId/
+  it('device open requires canonical chat+run and a valid bundleId before the driver runs', async () => {
+    await expect(service.open({ driver: 'device', bundleId: 'com.example.App' }, {})).rejects.toThrow(
+      /canonical chat and run/
     )
+    await expect(
+      service.open({ driver: 'device' }, { chatId: 'chat-a', runId: 'run-a' })
+    ).rejects.toThrow(/bundleId/)
+    await expect(
+      service.open(
+        { driver: 'device', bundleId: 'com.x; rm -rf /' },
+        { chatId: 'chat-a', runId: 'run-a' }
+      )
+    ).rejects.toThrow(/bundleId/)
     expect(fake.opened).toBe(false)
   })
 
-  it('device open routes to the device driver and records the device kind', async () => {
-    const opened = await service.open({ driver: 'device', bundleId: 'com.example.App' }, {})
+  it('device open routes to the device driver with chat/run authority and records the device kind', async () => {
+    const opened = await service.open(
+      { driver: 'device', bundleId: 'com.example.App' },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
     expect(opened.canvasId).toBeTruthy()
     expect(fake.opened).toBe(true)
-    expect(service.status(opened.canvasId, {})?.driver).toBe('device')
+    expect(lastDriverOpts?.appChatId).toBe('chat-a')
+    expect(lastDriverOpts?.appRunId).toBe('run-a')
+    expect(service.status(opened.canvasId, { chatId: 'chat-a', runId: 'run-a' })?.driver).toBe(
+      'device'
+    )
   })
 
   it('sketch open records the sketch driver and sketch updates emit redacted metadata', async () => {

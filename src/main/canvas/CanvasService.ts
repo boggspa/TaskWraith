@@ -528,6 +528,8 @@ export class CanvasService implements CanvasController {
     let imageAppChatId: string | undefined
     let windowAppChatId: string | undefined
     let windowAppRunId: string | undefined
+    let deviceAppChatId: string | undefined
+    let deviceAppRunId: string | undefined
     let windowTarget: CanvasWindowOpenTarget | undefined
     if (driverKind === 'window') {
       const chatId = canonicalAuthority(ctx.chatId)
@@ -547,6 +549,15 @@ export class CanvasService implements CanvasController {
       recordUrl = `window://managed/${digest}`
       eventHost = undefined
     } else if (driverKind === 'device') {
+      // Device open mutates the simulator host; require the same chat+run authority
+      // the controller lease (and HostControl) bind to.
+      const chatId = canonicalAuthority(ctx.chatId)
+      const runId = canonicalAuthority(ctx.runId)
+      if (!chatId || !runId) {
+        throw new Error('The device driver requires canonical chat and run authority.')
+      }
+      deviceAppChatId = chatId
+      deviceAppRunId = runId
       const bundleId = (input.bundleId || '').trim()
       if (!bundleId || !isValidBundleId(bundleId)) {
         throw new Error('The device driver requires a valid `bundleId` (e.g. "com.example.App").')
@@ -632,8 +643,10 @@ export class CanvasService implements CanvasController {
     try {
       driver = this.deps.createDriver(driverKind, canvasId, {
         embedded,
-        appChatId: imageAppChatId ?? windowAppChatId,
-        ...(windowAppRunId ? { appRunId: windowAppRunId } : {}),
+        appChatId: imageAppChatId ?? windowAppChatId ?? deviceAppChatId,
+        ...(windowAppRunId || deviceAppRunId
+          ? { appRunId: windowAppRunId ?? deviceAppRunId }
+          : {}),
         ...(windowTarget ? { windowTarget } : {}),
         initialSketchDocument: sketchScope
           ? this.deps.store.getSketchDocument(sketchScope) ?? undefined

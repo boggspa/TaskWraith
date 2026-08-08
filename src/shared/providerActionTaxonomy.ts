@@ -1931,6 +1931,30 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'application-resource'
   ),
+  simulator_tap: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_type: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_scroll: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
   theme_tokens_get: tool(
     'workspace_read',
     'mcpTools',
@@ -2816,6 +2840,40 @@ export interface ResolvedToolDispatchContract {
 export type StrictToolDispatchContract = ResolvedToolDispatchContract | UnmappedProviderAction
 
 /**
+ * Arg-dependent agentic-service resolution for catalog tools.
+ *
+ * Fixed taxonomy rows stay the default; today only `canvas_open` with
+ * `driver: 'device'` elevates to `simulatorCanvas` so simctl mutations cannot
+ * ride a bare `mcpTools` allow when Simulator Canvas is deny/ask-demoted.
+ */
+export function resolveCatalogToolAgenticService(
+  toolName: TaskWraithMcpToolName,
+  args?: unknown
+): AgenticServiceId {
+  const base = TASKWRAITH_TOOL_ACTIONS[toolName].service
+  if (toolName === 'canvas_open' && isCanvasOpenDeviceDriverArgs(args)) {
+    return 'simulatorCanvas'
+  }
+  return base
+}
+
+function isCanvasOpenDeviceDriverArgs(args: unknown): boolean {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return false
+  return (args as Record<string, unknown>).driver === 'device'
+}
+
+/** Nested target args for a capability_invoke envelope (first present bag wins). */
+function capabilityInvokeTargetArgs(root: Record<string, unknown>): unknown {
+  for (const key of ['rawInput', 'input', 'parameters', 'arguments', 'args']) {
+    const nested = root[key]
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested
+    }
+  }
+  return undefined
+}
+
+/**
  * Minimal strict contract for the MCP dispatcher entry/final guard. A caller
  * cannot get an owner for an unknown tool, and every success carries the same
  * action/service/lock metadata used by preflight and audit.
@@ -2905,7 +2963,7 @@ export function resolveToolDispatchContractStrict(
       action: metadata.operation,
       dispatchOwner: metadata.dispatchOwner,
       gatewayDispatchOwner: 'capability-gateway',
-      service: metadata.service,
+      service: resolveCatalogToolAgenticService(target, capabilityInvokeTargetArgs(root!)),
       mutation: metadata.mutation,
       lock: metadata.lock,
       networkEgress: metadata.networkEgress
@@ -2918,6 +2976,11 @@ export function resolveToolDispatchContractStrict(
       : isTaskWraithCatalogAction(canonical)
         ? TASKWRAITH_TOOL_ACTIONS[canonical]
         : AUDIT_MCP_TOOL_ACTIONS[canonical as TaxonomyAuditMcpToolName]
+  // capability_search is handled via CAPABILITY_GATEWAY_ACTIONS above and is
+  // never a TaskWraith catalog action — do not re-compare it here (TS2367).
+  const service = isTaskWraithCatalogAction(canonical)
+    ? resolveCatalogToolAgenticService(canonical, args)
+    : metadata.service
   return {
     ok: true,
     toolName: canonical as Exclude<TaskWraithOwnedMcpToolName, 'capability_invoke'>,
@@ -2926,7 +2989,7 @@ export function resolveToolDispatchContractStrict(
     toolClass: metadata.toolClass,
     action: metadata.operation,
     dispatchOwner: metadata.dispatchOwner,
-    service: metadata.service,
+    service,
     mutation: metadata.mutation,
     lock: metadata.lock,
     networkEgress: metadata.networkEgress

@@ -1277,10 +1277,8 @@ import { SimulatorHostControl } from './simulator/SimulatorHostControl'
 import { SimulatorHostService } from './simulator/SimulatorHostService'
 import { SimulatorInteractionBridge } from './simulator/SimulatorInteractionBridge'
 import { SimulatorSessionStore } from './simulator/SimulatorSessionStore'
-import {
-  createHostBackedDeviceOps,
-  defaultSimctlRunner
-} from './simulator/SimctlRunner'
+import { createLeaseEnforcingHostBackedDeviceOps } from './simulator/hostControlDeviceOps'
+import { defaultSimctlRunner } from './simulator/SimctlRunner'
 import {
   createLaunchToolExecutors,
   isLaunchMcpToolName,
@@ -4150,8 +4148,19 @@ const canvasService = new CanvasService({
       )
     }
     if (kind === 'device') {
+      if (!opts?.appChatId || !opts.appRunId) {
+        throw new Error('Device Canvas requires exact chat and run authority.')
+      }
       return new CanvasDeviceDriver(sessionId, {
-        deviceOps: createHostBackedDeviceOps(simulatorHostService, defaultSimctlRunner)
+        // Agent canvas_open(device) must mint a controller lease and mutate via
+        // HostControl — never raw SimulatorHostService (simctl bypass).
+        deviceOps: createLeaseEnforcingHostBackedDeviceOps({
+          hostControl: simulatorHostControl,
+          controllerLease: simulatorControllerLease,
+          chatId: opts.appChatId,
+          runId: opts.appRunId,
+          run: defaultSimctlRunner
+        })
       })
     }
     if (kind === 'html') {
