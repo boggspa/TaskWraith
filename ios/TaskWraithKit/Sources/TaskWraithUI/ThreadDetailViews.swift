@@ -3568,8 +3568,8 @@ func providerHueClassFromSpeaker(_ speaker: String?) -> String? {
         return brand.hueClass
     }
     let known = [
-        "gemini", "codex", "claude", "kimi", "grok", "cursor", "ollama", "pi", "mistral",
-        "qwen", "ornith",
+        "gemini", "codex", "claude", "kimi", "grok", "cursor", "ollama", "antigravity", "pi",
+        "mistral", "qwen", "ornith",
     ]
     return known.contains(headLower) ? headLower : nil
 }

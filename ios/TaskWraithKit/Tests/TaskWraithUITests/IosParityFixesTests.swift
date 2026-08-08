@@ -603,6 +603,28 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func participantHealthKeepsAntiGravityStampHue() throws {
+        let entry = try decode(
+            RemoteThreadSnapshot.Row.ParticipantHealth.Entry.self,
+            """
+            {
+              "participantId":"p-agy-scout",
+              "provider":"antigravity",
+              "model":"gemini-api:gemini-2.5-flash",
+              "displayProviderLabel":"AntiGravity",
+              "displayHueClass":"antigravity",
+              "role":"K2.7Scout",
+              "status":"ok"
+            }
+            """)
+
+        let presentation = participantHealthEntryPresentation(entry)
+        #expect(presentation.providerName == "AntiGravity")
+        #expect(presentation.providerClass == "antigravity")
+        #expect(TWTheme.providerAccentHex(presentation.providerClass) == 0x308713)
+    }
+
+    @MainActor
     @Test func participantHealthRepairsGenericOllamaStampForLaguna() throws {
         let entry = try decode(
             RemoteThreadSnapshot.Row.ParticipantHealth.Entry.self,
@@ -666,6 +688,8 @@ struct IosParityFixesTests {
         #expect(providerHueClassFromSpeaker("Pi / Worker · GLM-5.2") == "zai")
         #expect(
             providerHueClassFromSpeaker("Pi / Worker (GLM-4.7 (Cerebras))") == "cerebras")
+        #expect(providerHueClassFromSpeaker("AntiGravity / K2.7Scout") == "antigravity")
+        #expect(providerHueClassFromSpeaker("Antigravity · gemini-2.5-flash") == "antigravity")
     }
 
     @Test func remoteRowDecodesFrozenProviderHueClass() throws {
