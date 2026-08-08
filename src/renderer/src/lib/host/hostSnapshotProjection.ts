@@ -37,6 +37,7 @@ import type {
   HostSnapshot,
   HostApprovalProjection,
   HostProviderModelProjection,
+  HostQuestionProjection,
   HostThreadProjection,
   HostUsageObservation,
   HostWorkspaceProjection
@@ -116,6 +117,23 @@ export interface HostProjectedApproval {
   readonly threadId?: string
 }
 
+/**
+ * A pending/open question row exactly as Host reports it.
+ *
+ * Allowlisted on purpose — identity, status, preview and time only.
+ * `receiptId` is correlation metadata, never the free-text answer body.
+ */
+export interface HostProjectedQuestion {
+  readonly questionId: string
+  readonly threadId: string
+  readonly status: HostQuestionProjection['status']
+  readonly promptPreview: string
+  readonly askedAt: number
+  readonly answeredAt?: number
+  /** Receipt correlation for cross-client parity — not the answer body. */
+  readonly receiptId?: string
+}
+
 export interface HostProjectedWorkspace {
   readonly id: string
   readonly name: string
@@ -159,6 +177,8 @@ export interface HostProjectedSnapshot {
   readonly workspaces: readonly HostProjectedWorkspace[]
   readonly threads: readonly HostProjectedThread[]
   readonly providers: readonly HostProjectedProvider[]
+  /** Question rows Host already sends — allowlisted; never answer bodies. */
+  readonly questions: readonly HostProjectedQuestion[]
   /** AWAITING approval cards only — never the decided/ledger history. */
   readonly approvals: readonly HostProjectedApproval[]
   readonly usage: HostProjectedUsage
@@ -256,6 +276,21 @@ function projectApproval(approval: HostApprovalProjection): HostProjectedApprova
   }
 }
 
+function projectQuestion(question: HostQuestionProjection): HostProjectedQuestion {
+  // Field-by-field, same reason as projectApproval: a spread would forward
+  // whatever Host adds later. The leaf needs identity + status + preview; the
+  // free-text answer body must never cross this boundary.
+  return {
+    questionId: question.questionId,
+    threadId: question.threadId,
+    status: question.status,
+    promptPreview: question.promptPreview,
+    askedAt: question.askedAt,
+    ...(question.answeredAt !== undefined ? { answeredAt: question.answeredAt } : {}),
+    ...(question.receiptId ? { receiptId: question.receiptId } : {})
+  }
+}
+
 function projectProvider(provider: HostProviderModelProjection): HostProjectedProvider {
   // Field-by-field on purpose. A spread would forward whatever Host adds to
   // this record later, and the wire type explicitly promises it never carries
@@ -315,6 +350,7 @@ export function projectHostSnapshot(
     workspaces: snapshot.workspaces.map(projectWorkspace),
     threads: snapshot.threads.map(projectThread),
     providers: snapshot.providers.map(projectProvider),
+    questions: snapshot.questions.map(projectQuestion),
     approvals: snapshot.approvals.map(projectApproval),
     usage: projectUsage(snapshot.usage),
     warningCodes: snapshot.warnings.map((warning) => warning.code),

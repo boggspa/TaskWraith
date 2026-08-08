@@ -412,3 +412,82 @@ describe('projectHostSnapshot · approvals', () => {
     expect(projected.approvals).toEqual([])
   })
 })
+
+/* ------------------------------------------------------------------ */
+/*  Wave Track3 — question ROWS, not just a count                     */
+/* ------------------------------------------------------------------ */
+
+const questionRow = (overrides: Record<string, unknown> = {}): never =>
+  ({
+    questionId: 'q-1',
+    threadId: 't-1',
+    status: 'open',
+    promptPreview: 'Continue?',
+    askedAt: 20,
+    ...overrides
+  }) as never
+
+describe('projectHostSnapshot · questions', () => {
+  it('projects the question rows Host already sends, not only their count', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        questions: [
+          questionRow(),
+          questionRow({
+            questionId: 'q-2',
+            status: 'answered',
+            answeredAt: 30,
+            receiptId: 'rcpt-2'
+          })
+        ]
+      } as never),
+      'live'
+    )
+
+    expect(projected.questions).toHaveLength(2)
+    expect(projected.questions[0]).toMatchObject({
+      questionId: 'q-1',
+      threadId: 't-1',
+      status: 'open',
+      promptPreview: 'Continue?',
+      askedAt: 20
+    })
+    expect(projected.questions[1]).toMatchObject({
+      questionId: 'q-2',
+      status: 'answered',
+      answeredAt: 30,
+      receiptId: 'rcpt-2'
+    })
+  })
+
+  it('keeps the existing count alongside the rows — additive, nothing removed', () => {
+    const projected = projectHostSnapshot(snapshot({ questions: [questionRow()] } as never), 'live')
+    expect(projected.counts.questions).toBe(1)
+    expect(projected.questions).toHaveLength(1)
+  })
+
+  it('allowlists fields and does NOT carry an answer body across the boundary', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        questions: [
+          questionRow({
+            answerText: 'yes, proceed with the write',
+            answerBody: 'must-never-cross',
+            options: ['yes', 'no']
+          })
+        ]
+      } as never),
+      'live'
+    )
+    const row = projected.questions[0] as unknown as Record<string, unknown>
+    expect(row.answerText).toBeUndefined()
+    expect(row.answerBody).toBeUndefined()
+    expect(row.options).toBeUndefined()
+  })
+
+  it('projects an empty questions family as a real empty list', () => {
+    const projected = projectHostSnapshot(snapshot({ questions: [] }), 'live')
+    expect(projected.questions).toEqual([])
+    expect(projected.counts.questions).toBe(0)
+  })
+})
