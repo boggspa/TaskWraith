@@ -17,6 +17,10 @@
 // without touching the real ~/.kimi-code.
 
 import {
+  kimiShouldEmptySkillsDir,
+  type ProviderHarnessPosture
+} from '../../shared/providerHarnessPosture'
+import {
   buildKimiIsolatedConfig,
   UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS
 } from './KimiAcpContainment'
@@ -90,6 +94,12 @@ export interface PrepareKimiHomeInput {
   /** Strict teardown: reject cleanup when an ephemeral home survives or when a
    * durable home cannot be reduced to verified native continuity state. */
   strictCleanup?: boolean
+  /**
+   * Optional Wave C harness posture. When omitted (or skills ≠ allow-native),
+   * creates an empty isolated `skills/` dir so nothing auto-loads (today).
+   * `allow-native` skills skips creating that empty clamp.
+   */
+  harnessPosture?: ProviderHarnessPosture | null
   fs: KimiHomeFs
 }
 
@@ -425,9 +435,16 @@ export async function prepareKimiIsolatedHome(
       await fs.mkdir(fs.join(homeDir, 'credentials'))
       await fs.mkdir(fs.join(homeDir, 'oauth'))
     }
-    // Empty plugins/skills so nothing auto-loads (dossier B4/I3).
+    // Empty plugins so nothing auto-loads (dossier B4/I3). Skills follow Wave C
+    // posture: suppress/tw-only (default) create an empty skills dir; allow-native
+    // skips that clamp so the seat does not actively wipe native skills.
     await fs.mkdir(fs.join(homeDir, 'plugins'))
-    await fs.mkdir(fs.join(homeDir, 'skills'))
+    const emptySkills = input.harnessPosture
+      ? kimiShouldEmptySkillsDir(input.harnessPosture)
+      : true
+    if (emptySkills) {
+      await fs.mkdir(fs.join(homeDir, 'skills'))
+    }
 
     const isolatedConfig = buildKimiIsolatedConfig({
       baseConfig,

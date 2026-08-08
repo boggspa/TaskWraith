@@ -273,6 +273,35 @@ describe('prepareKimiIsolatedHome', () => {
     expect([...files.keys()].some((key) => key.startsWith('/iso'))).toBe(false)
   })
 
+  it('creates an empty skills dir by default and skips it for allow-native posture', async () => {
+    const suppressed = makeFakeFs({
+      '/src/config.toml': `${REAL_CONFIG}\n\n[providers.kimi]\ntype = "kimi"\napi_key = "sk-hosted"\n`
+    })
+    const suppressedHome = await prepareKimiIsolatedHome({
+      runId: 'skills-suppress',
+      homeDir: '/iso-suppress',
+      sourceHome: '/src',
+      harnessPosture: { skills: 'suppress', hooks: 'suppress' },
+      fs: suppressed.fs
+    })
+    expect(suppressedHome.ok).toBe(true)
+    expect(suppressed.dirs.has('/iso-suppress/skills')).toBe(true)
+
+    const allowed = makeFakeFs({
+      '/src/config.toml': `${REAL_CONFIG}\n\n[providers.kimi]\ntype = "kimi"\napi_key = "sk-hosted"\n`
+    })
+    const allowedHome = await prepareKimiIsolatedHome({
+      runId: 'skills-allow',
+      homeDir: '/iso-allow',
+      sourceHome: '/src',
+      harnessPosture: { skills: 'allow-native', hooks: 'allow-native' },
+      fs: allowed.fs
+    })
+    expect(allowedHome.ok).toBe(true)
+    expect(allowed.dirs.has('/iso-allow/skills')).toBe(false)
+    expect(allowed.dirs.has('/iso-allow/plugins')).toBe(true)
+  })
+
   it('allows API-key seats to prepare concurrently without the OAuth lease', async () => {
     const { fs } = makeFakeFs({
       '/src/config.toml': `${REAL_CONFIG}\n\n[providers.kimi]\ntype = "kimi"\napi_key = "sk-hosted"\n`

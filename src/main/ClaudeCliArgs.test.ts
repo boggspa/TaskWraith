@@ -180,6 +180,41 @@ describe('buildClaudeCliArgs', () => {
     expect(buildClaudeCliArgs({ ...base })).not.toContain('--settings')
     expect(buildClaudeCliArgs({ ...base, claudeFastMode: null })).not.toContain('--settings')
   })
+
+  it('keeps empty --setting-sources by default and for suppress/tw-only posture', () => {
+    expect(buildClaudeCliArgs(base)).toEqual(
+      expect.arrayContaining(['--setting-sources', ''])
+    )
+    expect(
+      buildClaudeCliArgs({
+        ...base,
+        harnessPosture: { skills: 'suppress', hooks: 'suppress' }
+      })
+    ).toEqual(expect.arrayContaining(['--setting-sources', '']))
+    expect(
+      buildClaudeCliArgs({
+        ...base,
+        harnessPosture: { skills: 'tw-only', hooks: 'tw-only' }
+      })
+    ).toEqual(expect.arrayContaining(['--setting-sources', '']))
+  })
+
+  it('omits empty --setting-sources when both channels allow-native', () => {
+    const args = buildClaudeCliArgs({
+      ...base,
+      harnessPosture: { skills: 'allow-native', hooks: 'allow-native' }
+    })
+    expect(args).not.toContain('--setting-sources')
+    expect(args).toContain('--strict-mcp-config')
+  })
+
+  it('keeps empty --setting-sources when only one channel allows native', () => {
+    const args = buildClaudeCliArgs({
+      ...base,
+      harnessPosture: { skills: 'allow-native', hooks: 'suppress' }
+    })
+    expect(args).toEqual(expect.arrayContaining(['--setting-sources', '']))
+  })
 })
 
 describe('claudeFastModeSettingsArg', () => {

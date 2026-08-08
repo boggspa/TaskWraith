@@ -176,6 +176,7 @@ import {
   DEFAULT_PROMPT_CACHE_SETTINGS,
   normalizePromptCacheSettings
 } from '../PromptCachePolicy'
+import { normalizeProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import {
   capRunQueueJobs,
   createRunQueueJob,
@@ -4769,6 +4770,7 @@ export class AppStore {
         stored.promptCache,
         defaultSettings.promptCache
       ),
+      providerHarnessPosture: normalizeProviderHarnessPostureMap(stored.providerHarnessPosture),
       agenticServices: {
         ...defaultSettings.agenticServices,
         ...(stored.agenticServices || {})

@@ -48,6 +48,7 @@ import { sanitizeRendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRen
 import type { RendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRendererAuthority'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { normalizePromptCacheSettings } from '../PromptCachePolicy'
+import { normalizeProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasCompletionCap'
 import { normalizeCliPathDirectories } from '../../shared/cliPathDirectories'
 import {
@@ -2005,6 +2006,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       sanitized.promptCache = normalizePromptCacheSettings(
         sanitized.promptCache,
         deps.getSettings().promptCache
+      )
+    }
+    if ('providerHarnessPosture' in sanitized) {
+      sanitized.providerHarnessPosture = normalizeProviderHarnessPostureMap(
+        sanitized.providerHarnessPosture
       )
     }
     if ('nativeSubAgentRequests' in sanitized) {

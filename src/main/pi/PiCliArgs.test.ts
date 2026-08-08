@@ -36,6 +36,30 @@ describe('buildPiRpcArgs', () => {
     expect(args[args.indexOf('--model') + 1]).toBe('deepseek-v4-flash')
   })
 
+  it('keeps --no-skills for suppress/tw-only and omits it for allow-native', () => {
+    expect(
+      buildPiRpcArgs({
+        ...base,
+        writeCapable: false,
+        harnessPosture: { skills: 'suppress', hooks: 'suppress' }
+      })
+    ).toContain('--no-skills')
+    expect(
+      buildPiRpcArgs({
+        ...base,
+        writeCapable: false,
+        harnessPosture: { skills: 'tw-only', hooks: 'tw-only' }
+      })
+    ).toContain('--no-skills')
+    expect(
+      buildPiRpcArgs({
+        ...base,
+        writeCapable: false,
+        harnessPosture: { skills: 'allow-native', hooks: 'allow-native' }
+      })
+    ).not.toContain('--no-skills')
+  })
+
   it('keeps native tools read-only for every posture', () => {
     const readOnly = buildPiRpcArgs({ ...base, writeCapable: false })
     expect(readOnly[readOnly.indexOf('--tools') + 1]).toBe(PI_READ_ONLY_TOOLS.join(','))

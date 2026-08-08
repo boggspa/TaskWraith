@@ -2,6 +2,11 @@
 // imports so it can be unit-tested directly. The argv values match the flags
 // exposed by the installed Claude Code CLI (`claude --help`).
 
+import {
+  claudeUsesEmptySettingSources,
+  type ProviderHarnessPosture
+} from '../shared/providerHarnessPosture'
+
 const CLAUDE_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 const CLAUDE_SONNET_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
 // Sonnet 5 family (claude-sonnet-5, claude-sonnet-5-1m, …) gets the full Opus
@@ -44,6 +49,14 @@ export interface BuildClaudeCliArgsInput {
   providerSessionId?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
+  /**
+   * Optional Wave C harness posture. When omitted, keeps today's fail-safe:
+   * `--setting-sources ''` (suppress native settings/hooks/plugins load).
+   *
+   * Claude cannot split skills vs hooks — `--setting-sources` gates both.
+   * Empty sources stay unless BOTH channels are `allow-native`.
+   */
+  harnessPosture?: ProviderHarnessPosture | null
 }
 
 export function claudeFastModeSettingsArg(value: boolean | null | undefined): string | null {
@@ -81,12 +94,19 @@ export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
     // servers load separately and remain available through their namespaces.
     '--tools',
     '',
-    // Do not auto-load workspace/user settings, hooks, plugins, or MCP files.
-    // TaskWraith supplies its reviewed settings and MCP config explicitly.
-    '--setting-sources',
-    '',
     '--strict-mcp-config'
   ]
+  // Default / suppress / tw-only: do not auto-load workspace/user settings,
+  // hooks, plugins, or MCP files. TaskWraith supplies reviewed settings + MCP
+  // config explicitly. allow-native on BOTH skills and hooks omits the empty
+  // `--setting-sources` pair so the CLI may load native sources.
+  const useEmptySettingSources = input.harnessPosture
+    ? claudeUsesEmptySettingSources(input.harnessPosture)
+    : true
+  if (useEmptySettingSources) {
+    const strictIdx = args.indexOf('--strict-mcp-config')
+    args.splice(strictIdx, 0, '--setting-sources', '')
+  }
   if (input.model && input.model !== 'default') {
     args.push('--model', input.model)
   }

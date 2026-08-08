@@ -235,6 +235,13 @@ export interface BuildContainedCursorReadOnlyArgvInput {
  * below). Only canonical TaskWraith-exposed Cursor model ids survive
  * normalization; a requested model is always coerced to a concrete Cursor id,
  * and an absent model falls back to Cursor's own account default (no `--model`).
+ *
+ * Wave C harness posture: default is allow-native / allow-native (no argv
+ * change). Path-B cannot fully suppress account skills/hooks under ~/.cursor —
+ * a Settings `suppress` choice is recorded and disclosed in the UI, but there
+ * is no honest argv/env clamp that removes those account surfaces today. Native
+ * actions remain OS-sandbox-bounded; brokered gateway calls stay TaskWraith-
+ * mediated.
  */
 /**
  * Shared contained-argv base. `readOnlyMode` is `'ask'`/`'plan'` for a read-only

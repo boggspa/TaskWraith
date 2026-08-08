@@ -6,9 +6,10 @@
  * from pi's own flag surface, all verified live on 0.82.1):
  *  - Workspace-local files are never trusted: `-na` (ignore project-local
  *    files), `-nc` (no AGENTS.md/CLAUDE.md discovery), `--no-extensions`,
- *    `--no-skills`, `--no-prompt-templates` close the project-config
- *    pre-prompt execution class (the Kimi B3 lesson) by flag instead of by
- *    guard-and-refuse.
+ *    `--no-skills` (default / suppress / tw-only; omitted only when Wave C
+ *    skills posture is `allow-native`), `--no-prompt-templates` close the
+ *    project-config pre-prompt execution class (the Kimi B3 lesson) by flag
+ *    instead of by guard-and-refuse.
  *  - Pi's native allowlist is always read-only (`read,grep,find,ls`). A
  *    write-approved seat receives only TaskWraith's explicit exact-file
  *    extension tools; native bash/edit/write never bypass transaction locks.
@@ -20,6 +21,10 @@
  *    provider API traffic is unaffected.
  */
 
+import {
+  piShouldPassNoSkills,
+  type ProviderHarnessPosture
+} from '../../shared/providerHarnessPosture'
 import {
   isPiTaskWraithToolName,
   type PiTaskWraithToolName
@@ -50,6 +55,12 @@ export interface PiRpcArgsInput {
   coordinationExtensionPath?: string
   /** Fixed custom tool names implemented by coordinationExtensionPath. */
   coordinationToolNames?: readonly PiTaskWraithToolName[]
+  /**
+   * Optional Wave C harness posture. When omitted, keeps today's fail-safe
+   * `--no-skills`. `allow-native` skills omits `--no-skills`; suppress and
+   * tw-only keep it. Hooks have no separate Pi argv today.
+   */
+  harnessPosture?: ProviderHarnessPosture | null
 }
 
 export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
@@ -70,7 +81,12 @@ export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
   }
   const tools = [...new Set([...nativeTools, ...coordinationToolNames])]
   args.push('--tools', tools.join(','))
-  args.push('--no-extensions', '--no-skills', '--no-prompt-templates')
+  args.push('--no-extensions')
+  const passNoSkills = input.harnessPosture
+    ? piShouldPassNoSkills(input.harnessPosture)
+    : true
+  if (passNoSkills) args.push('--no-skills')
+  args.push('--no-prompt-templates')
   if (input.coordinationExtensionPath) {
     args.push('--extension', input.coordinationExtensionPath)
   }
