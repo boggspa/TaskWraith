@@ -290,7 +290,11 @@ describe('AntigravityOptInCard successful mutation integration', () => {
     await act(async () => {
       mountedRoot = createRoot(container as unknown as Element)
       mountedRoot.render(
-        createElement(HostProjectionProvider, { store }, createElement(Harness))
+        createElement(HostProjectionProvider, {
+          store,
+          // eslint-disable-next-line react/no-children-prop -- HostProjectionProviderProps requires children in props for tsc
+          children: createElement(Harness)
+        })
       )
     })
     // useHostProjection refreshes on mount; settle the Host fetch.
