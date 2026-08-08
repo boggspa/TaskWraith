@@ -48,15 +48,11 @@ describe('memoryProposalDisplay', () => {
     expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'do_not_repeat' }))).toBe(
       true
     )
-    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'skill_patch' }))).toBe(
-      true
-    )
+    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'skill_patch' }))).toBe(true)
     expect(canApplyMemoryProposal(proposal({ status: 'proposed', kind: 'repo_convention' }))).toBe(
       false
     )
-    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'preference' }))).toBe(
-      false
-    )
+    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'preference' }))).toBe(false)
     expect(formatApplyMemoryProposalBlocked('skill_patch_path_escape')).toContain('escape')
   })
 

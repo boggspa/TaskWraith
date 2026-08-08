@@ -1030,9 +1030,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     ? isCoreTaskWraithMcpProfile(input.taskWraithMcpProfileId)
     : shouldUseCoreMcpProfile(provider, normalizeCliProviderModel(provider, nextModel))
   const gatewayMcpProfile = isGatewayTaskWraithMcpProfile(input.taskWraithMcpProfileId)
-  const advertiseDelegateWave = isGatewayV13DirectTaskWraithMcpProfile(
-    input.taskWraithMcpProfileId
-  )
+  const advertiseDelegateWave = isGatewayV13DirectTaskWraithMcpProfile(input.taskWraithMcpProfileId)
   const taskWraithMcpAdvertised = input.taskWraithMcpAdvertised !== false
   const nativeKimiSessionResume =
     provider === 'kimi' && Boolean(input.nativeSessionResume && resumeSessionId)

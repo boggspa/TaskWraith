@@ -44,12 +44,8 @@ describe('chat popout authority projection', () => {
   })
 
   it('keeps host-wide Discord history unavailable in a detached chat composer', () => {
-    expect(appSource).toContain(
-      "'Open this chat in the main window to add Discord context.'"
-    )
-    expect(appSource).toContain(
-      'openDiscordContextPicker: isChatPopoutWindow'
-    )
+    expect(appSource).toContain("'Open this chat in the main window to add Discord context.'")
+    expect(appSource).toContain('openDiscordContextPicker: isChatPopoutWindow')
     expect(composerSource).toContain('Boolean(discordContextUnavailableReason)')
   })
 
@@ -61,7 +57,7 @@ describe('chat popout authority projection', () => {
       "if (!isChatPopoutWindow && typeof window.api.getGeminiMcpBridgeStatus === 'function')"
     )
     expect(appSource).not.toContain(
-      ".getProductOperationsStatus()\n        .then(setProductOperationsStatus)"
+      '.getProductOperationsStatus()\n        .then(setProductOperationsStatus)'
     )
     expect(appSource).toContain('const refreshProductOperationsStatus = async () => {')
     expect(appSource).toContain('    refreshProductOperationsStatus,')

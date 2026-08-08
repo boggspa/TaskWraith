@@ -52,9 +52,7 @@ interface ThreadIntrospectionApi {
   runManualIntrospection?: (
     input: RunManualIntrospectionRequest
   ) => Promise<RunManualIntrospectionResponse>
-  getIntrospectionSchedule?: (
-    workspaceId?: string | null
-  ) => Promise<IntrospectionScheduleSettings>
+  getIntrospectionSchedule?: (workspaceId?: string | null) => Promise<IntrospectionScheduleSettings>
   updateIntrospectionSchedule?: (
     partial: Partial<IntrospectionScheduleSettings> & { workspaceId?: string | null }
   ) => Promise<IntrospectionScheduleSettings>
@@ -236,8 +234,8 @@ export function ThreadIntrospectionSettingsPanel({
         <div className="thread-introspection-settings-toolbar-copy">
           <div className="thread-introspection-settings-toolbar-title">Daily retrospective</div>
           <p className="settings-hint">
-            Scan the last 24 hours of runs and threads, then review distilled lessons before anything
-            durable is promoted.
+            Scan the last 24 hours of runs and threads, then review distilled lessons before
+            anything durable is promoted.
           </p>
         </div>
         <button
@@ -261,7 +259,9 @@ export function ThreadIntrospectionSettingsPanel({
         }`}
       >
         <div className="thread-introspection-settings-schedule-header">
-          <div className="thread-introspection-settings-schedule-title">Automatic daily harvest</div>
+          <div className="thread-introspection-settings-schedule-title">
+            Automatic daily harvest
+          </div>
           {scheduleApiReady && schedule?.enabled && (
             <span className="thread-introspection-settings-schedule-badge" aria-hidden="true">
               On
@@ -318,9 +318,13 @@ export function ThreadIntrospectionSettingsPanel({
       )}
 
       {scheduleError && (
-        <div className="settings-error thread-introspection-settings-run-error">{scheduleError}</div>
+        <div className="settings-error thread-introspection-settings-run-error">
+          {scheduleError}
+        </div>
       )}
-      {runError && <div className="settings-error thread-introspection-settings-run-error">{runError}</div>}
+      {runError && (
+        <div className="settings-error thread-introspection-settings-run-error">{runError}</div>
+      )}
       {runNotice && (
         <p className="thread-introspection-settings-run-notice" role="status">
           {runNotice}

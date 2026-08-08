@@ -3504,14 +3504,7 @@ export interface ChatMessage {
       title: string
       provider: ProviderId
       parentProvider?: ProviderId
-      status:
-        | 'created'
-        | 'running'
-        | 'completed'
-        | 'failed'
-        | 'cancelled'
-        | 'returned'
-        | 'unknown'
+      status: 'created' | 'running' | 'completed' | 'failed' | 'cancelled' | 'returned' | 'unknown'
       promptPreview?: string
     }>
     /** User pin timestamp (ms since epoch). Missing means not pinned. */

@@ -1,9 +1,6 @@
 import { readFileSync } from 'fs'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  armScheduledLoopStepTimeout,
-  scheduledHeadlessComposeFields
-} from './ScheduledHeadlessRun'
+import { armScheduledLoopStepTimeout, scheduledHeadlessComposeFields } from './ScheduledHeadlessRun'
 
 describe('scheduledHeadlessComposeFields', () => {
   it('preserves the durable occurrence posture and provider controls', () => {
@@ -108,8 +105,10 @@ describe('scheduled headless dispatch integration', () => {
   })
 
   it('rejects renderer-authored orchestration identities', () => {
-    expect(indexSource).toContain("if (payload.ensembleRun || payload.auditRun) {")
-    expect(indexSource).toContain("throw new Error('Renderer orchestration identities are MAIN-owned.')")
+    expect(indexSource).toContain('if (payload.ensembleRun || payload.auditRun) {')
+    expect(indexSource).toContain(
+      "throw new Error('Renderer orchestration identities are MAIN-owned.')"
+    )
   })
 
   it('fails closed when a scheduled identity outlives its live owner', () => {
@@ -154,9 +153,7 @@ describe('scheduled headless dispatch integration', () => {
       'ensembleOrchestratorRef = new EnsembleOrchestrator({',
       'shouldPersistProviderSessionForRun,'
     )
-    const exactLookup = ensembleDispatch.indexOf(
-      'pendingEntryIdsForSuppliedMessageIds('
-    )
+    const exactLookup = ensembleDispatch.indexOf('pendingEntryIdsForSuppliedMessageIds(')
     const accepted = ensembleDispatch.indexOf('dispatchResult.dispatched &&')
     const receipt = ensembleDispatch.indexOf(
       'midRunSteeringRegistry.markEntriesDeliveredToParticipant('
@@ -298,8 +295,12 @@ describe('scheduled headless dispatch integration', () => {
       '// Stage 0b-dispatch (ensemble)'
     )
     expect(helper).toContain('scheduledOccurrenceOwners.lookupByChatId(chatId)')
-    expect(indexSource.match(/assertScheduledEnsembleInteractiveAvailable\(chatId\)/g)).toHaveLength(2)
-    expect(indexSource.match(/scheduledEnsembleInteractiveBlock\(action\.threadId\)/g)).toHaveLength(4)
+    expect(
+      indexSource.match(/assertScheduledEnsembleInteractiveAvailable\(chatId\)/g)
+    ).toHaveLength(2)
+    expect(
+      indexSource.match(/scheduledEnsembleInteractiveBlock\(action\.threadId\)/g)
+    ).toHaveLength(4)
     expect(indexSource).toContain(
       "requireNonEmptyString(payload.appChatId, 'Ensemble dispatch chat id')"
     )
@@ -314,10 +315,7 @@ describe('scheduled headless dispatch integration', () => {
     const seal = solo.indexOf('const sealService = scheduledOccurrenceSealServiceRef')
     const seed = solo.indexOf('seedScheduledSoloTranscript(')
     const dispatch = solo.indexOf('const result = await dispatch(')
-    const steeringReceipt = solo.indexOf(
-      'midRunSteeringRegistry.markDelivered(',
-      dispatch
-    )
+    const steeringReceipt = solo.indexOf('midRunSteeringRegistry.markDelivered(', dispatch)
 
     expect(compose).toBeGreaterThanOrEqual(0)
     expect(seal).toBeGreaterThan(compose)
@@ -326,9 +324,7 @@ describe('scheduled headless dispatch integration', () => {
     expect(steeringReceipt).toBeGreaterThan(dispatch)
     expect(solo.slice(seed, dispatch)).not.toContain('midRunSteeringRegistry.markDelivered(')
     expect(solo).toContain('sealService.sealSoloOccurrence({')
-    expect(solo).toContain(
-      'Scheduled occurrence seal verification failed: ${sealOutcome.reason}'
-    )
+    expect(solo).toContain('Scheduled occurrence seal verification failed: ${sealOutcome.reason}')
   })
 
   it('continues to provider dispatch when solo sealing is explicitly skipped', () => {

@@ -2046,22 +2046,8 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
-  skill_list: tool(
-    'orchestration',
-    'mcpTools',
-    'control.read',
-    'skills',
-    'none',
-    'none'
-  ),
-  skill_read: tool(
-    'orchestration',
-    'mcpTools',
-    'control.read',
-    'skills',
-    'none',
-    'none'
-  ),
+  skill_list: tool('orchestration', 'mcpTools', 'control.read', 'skills', 'none', 'none'),
+  skill_read: tool('orchestration', 'mcpTools', 'control.read', 'skills', 'none', 'none'),
   image_edit: tool(
     'workspace_write',
     'mcpTools',

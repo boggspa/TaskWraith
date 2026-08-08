@@ -760,7 +760,6 @@ describe('catalogue reachability', () => {
     expect(TASKWRAITH_MCP_TOOLS).toContain('delegate_wave')
   })
 
-
   it('makes skill_list/skill_read discoverable on gateway-v14 without enlarging the direct surface', () => {
     expect(GATEWAY_V14_ADDED_TOOL_NAMES).toEqual(['skill_list', 'skill_read'])
     for (const tool of GATEWAY_V14_ADDED_TOOL_NAMES) {

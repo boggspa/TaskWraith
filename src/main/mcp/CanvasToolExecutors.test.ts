@@ -153,7 +153,12 @@ describe('isCanvasMcpToolName', () => {
 describe('executeCanvasTool', () => {
   it('canvas_open returns a canvasId', async () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
-    const result = await executeCanvasTool('canvas_open', { url: 'http://localhost:3000' }, ctx, 'claude')
+    const result = await executeCanvasTool(
+      'canvas_open',
+      { url: 'http://localhost:3000' },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBeFalsy()
     expect(result.structuredContent?.canvasId).toBe('c1')
   })
@@ -242,12 +247,7 @@ describe('executeCanvasTool', () => {
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
-    const result = await executeCanvasTool(
-      'canvas_navigate',
-      { action: 'reload' },
-      ctx,
-      'claude'
-    )
+    const result = await executeCanvasTool('canvas_navigate', { action: 'reload' }, ctx, 'claude')
     expect(result.isError).toBeFalsy()
     expect(navigated).toEqual(['w2'])
     expect(result.structuredContent?.canvasId).toBe('w2')
@@ -259,7 +259,12 @@ describe('executeCanvasTool', () => {
       list: () => [],
       open: async (input) => {
         opens.push(input)
-        return { canvasId: 'fresh1', url: input.url || '', title: 'T', viewport: { width: 1280, height: 800 } }
+        return {
+          canvasId: 'fresh1',
+          url: input.url || '',
+          title: 'T',
+          viewport: { width: 1280, height: 800 }
+        }
       },
       status: () => ({
         canvasId: 'fresh1',
@@ -356,7 +361,12 @@ describe('executeCanvasTool', () => {
     const controller = fakeController({
       open: async (input) => {
         seen = input
-        return { canvasId: 'c1', url: input.html ? 'html://abc' : '', title: 'Rendered HTML', viewport: { width: 800, height: 600 } }
+        return {
+          canvasId: 'c1',
+          url: input.html ? 'html://abc' : '',
+          title: 'Rendered HTML',
+          viewport: { width: 800, height: 600 }
+        }
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
@@ -394,7 +404,12 @@ describe('executeCanvasTool', () => {
     const controller = fakeController({
       open: async (input) => {
         seen = input
-        return { canvasId: 'c1', url: `image://${sha}`, title: 'image/png', viewport: { width: 4, height: 4 } }
+        return {
+          canvasId: 'c1',
+          url: `image://${sha}`,
+          title: 'image/png',
+          viewport: { width: 4, height: 4 }
+        }
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
@@ -436,7 +451,7 @@ describe('executeCanvasTool', () => {
     expect(opened).toBe(false)
   })
 
-  it('canvas_open_launch opens this chat\'s running detected URL with the web driver', async () => {
+  it("canvas_open_launch opens this chat's running detected URL with the web driver", async () => {
     let seen: unknown = null
     const controller = fakeController({
       open: async (input) => {
@@ -566,7 +581,11 @@ describe('executeCanvasTool', () => {
       // Retrying these cannot succeed, which is exactly what the old single
       // generic message failed to say.
       { reason: 'target-unavailable', retryable: false, guidance: /descend|open -a/i },
-      { reason: 'native-bridge-unavailable', retryable: false, guidance: /native bridge is not running/i },
+      {
+        reason: 'native-bridge-unavailable',
+        retryable: false,
+        guidance: /native bridge is not running/i
+      },
       { reason: 'attachment-stale', retryable: false, guidance: /no longer matches/i }
     ] as const
 
@@ -582,7 +601,12 @@ describe('executeCanvasTool', () => {
         resolveWindowOpenTarget: async () => ({ ok: false, reason: expected.reason })
       })
 
-      const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+      const result = await executeCanvasTool(
+        'canvas_open_launch',
+        { attemptId: 'att1' },
+        ctx,
+        'claude'
+      )
 
       expect(result.structuredContent).toMatchObject({
         reason: expected.reason,
@@ -645,7 +669,12 @@ describe('executeCanvasTool', () => {
     const controller = fakeController({
       open: async (input) => {
         seen = input
-        return { canvasId: 'clog', url: 'html://log', title: 'Build output', viewport: { width: 800, height: 600 } }
+        return {
+          canvasId: 'clog',
+          url: 'html://log',
+          title: 'Build output',
+          viewport: { width: 800, height: 600 }
+        }
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({
@@ -661,10 +690,17 @@ describe('executeCanvasTool', () => {
         })
       ]
     })
-    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'build1' }, ctx, 'claude')
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'build1' },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBeFalsy()
     expect(seen).toMatchObject({ driver: 'html' })
-    expect(String((seen as { html: string }).html)).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+    expect(String((seen as { html: string }).html)).toContain(
+      '&lt;script&gt;alert(1)&lt;/script&gt;'
+    )
     expect(result.structuredContent?.source).toBe('outputTail')
     expect(result.content?.some((b) => b.type === 'image')).toBe(true)
   })
@@ -674,14 +710,26 @@ describe('executeCanvasTool', () => {
     const controller = fakeController({
       open: async (input) => {
         seen = input
-        return { canvasId: 'clog', url: 'html://log', title: 'Build output', viewport: { width: 800, height: 600 } }
+        return {
+          canvasId: 'clog',
+          url: 'html://log',
+          title: 'Build output',
+          viewport: { width: 800, height: 600 }
+        }
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({
       controller,
-      launchAttempts: () => [fakeLaunchAttempt({ status: 'stopped', detectedUrls: ['http://localhost:5173/'] })]
+      launchAttempts: () => [
+        fakeLaunchAttempt({ status: 'stopped', detectedUrls: ['http://localhost:5173/'] })
+      ]
     })
-    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1' },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBeFalsy()
     expect(seen).toMatchObject({ driver: 'html' })
     expect(result.structuredContent?.source).toBe('outputTail')
@@ -692,7 +740,12 @@ describe('executeCanvasTool', () => {
     const controller = fakeController({
       open: async (input) => {
         seen = input
-        return { canvasId: 'clog', url: 'html://log', title: 'Build output', viewport: { width: 800, height: 600 } }
+        return {
+          canvasId: 'clog',
+          url: 'html://log',
+          title: 'Build output',
+          viewport: { width: 800, height: 600 }
+        }
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({
@@ -703,7 +756,12 @@ describe('executeCanvasTool', () => {
         reason: 'not-native-macos-launch'
       })
     })
-    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1' },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBeFalsy()
     expect(seen).toMatchObject({ driver: 'html' })
     expect(result.structuredContent?.source).toBe('outputTail')
@@ -719,9 +777,16 @@ describe('executeCanvasTool', () => {
     })
     const { executeCanvasTool } = createCanvasToolExecutors({
       controller,
-      launchAttempts: () => [fakeLaunchAttempt({ runId: undefined, detectedUrls: [], outputTail: 'SECRET=1\n' })]
+      launchAttempts: () => [
+        fakeLaunchAttempt({ runId: undefined, detectedUrls: [], outputTail: 'SECRET=1\n' })
+      ]
     })
-    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1' },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBe(true)
     expect(String(result.structuredContent?.error)).toMatch(/not found/)
     expect(JSON.stringify(result.structuredContent)).not.toContain('SECRET')
@@ -733,20 +798,32 @@ describe('executeCanvasTool', () => {
     const controller = fakeController({
       open: async (input) => {
         seen = input
-        return { canvasId: 'cw', url: input.url || '', title: 'Dev app', viewport: { width: 1280, height: 800 } }
+        return {
+          canvasId: 'cw',
+          url: input.url || '',
+          title: 'Dev app',
+          viewport: { width: 1280, height: 800 }
+        }
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({
       controller,
-      launchAttempts: () => [fakeLaunchAttempt({ runId: undefined, detectedUrls: ['http://localhost:5173/'] })]
+      launchAttempts: () => [
+        fakeLaunchAttempt({ runId: undefined, detectedUrls: ['http://localhost:5173/'] })
+      ]
     })
-    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1' },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBe(true)
     expect(seen).toBeNull()
     expect(String(result.structuredContent?.error)).toMatch(/not found/)
   })
 
-  it('canvas_open_launch refuses another chat\'s attemptId without opening', async () => {
+  it("canvas_open_launch refuses another chat's attemptId without opening", async () => {
     let opened = false
     const controller = fakeController({
       open: async () => {
@@ -758,7 +835,12 @@ describe('executeCanvasTool', () => {
       controller,
       launchAttempts: () => [fakeLaunchAttempt({ id: 'other', chatId: 'chat2' })]
     })
-    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'other' }, ctx, 'claude')
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'other' },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBe(true)
     expect(String(result.structuredContent?.error)).toMatch(/not found/)
     expect(opened).toBe(false)
@@ -801,9 +883,9 @@ describe('executeCanvasTool', () => {
     })
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
     // No bundleId → error, no url required for device.
-    expect((await executeCanvasTool('canvas_open', { driver: 'device' }, ctx, 'claude')).isError).toBe(
-      true
-    )
+    expect(
+      (await executeCanvasTool('canvas_open', { driver: 'device' }, ctx, 'claude')).isError
+    ).toBe(true)
     const r = await executeCanvasTool(
       'canvas_open',
       {
@@ -1035,10 +1117,20 @@ describe('executeCanvasTool', () => {
 
   it('canvas_annotate drops untargeted marks and requires at least one', async () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
-    expect((await executeCanvasTool('canvas_annotate', { canvasId: 'c1', marks: [] }, ctx, 'claude')).isError).toBe(true)
+    expect(
+      (await executeCanvasTool('canvas_annotate', { canvasId: 'c1', marks: [] }, ctx, 'claude'))
+        .isError
+    ).toBe(true)
     // a mark with a label but no ref/bbox is dropped → request becomes empty
     expect(
-      (await executeCanvasTool('canvas_annotate', { canvasId: 'c1', marks: [{ label: 'x' }] }, ctx, 'claude')).isError
+      (
+        await executeCanvasTool(
+          'canvas_annotate',
+          { canvasId: 'c1', marks: [{ label: 'x' }] },
+          ctx,
+          'claude'
+        )
+      ).isError
     ).toBe(true)
     const ok = await executeCanvasTool(
       'canvas_annotate',
@@ -1052,9 +1144,9 @@ describe('executeCanvasTool', () => {
 
   it('canvas_eval requires a non-empty script', async () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
-    expect((await executeCanvasTool('canvas_eval', { canvasId: 'c1' }, ctx, 'claude')).isError).toBe(
-      true
-    )
+    expect(
+      (await executeCanvasTool('canvas_eval', { canvasId: 'c1' }, ctx, 'claude')).isError
+    ).toBe(true)
     expect(
       (await executeCanvasTool('canvas_eval', { canvasId: 'c1', script: '   ' }, ctx, 'claude'))
         .isError
@@ -1064,7 +1156,12 @@ describe('executeCanvasTool', () => {
   it('canvas_eval rejects an oversized script before it reaches the page', async () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
     const huge = 'a'.repeat(CANVAS_EVAL_SCRIPT_CAP + 1)
-    const r = await executeCanvasTool('canvas_eval', { canvasId: 'c1', script: huge }, ctx, 'claude')
+    const r = await executeCanvasTool(
+      'canvas_eval',
+      { canvasId: 'c1', script: huge },
+      ctx,
+      'claude'
+    )
     expect(r.isError).toBe(true)
     expect(r.text).toContain('too large')
     expect(r.text).toContain(`max ${CANVAS_EVAL_SCRIPT_CAP} chars`)

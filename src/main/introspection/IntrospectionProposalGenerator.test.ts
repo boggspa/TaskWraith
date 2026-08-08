@@ -74,10 +74,10 @@ describe('IntrospectionProposalGenerator', () => {
   })
 
   it('routes provider-specific errors to provider scope', () => {
-    const proposal = proposalFromEvidenceItem(
-      evidence('provider_error', { provider: 'cursor' }),
-      { nowIso: '2026-07-05T12:00:00.000Z', idFactory: () => 'proposal-provider' }
-    )
+    const proposal = proposalFromEvidenceItem(evidence('provider_error', { provider: 'cursor' }), {
+      nowIso: '2026-07-05T12:00:00.000Z',
+      idFactory: () => 'proposal-provider'
+    })
     expect(proposal?.scope).toBe('provider')
     expect(proposal?.providerId).toBe('cursor')
   })

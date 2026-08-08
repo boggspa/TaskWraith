@@ -1,8 +1,5 @@
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
-import {
-  PLAN_MCP_ADVERTISE_TOOLS,
-  READ_ONLY_MCP_ADVERTISE_TOOLS
-} from '../mcp/McpAutoAllowedTools'
+import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
 import {
   GATEWAY_V14_MCP_DIRECT_TOOLS,
   taskWraithGatewayDirectToolNamesForProfile
@@ -103,7 +100,9 @@ export const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES = Object.freeze([
   'cancel_subthread'
 ] as const satisfies readonly OllamaToolName[])
 
-const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET = new Set<string>(OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES)
+const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET = new Set<string>(
+  OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES
+)
 
 export function isOllamaExcludedSubthreadTool(toolName: string): boolean {
   return OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET.has(toolName)
@@ -114,9 +113,7 @@ function withoutOllamaExcludedSubthreadTools(names: readonly OllamaToolName[]): 
 }
 
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
-const READ_ONLY_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(
-  READ_ONLY_MCP_ADVERTISE_TOOLS
-)
+const READ_ONLY_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(READ_ONLY_MCP_ADVERTISE_TOOLS)
 const PLAN_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(PLAN_MCP_ADVERTISE_TOOLS)
 
 /**

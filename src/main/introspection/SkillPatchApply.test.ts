@@ -84,10 +84,7 @@ describe('SkillPatchApply', () => {
       body: 'Use scoped Prettier only.'
     })
 
-    const synthesized = resolveSkillPatchTarget(
-      proposal({ skillPatchDiff: undefined }),
-      pack()
-    )
+    const synthesized = resolveSkillPatchTarget(proposal({ skillPatchDiff: undefined }), pack())
     expect(synthesized.ok).toBe(true)
     if (!synthesized.ok) return
     expect(synthesized.target.skillId).toBe('intro-prop-skill-1')
@@ -134,7 +131,9 @@ describe('SkillPatchApply', () => {
       })
     ])
     expect(
-      fs.existsSync(path.join(workspacePath, '.taskwraith', 'skills', 'scoped-prettier', 'SKILL.md'))
+      fs.existsSync(
+        path.join(workspacePath, '.taskwraith', 'skills', 'scoped-prettier', 'SKILL.md')
+      )
     ).toBe(true)
   })
 

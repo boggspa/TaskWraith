@@ -1160,9 +1160,7 @@ Next action:
     expect(table?.rows?.[2]?.seatText).toContain(
       '@Cursor · Cursor · Composer 2.5 Fast · Accept Edits'
     )
-    expect(table?.rows?.[3]?.seatText).toContain(
-      '@Kimi · Kimi · K2.7 Coding · Thinking · Plan'
-    )
+    expect(table?.rows?.[3]?.seatText).toContain('@Kimi · Kimi · K2.7 Coding · Thinking · Plan')
     expect(table?.rows?.[0]?.workLabel).toBe('2k Tks / 2 Turns')
     expect(table?.rows?.[2]?.workLabel).toBe('—')
   })
@@ -1463,9 +1461,7 @@ Next action:
           {
             ...message('t1', 'tool', ''),
             runId: run.runId,
-            toolActivities: [
-              activity({ toolName: 'git_commit', outputPreview: 'abc1234def567\n' })
-            ]
+            toolActivities: [activity({ toolName: 'git_commit', outputPreview: 'abc1234def567\n' })]
           }
         ],
         runs: [run]
@@ -1791,7 +1787,9 @@ Next action:
       expect.objectContaining({ subThreadId: 'round-child', title: 'Round child' })
     ])
     expect(
-      closeout.metadata?.closeoutSubagentDelegations?.some((row) => row.subThreadId === 'other-child')
+      closeout.metadata?.closeoutSubagentDelegations?.some(
+        (row) => row.subThreadId === 'other-child'
+      )
     ).toBe(false)
   })
 

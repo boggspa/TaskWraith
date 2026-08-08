@@ -118,7 +118,9 @@ describe('sanitizeAuditOrchestration', () => {
     expect(sanitizeAuditOrchestration({ ollamaEnabled: true })?.ollamaEnabled).toBe(true)
     expect(sanitizeAuditOrchestration({})).toBeUndefined()
     expect(sanitizeAuditOrchestration(null)).toBeUndefined()
-    expect(sanitizeAuditOrchestration({ providerAllowlist: ['nope'] })?.providerAllowlist).toEqual([])
+    expect(sanitizeAuditOrchestration({ providerAllowlist: ['nope'] })?.providerAllowlist).toEqual(
+      []
+    )
   })
 })
 
@@ -646,9 +648,9 @@ describe('MainSanitizers scheduled tasks', () => {
       getWorkflowDefinitions: () => [victim]
     })
 
-    expect(() =>
-      sanitizer.sanitizeWorkflowForSave({ ...draft, id: 'victim-workflow' })
-    ).toThrow('Workflow creation cannot replace an existing workflow.')
+    expect(() => sanitizer.sanitizeWorkflowForSave({ ...draft, id: 'victim-workflow' })).toThrow(
+      'Workflow creation cannot replace an existing workflow.'
+    )
     expect(sanitizer.sanitizeWorkflowPatch(victim.id, { enabled: false })).toEqual({
       enabled: false,
       unattendedElevation: undefined
@@ -682,9 +684,8 @@ describe('MainSanitizers scheduled tasks', () => {
   })
 
   it('strips renderer-supplied scheduled identity, lifecycle, linkage, and posture', () => {
-    const { sanitizeScheduledTaskForSave, sanitizeScheduledTaskPatch } = makeSanitizers(
-      makeSettings()
-    )
+    const { sanitizeScheduledTaskForSave, sanitizeScheduledTaskPatch } =
+      makeSanitizers(makeSettings())
     const runAt = new Date(Date.now() + 60_000).toISOString()
     const baseTask = {
       id: 'task-1',
@@ -776,7 +777,8 @@ describe('MainSanitizers scheduled tasks', () => {
 
 describe('MainSanitizers workspace boards', () => {
   it('sanitizes board and card provenance metadata', () => {
-    const { sanitizeWorkspaceBoardForSave, sanitizeWorkspaceBoardCardForSave } = makeSanitizers(makeSettings())
+    const { sanitizeWorkspaceBoardForSave, sanitizeWorkspaceBoardCardForSave } =
+      makeSanitizers(makeSettings())
     const provenance = {
       actor: 'agent',
       sourceKind: 'goal',
@@ -820,7 +822,8 @@ describe('MainSanitizers workspace boards', () => {
   })
 
   it('rejects unknown workspace board card link kinds at the IPC sanitizer boundary', () => {
-    const { sanitizeWorkspaceBoardCardForSave, sanitizeWorkspaceBoardCardPatch } = makeSanitizers(makeSettings())
+    const { sanitizeWorkspaceBoardCardForSave, sanitizeWorkspaceBoardCardPatch } =
+      makeSanitizers(makeSettings())
 
     expect(() =>
       sanitizeWorkspaceBoardCardForSave({
@@ -840,7 +843,8 @@ describe('MainSanitizers workspace boards', () => {
   })
 
   it('preserves precise workspace board card sort orders through IPC sanitization', () => {
-    const { sanitizeWorkspaceBoardCardForSave, sanitizeWorkspaceBoardCardPatch } = makeSanitizers(makeSettings())
+    const { sanitizeWorkspaceBoardCardForSave, sanitizeWorkspaceBoardCardPatch } =
+      makeSanitizers(makeSettings())
 
     expect(
       sanitizeWorkspaceBoardCardForSave({
@@ -954,9 +958,13 @@ describe('MainSanitizers settings patches', () => {
   it('accepts a valid modelUsagePanelView and drops invalid values', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
-    expect(sanitizeSettingsPatch({ modelUsagePanelView: 'spend' }).modelUsagePanelView).toBe('spend')
+    expect(sanitizeSettingsPatch({ modelUsagePanelView: 'spend' }).modelUsagePanelView).toBe(
+      'spend'
+    )
     expect(sanitizeSettingsPatch({ modelUsagePanelView: 'plan' }).modelUsagePanelView).toBe('plan')
-    expect(sanitizeSettingsPatch({ modelUsagePanelView: 'context' }).modelUsagePanelView).toBe('context')
+    expect(sanitizeSettingsPatch({ modelUsagePanelView: 'context' }).modelUsagePanelView).toBe(
+      'context'
+    )
     // Anything outside the enum is stripped so a malformed value can't persist.
     expect(
       'modelUsagePanelView' in
@@ -969,12 +977,10 @@ describe('MainSanitizers settings patches', () => {
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
 
     expect(
-      sanitizeSettingsPatch({ piCerebrasMaxCompletionTokens: 16_384 })
-        .piCerebrasMaxCompletionTokens
+      sanitizeSettingsPatch({ piCerebrasMaxCompletionTokens: 16_384 }).piCerebrasMaxCompletionTokens
     ).toBe(16_384)
     expect(
-      sanitizeSettingsPatch({ piCerebrasMaxCompletionTokens: null })
-        .piCerebrasMaxCompletionTokens
+      sanitizeSettingsPatch({ piCerebrasMaxCompletionTokens: null }).piCerebrasMaxCompletionTokens
     ).toBeUndefined()
     expect(
       'piCerebrasMaxCompletionTokens' in
@@ -1089,9 +1095,9 @@ describe('MainSanitizers settings patches', () => {
         .antigravityOptInAcceptedAt
     ).toBe(1_700_000_000_000)
     // A non-positive / non-numeric consent timestamp normalizes to null (no consent).
-    expect(sanitizeSettingsPatch({ antigravityOptInAcceptedAt: 0 }).antigravityOptInAcceptedAt).toBe(
-      null
-    )
+    expect(
+      sanitizeSettingsPatch({ antigravityOptInAcceptedAt: 0 }).antigravityOptInAcceptedAt
+    ).toBe(null)
     expect(
       sanitizeSettingsPatch({
         antigravityOptInAcceptedAt: 'yes' as unknown as number
@@ -1238,13 +1244,12 @@ describe('MainSanitizers settings patches', () => {
     expect(
       sanitizeSettingsPatch({ activityReportingEnabled: false }).activityReportingEnabled
     ).toBe(false)
-    expect(
-      sanitizeSettingsPatch({ activityReportingEnabled: true }).activityReportingEnabled
-    ).toBe(true)
+    expect(sanitizeSettingsPatch({ activityReportingEnabled: true }).activityReportingEnabled).toBe(
+      true
+    )
     for (const value of [undefined, null, 'true', 1, {}]) {
       expect(
-        'activityReportingEnabled' in
-          sanitizeSettingsPatch({ activityReportingEnabled: value })
+        'activityReportingEnabled' in sanitizeSettingsPatch({ activityReportingEnabled: value })
       ).toBe(false)
     }
   })
@@ -1483,7 +1488,8 @@ describe('MainSanitizers settings patches', () => {
 
     // Explicit false survives.
     expect(
-      sanitizeSettingsPatch({ advancedFx: { ...settings.advancedFx, refraction: false } }).advancedFx
+      sanitizeSettingsPatch({ advancedFx: { ...settings.advancedFx, refraction: false } })
+        .advancedFx
     ).toMatchObject({ refraction: false })
 
     // Explicit true survives.
@@ -1548,9 +1554,9 @@ describe('MainSanitizers settings patches', () => {
       id: 'grant-publish-1',
       service: 'externalPublish' as const
     }
-    expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [publishGrant] }).agenticWorkspaceGrants).toEqual([
-      { ...publishGrant, provider: 'agents' }
-    ])
+    expect(
+      sanitizeSettingsPatch({ agenticWorkspaceGrants: [publishGrant] }).agenticWorkspaceGrants
+    ).toEqual([{ ...publishGrant, provider: 'agents' }])
 
     // The 'agents' wildcard provider is accepted for workspace-scoped mutation grants.
     const agentsGrant = {
@@ -1558,9 +1564,9 @@ describe('MainSanitizers settings patches', () => {
       id: 'grant-agents-1',
       provider: 'agents' as const
     }
-    expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [agentsGrant] }).agenticWorkspaceGrants).toEqual([
-      agentsGrant
-    ])
+    expect(
+      sanitizeSettingsPatch({ agenticWorkspaceGrants: [agentsGrant] }).agenticWorkspaceGrants
+    ).toEqual([agentsGrant])
 
     // Empty array is a valid revoke-all write.
     expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [] }).agenticWorkspaceGrants).toEqual([])
@@ -1579,9 +1585,9 @@ describe('MainSanitizers settings patches', () => {
       ]
     })
     expect(mixed.agenticWorkspaceGrants).toEqual([{ ...grant, provider: 'agents' }])
-    expect('agenticWorkspaceGrants' in sanitizeSettingsPatch({ agenticWorkspaceGrants: 'nope' })).toBe(
-      false
-    )
+    expect(
+      'agenticWorkspaceGrants' in sanitizeSettingsPatch({ agenticWorkspaceGrants: 'nope' })
+    ).toBe(false)
   })
 
   it('consolidates legacy per-provider workspace grants into one agents row per workspace/service', () => {
@@ -1685,7 +1691,6 @@ describe('MainSanitizers settings patches', () => {
     }
     expect(consolidateAgenticWorkspaceGrants([canvasRow])).toEqual([canvasRow])
   })
-
 })
 
 describe('AntiGravity opt-in admission (S0b settings-aware gate)', () => {

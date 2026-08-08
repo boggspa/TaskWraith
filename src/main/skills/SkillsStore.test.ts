@@ -151,7 +151,10 @@ describe('SkillsStore', () => {
     try {
       fs.symlinkSync(outsideSkill, linkPath, 'dir')
     } catch (err) {
-      const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : ''
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as { code: unknown }).code)
+          : ''
       // SKIP (documented): platform/sandbox could not create a directory symlink
       // (common on Windows without elevation). Realpath containment still runs
       // whenever a link exists; this assertion cannot be exercised here.
@@ -196,7 +199,10 @@ describe('SkillsStore', () => {
     try {
       fs.symlinkSync(outsideSkill, linkPath, 'dir')
     } catch (err) {
-      const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : ''
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as { code: unknown }).code)
+          : ''
       // SKIP (documented): directory symlink unavailable on this platform/sandbox.
       if (code === 'EPERM' || code === 'EACCES' || process.platform === 'win32') {
         fs.rmSync(outside, { recursive: true, force: true })

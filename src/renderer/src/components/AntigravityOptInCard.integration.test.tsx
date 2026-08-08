@@ -1,10 +1,7 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  HOST_PROTOCOL_VERSION,
-  type HostSnapshot
-} from '../../../shared/hostProtocol'
+import { HOST_PROTOCOL_VERSION, type HostSnapshot } from '../../../shared/hostProtocol'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
 import { HostProjectionProvider } from './HostProjectionProvider'

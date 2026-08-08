@@ -77,14 +77,16 @@ function makeStore(seed: {
 
   return {
     getMemoryProposalPack: vi.fn(() => currentPack),
-    updateMemoryProposal: vi.fn((packId: string, proposalId: string, partial: Partial<MemoryProposal>) => {
-      if (!currentPack || currentPack.id !== packId) return null
-      const proposals = currentPack.proposals.map((item) =>
-        item.id === proposalId ? { ...item, ...partial, id: proposalId, updatedAt: NOW } : item
-      )
-      currentPack = { ...currentPack, proposals, updatedAt: NOW }
-      return currentPack
-    }),
+    updateMemoryProposal: vi.fn(
+      (packId: string, proposalId: string, partial: Partial<MemoryProposal>) => {
+        if (!currentPack || currentPack.id !== packId) return null
+        const proposals = currentPack.proposals.map((item) =>
+          item.id === proposalId ? { ...item, ...partial, id: proposalId, updatedAt: NOW } : item
+        )
+        currentPack = { ...currentPack, proposals, updatedAt: NOW }
+        return currentPack
+      }
+    ),
     getRepoConventionIndexes: vi.fn(() => conventionIndexes),
     saveRepoConventionIndex: vi.fn((snapshot: Partial<RepoConventionIndexSnapshot>) => {
       const saved: RepoConventionIndexSnapshot = {
@@ -170,11 +172,7 @@ describe('applyMemoryProposal', () => {
         ]
       })
     })
-    const result = applyMemoryProposal(
-      { store, skillsStore, now: () => NOW },
-      'pack-1',
-      'prop-1'
-    )
+    const result = applyMemoryProposal({ store, skillsStore, now: () => NOW }, 'pack-1', 'prop-1')
 
     expect(result.ok).toBe(true)
     expect(result.skillId).toBe('intro-rule')
@@ -192,9 +190,9 @@ describe('applyMemoryProposal', () => {
         })
       })
     )
-    expect(
-      skillsStore.listWorkspaceSkills(skillWorkspacePath, 'ws-1').map((s) => s.body)
-    ).toEqual(['Always stage by explicit path.'])
+    expect(skillsStore.listWorkspaceSkills(skillWorkspacePath, 'ws-1').map((s) => s.body)).toEqual([
+      'Always stage by explicit path.'
+    ])
   })
 
   it('blocks skill_patch when the skill id escapes the TaskWraith skill root', () => {
@@ -218,11 +216,7 @@ describe('applyMemoryProposal', () => {
         ]
       })
     })
-    const result = applyMemoryProposal(
-      { store, skillsStore, now: () => NOW },
-      'pack-1',
-      'prop-1'
-    )
+    const result = applyMemoryProposal({ store, skillsStore, now: () => NOW }, 'pack-1', 'prop-1')
     expect(result).toEqual({ ok: false, blocked: 'skill_patch_path_escape' })
     expect(store.updateMemoryProposal).not.toHaveBeenCalled()
   })
@@ -248,11 +242,7 @@ describe('applyMemoryProposal', () => {
         ]
       })
     })
-    const result = applyMemoryProposal(
-      { store, skillsStore, now: () => NOW },
-      'pack-1',
-      'prop-1'
-    )
+    const result = applyMemoryProposal({ store, skillsStore, now: () => NOW }, 'pack-1', 'prop-1')
     expect(result).toEqual({ ok: false, blocked: 'workspace_path_required' })
     expect(store.updateMemoryProposal).not.toHaveBeenCalled()
   })

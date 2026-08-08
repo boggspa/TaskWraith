@@ -15,10 +15,7 @@ import {
   setAntigravityAgyOptInEnabledProbe
 } from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
-import {
-  signRunPermissionPosture,
-  verifyRunPermissionPosture
-} from '../RunPermissionPosture'
+import { signRunPermissionPosture, verifyRunPermissionPosture } from '../RunPermissionPosture'
 import {
   buildExecutionGraphPermissionPosture,
   mintExecutionGraphAttemptPermissionPosture
@@ -470,8 +467,11 @@ describe('RunQueueService', () => {
       },
       agenticWorkspaceGrants: []
     } as Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'>
-    const sign = (approvalMode: string, permissions: Parameters<typeof signRunPermissionPosture>[2], context: Parameters<typeof signRunPermissionPosture>[3]) =>
-      signRunPermissionPosture(secret, approvalMode, permissions, context)
+    const sign = (
+      approvalMode: string,
+      permissions: Parameters<typeof signRunPermissionPosture>[2],
+      context: Parameters<typeof signRunPermissionPosture>[3]
+    ) => signRunPermissionPosture(secret, approvalMode, permissions, context)
     const verify = (
       approvalMode: string,
       permissions: Parameters<typeof verifyRunPermissionPosture>[2],

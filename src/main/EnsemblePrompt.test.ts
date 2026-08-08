@@ -23,10 +23,7 @@ import {
   EXTERNAL_CONTRIBUTION_PREAMBLE,
   wrapExternalContribution
 } from './collaboration/ExternalContributionContext'
-import {
-  buildMidRunSteeringMessage,
-  HOST_MIDRUN_STEERING_AUTHOR
-} from './run/MidRunSteering'
+import { buildMidRunSteeringMessage, HOST_MIDRUN_STEERING_AUTHOR } from './run/MidRunSteering'
 import type {
   ActiveGoal,
   ChatMessage,
@@ -111,9 +108,7 @@ describe('Ensemble prompt composition', () => {
       participant: ensemble.participants[0],
       currentPrompt: 'Continue.',
       roundId: 'round-skills',
-      skillDiscoverySkills: [
-        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
-      ],
+      skillDiscoverySkills: [{ id: 'deploy', name: 'Deploy', description: 'Ship the build.' }],
       sessionStartContext: 'branch=main'
     })
     expect(projection.prompt).toContain('## Available skills')
@@ -500,9 +495,7 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-captain-fanout'
     })
 
-    expect(prompt).toContain(
-      'you are a configured Captain'
-    )
+    expect(prompt).toContain('you are a configured Captain')
     expect(prompt).toContain('share all configured fan-out powers with Boss')
     expect(prompt).toContain('only the first available Captain in this listed roster order acts')
     expect(prompt).toContain(
@@ -1302,9 +1295,7 @@ describe('Ensemble prompt composition', () => {
       currentPrompt: 'Continue.',
       roundId: 'round-1'
     })
-    const sessionEventsBlock = prompt
-      .slice(prompt.indexOf('Session events:'))
-      .split('\n\n')[0]
+    const sessionEventsBlock = prompt.slice(prompt.indexOf('Session events:')).split('\n\n')[0]
     const renderedRows = sessionEventsBlock.split('\n').slice(1)
     expect(renderedRows).toHaveLength(8)
     expect(sessionEventsBlock).toContain('(×3)')
@@ -1470,7 +1461,9 @@ describe('Ensemble prompt composition', () => {
     expect(prompt.lastIndexOf('Lifecycle handoff check')).toBeGreaterThan(
       prompt.lastIndexOf('Current user request:')
     )
-    expect(prompt).toContain('call a listed lifecycle tool first even when the request describes prose')
+    expect(prompt).toContain(
+      'call a listed lifecycle tool first even when the request describes prose'
+    )
     expect(prompt).toContain('Codex runtime rule')
     expect(prompt).toContain('when `ensemble_yield` is listed on the `TaskWraith` MCP server')
     expect(prompt).toContain('Never substitute `run_shell_command`, `true`, `exit 0`')
@@ -2584,15 +2577,13 @@ describe('formatRoundModeInstructions (AR13)', () => {
 
 describe('Ollama ensemble prompt budgeting', () => {
   it('falls back to the standard composer shared-history budget for Ollama participants', () => {
-    expect(
-      resolveOllamaEnsembleTranscriptBudget(120_000, 12).contextChars
-    ).toBe(OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS)
+    expect(resolveOllamaEnsembleTranscriptBudget(120_000, 12).contextChars).toBe(
+      OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS
+    )
     expect(resolveOllamaEnsembleTranscriptBudget(120_000, 12).contextTurns).toBe(
       OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS
     )
-    expect(resolveOllamaEnsembleTranscriptBudget(undefined, undefined).contextChars).toBe(
-      24_000
-    )
+    expect(resolveOllamaEnsembleTranscriptBudget(undefined, undefined).contextChars).toBe(24_000)
     expect(resolveOllamaEnsembleTranscriptBudget(undefined, undefined).contextTurns).toBe(6)
     expect(resolveOllamaEnsembleTranscriptBudget(8_000, 3).contextChars).toBe(8_000)
     expect(resolveOllamaEnsembleTranscriptBudget(8_000, 3).contextTurns).toBe(3)
@@ -2877,9 +2868,7 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
       })
     ).toBe('Claude / Reviewer')
     // User rows + non-ensemble assistants stay unlabelled.
-    expect(
-      speakerFor({ id: 'u1', role: 'user', content: 'x', timestamp: 't' })
-    ).toBeUndefined()
+    expect(speakerFor({ id: 'u1', role: 'user', content: 'x', timestamp: 't' })).toBeUndefined()
     expect(
       speakerFor({ id: 'a3', role: 'assistant', content: 'x', timestamp: 't' })
     ).toBeUndefined()
@@ -2950,9 +2939,7 @@ describe('computeEnsemblePromptShellStamp', () => {
       }))
     }
     expect(computeEnsemblePromptShellStamp(reordered)).not.toBe(stamp)
-    expect(
-      computeEnsemblePromptShellStamp({ ...base, selfReflective: true })
-    ).not.toBe(stamp)
+    expect(computeEnsemblePromptShellStamp({ ...base, selfReflective: true })).not.toBe(stamp)
     expect(
       computeEnsemblePromptShellStamp({ ...base, fanoutPolicy: 'read_only' as const })
     ).not.toBe(stamp)

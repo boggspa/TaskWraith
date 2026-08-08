@@ -17,15 +17,9 @@ import type {
   RepoConventionIndexSnapshot
 } from '../store/types'
 import type { SkillsStore } from '../skills/SkillsStore'
-import {
-  applySkillPatch,
-  type SkillPatchApplyBlockReason
-} from './SkillPatchApply'
+import { applySkillPatch, type SkillPatchApplyBlockReason } from './SkillPatchApply'
 
-const CONVENTION_APPLYABLE_KINDS = new Set<MemoryProposalKind>([
-  'repo_convention',
-  'do_not_repeat'
-])
+const CONVENTION_APPLYABLE_KINDS = new Set<MemoryProposalKind>(['repo_convention', 'do_not_repeat'])
 
 export type ApplyMemoryProposalBlockReason =
   | 'pack_not_found'

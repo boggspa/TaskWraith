@@ -65,13 +65,13 @@ See blackboard decisions `thread-introspection-mvp-boundary` and
 
 ## How this differs from nearby concepts
 
-| Concept | Scope | Thread Introspection |
-| --- | --- | --- |
-| **EvidencePackRecord** | Per-run capability verification (scope radar, completion claims, touched files) | Multi-run retrospective; promotes **lessons**, not run completion |
-| **Ensemble Blackboard** | Ephemeral round/session/chat scratchpad (`decision`, `fact`, `risk`, `do-not-repeat`) | Durable promotion registry with status, expiry, supersession |
-| **HandoffCard** | One-shot run summary for delegation | Structured proposals with evidence refs and apply targets |
-| **tw_recall_*** | Bounded cross-thread read with citation honesty | Evidence substrate; introspection **consumes** recall-shaped refs |
-| **RepoConventionIndex** | Workspace conventions from tree scan | One **apply target** for `repo_convention` / `do_not_repeat` proposals |
+| Concept                 | Scope                                                                                 | Thread Introspection                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **EvidencePackRecord**  | Per-run capability verification (scope radar, completion claims, touched files)       | Multi-run retrospective; promotes **lessons**, not run completion      |
+| **Ensemble Blackboard** | Ephemeral round/session/chat scratchpad (`decision`, `fact`, `risk`, `do-not-repeat`) | Durable promotion registry with status, expiry, supersession           |
+| **HandoffCard**         | One-shot run summary for delegation                                                   | Structured proposals with evidence refs and apply targets              |
+| **tw*recall*\***        | Bounded cross-thread read with citation honesty                                       | Evidence substrate; introspection **consumes** recall-shaped refs      |
+| **RepoConventionIndex** | Workspace conventions from tree scan                                                  | One **apply target** for `repo_convention` / `do_not_repeat` proposals |
 
 Do **not** overload `EvidencePackRecord` for user preference memory.
 
@@ -84,13 +84,13 @@ hygiene live in `src/main/introspection/`.
 
 One retrospective pass over a time window.
 
-| Field | Meaning |
-| --- | --- |
-| `windowStart` / `windowEnd` | Evidence collection window (typically last 24h) |
-| `trigger` | `manual` \| `scheduled` \| `workflow` |
-| `status` | `collecting` → `analyzing` → `review_pending` → `completed` (or `failed` / `cancelled`) |
-| `evidenceItems` | Normalized harvested signals |
-| `proposalPackId` | Link to generated pack |
+| Field                       | Meaning                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| `windowStart` / `windowEnd` | Evidence collection window (typically last 24h)                                         |
+| `trigger`                   | `manual` \| `scheduled` \| `workflow`                                                   |
+| `status`                    | `collecting` → `analyzing` → `review_pending` → `completed` (or `failed` / `cancelled`) |
+| `evidenceItems`             | Normalized harvested signals                                                            |
+| `proposalPackId`            | Link to generated pack                                                                  |
 
 Persisted under `userData/introspection-runs.json` (history capped).
 
@@ -98,12 +98,12 @@ Persisted under `userData/introspection-runs.json` (history capped).
 
 Structured output of one introspection run.
 
-| Field | Meaning |
-| --- | --- |
-| `proposals` | Reviewable lesson candidates |
-| `evidenceItemCount` | How many signals were distilled |
-| `summary` | Optional human-readable report (markdown) |
-| `workspaceId` / `workspacePath` | Optional workspace scope |
+| Field                           | Meaning                                   |
+| ------------------------------- | ----------------------------------------- |
+| `proposals`                     | Reviewable lesson candidates              |
+| `evidenceItemCount`             | How many signals were distilled           |
+| `summary`                       | Optional human-readable report (markdown) |
+| `workspaceId` / `workspacePath` | Optional workspace scope                  |
 
 Persisted under `userData/memory-proposal-packs.json` (history capped).
 
@@ -113,15 +113,15 @@ One bounded, evidence-derived lesson candidate.
 
 **Kinds** (`MemoryProposalKind`):
 
-| Kind | Example lesson |
-| --- | --- |
-| `preference` | "User prefers concise final summaries after edits." |
-| `failure_mode` | "Write failures were caused by locked writer lane scope." |
-| `repo_convention` | "Do not run repo-wide Prettier." |
-| `provider_hint` | Provider-specific runtime hint |
-| `skill_patch` | Proposed diff to a skill/instruction file (**always review-gated**) |
-| `bug` | Product regression worth fixing (**always review-gated**) |
-| `do_not_repeat` | Pattern to avoid repeating |
+| Kind              | Example lesson                                                      |
+| ----------------- | ------------------------------------------------------------------- |
+| `preference`      | "User prefers concise final summaries after edits."                 |
+| `failure_mode`    | "Write failures were caused by locked writer lane scope."           |
+| `repo_convention` | "Do not run repo-wide Prettier."                                    |
+| `provider_hint`   | Provider-specific runtime hint                                      |
+| `skill_patch`     | Proposed diff to a skill/instruction file (**always review-gated**) |
+| `bug`             | Product regression worth fixing (**always review-gated**)           |
+| `do_not_repeat`   | Pattern to avoid repeating                                          |
 
 **Scopes** (`MemoryProposalScope`): `user` | `workspace` | `provider` |
 `skill` | `bug`
@@ -148,15 +148,15 @@ Each proposal includes:
 `IntrospectionProposalGenerator` maps normalized `IntrospectionEvidenceItem.signal`
 values to kinds/scopes. Examples:
 
-| Signal | Kind | Default scope |
-| --- | --- | --- |
-| `approval_denied`, `approval_timeout` | `failure_mode` | `workspace` |
-| `tool_failure`, `tool_loop` | `failure_mode` / `do_not_repeat` | `workspace` |
-| `provider_error` | `failure_mode` | `provider` (when provider present) |
-| `feedback_down`, `feedback_correction` | `preference` | `user` |
-| `repo_convention_hint` | `repo_convention` | `workspace` |
-| `skill_candidate` | `skill_patch` | `skill` |
-| `product_bug` | `bug` | `bug` |
+| Signal                                 | Kind                             | Default scope                      |
+| -------------------------------------- | -------------------------------- | ---------------------------------- |
+| `approval_denied`, `approval_timeout`  | `failure_mode`                   | `workspace`                        |
+| `tool_failure`, `tool_loop`            | `failure_mode` / `do_not_repeat` | `workspace`                        |
+| `provider_error`                       | `failure_mode`                   | `provider` (when provider present) |
+| `feedback_down`, `feedback_correction` | `preference`                     | `user`                             |
+| `repo_convention_hint`                 | `repo_convention`                | `workspace`                        |
+| `skill_candidate`                      | `skill_patch`                    | `skill`                            |
+| `product_bug`                          | `bug`                            | `bug`                              |
 
 Explicit classifier scope is preserved (e.g. approval friction without a
 provider stays `workspace`, not `provider`).
@@ -166,12 +166,12 @@ provider stays `workspace`, not `provider`).
 `IntrospectionEvidenceHarvester` reads persisted substrate for a time window
 and emits normalized `IntrospectionEvidenceItem` records. Sources:
 
-| Source | Signals / heuristics |
-| --- | --- |
-| **Run events** | `approval_denied`, `approval_timeout`, `provider_error`, `tool_failure`, `tool_loop`, `repeated_retry` |
-| **Approval ledger** | User/system denials, timer auto-deny |
-| **Message feedback** | Thumbs-down, correction notes |
-| **Chat messages** | User corrections after assistant replies, repo-convention phrases, skill-candidate heuristics |
+| Source               | Signals / heuristics                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Run events**       | `approval_denied`, `approval_timeout`, `provider_error`, `tool_failure`, `tool_loop`, `repeated_retry` |
+| **Approval ledger**  | User/system denials, timer auto-deny                                                                   |
+| **Message feedback** | Thumbs-down, correction notes                                                                          |
+| **Chat messages**    | User corrections after assistant replies, repo-convention phrases, skill-candidate heuristics          |
 
 Each item carries bounded summaries and optional `⟦recall:…⟧` citation tokens.
 Harvester `detail` can include bounded user-message text, and the generator can
@@ -215,20 +215,20 @@ Open **Settings → Automation → Thread introspection**.
 
 IPC channels (read/review/apply + manual run):
 
-| Preload API | Purpose |
-| --- | --- |
-| `getMemoryProposalPacks(workspaceId?)` | List packs for the review panel |
-| `getMemoryProposalPack(id)` | Fetch one pack |
-| `updateMemoryProposal(packId, proposalId, partial)` | Approve/reject/expire; whitelisted fields only |
-| `applyMemoryProposal(packId, proposalId)` | Phase-1 apply to `RepoConventionIndex` (eligible kinds only) |
-| `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate |
+| Preload API                                                                        | Purpose                                                      |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `getMemoryProposalPacks(workspaceId?)`                                             | List packs for the review panel                              |
+| `getMemoryProposalPack(id)`                                                        | Fetch one pack                                               |
+| `updateMemoryProposal(packId, proposalId, partial)`                                | Approve/reject/expire; whitelisted fields only               |
+| `applyMemoryProposal(packId, proposalId)`                                          | Phase-1 apply to `RepoConventionIndex` (eligible kinds only) |
+| `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate                                    |
 
 Schedule IPC:
 
-| Preload API | Purpose |
-| --- | --- |
+| Preload API                              | Purpose                                                  |
+| ---------------------------------------- | -------------------------------------------------------- |
 | `getIntrospectionSchedule(workspaceId?)` | Read `{ enabled, workspaceId?, lastRunAt?, nextRunAt? }` |
-| `updateIntrospectionSchedule(partial)` | Enable/disable daily run; optional workspace scope |
+| `updateIntrospectionSchedule(partial)`   | Enable/disable daily run; optional workspace scope       |
 
 When enabled, the backend runs `runManualIntrospection` with
 `trigger: 'scheduled'` on a rolling 24h window (typically once per calendar day
@@ -305,18 +305,18 @@ the same daily window. Workflow cron support is not required for this path.
 
 ## Substrate reuse (existing TaskWraith pieces)
 
-| Need | Existing primitive |
-| --- | --- |
-| Recent runs/threads | Chat persistence, `RunQueueJob`, `RunEventStore` |
-| Cross-thread citations | `tw_recall_find` / `tw_recall_read` / `tw_recall_read_events` |
-| Approval friction | `ApprovalLedgerRecord`, run events `approval_*` |
-| Tool loops / failures | Run event kinds (`tool`, `provider_error`, …) |
-| User corrections | `MessageFeedbackLedger` |
-| Per-run claims | `EvidencePackRecord` (input signals, not output store) |
-| Repo do-not-repeat | `RepoConventionIndex` |
-| Ensemble scratchpad | Blackboard categories (ephemeral, not registry) |
-| Scheduled daily run | `IntrospectionScheduleSettings` + `IntrospectionScheduler` |
-| Multi-phase orchestration pattern | `AuditRunRecord` / `AuditOrchestrator` |
+| Need                              | Existing primitive                                            |
+| --------------------------------- | ------------------------------------------------------------- |
+| Recent runs/threads               | Chat persistence, `RunQueueJob`, `RunEventStore`              |
+| Cross-thread citations            | `tw_recall_find` / `tw_recall_read` / `tw_recall_read_events` |
+| Approval friction                 | `ApprovalLedgerRecord`, run events `approval_*`               |
+| Tool loops / failures             | Run event kinds (`tool`, `provider_error`, …)                 |
+| User corrections                  | `MessageFeedbackLedger`                                       |
+| Per-run claims                    | `EvidencePackRecord` (input signals, not output store)        |
+| Repo do-not-repeat                | `RepoConventionIndex`                                         |
+| Ensemble scratchpad               | Blackboard categories (ephemeral, not registry)               |
+| Scheduled daily run               | `IntrospectionScheduleSettings` + `IntrospectionScheduler`    |
+| Multi-phase orchestration pattern | `AuditRunRecord` / `AuditOrchestrator`                        |
 
 ## Implementation status
 
@@ -332,23 +332,23 @@ Commits:
 - `673a1eb11` — `tw_introspection_*` MCP tools for run/list/read/review
 - `21e857890` — decay/supersede lifecycle helpers
 
-| Slice | Status | Notes |
-| --- | --- | --- |
-| Domain model + normalization | **Landed** | `IntrospectionModel.ts` |
-| Pure proposal generator | **Landed** | `IntrospectionProposalGenerator.ts` |
-| AppStore persistence | **Landed** | `introspection-runs.json`, `memory-proposal-packs.json` |
-| Evidence harvester | **Landed** | `IntrospectionEvidenceHarvester.ts` |
-| Manual run service | **Landed** | `runManualIntrospection()` |
-| Proposal Review UI + Settings | **Landed** | `MemoryProposalReviewPanel` + `ThreadIntrospectionSettingsPanel` |
-| IPC + preload | **Landed** | `introspectionHandlers.ts` — read/review/apply |
-| Apply layer (conventions) | **Landed** | `IntrospectionApplyService.ts` — `RepoConventionIndex` |
-| Skill Patch Manager | **Landed** | `SkillPatchApply.ts` — TW skill roots + rollback snapshot; no MCP apply |
-| Apply UI | **Landed** | Apply affordance for approved `repo_convention` / `do_not_repeat` / `skill_patch` |
-| Scheduled daily generation | **Landed** | `IntrospectionScheduler.ts` + schedule IPC/toggle |
-| MCP tools | **Landed** | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool |
-| Decay / supersede | **Partial** | Store helpers landed; IPC/MCP review can set expiry status/metadata, but no public supersede caller or automatic due-expiry policy exists |
-| Apply layer (prefs, bugs, provider hints) | **Pending** | Other kinds remain blocked |
-| Distillation policy | **Pending** | Auto-approve rules per scope/kind |
+| Slice                                     | Status      | Notes                                                                                                                                     |
+| ----------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain model + normalization              | **Landed**  | `IntrospectionModel.ts`                                                                                                                   |
+| Pure proposal generator                   | **Landed**  | `IntrospectionProposalGenerator.ts`                                                                                                       |
+| AppStore persistence                      | **Landed**  | `introspection-runs.json`, `memory-proposal-packs.json`                                                                                   |
+| Evidence harvester                        | **Landed**  | `IntrospectionEvidenceHarvester.ts`                                                                                                       |
+| Manual run service                        | **Landed**  | `runManualIntrospection()`                                                                                                                |
+| Proposal Review UI + Settings             | **Landed**  | `MemoryProposalReviewPanel` + `ThreadIntrospectionSettingsPanel`                                                                          |
+| IPC + preload                             | **Landed**  | `introspectionHandlers.ts` — read/review/apply                                                                                            |
+| Apply layer (conventions)                 | **Landed**  | `IntrospectionApplyService.ts` — `RepoConventionIndex`                                                                                    |
+| Skill Patch Manager                       | **Landed**  | `SkillPatchApply.ts` — TW skill roots + rollback snapshot; no MCP apply                                                                   |
+| Apply UI                                  | **Landed**  | Apply affordance for approved `repo_convention` / `do_not_repeat` / `skill_patch`                                                         |
+| Scheduled daily generation                | **Landed**  | `IntrospectionScheduler.ts` + schedule IPC/toggle                                                                                         |
+| MCP tools                                 | **Landed**  | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool                    |
+| Decay / supersede                         | **Partial** | Store helpers landed; IPC/MCP review can set expiry status/metadata, but no public supersede caller or automatic due-expiry policy exists |
+| Apply layer (prefs, bugs, provider hints) | **Pending** | Other kinds remain blocked                                                                                                                |
+| Distillation policy                       | **Pending** | Auto-approve rules per scope/kind                                                                                                         |
 
 **Tests:** focused introspection suites are green across handlers, harvester,
 run service, scheduler, apply service, skill patch apply, lifecycle service, MCP
@@ -400,10 +400,10 @@ with skill writes in `SkillPatchApply.ts`.
 
 ### Eligible proposals
 
-| Requirement | Detail |
-| --- | --- |
-| **Kinds** | `repo_convention`, `do_not_repeat`, `skill_patch` |
-| **Status** | Must be `approved` (not merely `proposed`) |
+| Requirement    | Detail                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| **Kinds**      | `repo_convention`, `do_not_repeat`, `skill_patch`                                           |
+| **Status**     | Must be `approved` (not merely `proposed`)                                                  |
 | **Pack scope** | Conventions require `workspaceId`; workspace-scoped skill patches also need `workspacePath` |
 
 ### What apply does
@@ -423,16 +423,16 @@ with skill writes in `SkillPatchApply.ts`.
 
 ### Blocked (explicit `blocked` reasons)
 
-| Kind / condition | Block reason (representative) |
-| --- | --- |
-| Not `approved` | `proposal_not_approved` |
-| Path-escaping skill id | `skill_patch_path_escape` |
-| `bug` | `bug_not_supported_phase1` |
-| `preference` | `preference_not_supported_phase1` |
-| `provider_hint` | `provider_hint_not_supported_phase1` |
-| `failure_mode` | `failure_mode_not_supported_phase1` |
-| Pack missing workspace (conventions) | `workspace_required` |
-| Unknown pack/proposal | `pack_not_found` / `proposal_not_found` |
+| Kind / condition                     | Block reason (representative)           |
+| ------------------------------------ | --------------------------------------- |
+| Not `approved`                       | `proposal_not_approved`                 |
+| Path-escaping skill id               | `skill_patch_path_escape`               |
+| `bug`                                | `bug_not_supported_phase1`              |
+| `preference`                         | `preference_not_supported_phase1`       |
+| `provider_hint`                      | `provider_hint_not_supported_phase1`    |
+| `failure_mode`                       | `failure_mode_not_supported_phase1`     |
+| Pack missing workspace (conventions) | `workspace_required`                    |
+| Unknown pack/proposal                | `pack_not_found` / `proposal_not_found` |
 
 **Skill Patch Manager (landed for TW skills only):** approved `skill_patch`
 proposals apply to TaskWraith skill roots with rollback snapshots. There is still
@@ -455,15 +455,15 @@ applyMemoryProposal(packId, proposalId) => {
 
 Beyond the landed apply surface, approved proposals will route by kind/scope:
 
-| Target | Proposal kinds | Phase |
-| --- | --- | --- |
-| `RepoConventionIndex` | `repo_convention`, `do_not_repeat` | **Landed** |
-| Skill Patch Manager (TW skills) | `skill_patch` (TW roots + rollback) | **Landed** |
-| User rules / global preferences | `preference` (`scope: user`) | Later |
-| Ensemble blackboard (durable export) | high-confidence `do_not_repeat` notes | Later |
-| Provider runtime hints | `provider_hint`, provider-scoped `failure_mode` | Later |
-| Provider instruction files | `.codex` / `.cursor` skills | Not planned via this path |
-| Issue tracker / workspace board | `bug` | Later |
+| Target                               | Proposal kinds                                  | Phase                     |
+| ------------------------------------ | ----------------------------------------------- | ------------------------- |
+| `RepoConventionIndex`                | `repo_convention`, `do_not_repeat`              | **Landed**                |
+| Skill Patch Manager (TW skills)      | `skill_patch` (TW roots + rollback)             | **Landed**                |
+| User rules / global preferences      | `preference` (`scope: user`)                    | Later                     |
+| Ensemble blackboard (durable export) | high-confidence `do_not_repeat` notes           | Later                     |
+| Provider runtime hints               | `provider_hint`, provider-scoped `failure_mode` | Later                     |
+| Provider instruction files           | `.codex` / `.cursor` skills                     | Not planned via this path |
+| Issue tracker / workspace board      | `bug`                                           | Later                     |
 
 Future apply actions should write **audit ledger entries** and wire **supersede**
 through the apply layer (store helpers landed; IPC/MCP/ledger integration pending).

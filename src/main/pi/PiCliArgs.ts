@@ -25,10 +25,7 @@ import {
   piShouldPassNoSkills,
   type ProviderHarnessPosture
 } from '../../shared/providerHarnessPosture'
-import {
-  isPiTaskWraithToolName,
-  type PiTaskWraithToolName
-} from './PiEnsembleCoordination'
+import { isPiTaskWraithToolName, type PiTaskWraithToolName } from './PiEnsembleCoordination'
 
 export const PI_READ_ONLY_TOOLS: readonly string[] = ['read', 'grep', 'find', 'ls']
 export const PI_WRITE_TOOLS: readonly string[] = PI_READ_ONLY_TOOLS
@@ -82,9 +79,7 @@ export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
   const tools = [...new Set([...nativeTools, ...coordinationToolNames])]
   args.push('--tools', tools.join(','))
   args.push('--no-extensions')
-  const passNoSkills = input.harnessPosture
-    ? piShouldPassNoSkills(input.harnessPosture)
-    : true
+  const passNoSkills = input.harnessPosture ? piShouldPassNoSkills(input.harnessPosture) : true
   if (passNoSkills) args.push('--no-skills')
   args.push('--no-prompt-templates')
   if (input.coordinationExtensionPath) {
@@ -111,9 +106,7 @@ export interface PiProcessEnvInput {
   isolatedHomeDir: string
 }
 
-export function buildPiProcessEnv(
-  input: PiProcessEnvInput
-): Record<string, string | undefined> {
+export function buildPiProcessEnv(input: PiProcessEnvInput): Record<string, string | undefined> {
   return {
     ...input.credentialEnv,
     PI_CODING_AGENT_DIR: input.isolatedHomeDir,

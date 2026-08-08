@@ -118,10 +118,7 @@ import type {
   ProjectReferenceExtract,
   ProjectReferenceExtractConsent
 } from '../shared/projectReferenceExtract'
-import type {
-  ProjectStudioCompanionMeta,
-  ProjectStudioKind
-} from '../shared/projectStudio'
+import type { ProjectStudioCompanionMeta, ProjectStudioKind } from '../shared/projectStudio'
 import type { DispatchResult } from '../main/services/RunCoordinator'
 import type {
   ProjectLegacyImportMarker,

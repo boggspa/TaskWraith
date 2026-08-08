@@ -34,11 +34,7 @@ import {
 } from './persistenceProbes'
 import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
-import {
-  createSaveCoalescer,
-  type FlushReason,
-  type SaveCoalescerStats
-} from './saveCoalescer'
+import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
@@ -172,10 +168,7 @@ import {
   type ScheduledOccurrenceMutationKind,
   type ScheduledOccurrenceTerminalStatus
 } from '../ScheduledOccurrenceMutationSemantics'
-import {
-  DEFAULT_PROMPT_CACHE_SETTINGS,
-  normalizePromptCacheSettings
-} from '../PromptCachePolicy'
+import { DEFAULT_PROMPT_CACHE_SETTINGS, normalizePromptCacheSettings } from '../PromptCachePolicy'
 import { normalizeProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import {
   capRunQueueJobs,
@@ -352,13 +345,8 @@ import {
   migrateUserMcpServerPlaintextSecrets
 } from '../ExtensionSecretMigration'
 
-function resetEnsembleParticipantSession(
-  participant: EnsembleParticipant
-): EnsembleParticipant {
-  const {
-    taskWraithMcpProfileReceipt: _dropMcpProfileReceipt,
-    ...restParticipant
-  } = participant
+function resetEnsembleParticipantSession(participant: EnsembleParticipant): EnsembleParticipant {
+  const { taskWraithMcpProfileReceipt: _dropMcpProfileReceipt, ...restParticipant } = participant
   return {
     ...restParticipant,
     linkedProviderSessionId: null
@@ -449,10 +437,7 @@ const scheduledOccurrenceMutationsPath = path.join(
   userDataPath,
   'scheduled-occurrence-mutation.json'
 )
-const scheduledRunIdTombstonesPath = path.join(
-  userDataPath,
-  'scheduled-run-id-tombstones.jsonl'
-)
+const scheduledRunIdTombstonesPath = path.join(userDataPath, 'scheduled-run-id-tombstones.jsonl')
 type ScheduledRunIdTombstoneKind = 'root' | 'loop-child' | 'ensemble-child'
 interface ScheduledRunIdTombstoneRecord {
   schemaVersion: 1
@@ -508,7 +493,8 @@ const writeMessageFeedbackLedger = (records: MessageFeedbackReceipt[]): void =>
   writeJson(messageFeedbackLedgerPath, capMessageFeedbackReceipts(records))
 const writeAuditBundleVerificationReceipts = (
   records: ProductAuditBundleVerificationReceipt[]
-): void => writeJson(auditBundleVerificationReceiptsPath, capAuditBundleVerificationReceipts(records))
+): void =>
+  writeJson(auditBundleVerificationReceiptsPath, capAuditBundleVerificationReceipts(records))
 const writeAuditRetentionPurgeReceipts = (records: AuditRetentionPurgeReceipt[]): void =>
   writeJson(auditRetentionPurgesPath, capAuditRetentionPurgeReceipts(records))
 const productCrashesPath = path.join(userDataPath, 'product-crashes.json')
@@ -767,7 +753,10 @@ function utilityWriteEnabled(): boolean {
 }
 
 /** The writer for this save, or null when it must run synchronously on main. */
-function utilityWriteEnqueueFor(chatId: string, reason: FlushReason): PersistenceWriteEnqueue | null {
+function utilityWriteEnqueueFor(
+  chatId: string,
+  reason: FlushReason
+): PersistenceWriteEnqueue | null {
   if (!utilityWriteEnabled() || !persistenceWriteEnqueue) return null
   if (reason !== 'normal') {
     // Barrier. Writing on main is only safe while nothing is queued for this
@@ -1058,7 +1047,8 @@ function electronSafeStorageOrUnavailable(): ExtensionSecretSafeStorage {
     const storage = (electron as unknown as { safeStorage?: unknown }).safeStorage
     if (
       storage &&
-      typeof (storage as { isEncryptionAvailable?: unknown }).isEncryptionAvailable === 'function' &&
+      typeof (storage as { isEncryptionAvailable?: unknown }).isEncryptionAvailable ===
+        'function' &&
       typeof (storage as { encryptString?: unknown }).encryptString === 'function' &&
       typeof (storage as { decryptString?: unknown }).decryptString === 'function'
     ) {
@@ -1230,7 +1220,8 @@ function normalizeWorkflowDefinitionRecord(
     // Slice 7b — preserve the cached loop summary (the normalizer whitelists fields,
     // and updateWorkflowDefinition re-normalizes, so without this they'd never persist).
     lastRunIterationCount:
-      typeof input.lastRunIterationCount === 'number' && Number.isFinite(input.lastRunIterationCount)
+      typeof input.lastRunIterationCount === 'number' &&
+      Number.isFinite(input.lastRunIterationCount)
         ? Math.max(0, Math.floor(input.lastRunIterationCount))
         : undefined,
     lastRunStopReason:
@@ -1265,9 +1256,11 @@ function normalizeWorkflowDefinitionRecord(
 function normalizeUnattendedElevationAck(value: unknown): UnattendedElevationAck | undefined {
   if (!value || typeof value !== 'object') return undefined
   const ack = value as Partial<UnattendedElevationAck>
-  if (ack.level !== 'safe' && ack.level !== 'default' && ack.level !== 'full_access') return undefined
+  if (ack.level !== 'safe' && ack.level !== 'default' && ack.level !== 'full_access')
+    return undefined
   if (typeof ack.acknowledgedAt !== 'string' || !ack.acknowledgedAt) return undefined
-  if (typeof ack.acknowledgedApprovalMode !== 'string' || !ack.acknowledgedApprovalMode) return undefined
+  if (typeof ack.acknowledgedApprovalMode !== 'string' || !ack.acknowledgedApprovalMode)
+    return undefined
   if (typeof ack.authorityDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(ack.authorityDigest)) {
     return undefined
   }
@@ -1310,11 +1303,16 @@ const WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS = new Set<WorkspaceBoardProvenance
 ])
 
 function isWorkspaceBoardColumnId(value: unknown): value is WorkspaceBoardColumnId {
-  return typeof value === 'string' && WORKSPACE_BOARD_COLUMN_IDS.has(value as WorkspaceBoardColumnId)
+  return (
+    typeof value === 'string' && WORKSPACE_BOARD_COLUMN_IDS.has(value as WorkspaceBoardColumnId)
+  )
 }
 
 function isWorkspaceBoardCardLinkKind(value: unknown): value is WorkspaceBoardCardLink['kind'] {
-  return typeof value === 'string' && WORKSPACE_BOARD_CARD_LINK_KIND_SET.has(value as WorkspaceBoardCardLink['kind'])
+  return (
+    typeof value === 'string' &&
+    WORKSPACE_BOARD_CARD_LINK_KIND_SET.has(value as WorkspaceBoardCardLink['kind'])
+  )
 }
 
 function normalizeWorkspaceBoardActivityEntry(
@@ -1331,7 +1329,8 @@ function normalizeWorkspaceBoardActivityEntry(
     at: typeof input.at === 'string' && input.at ? input.at : nowIso,
     actor: input.actor === 'agent' || input.actor === 'system' ? input.actor : 'user',
     action,
-    detail: typeof input.detail === 'string' && input.detail.trim() ? input.detail.trim() : undefined
+    detail:
+      typeof input.detail === 'string' && input.detail.trim() ? input.detail.trim() : undefined
   }
 }
 
@@ -1343,10 +1342,15 @@ function workspaceBoardActivityActorFromProvenance(
   return actor === 'agent' || actor === 'system' ? actor : 'user'
 }
 
-function normalizeWorkspaceBoardProvenance(value: unknown, nowIso: string): WorkspaceBoardProvenance | undefined {
+function normalizeWorkspaceBoardProvenance(
+  value: unknown,
+  nowIso: string
+): WorkspaceBoardProvenance | undefined {
   if (!value || typeof value !== 'object') return undefined
   const input = value as Partial<WorkspaceBoardProvenance>
-  const sourceKind = WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS.has(input.sourceKind as WorkspaceBoardProvenanceSourceKind)
+  const sourceKind = WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS.has(
+    input.sourceKind as WorkspaceBoardProvenanceSourceKind
+  )
     ? (input.sourceKind as WorkspaceBoardProvenanceSourceKind)
     : 'manual'
   return {
@@ -1354,12 +1358,23 @@ function normalizeWorkspaceBoardProvenance(value: unknown, nowIso: string): Work
     sourceKind,
     at: typeof input.at === 'string' && input.at ? input.at : nowIso,
     trust:
-      input.trust === 'agent-proposed' || input.trust === 'system-derived' || input.trust === 'user-confirmed'
+      input.trust === 'agent-proposed' ||
+      input.trust === 'system-derived' ||
+      input.trust === 'user-confirmed'
         ? input.trust
         : undefined,
-    sourceId: typeof input.sourceId === 'string' && input.sourceId.trim() ? input.sourceId.trim() : undefined,
-    sourceTitle: typeof input.sourceTitle === 'string' && input.sourceTitle.trim() ? input.sourceTitle.trim() : undefined,
-    provider: typeof input.provider === 'string' && input.provider.trim() ? input.provider.trim() : undefined,
+    sourceId:
+      typeof input.sourceId === 'string' && input.sourceId.trim()
+        ? input.sourceId.trim()
+        : undefined,
+    sourceTitle:
+      typeof input.sourceTitle === 'string' && input.sourceTitle.trim()
+        ? input.sourceTitle.trim()
+        : undefined,
+    provider:
+      typeof input.provider === 'string' && input.provider.trim()
+        ? input.provider.trim()
+        : undefined,
     runId: typeof input.runId === 'string' && input.runId.trim() ? input.runId.trim() : undefined,
     note: typeof input.note === 'string' && input.note.trim() ? input.note.trim() : undefined
   }
@@ -1378,7 +1393,8 @@ function normalizeWorkspaceBoardColumns(value: unknown): WorkspaceBoardColumn[] 
       sortOrder:
         typeof input.sortOrder === 'number' && Number.isFinite(input.sortOrder)
           ? Math.max(0, Math.floor(input.sortOrder))
-          : WORKSPACE_BOARD_DEFAULT_COLUMNS.find((column) => column.id === input.id)?.sortOrder || 0,
+          : WORKSPACE_BOARD_DEFAULT_COLUMNS.find((column) => column.id === input.id)?.sortOrder ||
+            0,
       wipLimit:
         typeof input.wipLimit === 'number' && Number.isFinite(input.wipLimit) && input.wipLimit > 0
           ? Math.floor(input.wipLimit)
@@ -1412,7 +1428,8 @@ function normalizeWorkspaceBoardDefinitionRecord(
     id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
     workspaceId: input.workspaceId,
     workspacePath: input.workspacePath,
-    name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Workspace Board',
+    name:
+      typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Workspace Board',
     description:
       typeof input.description === 'string' && input.description.trim()
         ? input.description.trim()
@@ -1453,7 +1470,8 @@ function normalizeWorkspaceBoardCardRecord(
     boardId: input.boardId,
     workspaceId: input.workspaceId,
     columnId: isWorkspaceBoardColumnId(input.columnId) ? input.columnId : 'inbox',
-    title: typeof input.title === 'string' && input.title.trim() ? input.title.trim() : 'Untitled card',
+    title:
+      typeof input.title === 'string' && input.title.trim() ? input.title.trim() : 'Untitled card',
     body: typeof input.body === 'string' && input.body.trim() ? input.body.trim() : undefined,
     sortOrder:
       typeof input.sortOrder === 'number' && Number.isFinite(input.sortOrder)
@@ -1676,9 +1694,7 @@ function validatePrunedTerminalScheduledTaskLinkage(
         canonicalIsoTimestampMs(event.timestamp) === null ||
         (event.scheduledTaskId !== undefined && event.scheduledTaskId !== task.id) ||
         (event.plannedFor !== undefined && event.plannedFor !== workflowOccurrenceAt) ||
-        (event.iteration === undefined &&
-          event.runId !== undefined &&
-          event.runId !== task.runId)
+        (event.iteration === undefined && event.runId !== undefined && event.runId !== task.runId)
     )
   ) {
     return 'Workflow-linked pruned occurrence has an invalid lifecycle ledger.'
@@ -1690,11 +1706,7 @@ function validatePrunedTerminalScheduledTaskLinkage(
   )
   const matchingTerminalEvents = terminalEvents.filter((event) => {
     const eventAtMs = canonicalIsoTimestampMs(event.timestamp)
-    const expected = canonicalScheduledOccurrenceLedgerEvent(
-      task,
-      event.timestamp,
-      event.sequence
-    )
+    const expected = canonicalScheduledOccurrenceLedgerEvent(task, event.timestamp, event.sequence)
     return (
       expected !== null &&
       sameJsonValue(expected, event) &&
@@ -1756,7 +1768,8 @@ function validatePrunedTerminalScheduledTaskLinkage(
     retainedCreatedAt.some((timestamp) => timestamp === null) ||
     retainedCreatedAt.some((timestamp) => (timestamp as number) < terminalEventAtMs) ||
     retainedCreatedAt.some(
-      (timestamp, index) => index > 0 && (timestamp as number) < (retainedCreatedAt[index - 1] as number)
+      (timestamp, index) =>
+        index > 0 && (timestamp as number) < (retainedCreatedAt[index - 1] as number)
     ) ||
     new Set(retainedIds).size !== retainedIds.length ||
     new Set(retainedTaskIds).size !== retainedTaskIds.length ||
@@ -1864,11 +1877,7 @@ function validateScheduledTaskWorkflowPair(
     }
   }
   if (executionMatches.length === 0) {
-    const prunedReason = validatePrunedTerminalScheduledTaskLinkage(
-      task,
-      workflow,
-      rawHistory
-    )
+    const prunedReason = validatePrunedTerminalScheduledTaskLinkage(task, workflow, rawHistory)
     return prunedReason
       ? { ok: false, reason: prunedReason }
       : { ok: true, workflow, execution: null, linkage: 'pruned-terminal' }
@@ -1936,9 +1945,7 @@ function sameWorkflowPath(a: string | undefined, b: string | undefined): boolean
 function sameWorkflowAuthority(a: WorkflowDefinition, b: WorkflowDefinition): boolean {
   try {
     const canonicalPath = (value: string): string => path.resolve(value)
-    return (
-      workflowAuthorityDigest(a, canonicalPath) === workflowAuthorityDigest(b, canonicalPath)
-    )
+    return workflowAuthorityDigest(a, canonicalPath) === workflowAuthorityDigest(b, canonicalPath)
   } catch {
     return false
   }
@@ -1956,9 +1963,7 @@ const WORKFLOW_OCCURRENCE_PROJECTION_FIELDS = [
 
 function workflowHasNonterminalOccurrence(workflow: WorkflowDefinition): boolean {
   if (workflow.activeExecutionId) {
-    const active = workflow.history.find(
-      (execution) => execution.id === workflow.activeExecutionId
-    )
+    const active = workflow.history.find((execution) => execution.id === workflow.activeExecutionId)
     if (!active || !isTerminalWorkflowExecutionStatus(active.status)) return true
   }
   return workflow.history.some(
@@ -2156,9 +2161,8 @@ function capAuditRetentionPurgeReceipts(
   receipts: AuditRetentionPurgeReceipt[],
   cap = AUDIT_RETENTION_PURGE_RECEIPT_CAP
 ): AuditRetentionPurgeReceipt[] {
-  const normalized = receipts.filter(
-    (receipt): receipt is AuditRetentionPurgeReceipt =>
-      Boolean(receipt?.id && receipt.schemaVersion === 1 && receipt.generatedAt)
+  const normalized = receipts.filter((receipt): receipt is AuditRetentionPurgeReceipt =>
+    Boolean(receipt?.id && receipt.schemaVersion === 1 && receipt.generatedAt)
   )
   return normalized.length <= cap ? normalized : normalized.slice(normalized.length - cap)
 }
@@ -2521,8 +2525,7 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
       ? Object.fromEntries(
           Object.entries(headersRecord)
             .filter(
-              ([key, val]) =>
-                /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) && typeof val === 'string'
+              ([key, val]) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) && typeof val === 'string'
             )
             .map(([key, val]) => [key, val])
             .slice(0, 64)
@@ -2535,7 +2538,8 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
       ? Array.from(
           new Set(
             secretRefsRecord.env.filter(
-              (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+              (key): key is string =>
+                typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
             )
           )
         ).slice(0, 64)
@@ -2826,7 +2830,9 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
           !target.maintenanceCompactionId ||
           target.maintenanceCompactionId.length > 4096)) ||
       (target.workspaceId !== undefined &&
-        (typeof target.workspaceId !== 'string' || !target.workspaceId || target.workspaceId.length > 4096)) ||
+        (typeof target.workspaceId !== 'string' ||
+          !target.workspaceId ||
+          target.workspaceId.length > 4096)) ||
       (target.provider !== undefined && !providerIds.includes(target.provider as ProviderId))
     ) {
       throw new Error('History deletion intent contains an invalid quiescence target.')
@@ -2883,16 +2889,15 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
   }
   const failures = Array.isArray(record.failures)
     ? record.failures
-        .filter(
-          (failure): failure is { step: HistoryDeletionStep | 'journal'; message: string } =>
-            Boolean(
-              failure &&
-                typeof failure === 'object' &&
-                !Array.isArray(failure) &&
-                ((failure as { step?: unknown }).step === 'journal' ||
-                  steps.has((failure as { step?: HistoryDeletionStep }).step as HistoryDeletionStep)) &&
-                typeof (failure as { message?: unknown }).message === 'string'
-            )
+        .filter((failure): failure is { step: HistoryDeletionStep | 'journal'; message: string } =>
+          Boolean(
+            failure &&
+            typeof failure === 'object' &&
+            !Array.isArray(failure) &&
+            ((failure as { step?: unknown }).step === 'journal' ||
+              steps.has((failure as { step?: HistoryDeletionStep }).step as HistoryDeletionStep)) &&
+            typeof (failure as { message?: unknown }).message === 'string'
+          )
         )
         .map((failure) => ({ step: failure.step, message: failure.message.slice(0, 500) }))
     : []
@@ -2938,7 +2943,9 @@ function assertHistoryMutationAdmission(
   intent: HistoryDeletionIntent
 ): void {
   const chatIds = new Set(
-    (input.chatIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
+    (input.chatIds || []).filter(
+      (value): value is string => typeof value === 'string' && Boolean(value)
+    )
   )
   const workspaceIds = new Set(
     (input.workspaceIds || []).filter(
@@ -2946,7 +2953,9 @@ function assertHistoryMutationAdmission(
     )
   )
   const runIds = new Set(
-    (input.runIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
+    (input.runIds || []).filter(
+      (value): value is string => typeof value === 'string' && Boolean(value)
+    )
   )
   const blocked =
     intent.kind === 'global' ||
@@ -3027,9 +3036,9 @@ function historyRecordMatches(
   }
   return Boolean(
     recordChatIds.length === 0 &&
-      options.includeRunIds !== false &&
-      typeof record.runId === 'string' &&
-      new Set(intent.runIds).has(record.runId)
+    options.includeRunIds !== false &&
+    typeof record.runId === 'string' &&
+    new Set(intent.runIds).has(record.runId)
   )
 }
 
@@ -3207,7 +3216,10 @@ function rewriteArrayHistoryStore(
   }
   const verified = readJsonStrictIfPresent(filePath)
   if (verified !== null) {
-    if (!Array.isArray(verified) || verified.some((record) => historyRecordMatches(record, intent))) {
+    if (
+      !Array.isArray(verified) ||
+      verified.some((record) => historyRecordMatches(record, intent))
+    ) {
       throw new Error(`${label} still contains records owned by the deletion scope.`)
     }
   }
@@ -3218,45 +3230,43 @@ function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
   const delegation = chat.delegationContext
   return Boolean(
     chat.messages.length > 0 ||
-      chat.runs.length > 0 ||
-      chat.linkedProviderSessionId ||
-      chat.linkedGeminiSessionId ||
-      chat.taskWraithMcpProfileReceipt ||
-      chat.seatGeneration ||
-      chat.contextCompactionSummary ||
-      chat.activeGoal ||
-      chat.chatTodos ||
-      chat.soloWakeups ||
-      chat.ollamaSessionMemory ||
-      chat.ollamaSessionMemories ||
-      delegation ||
-      ensemble?.activeRound ||
-      ensemble?.workSession ||
-      ensemble?.sessionActivityLedger ||
-      ensemble?.bossmanControlState ||
-      ensemble?.lastRoundSummary ||
-      ensemble?.roundSummaries ||
-      ensemble?.wakeups ||
-      ensemble?.blackboard ||
-      ensemble?.escalationSignals ||
-      ensemble?.participants.some(
-        (participant) =>
-          participant.linkedProviderSessionId ||
-          participant.taskWraithMcpProfileReceipt ||
-          participant.seatGeneration ||
-          participant.contextCompactionSummary ||
-          participant.promptShellVersion ||
-          participant.promptDynamicStateVersion ||
-          participant.tokenTotals ||
-          participant.kimiAcpNativeSession ||
-          participant.kimiAcpPostureVersion
-      )
+    chat.runs.length > 0 ||
+    chat.linkedProviderSessionId ||
+    chat.linkedGeminiSessionId ||
+    chat.taskWraithMcpProfileReceipt ||
+    chat.seatGeneration ||
+    chat.contextCompactionSummary ||
+    chat.activeGoal ||
+    chat.chatTodos ||
+    chat.soloWakeups ||
+    chat.ollamaSessionMemory ||
+    chat.ollamaSessionMemories ||
+    delegation ||
+    ensemble?.activeRound ||
+    ensemble?.workSession ||
+    ensemble?.sessionActivityLedger ||
+    ensemble?.bossmanControlState ||
+    ensemble?.lastRoundSummary ||
+    ensemble?.roundSummaries ||
+    ensemble?.wakeups ||
+    ensemble?.blackboard ||
+    ensemble?.escalationSignals ||
+    ensemble?.participants.some(
+      (participant) =>
+        participant.linkedProviderSessionId ||
+        participant.taskWraithMcpProfileReceipt ||
+        participant.seatGeneration ||
+        participant.contextCompactionSummary ||
+        participant.promptShellVersion ||
+        participant.promptDynamicStateVersion ||
+        participant.tokenTotals ||
+        participant.kimiAcpNativeSession ||
+        participant.kimiAcpPostureVersion
+    )
   )
 }
 
-function normalizedScheduledRunIdTombstone(
-  value: unknown
-): ScheduledRunIdTombstoneRecord | null {
+function normalizedScheduledRunIdTombstone(value: unknown): ScheduledRunIdTombstoneRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const candidate = value as Partial<ScheduledRunIdTombstoneRecord>
   const keys = Object.keys(value).sort()
@@ -3314,22 +3324,20 @@ function normalizedScheduledRunIdTombstone(
   }
 }
 
-function scheduledRunIdTombstoneHash(
-  record: Omit<ScheduledRunIdTombstoneRecord, 'hash'>
-): string {
+function scheduledRunIdTombstoneHash(record: Omit<ScheduledRunIdTombstoneRecord, 'hash'>): string {
   return createHash('sha256')
     .update(
       'TaskWraith:scheduled-run-id-tombstone:v1\0' +
-      JSON.stringify({
-        schemaVersion: record.schemaVersion,
-        sequence: record.sequence,
-        runId: record.runId,
-        rootRunId: record.rootRunId,
-        taskId: record.taskId,
-        kind: record.kind,
-        recordedAt: record.recordedAt,
-        prevHash: record.prevHash
-      })
+        JSON.stringify({
+          schemaVersion: record.schemaVersion,
+          sequence: record.sequence,
+          runId: record.runId,
+          rootRunId: record.rootRunId,
+          taskId: record.taskId,
+          kind: record.kind,
+          recordedAt: record.recordedAt,
+          prevHash: record.prevHash
+        })
     )
     .digest('hex')
 }
@@ -3362,11 +3370,7 @@ function scheduledRunIdTombstoneFileStat(): fs.Stats | null {
 function openScheduledRunIdTombstoneFile(flags: number, mode?: number): number {
   const noFollow = fs.constants.O_NOFOLLOW ?? 0
   const nonBlocking = fs.constants.O_NONBLOCK ?? 0
-  const descriptor = fs.openSync(
-    scheduledRunIdTombstonesPath,
-    flags | noFollow | nonBlocking,
-    mode
-  )
+  const descriptor = fs.openSync(scheduledRunIdTombstonesPath, flags | noFollow | nonBlocking, mode)
   const stat = fs.fstatSync(descriptor)
   if (!stat.isFile()) {
     fs.closeSync(descriptor)
@@ -3399,7 +3403,11 @@ function readScheduledRunIdTombstones(): Map<string, ScheduledRunIdTombstoneReco
   try {
     descriptor = openScheduledRunIdTombstoneFile(fs.constants.O_RDONLY)
     const openedStat = fs.fstatSync(descriptor)
-    if (openedStat.dev !== stat.dev || openedStat.ino !== stat.ino || openedStat.size !== stat.size) {
+    if (
+      openedStat.dev !== stat.dev ||
+      openedStat.ino !== stat.ino ||
+      openedStat.size !== stat.size
+    ) {
       throw new Error('Scheduled run-id tombstone ledger changed while it was being opened.')
     }
     raw = fs.readFileSync(descriptor, 'utf8')
@@ -3789,8 +3797,7 @@ function readScheduledOccurrenceWorkflowRecordsStrict(): ScheduledOccurrenceWork
         ids.has(input.id) ||
         !Array.isArray(input.history) ||
         input.history.some(
-          (execution) =>
-            !execution || typeof execution !== 'object' || Array.isArray(execution)
+          (execution) => !execution || typeof execution !== 'object' || Array.isArray(execution)
         )
       ) {
         return null
@@ -3897,8 +3904,7 @@ function validateCurrentRunOwnerReferences(
     (expectedEstablishedCount !== null &&
       (taskIdRefs.length !== expectedEstablishedCount ||
         executionIdRefs.length !== expectedEstablishedCount)) ||
-    (intent.kind === 'materialize' &&
-      activeExecutionRefs.length !== executionIdRefs.length) ||
+    (intent.kind === 'materialize' && activeExecutionRefs.length !== executionIdRefs.length) ||
     (intent.kind === 'claim' && activeExecutionRefs.length !== 1) ||
     activeExecutionRefs.some((workflow) => workflow.id !== intent.identity.workflowId) ||
     taskIdRefs.some((task) => !taskMatchesOccurrenceIdentity(task, intent.identity)) ||
@@ -4097,7 +4103,8 @@ async function readAgentStatsFileAsync(filePath: string): Promise<AgentStatRecor
       .map(parseAgentStatRecordLine)
       .filter((record): record is AgentStatRecord => Boolean(record))
   } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${filePath}`, e)
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT')
+      console.error(`Failed to read ${filePath}`, e)
     return []
   }
 }
@@ -4153,8 +4160,7 @@ function workflowRunEventInputStructureReason(input: WorkflowRunEventInput): str
     !isNonEmptyTrimmedString(input.workflowId) ||
     !WORKFLOW_RUN_LEDGER_EVENT_KINDS.has(input.kind) ||
     (input.timestamp !== undefined && canonicalIsoTimestampMs(input.timestamp) === null) ||
-    (input.scheduledTaskId !== undefined &&
-      !isNonEmptyTrimmedString(input.scheduledTaskId)) ||
+    (input.scheduledTaskId !== undefined && !isNonEmptyTrimmedString(input.scheduledTaskId)) ||
     (input.runId !== undefined && !isNonEmptyTrimmedString(input.runId)) ||
     (input.plannedFor !== undefined && canonicalIsoTimestampMs(input.plannedFor) === null) ||
     (input.iteration !== undefined &&
@@ -4254,9 +4260,7 @@ function readWorkflowRunLedgerStrict(filePath: string): StrictWorkflowRunLedgerR
       .filter((value): value is string => value !== undefined)
   )
   const plannedForValues = new Set(
-    events
-      .map((event) => event.plannedFor)
-      .filter((value): value is string => value !== undefined)
+    events.map((event) => event.plannedFor).filter((value): value is string => value !== undefined)
   )
   if (scheduledTaskIds.size > 1 || plannedForValues.size > 1) {
     throw new Error('Workflow run ledger contains cross-occurrence rows.')
@@ -4377,7 +4381,8 @@ async function readWorkflowRunFileAsync(filePath: string): Promise<WorkflowRunEv
       .map(parseWorkflowRunEventLine)
       .filter((event): event is WorkflowRunEvent => Boolean(event))
   } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${filePath}`, e)
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT')
+      console.error(`Failed to read ${filePath}`, e)
     return []
   }
 }
@@ -4535,7 +4540,8 @@ async function readRunEventFileAsync(
     }
     return events
   } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${filePath}`, e)
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT')
+      console.error(`Failed to read ${filePath}`, e)
     return []
   }
 }
@@ -4592,7 +4598,8 @@ async function readAllRunEventFilesAsync(kinds?: RunEventKind[]): Promise<RunEve
     }
     return all
   } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${runEventsDir}`, e)
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT')
+      console.error(`Failed to read ${runEventsDir}`, e)
     return []
   }
 }
@@ -4766,10 +4773,7 @@ export class AppStore {
         stored.geminiApiRuntime === 'never'
           ? stored.geminiApiRuntime
           : defaultSettings.geminiApiRuntime,
-      promptCache: normalizePromptCacheSettings(
-        stored.promptCache,
-        defaultSettings.promptCache
-      ),
+      promptCache: normalizePromptCacheSettings(stored.promptCache, defaultSettings.promptCache),
       providerHarnessPosture: normalizeProviderHarnessPostureMap(stored.providerHarnessPosture),
       agenticServices: {
         ...defaultSettings.agenticServices,
@@ -4876,7 +4880,9 @@ export class AppStore {
     }
     if (Object.prototype.hasOwnProperty.call(partial, 'userMcpServers')) {
       const previousIds = new Set((current.userMcpServers || []).map((server) => server.id))
-      const nextIds = new Set(normalizeUserMcpServers(next.userMcpServers).map((server) => server.id))
+      const nextIds = new Set(
+        normalizeUserMcpServers(next.userMcpServers).map((server) => server.id)
+      )
       for (const id of previousIds) {
         if (!nextIds.has(id)) extensionSecretStore.clearOwnerSecrets('userMcpServer', id)
       }
@@ -5255,15 +5261,13 @@ export class AppStore {
                     })),
                     bossmanParticipantId: stored.activeRound.bossmanParticipantId,
                     captainParticipantIds: stored.activeRound.captainParticipantIds,
-                    secondInCommandParticipantId:
-                      stored.activeRound.secondInCommandParticipantId
+                    secondInCommandParticipantId: stored.activeRound.secondInCommandParticipantId
                   })
                   return {
                     ...stored.activeRound,
                     bossmanParticipantId: roundAuthority.bossmanParticipantId,
                     captainParticipantIds: roundAuthority.captainParticipantIds,
-                    secondInCommandParticipantId:
-                      roundAuthority.secondInCommandParticipantId
+                    secondInCommandParticipantId: roundAuthority.secondInCommandParticipantId
                   }
                 })()
               : undefined
@@ -5360,7 +5364,10 @@ export class AppStore {
     }
   }
 
-  static toChatListItem(chat: ChatRecord, sourceStat?: Pick<fs.Stats, 'mtimeMs' | 'size'>): ChatListItem {
+  static toChatListItem(
+    chat: ChatRecord,
+    sourceStat?: Pick<fs.Stats, 'mtimeMs' | 'size'>
+  ): ChatListItem {
     const normalizedChat = this.normalizeChatRecord(chat)
     // A list entry is a ROW, not a record. The full ensemble blob measured
     // ~229 KB of a 234 KB entry — 98% — which is what grew
@@ -5372,7 +5379,9 @@ export class AppStore {
     // and for a chat the user has not opened, the row is the only source.
     const { ensemble, ...listProjection } = normalizedChat
     const messages = Array.isArray(normalizedChat.messages)
-      ? normalizedChat.messages.filter((message) => !isRetiredExternalChannelInboundMessage(message))
+      ? normalizedChat.messages.filter(
+          (message) => !isRetiredExternalChannelInboundMessage(message)
+        )
       : []
     const runs = Array.isArray(normalizedChat.runs) ? normalizedChat.runs : []
     const lastRun = summarizeLastRun(runs[runs.length - 1])
@@ -5423,9 +5432,8 @@ export class AppStore {
   static isChatListEnsembleProjection(ensemble: EnsembleConfig | undefined): boolean {
     if (!ensemble) return false
     return (
-      (ensemble as unknown as Record<string, unknown>)[
-        this.CHAT_LIST_ENSEMBLE_PROJECTION_FLAG
-      ] === true
+      (ensemble as unknown as Record<string, unknown>)[this.CHAT_LIST_ENSEMBLE_PROJECTION_FLAG] ===
+      true
     )
   }
 
@@ -5549,7 +5557,10 @@ export class AppStore {
    *  to avoid rewriting the list entry on every volatile field bump. */
   private static chatListIndexWriteAtByChatId = new Map<string, number>()
 
-  private static chatListItemJson(item: ChatListItem | undefined, includeVolatile: boolean): string {
+  private static chatListItemJson(
+    item: ChatListItem | undefined,
+    includeVolatile: boolean
+  ): string {
     if (!item) return ''
     // Compare the projection we actually store. Entries written before the
     // ensemble split still carry the blob on disk, so without this the diff
@@ -6323,15 +6334,9 @@ export class AppStore {
           derived.codexReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'claude') {
           derived.claudeReasoningEffort = participant.reasoningEffort
-        } else if (
-          participant.provider === 'grok' &&
-          isGrok45ReasoningModelId(participant.model)
-        ) {
+        } else if (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) {
           derived.grokReasoningEffort = participant.reasoningEffort
-        } else if (
-          participant.provider === 'cursor' &&
-          isCursorGrok45ModelId(participant.model)
-        ) {
+        } else if (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)) {
           derived.cursorReasoningEffort = participant.reasoningEffort
         }
       }
@@ -6666,10 +6671,7 @@ export class AppStore {
     }
 
     const chatPath = chatPathForId(chatsDir, chat.appChatId)
-    const previousChatForFeedback = this.readChatForFeedbackBaseline(
-      chat.appChatId,
-      chatPath
-    )
+    const previousChatForFeedback = this.readChatForFeedbackBaseline(chat.appChatId, chatPath)
     // These fields are written only by main-owned async patchers. Renderer
     // chat records can lag those writes, so a later whole-record save must not
     // erase a durable isolated-worktree binding, an explicit PR watch, or the
@@ -6751,7 +6753,9 @@ export class AppStore {
       let postStat: fs.Stats | null = null
       try {
         postStat = fs.statSync(chatPath)
-      } catch { /* writeJson just succeeded; stat failure is a kernel race */ }
+      } catch {
+        /* writeJson just succeeded; stat failure is a kernel race */
+      }
       if (postStat) {
         this.chatRecordCache.set(normalizedChat.appChatId, {
           mtimeMs: postStat.mtimeMs,
@@ -7163,10 +7167,7 @@ export class AppStore {
       for (const workflow of workflows) {
         if (!targetWorkflowIds.has(workflow.id)) continue
         for (const execution of workflow.history) {
-          if (
-            execution.scheduledTaskId &&
-            !targetScheduledTaskIds.has(execution.scheduledTaskId)
-          ) {
+          if (execution.scheduledTaskId && !targetScheduledTaskIds.has(execution.scheduledTaskId)) {
             targetScheduledTaskIds.add(execution.scheduledTaskId)
             scheduleScopeChanged = true
           }
@@ -7253,7 +7254,9 @@ export class AppStore {
       if (stored === null) continue
       if (!Array.isArray(stored)) {
         if (input.kind === 'global') continue
-        throw new Error(`${label} is not an array; scoped history deletion cannot preserve siblings.`)
+        throw new Error(
+          `${label} is not an array; scoped history deletion cannot preserve siblings.`
+        )
       }
       for (const record of stored) {
         if (!historyRecordMatches(record, draft, { includeRunIds: false })) continue
@@ -7266,7 +7269,9 @@ export class AppStore {
     const mailboxLedger = objectRecord(mailboxValue)
     const mailboxes = objectRecord(mailboxLedger?.mailboxes)
     if (mailboxValue !== null && (!mailboxLedger || !mailboxes) && input.kind !== 'global') {
-      throw new Error('Sub-thread mailbox ledger is invalid; scoped deletion cannot preserve siblings.')
+      throw new Error(
+        'Sub-thread mailbox ledger is invalid; scoped deletion cannot preserve siblings.'
+      )
     }
     for (const [parentChatId, mailboxValueForParent] of Object.entries(mailboxes || {})) {
       const mailbox = objectRecord(mailboxValueForParent)
@@ -7284,7 +7289,9 @@ export class AppStore {
     if (input.kind === 'global') {
       try {
         if (fs.existsSync(runEventsDir)) {
-          for (const file of fs.readdirSync(runEventsDir).filter((item) => item.endsWith('.jsonl'))) {
+          for (const file of fs
+            .readdirSync(runEventsDir)
+            .filter((item) => item.endsWith('.jsonl'))) {
             runIds.add(path.basename(file, '.jsonl'))
           }
         }
@@ -7431,7 +7438,8 @@ export class AppStore {
           updatedAt: intent.createdAt
         }
       })
-      if (!sameJsonValue(workflows, rewrittenWorkflows)) writeJson(workflowsPath, rewrittenWorkflows)
+      if (!sameJsonValue(workflows, rewrittenWorkflows))
+        writeJson(workflowsPath, rewrittenWorkflows)
 
       const verifiedTasks = readScheduledTasksForHistoryDeletionStrict()
       for (const task of verifiedTasks) {
@@ -7464,7 +7472,9 @@ export class AppStore {
           workflow.unattendedElevation ||
           workflow.template.handoffSourceRunId
         ) {
-          throw new Error('Workflow remains runnable or retains occurrence linkage after history clear.')
+          throw new Error(
+            'Workflow remains runnable or retains occurrence linkage after history clear.'
+          )
         }
       }
       return
@@ -7495,7 +7505,11 @@ export class AppStore {
       return
     }
     if (step === 'message-feedback') {
-      rewriteArrayHistoryStore(messageFeedbackLedgerPath, 'message feedback receipt history', intent)
+      rewriteArrayHistoryStore(
+        messageFeedbackLedgerPath,
+        'message feedback receipt history',
+        intent
+      )
       return
     }
     if (step === 'sub-thread-mailboxes') {
@@ -7549,7 +7563,8 @@ export class AppStore {
             const source = objectRecord(objectRecord(eventValue)?.source)
             if (
               (typeof source?.subThreadId === 'string' && targetChatIds.has(source.subThreadId)) ||
-              (typeof source?.sourceRunId === 'string' && intent.runIds.includes(source.sourceRunId))
+              (typeof source?.sourceRunId === 'string' &&
+                intent.runIds.includes(source.sourceRunId))
             ) {
               throw new Error('Sub-thread mailbox history still contains a target event.')
             }
@@ -7721,7 +7736,9 @@ export class AppStore {
         this.chatRecordCache.delete(chatId)
         const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
         if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
-          throw new Error('Truncated chat still contains a durable history or orchestration source.')
+          throw new Error(
+            'Truncated chat still contains a durable history or orchestration source.'
+          )
         }
       } else {
         // T3a-1: discard, never flush. A pending write for a chat being
@@ -7776,14 +7793,18 @@ export class AppStore {
         try {
           this.applyProjectOp({ kind: 'remove-chat-everywhere', chatId, now: Date.now() })
         } catch (error) {
-          failures.push(new Error(`project membership ${chatId}: ${historyDeletionErrorMessage(error)}`))
+          failures.push(
+            new Error(`project membership ${chatId}: ${historyDeletionErrorMessage(error)}`)
+          )
         }
       }
       const residual = this.getProjects().flatMap((project) =>
         project.memberChatIds.filter((chatId) => intent.chatIds.includes(chatId))
       )
-      if (residual.length > 0) failures.push(new Error('Project membership still references a target chat.'))
-      if (failures.length > 0) throw new AggregateError(failures, 'Project membership cleanup failed.')
+      if (residual.length > 0)
+        failures.push(new Error('Project membership still references a target chat.'))
+      if (failures.length > 0)
+        throw new AggregateError(failures, 'Project membership cleanup failed.')
     }
   }
 
@@ -7849,7 +7870,10 @@ export class AppStore {
     try {
       removePathStrict(historyDeletionIntentPath, 'history deletion intent journal')
     } catch (error) {
-      const journalFailure = { step: 'journal' as const, message: historyDeletionErrorMessage(error) }
+      const journalFailure = {
+        step: 'journal' as const,
+        message: historyDeletionErrorMessage(error)
+      }
       intent.failures = [journalFailure]
       intent.updatedAt = new Date().toISOString()
       writeHistoryDeletionIntent(intent)
@@ -7886,7 +7910,9 @@ export class AppStore {
     }
   }
 
-  private static historyDeletionPreparation(intent: HistoryDeletionIntent): HistoryDeletionPreparation {
+  private static historyDeletionPreparation(
+    intent: HistoryDeletionIntent
+  ): HistoryDeletionPreparation {
     return {
       operationId: intent.operationId,
       kind: intent.kind,
@@ -7922,10 +7948,9 @@ export class AppStore {
     }
   }
 
-  static prepareHistoryDeletion(
-    input: HistoryDeletionPrepareInput
-  ): HistoryDeletionPreparation {
-    if (this.historyDeletionRunning) throw new Error('A history deletion transaction is already running.')
+  static prepareHistoryDeletion(input: HistoryDeletionPrepareInput): HistoryDeletionPreparation {
+    if (this.historyDeletionRunning)
+      throw new Error('A history deletion transaction is already running.')
     const existing = readHistoryDeletionIntent()
     if (existing) {
       const sameScope =
@@ -7966,7 +7991,8 @@ export class AppStore {
   }
 
   static commitPreparedHistoryDeletion(operationId: string): void {
-    if (this.historyDeletionRunning) throw new Error('A history deletion transaction is already running.')
+    if (this.historyDeletionRunning)
+      throw new Error('A history deletion transaction is already running.')
     const intent = readHistoryDeletionIntent()
     if (!intent || intent.operationId !== operationId) {
       throw new Error('History deletion commit does not match the pending operation.')
@@ -7997,9 +8023,7 @@ export class AppStore {
   }
 
   static clearChats(workspaceId?: string): void {
-    this.runHistoryDeletion(
-      workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' }
-    )
+    this.runHistoryDeletion(workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' })
   }
 
   // Durable parent-bound sub-thread event mailbox. Kept outside ChatRecord so
@@ -8218,15 +8242,11 @@ export class AppStore {
     usageJournalStore.append(record)
   }
 
-  static beginUsageHistoryMutation(
-    input: UsageHistoryMutationInput
-  ): UsageHistoryMutationHold {
+  static beginUsageHistoryMutation(input: UsageHistoryMutationInput): UsageHistoryMutationHold {
     return usageJournalStore.beginHistoryMutation(input)
   }
 
-  static purgeUsageHistoryStrict(
-    hold: UsageHistoryMutationHold
-  ): UsageHistoryPurgeReport {
+  static purgeUsageHistoryStrict(hold: UsageHistoryMutationHold): UsageHistoryPurgeReport {
     return usageJournalStore.purgeHistoryStrict(hold)
   }
 
@@ -8460,9 +8480,8 @@ export class AppStore {
       if (
         nonterminalExecutions.some((execution) => !execution.scheduledTaskId) ||
         (workflow.activeExecutionId &&
-          nonterminalExecutions.filter(
-            (execution) => execution.id === workflow.activeExecutionId
-          ).length !== 1)
+          nonterminalExecutions.filter((execution) => execution.id === workflow.activeExecutionId)
+            .length !== 1)
       ) {
         throw new Error(
           'Workflow definition could not be deleted because a linked occurrence did not settle: active execution linkage is missing or divergent.'
@@ -8476,8 +8495,7 @@ export class AppStore {
       const retainedHistoryTaskIds = workflow.history
         .filter(
           (execution) =>
-            execution.scheduledTaskId &&
-            tasks.some((task) => task.id === execution.scheduledTaskId)
+            execution.scheduledTaskId && tasks.some((task) => task.id === execution.scheduledTaskId)
         )
         .map((execution) => execution.scheduledTaskId as string)
       const retainedExecutionIds = new Set(workflow.history.map((execution) => execution.id))
@@ -8565,11 +8583,7 @@ export class AppStore {
           )
         }
         const finalTask = finalMatches[0]
-        const finalPair = validateScheduledTaskWorkflowPair(
-          finalTask,
-          finalWorkflows,
-          finalTasks
-        )
+        const finalPair = validateScheduledTaskWorkflowPair(finalTask, finalWorkflows, finalTasks)
         if (
           !isTerminalScheduledTaskStatus(finalTask.status) ||
           !finalPair.ok ||
@@ -8619,9 +8633,7 @@ export class AppStore {
 
   static saveWorkspaceBoard(
     board: Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
-      Partial<
-        Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
-      >
+      Partial<Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
   ): WorkspaceBoardDefinition {
     const boards = this.getWorkspaceBoards()
     const nowMs = Date.now()
@@ -8638,10 +8650,7 @@ export class AppStore {
         ...board,
         id: board.id || randomUUID(),
         columns: board.columns || WORKSPACE_BOARD_DEFAULT_COLUMNS,
-        activity: [
-          ...(Array.isArray(board.activity) ? board.activity : []),
-          createdActivity
-        ],
+        activity: [...(Array.isArray(board.activity) ? board.activity : []), createdActivity],
         createdAt: board.createdAt || nowIso,
         updatedAt: nowIso
       },
@@ -8651,7 +8660,10 @@ export class AppStore {
     const index = boards.findIndex((item) => item.id === normalized.id)
     if (index >= 0) {
       const prior = boards[index]
-      if (prior.workspaceId !== normalized.workspaceId || prior.workspacePath !== normalized.workspacePath) {
+      if (
+        prior.workspaceId !== normalized.workspaceId ||
+        prior.workspacePath !== normalized.workspacePath
+      ) {
         throw new Error('Workspace board cannot move workspaces.')
       }
       const updatedActivity: WorkspaceBoardActivityEntry = {
@@ -8665,10 +8677,7 @@ export class AppStore {
         ...normalized,
         createdAt: prior.createdAt,
         updatedAt: nowIso,
-        activity: [
-          ...(prior.activity || []),
-          updatedActivity
-        ].slice(-100)
+        activity: [...(prior.activity || []), updatedActivity].slice(-100)
       }
     } else {
       boards.push(normalized)
@@ -8688,7 +8697,9 @@ export class AppStore {
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
     const activityActor =
-      'provenance' in partial ? workspaceBoardActivityActorFromProvenance(partial.provenance) : 'user'
+      'provenance' in partial
+        ? workspaceBoardActivityActorFromProvenance(partial.provenance)
+        : 'user'
     const normalized = normalizeWorkspaceBoardDefinitionRecord(
       {
         ...source,
@@ -8748,7 +8759,12 @@ export class AppStore {
     }
     if (link.kind === 'chat') {
       const chat = this.getChat(link.id)
-      if (!chat || chat.archived || chat.workspaceId !== board.workspaceId || chat.scope === 'global') {
+      if (
+        !chat ||
+        chat.archived ||
+        chat.workspaceId !== board.workspaceId ||
+        chat.scope === 'global'
+      ) {
         throw new Error('Board card chat link must belong to the board workspace.')
       }
       return link
@@ -8759,7 +8775,13 @@ export class AppStore {
       const messageId = separatorIndex >= 0 ? link.id.slice(separatorIndex + 1) : ''
       const chat = chatId ? this.getChat(chatId) : undefined
       const message = messageId ? chat?.messages?.find((item) => item.id === messageId) : undefined
-      if (!chat || !message || chat.archived || chat.workspaceId !== board.workspaceId || chat.scope === 'global') {
+      if (
+        !chat ||
+        !message ||
+        chat.archived ||
+        chat.workspaceId !== board.workspaceId ||
+        chat.scope === 'global'
+      ) {
         throw new Error('Board card pinned message link must belong to the board workspace.')
       }
       return link
@@ -8823,10 +8845,7 @@ export class AppStore {
         boardId: board.id,
         workspaceId: board.workspaceId,
         link: this.assertWorkspaceBoardCardLink(board, card.link),
-        activity: [
-          ...(Array.isArray(card.activity) ? card.activity : []),
-          createdActivity
-        ],
+        activity: [...(Array.isArray(card.activity) ? card.activity : []), createdActivity],
         createdAt: card.createdAt || nowIso,
         updatedAt: nowIso
       },
@@ -8848,10 +8867,7 @@ export class AppStore {
         workspaceId: prior.workspaceId,
         createdAt: prior.createdAt,
         updatedAt: nowIso,
-        activity: [
-          ...(prior.activity || []),
-          updatedActivity
-        ].slice(-100)
+        activity: [...(prior.activity || []), updatedActivity].slice(-100)
       }
     } else {
       cards.push(normalized)
@@ -8873,7 +8889,9 @@ export class AppStore {
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
     const activityActor =
-      'provenance' in partial ? workspaceBoardActivityActorFromProvenance(partial.provenance) : 'user'
+      'provenance' in partial
+        ? workspaceBoardActivityActorFromProvenance(partial.provenance)
+        : 'user'
     const normalized = normalizeWorkspaceBoardCardRecord(
       {
         ...source,
@@ -8884,9 +8902,7 @@ export class AppStore {
         humanOwner: 'humanOwner' in partial ? partial.humanOwner : source.humanOwner,
         labels: 'labels' in partial ? partial.labels : source.labels,
         link:
-          'link' in partial
-            ? this.assertWorkspaceBoardCardLink(board, partial.link)
-            : source.link,
+          'link' in partial ? this.assertWorkspaceBoardCardLink(board, partial.link) : source.link,
         blockedReason: 'blockedReason' in partial ? partial.blockedReason : source.blockedReason,
         nextStep: 'nextStep' in partial ? partial.nextStep : source.nextStep,
         reminderAt: 'reminderAt' in partial ? partial.reminderAt : source.reminderAt,
@@ -8981,12 +8997,10 @@ export class AppStore {
     snapshot: Partial<RepoConventionIndexSnapshot>
   ): RepoConventionIndexSnapshot {
     const snapshots = this.getRepoConventionIndexes()
-    const normalized = normalizeRepoConventionIndexSnapshot(
-      {
-        ...snapshot,
-        generatedAt: snapshot.generatedAt || new Date().toISOString()
-      }
-    )
+    const normalized = normalizeRepoConventionIndexSnapshot({
+      ...snapshot,
+      generatedAt: snapshot.generatedAt || new Date().toISOString()
+    })
     if (!normalized) throw new Error('Repo convention index is invalid.')
     const index = snapshots.findIndex((item) => item.workspaceId === normalized.workspaceId)
     if (index >= 0) snapshots[index] = normalized
@@ -9328,16 +9342,18 @@ export class AppStore {
         (receipt): receipt is AuditRetentionPurgeReceipt =>
           Boolean(
             receipt &&
-              typeof receipt === 'object' &&
-              (receipt as AuditRetentionPurgeReceipt).schemaVersion === 1 &&
-              typeof (receipt as AuditRetentionPurgeReceipt).id === 'string'
+            typeof receipt === 'object' &&
+            (receipt as AuditRetentionPurgeReceipt).schemaVersion === 1 &&
+            typeof (receipt as AuditRetentionPurgeReceipt).id === 'string'
           )
       )
     )
   }
 
   static getAuditBundleVerificationReceipts(): ProductAuditBundleVerificationReceipt[] {
-    return capAuditBundleVerificationReceipts(readJson<unknown[]>(auditBundleVerificationReceiptsPath, []))
+    return capAuditBundleVerificationReceipts(
+      readJson<unknown[]>(auditBundleVerificationReceiptsPath, [])
+    )
   }
 
   static recordAuditBundleVerificationReceipt(
@@ -9482,16 +9498,13 @@ export class AppStore {
       throw new Error('Scheduled occurrence lifecycle ledger is missing its W/E/P identity.')
     }
     const ledgerPath = workflowRunFilePath(task.workflowExecutionId)
-    const events = readWorkflowRunLedgerForAppend(
-      ledgerPath,
-      {
-        workflowExecutionId: task.workflowExecutionId,
-        workflowId: task.workflowId,
-        scheduledTaskId: task.id,
-        plannedFor: task.workflowOccurrenceAt,
-        runId: task.runId ?? null
-      }
-    )
+    const events = readWorkflowRunLedgerForAppend(ledgerPath, {
+      workflowExecutionId: task.workflowExecutionId,
+      workflowId: task.workflowId,
+      scheduledTaskId: task.id,
+      plannedFor: task.workflowOccurrenceAt,
+      runId: task.runId ?? null
+    })
     const read = readWorkflowRunLedgerStrict(ledgerPath)
     if (!sameJsonValue(read.events, events) || read.hasTornTail) {
       throw new Error('Scheduled occurrence lifecycle ledger predecessor is not durable.')
@@ -9621,7 +9634,10 @@ export class AppStore {
     if (transition.length > 1) {
       return { blocked: 'Workflow run ledger contains a duplicate occurrence transition.' }
     }
-    if (transition.length !== 0 || read.events.some((event) => event.sequence === expected.sequence)) {
+    if (
+      transition.length !== 0 ||
+      read.events.some((event) => event.sequence === expected.sequence)
+    ) {
       return { blocked: 'Workflow run ledger contains a conflicting occurrence post-image.' }
     }
     return { blocked: 'Workflow run ledger no longer matches its exact WAL prefix.' }
@@ -9719,11 +9735,7 @@ export class AppStore {
       ledgerState
     )
     if (writeOrderReason) return writeOrderReason
-    const ownerReason = validateCurrentRunOwnerReferences(
-      intent,
-      tasks,
-      workflowRecords.normalized
-    )
+    const ownerReason = validateCurrentRunOwnerReferences(intent, tasks, workflowRecords.normalized)
     if (ownerReason) return ownerReason
 
     if (taskState.status === 'before') {
@@ -9792,11 +9804,7 @@ export class AppStore {
       intent.workflowBefore,
       intent.workflowAfter
     )
-    const ownerReason = validateCurrentRunOwnerReferences(
-      intent,
-      tasks,
-      workflowRecords.normalized
-    )
+    const ownerReason = validateCurrentRunOwnerReferences(intent, tasks, workflowRecords.normalized)
     const ledgerState = this.scheduledOccurrenceLedgerState(intent)
     if (
       taskState.status !== 'before' ||
@@ -9866,8 +9874,7 @@ export class AppStore {
 
   static materializeDueWorkflows(
     nowMs: number = Date.now(),
-    resolveAttachments: ResolveScheduledAttachments =
-      rejectUnconfiguredScheduledAttachmentResolution
+    resolveAttachments: ResolveScheduledAttachments = rejectUnconfiguredScheduledAttachmentResolution
   ): ScheduledTask[] {
     assertNoPendingScheduledOccurrenceMutation()
     const workflows = this.getWorkflowDefinitions()
@@ -9907,8 +9914,7 @@ export class AppStore {
   static materializeWorkflowNow(
     id: string,
     nowMs: number = Date.now(),
-    resolveAttachments: ResolveScheduledAttachments =
-      rejectUnconfiguredScheduledAttachmentResolution
+    resolveAttachments: ResolveScheduledAttachments = rejectUnconfiguredScheduledAttachmentResolution
   ): ScheduledTask | null {
     assertNoPendingScheduledOccurrenceMutation()
     const workflows = this.getWorkflowDefinitions()
@@ -10269,7 +10275,10 @@ export class AppStore {
     }
     const partialFields = Object.keys(partial) as Array<keyof ScheduledTask>
     if (!partial.status && partialFields.length === 0) return current
-    if (!partial.status && partialFields.some((field) => !SCHEDULED_TASK_MAINTENANCE_FIELDS.has(field))) {
+    if (
+      !partial.status &&
+      partialFields.some((field) => !SCHEDULED_TASK_MAINTENANCE_FIELDS.has(field))
+    ) {
       return current
     }
     if (
@@ -10287,10 +10296,7 @@ export class AppStore {
     // with the exact run + occurrence tuple instead of borrowing the persisted
     // owner from a stale task id.
     if (partial.status === 'running' && current.status !== 'running') return current
-    if (
-      Object.prototype.hasOwnProperty.call(partial, 'runId') &&
-      partial.runId !== current.runId
-    ) {
+    if (Object.prototype.hasOwnProperty.call(partial, 'runId') && partial.runId !== current.runId) {
       return current
     }
     const exactTerminalFields = new Set(['status', 'runId', 'completedAt', 'lastError'])
@@ -10319,11 +10325,7 @@ export class AppStore {
         lastError: partial.lastError
       }
       if (hasWorkflowLink) {
-        if (
-          !current.workflowId ||
-          !current.workflowExecutionId ||
-          !current.workflowOccurrenceAt
-        ) {
+        if (!current.workflowId || !current.workflowExecutionId || !current.workflowOccurrenceAt) {
           return current
         }
         return this.settleUnownedScheduledWorkflowTask(id, terminalOptions)
@@ -10433,9 +10435,7 @@ export class AppStore {
       const workflowMatches = workflows.filter((workflow) => workflow.id === expected.workflowId)
       if (workflowMatches.length !== 1) return null
       const workflow = workflowMatches[0]
-      const executionMatches = workflow.history.filter(
-        (item) => item.id === expected.executionId
-      )
+      const executionMatches = workflow.history.filter((item) => item.id === expected.executionId)
       if (executionMatches.length !== 1) return null
       const execution = executionMatches[0]
       if (
@@ -10497,8 +10497,10 @@ export class AppStore {
       linkedWorkflow = canonicalWorkflow
       const projection = projectWorkflowFromScheduledTask(linkedWorkflow, updated, nowIso)
       if (!projection || projection.nextStatus !== 'running') return null
-      const { ledgerBefore, ledgerAfter } =
-        this.createScheduledOccurrenceLedgerTransition(updated, nowIso)
+      const { ledgerBefore, ledgerAfter } = this.createScheduledOccurrenceLedgerTransition(
+        updated,
+        nowIso
+      )
       this.commitScheduledOccurrenceMutation({
         schemaVersion: 1,
         id: randomUUID(),
@@ -10664,8 +10666,7 @@ export class AppStore {
     const queuedTerminal =
       (current.status === 'due' || current.status === 'pending') &&
       (options.status === 'failed' || options.status === 'cancelled')
-    const legacyRunningTerminal =
-      expectedProjection === 'running' && current.status === 'running'
+    const legacyRunningTerminal = expectedProjection === 'running' && current.status === 'running'
     if (
       (expectedProjection === 'queued' ? !queuedTerminal : !legacyRunningTerminal) ||
       current.runId !== undefined ||
@@ -10715,8 +10716,10 @@ export class AppStore {
     if (!canonicalWorkflow) return null
     const projection = projectWorkflowFromScheduledTask(canonicalWorkflow, updated, mutationAt)
     if (!projection || projection.nextStatus !== options.status) return null
-    const { ledgerBefore, ledgerAfter } =
-      this.createScheduledOccurrenceLedgerTransition(updated, mutationAt)
+    const { ledgerBefore, ledgerAfter } = this.createScheduledOccurrenceLedgerTransition(
+      updated,
+      mutationAt
+    )
     this.commitScheduledOccurrenceMutation({
       schemaVersion: 1,
       id: randomUUID(),
@@ -10851,10 +10854,7 @@ export class AppStore {
       }
     }
   ): ScheduledTask | null {
-    if (
-      !isNonEmptyTrimmedString(options.runId) ||
-      !isTerminalScheduledTaskStatus(options.status)
-    ) {
+    if (!isNonEmptyTrimmedString(options.runId) || !isTerminalScheduledTaskStatus(options.status)) {
       return null
     }
     if (readScheduledOccurrenceMutationJournal().status !== 'none') return null
@@ -10926,8 +10926,10 @@ export class AppStore {
     if (!canonicalWorkflow) return null
     const projection = projectWorkflowFromScheduledTask(canonicalWorkflow, updated, mutationAt)
     if (!projection || !isTerminalWorkflowExecutionStatus(projection.nextStatus)) return null
-    const { ledgerBefore, ledgerAfter } =
-      this.createScheduledOccurrenceLedgerTransition(updated, mutationAt)
+    const { ledgerBefore, ledgerAfter } = this.createScheduledOccurrenceLedgerTransition(
+      updated,
+      mutationAt
+    )
     const intent: ScheduledOccurrenceMutationIntent = {
       schemaVersion: 1,
       id: randomUUID(),
@@ -11024,8 +11026,7 @@ export class AppStore {
 
   static getDueScheduledTasks(
     nowMs: number = Date.now(),
-    resolveAttachments: ResolveScheduledAttachments =
-      rejectUnconfiguredScheduledAttachmentResolution
+    resolveAttachments: ResolveScheduledAttachments = rejectUnconfiguredScheduledAttachmentResolution
   ): ScheduledTask[] {
     assertNoPendingScheduledOccurrenceMutation()
     const due: ScheduledTask[] = []
@@ -11088,8 +11089,7 @@ export class AppStore {
       const terminalOptions = {
         status: 'failed' as const,
         completedAt: current.completedAt || recoveredAt,
-        lastError:
-          current.lastError || 'TaskWraith restarted before this scheduled run completed.'
+        lastError: current.lastError || 'TaskWraith restarted before this scheduled run completed.'
       }
       const hasWorkflowLink = Boolean(
         current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
@@ -11097,9 +11097,7 @@ export class AppStore {
       let updated: ScheduledTask | null = null
       if (isNonEmptyTrimmedString(current.runId)) {
         const expectedWorkflowOccurrence = hasWorkflowLink
-          ? current.workflowId &&
-            current.workflowExecutionId &&
-            current.workflowOccurrenceAt
+          ? current.workflowId && current.workflowExecutionId && current.workflowOccurrenceAt
             ? {
                 taskId: current.id,
                 workflowId: current.workflowId,
@@ -11160,21 +11158,11 @@ export class AppStore {
     const settled: ScheduledTask[] = []
     for (const snapshot of snapshots) {
       try {
-        const [candidate] = findStalledScheduledTasks(
-          [snapshot],
-          isRunLive,
-          nowMs,
-          backstopMs
-        )
+        const [candidate] = findStalledScheduledTasks([snapshot], isRunLive, nowMs, backstopMs)
         if (!candidate) continue
         const matches = this.getScheduledTasks().filter((task) => task.id === snapshot.id)
         if (matches.length !== 1) continue
-        const [revalidated] = findStalledScheduledTasks(
-          [matches[0]],
-          isRunLive,
-          nowMs,
-          backstopMs
-        )
+        const [revalidated] = findStalledScheduledTasks([matches[0]], isRunLive, nowMs, backstopMs)
         if (!revalidated) continue
         const current = revalidated.task
         const terminalOptions = {
@@ -11189,9 +11177,7 @@ export class AppStore {
         if (current.status === 'running') {
           if (!isNonEmptyTrimmedString(current.runId) || isRunLive(current.runId)) continue
           const expectedWorkflowOccurrence = hasWorkflowLink
-            ? current.workflowId &&
-              current.workflowExecutionId &&
-              current.workflowOccurrenceAt
+            ? current.workflowId && current.workflowExecutionId && current.workflowOccurrenceAt
               ? {
                   taskId: current.id,
                   workflowId: current.workflowId,
@@ -11388,11 +11374,7 @@ export class AppStore {
     const fd = fs.openSync(filePath, 'a')
     try {
       fs.writeFileSync(fd, serializeRunEventRecord(record), 'utf-8')
-      if (
-        options.durability === 'strict' ||
-        input.kind === 'lifecycle' ||
-        sequence % 25 === 0
-      ) {
+      if (options.durability === 'strict' || input.kind === 'lifecycle' || sequence % 25 === 0) {
         fs.fsyncSync(fd)
       }
     } finally {
@@ -11485,7 +11467,12 @@ export class AppStore {
     this.ensureAgentStatsLoaded(agentId)
     const seen = agentStatsSeenCache.get(agentId) as Set<string>
     if (seen.has(run.runId)) return
-    const delta = buildAgentStatDelta(chatId, run, Date.now(), toolActivityStatsForRun(run.runId, messages))
+    const delta = buildAgentStatDelta(
+      chatId,
+      run,
+      Date.now(),
+      toolActivityStatsForRun(run.runId, messages)
+    )
     if (!delta) return
     const filePath = agentStatsFilePath(agentId)
     const rawCount = agentStatsRawCountCache.get(agentId) ?? 0
@@ -11536,9 +11523,9 @@ export class AppStore {
       const directAgentId = isPooledAgentId(run?.pooledAgentId)
         ? (run.pooledAgentId as string)
         : undefined
-      const agentId = directAgentId || (run?.ensembleParticipantId
-        ? agentByParticipant.get(run.ensembleParticipantId)
-        : undefined)
+      const agentId =
+        directAgentId ||
+        (run?.ensembleParticipantId ? agentByParticipant.get(run.ensembleParticipantId) : undefined)
       if (agentId) this.recordAgentRunDelta(agentId, chatId, run, chat.messages)
     }
   }
@@ -11638,7 +11625,11 @@ export class AppStore {
         })
         settled.push(execution)
       } catch (e) {
-        console.error('Failed to settle stale workflow run ledger', execution.workflowExecutionId, e)
+        console.error(
+          'Failed to settle stale workflow run ledger',
+          execution.workflowExecutionId,
+          e
+        )
       }
     }
     return settled

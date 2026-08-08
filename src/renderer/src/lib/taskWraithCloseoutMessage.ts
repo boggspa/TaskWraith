@@ -135,9 +135,7 @@ export function buildTaskWraithRunCloseoutMessage(input: {
       ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
-      ...(closeoutSubagentDelegations.length > 0
-        ? { closeoutSubagentDelegations }
-        : {})
+      ...(closeoutSubagentDelegations.length > 0 ? { closeoutSubagentDelegations } : {})
     }
   }
 }
@@ -208,9 +206,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
       ...(participantTable ? { closeoutParticipantTable: participantTable } : {}),
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
-      ...(closeoutSubagentDelegations.length > 0
-        ? { closeoutSubagentDelegations }
-        : {})
+      ...(closeoutSubagentDelegations.length > 0 ? { closeoutSubagentDelegations } : {})
     }
   }
 }
@@ -1627,8 +1623,7 @@ export function collectCloseoutSubagentDelegations(input: {
     if (!messageInSubagentCloseoutScope(message, affiliatedGroupIds, input.window)) continue
 
     const metadata = message.metadata || {}
-    const subThreadId =
-      typeof metadata.subThreadId === 'string' ? metadata.subThreadId.trim() : ''
+    const subThreadId = typeof metadata.subThreadId === 'string' ? metadata.subThreadId.trim() : ''
     if (!subThreadId) continue
 
     const provider =
@@ -1771,8 +1766,7 @@ function resolveCloseoutSubagentStatus(input: {
   if (input.child?.delegationContext?.dispatchError) return 'failed'
   if (input.child?.delegationContext?.resultReturnedAt) return 'returned'
   if (input.isReturn) {
-    const outcome =
-      typeof input.outcome === 'string' ? input.outcome.trim().toLowerCase() : ''
+    const outcome = typeof input.outcome === 'string' ? input.outcome.trim().toLowerCase() : ''
     if (outcome === 'failed' || outcome === 'error') return 'failed'
     if (outcome === 'cancelled' || outcome === 'canceled') return 'cancelled'
     if (outcome === 'success' || outcome === 'completed' || outcome === 'done') return 'returned'
@@ -1790,9 +1784,7 @@ function statusFromChildChat(child: CloseoutChildChat): CloseoutSubagentDelegati
   if (child.delegationContext?.resultReturnedAt) return 'returned'
   // List-summary hydration often leaves `runs: []` but stamps `lastRun`.
   const lastRun =
-    child.runs && child.runs.length > 0
-      ? child.runs[child.runs.length - 1]
-      : child.lastRun
+    child.runs && child.runs.length > 0 ? child.runs[child.runs.length - 1] : child.lastRun
   if (!lastRun) {
     // No live signal — do not force 'created' over a return-card outcome.
     return null

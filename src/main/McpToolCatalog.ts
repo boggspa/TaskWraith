@@ -1766,8 +1766,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           count: {
             type: 'number',
-            description:
-              'Number of frames to capture. Default 1; clamped to 1..8 (1..5 with OCR).'
+            description: 'Number of frames to capture. Default 1; clamped to 1..8 (1..5 with OCR).'
           },
           max_dimension_px: {
             type: 'number',
@@ -3596,7 +3595,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                 provider: {
                   type: 'string',
                   enum: selectableProviderIds(),
-                  description: 'Selectable provider for this worker (runtime admission still applies).'
+                  description:
+                    'Selectable provider for this worker (runtime admission still applies).'
                 },
                 prompt: {
                   type: 'string',
@@ -3792,7 +3792,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'launch_adopt',
       description:
-        "Record a process YOU already started (via your own shell) as a launch attempt, so it can be observed and driven. Use this when the app you want to QA is not a discovered launch_list_targets target — e.g. you built it and ran its executable yourself. This NEVER starts, stops, or signals anything: it only registers a PID you pass. TaskWraith refuses unless the process is a live descendant of this TaskWraith instance (proved by a process-birth-receipt chain), is not a TaskWraith process itself, and the user approves the exact process after seeing its command. IMPORTANT: launch a GUI app by running its executable directly (e.g. `MyApp.app/Contents/MacOS/MyApp &`) — an app started with `open -a` is parented to launchd, not to TaskWraith, and cannot be adopted. Returns an `attemptId`; then ask the user to attach that window in Screen Watch and approve View & Control, and open it with canvas_open_launch. Adopted attempts are stopped by exact PID only, never by process group.",
+        'Record a process YOU already started (via your own shell) as a launch attempt, so it can be observed and driven. Use this when the app you want to QA is not a discovered launch_list_targets target — e.g. you built it and ran its executable yourself. This NEVER starts, stops, or signals anything: it only registers a PID you pass. TaskWraith refuses unless the process is a live descendant of this TaskWraith instance (proved by a process-birth-receipt chain), is not a TaskWraith process itself, and the user approves the exact process after seeing its command. IMPORTANT: launch a GUI app by running its executable directly (e.g. `MyApp.app/Contents/MacOS/MyApp &`) — an app started with `open -a` is parented to launchd, not to TaskWraith, and cannot be adopted. Returns an `attemptId`; then ask the user to attach that window in Screen Watch and approve View & Control, and open it with canvas_open_launch. Adopted attempts are stopped by exact PID only, never by process group.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3926,7 +3926,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_open_launch',
       description:
-        "Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemptId` from launch_start / launch_status. This tool NEVER starts a process and accepts only an attempt owned by the canonical calling chat/run. It first opens a detected loopback URL with the web driver. Without one, an eligible live macOS 15.2+ managed launch can open its user-picked Screen Watch window only after a separate View & Control consent and current Accessibility trust; the opaque exact-run native lease is AX-only (observe/inspect/click/fill), defaults to 15 minutes and 20 click/fill attempts, and never grants arbitrary desktop control. Secure fields are refused; every native click needs a main-owned one-use human confirmation bound to the exact lease/ref/observation/input epoch and a value-free target summary (consequential keywords are advisory only), and an accepted in-flight click may finish if detach races immediately afterward. Raw canvas_open cannot request this driver. If the macOS launch lacks a matching attachment/control lease, the result tells you to ask the user to attach it in Screen Watch and approve View & Control; unsupported/non-native attempts render the escaped outputTail fallback. Gated like canvas_open.",
+        'Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemptId` from launch_start / launch_status. This tool NEVER starts a process and accepts only an attempt owned by the canonical calling chat/run. It first opens a detected loopback URL with the web driver. Without one, an eligible live macOS 15.2+ managed launch can open its user-picked Screen Watch window only after a separate View & Control consent and current Accessibility trust; the opaque exact-run native lease is AX-only (observe/inspect/click/fill), defaults to 15 minutes and 20 click/fill attempts, and never grants arbitrary desktop control. Secure fields are refused; every native click needs a main-owned one-use human confirmation bound to the exact lease/ref/observation/input epoch and a value-free target summary (consequential keywords are advisory only), and an accepted in-flight click may finish if detach races immediately afterward. Raw canvas_open cannot request this driver. If the macOS launch lacks a matching attachment/control lease, the result tells you to ask the user to attach it in Screen Watch and approve View & Control; unsupported/non-native attempts render the escaped outputTail fallback. Gated like canvas_open.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -4350,8 +4350,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           url: {
             type: 'string',
-            description:
-              'Absolute http(s) URL to load. Provide exactly one of `url` or `action`.'
+            description: 'Absolute http(s) URL to load. Provide exactly one of `url` or `action`.'
           },
           action: {
             type: 'string',
@@ -4887,8 +4886,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           deltaY: {
             type: 'number',
-            description:
-              'Vertical scroll delta in device points (positive = content moves down).'
+            description: 'Vertical scroll delta in device points (positive = content moves down).'
           },
           width: {
             type: 'number',

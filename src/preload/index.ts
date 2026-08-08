@@ -579,7 +579,9 @@ const api = {
    * current primary workspace binding (all active providers). Remaining gaps
    * still need the grant prompt — never silently skip a seat.
    */
-  repairStaleExternalPathGrants: (payload: { chatId: string }): Promise<
+  repairStaleExternalPathGrants: (payload: {
+    chatId: string
+  }): Promise<
     | {
         ok: true
         repairedPaths: string[]
@@ -1309,13 +1311,8 @@ const api = {
       ipcRenderer.invoke('simulator-canvas:tap', payload),
     type: (payload: { chatId: string; text: string }) =>
       ipcRenderer.invoke('simulator-canvas:type', payload),
-    scroll: (payload: {
-      chatId: string
-      x: number
-      y: number
-      deltaX: number
-      deltaY: number
-    }) => ipcRenderer.invoke('simulator-canvas:scroll', payload),
+    scroll: (payload: { chatId: string; x: number; y: number; deltaX: number; deltaY: number }) =>
+      ipcRenderer.invoke('simulator-canvas:scroll', payload),
     inspect: (chatId: string, udid: string) =>
       ipcRenderer.invoke('simulator-canvas:inspect', chatId, udid),
     button: (chatId: string, udid: string, button: string) =>
@@ -1818,11 +1815,8 @@ const api = {
   listEffectiveSkills: (payload: { workspacePath: string; workspaceId?: string }) =>
     ipcRenderer.invoke('skills:list-effective', payload),
   upsertSkill: (payload: unknown) => ipcRenderer.invoke('skills:upsert', payload),
-  deleteSkill: (payload: {
-    scope: 'user' | 'workspace'
-    id: string
-    workspacePath?: string
-  }) => ipcRenderer.invoke('skills:delete', payload),
+  deleteSkill: (payload: { scope: 'user' | 'workspace'; id: string; workspacePath?: string }) =>
+    ipcRenderer.invoke('skills:delete', payload),
   setSkillEnabled: (payload: {
     scope: 'user' | 'workspace'
     id: string

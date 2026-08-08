@@ -6,10 +6,7 @@ import {
   type HostSnapshot
 } from '../../../shared/hostProtocol'
 import { HostProjectionProvider } from '../components/HostProjectionProvider'
-import {
-  HostProjectionStore,
-  type HostProjectionState
-} from '../lib/host/HostProjectionStore'
+import { HostProjectionStore, type HostProjectionState } from '../lib/host/HostProjectionStore'
 import {
   antigravityGeminiApiSecretIdentityIsConfigured,
   antigravityGeminiApiSecretRefreshIdentity,
@@ -255,15 +252,19 @@ describe('successful Gemini API mutation refresh signal', () => {
 
 describe('antigravityGeminiApiSecretRefreshIdentity', () => {
   it('projects only nonsecret configured and generation state', () => {
-    expect(antigravityGeminiApiSecretRefreshIdentity({
-      configured: true,
-      updatedAt: '2026-07-23T15:00:00.000Z',
-      apiKey: 'secret'
-    })).toBe('configured:2026-07-23T15:00:00.000Z')
-    expect(antigravityGeminiApiSecretRefreshIdentity({
-      configured: false,
-      ciphertext: 'secret'
-    })).toBe('unconfigured:')
+    expect(
+      antigravityGeminiApiSecretRefreshIdentity({
+        configured: true,
+        updatedAt: '2026-07-23T15:00:00.000Z',
+        apiKey: 'secret'
+      })
+    ).toBe('configured:2026-07-23T15:00:00.000Z')
+    expect(
+      antigravityGeminiApiSecretRefreshIdentity({
+        configured: false,
+        ciphertext: 'secret'
+      })
+    ).toBe('unconfigured:')
   })
 
   // App.tsx admits AntiGravity when EITHER lane is consented; reading only the
@@ -271,10 +272,17 @@ describe('antigravityGeminiApiSecretRefreshIdentity', () => {
   // key-only users.
   it('reports key-lane admission from the polled identity, failing closed', () => {
     expect(
-      antigravityGeminiApiSecretIdentityIsConfigured('configured:2026-07-23T15:00:00.000Z:mutation-0')
+      antigravityGeminiApiSecretIdentityIsConfigured(
+        'configured:2026-07-23T15:00:00.000Z:mutation-0'
+      )
     ).toBe(true)
     expect(antigravityGeminiApiSecretIdentityIsConfigured('configured::mutation-3')).toBe(true)
-    for (const identity of ['unconfigured::mutation-0', 'unavailable:mutation-1', ':mutation-0', '']) {
+    for (const identity of [
+      'unconfigured::mutation-0',
+      'unavailable:mutation-1',
+      ':mutation-0',
+      ''
+    ]) {
       expect(antigravityGeminiApiSecretIdentityIsConfigured(identity)).toBe(false)
     }
   })

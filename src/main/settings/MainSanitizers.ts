@@ -242,10 +242,7 @@ export interface MainSanitizerDeps {
   getWorkflowDefinitions: () => WorkflowDefinition[]
   getChat: (
     id: string
-  ) => Pick<
-    ChatRecord,
-    'appChatId' | 'archived' | 'scope' | 'workspaceId' | 'workspacePath'
-  > | null
+  ) => Pick<ChatRecord, 'appChatId' | 'archived' | 'scope' | 'workspaceId' | 'workspacePath'> | null
   findRegisteredWorkspace: (workspacePath: string) => WorkspaceRecord | undefined
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
   canonicalPath: (value: string) => string
@@ -272,7 +269,18 @@ export function assertProviderId(value: unknown): ProviderId {
 }
 
 export function availableProviderIds(): ProviderId[] {
-  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'antigravity', 'pi', 'mistral']
+  return [
+    'gemini',
+    'codex',
+    'claude',
+    'kimi',
+    'grok',
+    'cursor',
+    'ollama',
+    'antigravity',
+    'pi',
+    'mistral'
+  ]
 }
 
 /**
@@ -400,7 +408,8 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
       ? Array.from(
           new Set(
             secretRefsInput.env.filter(
-              (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+              (key): key is string =>
+                typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
             )
           )
         ).slice(0, 64)
@@ -455,7 +464,9 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
   return servers
 }
 
-function sanitizePluginResourceProvenance(value: unknown): TaskWraithPluginResourceProvenance | undefined {
+function sanitizePluginResourceProvenance(
+  value: unknown
+): TaskWraithPluginResourceProvenance | undefined {
   if (!isRecord(value)) return undefined
   const pluginId = optionalString(value.pluginId)?.trim()
   const publisher = optionalString(value.publisher)?.trim()
@@ -492,7 +503,17 @@ function sanitizePluginResourceProvenance(value: unknown): TaskWraithPluginResou
   ) {
     return undefined
   }
-  return { pluginId, publisher, version, source, namespace, manifestHash, kind, objectId, materializedAt }
+  return {
+    pluginId,
+    publisher,
+    version,
+    source,
+    namespace,
+    manifestHash,
+    kind,
+    objectId,
+    materializedAt
+  }
 }
 
 function sanitizePluginReviewState(value: unknown): TaskWraithPluginReviewState | undefined {
@@ -585,8 +606,7 @@ export function sanitizeAgenticWorkspaceGrants(
   for (const entry of value) {
     if (!isRecord(entry)) continue
     const id = typeof entry.id === 'string' ? entry.id.trim() : ''
-    const workspacePath =
-      typeof entry.workspacePath === 'string' ? entry.workspacePath.trim() : ''
+    const workspacePath = typeof entry.workspacePath === 'string' ? entry.workspacePath.trim() : ''
     const provider =
       typeof entry.provider === 'string' &&
       AGENTIC_WORKSPACE_GRANT_PROVIDER_IDS.has(entry.provider as AgenticWorkspaceGrantProviderId)
@@ -1132,9 +1152,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     } as WorkflowRunTemplate
   }
 
-  function sanitizeWorkflowForSave(
-    workflow: unknown
-  ): WorkflowDefinitionCreateInput {
+  function sanitizeWorkflowForSave(workflow: unknown): WorkflowDefinitionCreateInput {
     const input = requireRecord(workflow, 'Workflow')
     if ('id' in input) {
       throw new Error('Workflow creation cannot replace an existing workflow.')
@@ -1215,7 +1233,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
   function sanitizeWorkspaceBoardProvenance(value: unknown): WorkspaceBoardProvenance | undefined {
     if (!isRecord(value)) return undefined
     const trimmed = (input: unknown) => optionalString(input)?.trim() || undefined
-    const sourceKind = workspaceBoardProvenanceSourceKinds.has(value.sourceKind as WorkspaceBoardProvenanceSourceKind)
+    const sourceKind = workspaceBoardProvenanceSourceKinds.has(
+      value.sourceKind as WorkspaceBoardProvenanceSourceKind
+    )
       ? (value.sourceKind as WorkspaceBoardProvenanceSourceKind)
       : 'manual'
     return {
@@ -1223,7 +1243,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       sourceKind,
       at: optionalString(value.at) || new Date().toISOString(),
       trust:
-        value.trust === 'agent-proposed' || value.trust === 'system-derived' || value.trust === 'user-confirmed'
+        value.trust === 'agent-proposed' ||
+        value.trust === 'system-derived' ||
+        value.trust === 'user-confirmed'
           ? value.trust
           : undefined,
       sourceId: trimmed(value.sourceId),
@@ -1285,14 +1307,13 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
   }
 
-  function sanitizeWorkspaceBoardPatch(
-    partial: unknown
-  ): Partial<WorkspaceBoardDefinition> {
+  function sanitizeWorkspaceBoardPatch(partial: unknown): Partial<WorkspaceBoardDefinition> {
     const input = requireRecord(partial, 'Workspace board update')
     const sanitized: Partial<WorkspaceBoardDefinition> = {}
     if ('name' in input) sanitized.name = requireNonEmptyString(input.name, 'Workspace board name')
     if ('description' in input) sanitized.description = optionalString(input.description)
-    if ('provenance' in input) sanitized.provenance = sanitizeWorkspaceBoardProvenance(input.provenance)
+    if ('provenance' in input)
+      sanitized.provenance = sanitizeWorkspaceBoardProvenance(input.provenance)
     if ('pinned' in input) sanitized.pinned = input.pinned === true
     if ('archived' in input) sanitized.archived = input.archived === true
     if ('columns' in input && Array.isArray(input.columns)) {
@@ -1328,9 +1349,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       columnId,
       title: requireNonEmptyString(input.title, 'Workspace board card title'),
       body: optionalString(input.body),
-      sortOrder: Number.isFinite(Number(input.sortOrder))
-        ? Number(input.sortOrder)
-        : Date.now(),
+      sortOrder: Number.isFinite(Number(input.sortOrder)) ? Number(input.sortOrder) : Date.now(),
       humanOwner: optionalString(input.humanOwner),
       labels: Array.isArray(input.labels)
         ? input.labels
@@ -1351,9 +1370,13 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
   function sanitizeWorkspaceBoardCardPatch(partial: unknown): Partial<WorkspaceBoardCard> {
     const input = requireRecord(partial, 'Workspace board card update')
     const sanitized: Partial<WorkspaceBoardCard> = {}
-    if ('title' in input) sanitized.title = requireNonEmptyString(input.title, 'Workspace board card title')
+    if ('title' in input)
+      sanitized.title = requireNonEmptyString(input.title, 'Workspace board card title')
     if ('body' in input) sanitized.body = optionalString(input.body)
-    if ('columnId' in input && workspaceBoardColumnIds.has(input.columnId as WorkspaceBoardColumnId)) {
+    if (
+      'columnId' in input &&
+      workspaceBoardColumnIds.has(input.columnId as WorkspaceBoardColumnId)
+    ) {
       sanitized.columnId = input.columnId as WorkspaceBoardColumnId
     }
     if ('sortOrder' in input && Number.isFinite(Number(input.sortOrder))) {
@@ -1373,7 +1396,8 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('blockedReason' in input) sanitized.blockedReason = optionalString(input.blockedReason)
     if ('nextStep' in input) sanitized.nextStep = optionalString(input.nextStep)
     if ('reminderAt' in input) sanitized.reminderAt = optionalString(input.reminderAt)
-    if ('provenance' in input) sanitized.provenance = sanitizeWorkspaceBoardProvenance(input.provenance)
+    if ('provenance' in input)
+      sanitized.provenance = sanitizeWorkspaceBoardProvenance(input.provenance)
     if ('archived' in input) sanitized.archived = input.archived === true
     return sanitized
   }
@@ -1413,7 +1437,8 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       ? Array.from(
           new Set(
             secretRefsInput.env.filter(
-              (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+              (key): key is string =>
+                typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
             )
           )
         ).slice(0, 64)
@@ -1695,9 +1720,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         // advertised maximum instead of carrying a hidden old cap.
         sanitized.piCerebrasMaxCompletionTokens = undefined
       } else {
-        const cap = normalizePiCerebrasMaxCompletionTokens(
-          sanitized.piCerebrasMaxCompletionTokens
-        )
+        const cap = normalizePiCerebrasMaxCompletionTokens(sanitized.piCerebrasMaxCompletionTokens)
         if (cap === undefined) delete sanitized.piCerebrasMaxCompletionTokens
         else sanitized.piCerebrasMaxCompletionTokens = cap
       }
@@ -1863,7 +1886,8 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('modelUsagePanelView' in sanitized) {
       const value = sanitized.modelUsagePanelView
-      if (value !== 'plan' && value !== 'spend' && value !== 'context') delete sanitized.modelUsagePanelView
+      if (value !== 'plan' && value !== 'spend' && value !== 'context')
+        delete sanitized.modelUsagePanelView
     }
     if ('appIconVariant' in sanitized) {
       // Drop invalid ids (including the retired wwdc26 — its assets are gone, so

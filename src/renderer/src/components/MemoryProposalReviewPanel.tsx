@@ -96,8 +96,12 @@ export function MemoryProposalReviewPanel({
   const [actionError, setActionError] = useState<string | null>(null)
   const [applyNotice, setApplyNotice] = useState<string | null>(null)
   const [actingProposalId, setActingProposalId] = useState<string | null>(null)
-  const [kindFilter, setKindFilter] = useState<Set<MemoryProposalKind>>(new Set(MEMORY_PROPOSAL_KINDS))
-  const [scopeFilter, setScopeFilter] = useState<Set<MemoryProposalScope>>(new Set(MEMORY_PROPOSAL_SCOPES))
+  const [kindFilter, setKindFilter] = useState<Set<MemoryProposalKind>>(
+    new Set(MEMORY_PROPOSAL_KINDS)
+  )
+  const [scopeFilter, setScopeFilter] = useState<Set<MemoryProposalScope>>(
+    new Set(MEMORY_PROPOSAL_SCOPES)
+  )
   const [statusFilter, setStatusFilter] = useState<Set<MemoryProposalStatus>>(
     new Set(MEMORY_PROPOSAL_STATUSES)
   )
@@ -299,16 +303,12 @@ export function MemoryProposalReviewPanel({
         if (receipt?.target === 'TaskWraithSkill' || proposal.kind === 'skill_patch') {
           const skillId = result.skillId ?? receipt?.skillId
           setApplyNotice(
-            skillId
-              ? `Applied to TaskWraith skills (${skillId}).`
-              : 'Applied to TaskWraith skills.'
+            skillId ? `Applied to TaskWraith skills (${skillId}).` : 'Applied to TaskWraith skills.'
           )
         } else {
           const entryId = result.conventionEntryId ?? receipt?.conventionEntryId
           setApplyNotice(
-            entryId
-              ? `Applied to repo conventions (${entryId}).`
-              : 'Applied to repo conventions.'
+            entryId ? `Applied to repo conventions (${entryId}).` : 'Applied to repo conventions.'
           )
         }
       } catch (err) {
@@ -328,8 +328,8 @@ export function MemoryProposalReviewPanel({
         <div className="memory-proposal-review-heading">
           <div className="memory-proposal-review-title">Thread introspection</div>
           <div className="memory-proposal-review-subtitle">
-            Review distilled lessons from recent runs before they are promoted to skills, conventions,
-            or durable memory.
+            Review distilled lessons from recent runs before they are promoted to skills,
+            conventions, or durable memory.
           </div>
         </div>
         <div className="memory-proposal-review-header-controls">
@@ -361,7 +361,9 @@ export function MemoryProposalReviewPanel({
       </p>
 
       {error && <div className="settings-error memory-proposal-review-error">{error}</div>}
-      {actionError && <div className="settings-error memory-proposal-review-error">{actionError}</div>}
+      {actionError && (
+        <div className="settings-error memory-proposal-review-error">{actionError}</div>
+      )}
       {applyNotice && (
         <div className="memory-proposal-review-apply-notice" role="status">
           {applyNotice}
@@ -428,7 +430,10 @@ export function MemoryProposalReviewPanel({
 
       {allPacks.length > 1 && (
         <div className="memory-proposal-review-pack-picker">
-          <label className="memory-proposal-review-filter-label" htmlFor="memory-proposal-pack-select">
+          <label
+            className="memory-proposal-review-filter-label"
+            htmlFor="memory-proposal-pack-select"
+          >
             Proposal pack
           </label>
           <select
@@ -522,7 +527,9 @@ export function MemoryProposalReviewPanel({
                         <td colSpan={5}>
                           <div className="memory-proposal-review-detail">
                             <div className="memory-proposal-review-detail-section">
-                              <div className="memory-proposal-review-detail-title">Distilled lesson</div>
+                              <div className="memory-proposal-review-detail-title">
+                                Distilled lesson
+                              </div>
                               <div>{proposal.lesson}</div>
                               {proposal.suggestedApplyTarget && (
                                 <div className="settings-hint">
@@ -564,7 +571,9 @@ export function MemoryProposalReviewPanel({
                                 <div className="memory-proposal-review-detail-title">
                                   Proposed skill patch (preview only)
                                 </div>
-                                <pre className="memory-proposal-review-diff">{proposal.skillPatchDiff}</pre>
+                                <pre className="memory-proposal-review-diff">
+                                  {proposal.skillPatchDiff}
+                                </pre>
                               </div>
                             )}
 

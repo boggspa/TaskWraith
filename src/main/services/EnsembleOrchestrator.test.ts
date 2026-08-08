@@ -4264,7 +4264,8 @@ describe('EnsembleOrchestrator', () => {
     const { createHash } = await import('node:crypto')
     type Project = import('../../shared/projects').Project
     type ProjectReference = import('../../shared/projects').ProjectReference
-    type ProjectReferenceExtract = import('../../shared/projectReferenceExtract').ProjectReferenceExtract
+    type ProjectReferenceExtract =
+      import('../../shared/projectReferenceExtract').ProjectReferenceExtract
 
     const project: Project = {
       schemaVersion: 1,
@@ -11596,9 +11597,12 @@ Next action:
       pass: 1,
       requirement: 'later_pass_selection'
     })
-    const preserve = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'skip_intervention'
-    })
+    const preserve = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'skip_intervention'
+      }
+    )
     expect(preserve).toMatchObject({ ok: true, action: 'skip_intervention' })
     expectYielded(
       harness.orchestrator.markYielded(
@@ -13646,7 +13650,11 @@ Next action:
       harness.orchestrator as unknown as {
         roundsByChatId: Map<
           string,
-          { continuationHops: number; maxContinuationHops: number; continuationLimitPending?: boolean }
+          {
+            continuationHops: number
+            maxContinuationHops: number
+            continuationLimitPending?: boolean
+          }
         >
       }
     ).roundsByChatId.get('ensemble-chat')!
@@ -15789,11 +15797,14 @@ Next action:
     expect(harness.dispatched[0].provider).toBe('codex') // Boss speaks first
 
     // Continuous Boss must keep Worker before a quiet answer can advance.
-    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'select_participants',
-      participantRoles: ['Worker'],
-      reason: 'Keep Worker for the implementation slice.'
-    })
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker'],
+        reason: 'Keep Worker for the implementation slice.'
+      }
+    )
     expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
 
     // Boss (codex) answers without a mention.
@@ -15871,11 +15882,14 @@ Next action:
     // targetless yield is accepted. Keep Worker, then yield without a target so
     // NO yield-return frame is created: the ONLY path that can bring the Boss
     // back is the priority @-mention under test.
-    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'select_participants',
-      participantRoles: ['Worker'],
-      reason: 'Keep Worker after an explicit Boss yield.'
-    })
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker'],
+        reason: 'Keep Worker after an explicit Boss yield.'
+      }
+    )
     expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
     const bossRunId = harness.dispatched[0].appRunId!
     expectYielded(harness.orchestrator.markYielded(bossRunId, 'Worker, take it.'))
@@ -15940,11 +15954,14 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'select_participants',
-      participantRoles: ['Worker'],
-      reason: 'Keep Worker so the hop-budget note can be isolated.'
-    })
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker'],
+        reason: 'Keep Worker so the hop-budget note can be isolated.'
+      }
+    )
     expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
     const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
@@ -16018,11 +16035,14 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'select_participants',
-      participantRoles: ['Worker'],
-      reason: 'Keep Worker so the failed-run note can be isolated.'
-    })
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker'],
+        reason: 'Keep Worker so the failed-run note can be isolated.'
+      }
+    )
     expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
     const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
@@ -20419,9 +20439,14 @@ describe('staged fan-out (stageRole)', () => {
 
     await vi.waitFor(() =>
       expect(
-        harness.chat.messages.some((message) =>
-          (message.content || '').includes('Review wave complete · returning to serial writer step.') ||
-          (message.content || '').includes('Review wave complete · continuing Continuous while hops remain.')
+        harness.chat.messages.some(
+          (message) =>
+            (message.content || '').includes(
+              'Review wave complete · returning to serial writer step.'
+            ) ||
+            (message.content || '').includes(
+              'Review wave complete · continuing Continuous while hops remain.'
+            )
         )
       ).toBe(true)
     )
@@ -20430,7 +20455,8 @@ describe('staged fan-out (stageRole)', () => {
     expect(
       harness.chat.messages.some(
         (message) =>
-          typeof message.content === 'string' && message.content.includes('auto-continuing for pass')
+          typeof message.content === 'string' &&
+          message.content.includes('auto-continuing for pass')
       )
     ).toBe(true)
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
@@ -20534,9 +20560,14 @@ describe('staged fan-out (stageRole)', () => {
 
     await vi.waitFor(() =>
       expect(
-        harness.chat.messages.some((message) =>
-          (message.content || '').includes('Review wave complete · returning to serial writer step.') ||
-          (message.content || '').includes('Review wave complete · continuing Continuous while hops remain.')
+        harness.chat.messages.some(
+          (message) =>
+            (message.content || '').includes(
+              'Review wave complete · returning to serial writer step.'
+            ) ||
+            (message.content || '').includes(
+              'Review wave complete · continuing Continuous while hops remain.'
+            )
         )
       ).toBe(true)
     )
@@ -20545,7 +20576,8 @@ describe('staged fan-out (stageRole)', () => {
     expect(
       harness.chat.messages.some(
         (message) =>
-          typeof message.content === 'string' && message.content.includes('auto-continuing for pass')
+          typeof message.content === 'string' &&
+          message.content.includes('auto-continuing for pass')
       )
     ).toBe(true)
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)

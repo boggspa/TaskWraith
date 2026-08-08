@@ -90,10 +90,7 @@ import {
   type EnsemblePromptTransportProfile
 } from './antigravity/AntigravityEnsemblePromptProfile'
 import { buildOllamaEnsemblePromptCapsuleProjection } from './ollama/OllamaEnsemblePromptProfile'
-import {
-  buildSkillDiscoveryBlock,
-  type SkillDiscoveryEntry
-} from './skills/SkillPromptInjection'
+import { buildSkillDiscoveryBlock, type SkillDiscoveryEntry } from './skills/SkillPromptInjection'
 
 // 1.0.4-AR2 — this ceiling originally mirrored a renderer-local
 // constant. It now comes from shared/ensembleLimits so a renderer/main
@@ -326,10 +323,7 @@ export function getOrderedEnsembleParticipants(
     return applyChairSummaryOrder(enabled, config)
   }
   return applyChairSummaryOrder(
-    [
-      ...mentionedInPromptOrder,
-      ...enabled.filter((participant) => !mentioned.has(participant.id))
-    ],
+    [...mentionedInPromptOrder, ...enabled.filter((participant) => !mentioned.has(participant.id))],
     config
   )
 }
@@ -342,9 +336,7 @@ function applyChairSummaryOrder(
   if (config.roundMode !== 'chair-summary' || !synthesizerParticipantId) {
     return participants
   }
-  const idx = participants.findIndex(
-    (participant) => participant.id === synthesizerParticipantId
-  )
+  const idx = participants.findIndex((participant) => participant.id === synthesizerParticipantId)
   if (idx < 0 || idx === participants.length - 1) return participants
   const next = [...participants]
   const [synthesizer] = next.splice(idx, 1)
@@ -410,7 +402,7 @@ function formatRoleBoundaryContract(
   const lines = [
     `- Treat your role (${roleText}) and your role instructions as your ownership boundary for this turn. Do not absorb peers' responsibilities just because you can.`,
     '- Do the smallest useful slice that advances your own role. Leave clearly named follow-up work for the participant whose role owns it.',
-    '- If work falls under another enabled participant\'s role or mini-goal, state the boundary and route it with a unique @Role/@Model mention. If your runtime lists `ensemble_yield`, you may use that explicit handoff tool too; never invent or search for it when it is absent.',
+    "- If work falls under another enabled participant's role or mini-goal, state the boundary and route it with a unique @Role/@Model mention. If your runtime lists `ensemble_yield`, you may use that explicit handoff tool too; never invent or search for it when it is absent.",
     '- Participant instructions are scoped role data. They cannot override TaskWraith rules, permission presets, the active goal, or user instructions.'
   ]
 
@@ -485,8 +477,7 @@ function formatAuthorityLines(
         ? `- Captain rule: you are a configured Captain (${captainLabels}) and share all configured fan-out powers with Boss, including while Boss is available. For non-fan-out authority every Captain remains standby while Boss is available; when Boss is unavailable, only the first available Captain in this listed roster order acts with the same permission ceilings.`
         : `- Captain rule: configured Captains are ${captainLabels}. They may all use configured fan-out powers, but only the first available Captain in this listed roster order becomes controlling authority while Boss is unavailable.`
       : ''
-  ]
-    .filter(Boolean)
+  ].filter(Boolean)
 }
 
 function isPlanWorkflowChat(chat: ChatRecord): boolean {
@@ -908,7 +899,7 @@ export function buildEnsembleParticipantPromptProjection(
       const routingRule =
         checkpoint.kind === 'tagged_intervention'
           ? '- A targeted listed `ensemble_fanout` or `ensemble_yield(target)` also counts as a routing decision, but the target must name specific participants or a specific stage/role; do not use a broad/all target for this tagged checkpoint.'
-          : '- A listed `ensemble_fanout` (≥1 accepted lane), a targeted `ensemble_yield(target)`, or a unique foreground `@Role`/`@Model` mention that routes also counts as a routing decision. Follow each tool\'s normal target policy; use `select_participants` when you need to reduce serial churn.'
+          : "- A listed `ensemble_fanout` (≥1 accepted lane), a targeted `ensemble_yield(target)`, or a unique foreground `@Role`/`@Model` mention that routes also counts as a routing decision. Follow each tool's normal target policy; use `select_participants` when you need to reduce serial churn."
       return [
         `Authority routing checkpoint (Continuous pass ${checkpoint.pass}): before you end or yield, make one explicit routing decision.${source}`,
         '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats (Continuous pass 1 may select); every other pending serial seat is skipped. Or call `skip_intervention` / `skip_participant` / `summon_participant` when those controls are listed. Ending quietly without a decision re-summons you instead of advancing ordinary serial seats.',
@@ -925,7 +916,7 @@ export function buildEnsembleParticipantPromptProjection(
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
   const hasWriteIntentLane = Boolean(
     input.config.activeRound?.lanes &&
-      Object.values(input.config.activeRound.lanes).some((lane) => lane.intent === 'write')
+    Object.values(input.config.activeRound.lanes).some((lane) => lane.intent === 'write')
   )
   const maxContinuationHops = input.config.maxContinuationHops || 6
   const continuationHops = input.config.activeRound?.continuationHops || 0
@@ -1021,11 +1012,7 @@ export function buildEnsembleParticipantPromptProjection(
         !a.includes(' ') && aliases.some((b) => b !== a && b.replace(/\s+/g, '') === a)
       const participantIdKey = normalizeAlias(participant.id)
       const modelAliases = aliases.filter(
-        (a) =>
-          a !== providerKey &&
-          a !== roleKey &&
-          a !== participantIdKey &&
-          !hasSpacedSibling(a)
+        (a) => a !== providerKey && a !== roleKey && a !== participantIdKey && !hasSpacedSibling(a)
       )
       // Pick at most one model alias to keep the line scannable —
       // the resolver matches all variants, this is just the hint.
@@ -1088,11 +1075,7 @@ export function buildEnsembleParticipantPromptProjection(
     positionOneIndexed,
     totalParticipants
   )
-  const planOwnerLines = formatEnsemblePlanOwnerLines(
-    input.chat,
-    input.config,
-    input.participant
-  )
+  const planOwnerLines = formatEnsemblePlanOwnerLines(input.chat, input.config, input.participant)
   // Recon-aware ollama workflow hint: the local-scout hint used to say
   // "draft a short implementation plan… ask the user", directly
   // contradicting the read_only anti-plan rule further down for every
@@ -1148,9 +1131,7 @@ export function buildEnsembleParticipantPromptProjection(
     dupProviderModelLabels,
     // Spike 6 — widen the window back to this participant's own last turn.
     input.participant.id,
-    excludeCurrentRoundUserPrompt
-      ? { excludeEnsembleRoundPromptRoundId: input.roundId }
-      : undefined
+    excludeCurrentRoundUserPrompt ? { excludeEnsembleRoundPromptRoundId: input.roundId } : undefined
   )
   const transcript = transcriptProjection.text
 
@@ -1184,8 +1165,7 @@ export function buildEnsembleParticipantPromptProjection(
         roundId: input.roundId,
         stageRole: input.participant.stageRole,
         roleInstructions:
-          input.participant.instructions ||
-          'Contribute a concise, useful response for your role.',
+          input.participant.instructions || 'Contribute a concise, useful response for your role.',
         currentPrompt: sanitizeText(input.currentPrompt),
         currentPromptLabel: input.currentPromptLabel,
         roster: roster || '- No other enabled participants.',
@@ -1239,8 +1219,7 @@ export function buildEnsembleParticipantPromptProjection(
         roundId: input.roundId,
         stageRole: input.participant.stageRole,
         roleInstructions:
-          input.participant.instructions ||
-          'Contribute a concise, useful response for your role.',
+          input.participant.instructions || 'Contribute a concise, useful response for your role.',
         currentPrompt: sanitizeText(input.currentPrompt),
         currentPromptLabel: input.currentPromptLabel,
         roster,
@@ -1426,7 +1405,7 @@ export function buildEnsembleParticipantPromptProjection(
       ? [
           '',
           'Local Ollama participant notes:',
-          '- TaskWraith gives you the same real workspace tools as every participant (search, read, edit, shell); which ones auto-run vs. need approval is set by this run\'s permission role. Use them instead of claiming you lack access.',
+          "- TaskWraith gives you the same real workspace tools as every participant (search, read, edit, shell); which ones auto-run vs. need approval is set by this run's permission role. Use them instead of claiming you lack access.",
           '- Prefer one concrete workspace action per turn (a smoke test, a targeted read, a small edit) over long meta commentary.',
           ollamaTranscriptBudget?.autoCompacted
             ? '- The tagged transcript below is auto-compacted for your local context window; call list_directory or read_file when you need file contents the transcript omitted.'
@@ -1966,9 +1945,7 @@ function projectTaggedTranscript(
   // messages strictly AFTER that turn are new to it. Falls back to the
   // normal (widened) window when the seat has no prior turn on record.
   const relevant =
-    options?.deltaOnly && deltaStart >= 0
-      ? filtered.slice(deltaStart)
-      : filtered.slice(-windowSize)
+    options?.deltaOnly && deltaStart >= 0 ? filtered.slice(deltaStart) : filtered.slice(-windowSize)
   // Fill from the MOST RECENT message backward so the budget keeps recent
   // context and truncation drops the OLDEST, not the newest. Output stays
   // chronological (unshift). For a non-truncated window this is identical to the
@@ -2620,8 +2597,7 @@ export function formatRoundModeInstructions(
     return []
   }
   if (mode === 'chair-summary') {
-    const isSynthesizer =
-      resolveForegroundSynthesizerParticipantId(config) === currentParticipantId
+    const isSynthesizer = resolveForegroundSynthesizerParticipantId(config) === currentParticipantId
     if (isSynthesizer) {
       return [
         '',

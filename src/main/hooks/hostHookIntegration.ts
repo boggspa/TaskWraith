@@ -87,12 +87,7 @@ export function createHookRunEventEmitter(
   return (event) => {
     const runId = typeof options.appRunId === 'string' ? options.appRunId.trim() : ''
     if (!runId) {
-      console.debug(
-        '[hooks] run-event (no run id)',
-        event.kind,
-        event.hookId,
-        event.event
-      )
+      console.debug('[hooks] run-event (no run id)', event.kind, event.hookId, event.event)
       return
     }
     const chatId = typeof options.appChatId === 'string' ? options.appChatId.trim() : ''
@@ -238,8 +233,7 @@ export async function withHostToolHooks<T>(
     options.onHookError?.('pre', error)
     return {
       blocked: true,
-      reason:
-        error instanceof Error ? error.message : 'PreToolUse hook failed closed.'
+      reason: error instanceof Error ? error.message : 'PreToolUse hook failed closed.'
     }
   }
 

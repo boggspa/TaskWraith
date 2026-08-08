@@ -135,13 +135,9 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   // read-only-only broker) and must run in DEFAULT mode, because `--mode plan`
   // executes no tools — including the read tools the seat was just given.
   const readOnlyContained =
-    containmentAttested &&
-    !mcpToolsDenied &&
-    !writeCapable &&
-    Boolean(input.readOnlyBridgeActive)
+    containmentAttested && !mcpToolsDenied && !writeCapable && Boolean(input.readOnlyBridgeActive)
   const bridgeActive =
-    !mcpToolsDenied &&
-    ((writeCapable && Boolean(input.webBridgeActive)) || readOnlyContained)
+    !mcpToolsDenied && ((writeCapable && Boolean(input.webBridgeActive)) || readOnlyContained)
   // Read-only safety: plan mode performs no edits (proven). Write mode runs in
   // default mode; native side effects are contained by the deny-list config.
   // A read-only-contained seat also runs in default mode (contained instead).
@@ -319,8 +315,6 @@ export interface BuildContainedCursorWriteArgvInput {
  * `--approve-mcps`/`--api-key`/`--sandbox disabled`; `--force` appears only via
  * the bridge-gated `forceAllowMcpTools` input.
  */
-export function buildContainedCursorWriteArgv(
-  input: BuildContainedCursorWriteArgvInput
-): string[] {
+export function buildContainedCursorWriteArgv(input: BuildContainedCursorWriteArgvInput): string[] {
   return buildContainedCursorArgv(input, null, input.forceAllowMcpTools)
 }

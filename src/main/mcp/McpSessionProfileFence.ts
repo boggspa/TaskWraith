@@ -292,9 +292,7 @@ export function isTaskWraithMcpAuthorizedEphemeralReroute(input: {
   providerReroute?: ProviderRunReroute | null
 }): boolean {
   const reroute = input.providerReroute
-  return Boolean(
-    reroute && reroute.to === input.payloadProvider && reroute.from !== reroute.to
-  )
+  return Boolean(reroute && reroute.to === input.payloadProvider && reroute.from !== reroute.to)
 }
 
 export function createTaskWraithMcpProfileReceipt(input: {
@@ -304,7 +302,8 @@ export function createTaskWraithMcpProfileReceipt(input: {
   pinnedAt?: string
 }): TaskWraithMcpProfileReceipt {
   const providerSessionId = nonEmptyString(input.providerSessionId)
-  if (!providerSessionId) throw new Error('A provider session id is required to pin an MCP profile.')
+  if (!providerSessionId)
+    throw new Error('A provider session id is required to pin an MCP profile.')
   return {
     schemaVersion: 1,
     profileId: input.profileId,
@@ -443,9 +442,9 @@ export function taskWraithMcpRunStartedWithPinnedReceipt(input: {
   const fence = input.fence
   return Boolean(
     providerSessionId &&
-      fence?.storeWritable &&
-      nonEmptyString(fence.runStartedProviderSessionId) === providerSessionId &&
-      nonEmptyString(fence.runStartedReceiptFingerprint)
+    fence?.storeWritable &&
+    nonEmptyString(fence.runStartedProviderSessionId) === providerSessionId &&
+    nonEmptyString(fence.runStartedReceiptFingerprint)
   )
 }
 
@@ -453,8 +452,7 @@ export function isCoreTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
   return (
-    profileId === TASKWRAITH_CORE_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_CORE_V2_MCP_PROFILE_ID
+    profileId === TASKWRAITH_CORE_MCP_PROFILE_ID || profileId === TASKWRAITH_CORE_V2_MCP_PROFILE_ID
   )
 }
 

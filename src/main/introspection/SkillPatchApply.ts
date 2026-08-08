@@ -147,7 +147,10 @@ export function skillIdForProposal(proposalId: string): string {
     .slice(0, 120)
   const base = cleaned || 'proposal'
   const candidate = `intro-${base}`
-  return sanitizeSkillIdCandidate(candidate) ?? `intro-${base.replace(/[^a-zA-Z0-9]/g, '').slice(0, 100) || 'skill'}`
+  return (
+    sanitizeSkillIdCandidate(candidate) ??
+    `intro-${base.replace(/[^a-zA-Z0-9]/g, '').slice(0, 100) || 'skill'}`
+  )
 }
 
 function defaultSkillScope(pack: MemoryProposalPack): SkillScope {
@@ -308,7 +311,11 @@ export function applySkillPatch(deps: SkillPatchApplyDeps): ApplySkillPatchResul
       deps.assertWorkspacePath
     )
     if (!workspace.ok) {
-      return { ok: false, blocked: workspace.blocked, ...(workspace.error ? { error: workspace.error } : {}) }
+      return {
+        ok: false,
+        blocked: workspace.blocked,
+        ...(workspace.error ? { error: workspace.error } : {})
+      }
     }
     workspacePath = workspace.workspacePath
   }
@@ -343,13 +350,7 @@ export function applySkillPatch(deps: SkillPatchApplyDeps): ApplySkillPatchResul
   }
 
   try {
-    upsertSkill(
-      deps.skillsStore,
-      target,
-      workspacePath,
-      deps.pack.workspaceId,
-      upsertInput
-    )
+    upsertSkill(deps.skillsStore, target, workspacePath, deps.pack.workspaceId, upsertInput)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/escape|Invalid skill id/i.test(message)) {
@@ -401,12 +402,13 @@ export function rollbackSkillPatch(input: {
 
   let workspacePath: string | undefined
   if (skillScope === 'workspace') {
-    const workspace = resolveWorkspaceSkillApplyPath(
-      input.workspacePath,
-      input.assertWorkspacePath
-    )
+    const workspace = resolveWorkspaceSkillApplyPath(input.workspacePath, input.assertWorkspacePath)
     if (!workspace.ok) {
-      return { ok: false, blocked: workspace.blocked, ...(workspace.error ? { error: workspace.error } : {}) }
+      return {
+        ok: false,
+        blocked: workspace.blocked,
+        ...(workspace.error ? { error: workspace.error } : {})
+      }
     }
     workspacePath = workspace.workspacePath
   }

@@ -361,9 +361,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'video'
     case 'mcp_tool':
     case 'dynamic_tool':
-      // falls through: a bare `mcp` base means a brokered MCP call whose inner
-      // tool name couldn't be unwrapped, plus the raw call wrappers.
-      // eslint-disable-next-line no-fallthrough
+    // falls through: a bare `mcp` base means a brokered MCP call whose inner
+    // tool name couldn't be unwrapped, plus the raw call wrappers.
+    // eslint-disable-next-line no-fallthrough
     case 'mcp':
     case 'callmcptool':
     case 'call_mcp_tool':
@@ -373,7 +373,8 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
 
   // Pattern buckets — order matters (more-specific patterns first).
   if (normalised.endsWith('_thinking') || normalised.endsWith('_reasoning')) return 'reasoning'
-  if (normalised.startsWith('git_') || normalised === 'git' || normalised === 'github_ci_status') return 'git'
+  if (normalised.startsWith('git_') || normalised === 'git' || normalised === 'github_ci_status')
+    return 'git'
   if (normalised.startsWith('browser_')) return 'browser'
   if (normalised.startsWith('canvas_')) return 'canvas'
   if (normalised.startsWith('simulator_')) return 'canvas'

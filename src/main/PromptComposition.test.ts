@@ -620,9 +620,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       isGlobalRun: false,
       approvalMode: 'default',
       providerLabel: 'Codex',
-      skillDiscoverySkills: [
-        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
-      ],
+      skillDiscoverySkills: [{ id: 'deploy', name: 'Deploy', description: 'Ship the build.' }],
       sessionStartContext: 'branch=main'
     })
 
@@ -844,9 +842,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(requested.contextualPrompt).toMatch(
       /Recall example:\s*TaskWraith__delegate_to_subthread\(\{[^}]*subThreadId/
     )
-    expect(requested.contextualPrompt).not.toMatch(
-      /Recall example:\s*TaskWraith__delegate_wave/
-    )
+    expect(requested.contextualPrompt).not.toMatch(/Recall example:\s*TaskWraith__delegate_wave/)
 
     const preV13 = composeRunPrompt({
       provider: 'codex',

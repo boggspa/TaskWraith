@@ -99,7 +99,7 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
         ollama: 120_000,
         antigravity: 120_000,
         pi: 120_000,
-        mistral: 120_000,
+        mistral: 120_000
       },
       mainAuthorityMs: 30_000
     },
@@ -449,7 +449,9 @@ describe('ComposerService', () => {
   })
 
   it('rejects a new antigravity run when no Gemini API key is configured', async () => {
-    await expect(compose({ provider: 'antigravity' }, {})).rejects.toThrow('antigravity is unavailable for new runs.')
+    await expect(compose({ provider: 'antigravity' }, {})).rejects.toThrow(
+      'antigravity is unavailable for new runs.'
+    )
   })
 
   it('admits a new antigravity run once a Gemini API key is configured, with no AGY opt-in', async () => {
@@ -485,7 +487,9 @@ describe('ComposerService', () => {
     setAntigravityAgyOptInEnabledProbe(() => false)
     setAntigravityGeminiApiKeyConfiguredProbe(() => false)
     try {
-      await expect(compose({ provider: 'antigravity' }, {})).rejects.toThrow('antigravity is unavailable for new runs.')
+      await expect(compose({ provider: 'antigravity' }, {})).rejects.toThrow(
+        'antigravity is unavailable for new runs.'
+      )
     } finally {
       resetAntigravityAgyOptInEnabledProbeForTests()
       resetAntigravityGeminiApiKeyConfiguredProbeForTests()
@@ -664,7 +668,10 @@ describe('ComposerService', () => {
   })
 
   it('keeps explicit normal workflow separate from read-only plan permissions', async () => {
-    const payload = await compose({ provider: 'codex' }, { approvalMode: 'plan', workflowMode: 'normal' })
+    const payload = await compose(
+      { provider: 'codex' },
+      { approvalMode: 'plan', workflowMode: 'normal' }
+    )
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('normal')
     expect(payload.composer.workflowMode).toBe('normal')
@@ -1235,7 +1242,7 @@ describe('ComposerService', () => {
     const { deps } = makeDeps(chat)
     let released = false
     deps.resolveSessionStartContext = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 15))
+      await new Promise((resolve) => setTimeout(resolve, 15))
       released = true
       return 'session-start-stdout'
     }
@@ -1294,9 +1301,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(staleFullAccessPayload.effectivePermissions?.presetId).toBe('workspace_write')
     // Non-durable Full Access clamps to Full WS Access (auto-allow shell/file
     // for the run; sandbox drop still requires durable full_access + trust).
-    expect(staleFullAccessPayload.effectivePermissions?.agenticServices.shellCommands).toBe(
-      'allow'
-    )
+    expect(staleFullAccessPayload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
 
     const trustedChat = makeChat({ providerMetadata: { approvalMode: 'auto_edit' } })
     const { deps } = makeDeps(trustedChat)
@@ -1497,7 +1502,9 @@ describe('composeRun frozen execution-graph permission posture', () => {
         selectedModelType: 'preview:anthropic:claude-fable-5',
         approvalMode: 'auto_edit'
       })
-    ).rejects.toThrow('Execution graph permission posture cannot be applied after the model became preview-risk.')
+    ).rejects.toThrow(
+      'Execution graph permission posture cannot be applied after the model became preview-risk.'
+    )
   })
 })
 
@@ -1942,9 +1949,13 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
       path: '/outside',
       duration: 'workspace'
     })
-    const payload = await composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
-      externalPathGrants: [grant]
-    })
+    const payload = await composeUnattended(
+      { level: 'full_access', mode: 'auto_edit' },
+      undefined,
+      {
+        externalPathGrants: [grant]
+      }
+    )
     expect(payload.approvalMode).toBe('auto_edit')
     expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
     expect(payload.effectivePermissions?.readOnly).toBe(false)
@@ -2007,9 +2018,13 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
   })
 
   it('honors a verified full-access ack for GA GPT-5.6 scheduled runs (5.5 parity)', async () => {
-    const payload = await composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
-      selectedModelType: 'gpt-5.6-sol'
-    })
+    const payload = await composeUnattended(
+      { level: 'full_access', mode: 'auto_edit' },
+      undefined,
+      {
+        selectedModelType: 'gpt-5.6-sol'
+      }
+    )
 
     expect(payload.approvalMode).toBe('auto_edit')
     expect(payload.effectivePermissions?.presetId).toBe('workspace_write')

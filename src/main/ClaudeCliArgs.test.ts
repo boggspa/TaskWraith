@@ -182,9 +182,7 @@ describe('buildClaudeCliArgs', () => {
   })
 
   it('keeps empty --setting-sources by default and for suppress/tw-only posture', () => {
-    expect(buildClaudeCliArgs(base)).toEqual(
-      expect.arrayContaining(['--setting-sources', ''])
-    )
+    expect(buildClaudeCliArgs(base)).toEqual(expect.arrayContaining(['--setting-sources', '']))
     expect(
       buildClaudeCliArgs({
         ...base,

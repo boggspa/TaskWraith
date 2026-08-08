@@ -10,11 +10,7 @@
  * phase 1; skill/instruction writes remain blocked.
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import type {
-  MemoryProposal,
-  MemoryProposalPack,
-  MemoryProposalStatus
-} from '../store/types'
+import type { MemoryProposal, MemoryProposalPack, MemoryProposalStatus } from '../store/types'
 import { buildRolling24hWindow } from '../introspection/IntrospectionScheduler'
 import type {
   RunManualIntrospectionInput,
@@ -162,8 +158,9 @@ function sanitizeRunInput(
     optionalText(args.workspacePath, 4096) ?? deps.resolveCallerWorkspacePath(context)
 
   const minConfidenceRaw = Number(args.minConfidence)
-  const minConfidence =
-    Number.isFinite(minConfidenceRaw) ? Math.min(1, Math.max(0, minConfidenceRaw)) : undefined
+  const minConfidence = Number.isFinite(minConfidenceRaw)
+    ? Math.min(1, Math.max(0, minConfidenceRaw))
+    : undefined
 
   return {
     windowStart,
@@ -219,8 +216,7 @@ export function createIntrospectionToolExecutors(
       evidenceCount: result.evidenceCount,
       proposalCount: result.proposalCount,
       pack: summarizePack(result.pack),
-      note:
-        'Proposal pack created for review. Use tw_introspection_read for details. Apply remains Settings-only in phase 1.'
+      note: 'Proposal pack created for review. Use tw_introspection_read for details. Apply remains Settings-only in phase 1.'
     })
   }
 
@@ -323,6 +319,9 @@ export function createIntrospectionToolExecutors(
 }
 
 /** Default rolling window helper exposed for tests. */
-export function defaultIntrospectionWindow(nowIso: string): { windowStart: string; windowEnd: string } {
+export function defaultIntrospectionWindow(nowIso: string): {
+  windowStart: string
+  windowEnd: string
+} {
   return buildRolling24hWindow(nowIso)
 }

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  PI_READ_ONLY_TOOLS,
-  PI_WRITE_TOOLS,
-  buildPiProcessEnv,
-  buildPiRpcArgs
-} from './PiCliArgs'
+import { PI_READ_ONLY_TOOLS, PI_WRITE_TOOLS, buildPiProcessEnv, buildPiRpcArgs } from './PiCliArgs'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
@@ -148,7 +143,11 @@ describe('buildPiRpcArgs', () => {
       })
     ).toThrow(/extension path/i)
     expect(() =>
-      buildPiRpcArgs({ ...base, writeCapable: false, coordinationExtensionPath: '/tmp/extension.mjs' })
+      buildPiRpcArgs({
+        ...base,
+        writeCapable: false,
+        coordinationExtensionPath: '/tmp/extension.mjs'
+      })
     ).toThrow(/allowlist/i)
     expect(() =>
       buildPiRpcArgs({

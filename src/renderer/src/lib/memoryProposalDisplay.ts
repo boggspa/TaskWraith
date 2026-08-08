@@ -148,9 +148,7 @@ export function memoryProposalApplyHint(proposal: MemoryProposal): string {
         : 'Applied to TaskWraith skills.'
     }
     const entryId = proposal.applyReceipt?.conventionEntryId
-    return entryId
-      ? `Applied to repo conventions (${entryId}).`
-      : 'Applied to repo conventions.'
+    return entryId ? `Applied to repo conventions (${entryId}).` : 'Applied to repo conventions.'
   }
   if (canApplyMemoryProposal(proposal)) {
     if (proposal.kind === 'skill_patch') {

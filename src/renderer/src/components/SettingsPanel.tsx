@@ -39,10 +39,7 @@ import type {
   UserMcpServerTransport
 } from '../../../main/store/types'
 import type { DiffStatColors } from '../../../shared/diffStatColors'
-import {
-  DEFAULT_DIFF_STAT_COLORS,
-  normalizeDiffStatColors
-} from '../../../shared/diffStatColors'
+import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboardStatRegistry'
 import {
   summariseCliProviderEnabled,
@@ -119,7 +116,11 @@ import { ThirdPartyNoticesSettings } from './ThirdPartyNoticesSettings'
 import { ActivityReportingSettings } from './ActivityReportingSettings'
 import { NotificationBannerSettings } from './NotificationBannerSettings'
 import { ModelUsageCard } from './ModelUsageCard'
-import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable, ModelContextLengthsSettingsTable } from './ModelUsageSettingsTable'
+import {
+  ModelUsageSettingsTable,
+  ProviderApiRatesSettingsTable,
+  ModelContextLengthsSettingsTable
+} from './ModelUsageSettingsTable'
 import { SettingsModelComparisonsTable } from './SettingsModelComparisonsTable'
 import { PromptCacheSettingsSection } from './PromptCacheSettingsSection'
 import { TokenUsageChart } from './TokenUsageChart'
@@ -150,10 +151,7 @@ import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
 import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate, ModelUsageProviderId } from '../lib/usageAggregateTypes'
-import {
-  TASKWRAITH_MCP_TOOLS,
-  type TaskWraithMcpToolName
-} from '../../../main/TaskWraithMcpTools'
+import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../../../main/TaskWraithMcpTools'
 import { catalogToolAgenticService } from '../../../shared/canonicalToolCoalesce'
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
@@ -790,7 +788,6 @@ const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; help
   { value: 'epic', label: 'Epic', helper: 'Adds additional ambient scene accents.' }
 ]
 
-
 // Settings status order for the current live providers. Offer/run membership
 // remains owned by the canonical shared provider set, not this presentation list.
 const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
@@ -1008,7 +1005,8 @@ function parseUserMcpServerSecretLines(
     const line = rawLine.trim()
     if (!line) continue
     const separatorIndex = line.indexOf('=')
-    if (separatorIndex <= 0) return { names, values, error: `Secret ${label} lines must use Name=value.` }
+    if (separatorIndex <= 0)
+      return { names, values, error: `Secret ${label} lines must use Name=value.` }
     const key = line.slice(0, separatorIndex).trim()
     const val = line.slice(separatorIndex + 1)
     if (!namePattern.test(key)) {
@@ -1050,9 +1048,7 @@ function formFromRuntimeProfile(profile: RuntimeProfile): RuntimeProfileFormStat
     scope: profile.scope,
     workspaceMode: profile.workspaceMode,
     binaryPath: profile.binaryPath || '',
-    envText: formatUserMcpServerEnv(
-      omitSecretBackedFields(profile.env, profile.secretRefs?.env)
-    ),
+    envText: formatUserMcpServerEnv(omitSecretBackedFields(profile.env, profile.secretRefs?.env)),
     envSecretText: formatRuntimeProfileSecretRefs(profile.secretRefs?.env),
     approvalMode: profile.approvalMode || 'default',
     networkPolicy: profile.networkPolicy,
@@ -1206,10 +1202,7 @@ export function userMcpServerReadiness(server: UserMcpServerConfig): UserMcpServ
   }
 }
 
-export function userMcpServerMatchesQuery(
-  server: UserMcpServerConfig,
-  query: string
-): boolean {
+export function userMcpServerMatchesQuery(server: UserMcpServerConfig, query: string): boolean {
   const search = query.trim().toLowerCase()
   if (!search) return true
   const haystack = [
@@ -1271,8 +1264,7 @@ export function hasUserMcpServerNameConflict(
   const normalized = normalizeUserMcpServerName(candidateName)
   if (!normalized) return false
   return servers.some(
-    (server) =>
-      server.id !== candidateId && normalizeUserMcpServerName(server.name) === normalized
+    (server) => server.id !== candidateId && normalizeUserMcpServerName(server.name) === normalized
   )
 }
 
@@ -1643,8 +1635,7 @@ function parseCodexMcpServersToml(text: string): Record<string, Record<string, u
     const tableMatch = line.match(/^\[(.+)]$/)
     if (tableMatch) {
       const path = parseTomlDottedPath(tableMatch[1])
-      currentServerName =
-        path && path.length === 2 && path[0] === 'mcp_servers' ? path[1] : null
+      currentServerName = path && path.length === 2 && path[0] === 'mcp_servers' ? path[1] : null
       if (currentServerName && !servers[currentServerName]) servers[currentServerName] = {}
       continue
     }
@@ -1673,7 +1664,9 @@ function parseCodexMcpServersToml(text: string): Record<string, Record<string, u
 }
 
 function normalizeImportedUserMcpTransport(entry: Record<string, unknown>): UserMcpServerTransport {
-  const raw = String(entry.type || entry.transport || '').trim().toLowerCase()
+  const raw = String(entry.type || entry.transport || '')
+    .trim()
+    .toLowerCase()
   if (raw === 'sse') return 'sse'
   if (
     raw === 'http' ||
@@ -1815,10 +1808,7 @@ function userMcpServerAuditKey(server: UserMcpServerConfig): string {
   return server.name.trim() || server.id
 }
 
-function uniqueUserMcpServerAuditKey(
-  server: UserMcpServerConfig,
-  usedKeys: Set<string>
-): string {
+function uniqueUserMcpServerAuditKey(server: UserMcpServerConfig, usedKeys: Set<string>): string {
   const base = userMcpServerAuditKey(server)
   let candidate = base
   let suffix = 2
@@ -2046,11 +2036,7 @@ export function formatUserMcpServerClaudeJsonSnippet(
   server: UserMcpServerConfig,
   options: { redactValues?: boolean } = {}
 ): string {
-  const providerKey = findUserMcpServerProviderKey(
-    servers,
-    server,
-    isClaudeExportableUserMcpServer
-  )
+  const providerKey = findUserMcpServerProviderKey(servers, server, isClaudeExportableUserMcpServer)
   if (!providerKey) return ''
   return JSON.stringify(
     { mcpServers: { [providerKey]: userMcpServerProviderEntry(server, options) } },
@@ -2109,11 +2095,7 @@ export function formatUserMcpServerCursorJsonSnippet(
   server: UserMcpServerConfig,
   options: { redactValues?: boolean } = {}
 ): string {
-  const providerKey = findUserMcpServerProviderKey(
-    servers,
-    server,
-    isCursorExportableUserMcpServer
-  )
+  const providerKey = findUserMcpServerProviderKey(servers, server, isCursorExportableUserMcpServer)
   if (!providerKey) return ''
   return JSON.stringify(
     { mcpServers: { [providerKey]: userMcpServerCursorEntry(server, options) } },
@@ -2158,16 +2140,10 @@ export function formatUserMcpServersCodexToml(
   for (const server of servers) {
     if (!isCodexExportableUserMcpServer(server)) continue
     entries.push(
-      formatUserMcpServerCodexTomlEntry(
-        server,
-        userMcpServerProviderKey(server, usedKeys),
-        options
-      )
+      formatUserMcpServerCodexTomlEntry(server, userMcpServerProviderKey(server, usedKeys), options)
     )
   }
-  return entries.length > 0
-    ? entries.join('\n\n')
-    : '# No enabled Codex-compatible MCP servers.'
+  return entries.length > 0 ? entries.join('\n\n') : '# No enabled Codex-compatible MCP servers.'
 }
 
 export function formatUserMcpServerCodexTomlSnippet(
@@ -2175,11 +2151,7 @@ export function formatUserMcpServerCodexTomlSnippet(
   server: UserMcpServerConfig,
   options: { redactValues?: boolean } = {}
 ): string {
-  const providerKey = findUserMcpServerProviderKey(
-    servers,
-    server,
-    isCodexExportableUserMcpServer
-  )
+  const providerKey = findUserMcpServerProviderKey(servers, server, isCodexExportableUserMcpServer)
   return providerKey ? formatUserMcpServerCodexTomlEntry(server, providerKey, options) : ''
 }
 
@@ -2868,7 +2840,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'behavior',
     label: 'General',
     group: 'app',
-    description: 'Core app behavior, dashboard defaults, updates, approval timeouts, and desktop operations.',
+    description:
+      'Core app behavior, dashboard defaults, updates, approval timeouts, and desktop operations.',
     aliases: ['behavior', 'system', 'updates', 'timeouts', 'currency', 'dashboard', 'desktop'],
     scope: 'global'
   },
@@ -2876,7 +2849,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'appearance',
     label: 'Appearance',
     group: 'app',
-    description: 'Themes, composer shells, fonts, density, motion, transparency, and visual effects.',
+    description:
+      'Themes, composer shells, fonts, density, motion, transparency, and visual effects.',
     aliases: ['theme', 'font', 'motion', 'transparency', 'density', 'accessibility', 'composer'],
     scope: 'global'
   },
@@ -2910,14 +2884,26 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     label: 'Providers',
     group: 'ai-providers',
     description: 'Provider sign-in, runtime health, CLI/API setup, and agentic service policies.',
-    aliases: ['models', 'auth', 'login', 'codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'gemini'],
+    aliases: [
+      'models',
+      'auth',
+      'login',
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama',
+      'gemini'
+    ],
     scope: 'provider'
   },
   {
     id: 'roster',
     label: 'Ensemble roster',
     group: 'ai-providers',
-    description: 'Saved Ensemble participant presets, roles, provider chains, and orchestration defaults.',
+    description:
+      'Saved Ensemble participant presets, roles, provider chains, and orchestration defaults.',
     aliases: ['roster', 'ensemble', 'participants', 'roles', 'multi-provider', 'panel'],
     scope: 'provider'
   },
@@ -2925,7 +2911,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'agent-pool',
     label: 'Agent pool',
     group: 'ai-providers',
-    description: 'Reusable Agents — provider, model, role, icon and hue — you can add to any Ensemble preset.',
+    description:
+      'Reusable Agents — provider, model, role, icon and hue — you can add to any Ensemble preset.',
     aliases: ['agent pool', 'agents', 'pool', 'reusable agents', 'icon', 'hue', 'nickname'],
     scope: 'provider'
   },
@@ -2958,7 +2945,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'workspaces',
     label: 'Workspaces',
     group: 'workspaces',
-    description: 'Registered workspaces, launch targets, pinning, removal, and paired-device access shortcuts.',
+    description:
+      'Registered workspaces, launch targets, pinning, removal, and paired-device access shortcuts.',
     aliases: ['projects', 'folders', 'environments', 'remote access', 'workspace list'],
     scope: 'workspace'
   },
@@ -2966,7 +2954,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'mcp',
     label: 'Provider Tools',
     group: 'integrations',
-    description: 'TaskWraith MCP bridge status, built-in tool catalog, provider surfaces, and policy audit.',
+    description:
+      'TaskWraith MCP bridge status, built-in tool catalog, provider surfaces, and policy audit.',
     aliases: [
       'provider tools',
       'taskwraith tools',
@@ -2983,7 +2972,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'mcp-servers',
     label: 'MCP Servers',
     group: 'integrations',
-    description: 'User-managed MCP server definitions, enablement, transport, commands, URLs, and env vars.',
+    description:
+      'User-managed MCP server definitions, enablement, transport, commands, URLs, and env vars.',
     aliases: [
       'mcp',
       'servers',
@@ -3043,7 +3033,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'plugins',
     label: 'Plugins',
     group: 'integrations',
-    description: 'Declarative capability bundles, installed state, marketplace metadata, and preflight status.',
+    description:
+      'Declarative capability bundles, installed state, marketplace metadata, and preflight status.',
     aliases: [
       'plugins',
       'extensions',
@@ -3059,7 +3050,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'skills',
     label: 'Skills',
     group: 'integrations',
-    description: 'User and workspace skill libraries — enablement, create, delete, and Finder roots.',
+    description:
+      'User and workspace skill libraries — enablement, create, delete, and Finder roots.',
     aliases: [
       'skills',
       'skill library',
@@ -3091,7 +3083,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'local-servers',
     label: 'Local servers',
     group: 'integrations',
-    description: 'Dev servers and watchers running under workspaces, with stop and lifecycle controls.',
+    description:
+      'Dev servers and watchers running under workspaces, with stop and lifecycle controls.',
     aliases: ['localhost', 'ports', 'preview', 'vite', 'next', 'watchers', 'browser'],
     scope: 'workspace'
   },
@@ -3100,22 +3093,44 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     label: 'Devices',
     group: 'integrations',
     description: 'iPhone and iPad pairing, Tailscale, bridge networking, and push wake.',
-    aliases: ['ios', 'iphone', 'ipad', 'remote', 'pairing', 'tailscale', 'apns', 'mobile', 'bridge'],
+    aliases: [
+      'ios',
+      'iphone',
+      'ipad',
+      'remote',
+      'pairing',
+      'tailscale',
+      'apns',
+      'mobile',
+      'bridge'
+    ],
     scope: 'device'
   },
   {
     id: 'shares',
     label: 'People',
     group: 'integrations',
-    description: 'Chats you have invited people into — participants, access level, and per-chat revoke.',
-    aliases: ['share', 'shares', 'shared chats', 'collaborators', 'people', 'collaboration', 'guests', 'guest', 'invite'],
+    description:
+      'Chats you have invited people into — participants, access level, and per-chat revoke.',
+    aliases: [
+      'share',
+      'shares',
+      'shared chats',
+      'collaborators',
+      'people',
+      'collaboration',
+      'guests',
+      'guest',
+      'invite'
+    ],
     scope: 'global'
   },
   {
     id: 'safety-privacy',
     label: 'Safety & Privacy',
     group: 'data',
-    description: 'Risk posture, local history, provider data flow, mobile visibility, and grant status.',
+    description:
+      'Risk posture, local history, provider data flow, mobile visibility, and grant status.',
     aliases: [
       'privacy',
       'safety',
@@ -3215,7 +3230,8 @@ export function pluginMcpPresetServerId(pluginId: string, presetId: string): str
 }
 
 function runtimeProfileReadOnlyReason(profile: RuntimeProfile): string | null {
-  if (profile.builtin) return 'Built-in runtime profiles are read-only. Create a custom profile instead.'
+  if (profile.builtin)
+    return 'Built-in runtime profiles are read-only. Create a custom profile instead.'
   if (profile.pluginProvenance) {
     return 'Plugin runtime profiles are read-only. Disable the contributing plugin to remove this profile.'
   }
@@ -3489,12 +3505,7 @@ function SettingsProviderPauseControls({
       ...(state || {}),
       ...patch
     }
-    if (
-      !nextState.paused &&
-      !nextState.until &&
-      !nextState.reason?.trim() &&
-      !nextState.reroute
-    ) {
+    if (!nextState.paused && !nextState.until && !nextState.reason?.trim() && !nextState.reroute) {
       commitState(null)
       return
     }
@@ -3506,7 +3517,8 @@ function SettingsProviderPauseControls({
       updateState({ reroute: null })
       return
     }
-    const current = state?.reroute || ({ provider: SETTINGS_PROVIDER_ORDER[0] } as ProviderReroutePlan)
+    const current =
+      state?.reroute || ({ provider: SETTINGS_PROVIDER_ORDER[0] } as ProviderReroutePlan)
     const nextReroute = {
       ...current,
       ...patch
@@ -3555,7 +3567,9 @@ function SettingsProviderPauseControls({
               className="settings-select"
               type="datetime-local"
               value={toPauseDateTimeLocal(state?.until)}
-              onChange={(event) => updateState({ until: fromPauseDateTimeLocal(event.target.value) })}
+              onChange={(event) =>
+                updateState({ until: fromPauseDateTimeLocal(event.target.value) })
+              }
             />
           </label>
           <label>
@@ -4080,13 +4094,9 @@ export function SettingsPanel({
   const [pluginSecretError, setPluginSecretError] = useState('')
   const [pluginCatalogError, setPluginCatalogError] = useState('')
   const [pluginBusyId, setPluginBusyId] = useState<string | null>(null)
-  const [mcpServerFormMode, setMcpServerFormMode] = useState<'hidden' | 'create' | 'edit'>(
-    'hidden'
-  )
+  const [mcpServerFormMode, setMcpServerFormMode] = useState<'hidden' | 'create' | 'edit'>('hidden')
   const [editingMcpServerId, setEditingMcpServerId] = useState<string | null>(null)
-  const [mcpServerForm, setMcpServerForm] = useState<UserMcpServerFormState>(
-    emptyUserMcpServerForm
-  )
+  const [mcpServerForm, setMcpServerForm] = useState<UserMcpServerFormState>(emptyUserMcpServerForm)
   const [mcpServerFormError, setMcpServerFormError] = useState('')
   const [mcpImportOpen, setMcpImportOpen] = useState(false)
   const [mcpImportText, setMcpImportText] = useState('')
@@ -4096,9 +4106,9 @@ export function SettingsPanel({
   )
   const [runtimeProfileLoading, setRuntimeProfileLoading] = useState(false)
   const [runtimeProfileError, setRuntimeProfileError] = useState('')
-  const [runtimeProfileFormMode, setRuntimeProfileFormMode] = useState<'hidden' | 'create' | 'edit'>(
-    'hidden'
-  )
+  const [runtimeProfileFormMode, setRuntimeProfileFormMode] = useState<
+    'hidden' | 'create' | 'edit'
+  >('hidden')
   const [editingRuntimeProfileId, setEditingRuntimeProfileId] = useState<string | null>(null)
   const [runtimeProfileForm, setRuntimeProfileForm] = useState<RuntimeProfileFormState>(() =>
     emptyRuntimeProfileForm(activeProvider)
@@ -4139,8 +4149,7 @@ export function SettingsPanel({
     managedPolicyStatus,
     'userMcpServers'
   )
-  const userMcpManagedLockMessage =
-    'User MCP server editing is managed by organization policy.'
+  const userMcpManagedLockMessage = 'User MCP server editing is managed by organization policy.'
   const autoUpdateManagedLocked = isManagedPolicySettingLocked(
     managedPolicyStatus,
     'autoUpdateEnabled'
@@ -4746,9 +4755,7 @@ export function SettingsPanel({
     }
     persistUserMcpServers(
       userMcpServers.map((entry) =>
-        entry.id === server.id
-          ? { ...entry, enabled, updatedAt: new Date().toISOString() }
-          : entry
+        entry.id === server.id ? { ...entry, enabled, updatedAt: new Date().toISOString() } : entry
       )
     )
   }
@@ -5061,30 +5068,29 @@ export function SettingsPanel({
     // launch. Cursor also retains its sandbox-bounded native tools. These blocks
     // only seed the card BEFORE the contract has loaded; the static card cannot
     // claim a particular run's broker attachment state.
-    const provisionalFallback =
-      contract?.mcp
-        ? null
-        : provider === 'cursor'
+    const provisionalFallback = contract?.mcp
+      ? null
+      : provider === 'cursor'
+        ? {
+            state: 'delegated' as const,
+            source: 'provider-managed',
+            serverName: 'provider-managed',
+            toolCount: 0,
+            providerManaged: true,
+            message:
+              'Cursor Path-B runs keep native tools inside the OS sandbox and attach the governed TaskWraith broker when setup succeeds. Broker attachment is reported on the run, not by this static status card.'
+          }
+        : provider === 'grok'
           ? {
-              state: 'delegated' as const,
-              source: 'provider-managed',
-              serverName: 'provider-managed',
-              toolCount: 0,
-              providerManaged: true,
+              state: 'available' as const,
+              source: 'bridge',
+              serverName: 'TaskWraith',
+              toolCount: TASKWRAITH_MCP_TOOLS.length,
+              providerManaged: false,
               message:
-                'Cursor Path-B runs keep native tools inside the OS sandbox and attach the governed TaskWraith broker when setup succeeds. Broker attachment is reported on the run, not by this static status card.'
+                'TaskWraith registers a brokered MCP server for Grok ACP runs. Mutating MCP tools are executed by TaskWraith after approval and workspace/path checks.'
             }
-          : provider === 'grok'
-            ? {
-                state: 'available' as const,
-                source: 'bridge',
-                serverName: 'TaskWraith',
-                toolCount: TASKWRAITH_MCP_TOOLS.length,
-                providerManaged: false,
-                message:
-                  'TaskWraith registers a brokered MCP server for Grok ACP runs. Mutating MCP tools are executed by TaskWraith after approval and workspace/path checks.'
-              }
-            : null
+          : null
     const mcp = contract?.mcp
     // Provider-managed fallback surfaces are not installable TaskWraith MCP
     // servers, so they must never read as an error ("unsupported" /
@@ -5098,7 +5104,7 @@ export function SettingsPanel({
         mcp?.source === 'unsupported' ||
         Boolean(provisionalFallback?.providerManaged))
     const available = runtimeAvailabilityProvider
-      ? runtimeAvailable ?? Boolean(contract?.availability?.available)
+      ? (runtimeAvailable ?? Boolean(contract?.availability?.available))
       : Boolean(mcp?.available ?? status?.available)
     const enabled = Boolean(mcp?.enabled ?? available)
     // HARD RULE: never fabricate "installed" from mere availability for a
@@ -5113,7 +5119,7 @@ export function SettingsPanel({
       ? available
         ? 'available'
         : 'unavailable'
-      : mcp?.state ?? provisionalFallback?.state ?? (available ? 'available' : 'gated')
+      : (mcp?.state ?? provisionalFallback?.state ?? (available ? 'available' : 'gated'))
     const rawToolCount = countMcpStatusTools(status)
     const rawServerCount = countMcpStatusServers(status)
     // The Gemini API lane advertises the TaskWraith tool catalog as function
@@ -5320,7 +5326,9 @@ export function SettingsPanel({
   const activeKeyCommandCount = keyCommandRows.filter((command) => command.binding !== null).length
   const customizedKeyCommandCount = keyCommandRows.filter((command) => command.customized).length
   const conflictKeyCommandCount = keyCommandRows.filter((command) => command.conflict).length
-  const policyTone = (value: AgenticServicePolicy | AgenticNetworkPolicy): 'ok' | 'watch' | 'risk' => {
+  const policyTone = (
+    value: AgenticServicePolicy | AgenticNetworkPolicy
+  ): 'ok' | 'watch' | 'risk' => {
     if (value === 'allow') return 'risk'
     if (value === 'workspace') return 'watch'
     return 'ok'
@@ -5360,7 +5368,8 @@ export function SettingsPanel({
       value: externalPublishPolicy,
       display: agenticPolicyLabel(externalPublishPolicy),
       tone: policyTone(externalPublishPolicy),
-      description: 'Agent-routed pushes, pull requests, and release publishing require explicit approval.'
+      description:
+        'Agent-routed pushes, pull requests, and release publishing require explicit approval.'
     },
     {
       id: 'mcp',
@@ -5451,64 +5460,66 @@ export function SettingsPanel({
     action: string
     tab: SettingsTab
   }
-  const safetySurfaceRows = ([
-    {
-      id: 'history',
-      label: 'Local history and audit records',
-      scope: 'Global',
-      detail:
-        'Chats, run events, approval decisions, usage snapshots, and pinned messages are kept in TaskWraith storage on this Mac unless you delete them.',
-      action: 'Open General',
-      tab: 'behavior'
-    },
-    {
-      id: 'providers',
-      label: 'Provider accounts and usage visibility',
-      scope: 'Provider',
-      detail:
-        'TaskWraith shows provider availability and usage state, but provider sign-in remains in each provider CLI, OAuth profile, or API-key flow.',
-      action: 'Open Providers',
-      tab: 'providers'
-    },
-    {
-      id: 'mcp',
-      label: 'Provider tool surfaces',
-      scope: 'Provider',
-      detail:
-        'The TaskWraith MCP bridge exposes workspace, audit, editor, and orchestration tools according to the active service policies.',
-      action: 'Open Provider Tools',
-      tab: 'mcp'
-    },
-    {
-      id: 'mcp-servers',
-      label: 'User-managed MCP servers',
-      scope: 'Global',
-      detail:
-        'External MCP server commands, URLs, env vars, and headers are stored in TaskWraith settings and attached to supported provider launches.',
-      action: 'Open MCP Servers',
-      tab: 'mcp-servers'
-    },
-    {
-      id: 'devices',
-      label: 'Paired iOS device visibility',
-      scope: 'Device',
-      detail:
-        remoteAllowlist.length > 0
-          ? `${pluralizeCount(remoteAllowlist.length, 'workspace')} can be projected to paired devices. Remote write attempts still flow through desktop policy and approval gates.`
-          : 'No remote workspace allowlist entries are currently loaded for paired devices.',
-      action: 'Open Devices',
-      tab: 'pairing'
-    },
-    {
-      id: 'capture',
-      label: 'Window capture, browser previews, and Canvas control',
-      scope: 'Workspace',
-      detail:
-        'Screen Watch frames, browser previews, and Canvas clicks are transient tool inputs; interaction is governed by the Canvas and MCP policy rows.',
-      action: 'Open Approvals',
-      tab: 'approval-ledger'
-    }
-  ] satisfies SafetySurfaceRow[]).filter((row) => isSettingsTabVisible(row.tab))
+  const safetySurfaceRows = (
+    [
+      {
+        id: 'history',
+        label: 'Local history and audit records',
+        scope: 'Global',
+        detail:
+          'Chats, run events, approval decisions, usage snapshots, and pinned messages are kept in TaskWraith storage on this Mac unless you delete them.',
+        action: 'Open General',
+        tab: 'behavior'
+      },
+      {
+        id: 'providers',
+        label: 'Provider accounts and usage visibility',
+        scope: 'Provider',
+        detail:
+          'TaskWraith shows provider availability and usage state, but provider sign-in remains in each provider CLI, OAuth profile, or API-key flow.',
+        action: 'Open Providers',
+        tab: 'providers'
+      },
+      {
+        id: 'mcp',
+        label: 'Provider tool surfaces',
+        scope: 'Provider',
+        detail:
+          'The TaskWraith MCP bridge exposes workspace, audit, editor, and orchestration tools according to the active service policies.',
+        action: 'Open Provider Tools',
+        tab: 'mcp'
+      },
+      {
+        id: 'mcp-servers',
+        label: 'User-managed MCP servers',
+        scope: 'Global',
+        detail:
+          'External MCP server commands, URLs, env vars, and headers are stored in TaskWraith settings and attached to supported provider launches.',
+        action: 'Open MCP Servers',
+        tab: 'mcp-servers'
+      },
+      {
+        id: 'devices',
+        label: 'Paired iOS device visibility',
+        scope: 'Device',
+        detail:
+          remoteAllowlist.length > 0
+            ? `${pluralizeCount(remoteAllowlist.length, 'workspace')} can be projected to paired devices. Remote write attempts still flow through desktop policy and approval gates.`
+            : 'No remote workspace allowlist entries are currently loaded for paired devices.',
+        action: 'Open Devices',
+        tab: 'pairing'
+      },
+      {
+        id: 'capture',
+        label: 'Window capture, browser previews, and Canvas control',
+        scope: 'Workspace',
+        detail:
+          'Screen Watch frames, browser previews, and Canvas clicks are transient tool inputs; interaction is governed by the Canvas and MCP policy rows.',
+        action: 'Open Approvals',
+        tab: 'approval-ledger'
+      }
+    ] satisfies SafetySurfaceRow[]
+  ).filter((row) => isSettingsTabVisible(row.tab))
   const updateKeyCommandOverrides = (next: AppSettings['keyCommandBindings']): void => {
     onChange({ keyCommandBindings: sanitizeKeyCommandOverrides(next) })
   }
@@ -5527,7 +5538,13 @@ export function SettingsPanel({
   useEffect(() => {
     if (!recordingKeyCommandId) return
     const handleRecordingKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+      if (
+        event.key === 'Escape' &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        !event.altKey
+      ) {
         event.preventDefault()
         event.stopPropagation()
         setRecordingKeyCommandId(null)
@@ -5846,7 +5863,8 @@ export function SettingsPanel({
                   />
                 </div>
                 <p className="settings-hint">
-                  Drives the +N / -N counters in composer rows, transcript file summaries, and tool-call rows.
+                  Drives the +N / -N counters in composer rows, transcript file summaries, and
+                  tool-call rows.
                 </p>
               </div>
 
@@ -6213,9 +6231,9 @@ export function SettingsPanel({
                       </select>
                       <small>
                         How each seat&rsquo;s result card sits in the transcript when a fan-out
-                        runs, and the same two-across layout for parallel sub-thread return
-                        cards. Side by side fits twice as many lanes on screen; a lane with no
-                        neighbour still spans the full width.
+                        runs, and the same two-across layout for parallel sub-thread return cards.
+                        Side by side fits twice as many lanes on screen; a lane with no neighbour
+                        still spans the full width.
                       </small>
                     </label>
                   </section>
@@ -6308,9 +6326,9 @@ export function SettingsPanel({
                         <span>
                           Refractive glass (experimental)
                           <small>
-                            Refractive liquid-glass material on the composer, pickers and
-                            panels — replaces flat frost with a light-bending sheen + rim.
-                            Independent of Advanced FX; respects Reduce Transparency.
+                            Refractive liquid-glass material on the composer, pickers and panels —
+                            replaces flat frost with a light-bending sheen + rim. Independent of
+                            Advanced FX; respects Reduce Transparency.
                           </small>
                         </span>
                         <input
@@ -6571,8 +6589,8 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   Allows a visible summarize turn only when TaskWraith has provider-semantic
                   occupancy, a classified context overflow, or confirmed uncovered Kimi prompt
-                  material. Generic run token totals are advisory and never reset a session.
-                  Manual /compact stays available when a provider has no verified signal.
+                  material. Generic run token totals are advisory and never reset a session. Manual
+                  /compact stays available when a provider has no verified signal.
                 </p>
               </div>
 
@@ -7251,8 +7269,8 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   Per-provider deadline before an unanswered approval is auto-denied. Defaults
                   (Codex 30s, Kimi 60s, Main 60s, other live providers 120s) reflect how tolerant
-                  each runtime is of paused tool calls. Historical provider values remain stored
-                  for decode but are not editable.
+                  each runtime is of paused tool calls. Historical provider values remain stored for
+                  decode but are not editable.
                 </p>
               </div>
             </>
@@ -7337,9 +7355,7 @@ export function SettingsPanel({
                   >
                     <div className="settings-provider-auth-command">
                       <code>TaskWraith Codex sign-in</code>
-                      <span>
-                        Run once for the private Codex home used only by TaskWraith.
-                      </span>
+                      <span>Run once for the private Codex home used only by TaskWraith.</span>
                     </div>
                     <div className="settings-provider-auth-action-row">
                       {onProviderLogin && (
@@ -7370,7 +7386,11 @@ export function SettingsPanel({
                         </PillButton>
                       )}
                       {renderProviderUpgradeButton('codex')}
-                      <PillButton size="compact" variant="primary" onClick={onImportCodexUsageCredential}>
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={onImportCodexUsageCredential}
+                      >
                         Import usage session
                       </PillButton>
                       {codexUsageConfigured && (
@@ -7421,11 +7441,7 @@ export function SettingsPanel({
                       )}
                       {renderProviderUpgradeButton('claude')}
                       {claudeAuthStatus?.apiKeyConfigured && onClearClaudeApiKey && (
-                        <PillButton
-                          size="compact"
-                          variant="danger"
-                          onClick={onClearClaudeApiKey}
-                        >
+                        <PillButton size="compact" variant="danger" onClick={onClearClaudeApiKey}>
                           Clear API key
                         </PillButton>
                       )}
@@ -7465,11 +7481,7 @@ export function SettingsPanel({
                       )}
                       {renderProviderUpgradeButton('kimi')}
                       {kimiAuthStatus?.apiKeyConfigured && onClearKimiApiKey && (
-                        <PillButton
-                          size="compact"
-                          variant="danger"
-                          onClick={onClearKimiApiKey}
-                        >
+                        <PillButton size="compact" variant="danger" onClick={onClearKimiApiKey}>
                           Clear API key
                         </PillButton>
                       )}
@@ -7513,10 +7525,10 @@ export function SettingsPanel({
                       {renderProviderUpgradeButton('cursor')}
                     </div>
                     <p className="settings-provider-auth-footnote">
-                      TaskWraith stores no Cursor credential; auth stays inside the Cursor CLI.
-                      Runs use the real ~/.cursor login under a contained --sandbox argv. Eligible
-                      runs attach TaskWraith&apos;s governed broker; setup failure falls back
-                      visibly to sandboxed native tools.
+                      TaskWraith stores no Cursor credential; auth stays inside the Cursor CLI. Runs
+                      use the real ~/.cursor login under a contained --sandbox argv. Eligible runs
+                      attach TaskWraith&apos;s governed broker; setup failure falls back visibly to
+                      sandboxed native tools.
                       {renderProviderUpgradeHint('cursor')}
                     </p>
                     {renderProviderPauseControls('cursor')}
@@ -7642,9 +7654,7 @@ export function SettingsPanel({
                     geminiApiDisclosureAcceptedAt={antigravityGeminiApiDisclosureAcceptedAt}
                     geminiApiMonthlySpendCapUsd={antigravityGeminiApiMonthlySpendCapUsd}
                     onChange={onChange}
-                    onOpenLogin={
-                      onProviderLogin ? () => onProviderLogin('antigravity') : undefined
-                    }
+                    onOpenLogin={onProviderLogin ? () => onProviderLogin('antigravity') : undefined}
                   />
                 </div>
               </div>
@@ -7817,10 +7827,7 @@ export function SettingsPanel({
                       value={agenticServices.webBrowsing ?? 'ask'}
                       disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
-                        updateAgenticService(
-                          'webBrowsing',
-                          e.target.value as AgenticServicePolicy
-                        )
+                        updateAgenticService('webBrowsing', e.target.value as AgenticServicePolicy)
                       }
                     >
                       {AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
@@ -7845,10 +7852,7 @@ export function SettingsPanel({
                       value={agenticServices.sketchCanvas ?? 'allow'}
                       disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
-                        updateAgenticService(
-                          'sketchCanvas',
-                          e.target.value as AgenticServicePolicy
-                        )
+                        updateAgenticService('sketchCanvas', e.target.value as AgenticServicePolicy)
                       }
                     >
                       {AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
@@ -7986,8 +7990,8 @@ export function SettingsPanel({
                   </select>
                 </label>
                 <p className="settings-hint">
-                  When Codex hits a Swift/Xcode sandbox/tooling collision, TaskWraith can ask to rerun
-                  that exact command once from the host process.
+                  When Codex hits a Swift/Xcode sandbox/tooling collision, TaskWraith can ask to
+                  rerun that exact command once from the host process.
                 </p>
                 {codexSandboxFallbackManagedLocked && (
                   <p className="settings-hint">
@@ -8016,8 +8020,8 @@ export function SettingsPanel({
                   <span>
                     Audit role providers
                     <small>
-                      Empty keeps /audit on the parent chat provider. Select providers only when
-                      you want cross-provider audit fallback.
+                      Empty keeps /audit on the parent chat provider. Select providers only when you
+                      want cross-provider audit fallback.
                     </small>
                   </span>
                   <div
@@ -8121,7 +8125,6 @@ export function SettingsPanel({
                     disabled
                   />
                 </label>
-
               </div>
 
               <div className="settings-group">
@@ -8271,9 +8274,7 @@ export function SettingsPanel({
                           : '● Binary not found'}
                       </span>
                     ) : kimiAuthStatus.transportSupported === false ? (
-                      <span
-                        style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}
-                      >
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
                         ● Kimi Code detected — stable identity/startup/ACP compatibility checks
                         failed
                       </span>
@@ -8307,8 +8308,8 @@ export function SettingsPanel({
                   }}
                 >
                   Managed ACP authenticates from the current Kimi Code home: <code>kimi login</code>{' '}
-                  (OAuth), or a provider key in <code>~/.kimi-code/config.toml</code>. The key stored
-                  here is not projected into ACP. Structural ACP admission is always enabled;
+                  (OAuth), or a provider key in <code>~/.kimi-code/config.toml</code>. The key
+                  stored here is not projected into ACP. Structural ACP admission is always enabled;
                   compatible unreviewed runtimes run with the explicit{' '}
                   <code>unattested-development</code> label. Credentials do not bypass stable
                   identity, bounded startup, or ACP compatibility checks.
@@ -8537,18 +8538,10 @@ export function SettingsPanel({
                   >
                     Refresh
                   </PillButton>
-                  <PillButton
-                    size="compact"
-                    variant="secondary"
-                    onClick={openImportMcpServersPage}
-                  >
+                  <PillButton size="compact" variant="secondary" onClick={openImportMcpServersPage}>
                     Import config
                   </PillButton>
-                  <PillButton
-                    size="compact"
-                    variant="secondary"
-                    onClick={openCreateMcpServerPage}
-                  >
+                  <PillButton size="compact" variant="secondary" onClick={openCreateMcpServerPage}>
                     Add server
                   </PillButton>
                 </div>
@@ -8626,8 +8619,8 @@ export function SettingsPanel({
                   Connected surfaces
                 </h4>
                 <p className="settings-hint">
-                  Provider status comes from existing runtime discovery. The shared TaskWraith
-                  MCP bridge is registered for supported provider runtimes.
+                  Provider status comes from existing runtime discovery. The shared TaskWraith MCP
+                  bridge is registered for supported provider runtimes.
                 </p>
               </div>
               <div className="settings-mcp-server-grid">
@@ -8854,7 +8847,9 @@ export function SettingsPanel({
                               return (
                                 <span key={tool} className="settings-plugin-tool-bundle-tool">
                                   <code>{tool}</code>
-                                  <small>{getMcpPolicyLabel(agenticServices, meta.policyKey)}</small>
+                                  <small>
+                                    {getMcpPolicyLabel(agenticServices, meta.policyKey)}
+                                  </small>
                                 </span>
                               )
                             })}
@@ -8887,10 +8882,7 @@ export function SettingsPanel({
                         </div>
                       )}
                       {activatedConnectors.map((entry) => {
-                        const secretRows = pluginConnectorSecretSummaries(
-                          entry,
-                          pluginSecretStatus
-                        )
+                        const secretRows = pluginConnectorSecretSummaries(entry, pluginSecretStatus)
                         return (
                           <div key={entry.id} className="settings-plugin-connector-row">
                             <div>
@@ -9002,7 +8994,10 @@ export function SettingsPanel({
                   <p>
                     {activatedProviderSetup.length > 0
                       ? activatedProviderSetup
-                          .map((entry) => entry.setup.label || SETTINGS_PROVIDER_LABELS[entry.setup.provider])
+                          .map(
+                            (entry) =>
+                              entry.setup.label || SETTINGS_PROVIDER_LABELS[entry.setup.provider]
+                          )
                           .join(', ')
                       : 'No plugin provider setup metadata is active.'}
                   </p>
@@ -9036,9 +9031,7 @@ export function SettingsPanel({
               <div className="settings-mcp-management-grid">
                 <article className="settings-mcp-management-card">
                   <strong>User MCP servers</strong>
-                  <p>
-                    Add, edit, enable, and remove app-managed external MCP server definitions.
-                  </p>
+                  <p>Add, edit, enable, and remove app-managed external MCP server definitions.</p>
                   <PillButton
                     size="compact"
                     variant="secondary"
@@ -9099,8 +9092,8 @@ export function SettingsPanel({
                     servers attach to Codex and Claude launches; SSE attaches to Claude. Cursor JSON
                     remains available for configuration interchange outside TaskWraith. Managed
                     Cursor runs attach TaskWraith&apos;s built-in broker separately; these
-                    user-server records are not injected into Cursor.
-                    Remote headers are stored locally and redacted in audit JSON.
+                    user-server records are not injected into Cursor. Remote headers are stored
+                    locally and redacted in audit JSON.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -9253,7 +9246,9 @@ export function SettingsPanel({
                 <details className="settings-user-mcp-config settings-user-mcp-config-all">
                   <summary>Codex config TOML</summary>
                   <pre>
-                    <code>{formatUserMcpServersCodexToml(userMcpServers, { redactValues: true })}</code>
+                    <code>
+                      {formatUserMcpServersCodexToml(userMcpServers, { redactValues: true })}
+                    </code>
                   </pre>
                 </details>
               )}
@@ -9266,8 +9261,8 @@ export function SettingsPanel({
                     Import MCP config
                   </h4>
                   <p className="settings-hint">
-                    Paste a Claude or Cursor JSON object with a top-level mcpServers map, or a
-                    Codex TOML snippet with mcp_servers tables. Imported servers are stored as
+                    Paste a Claude or Cursor JSON object with a top-level mcpServers map, or a Codex
+                    TOML snippet with mcp_servers tables. Imported servers are stored as
                     TaskWraith-owned definitions.
                   </p>
                 </div>
@@ -9298,11 +9293,7 @@ export function SettingsPanel({
                     >
                       Import
                     </PillButton>
-                    <PillButton
-                      size="compact"
-                      variant="secondary"
-                      onClick={cancelImportMcpServers}
-                    >
+                    <PillButton size="compact" variant="secondary" onClick={cancelImportMcpServers}>
                       Cancel
                     </PillButton>
                   </div>
@@ -9318,9 +9309,8 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   These records are stored by TaskWraith. Stdio and HTTP servers are available to
                   Codex and Claude provider launch paths; SSE is available to Claude. Cursor JSON
-                  remains exportable for use outside TaskWraith. Cursor&apos;s managed Path-B
-                  launch may attach the built-in TaskWraith broker, but not these user-server
-                  records.
+                  remains exportable for use outside TaskWraith. Cursor&apos;s managed Path-B launch
+                  may attach the built-in TaskWraith broker, but not these user-server records.
                 </p>
               </div>
               {userMcpServers.length > 0 && (
@@ -9423,16 +9413,27 @@ export function SettingsPanel({
                               <span>{pluralizeCount(server.args.length, 'arg')}</span>
                             )}
                             {server.env && Object.keys(server.env).length > 0 && (
-                              <span>{pluralizeCount(Object.keys(server.env).length, 'env var')}</span>
+                              <span>
+                                {pluralizeCount(Object.keys(server.env).length, 'env var')}
+                              </span>
                             )}
                             {server.secretRefs?.env && server.secretRefs.env.length > 0 && (
-                              <span>{pluralizeCount(server.secretRefs.env.length, 'encrypted env var')}</span>
+                              <span>
+                                {pluralizeCount(server.secretRefs.env.length, 'encrypted env var')}
+                              </span>
                             )}
                             {server.headers && Object.keys(server.headers).length > 0 && (
-                              <span>{pluralizeCount(Object.keys(server.headers).length, 'header')}</span>
+                              <span>
+                                {pluralizeCount(Object.keys(server.headers).length, 'header')}
+                              </span>
                             )}
                             {server.secretRefs?.headers && server.secretRefs.headers.length > 0 && (
-                              <span>{pluralizeCount(server.secretRefs.headers.length, 'encrypted header')}</span>
+                              <span>
+                                {pluralizeCount(
+                                  server.secretRefs.headers.length,
+                                  'encrypted header'
+                                )}
+                              </span>
                             )}
                             {server.bearerTokenEnvVar && <span>bearer env</span>}
                             <span>{userMcpServerRuntimeLabel(server)}</span>
@@ -9773,18 +9774,16 @@ export function SettingsPanel({
                     />
                     <span>
                       Enabled
-                      <small>Disabled servers stay saved but are not offered to provider runs.</small>
+                      <small>
+                        Disabled servers stay saved but are not offered to provider runs.
+                      </small>
                     </span>
                   </label>
                   <div className="settings-mcp-header-actions">
                     {mcpServerFormError && (
                       <span className="settings-user-mcp-error">{mcpServerFormError}</span>
                     )}
-                    <PillButton
-                      size="compact"
-                      variant="secondary"
-                      onClick={resetMcpServerForm}
-                    >
+                    <PillButton size="compact" variant="secondary" onClick={resetMcpServerForm}>
                       Cancel
                     </PillButton>
                     <PillButton
@@ -9905,7 +9904,9 @@ export function SettingsPanel({
                             <span>{profile.persistence}</span>
                             {profile.binaryPath && <span>binary override</span>}
                             {Object.keys(profile.env ?? {}).length > 0 && (
-                              <span>{pluralizeCount(Object.keys(profile.env).length, 'env var')}</span>
+                              <span>
+                                {pluralizeCount(Object.keys(profile.env).length, 'env var')}
+                              </span>
                             )}
                             {profile.secretRefs?.env && profile.secretRefs.env.length > 0 && (
                               <span>
@@ -10008,8 +10009,8 @@ export function SettingsPanel({
                       onChange={(event) =>
                         setRuntimeProfileForm((prev) => ({
                           ...prev,
-                          workspaceMode:
-                            event.target.value as RuntimeProfileFormState['workspaceMode']
+                          workspaceMode: event.target
+                            .value as RuntimeProfileFormState['workspaceMode']
                         }))
                       }
                     >
@@ -10040,8 +10041,8 @@ export function SettingsPanel({
                       onChange={(event) =>
                         setRuntimeProfileForm((prev) => ({
                           ...prev,
-                          networkPolicy:
-                            event.target.value as RuntimeProfileFormState['networkPolicy']
+                          networkPolicy: event.target
+                            .value as RuntimeProfileFormState['networkPolicy']
                         }))
                       }
                     >
@@ -10058,8 +10059,7 @@ export function SettingsPanel({
                       onChange={(event) =>
                         setRuntimeProfileForm((prev) => ({
                           ...prev,
-                          persistence:
-                            event.target.value as RuntimeProfileFormState['persistence']
+                          persistence: event.target.value as RuntimeProfileFormState['persistence']
                         }))
                       }
                     >
@@ -10328,8 +10328,7 @@ export function SettingsPanel({
                                     size="compact"
                                     variant="secondary"
                                     disabled={
-                                      userMcpServersManagedLocked ||
-                                      (presetState?.disabled ?? true)
+                                      userMcpServersManagedLocked || (presetState?.disabled ?? true)
                                     }
                                     onClick={() => addPluginMcpPreset(pluginId, preset.id)}
                                     title={
@@ -10585,7 +10584,8 @@ export function SettingsPanel({
                             {recordingKeyCommandId === command.id && (
                               <div className="settings-key-command-recording" role="status">
                                 <span>
-                                  {keyCommandRecordError || 'Press a new shortcut, or Esc to cancel.'}
+                                  {keyCommandRecordError ||
+                                    'Press a new shortcut, or Esc to cancel.'}
                                 </span>
                               </div>
                             )}
@@ -10701,10 +10701,7 @@ export function SettingsPanel({
               </div>
               <div className="settings-safety-policy-list">
                 {safetyPolicyRows.map((row) => (
-                  <article
-                    key={row.id}
-                    className={`settings-safety-policy-row tone-${row.tone}`}
-                  >
+                  <article key={row.id} className={`settings-safety-policy-row tone-${row.tone}`}>
                     <div className="settings-safety-policy-main">
                       <strong>{row.label}</strong>
                       <p>{row.description}</p>
@@ -10888,11 +10885,7 @@ export function SettingsPanel({
                   >
                     Verify audit bundle
                   </PillButton>
-                  <PillButton
-                    size="compact"
-                    variant="secondary"
-                    onClick={onRepairProductInstall}
-                  >
+                  <PillButton size="compact" variant="secondary" onClick={onRepairProductInstall}>
                     Repair install
                   </PillButton>
                 </div>
@@ -11008,8 +11001,8 @@ export function SettingsPanel({
                       productOperationsStatus.auditReceipts.hashes.messageFeedbackCastingSignals
                     )}
                     . Audit bundle verification receipts:{' '}
-                    {productOperationsStatus.auditReceipts.counts.auditBundleVerifications} retained;
-                    hash{' '}
+                    {productOperationsStatus.auditReceipts.counts.auditBundleVerifications}{' '}
+                    retained; hash{' '}
                     {shortAuditHash(
                       productOperationsStatus.auditReceipts.hashes.auditBundleVerifications
                     )}
@@ -11082,8 +11075,8 @@ export function SettingsPanel({
                                   {String(receipt.verifiedAt || 'unknown time')}
                                 </strong>
                                 <span>
-                                  {String(receipt.tamperEvidence || 'unknown evidence')} ·
-                                  signature {signatureLabel}
+                                  {String(receipt.tamperEvidence || 'unknown evidence')} · signature{' '}
+                                  {signatureLabel}
                                 </span>
                                 <div className="settings-mcp-server-meta">
                                   {receiptHash && (
@@ -11095,7 +11088,8 @@ export function SettingsPanel({
                                   )}
                                   {receipt.payloadHashValid !== undefined && (
                                     <span>
-                                      payload {auditBundleCheckLabel(receipt.payloadHashValid === true)}
+                                      payload{' '}
+                                      {auditBundleCheckLabel(receipt.payloadHashValid === true)}
                                     </span>
                                   )}
                                   {receipt.sectionHashesValid !== undefined && (
@@ -11169,18 +11163,10 @@ export function SettingsPanel({
                   ))}
                 </div>
                 <div className="settings-option-list settings-option-list-inline">
-                  <PillButton
-                    size="compact"
-                    variant="secondary"
-                    onClick={onDryRunAuditRetention}
-                  >
+                  <PillButton size="compact" variant="secondary" onClick={onDryRunAuditRetention}>
                     Dry-run retention
                   </PillButton>
-                  <PillButton
-                    size="compact"
-                    variant="danger"
-                    onClick={onPurgeAuditRetention}
-                  >
+                  <PillButton size="compact" variant="danger" onClick={onPurgeAuditRetention}>
                     Purge expired evidence
                   </PillButton>
                 </div>

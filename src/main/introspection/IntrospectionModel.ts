@@ -165,9 +165,8 @@ export function normalizeMemoryProposalApplyReceipt(
 
   if (input.target === 'TaskWraithSkill') {
     const skillId = text(input.skillId, 128)
-    const skillScope = input.skillScope === 'user' || input.skillScope === 'workspace'
-      ? input.skillScope
-      : null
+    const skillScope =
+      input.skillScope === 'user' || input.skillScope === 'workspace' ? input.skillScope : null
     if (!skillId || !skillScope) return null
     const rollbackRaw =
       input.rollbackSnapshot && typeof input.rollbackSnapshot === 'object'
@@ -233,7 +232,9 @@ export function normalizeIntrospectionEvidenceRef(value: unknown): Introspection
   }
 }
 
-export function normalizeIntrospectionEvidenceItem(value: unknown): IntrospectionEvidenceItem | null {
+export function normalizeIntrospectionEvidenceItem(
+  value: unknown
+): IntrospectionEvidenceItem | null {
   if (!value || typeof value !== 'object') return null
   const input = value as Partial<IntrospectionEvidenceItem>
   const id = text(input.id, 120)
@@ -274,10 +275,8 @@ export function normalizeMemoryProposal(value: unknown): MemoryProposal | null {
   const nowIso = new Date().toISOString()
   if (!id || !title || !lesson || !dedupKey) return null
   if (!kind || !PROPOSAL_KINDS.has(kind)) return null
-  const resolvedScope =
-    scope && PROPOSAL_SCOPES.has(scope) ? scope : defaultScopeForKind(kind)
-  const resolvedStatus =
-    status && PROPOSAL_STATUSES.has(status) ? status : 'proposed'
+  const resolvedScope = scope && PROPOSAL_SCOPES.has(scope) ? scope : defaultScopeForKind(kind)
+  const resolvedStatus = status && PROPOSAL_STATUSES.has(status) ? status : 'proposed'
   const confidence = clamp01(input.confidence, 0.5)
   const evidenceRefs = arr<unknown>(input.evidenceRefs)
     .map((ref) => normalizeIntrospectionEvidenceRef(ref))
@@ -311,7 +310,9 @@ export function normalizeMemoryProposal(value: unknown): MemoryProposal | null {
     ...(text(input.expiresAt, 64) ? { expiresAt: text(input.expiresAt, 64) } : {}),
     ...(text(input.supersedesId, 120) ? { supersedesId: text(input.supersedesId, 120) } : {}),
     ...(text(input.supersededById, 120) ? { supersededById: text(input.supersededById, 120) } : {}),
-    ...(text(input.reviewNote, MAX_SUMMARY) ? { reviewNote: text(input.reviewNote, MAX_SUMMARY) } : {}),
+    ...(text(input.reviewNote, MAX_SUMMARY)
+      ? { reviewNote: text(input.reviewNote, MAX_SUMMARY) }
+      : {}),
     ...(text(input.appliedAt, 64) ? { appliedAt: text(input.appliedAt, 64) } : {}),
     ...(applyReceipt ? { applyReceipt } : {})
   }

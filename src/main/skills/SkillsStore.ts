@@ -43,11 +43,7 @@ function realpathNative(input: string): string {
  * Lexical + realpath containment under an intended skills root.
  * Rejects skill-dir symlink escapes that leave the root after resolution.
  */
-function assertContainedUnderSkillsRoot(
-  candidate: string,
-  root: string,
-  label: string
-): string {
+function assertContainedUnderSkillsRoot(candidate: string, root: string, label: string): string {
   const resolvedRoot = path.resolve(root)
   const resolvedCandidate = path.resolve(candidate)
   if (!pathWithinRoot(resolvedCandidate, resolvedRoot)) {

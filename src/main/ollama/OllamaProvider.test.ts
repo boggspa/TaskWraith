@@ -143,7 +143,11 @@ function ollamaStreamResponse(lines: string[]): any {
   }
 }
 
-function delayedOllamaStreamResponse(firstLine: string, gate: Promise<void>, laterLines: string[]): any {
+function delayedOllamaStreamResponse(
+  firstLine: string,
+  gate: Promise<void>,
+  laterLines: string[]
+): any {
   const encoder = new TextEncoder()
   return {
     ok: true,
@@ -166,9 +170,7 @@ function makeProviderDeps(
     executeTool?: OllamaProviderDeps['executeTool']
     createHostCommandProjection?: OllamaProviderDeps['createHostCommandProjection']
     canAdmitTransport?: (runId: string | undefined, requireExistingRun?: boolean) => boolean
-    claimedTerminalStatus?: (
-      runId: string | undefined
-    ) => 'failed' | 'cancelled' | undefined
+    claimedTerminalStatus?: (runId: string | undefined) => 'failed' | 'cancelled' | undefined
     settings?: Record<string, unknown>
   } = {}
 ): {
@@ -609,8 +611,7 @@ describe('runOllamaProvider streaming', () => {
     expect(
       lines.some(
         (line) =>
-          line.payload.type === 'tool_result' &&
-          line.payload.tool_name === 'workspace_search'
+          line.payload.type === 'tool_result' && line.payload.tool_name === 'workspace_search'
       )
     ).toBe(false)
     expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
@@ -758,8 +759,7 @@ describe('runOllamaProvider streaming', () => {
     expect(
       lines.some(
         (line) =>
-          line.payload.type === 'tool_result' &&
-          line.payload.tool_name === 'workspace_search'
+          line.payload.type === 'tool_result' && line.payload.tool_name === 'workspace_search'
       )
     ).toBe(false)
     expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
@@ -774,9 +774,9 @@ describe('runOllamaProvider streaming', () => {
       sendLine(sender, provider, line, route)
     }
 
-    await expect(
-      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
-    ).rejects.toThrow('result projection failed')
+    await expect(runOllamaProvider(deps, stubEvent, basePayload, baseRoute)).rejects.toThrow(
+      'result projection failed'
+    )
 
     expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'completed' }])
   })
@@ -808,9 +808,9 @@ describe('runOllamaProvider streaming', () => {
       throw new Error('error projection failed')
     }
 
-    await expect(
-      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
-    ).rejects.toThrow('error projection failed')
+    await expect(runOllamaProvider(deps, stubEvent, basePayload, baseRoute)).rejects.toThrow(
+      'error projection failed'
+    )
 
     expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'failed' }])
   })
@@ -841,9 +841,9 @@ describe('runOllamaProvider streaming', () => {
       throw new Error('exit projection failed')
     }
 
-    await expect(
-      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
-    ).rejects.toThrow('exit projection failed')
+    await expect(runOllamaProvider(deps, stubEvent, basePayload, baseRoute)).rejects.toThrow(
+      'exit projection failed'
+    )
 
     expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'cancelled' }])
   })
@@ -865,9 +865,9 @@ describe('runOllamaProvider streaming', () => {
       sendLine(sender, provider, line, route)
     }
 
-    await expect(
-      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
-    ).rejects.toThrow('graph result projection failed')
+    await expect(runOllamaProvider(deps, stubEvent, basePayload, baseRoute)).rejects.toThrow(
+      'graph result projection failed'
+    )
 
     expect(runManager.get('run-ollama-1')?.status).toBe('completed')
     expect(runManager.getTerminalJoinState('run-ollama-1')).toEqual({
@@ -931,7 +931,8 @@ describe('runOllamaProvider streaming', () => {
           JSON.stringify({
             message: {
               role: 'assistant',
-              content: 'I will follow the ensemble role contract and continue with the assigned slice.'
+              content:
+                'I will follow the ensemble role contract and continue with the assigned slice.'
             }
           }),
           JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 2 })
@@ -1024,7 +1025,8 @@ describe('runOllamaProvider streaming', () => {
           JSON.stringify({
             message: {
               role: 'assistant',
-              content: 'I found the relevant ensemble prompt lines and will stay within my assigned role.'
+              content:
+                'I found the relevant ensemble prompt lines and will stay within my assigned role.'
             }
           }),
           JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 12 })
@@ -1141,10 +1143,7 @@ describe('runOllamaProvider streaming', () => {
       baseRoute
     )
 
-    expect(deps.getOllamaSessionMemory).toHaveBeenCalledWith(
-      'chat-ollama-1',
-      'ensemble:lfm-seat'
-    )
+    expect(deps.getOllamaSessionMemory).toHaveBeenCalledWith('chat-ollama-1', 'ensemble:lfm-seat')
     expect(deps.saveOllamaSessionMemory).toHaveBeenCalledWith(
       'chat-ollama-1',
       expect.objectContaining({
@@ -1195,9 +1194,7 @@ describe('runOllamaProvider streaming', () => {
             JSON.stringify({
               message: {
                 role: 'assistant',
-                tool_calls: [
-                  { function: { name: 'capability_invoke', arguments: toolArgs } }
-                ]
+                tool_calls: [{ function: { name: 'capability_invoke', arguments: toolArgs } }]
               }
             }),
             JSON.stringify({ done: true, prompt_eval_count: 20, eval_count: 8 })
@@ -1678,7 +1675,9 @@ describe('runOllamaProvider streaming', () => {
 
     expect(chatCalls).toBe(3)
     expect(unloadCalls).toBe(1)
-    expect(lines.filter((line) => line.payload.id === 'ollama-chat-transport-retry')).toHaveLength(2)
+    expect(lines.filter((line) => line.payload.id === 'ollama-chat-transport-retry')).toHaveLength(
+      2
+    )
     expect(errors).toHaveLength(1)
     expect(errors[0].error).toContain('Ollama connection dropped')
     expect(errors[0].error).toContain('memory pressure')
@@ -1736,7 +1735,9 @@ describe('runOllamaProvider streaming', () => {
 
     expect(chatCalls).toBe(3)
     expect(unloadCalls).toBe(1)
-    expect(errors).toEqual([{ provider: 'ollama', error: 'Ollama run cancelled.', route: baseRoute }])
+    expect(errors).toEqual([
+      { provider: 'ollama', error: 'Ollama run cancelled.', route: baseRoute }
+    ])
     expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
     expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'cancelled' })
   })
@@ -1825,8 +1826,7 @@ describe('runOllamaProvider streaming', () => {
           JSON.stringify({
             message: {
               role: 'assistant',
-              content:
-                '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"README.md"}}}'
+              content: '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"README.md"}}}'
             }
           }),
           JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
@@ -2202,7 +2202,9 @@ describe('runOllamaProvider streaming', () => {
     expect(lifecycleEvents).toEqual(['run', 'complete-after-tool-result'])
 
     const ordered = lines
-      .filter((line) => ['content', 'tool_use', 'tool_result', 'result'].includes(line.payload.type))
+      .filter((line) =>
+        ['content', 'tool_use', 'tool_result', 'result'].includes(line.payload.type)
+      )
       .map((line) =>
         line.payload.type === 'content' ? `content:${line.payload.text}` : line.payload.type
       )
@@ -2288,7 +2290,9 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     const rawToolResults = lines
-      .filter((line) => line.payload.type === 'tool_result' && line.payload.tool_name === 'update_goal')
+      .filter(
+        (line) => line.payload.type === 'tool_result' && line.payload.tool_name === 'update_goal'
+      )
       .map((line) => line.payload.output)
     expect(rawToolResults).toEqual([
       '{"ok":false,"tool":"update_goal","error":"No active TaskWraith goal is set for this chat."}'
@@ -2296,9 +2300,7 @@ describe('runOllamaProvider streaming', () => {
     expect(JSON.stringify(chatBodies[1].messages)).toContain('Do NOT call update_goal')
     expect(JSON.stringify(chatBodies[1].messages)).toContain('not todo lists')
     expect(
-      lines
-        .filter((line) => line.payload.type === 'content')
-        .map((line) => line.payload.text)
+      lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
     ).toEqual(['I will continue locally with the available workspace tools.'])
     expect(
       lines.some(
@@ -2399,9 +2401,7 @@ describe('runOllamaProvider streaming', () => {
     expect(chatBodies[1]).toContain('assigned ensemble slice')
     expect(chatBodies[1]).toContain('role / authority boundary from the capsule')
     expect(
-      lines
-        .filter((line) => line.payload.type === 'content')
-        .map((line) => line.payload.text)
+      lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
     ).toEqual(['I will continue within my assigned ensemble slice.'])
   })
 
@@ -2455,7 +2455,10 @@ describe('runOllamaProvider streaming', () => {
     try {
       const thinkingUse = lines.find((line) => line.payload.tool_name === 'ollama_thinking')
       const thinkingResults = lines
-        .filter((line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_result')
+        .filter(
+          (line) =>
+            line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_result'
+        )
         .map((line) => line.payload.output)
       expect(thinkingUse?.payload.type).toBe('tool_use')
       expect(thinkingResults).toEqual(['Reasoning about the public answer. '])
@@ -2468,14 +2471,19 @@ describe('runOllamaProvider streaming', () => {
     if (assertionError) throw assertionError
 
     const thinkingResults = lines
-      .filter((line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_result')
+      .filter(
+        (line) =>
+          line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_result'
+      )
       .map((line) => line.payload.output)
     expect(thinkingResults).toEqual([
       'Reasoning about the public answer. ',
       'Reasoning about the public answer. Done.'
     ])
     expect(
-      lines.filter((line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_use')
+      lines.filter(
+        (line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_use'
+      )
     ).toHaveLength(1)
   })
 
@@ -2615,7 +2623,10 @@ describe('runOllamaProvider streaming', () => {
       }
       throw new Error(`unexpected fetch ${url}`)
     })
-    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool: async () => ({ ok: true, output: '' }) })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      executeTool: async () => ({ ok: true, output: '' })
+    })
 
     await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
 
@@ -2733,7 +2744,9 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(6)
     expect(chatCalls).toBe(6)
-    expect(chatBodies.filter((body) => body.includes('Change approach now')).length).toBeGreaterThanOrEqual(3)
+    expect(
+      chatBodies.filter((body) => body.includes('Change approach now')).length
+    ).toBeGreaterThanOrEqual(3)
     expect(chatBodies.some((body) => body.includes('failed the same way repeatedly'))).toBe(true)
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2954,7 +2967,10 @@ describe('runOllamaProvider streaming', () => {
       }
       throw new Error(`unexpected fetch ${url}`)
     })
-    const { deps } = makeProviderDeps({ fetchMock, executeTool: async () => ({ ok: true, output: '' }) })
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      executeTool: async () => ({ ok: true, output: '' })
+    })
 
     await runOllamaProvider(
       deps,
@@ -3104,7 +3120,9 @@ describe('runOllamaProvider streaming', () => {
           ])
         }
         return ollamaStreamResponse([
-          JSON.stringify({ message: { role: 'assistant', content: 'Answering directly instead.' } }),
+          JSON.stringify({
+            message: { role: 'assistant', content: 'Answering directly instead.' }
+          }),
           JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 4 })
         ])
       }
@@ -3228,23 +3246,17 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('ornith:9b')).toBe('Ornith 1.0 (9B Param)')
     expect(humanizeOllamaModelId('ornith:35b')).toBe('Ornith 1.0 (35B Param)')
     expect(humanizeOllamaModelId('ornith:35b-q4_K_M')).toBe('Ornith 1.0 (35B Param)')
-    expect(humanizeOllamaModelId('laguna-xs-2.1:q8_0')).toBe(
-      'Laguna XS 2.1 (33B-A3B Q8)'
-    )
+    expect(humanizeOllamaModelId('laguna-xs-2.1:q8_0')).toBe('Laguna XS 2.1 (33B-A3B Q8)')
     expect(humanizeOllamaModelId('gpt-oss')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('gpt-oss:20b')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('gpt-oss:latest')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
     expect(humanizeOllamaModelId('granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
-    expect(humanizeOllamaModelId('nemotron3:33b')).toBe(
-      'Nemotron 3 Nano Omni (33B Param)'
-    )
+    expect(humanizeOllamaModelId('nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
     expect(humanizeOllamaModelId('llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
     expect(humanizeOllamaModelId('deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
     expect(humanizeOllamaModelId('rnj-1:latest')).toBe('Rnj-1 (8B Param)')
-    expect(humanizeOllamaModelId('glm-4.7-flash:q4_K_M')).toBe(
-      'GLM-4.7-Flash (30B-A3B Q4)'
-    )
+    expect(humanizeOllamaModelId('glm-4.7-flash:q4_K_M')).toBe('GLM-4.7-Flash (30B-A3B Q4)')
     expect(humanizeOllamaModelId('north-mini-code-1.0:q4_K_M')).toBe(
       'North Mini Code 1.0 (30B-A3B Q4)'
     )
@@ -3467,7 +3479,9 @@ describe('parseOllamaToolRequest', () => {
 
   it('accepts the virtual tool_help lookup (not in the catalog)', () => {
     expect(
-      parseOllamaToolRequest('{"taskwraith_tool":{"name":"tool_help","arguments":{"name":"git_push"}}}')
+      parseOllamaToolRequest(
+        '{"taskwraith_tool":{"name":"tool_help","arguments":{"name":"git_push"}}}'
+      )
     ).toEqual({
       toolName: 'tool_help',
       arguments: { name: 'git_push' }
@@ -3662,9 +3676,11 @@ describe('parseOllamaToolRequest', () => {
     expect(canonicalizeOllamaToolArguments('blackboard_read', { keys: 'jokes-count' })).toEqual({
       keys: ['jokes-count']
     })
-    expect(canonicalizeOllamaToolArguments('delete_path', { file_path: 'gone.txt' })).toMatchObject({
-      path: 'gone.txt'
-    })
+    expect(canonicalizeOllamaToolArguments('delete_path', { file_path: 'gone.txt' })).toMatchObject(
+      {
+        path: 'gone.txt'
+      }
+    )
     expect(validateOllamaToolArguments('blackboard_read', { keys: 'jokes-count' }).ok).toBe(false)
     expect(
       validateOllamaToolArguments(
@@ -3962,9 +3978,9 @@ describe('parseOllamaToolRequest', () => {
         'We need to produce a response as Ollama / Qwen36 (qwen3.6:35b). The system says Qwen36 already spoke in this turn-bound round.'
       )
     ).toBe(true)
-    expect(looksLikeOllamaPromptRestatement('I found the matching file and can now patch it.')).toBe(
-      false
-    )
+    expect(
+      looksLikeOllamaPromptRestatement('I found the matching file and can now patch it.')
+    ).toBe(false)
   })
 
   it('detects tool-intent stubs that announce a tool without calling it', () => {
@@ -4388,7 +4404,9 @@ describe('repeated-tool-call guard', () => {
   it('flags a second identical call with an unchanged result', () => {
     const sigs = new Map<string, OllamaToolCallSignatureEntry>()
     const args = { path: 'test_kimi_datetime.py' }
-    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'FILE BODY').repeated).toBe(false)
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'FILE BODY').repeated).toBe(
+      false
+    )
     expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'FILE BODY').repeated).toBe(true)
   })
 
@@ -4406,9 +4424,9 @@ describe('repeated-tool-call guard', () => {
     const sigs = new Map<string, OllamaToolCallSignatureEntry>()
     evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'A')
     evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'b.py' }, 'B')
-    expect(
-      evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'A').repeated
-    ).toBe(true)
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'A').repeated).toBe(
+      true
+    )
   })
 
   it('keys different tools and different args separately', () => {

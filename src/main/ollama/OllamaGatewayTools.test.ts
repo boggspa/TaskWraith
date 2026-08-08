@@ -49,15 +49,14 @@ describe('Ollama capability gateway exposure', () => {
     const definitions = ollamaNativeToolDefinitions('provider_parity')
     const names = definitions.map((definition) => definition.function.name)
     expect(names).toContain(OLLAMA_TOOL_HELP_NAME)
-    expect(names.indexOf(OLLAMA_TOOL_HELP_NAME)).toBeGreaterThan(
-      names.indexOf('capability_invoke')
-    )
-    expect(definitions.find((definition) => definition.function.name === OLLAMA_TOOL_HELP_NAME))
-      .toMatchObject({
-        function: {
-          parameters: { properties: { name: { type: 'string' } } }
-        }
-      })
+    expect(names.indexOf(OLLAMA_TOOL_HELP_NAME)).toBeGreaterThan(names.indexOf('capability_invoke'))
+    expect(
+      definitions.find((definition) => definition.function.name === OLLAMA_TOOL_HELP_NAME)
+    ).toMatchObject({
+      function: {
+        parameters: { properties: { name: { type: 'string' } } }
+      }
+    })
   })
 
   it('keeps gateway discovery available to a read-only local seat', () => {
@@ -114,32 +113,18 @@ describe('Ollama capability gateway exposure', () => {
   })
 
   it.each([
-    [
-      'capability_search',
-      { query: 'trim video', limit: 2 }
-    ],
-    [
-      'capability_invoke',
-      { name: 'video_thumbnail', arguments: { inputPath: 'clip.mov' } }
-    ],
+    ['capability_search', { query: 'trim video', limit: 2 }],
+    ['capability_invoke', { name: 'video_thumbnail', arguments: { inputPath: 'clip.mov' } }],
     [OLLAMA_TOOL_HELP_NAME, { name: 'video_thumbnail' }]
   ] as const)('accepts %s through the JSON fallback protocol', (name, args) => {
     expect(
-      parseOllamaToolRequest(
-        JSON.stringify({ taskwraith_tool: { name, arguments: args } })
-      )
+      parseOllamaToolRequest(JSON.stringify({ taskwraith_tool: { name, arguments: args } }))
     ).toEqual({ toolName: name, arguments: args })
   })
 
   it.each([
-    [
-      'capability_search',
-      { query: 'inspect media' }
-    ],
-    [
-      'capability_invoke',
-      { name: 'inspect_chat_attachment', arguments: { ref: 'attachment-1' } }
-    ],
+    ['capability_search', { query: 'inspect media' }],
+    ['capability_invoke', { name: 'inspect_chat_attachment', arguments: { ref: 'attachment-1' } }],
     [OLLAMA_TOOL_HELP_NAME, { name: 'inspect_chat_attachment' }]
   ] as const)('accepts %s through native Ollama tool calls', (name, args) => {
     expect(normalizeOllamaNativeToolCall({ function: { name, arguments: args } })).toEqual({

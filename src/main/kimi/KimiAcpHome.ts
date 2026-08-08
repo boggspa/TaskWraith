@@ -217,10 +217,7 @@ export async function prepareKimiIsolatedHome(
   try {
     await fs.mkdir(boundaryRoot)
     let boundaryStat = await fs.lstat(boundaryRoot)
-    if (
-      !boundaryStat.isDirectory() ||
-      boundaryStat.isSymbolicLink()
-    ) {
+    if (!boundaryStat.isDirectory() || boundaryStat.isSymbolicLink()) {
       throw new Error('the isolated-home root is not a private real directory')
     }
     await fs.chmod(boundaryRoot, 0o700)
@@ -439,9 +436,7 @@ export async function prepareKimiIsolatedHome(
     // posture: suppress/tw-only (default) create an empty skills dir; allow-native
     // skips that clamp so the seat does not actively wipe native skills.
     await fs.mkdir(fs.join(homeDir, 'plugins'))
-    const emptySkills = input.harnessPosture
-      ? kimiShouldEmptySkillsDir(input.harnessPosture)
-      : true
+    const emptySkills = input.harnessPosture ? kimiShouldEmptySkillsDir(input.harnessPosture) : true
     if (emptySkills) {
       await fs.mkdir(fs.join(homeDir, 'skills'))
     }
@@ -466,7 +461,8 @@ export async function prepareKimiIsolatedHome(
       home: homeDir,
       env: { KIMI_CODE_HOME: homeDir },
       ...(modelContextWindow ? { modelContextWindow } : {}),
-      noteProviderProcess: (pid) => oauthCredentialLease?.noteProviderProcess(pid) ?? Promise.resolve(),
+      noteProviderProcess: (pid) =>
+        oauthCredentialLease?.noteProviderProcess(pid) ?? Promise.resolve(),
       cleanup
     }
   } catch (error) {

@@ -826,10 +826,7 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'glm-4.7-flash:q4_k_m' || key.startsWith('glm-4.7-flash:q4_k_m-')) {
     return 'GLM-4.7-Flash (30B-A3B Q4)'
   }
-  if (
-    key === 'north-mini-code-1.0:q4_k_m' ||
-    key.startsWith('north-mini-code-1.0:q4_k_m-')
-  ) {
+  if (key === 'north-mini-code-1.0:q4_k_m' || key.startsWith('north-mini-code-1.0:q4_k_m-')) {
     return 'North Mini Code 1.0 (30B-A3B Q4)'
   }
   if (key === 'llama3.2:3b' || key.startsWith('llama3.2:3b-')) {
@@ -848,7 +845,9 @@ function modelDescription(model: OllamaTagModel): string | undefined {
     details.family,
     details.parameter_size,
     details.quantization_level,
-    typeof details.context_length === 'number' ? `${details.context_length.toLocaleString()} ctx` : ''
+    typeof details.context_length === 'number'
+      ? `${details.context_length.toLocaleString()} ctx`
+      : ''
   ].filter(Boolean)
   return pieces.length > 0 ? pieces.join(' · ') : undefined
 }
@@ -1109,7 +1108,8 @@ export async function getOllamaStatusSnapshot(
       await fetchOllamaModels({ ...settings, ollamaBaseUrl: baseUrl })
     )
     const defaultModel =
-      String(settings.ollamaDefaultModel || '').trim() || models.find((model) => model.isDefault)?.id
+      String(settings.ollamaDefaultModel || '').trim() ||
+      models.find((model) => model.isDefault)?.id
     return {
       available: true,
       setupRequired: models.length === 0,
@@ -1117,7 +1117,9 @@ export async function getOllamaStatusSnapshot(
       modelCount: models.length,
       defaultModel,
       models,
-      ...(models.length === 0 ? { error: 'Ollama is reachable, but no local models are installed.' } : {})
+      ...(models.length === 0
+        ? { error: 'Ollama is reachable, but no local models are installed.' }
+        : {})
     }
   } catch (error) {
     return {
@@ -1148,8 +1150,7 @@ export async function getOllamaCapabilityContract(
     approvalMode,
     status,
     mcpStatus: {
-      available:
-        Boolean(request.workspacePath) && settings.agenticServices?.mcpTools !== 'deny',
+      available: Boolean(request.workspacePath) && settings.agenticServices?.mcpTools !== 'deny',
       enabled: settings.agenticServices?.mcpTools !== 'deny',
       installed: true,
       serverName: OLLAMA_LOCAL_TOOL_SERVER,
@@ -1301,8 +1302,7 @@ function resolveOllamaToolRequestIdentity(
   const contract = resolveToolDispatchContractStrict(rawName, args)
   if (
     !contract.ok ||
-    (!isTaskWraithMcpToolName(contract.toolName) &&
-      !isCapabilityGatewayToolName(contract.toolName))
+    (!isTaskWraithMcpToolName(contract.toolName) && !isCapabilityGatewayToolName(contract.toolName))
   ) {
     return null
   }
@@ -1355,9 +1355,14 @@ function ollamaNativeToolParameters(
   switch (toolName) {
     case 'read_file':
       return {
-        description: compact ? 'Read workspace file.' : 'Read a UTF-8 text file inside the active workspace.',
+        description: compact
+          ? 'Read workspace file.'
+          : 'Read a UTF-8 text file inside the active workspace.',
         properties: {
-          path: { ...STRING, description: compact ? 'Relative path.' : 'Workspace-relative file path.' },
+          path: {
+            ...STRING,
+            description: compact ? 'Relative path.' : 'Workspace-relative file path.'
+          },
           startLine: { type: 'number', description: 'Optional 1-based first line to read.' },
           endLine: { type: 'number', description: 'Optional 1-based last line to read.' },
           maxLines: { type: 'number', description: 'Optional maximum number of lines to return.' }
@@ -1366,11 +1371,15 @@ function ollamaNativeToolParameters(
       }
     case 'list_directory':
       return {
-        description: compact ? 'List workspace directory.' : 'List the entries of a directory inside the active workspace.',
+        description: compact
+          ? 'List workspace directory.'
+          : 'List the entries of a directory inside the active workspace.',
         properties: {
           path: {
             ...STRING,
-            description: compact ? 'Relative path ("." for root).' : 'Workspace-relative directory path. Use "." for the root.'
+            description: compact
+              ? 'Relative path ("." for root).'
+              : 'Workspace-relative directory path. Use "." for the root.'
           }
         },
         required: ['path']
@@ -1394,7 +1403,10 @@ function ollamaNativeToolParameters(
               },
               path: { ...STRING, description: 'Optional subdirectory to scope the search.' },
               maxResults: { type: 'number', description: 'Maximum files to return.' },
-              includeHidden: { type: 'boolean', description: 'Include hidden files. Defaults to false.' }
+              includeHidden: {
+                type: 'boolean',
+                description: 'Include hidden files. Defaults to false.'
+              }
             },
             required: ['pattern']
           }
@@ -1423,7 +1435,12 @@ function ollamaNativeToolParameters(
         description: compact
           ? 'Search the live web.'
           : 'Search the live web. Returns a ranked list of result titles and URLs. Use this for current events, weather, prices, or anything not answerable from memory.',
-        properties: { query: { ...STRING, description: compact ? 'Search query.' : 'What to search the web for.' } },
+        properties: {
+          query: {
+            ...STRING,
+            description: compact ? 'Search query.' : 'What to search the web for.'
+          }
+        },
         required: ['query']
       }
     case 'web_fetch':
@@ -1431,7 +1448,12 @@ function ollamaNativeToolParameters(
         description: compact
           ? 'Fetch readable page text from a URL.'
           : 'Download a web page and return its readable text (HTML stripped) so you can summarize it.',
-        properties: { url: { ...STRING, description: compact ? 'http(s) URL.' : 'Absolute http(s) URL to fetch.' } },
+        properties: {
+          url: {
+            ...STRING,
+            description: compact ? 'http(s) URL.' : 'Absolute http(s) URL to fetch.'
+          }
+        },
         required: ['url']
       }
     case 'git_log':
@@ -1457,9 +1479,14 @@ function ollamaNativeToolParameters(
           }
     case 'git_show':
       return {
-        description: compact ? 'Inspect a git commit/ref.' : 'Inspect metadata, stats, or patch for a git ref.',
+        description: compact
+          ? 'Inspect a git commit/ref.'
+          : 'Inspect metadata, stats, or patch for a git ref.',
         properties: {
-          ref: { ...STRING, description: compact ? 'Commit/ref.' : 'Commit, tag, or git ref to inspect.' },
+          ref: {
+            ...STRING,
+            description: compact ? 'Commit/ref.' : 'Commit, tag, or git ref to inspect.'
+          },
           path: { ...STRING, description: 'Optional workspace-relative path filter.' },
           includePatch: { type: 'boolean', description: 'Include patch output.' },
           stat: { type: 'boolean', description: 'Include diffstat.' }
@@ -1468,9 +1495,14 @@ function ollamaNativeToolParameters(
       }
     case 'git_blame':
       return {
-        description: compact ? 'Blame file lines.' : 'Read bounded git blame information for a workspace file.',
+        description: compact
+          ? 'Blame file lines.'
+          : 'Read bounded git blame information for a workspace file.',
         properties: {
-          path: { ...STRING, description: compact ? 'Relative file path.' : 'Workspace-relative file path.' },
+          path: {
+            ...STRING,
+            description: compact ? 'Relative file path.' : 'Workspace-relative file path.'
+          },
           startLine: { type: 'number', description: 'Optional first line.' },
           endLine: { type: 'number', description: 'Optional last line.' },
           maxLines: { type: 'number', description: 'Maximum lines to return.' }
@@ -1479,13 +1511,20 @@ function ollamaNativeToolParameters(
       }
     case 'git_push':
       return {
-        description: compact ? 'Push current branch (intent required).' : 'Push the current git branch. Requires a short intent.',
+        description: compact
+          ? 'Push current branch (intent required).'
+          : 'Push the current git branch. Requires a short intent.',
         properties: {
           remote: {
             ...STRING,
-            description: compact ? 'Optional remote.' : 'Optional remote name. Defaults to upstream or origin.'
+            description: compact
+              ? 'Optional remote.'
+              : 'Optional remote name. Defaults to upstream or origin.'
           },
-          setUpstream: { type: 'boolean', description: 'Push with -u even when an upstream exists.' },
+          setUpstream: {
+            type: 'boolean',
+            description: 'Push with -u even when an upstream exists.'
+          },
           intent: {
             ...STRING,
             description: compact ? 'Short reason.' : 'Short reason for publishing code.'
@@ -1495,7 +1534,9 @@ function ollamaNativeToolParameters(
       }
     case 'git_create_pr':
       return {
-        description: compact ? 'Create GitHub PR (intent required).' : 'Create a GitHub pull request using gh. Requires a short intent.',
+        description: compact
+          ? 'Create GitHub PR (intent required).'
+          : 'Create a GitHub pull request using gh. Requires a short intent.',
         properties: {
           title: { ...STRING, description: 'Pull request title.' },
           body: { ...STRING, description: 'Pull request body.' },
@@ -1527,97 +1568,200 @@ function ollamaNativeToolParameters(
       }
     case 'write_file':
       return {
-        description: compact ? 'Write workspace file (intent required).' : 'Create or overwrite a workspace file. Requires a short intent.',
+        description: compact
+          ? 'Write workspace file (intent required).'
+          : 'Create or overwrite a workspace file. Requires a short intent.',
         properties: {
-          path: { ...STRING, description: compact ? 'Relative path.' : 'Workspace-relative file path.' },
-          content: { ...STRING, description: compact ? 'File contents.' : 'Full new file contents.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the change (shown in the approval modal).' }
+          path: {
+            ...STRING,
+            description: compact ? 'Relative path.' : 'Workspace-relative file path.'
+          },
+          content: {
+            ...STRING,
+            description: compact ? 'File contents.' : 'Full new file contents.'
+          },
+          intent: {
+            ...STRING,
+            description: compact
+              ? 'Short reason.'
+              : 'Short reason for the change (shown in the approval modal).'
+          }
         },
         required: ['path', 'content', 'intent']
       }
     case 'replace':
       return {
-        description: compact ? 'Replace text in file (intent required).' : 'Replace an exact substring within a workspace file. Requires a short intent.',
+        description: compact
+          ? 'Replace text in file (intent required).'
+          : 'Replace an exact substring within a workspace file. Requires a short intent.',
         properties: {
-          path: { ...STRING, description: compact ? 'Relative path.' : 'Workspace-relative file path.' },
-          old_string: { ...STRING, description: compact ? 'Text to replace.' : 'Exact text to replace.' },
+          path: {
+            ...STRING,
+            description: compact ? 'Relative path.' : 'Workspace-relative file path.'
+          },
+          old_string: {
+            ...STRING,
+            description: compact ? 'Text to replace.' : 'Exact text to replace.'
+          },
           new_string: { ...STRING, description: compact ? 'Replacement.' : 'Replacement text.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the change.' }
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for the change.'
+          }
         },
         required: ['path', 'old_string', 'new_string', 'intent']
       }
     case 'create_directory':
       return {
-        description: compact ? 'Create directory (intent required).' : 'Create a directory inside the active workspace. Requires a short intent.',
+        description: compact
+          ? 'Create directory (intent required).'
+          : 'Create a directory inside the active workspace. Requires a short intent.',
         properties: {
-          path: { ...STRING, description: compact ? 'Relative directory.' : 'Workspace-relative directory path.' },
-          recursive: { type: 'boolean', description: 'Create parent directories. Defaults to true.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the change.' }
+          path: {
+            ...STRING,
+            description: compact ? 'Relative directory.' : 'Workspace-relative directory path.'
+          },
+          recursive: {
+            type: 'boolean',
+            description: 'Create parent directories. Defaults to true.'
+          },
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for the change.'
+          }
         },
         required: ['path', 'intent']
       }
     case 'delete_path':
       return {
-        description: compact ? 'Delete file/empty dir (intent required).' : 'Delete a file or empty directory inside the active workspace. Recursive deletion is not supported. Requires a short intent.',
+        description: compact
+          ? 'Delete file/empty dir (intent required).'
+          : 'Delete a file or empty directory inside the active workspace. Recursive deletion is not supported. Requires a short intent.',
         properties: {
-          path: { ...STRING, description: compact ? 'Relative path.' : 'Workspace-relative file or empty directory path.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the deletion.' }
+          path: {
+            ...STRING,
+            description: compact
+              ? 'Relative path.'
+              : 'Workspace-relative file or empty directory path.'
+          },
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for the deletion.'
+          }
         },
         required: ['path', 'intent']
       }
     case 'move_path':
       return {
-        description: compact ? 'Move path (intent required).' : 'Move a file or directory inside the active workspace. Requires a short intent.',
+        description: compact
+          ? 'Move path (intent required).'
+          : 'Move a file or directory inside the active workspace. Requires a short intent.',
         properties: {
-          from: { ...STRING, description: compact ? 'Source path.' : 'Workspace-relative source path.' },
-          to: { ...STRING, description: compact ? 'Destination path.' : 'Workspace-relative destination path.' },
-          overwrite: { type: 'boolean', description: 'Replace an existing destination. Defaults to false.' },
-          createParents: { type: 'boolean', description: 'Create missing destination parent directories. Defaults to false.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the move.' }
+          from: {
+            ...STRING,
+            description: compact ? 'Source path.' : 'Workspace-relative source path.'
+          },
+          to: {
+            ...STRING,
+            description: compact ? 'Destination path.' : 'Workspace-relative destination path.'
+          },
+          overwrite: {
+            type: 'boolean',
+            description: 'Replace an existing destination. Defaults to false.'
+          },
+          createParents: {
+            type: 'boolean',
+            description: 'Create missing destination parent directories. Defaults to false.'
+          },
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for the move.'
+          }
         },
         required: ['from', 'to', 'intent']
       }
     case 'rename_path':
       return {
-        description: compact ? 'Rename path (intent required).' : 'Rename a file or directory within its current parent directory. Requires a short intent.',
+        description: compact
+          ? 'Rename path (intent required).'
+          : 'Rename a file or directory within its current parent directory. Requires a short intent.',
         properties: {
-          path: { ...STRING, description: compact ? 'Source path.' : 'Workspace-relative source path.' },
-          newName: { ...STRING, description: compact ? 'New basename.' : 'New basename only, not a path.' },
-          overwrite: { type: 'boolean', description: 'Replace an existing destination. Defaults to false.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the rename.' }
+          path: {
+            ...STRING,
+            description: compact ? 'Source path.' : 'Workspace-relative source path.'
+          },
+          newName: {
+            ...STRING,
+            description: compact ? 'New basename.' : 'New basename only, not a path.'
+          },
+          overwrite: {
+            type: 'boolean',
+            description: 'Replace an existing destination. Defaults to false.'
+          },
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for the rename.'
+          }
         },
         required: ['path', 'newName', 'intent']
       }
     case 'apply_patch':
       return {
-        description: compact ? 'Apply unified diff (intent required).' : 'Apply a unified diff to the workspace. Requires a short intent.',
+        description: compact
+          ? 'Apply unified diff (intent required).'
+          : 'Apply a unified diff to the workspace. Requires a short intent.',
         properties: {
           patch: { ...STRING, description: compact ? 'Unified diff.' : 'Unified diff text.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the change.' }
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for the change.'
+          }
         },
         required: ['patch', 'intent']
       }
     case 'run_shell_command':
       return {
-        description: compact ? 'Run shell command (intent required).' : 'Run a shell command in the workspace. Requires a short intent.',
+        description: compact
+          ? 'Run shell command (intent required).'
+          : 'Run a shell command in the workspace. Requires a short intent.',
         properties: {
           command: { ...STRING, description: compact ? 'Command.' : 'Exact command to run.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for running it.' }
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for running it.'
+          }
         },
         required: ['command', 'intent']
       }
     case 'get_diagnostics':
       return {
-        description: compact ? 'Run diagnostics (intent required).' : 'Run fixed workspace diagnostics. Requires a short intent.',
+        description: compact
+          ? 'Run diagnostics (intent required).'
+          : 'Run fixed workspace diagnostics. Requires a short intent.',
         properties: {
           source: {
             ...STRING,
-            description: compact ? 'typescript|eslint|all.' : 'Diagnostic source: typescript, eslint, or all.'
+            description: compact
+              ? 'typescript|eslint|all.'
+              : 'Diagnostic source: typescript, eslint, or all.'
           },
-          path: { ...STRING, description: compact ? 'Optional relative path.' : 'Optional workspace-relative file or directory filter.' },
-          project: { ...STRING, description: compact ? 'Optional tsconfig.' : 'Optional workspace-relative tsconfig path.' },
+          path: {
+            ...STRING,
+            description: compact
+              ? 'Optional relative path.'
+              : 'Optional workspace-relative file or directory filter.'
+          },
+          project: {
+            ...STRING,
+            description: compact
+              ? 'Optional tsconfig.'
+              : 'Optional workspace-relative tsconfig path.'
+          },
           maxDiagnostics: { type: 'number', description: 'Maximum diagnostics to return.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for running diagnostics.' }
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for running diagnostics.'
+          }
         },
         required: ['intent']
       }
@@ -1707,22 +1851,51 @@ function ollamaNativeToolParameters(
       }
     case 'list_active_runs':
       return {
-        description: compact ? 'List active runs.' : 'List TaskWraith-owned active runs and queued run jobs.',
+        description: compact
+          ? 'List active runs.'
+          : 'List TaskWraith-owned active runs and queued run jobs.',
         properties: {
-          provider: { ...STRING, description: compact ? 'Optional provider.' : 'Optional provider filter.' },
-          chatId: { ...STRING, description: compact ? 'Optional chat id.' : 'Optional chat id filter.' },
-          includeEvents: { type: 'boolean', description: compact ? 'Include recent events.' : 'Include bounded recent durable events.' }
+          provider: {
+            ...STRING,
+            description: compact ? 'Optional provider.' : 'Optional provider filter.'
+          },
+          chatId: {
+            ...STRING,
+            description: compact ? 'Optional chat id.' : 'Optional chat id filter.'
+          },
+          includeEvents: {
+            type: 'boolean',
+            description: compact
+              ? 'Include recent events.'
+              : 'Include bounded recent durable events.'
+          }
         },
         required: []
       }
     case 'cancel_active_run':
       return {
-        description: compact ? 'Cancel active run (intent required).' : 'Request cancellation of one TaskWraith-owned active run. Requires a short intent.',
+        description: compact
+          ? 'Cancel active run (intent required).'
+          : 'Request cancellation of one TaskWraith-owned active run. Requires a short intent.',
         properties: {
-          provider: { ...STRING, description: compact ? 'Provider.' : 'Provider that owns the run.' },
-          runId: { ...STRING, description: compact ? 'Run id.' : 'TaskWraith app run id. Required when multiple runs match.' },
-          chatId: { ...STRING, description: compact ? 'Optional chat id.' : 'Optional chat id to narrow the target.' },
-          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for cancelling the run.' }
+          provider: {
+            ...STRING,
+            description: compact ? 'Provider.' : 'Provider that owns the run.'
+          },
+          runId: {
+            ...STRING,
+            description: compact
+              ? 'Run id.'
+              : 'TaskWraith app run id. Required when multiple runs match.'
+          },
+          chatId: {
+            ...STRING,
+            description: compact ? 'Optional chat id.' : 'Optional chat id to narrow the target.'
+          },
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for cancelling the run.'
+          }
         },
         required: ['provider', 'intent']
       }
@@ -1730,7 +1903,7 @@ function ollamaNativeToolParameters(
     case 'ensemble_bossman_control':
       return {
         description:
-          'Boss/Captain Ensemble control. Set action and put only that action\'s fields in params.',
+          "Boss/Captain Ensemble control. Set action and put only that action's fields in params.",
         properties: {
           action: {
             ...STRING,
@@ -1753,12 +1926,16 @@ function ollamaNativeToolParameters(
           key: {
             ...STRING,
             minLength: 1,
-            description: compact ? 'Short stable key.' : 'Short stable topic/key for the shared entry.'
+            description: compact
+              ? 'Short stable key.'
+              : 'Short stable topic/key for the shared entry.'
           },
           value: {
             ...STRING,
             minLength: 1,
-            description: compact ? 'Fact, decision, risk, or note.' : 'The fact, decision, risk, or note to share.'
+            description: compact
+              ? 'Fact, decision, risk, or note.'
+              : 'The fact, decision, risk, or note to share.'
           },
           category: {
             ...STRING,
@@ -1794,7 +1971,10 @@ function ollamaNativeToolParameters(
             enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note'],
             description: 'Optional category filter.'
           },
-          unseenOnly: { type: 'boolean', description: 'Only entries not yet seen by this participant.' },
+          unseenOnly: {
+            type: 'boolean',
+            description: 'Only entries not yet seen by this participant.'
+          },
           first: { type: 'number', description: 'Optional oldest-entry limit.' },
           last: { type: 'number', description: 'Optional newest-entry limit.' }
         },
@@ -2025,7 +2205,9 @@ function ollamaBlackboardFailureRepairHint(toolName: string, output: string): st
   }
   if (
     toolName === 'blackboard_read' &&
-    (normalized.includes('argument') || normalized.includes('array') || normalized.includes('filter'))
+    (normalized.includes('argument') ||
+      normalized.includes('array') ||
+      normalized.includes('filter'))
   ) {
     return ollamaToolSchemaRepairHint(toolName)
   }
@@ -2103,7 +2285,7 @@ interface OllamaRetryPromptOptions {
 function ollamaEnsembleRetryReminder(options?: OllamaRetryPromptOptions): string[] {
   return options?.ensembleRun
     ? [
-        'For this ensemble run, answer only as your assigned local seat and stay inside your role / authority boundary from the capsule; do not invent peers or broaden into another participant\'s slice.'
+        "For this ensemble run, answer only as your assigned local seat and stay inside your role / authority boundary from the capsule; do not invent peers or broaden into another participant's slice."
       ]
     : []
 }
@@ -2299,9 +2481,7 @@ export function looksLikeOllamaToolIntent(content: string, toolNames: string[]):
   if (!text) return false
   // Intent stubs are short; a real answer that happens to mention a tool is not.
   if (text.length > 400) return false
-  const names = (toolNames || [])
-    .map((name) => (name || '').trim().toLowerCase())
-    .filter(Boolean)
+  const names = (toolNames || []).map((name) => (name || '').trim().toLowerCase()).filter(Boolean)
   const mentionsToolName = names.some((name) => name && text.includes(name))
   const mentionsGenericTool = /\b(tool|function call|function)\b/.test(text)
   if (!mentionsToolName && !mentionsGenericTool) return false
@@ -2337,7 +2517,9 @@ export function looksLikeOllamaPromptRestatement(text: string): boolean {
   const value = (text || '').trim().toLowerCase()
   if (!value) return false
   return (
-    /\bwe need to (?:respond|reply|answer|produce (?:a )?response|provide (?:a )?response) as ollama\b/.test(value) ||
+    /\bwe need to (?:respond|reply|answer|produce (?:a )?response|provide (?:a )?response) as ollama\b/.test(
+      value
+    ) ||
     /\bwe are #p\d+\b/.test(value) ||
     /\bprior participants?\b/.test(value) ||
     /\bturn-bound round\b/.test(value) ||
@@ -2516,7 +2698,9 @@ async function fetchOllamaChatResponseWithRetry(input: {
       await waitForOllamaRetry(retryDelay, input.signal)
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError || 'Ollama fetch failed.'))
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(String(lastError || 'Ollama fetch failed.'))
 }
 
 export function shouldReleaseOllamaContentDelta(input: {
@@ -2617,7 +2801,10 @@ function ollamaArgPresent(
     if (
       Array.isArray(value) &&
       value.every(
-        (item) => item === undefined || item === null || (typeof item === 'string' && item.trim().length === 0)
+        (item) =>
+          item === undefined ||
+          item === null ||
+          (typeof item === 'string' && item.trim().length === 0)
       )
     ) {
       continue
@@ -2650,21 +2837,22 @@ function ollamaArgTypeMatches(expected: 'string' | 'array', value: unknown): boo
 // LIST via the `globs` synonym, so it is intentionally absent) — a pre-execution
 // gate must never false-positive a call the executor would run. Presence/required
 // is handled separately; this only fires on a PRESENT arg of the wrong shape.
-const OLLAMA_ARG_TYPE_CHECKS: Partial<Record<OllamaToolName, Record<string, 'string' | 'array'>>> = {
-  read_file: { path: 'string' },
-  write_file: { path: 'string', content: 'string' },
-  replace: { path: 'string', old_string: 'string', new_string: 'string' },
-  create_directory: { path: 'string' },
-  delete_path: { path: 'string' },
-  move_path: { from: 'string', to: 'string' },
-  rename_path: { path: 'string', newName: 'string' },
-  run_shell_command: { command: 'string' },
-  workspace_search: { query: 'string' },
-  todo_write: { todos: 'array' },
-  blackboard_post: { key: 'string', value: 'string' },
-  blackboard_read: { ids: 'array', keys: 'array' },
-  blackboard_delete: { ids: 'array', keys: 'array' }
-}
+const OLLAMA_ARG_TYPE_CHECKS: Partial<Record<OllamaToolName, Record<string, 'string' | 'array'>>> =
+  {
+    read_file: { path: 'string' },
+    write_file: { path: 'string', content: 'string' },
+    replace: { path: 'string', old_string: 'string', new_string: 'string' },
+    create_directory: { path: 'string' },
+    delete_path: { path: 'string' },
+    move_path: { from: 'string', to: 'string' },
+    rename_path: { path: 'string', newName: 'string' },
+    run_shell_command: { command: 'string' },
+    workspace_search: { query: 'string' },
+    todo_write: { todos: 'array' },
+    blackboard_post: { key: 'string', value: 'string' },
+    blackboard_read: { ids: 'array', keys: 'array' },
+    blackboard_delete: { ids: 'array', keys: 'array' }
+  }
 
 function ollamaArgValueAbsent(value: unknown): boolean {
   if (value === undefined || value === null) return true
@@ -2840,12 +3028,11 @@ async function runOllamaChatTurn(input: {
         ? {
             // Grammar and direct advertisement share the same immutable profile;
             // capability_invoke carries hidden target names as ordinary args.
-            format:
-              input.formatToolNames?.length
-                ? ollamaToolCallFormatSchema(input.formatToolNames)
-                : input.availableToolNames?.length
-                  ? ollamaToolCallFormatSchema(input.availableToolNames)
-                  : 'json'
+            format: input.formatToolNames?.length
+              ? ollamaToolCallFormatSchema(input.formatToolNames)
+              : input.availableToolNames?.length
+                ? ollamaToolCallFormatSchema(input.availableToolNames)
+                : 'json'
           }
         : {}),
       ...(input.think ? { think: input.think } : {}),
@@ -2923,8 +3110,7 @@ async function runOllamaChatTurn(input: {
         // Hallucinated / unknown tool name — record it so the run loop can send a
         // specific repair rather than silently dropping the call and misreading
         // the turn as empty/reasoning-only.
-        const droppedName =
-          typeof call.function?.name === 'string' ? call.function.name.trim() : ''
+        const droppedName = typeof call.function?.name === 'string' ? call.function.name.trim() : ''
         if (droppedName) droppedNativeToolNames.push(droppedName)
       }
     }
@@ -2986,8 +3172,7 @@ export async function runOllamaProvider(
   let launchedModel: string | null = null
   deps.runManager.attachAbortController(route.appRunId!, controller)
   const launchAuthorized = (): boolean =>
-    !controller.signal.aborted &&
-    deps.runManager.canAdmitTransport(route.appRunId, true)
+    !controller.signal.aborted && deps.runManager.canAdmitTransport(route.appRunId, true)
   const reportWorkingTokenUsage = (stats: Record<string, unknown>): void => {
     try {
       deps.reportWorkingTokenUsage?.(stats, {
@@ -3027,10 +3212,7 @@ export async function runOllamaProvider(
       },
       {
         loadInstalledModels: () =>
-          fetchOllamaModels(
-            { ...settings, ollamaBaseUrl: baseUrl },
-            { signal: controller.signal }
-          ),
+          fetchOllamaModels({ ...settings, ollamaBaseUrl: baseUrl }, { signal: controller.signal }),
         loadModelShow: (model) =>
           fetchOllamaModelShow(baseUrl, model, {
             signal: controller.signal,
@@ -3039,8 +3221,7 @@ export async function runOllamaProvider(
         modelLabel: humanizeOllamaModelId,
         buildNativeToolDefinitions: (input) =>
           ollamaNativeToolDefinitions('provider_parity', input),
-        getSessionMemory: (chatId, memoryKey) =>
-          deps.getOllamaSessionMemory?.(chatId, memoryKey),
+        getSessionMemory: (chatId, memoryKey) => deps.getOllamaSessionMemory?.(chatId, memoryKey),
         prepareEnsemblePrompt: prepareOllamaEnsemblePromptForRuntime,
         buildWorkspaceIndexBlock: buildOllamaWorkspaceIndexBlock,
         buildOpeningMessages: buildOllamaOpeningMessages,
@@ -3102,12 +3283,8 @@ export async function runOllamaProvider(
     }
     const chatId = route.appChatId || payload.appChatId
     const memoryKey = launchPlan.memoryKey ?? undefined
-    let sessionMemory = JSON.parse(
-      JSON.stringify(launchPlan.sessionMemory)
-    ) as OllamaSessionMemory
-    const messages = JSON.parse(
-      JSON.stringify(launchPlan.openingMessages)
-    ) as OllamaChatMessage[]
+    let sessionMemory = JSON.parse(JSON.stringify(launchPlan.sessionMemory)) as OllamaSessionMemory
+    const messages = JSON.parse(JSON.stringify(launchPlan.openingMessages)) as OllamaChatMessage[]
     // Cache the daemon's own context length for this model, keyed on the plain
     // model id (not the preflight key, which folds in a digest). Recorded on every
     // run rather than only inside the preflight gate below, because that gate is
@@ -3465,14 +3642,13 @@ export async function runOllamaProvider(
         // JSON contract but it couldn't be parsed (e.g. invalid escapes from
         // embedded source code). Re-prompt to re-issue valid JSON rather than
         // leaking the raw blob to the user as the final answer.
-        if (
-          hasContent &&
-          toolProtocolEnabled &&
-          looksLikeLeakedOllamaToolProtocol(turn.content)
-        ) {
+        if (hasContent && toolProtocolEnabled && looksLikeLeakedOllamaToolProtocol(turn.content)) {
           forceJsonToolFallback = true
           messages.push({ role: 'assistant', content: turn.content })
-          messages.push({ role: 'user', content: ollamaMalformedToolJsonNudgePrompt(stickyRetryOptions) })
+          messages.push({
+            role: 'user',
+            content: ollamaMalformedToolJsonNudgePrompt(stickyRetryOptions)
+          })
           continue
         }
         // Tool-intent stub: the model announced a tool in prose ("We need to
@@ -3492,13 +3668,15 @@ export async function runOllamaProvider(
           })
           continue
         }
-        const outputTokens =
-          typeof lastDone?.eval_count === 'number' ? lastDone.eval_count : null
+        const outputTokens = typeof lastDone?.eval_count === 'number' ? lastDone.eval_count : null
         if (isDegenerateOllamaTurn(turn, visibleText, toolRequests.length, outputTokens)) {
           if (turn.content.trim()) {
             messages.push({ role: 'assistant', content: turn.content })
           }
-          messages.push({ role: 'user', content: ollamaDegenerateResponseNudgePrompt(stickyRetryOptions) })
+          messages.push({
+            role: 'user',
+            content: ollamaDegenerateResponseNudgePrompt(stickyRetryOptions)
+          })
           continue
         }
         if (visibleText) {
@@ -3588,10 +3766,7 @@ export async function runOllamaProvider(
           // do not allow the next `/api/chat` continuation to cross the
           // already-claimed terminal boundary.
           assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
-          noActiveGoalToolResult = isOllamaNoActiveGoalToolResult(
-            toolRequest.toolName,
-            toolResult
-          )
+          noActiveGoalToolResult = isOllamaNoActiveGoalToolResult(toolRequest.toolName, toolResult)
           // Repeated-tool-call guard: if this exact call already returned the
           // same result earlier this run, feed the model a redirect (or, after
           // a compression, re-serve the content) instead of re-dumping
@@ -3758,23 +3933,24 @@ export async function runOllamaProvider(
           })
           messages.push({
             role: 'user',
-            content: toolResult.validationError || identicalFailureStrategyNudge
-              ? modelFacingOutput
-              : harnessEnabled
-                ? ollamaHarnessToolFollowUpPrompt({
-                    toolName: toolRequest.toolName,
-                    output: modelFacingOutput,
-                    ok: toolResult.ok,
-                    state: harnessState,
-                    tier: toolControlTier,
-                    ...stickyRetryOptions
-                  })
-                : ollamaToolResultFollowUpPrompt({
-                    toolName: toolRequest.toolName,
-                    output: modelFacingOutput,
-                    ok: toolResult.ok,
-                    currentRequestExcerpt: stickyRetryOptions.currentRequestExcerpt
-                  })
+            content:
+              toolResult.validationError || identicalFailureStrategyNudge
+                ? modelFacingOutput
+                : harnessEnabled
+                  ? ollamaHarnessToolFollowUpPrompt({
+                      toolName: toolRequest.toolName,
+                      output: modelFacingOutput,
+                      ok: toolResult.ok,
+                      state: harnessState,
+                      tier: toolControlTier,
+                      ...stickyRetryOptions
+                    })
+                  : ollamaToolResultFollowUpPrompt({
+                      toolName: toolRequest.toolName,
+                      output: modelFacingOutput,
+                      ok: toolResult.ok,
+                      currentRequestExcerpt: stickyRetryOptions.currentRequestExcerpt
+                    })
           })
         }
       }
@@ -3789,7 +3965,11 @@ export async function runOllamaProvider(
     }
 
     if (chatId && deps.saveOllamaSessionMemory && sessionMemory.toolTurnCount > 0) {
-      deps.saveOllamaSessionMemory(chatId, pruneOllamaSessionMemoryForPersist(sessionMemory), memoryKey)
+      deps.saveOllamaSessionMemory(
+        chatId,
+        pruneOllamaSessionMemoryForPersist(sessionMemory),
+        memoryKey
+      )
     }
 
     const hardwareStats = memoryMonitor ? await memoryMonitor.stop() : {}

@@ -532,15 +532,15 @@ export class ComposerService {
       provider === 'pi'
         ? false
         : provider === 'grok'
-        ? shouldAdvertiseTaskWraithMcpToGrok({
-            acpEnabled: grokAcpEnabled(),
-            approvalMode,
-            bridgeEnabled: Boolean(settings.geminiMcpBridgeEnabled),
-            readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
-          })
-        : provider === 'claude'
-          ? Boolean(claudePinnedMcpReceipt || settings.geminiMcpBridgeEnabled)
-          : true
+          ? shouldAdvertiseTaskWraithMcpToGrok({
+              acpEnabled: grokAcpEnabled(),
+              approvalMode,
+              bridgeEnabled: Boolean(settings.geminiMcpBridgeEnabled),
+              readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
+            })
+          : provider === 'claude'
+            ? Boolean(claudePinnedMcpReceipt || settings.geminiMcpBridgeEnabled)
+            : true
     const taskWraithMcpProfile = resolveTaskWraithMcpProfile({
       provider,
       modelId: requestedModel,
@@ -635,12 +635,8 @@ export class ComposerService {
     // composition (claudeDispatchPrompt), so a rotated conversation is seeded
     // with the compaction summary + compact transcript instead of starting
     // cold.
-    const codexNativeSessionResume = Boolean(
-      provider === 'codex' && resumeDecision.sessionId
-    )
-    const claudeNativeSessionResume = Boolean(
-      provider === 'claude' && resumeDecision.sessionId
-    )
+    const codexNativeSessionResume = Boolean(provider === 'codex' && resumeDecision.sessionId)
+    const claudeNativeSessionResume = Boolean(provider === 'claude' && resumeDecision.sessionId)
     const resumeFallbackPrompt =
       kimiNativeSessionResume || codexNativeSessionResume || claudeNativeSessionResume
         ? composeRunPrompt({

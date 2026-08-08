@@ -374,7 +374,13 @@ describe('buildContainedCursorReadOnlyArgv (Path B contained read-only runtime)'
     // `--` guard a prompt of "--sandbox disabled" / "--force" would be reparsed as
     // a real flag (disabling the sandbox or widening tools). The guard forces the
     // prompt to be a positional after the real, load-bearing flags.
-    for (const prompt of ['--sandbox disabled', '--force', '--yolo', '--approve-mcps', '--version']) {
+    for (const prompt of [
+      '--sandbox disabled',
+      '--force',
+      '--yolo',
+      '--approve-mcps',
+      '--version'
+    ]) {
       const args = buildContainedCursorReadOnlyArgv({ workspace: '/ws', prompt })
       const guard = args.indexOf('--')
       expect(guard).toBeGreaterThan(-1)
@@ -410,9 +416,9 @@ describe('buildContainedCursorReadOnlyArgv (Path B contained read-only runtime)'
   })
 
   it('normalizes a requested Cursor model and coerces a leaked id to a concrete Cursor default', () => {
-    expect(buildContainedCursorReadOnlyArgv({ ...base, model: 'composer-2.5' }).join(' ')).toContain(
-      '--model composer-2.5'
-    )
+    expect(
+      buildContainedCursorReadOnlyArgv({ ...base, model: 'composer-2.5' }).join(' ')
+    ).toContain('--model composer-2.5')
     // A non-Cursor / leaked id is coerced to a concrete Cursor model, never passed through.
     const leaked = buildContainedCursorReadOnlyArgv({ ...base, model: 'gpt-5' })
     expect(leaked.join(' ')).toContain('--model composer-2.5-fast')

@@ -1,6 +1,7 @@
 # Gateway remint note (skills/hooks rebase)
 
 Master committed HEAD (`90744e038`) already owns:
+
 - `GATEWAY_V12_ADDED` = `project_reference_list` (frozen)
 - `GATEWAY_V13_ADDED` = scout_brief / ensemble_await / ensemble_lane_result / `delegate_wave`
 

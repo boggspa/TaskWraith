@@ -251,11 +251,21 @@ describe('resolveTaskWraithMcpProfile', () => {
     )
     expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID)).toBe(false)
     expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID)).toBe(false)
-    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V10_MCP_PROFILE_ID)).toBe(false)
-    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V11_MCP_PROFILE_ID)).toBe(false)
-    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID)).toBe(false)
-    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID)).toBe(false)
-    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID)).toBe(false)
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V10_MCP_PROFILE_ID)).toBe(
+      false
+    )
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V11_MCP_PROFILE_ID)).toBe(
+      false
+    )
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID)).toBe(
+      false
+    )
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID)).toBe(
+      false
+    )
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID)).toBe(
+      false
+    )
   })
 
   it('promotes Sketch on v8 and later births while preserving every v7 receipt', () => {
@@ -313,21 +323,17 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID)).toBe(
       false
     )
-    expect(
-      isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V12_MESH_MCP_PROFILE_ID)
-    ).toBe(false)
-    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID)).toBe(
+    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V12_MESH_MCP_PROFILE_ID)).toBe(
+      false
+    )
+    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID)).toBe(true)
+    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V13_MESH_MCP_PROFILE_ID)).toBe(
       true
     )
-    expect(
-      isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V13_MESH_MCP_PROFILE_ID)
-    ).toBe(true)
-    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID)).toBe(
+    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID)).toBe(true)
+    expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID)).toBe(
       true
     )
-    expect(
-      isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID)
-    ).toBe(true)
     expect(isGatewayV13DirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)).toBe(true)
     expect(isGatewayV13DirectTaskWraithMcpProfile(null)).toBe(false)
     expect(isGatewayV13DirectTaskWraithMcpProfile(undefined)).toBe(false)

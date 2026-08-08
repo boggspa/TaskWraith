@@ -83,7 +83,9 @@ describe('registerComposeRunHandlers', () => {
     const deps = createDeps()
     registerComposeRunHandlers(deps)
 
-    await expect(handlerFor('compose-run')({ sender: { id: 1 } }, inputFor('chat-test-1', 'chat-test-3'))).rejects.toThrow('Composer chat snapshot does not match the requested chat.')
+    await expect(
+      handlerFor('compose-run')({ sender: { id: 1 } }, inputFor('chat-test-1', 'chat-test-3'))
+    ).rejects.toThrow('Composer chat snapshot does not match the requested chat.')
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
@@ -169,14 +171,16 @@ describe('registerComposeRunHandlers', () => {
     })
     registerComposeRunHandlers(deps)
 
-    await expect(handlerFor('compose-run')(
+    await expect(
+      handlerFor('compose-run')(
         { sender: { id: 11 } },
         {
           ...inputFor('chat-test-1'),
           appRunId: 'run-replayed',
           scheduledTaskId: 'scheduled-test-3'
         }
-      )).rejects.toThrow('Scheduled occurrence does not match')
+      )
+    ).rejects.toThrow('Scheduled occurrence does not match')
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
