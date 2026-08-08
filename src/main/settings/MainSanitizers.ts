@@ -203,6 +203,8 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'nativeSubAgentRequests',
   'promptCache',
   'geminiApiRuntime',
+  'providerHarnessPosture',
+  'trustWorkspaceHooks',
   'userMcpServers',
   'geminiMcpBridgeEnabled',
   'geminiMcpBridgeLastStatus',
@@ -2012,6 +2014,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       sanitized.providerHarnessPosture = normalizeProviderHarnessPostureMap(
         sanitized.providerHarnessPosture
       )
+    }
+    if ('trustWorkspaceHooks' in sanitized) {
+      if (typeof sanitized.trustWorkspaceHooks !== 'boolean') {
+        delete sanitized.trustWorkspaceHooks
+      }
     }
     if ('nativeSubAgentRequests' in sanitized) {
       sanitized.nativeSubAgentRequests =

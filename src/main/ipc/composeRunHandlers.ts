@@ -34,42 +34,47 @@ export interface ComposeRunHandlersDeps {
 const SNAPSHOT_IDENTITY_ERROR = 'Composer chat snapshot does not match the requested chat.'
 
 export function registerComposeRunHandlers(deps: ComposeRunHandlersDeps): void {
-  ipcMain.handle('compose-run', (event, input?: ComposerInput): ComposerRunPayload => {
-    const chatId = deps.requireNonEmptyString(input?.chatId, 'Chat id')
-    deps.assertSenderChatScope(event, chatId)
+  ipcMain.handle(
+    'compose-run',
+    async (event, input?: ComposerInput): Promise<ComposerRunPayload> => {
+      const chatId = deps.requireNonEmptyString(input?.chatId, 'Chat id')
+      deps.assertSenderChatScope(event, chatId)
 
-    const snapshot = input?.chatSnapshot as unknown
-    if (
-      snapshot !== undefined &&
-      (!snapshot ||
-        typeof snapshot !== 'object' ||
-        (snapshot as { appChatId?: unknown }).appChatId !== chatId)
-    ) {
-      throw new Error(SNAPSHOT_IDENTITY_ERROR)
-    }
-
-    const resolvedAuthority = deps.resolveSenderComposeAuthority(event, input as ComposerInput)
-    const authorizedInput = { ...resolvedAuthority.input }
-    if (!resolvedAuthority.mainOwnedAttachments) {
-      for (const field of ['attachments', 'imageAttachments'] as const) {
-        const attachments = authorizedInput[field]
-        if (!Array.isArray(attachments)) continue
-        const paths = attachments
-          .map((attachment) => (typeof attachment?.path === 'string' ? attachment.path.trim() : ''))
-          .filter(Boolean)
-        const resolvedPaths = deps.resolveSenderAttachmentPaths(event, paths)
-        let resolvedIndex = 0
-        authorizedInput[field] = attachments.map((attachment) => {
-          if (typeof attachment?.path !== 'string' || !attachment.path.trim()) return attachment
-          return { ...attachment, path: resolvedPaths[resolvedIndex++] }
-        })
+      const snapshot = input?.chatSnapshot as unknown
+      if (
+        snapshot !== undefined &&
+        (!snapshot ||
+          typeof snapshot !== 'object' ||
+          (snapshot as { appChatId?: unknown }).appChatId !== chatId)
+      ) {
+        throw new Error(SNAPSHOT_IDENTITY_ERROR)
       }
-    }
 
-    const payload = deps.composeRun(authorizedInput)
-    if (resolvedAuthority.mainOwnedAttachments && authorizedInput.scheduledTaskId) {
-      deps.onScheduledRunComposed?.(event, authorizedInput, payload)
+      const resolvedAuthority = deps.resolveSenderComposeAuthority(event, input as ComposerInput)
+      const authorizedInput = { ...resolvedAuthority.input }
+      if (!resolvedAuthority.mainOwnedAttachments) {
+        for (const field of ['attachments', 'imageAttachments'] as const) {
+          const attachments = authorizedInput[field]
+          if (!Array.isArray(attachments)) continue
+          const paths = attachments
+            .map((attachment) =>
+              typeof attachment?.path === 'string' ? attachment.path.trim() : ''
+            )
+            .filter(Boolean)
+          const resolvedPaths = deps.resolveSenderAttachmentPaths(event, paths)
+          let resolvedIndex = 0
+          authorizedInput[field] = attachments.map((attachment) => {
+            if (typeof attachment?.path !== 'string' || !attachment.path.trim()) return attachment
+            return { ...attachment, path: resolvedPaths[resolvedIndex++] }
+          })
+        }
+      }
+
+      const payload = await deps.composeRun(authorizedInput)
+      if (resolvedAuthority.mainOwnedAttachments && authorizedInput.scheduledTaskId) {
+        deps.onScheduledRunComposed?.(event, authorizedInput, payload)
+      }
+      return payload
     }
-    return payload
-  })
+  )
 }

@@ -7,15 +7,16 @@
  *
  * SessionStart: `runSessionStartHooksForWorkspace` is the awaitable helper.
  * PromptComposition injects `sessionStartContext` when supplied. Main's
- * ComposerService path currently kicks hooks async into a workspace cache and
- * reads the prior cached stdout on compose (same-turn await still open).
+ * ComposerService awaits `resolveSessionStartContext` on compose (once per
+ * workspace) so the same turn can include SessionStart stdout.
  *
  * Pre/Post are wired from `executeGeminiMcpTool` (Pre blocks on onError=block;
  * Post is fire-and-forget in finally).
  *
- * Trust note: workspace `.taskwraith/hooks.json` is agent-writable. v1 does not
- * auto-execute workspace-scoped hooks unless `allowWorkspaceHooks: true` is
- * passed explicitly (Settings/user hooks under userData remain the default).
+ * Trust note: workspace `.taskwraith/hooks.json` is agent-writable. Host
+ * execution defaults to user-scoped hooks only. Workspace hooks run only when
+ * Settings → Hooks → "Trust workspace hooks" is on (`AppSettings.trustWorkspaceHooks`),
+ * which main passes as `allowWorkspaceHooks: true`.
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'

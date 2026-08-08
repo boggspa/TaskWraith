@@ -15129,7 +15129,7 @@ async function dispatchDueScheduledLoopHeadless(
       // resolves any verified elevation internally) but is deliberately NOT re-added
       // to the output payload below — so the chokepoint skips the per-iteration
       // solo/budget bookkeeping (Option A). appRunId = input.runId bridges completion.
-      composed = composer.composeRun({
+      composed = await composer.composeRun({
         chatId: task.chatId,
         appRunId: input.runId,
         provider: composeProvider,
@@ -15666,7 +15666,7 @@ async function dispatchDueScheduledTaskHeadless(
           resumeProviderSessionId: null
         })
       : null
-    const composed = composer.composeRun({
+    const composed = await composer.composeRun({
       chatId: task.chatId,
       appRunId: owner.ownerRunId,
       provider: task.provider,
@@ -35516,7 +35516,7 @@ async function executeGeminiMcpTool(
         const pre = await runPreToolUseHooks(
           hostHooksWorkspace,
           { toolName: String(toolName) },
-          { hooksStore, allowWorkspaceHooks: false }
+          { hooksStore, allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true }
         )
         if (pre.blocked) {
           return {
@@ -39340,7 +39340,7 @@ async function executeGeminiMcpTool(
         void runPostToolUseHooks(
           hostHooksWorkspace,
           { toolName: String(toolName) },
-          { hooksStore, allowWorkspaceHooks: false }
+          { hooksStore, allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true }
         ).catch((error) => {
           console.warn('[hooks] PostToolUse failed:', error)
         })
@@ -49118,9 +49118,8 @@ if (isGeminiMcpBridgeProcess) {
       requireNonEmptyString
     })
     // Skills + Hooks Settings IPC + stores (Wave A).
-    // SessionStart: kickSessionStartHooks primes stdout into
-    // sessionStartContextByWorkspace for the next compose; await
-    // runSessionStartHooksForWorkspace when a caller can inject into THIS turn.
+    // SessionStart: ComposerService awaits resolveSessionStartContext once per
+    // workspace (sessionStartHooksFired) and injects stdout into this turn.
     // Stop: fireStopHooksForWorkspace on terminal. Pre/Post run inside
     // executeGeminiMcpTool via getSkillsHooksSubsystem().
     const { skillsStore, hooksStore } = createSkillsHooksSubsystem({
@@ -49138,30 +49137,10 @@ if (isGeminiMcpBridgeProcess) {
     })
     const sessionStartContextByWorkspace = new Map<string, string>()
     const sessionStartHooksFired = new Set<string>()
-    const kickSessionStartHooks = (workspacePath: string): void => {
-      const path = workspacePath.trim()
-      if (!path) return
-      // Fire SessionStart at most once per workspacePath until cleared; still
-      // return any previously cached context on later compose kicks.
-      if (sessionStartHooksFired.has(path)) return
-      sessionStartHooksFired.add(path)
-      void runSessionStartHooksForWorkspace(path, {
-        hooksStore,
-        allowWorkspaceHooks: false
-      })
-        .then((outcome) => {
-          if (outcome.sessionStartContext) {
-            sessionStartContextByWorkspace.set(path, outcome.sessionStartContext)
-          }
-        })
-        .catch((error) => {
-          console.warn('[hooks] SessionStart failed:', error)
-        })
-    }
     const fireStopHooksForWorkspace = (workspacePath: string, status?: string): void => {
       const path = workspacePath.trim()
       if (!path) return
-      void runStopHooks(path, { status }, { hooksStore, allowWorkspaceHooks: false }).catch(
+      void runStopHooks(path, { status }, { hooksStore, allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true }).catch(
         (error) => {
           console.warn('[hooks] Stop failed:', error)
         }
@@ -49713,9 +49692,26 @@ if (isGeminiMcpBridgeProcess) {
           name: skill.name,
           description: skill.description
         })),
-      resolveSessionStartContext: (workspacePath) => {
-        kickSessionStartHooks(workspacePath)
-        return sessionStartContextByWorkspace.get(workspacePath.trim()) || undefined
+      resolveSessionStartContext: async (workspacePath) => {
+        const path = workspacePath.trim()
+        if (!path) return undefined
+        if (sessionStartContextByWorkspace.has(path) || sessionStartHooksFired.has(path)) {
+          return sessionStartContextByWorkspace.get(path)
+        }
+        sessionStartHooksFired.add(path)
+        try {
+          const outcome = await runSessionStartHooksForWorkspace(path, {
+            hooksStore,
+            allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true
+          })
+          if (outcome.sessionStartContext) {
+            sessionStartContextByWorkspace.set(path, outcome.sessionStartContext)
+          }
+          return outcome.sessionStartContext || undefined
+        } catch (error) {
+          console.warn('[hooks] SessionStart failed:', error)
+          return sessionStartContextByWorkspace.get(path)
+        }
       },
       signRunPermissionPosture: signRunPosture,
       resolveFrozenPermissionPosture: (input) => {
@@ -53494,9 +53490,9 @@ if (isGeminiMcpBridgeProcess) {
     // requiring a Gemini-renderer round-trip.
     runCoordinatorRef = runCoordinator
 
-    const composeMainOwnedExecutionGraphAttempt = (
+    const composeMainOwnedExecutionGraphAttempt = async (
       appRunId: string
-    ): ExecutionGraphComposedPayloadEntry => {
+    ): Promise<ExecutionGraphComposedPayloadEntry> => {
       const input = graphOwnedComposerInput(appRunId)
       if (!input) throw new Error('Execution graph composer authority is unavailable.')
       const { job } = resolveExecutionGraphQueueAuthority(appRunId)
@@ -53504,7 +53500,7 @@ if (isGeminiMcpBridgeProcess) {
         throw new Error('Execution graph queue run lost its main-owned starting lease.')
       }
       const binding = job.executionGraph!
-      const payload = composerService.composeRun(input)
+      const payload = await composerService.composeRun(input)
       if (
         payload.appRunId !== job.runId ||
         payload.appChatId !== job.chatId ||
@@ -53602,7 +53598,7 @@ if (isGeminiMcpBridgeProcess) {
         if (leased.runId !== appRunId || leased.status !== 'starting' || !leased.executionGraph) {
           throw new Error('Execution graph scheduler could not acquire its exact queue lease.')
         }
-        const entry = composeMainOwnedExecutionGraphAttempt(appRunId)
+        const entry = await composeMainOwnedExecutionGraphAttempt(appRunId)
         const { job } = resolveExecutionGraphQueueAuthority(appRunId)
         const binding = job.executionGraph!
         if (

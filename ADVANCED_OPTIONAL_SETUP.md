@@ -318,9 +318,11 @@ TaskWraith can run Settings-authored shell hooks at SessionStart, PreToolUse,
 PostToolUse, and Stop. User hooks live under app `userData/hooks.json`.
 Workspace hooks may be stored at `{workspace}/.taskwraith/hooks.json`.
 
-That workspace file is inside the agent-writable tree, so v1 does **not**
-auto-execute workspace-scoped hooks. Host execution runs `scope === 'user'`
-hooks only unless a future trusted opt-in passes `allowWorkspaceHooks: true`.
+That workspace file is inside the agent-writable tree, so TaskWraith does **not**
+auto-execute workspace-scoped hooks by default. Host execution runs
+`scope === 'user'` hooks only unless you enable **Settings → Hooks → Trust
+workspace hooks** (`trustWorkspaceHooks`). That opt-in is persisted in app
+settings and passed through as `allowWorkspaceHooks: true` at each fire point.
 Hook processes receive a scrubbed env (PATH, HOME, USER, LANG, TMPDIR) — never
 the full host `process.env`.
 

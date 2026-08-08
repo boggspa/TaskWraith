@@ -18,6 +18,9 @@ export interface HooksSettingsPanelProps {
   onUpsert: (hook: HookCommand) => void | Promise<void>
   onDelete: (hook: HookCommand) => void | Promise<void>
   onSetEnabled: (hook: HookCommand, enabled: boolean) => void | Promise<void>
+  /** When true, host may execute workspace-scoped `.taskwraith/hooks.json` hooks. */
+  trustWorkspaceHooks?: boolean
+  onTrustWorkspaceHooksChange?: (enabled: boolean) => void | Promise<void>
   workspaceLabel?: string
   busy?: boolean
   error?: string | null
@@ -57,6 +60,8 @@ export function HooksSettingsPanel({
   onUpsert,
   onDelete,
   onSetEnabled,
+  trustWorkspaceHooks = false,
+  onTrustWorkspaceHooksChange,
   workspaceLabel,
   busy = false,
   error = null,
@@ -164,6 +169,24 @@ export function HooksSettingsPanel({
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="settings-group span-all">
+        <label className="settings-effects-check-row" style={{ margin: 0 }}>
+          <input
+            type="checkbox"
+            checked={trustWorkspaceHooks}
+            disabled={busy || !onTrustWorkspaceHooksChange}
+            aria-label="Trust workspace hooks"
+            onChange={(event) => void onTrustWorkspaceHooksChange?.(event.target.checked)}
+          />
+          <span>Trust workspace hooks</span>
+        </label>
+        <p className="settings-hint">
+          Off by default. When enabled, TaskWraith may execute workspace-scoped hooks from{' '}
+          <code>.taskwraith/hooks.json</code>. That file is agent-writable — treat this as a
+          trust decision, not a convenience toggle.
+        </p>
       </div>
 
       {ipcHint && (
@@ -326,6 +349,7 @@ export function HooksSettingsPanelHost({
   const api = useMemo(() => getSkillsHooksSettingsApi(), [])
   const ipcReady = hooksIpcReady(api)
   const [hooks, setHooks] = useState<HookCommand[]>([])
+  const [trustWorkspaceHooks, setTrustWorkspaceHooks] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -346,6 +370,24 @@ export function HooksSettingsPanelHost({
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.api?.getSettings !== 'function') return
+    let cancelled = false
+    void window.api
+      .getSettings()
+      .then((settings) => {
+        if (cancelled) return
+        setTrustWorkspaceHooks(settings?.trustWorkspaceHooks === true)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : String(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const onUpsert = useCallback(
     async (hook: HookCommand) => {
@@ -435,12 +477,31 @@ export function HooksSettingsPanelHost({
     [api, refresh, workspacePath]
   )
 
+  const onTrustWorkspaceHooksChange = useCallback(async (enabled: boolean) => {
+    setTrustWorkspaceHooks(enabled)
+    if (typeof window === 'undefined' || typeof window.api?.updateSettings !== 'function') {
+      setError('Settings IPC is unavailable — trust toggle stays in this session.')
+      return
+    }
+    try {
+      setBusy(true)
+      setError(null)
+      await window.api.updateSettings({ trustWorkspaceHooks: enabled })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
   return (
     <HooksSettingsPanel
       hooks={hooks}
       onUpsert={onUpsert}
       onDelete={onDelete}
       onSetEnabled={onSetEnabled}
+      trustWorkspaceHooks={trustWorkspaceHooks}
+      onTrustWorkspaceHooksChange={onTrustWorkspaceHooksChange}
       workspaceLabel={workspaceLabel ?? undefined}
       busy={busy}
       error={error}

@@ -310,7 +310,7 @@ describe('scheduled headless dispatch integration', () => {
       'async function dispatchDueScheduledTaskHeadless(',
       'function emitDueScheduledTasks() {'
     )
-    const compose = solo.indexOf('const composed = composer.composeRun({')
+    const compose = solo.indexOf('const composed = await composer.composeRun({')
     const seal = solo.indexOf('const sealService = scheduledOccurrenceSealServiceRef')
     const seed = solo.indexOf('seedScheduledSoloTranscript(')
     const dispatch = solo.indexOf('const result = await dispatch(')

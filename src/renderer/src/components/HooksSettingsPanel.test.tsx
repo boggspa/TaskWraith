@@ -53,6 +53,23 @@ describe('HooksSettingsPanel', () => {
     expect(html).toContain('Add hook')
     expect(html).toContain('No post tool use hooks.')
     expect(html).toContain('aria-label="Enable hook hook-1"')
+    expect(html).toContain('Trust workspace hooks')
+    expect(html).toContain('agent-writable')
+  })
+
+  it('reflects the trustWorkspaceHooks prop on the checkbox', () => {
+    const html = renderToStaticMarkup(
+      <HooksSettingsPanel
+        hooks={[]}
+        onUpsert={vi.fn()}
+        onDelete={vi.fn()}
+        onSetEnabled={vi.fn()}
+        trustWorkspaceHooks
+        onTrustWorkspaceHooksChange={vi.fn()}
+      />
+    )
+    expect(html).toContain('aria-label="Trust workspace hooks"')
+    expect(html).toContain('checked=""')
   })
 
   it('renders empty groups when no hooks exist', () => {

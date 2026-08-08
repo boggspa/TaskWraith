@@ -2408,6 +2408,12 @@ export interface AppSettings {
    * `DEFAULT_PROVIDER_HARNESS_POSTURES` in `shared/providerHarnessPosture.ts`.
    */
   providerHarnessPosture?: ProviderHarnessPostureMap
+  /**
+   * When true, host shell hooks may execute workspace-scoped commands from
+   * `{workspace}/.taskwraith/hooks.json`. That file is agent-writable, so the
+   * default (undefined/false) keeps execution limited to user-scoped hooks.
+   */
+  trustWorkspaceHooks?: boolean
   userMcpServers?: UserMcpServerConfig[]
   codexUsageCredential?: {
     encryptedAccessToken?: string

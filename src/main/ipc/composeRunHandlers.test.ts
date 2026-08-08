@@ -50,13 +50,13 @@ function inputFor(chatId: string, snapshotChatId = chatId): ComposerInput {
 }
 
 describe('registerComposeRunHandlers', () => {
-  it('registers compose-run and preserves unrestricted main-renderer targeting', () => {
+  it('registers compose-run and preserves unrestricted main-renderer targeting', async () => {
     const mainEvent = { sender: { id: 1 } }
     const deps = createDeps()
     registerComposeRunHandlers(deps)
     const input = inputFor('chat-test-3')
 
-    expect(handlerFor('compose-run')(mainEvent, input)).toEqual({
+    await expect(handlerFor('compose-run')(mainEvent, input)).resolves.toEqual({
       provider: 'codex'
     })
     expect(deps.assertSenderChatScope).toHaveBeenCalledWith(mainEvent, 'chat-test-3')
@@ -64,7 +64,7 @@ describe('registerComposeRunHandlers', () => {
     expect(deps.composeRun).toHaveBeenCalledWith(input)
   })
 
-  it('rejects a Test 1 popout composing a Test 3 chat before ComposerService', () => {
+  it('rejects a Test 1 popout composing a Test 3 chat before ComposerService', async () => {
     const test1Popout = { sender: { id: 11 } }
     const deps = createDeps()
     deps.assertSenderChatScope = vi.fn((_event, chatId) => {
@@ -72,24 +72,22 @@ describe('registerComposeRunHandlers', () => {
     })
     registerComposeRunHandlers(deps)
 
-    expect(() => handlerFor('compose-run')(test1Popout, inputFor('chat-test-3'))).toThrow(
+    await expect(handlerFor('compose-run')(test1Popout, inputFor('chat-test-3'))).rejects.toThrow(
       'Renderer chat ownership mismatch.'
     )
     expect(deps.assertSenderChatScope).toHaveBeenCalledWith(test1Popout, 'chat-test-3')
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
-  it('rejects a payload whose chat snapshot belongs to a different chat before ComposerService', () => {
+  it('rejects a payload whose chat snapshot belongs to a different chat before ComposerService', async () => {
     const deps = createDeps()
     registerComposeRunHandlers(deps)
 
-    expect(() =>
-      handlerFor('compose-run')({ sender: { id: 1 } }, inputFor('chat-test-1', 'chat-test-3'))
-    ).toThrow('Composer chat snapshot does not match the requested chat.')
+    await expect(handlerFor('compose-run')({ sender: { id: 1 } }, inputFor('chat-test-1', 'chat-test-3'))).rejects.toThrow('Composer chat snapshot does not match the requested chat.')
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
-  it('rejects a Test 1 popout using a Test 3 attachment before ComposerService', () => {
+  it('rejects a Test 1 popout using a Test 3 attachment before ComposerService', async () => {
     const test1Popout = { sender: { id: 11 } }
     const deps = createDeps()
     deps.resolveSenderAttachmentPaths = vi.fn(() => {
@@ -101,7 +99,7 @@ describe('registerComposeRunHandlers', () => {
       imageAttachments: [{ path: '/Test 3/secret.pdf', name: 'secret.pdf' }]
     }
 
-    expect(() => handlerFor('compose-run')(test1Popout, input)).toThrow(
+    await expect(handlerFor('compose-run')(test1Popout, input)).rejects.toThrow(
       'Renderer is not authorized to use one or more attachments.'
     )
     expect(deps.resolveSenderAttachmentPaths).toHaveBeenCalledWith(test1Popout, [
@@ -110,7 +108,7 @@ describe('registerComposeRunHandlers', () => {
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
-  it('passes canonical caller-authorized attachments to ComposerService', () => {
+  it('passes canonical caller-authorized attachments to ComposerService', async () => {
     const deps = createDeps()
     deps.resolveSenderAttachmentPaths = vi.fn((_event, paths) =>
       paths.map((path) => `/real${path}`)
@@ -121,7 +119,7 @@ describe('registerComposeRunHandlers', () => {
       imageAttachments: [{ path: '/Test 1/allowed.png', name: 'allowed.png' }]
     }
 
-    handlerFor('compose-run')({ sender: { id: 11 } }, input)
+    await handlerFor('compose-run')({ sender: { id: 11 } }, input)
 
     expect(deps.composeRun).toHaveBeenCalledWith({
       ...input,
@@ -129,7 +127,7 @@ describe('registerComposeRunHandlers', () => {
     })
   })
 
-  it('composes only the durable chat/workspace returned by main authority', () => {
+  it('composes only the durable chat/workspace returned by main authority', async () => {
     const deps = createDeps()
     const input = {
       ...inputFor('chat-test-1'),
@@ -153,7 +151,7 @@ describe('registerComposeRunHandlers', () => {
     }))
     registerComposeRunHandlers(deps)
 
-    handlerFor('compose-run')({ sender: { id: 11 } }, input)
+    await handlerFor('compose-run')({ sender: { id: 11 } }, input)
 
     expect(deps.composeRun).toHaveBeenCalledWith({
       ...input,
@@ -162,7 +160,7 @@ describe('registerComposeRunHandlers', () => {
     })
   })
 
-  it('rejects scheduled provenance before composing', () => {
+  it('rejects scheduled provenance before composing', async () => {
     const deps = createDeps()
     deps.resolveSenderComposeAuthority = vi.fn(() => {
       throw new Error(
@@ -171,20 +169,18 @@ describe('registerComposeRunHandlers', () => {
     })
     registerComposeRunHandlers(deps)
 
-    expect(() =>
-      handlerFor('compose-run')(
+    await expect(handlerFor('compose-run')(
         { sender: { id: 11 } },
         {
           ...inputFor('chat-test-1'),
           appRunId: 'run-replayed',
           scheduledTaskId: 'scheduled-test-3'
         }
-      )
-    ).toThrow('Scheduled occurrence does not match')
+      )).rejects.toThrow('Scheduled occurrence does not match')
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
-  it('uses canonical scheduled attachments after exact main-owned occurrence validation', () => {
+  it('uses canonical scheduled attachments after exact main-owned occurrence validation', async () => {
     const deps = createDeps()
     const input = {
       ...inputFor('chat-test-1'),
@@ -201,7 +197,7 @@ describe('registerComposeRunHandlers', () => {
     }))
     registerComposeRunHandlers(deps)
 
-    handlerFor('compose-run')({ sender: { id: 1 } }, input)
+    await handlerFor('compose-run')({ sender: { id: 1 } }, input)
 
     expect(deps.resolveSenderAttachmentPaths).not.toHaveBeenCalled()
     expect(deps.composeRun).toHaveBeenCalledWith({
@@ -210,7 +206,7 @@ describe('registerComposeRunHandlers', () => {
     })
   })
 
-  it('issues a dispatch receipt only after canonical scheduled composition succeeds', () => {
+  it('issues a dispatch receipt only after canonical scheduled composition succeeds', async () => {
     const deps = createDeps()
     const composed = { provider: 'codex' } as ComposerRunPayload
     const event = { sender: { id: 1 } }
@@ -227,7 +223,7 @@ describe('registerComposeRunHandlers', () => {
     deps.onScheduledRunComposed = vi.fn()
     registerComposeRunHandlers(deps)
 
-    expect(handlerFor('compose-run')(event, input)).toBe(composed)
+    await expect(handlerFor('compose-run')(event, input)).resolves.toBe(composed)
     expect(deps.onScheduledRunComposed).toHaveBeenCalledWith(event, input, composed)
   })
 })

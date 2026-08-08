@@ -252,16 +252,18 @@ export interface ComposerServiceDeps {
     workspaceId?: string
   ) => readonly { id: string; name: string; description: string }[]
   /**
-   * Optional SessionStart hook stdout already collected for this turn.
-   * Compose stays sync; callers that await host hooks may pass the result.
+   * Optional SessionStart hook stdout for this turn. May be sync or async;
+   * `composeRun` awaits the result before prompt composition.
    */
-  resolveSessionStartContext?: (workspacePath: string) => string | null | undefined
+  resolveSessionStartContext?: (
+    workspacePath: string
+  ) => string | null | undefined | Promise<string | null | undefined>
 }
 
 export class ComposerService {
   constructor(private deps: ComposerServiceDeps) {}
 
-  composeRun(input: ComposerInput): ComposerRunPayload {
+  async composeRun(input: ComposerInput): Promise<ComposerRunPayload> {
     const chatId = requireNonEmptyString(input?.chatId, 'Chat id')
     const storedChat = this.deps.appStore.getChat(chatId)
     const sourceChat = input.chatSnapshot || storedChat
@@ -574,7 +576,7 @@ export class ComposerService {
       !graphContextIsolated &&
       workspacePathForSkills &&
       this.deps.resolveSessionStartContext
-        ? this.deps.resolveSessionStartContext(workspacePathForSkills)
+        ? await this.deps.resolveSessionStartContext(workspacePathForSkills)
         : undefined
     const promptInput = {
       provider,

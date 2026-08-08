@@ -156,11 +156,11 @@ function makeDeps(
   }
 }
 
-function compose(
+async function compose(
   chatOverrides: Partial<ChatRecord>,
   inputOverrides: Record<string, unknown>,
   settings: Partial<AppSettings> = {}
-): ComposerRunPayload {
+): Promise<ComposerRunPayload> {
   const chat = makeChat(chatOverrides)
   const { deps } = makeDeps(chat, settings)
   const service = new ComposerService(deps)
@@ -191,8 +191,8 @@ function makeGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPathGran
 }
 
 describe('ComposerService', () => {
-  it('isolates execution-graph attempts from transcript and native-session context', () => {
-    const payload = compose(
+  it('isolates execution-graph attempts from transcript and native-session context', async () => {
+    const payload = await compose(
       {
         provider: 'codex',
         linkedProviderSessionId: 'thread-old'
@@ -212,8 +212,8 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('Do the thing')
   })
 
-  it('isolates execution-graph Ollama attempts from root-chat memory and metadata', () => {
-    const payload = compose(
+  it('isolates execution-graph Ollama attempts from root-chat memory and metadata', async () => {
+    const payload = await compose(
       {
         provider: 'ollama',
         ollamaSessionMemory: {
@@ -239,11 +239,11 @@ describe('ComposerService', () => {
     expect(payload.composer.providerMetadataPatch).toBeUndefined()
   })
 
-  it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', () => {
+  it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', async () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
-      const payload = compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
+      const payload = await compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
       expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
@@ -253,11 +253,11 @@ describe('ComposerService', () => {
     }
   })
 
-  it('does not claim MCP/gateway is active when the Claude bridge setting is disabled', () => {
+  it('does not claim MCP/gateway is active when the Claude bridge setting is disabled', async () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
-      const payload = compose(
+      const payload = await compose(
         { provider: 'claude' },
         { userInput: 'blur the screenshot' },
         { geminiMcpBridgeEnabled: false }
@@ -272,8 +272,8 @@ describe('ComposerService', () => {
     }
   })
 
-  it('keeps Pi generic MCP unadvertised until its launch-time coordination receipt', () => {
-    const payload = compose(
+  it('keeps Pi generic MCP unadvertised until its launch-time coordination receipt', async () => {
+    const payload = await compose(
       { provider: 'pi' },
       { userInput: 'Ask the next participant to review the findings.' },
       { geminiMcpBridgeEnabled: true }
@@ -285,11 +285,11 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('capability_search')
   })
 
-  it('honors a pinned Claude core receipt after the rollout flag is disabled', () => {
+  it('honors a pinned Claude core receipt after the rollout flag is disabled', async () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     delete process.env.TASKWRAITH_CORE_MCP_PROFILE
     try {
-      const payload = compose(
+      const payload = await compose(
         {
           provider: 'claude',
           linkedProviderSessionId: 'claude-session-1',
@@ -313,8 +313,8 @@ describe('ComposerService', () => {
     }
   })
 
-  it('keeps pinned full-profile Claude capability prose truthful when the toggle is off', () => {
-    const payload = compose(
+  it('keeps pinned full-profile Claude capability prose truthful when the toggle is off', async () => {
+    const payload = await compose(
       {
         provider: 'claude',
         linkedProviderSessionId: 'claude-session-1',
@@ -336,11 +336,11 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('Image tools are also available over MCP')
   })
 
-  it('normalizes a default Grok model before composing image-tool capability prose', () => {
+  it('normalizes a default Grok model before composing image-tool capability prose', async () => {
     const previous = process.env.TASKWRAITH_GROK_ACP
     process.env.TASKWRAITH_GROK_ACP = '1'
     try {
-      const payload = compose(
+      const payload = await compose(
         { provider: 'grok' },
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
@@ -354,11 +354,11 @@ describe('ComposerService', () => {
     }
   })
 
-  it('does not claim an ACP profile when the retired override fails the run closed', () => {
+  it('does not claim an ACP profile when the retired override fails the run closed', async () => {
     const previous = process.env.TASKWRAITH_GROK_ACP
     process.env.TASKWRAITH_GROK_ACP = '0'
     try {
-      const payload = compose(
+      const payload = await compose(
         { provider: 'grok' },
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
@@ -371,13 +371,13 @@ describe('ComposerService', () => {
     }
   })
 
-  it('does not claim core for ACP read-only Grok when advertise gates are off', () => {
+  it('does not claim core for ACP read-only Grok when advertise gates are off', async () => {
     const previousAcp = process.env.TASKWRAITH_GROK_ACP
     const previousReadOnly = process.env.TASKWRAITH_GROK_READONLY_MCP
     process.env.TASKWRAITH_GROK_ACP = '1'
     delete process.env.TASKWRAITH_GROK_READONLY_MCP
     try {
-      const payload = compose(
+      const payload = await compose(
         { provider: 'grok' },
         { selectedModelType: 'cli-default', approvalMode: 'plan', workflowMode: 'normal' }
       )
@@ -391,14 +391,14 @@ describe('ComposerService', () => {
     }
   })
 
-  it('rejects a new Gemini run from a linked historical Gemini chat', () => {
+  it('rejects a new Gemini run from a linked historical Gemini chat', async () => {
     const chat = makeChat({
       provider: 'gemini',
       linkedGeminiSessionId: 'gemini-session-1'
     })
     const { deps } = makeDeps(chat)
     const service = new ComposerService(deps)
-    expect(() =>
+    await expect(
       service.composeRun({
         chatId: chat.appChatId,
         provider: 'gemini',
@@ -407,11 +407,11 @@ describe('ComposerService', () => {
         selectedModelType: 'flash-lite',
         approvalMode: 'plan'
       })
-    ).toThrow('gemini is unavailable for new runs.')
+    ).rejects.toThrow('gemini is unavailable for new runs.')
   })
 
-  it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', () => {
-    const payload = compose(
+  it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', async () => {
+    const payload = await compose(
       {
         provider: 'ollama',
         providerMetadata: {
@@ -424,8 +424,8 @@ describe('ComposerService', () => {
     expect(payload.ollamaRunProfile).toBe('verify_with_shell')
   })
 
-  it('omits the per-chat Ollama run profile when the chat has none', () => {
-    const payload = compose(
+  it('omits the per-chat Ollama run profile when the chat has none', async () => {
+    const payload = await compose(
       { provider: 'ollama', providerMetadata: {} },
       { selectedModelType: 'gpt-oss:latest' },
       {}
@@ -433,11 +433,11 @@ describe('ComposerService', () => {
     expect(payload.ollamaRunProfile).toBeUndefined()
   })
 
-  it('does not revive Gemini when a historical chat supplies the provider fallback', () => {
+  it('does not revive Gemini when a historical chat supplies the provider fallback', async () => {
     const chat = makeChat({ provider: 'gemini' })
     const { deps } = makeDeps(chat)
     const service = new ComposerService(deps)
-    expect(() =>
+    await expect(
       service.composeRun({
         chatId: chat.appChatId,
         workspace: chat.workspacePath,
@@ -445,26 +445,24 @@ describe('ComposerService', () => {
         selectedModelType: 'flash-lite',
         approvalMode: 'default'
       })
-    ).toThrow('gemini is unavailable for new runs.')
+    ).rejects.toThrow('gemini is unavailable for new runs.')
   })
 
-  it('rejects a new antigravity run when no Gemini API key is configured', () => {
-    expect(() => compose({ provider: 'antigravity' }, {})).toThrow(
-      'antigravity is unavailable for new runs.'
-    )
+  it('rejects a new antigravity run when no Gemini API key is configured', async () => {
+    await expect(compose({ provider: 'antigravity' }, {})).rejects.toThrow('antigravity is unavailable for new runs.')
   })
 
-  it('admits a new antigravity run once a Gemini API key is configured, with no AGY opt-in', () => {
+  it('admits a new antigravity run once a Gemini API key is configured, with no AGY opt-in', async () => {
     setAntigravityGeminiApiKeyConfiguredProbe(() => true)
     try {
-      const payload = compose({ provider: 'antigravity' }, {})
+      const payload = await compose({ provider: 'antigravity' }, {})
       expect(payload.provider).toBe('antigravity')
     } finally {
       resetAntigravityGeminiApiKeyConfiguredProbeForTests()
     }
   })
 
-  it('admits a new antigravity run on the agy opt-in alone, with NO Gemini API key', () => {
+  it('admits a new antigravity run on the agy opt-in alone, with NO Gemini API key', async () => {
     // The regression this pins: admission keyed ONLY on the API-key signal, so
     // a user who had accepted the agy ban-risk opt-in but never saved a key
     // could select a bare quota model and the send died here, before IPC
@@ -472,7 +470,7 @@ describe('ComposerService', () => {
     setAntigravityAgyOptInEnabledProbe(() => true)
     setAntigravityGeminiApiKeyConfiguredProbe(() => false)
     try {
-      const payload = compose({ provider: 'antigravity' }, {})
+      const payload = await compose({ provider: 'antigravity' }, {})
       expect(payload.provider).toBe('antigravity')
     } finally {
       resetAntigravityAgyOptInEnabledProbeForTests()
@@ -480,24 +478,22 @@ describe('ComposerService', () => {
     }
   })
 
-  it('rejects a new antigravity run when NEITHER lane is admitted', () => {
+  it('rejects a new antigravity run when NEITHER lane is admitted', async () => {
     // Previously titled as proving the agy lane is refused "even with a
     // configured key" — but it set the key probe to false, so it only ever
     // asserted the both-absent case. Named for what it actually checks.
     setAntigravityAgyOptInEnabledProbe(() => false)
     setAntigravityGeminiApiKeyConfiguredProbe(() => false)
     try {
-      expect(() => compose({ provider: 'antigravity' }, {})).toThrow(
-        'antigravity is unavailable for new runs.'
-      )
+      await expect(compose({ provider: 'antigravity' }, {})).rejects.toThrow('antigravity is unavailable for new runs.')
     } finally {
       resetAntigravityAgyOptInEnabledProbeForTests()
       resetAntigravityGeminiApiKeyConfiguredProbeForTests()
     }
   })
 
-  it('maps non-plan global runs back to default approval mode', () => {
-    const payload = compose(
+  it('maps non-plan global runs back to default approval mode', async () => {
+    const payload = await compose(
       { provider: 'codex', scope: 'global', workspacePath: undefined },
       {
         provider: 'codex',
@@ -512,8 +508,8 @@ describe('ComposerService', () => {
     expect(payload.approvalMode).toBe('default')
   })
 
-  it('builds Kimi prompts with conversation context even when resuming a provider session', () => {
-    const payload = compose(
+  it('builds Kimi prompts with conversation context even when resuming a provider session', async () => {
+    const payload = await compose(
       { provider: 'kimi', linkedProviderSessionId: 'kimi-thread-1' },
       { selectedModelType: 'kimi-k2.6', kimiThinkingEnabled: false }
     )
@@ -526,8 +522,8 @@ describe('ComposerService', () => {
     )
   })
 
-  it('pairs a slim native Kimi ACP resume prompt with a full-context fallback', () => {
-    const payload = compose(
+  it('pairs a slim native Kimi ACP resume prompt with a full-context fallback', async () => {
+    const payload = await compose(
       {
         provider: 'kimi',
         linkedProviderSessionId: 'session_native_1',
@@ -546,8 +542,8 @@ describe('ComposerService', () => {
     expect(payload.composer.applicationLog).toContain('resuming Kimi Code ACP session context')
   })
 
-  it('does not slim-resume a legacy boolean-only Kimi ACP record', () => {
-    const payload = compose(
+  it('does not slim-resume a legacy boolean-only Kimi ACP record', async () => {
+    const payload = await compose(
       {
         provider: 'kimi',
         linkedProviderSessionId: 'session_legacy',
@@ -560,15 +556,15 @@ describe('ComposerService', () => {
     expect(payload.resumeFallbackPrompt).toBeUndefined()
   })
 
-  it('defaults Kimi thinking to true from provider metadata defaults', () => {
-    const payload = compose({ provider: 'kimi' }, { selectedModelType: undefined })
+  it('defaults Kimi thinking to true from provider metadata defaults', async () => {
+    const payload = await compose({ provider: 'kimi' }, { selectedModelType: undefined })
     expect(payload.model).toBe('kimi-k2.7-code')
     expect(payload.kimiThinking).toBe(true)
     expect(payload.serviceTier).toBe('standard')
   })
 
-  it('threads K3 effort while keeping thinking always on', () => {
-    const payload = compose(
+  it('threads K3 effort while keeping thinking always on', async () => {
+    const payload = await compose(
       { provider: 'kimi' },
       {
         selectedModelType: 'kimi-k3',
@@ -583,8 +579,8 @@ describe('ComposerService', () => {
     expect(payload.kimiThinking).toBe(true)
   })
 
-  it('defaults K3 effort to Max and ignores unsupported Off', () => {
-    const payload = compose(
+  it('defaults K3 effort to Max and ignores unsupported Off', async () => {
+    const payload = await compose(
       { provider: 'kimi' },
       { selectedModelType: 'kimi-k3', kimiReasoningEffort: 'off' }
     )
@@ -592,12 +588,12 @@ describe('ComposerService', () => {
     expect(payload.kimiThinking).toBe(true)
   })
 
-  it('maps the Kimi Fast selection to the HighSpeed service tier', () => {
-    const selected = compose(
+  it('maps the Kimi Fast selection to the HighSpeed service tier', async () => {
+    const selected = await compose(
       { provider: 'kimi' },
       { selectedModelType: 'kimi-k2.7-code', kimiFastMode: true }
     )
-    const persisted = compose(
+    const persisted = await compose(
       { provider: 'kimi', providerMetadata: { kimiFastMode: true } },
       { selectedModelType: 'kimi-k2.7-code' }
     )
@@ -607,11 +603,11 @@ describe('ComposerService', () => {
     expect(selected.kimiThinking).toBe(true)
   })
 
-  it('teaches Kimi about cross-provider delegate_to_subthread (Phase I4)', () => {
+  it('teaches Kimi about cross-provider delegate_to_subthread (Phase I4)', async () => {
     // The runtime note must point Kimi at TaskWraith__delegate_to_subthread
     // so it doesn't reach for a built-in generalist agent when asked to
     // delegate to Gemini / Codex / Claude.
-    const payload = compose(
+    const payload = await compose(
       { provider: 'kimi' },
       { userInput: 'Use a subagent to review this and delegate a pass.' }
     )
@@ -627,15 +623,15 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
   })
 
-  it('omits the Kimi delegation preamble in plan mode (read-only sessions)', () => {
-    const payload = compose({ provider: 'kimi' }, { approvalMode: 'plan' })
+  it('omits the Kimi delegation preamble in plan mode (read-only sessions)', async () => {
+    const payload = await compose({ provider: 'kimi' }, { approvalMode: 'plan' })
     expect(payload.prompt).not.toContain('TaskWraith MCP server')
     expect(payload.prompt).not.toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('Do the thing')
   })
 
-  it('omits the Kimi delegation preamble for global-scope runs (no workspace)', () => {
-    const payload = compose(
+  it('omits the Kimi delegation preamble for global-scope runs (no workspace)', async () => {
+    const payload = await compose(
       { provider: 'kimi', scope: 'global', workspacePath: undefined, workspaceId: undefined },
       {}
     )
@@ -644,8 +640,8 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('Do the thing')
   })
 
-  it('strips internal plan markdown blocks and forces plan approval mode', () => {
-    const payload = compose(
+  it('strips internal plan markdown blocks and forces plan approval mode', async () => {
+    const payload = await compose(
       { provider: 'kimi' },
       {
         selectedModelType: 'kimi-k2.6',
@@ -660,15 +656,15 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('```plan')
   })
 
-  it('keeps legacy plan approval mode in normal workflow when no workflow is explicit', () => {
-    const payload = compose({ provider: 'codex' }, { approvalMode: 'plan' })
+  it('keeps legacy plan approval mode in normal workflow when no workflow is explicit', async () => {
+    const payload = await compose({ provider: 'codex' }, { approvalMode: 'plan' })
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('normal')
     expect(payload.composer.workflowMode).toBe('normal')
   })
 
-  it('keeps explicit normal workflow separate from read-only plan permissions', () => {
-    const payload = compose({ provider: 'codex' }, { approvalMode: 'plan', workflowMode: 'normal' })
+  it('keeps explicit normal workflow separate from read-only plan permissions', async () => {
+    const payload = await compose({ provider: 'codex' }, { approvalMode: 'plan', workflowMode: 'normal' })
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('normal')
     expect(payload.composer.workflowMode).toBe('normal')
@@ -680,8 +676,8 @@ describe('ComposerService', () => {
     expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('ask')
   })
 
-  it('uses persisted plan workflow to force plan approval mode', () => {
-    const payload = compose(
+  it('uses persisted plan workflow to force plan approval mode', async () => {
+    const payload = await compose(
       { provider: 'claude', workflowMode: 'plan' },
       { approvalMode: 'default' }
     )
@@ -690,8 +686,8 @@ describe('ComposerService', () => {
     expect(payload.composer.workflowMode).toBe('plan')
   })
 
-  it('posture inversion: a Plan-workflow solo run keeps the no-ask floor except sub-thread delegation', () => {
-    const payload = compose(
+  it('posture inversion: a Plan-workflow solo run keeps the no-ask floor except sub-thread delegation', async () => {
+    const payload = await compose(
       { provider: 'claude', workflowMode: 'plan' },
       { approvalMode: 'default' }
     )
@@ -707,13 +703,13 @@ describe('ComposerService', () => {
     expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
   })
 
-  it('1.0.4-AF: strips a leading /discuss token and flags selfReflectiveRequested', () => {
+  it('1.0.4-AF: strips a leading /discuss token and flags selfReflectiveRequested', async () => {
     // /discuss is the prefix-shaped sibling of the ```plan``` fenced
     // block: a composer-level slash signal that the user wants the
     // ensemble's deictic rule to flip toward TaskWraith itself for the
     // round. The token never reaches the provider — it's a marker
     // for the orchestrator (or future self-reflective UI) to read.
-    const payload = compose(
+    const payload = await compose(
       { provider: 'claude' },
       {
         selectedModelType: 'claude-opus-4-8-1m',
@@ -729,8 +725,8 @@ describe('ComposerService', () => {
     expect(payload.composer.planModeParsed).toBeFalsy()
   })
 
-  it('1.0.4-AF: accepts /meta as an alias for /discuss with the same flag', () => {
-    const payload = compose(
+  it('1.0.4-AF: accepts /meta as an alias for /discuss with the same flag', async () => {
+    const payload = await compose(
       { provider: 'claude' },
       { selectedModelType: 'cli-default', userInput: '/meta let us reflect on the harness UX' }
     )
@@ -739,12 +735,12 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toMatch(/^\/meta/)
   })
 
-  it('1.0.4-AF: /discuss composes with a plan markdown block — both signals fire', () => {
+  it('1.0.4-AF: /discuss composes with a plan markdown block — both signals fire', async () => {
     // Plan Mode and Ensemble self-reflective mode are orthogonal:
     // Plan controls per-participant permission posture; self-
     // reflective controls deictic resolution. A prompt that opens
     // with /discuss AND carries a ```plan``` block should set both.
-    const payload = compose(
+    const payload = await compose(
       { provider: 'kimi' },
       {
         selectedModelType: 'kimi-k2.6',
@@ -759,11 +755,11 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('```plan')
   })
 
-  it('1.0.4-AF: does NOT fire on /discuss buried inside the prompt body', () => {
+  it('1.0.4-AF: does NOT fire on /discuss buried inside the prompt body', async () => {
     // Only a leading /discuss token triggers the flag. Users
     // discussing the command itself ("explain /discuss") should not
     // accidentally flip the ensemble's mode.
-    const payload = compose(
+    const payload = await compose(
       { provider: 'claude' },
       {
         selectedModelType: 'cli-default',
@@ -774,7 +770,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('/discuss')
   })
 
-  it('teaches Codex about cross-provider delegate_to_subthread (Phase I2 prompt-level fix)', () => {
+  it('teaches Codex about cross-provider delegate_to_subthread (Phase I2 prompt-level fix)', async () => {
     // Empirical bug: Codex CLI registered the TaskWraith MCP server
     // correctly (~/Library/Logs/TaskWraith/bridge-subprocess.log shows
     // 100+ codex-parented bridge spawns) but the Codex agent itself
@@ -783,7 +779,7 @@ describe('ComposerService', () => {
     // runtime-note preamble in Phase I3/I4 and immediately started
     // calling delegate_to_subthread; Codex was the only provider
     // missing the preamble.
-    const payload = compose(
+    const payload = await compose(
       { provider: 'codex' },
       { userInput: 'Use a parallel review agent and delegate the audit.' }
     )
@@ -802,15 +798,15 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
   })
 
-  it('omits the Codex delegation preamble in plan mode (read-only sessions)', () => {
-    const payload = compose({ provider: 'codex' }, { approvalMode: 'plan' })
+  it('omits the Codex delegation preamble in plan mode (read-only sessions)', async () => {
+    const payload = await compose({ provider: 'codex' }, { approvalMode: 'plan' })
     expect(payload.prompt).not.toContain('TaskWraith MCP server')
     expect(payload.prompt).not.toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('Do the thing')
   })
 
-  it('omits the Codex delegation preamble for global-scope runs (no workspace)', () => {
-    const payload = compose(
+  it('omits the Codex delegation preamble for global-scope runs (no workspace)', async () => {
+    const payload = await compose(
       { provider: 'codex', scope: 'global', workspacePath: undefined, workspaceId: undefined },
       {}
     )
@@ -819,8 +815,8 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('Do the thing')
   })
 
-  it('builds Codex payloads with image paths and external grant prompt references without packing app-server input', () => {
-    const payload = compose(
+  it('builds Codex payloads with image paths and external grant prompt references without packing app-server input', async () => {
+    const payload = await compose(
       { provider: 'codex' },
       {
         selectedModelType: 'gpt-5.5',
@@ -837,8 +833,8 @@ describe('ComposerService', () => {
     expect(payload.serviceTier).toBe('fast')
   })
 
-  it('allows attachments to be the prompt content when text is blank', () => {
-    const payload = compose(
+  it('allows attachments to be the prompt content when text is blank', async () => {
+    const payload = await compose(
       { provider: 'codex' },
       {
         selectedModelType: 'gpt-5.5',
@@ -852,8 +848,8 @@ describe('ComposerService', () => {
     expect(payload.imagePaths).toEqual(['/tmp/screen.png'])
   })
 
-  it('injects Discord context snapshots into provider prompts and read metadata', () => {
-    const payload = compose(
+  it('injects Discord context snapshots into provider prompts and read metadata', async () => {
+    const payload = await compose(
       { provider: 'claude', linkedProviderSessionId: 'claude-session-1' },
       {
         selectedModelType: 'claude-sonnet-4-6',
@@ -907,8 +903,8 @@ describe('ComposerService', () => {
     ])
   })
 
-  it('uses Grok 4.5 as the Grok fallback instead of Gemini defaults', () => {
-    const payload = compose(
+  it('uses Grok 4.5 as the Grok fallback instead of Gemini defaults', async () => {
+    const payload = await compose(
       {
         provider: 'grok',
         requestedModel: undefined,
@@ -925,7 +921,7 @@ describe('ComposerService', () => {
     expect(payload.model).toBe('grok-4.5')
   })
 
-  it('passes provider-filtered workspace access and path context to non-Codex providers', () => {
+  it('passes provider-filtered workspace access and path context to non-Codex providers', async () => {
     const ollamaGrant = makeGrant({
       id: 'ollama-grant',
       provider: 'ollama',
@@ -938,7 +934,7 @@ describe('ComposerService', () => {
       access: 'write',
       path: '/outside/claude.txt'
     })
-    const payload = compose(
+    const payload = await compose(
       { provider: 'ollama' },
       { externalPathGrants: [ollamaGrant, claudeGrant] }
     )
@@ -949,8 +945,8 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('/outside/claude.txt')
   })
 
-  it('applies Codex model-handoff context once and returns providerMetadata patch data', () => {
-    const payload = compose(
+  it('applies Codex model-handoff context once and returns providerMetadata patch data', async () => {
+    const payload = await compose(
       {
         provider: 'codex',
         runs: [
@@ -972,8 +968,8 @@ describe('ComposerService', () => {
     })
   })
 
-  it('injects active goals using the provider that will handle the next run', () => {
-    const payload = compose(
+  it('injects active goals using the provider that will handle the next run', async () => {
+    const payload = await compose(
       {
         provider: 'ollama',
         activeGoal: {
@@ -993,8 +989,8 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Provider mode: Native Codex goal')
   })
 
-  it('carries Grok native goals as structured run state without prompt steering', () => {
-    const payload = compose(
+  it('carries Grok native goals as structured run state without prompt steering', async () => {
+    const payload = await compose(
       {
         provider: 'grok',
         activeGoal: {
@@ -1020,8 +1016,8 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Use the official Grok goal mode')
   })
 
-  it('does not repeat Codex model-handoff context after the handoff key was applied', () => {
-    const payload = compose(
+  it('does not repeat Codex model-handoff context after the handoff key was applied', async () => {
+    const payload = await compose(
       {
         provider: 'codex',
         providerMetadata: { codexModelContextAppliedKeys: ['gpt-5.4->gpt-5.5'] },
@@ -1043,8 +1039,8 @@ describe('ComposerService', () => {
     )
   })
 
-  it('builds Claude payloads without generic context and includes Claude reasoning/fast settings', () => {
-    const payload = compose(
+  it('builds Claude payloads without generic context and includes Claude reasoning/fast settings', async () => {
+    const payload = await compose(
       {
         provider: 'claude',
         linkedProviderSessionId: 'claude-thread-1',
@@ -1076,8 +1072,8 @@ describe('ComposerService', () => {
     expect(payload.claudeFastMode).toBe(true)
   })
 
-  it('falls back to chat metadata for Claude fast mode', () => {
-    const payload = compose(
+  it('falls back to chat metadata for Claude fast mode', async () => {
+    const payload = await compose(
       { provider: 'claude', providerMetadata: { claudeFastMode: true } },
       { selectedModelType: 'claude-opus-4-7' }
     )
@@ -1085,11 +1081,11 @@ describe('ComposerService', () => {
     expect(payload.claudeFastMode).toBe(true)
   })
 
-  it('teaches Claude about cross-provider delegate_to_subthread (Phase I3)', () => {
+  it('teaches Claude about cross-provider delegate_to_subthread (Phase I3)', async () => {
     // The runtime note must point Claude at mcp__TaskWraith__delegate_to_subthread
     // so it doesn't reach for its built-in Task tool when asked to
     // delegate to Codex.
-    const payload = compose(
+    const payload = await compose(
       { provider: 'claude' },
       { userInput: 'Use a review agent and delegate one pass to Codex.' },
       { geminiMcpBridgeEnabled: true }
@@ -1106,15 +1102,15 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
   })
 
-  it('omits the Claude delegation preamble in plan mode (read-only sessions)', () => {
-    const payload = compose({ provider: 'claude' }, { approvalMode: 'plan' })
+  it('omits the Claude delegation preamble in plan mode (read-only sessions)', async () => {
+    const payload = await compose({ provider: 'claude' }, { approvalMode: 'plan' })
     expect(payload.prompt).not.toContain('TaskWraith MCP server')
     expect(payload.prompt).not.toContain('mcp__TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('Do the thing')
   })
 
-  it('omits the Claude delegation preamble for global-scope runs (no workspace)', () => {
-    const payload = compose(
+  it('omits the Claude delegation preamble for global-scope runs (no workspace)', async () => {
+    const payload = await compose(
       { provider: 'claude', scope: 'global', workspacePath: undefined, workspaceId: undefined },
       {}
     )
@@ -1123,8 +1119,8 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('Do the thing')
   })
 
-  it('uses Claude provider metadata defaults when model input is omitted', () => {
-    const payload = compose(
+  it('uses Claude provider metadata defaults when model input is omitted', async () => {
+    const payload = await compose(
       {
         provider: 'claude',
         providerMetadata: { selectedModelType: 'claude-opus-4-7', approvalMode: 'plan' }
@@ -1135,8 +1131,8 @@ describe('ComposerService', () => {
     expect(payload.approvalMode).toBe('plan')
   })
 
-  it('honors context-turn setting 0 by disabling cold-run history injection', () => {
-    const payload = compose(
+  it('honors context-turn setting 0 by disabling cold-run history injection', async () => {
+    const payload = await compose(
       { provider: 'codex' },
       { selectedModelType: 'cli-default' },
       { chatContextTurns: 0 }
@@ -1145,12 +1141,12 @@ describe('ComposerService', () => {
     expect(payload.composer.contextTurnsApplied).toBe(0)
   })
 
-  it('uses only the last configured number of turns for context', () => {
+  it('uses only the last configured number of turns for context', async () => {
     const messages = Array.from({ length: 6 }, (_, index) => [
       { id: `u${index}`, role: 'user' as const, content: `user-${index}`, timestamp: 't' },
       { id: `a${index}`, role: 'assistant' as const, content: `assistant-${index}`, timestamp: 't' }
     ]).flat()
-    const payload = compose(
+    const payload = await compose(
       { provider: 'codex', messages },
       { selectedModelType: 'cli-default' },
       { chatContextTurns: 2 }
@@ -1161,8 +1157,8 @@ describe('ComposerService', () => {
     expect(payload.composer.contextTurnsApplied).toBe(2)
   })
 
-  it('pairs a slim native Codex resume with a full-context cutover fallback', () => {
-    const payload = compose(
+  it('pairs a slim native Codex resume with a full-context cutover fallback', async () => {
+    const payload = await compose(
       {
         provider: 'codex',
         linkedProviderSessionId: '7b057c8b-33fa-4eca-9efe-3313a83669f4'
@@ -1175,12 +1171,12 @@ describe('ComposerService', () => {
     expect(payload.resumeFallbackPrompt).toContain('Previous answer')
   })
 
-  it('caps context turns at twenty from settings', () => {
+  it('caps context turns at twenty from settings', async () => {
     const messages = Array.from({ length: 25 }, (_, index) => [
       { id: `u${index}`, role: 'user' as const, content: `user-${index}`, timestamp: 't' },
       { id: `a${index}`, role: 'assistant' as const, content: `assistant-${index}`, timestamp: 't' }
     ]).flat()
-    const payload = compose(
+    const payload = await compose(
       { provider: 'codex', messages },
       { selectedModelType: 'cli-default' },
       { chatContextTurns: 99 }
@@ -1190,22 +1186,22 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('user-24')
   })
 
-  it('rejects empty prompts clearly', () => {
+  it('rejects empty prompts clearly', async () => {
     const chat = makeChat()
     const { deps } = makeDeps(chat)
     const service = new ComposerService(deps)
-    expect(() =>
+    await expect(
       service.composeRun({
         chatId: chat.appChatId,
         provider: chat.provider as ProviderId,
         workspace: '/repo',
         userInput: '   '
       })
-    ).toThrow('Prompt is required.')
+    ).rejects.toThrow('Prompt is required.')
   })
 
-  it('normalizes image attachment shape by filtering blank paths', () => {
-    const payload = compose(
+  it('normalizes image attachment shape by filtering blank paths', async () => {
+    const payload = await compose(
       { provider: 'claude' },
       {
         selectedModelType: 'claude-sonnet-4-6',
@@ -1218,8 +1214,8 @@ describe('ComposerService', () => {
     expect(payload.imagePaths).toEqual(['/tmp/mock.jpg'])
   })
 
-  it('preserves runtime profile and handoff identifiers on the payload', () => {
-    const payload = compose(
+  it('preserves runtime profile and handoff identifiers on the payload', async () => {
+    const payload = await compose(
       { provider: 'codex' },
       {
         selectedModelType: 'gpt-5.5',
@@ -1230,11 +1226,38 @@ describe('ComposerService', () => {
     expect(payload.runtimeProfileId).toBe('profile-1')
     expect(payload.handoffSourceRunId).toBe('source-run-1')
   })
+
+  it('awaits async resolveSessionStartContext before composing the prompt', async () => {
+    const chat = makeChat({
+      provider: 'claude',
+      workspacePath: '/tmp/session-start-ws'
+    })
+    const { deps } = makeDeps(chat)
+    let released = false
+    deps.resolveSessionStartContext = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 15))
+      released = true
+      return 'session-start-stdout'
+    }
+    const service = new ComposerService(deps)
+    const result = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'claude',
+      workspace: '/tmp/session-start-ws',
+      userInput: 'Do the thing',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+    const payload = await Promise.resolve(result)
+    expect(released).toBe(true)
+    expect(payload.prompt).toContain('session-start-stdout')
+    expect(payload.prompt).toContain('SessionStart hook context')
+  })
 })
 
 describe('composeRun effectivePermissions (single-run read-only enforcement)', () => {
-  it('populates read-only effectivePermissions for a plan-mode run', () => {
-    const payload = compose({}, { approvalMode: 'plan' })
+  it('populates read-only effectivePermissions for a plan-mode run', async () => {
+    const payload = await compose({}, { approvalMode: 'plan' })
     // The canonical permissions must be present so isReadOnlyBlockedTool() + the
     // YOLO read-only suppression actually engage on the single-run path.
     expect(payload.effectivePermissions).toBeDefined()
@@ -1245,12 +1268,12 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('ask')
   })
 
-  it('populates signed effectivePermissions for non-read-only runs', () => {
-    const defaultPayload = compose({}, { approvalMode: 'default' })
+  it('populates signed effectivePermissions for non-read-only runs', async () => {
+    const defaultPayload = await compose({}, { approvalMode: 'default' })
     expect(defaultPayload.effectivePermissions?.readOnly).toBe(false)
     expect(defaultPayload.effectivePermissions?.presetId).toBe('default')
 
-    const workspaceWritePayload = compose(
+    const workspaceWritePayload = await compose(
       { providerMetadata: { approvalMode: 'auto_edit' } },
       { approvalMode: 'auto_edit', appRunId: 'run-workspace-write' }
     )
@@ -1259,7 +1282,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(workspaceWritePayload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
     expect(workspaceWritePayload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
 
-    const staleFullAccessPayload = compose(
+    const staleFullAccessPayload = await compose(
       { providerMetadata: { approvalMode: 'auto_edit' } },
       {
         approvalMode: 'auto_edit',
@@ -1282,7 +1305,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
       ...deps,
       isTrustedSessionGranted: trusted
     })
-    const fullAccessPayload = trustedService.composeRun({
+    const fullAccessPayload = await trustedService.composeRun({
       chatId: trustedChat.appChatId,
       provider: trustedChat.provider as ProviderId,
       workspace: trustedChat.workspacePath,
@@ -1304,8 +1327,8 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     )
   })
 
-  it('runs GA GPT-5.6 interactive runs with full user-chosen permissions (5.5 parity)', () => {
-    const payload = compose(
+  it('runs GA GPT-5.6 interactive runs with full user-chosen permissions (5.5 parity)', async () => {
+    const payload = await compose(
       { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
       {
         provider: 'codex',
@@ -1356,7 +1379,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
     readOnly: false
   }
 
-  it('uses the exact main-resolved posture for a graph-owned appRunId', () => {
+  it('uses the exact main-resolved posture for a graph-owned appRunId', async () => {
     const chat = makeChat({ provider: 'codex' })
     const { deps } = makeDeps(chat)
     const resolveFrozenPermissionPosture = vi.fn(() => ({
@@ -1371,7 +1394,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
       isTrustedSessionGranted
     })
 
-    const payload = service.composeRun({
+    const payload = await service.composeRun({
       chatId: chat.appChatId,
       appRunId: 'graph-run-1',
       provider: 'codex',
@@ -1403,7 +1426,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
     expect(isTrustedSessionGranted).not.toHaveBeenCalled()
   })
 
-  it('does not consult the graph resolver for an ordinary run without an appRunId', () => {
+  it('does not consult the graph resolver for an ordinary run without an appRunId', async () => {
     const chat = makeChat({ provider: 'codex' })
     const { deps } = makeDeps(chat)
     const resolveFrozenPermissionPosture = vi.fn(() => ({
@@ -1413,7 +1436,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
     }))
     const service = new ComposerService({ ...deps, resolveFrozenPermissionPosture })
 
-    const payload = service.composeRun({
+    const payload = await service.composeRun({
       chatId: chat.appChatId,
       provider: 'codex',
       workspace: '/repo',
@@ -1428,7 +1451,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
     expect(payload.effectivePermissions).not.toBe(frozenWorkspaceWrite)
   })
 
-  it('keeps scheduled runs on the unattended path even when they carry an appRunId', () => {
+  it('keeps scheduled runs on the unattended path even when they carry an appRunId', async () => {
     const chat = makeChat({ provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } })
     const { deps } = makeDeps(chat)
     const resolveFrozenPermissionPosture = vi.fn(() => ({
@@ -1438,7 +1461,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
     }))
     const service = new ComposerService({ ...deps, resolveFrozenPermissionPosture })
 
-    const payload = service.composeRun({
+    const payload = await service.composeRun({
       chatId: chat.appChatId,
       appRunId: 'scheduled-run-1',
       scheduledTaskId: 'scheduled-task-1',
@@ -1454,7 +1477,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
     expect(payload.effectivePermissions?.readOnly).toBe(true)
   })
 
-  it('rejects a writable frozen posture if the selected model is preview-risk', () => {
+  it('rejects a writable frozen posture if the selected model is preview-risk', async () => {
     const chat = makeChat({ provider: 'claude' })
     const { deps } = makeDeps(chat)
     const resolveFrozenPermissionPosture = vi.fn(() => ({
@@ -1464,7 +1487,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
     }))
     const service = new ComposerService({ ...deps, resolveFrozenPermissionPosture })
 
-    expect(() =>
+    await expect(
       service.composeRun({
         chatId: chat.appChatId,
         appRunId: 'graph-preview-run',
@@ -1474,9 +1497,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
         selectedModelType: 'preview:anthropic:claude-fable-5',
         approvalMode: 'auto_edit'
       })
-    ).toThrow(
-      'Execution graph permission posture cannot be applied after the model became preview-risk.'
-    )
+    ).rejects.toThrow('Execution graph permission posture cannot be applied after the model became preview-risk.')
   })
 })
 
@@ -1508,10 +1529,10 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     readOnly: true
   }
 
-  function composeSigned(
+  async function composeSigned(
     inputOverrides: Record<string, unknown>,
     chatOverrides: Partial<ChatRecord> = {}
-  ): ComposerRunPayload {
+  ): Promise<ComposerRunPayload> {
     const chat = makeChat(chatOverrides)
     const { deps } = makeDeps(chat)
     const service = new ComposerService({
@@ -1519,7 +1540,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
       signRunPermissionPosture: (mode, perms, context) =>
         signRunPermissionPosture(SECRET, mode, perms, context)
     })
-    return service.composeRun({
+    return await service.composeRun({
       chatId: chat.appChatId,
       appRunId: 'run-signed',
       provider: chat.provider as ProviderId,
@@ -1557,7 +1578,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     runtimeProfileId: payload.runtimeProfileId
   })
 
-  it('re-resolves selected Project references and binds the exact context into the run signature', () => {
+  it('re-resolves selected Project references and binds the exact context into the run signature', async () => {
     const chat = makeChat({ provider: 'codex' })
     const { deps, store } = makeDeps(chat)
     store.getProjects = () => [
@@ -1592,7 +1613,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
         signRunPermissionPosture(SECRET, mode, perms, context)
     })
 
-    const payload = service.composeRun({
+    const payload = await service.composeRun({
       chatId: chat.appChatId,
       appRunId: 'run-reference-context',
       provider: 'codex',
@@ -1658,8 +1679,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     ).toBe(false)
   })
 
-  it('stamps a verifiable signature on a plan run that survives the clamp byte-for-byte', () => {
-    const payload = composeSigned({ approvalMode: 'plan' })
+  it('stamps a verifiable signature on a plan run that survives the clamp byte-for-byte', async () => {
+    const payload = await composeSigned({ approvalMode: 'plan' })
     expect(payload.effectivePermissionsSignature).toBeTruthy()
     const clamped = clampUntrustedRunPosture(
       {
@@ -1676,8 +1697,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     expect(clamped.effectivePermissions).toEqual(payload.effectivePermissions)
   })
 
-  it('binds approvalMode and effectivePermissions for non-plan runs', () => {
-    const payload = composeSigned(
+  it('binds approvalMode and effectivePermissions for non-plan runs', async () => {
+    const payload = await composeSigned(
       { approvalMode: 'auto_edit' },
       { providerMetadata: { approvalMode: 'auto_edit' } }
     )
@@ -1697,8 +1718,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     expect(clamped.effectivePermissions).toEqual(payload.effectivePermissions)
   })
 
-  it('binds workflowMode so a read-only recon payload cannot be flipped into plan', () => {
-    const payload = composeSigned({ approvalMode: 'plan', workflowMode: 'normal' })
+  it('binds workflowMode so a read-only recon payload cannot be flipped into plan', async () => {
+    const payload = await composeSigned({ approvalMode: 'plan', workflowMode: 'normal' })
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('normal')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
@@ -1719,8 +1740,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     expect(clamped.effectivePermissions).toEqual(SENTINEL_READONLY)
   })
 
-  it('rejects replaying a composed signature onto a different run context', () => {
-    const payload = composeSigned(
+  it('rejects replaying a composed signature onto a different run context', async () => {
+    const payload = await composeSigned(
       { approvalMode: 'auto_edit' },
       { providerMetadata: { approvalMode: 'auto_edit' } }
     )
@@ -1740,8 +1761,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     expect(clamped.effectivePermissions).toEqual(SENTINEL_READONLY)
   })
 
-  it('caps renderer-requested auto_edit to the trusted persisted chat posture before signing', () => {
-    const payload = composeSigned({ approvalMode: 'auto_edit' })
+  it('caps renderer-requested auto_edit to the trusted persisted chat posture before signing', async () => {
+    const payload = await composeSigned({ approvalMode: 'auto_edit' })
     expect(payload.approvalMode).toBe('default')
     expect(payload.effectivePermissions?.presetId).toBe('default')
     expect(payload.effectivePermissionsSignature).toBeTruthy()
@@ -1759,8 +1780,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     expect(clamped.approvalMode).toBe('default')
   })
 
-  it('downgrades to read-only when the renderer inflates the composed posture', () => {
-    const payload = composeSigned({ approvalMode: 'plan' })
+  it('downgrades to read-only when the renderer inflates the composed posture', async () => {
+    const payload = await composeSigned({ approvalMode: 'plan' })
     // Renderer tampers the round-tripped payload: keeps the plan-run signature
     // but swaps in an over-permissive effectivePermissions object.
     const clamped = clampUntrustedRunPosture(
@@ -1804,11 +1825,11 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
 })
 
 describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => {
-  it('FORCES plan for an unattended run even when the chat’s stored mode is auto_edit (trusted-floor poisoning)', () => {
+  it('FORCES plan for an unattended run even when the chat’s stored mode is auto_edit (trusted-floor poisoning)', async () => {
     // The chat persisted auto_edit, so capRequestedApprovalMode’s trusted ceiling is
     // itself auto_edit and the run carries an appRunId — i.e. every pre-existing cap
     // is a no-op. The scheduledTaskId clamp must still force a safe posture.
-    const payload = compose(
+    const payload = await compose(
       { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
       { provider: 'codex', approvalMode: 'auto_edit', appRunId: 'run-1', scheduledTaskId: 'task-1' }
     )
@@ -1826,7 +1847,7 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
     expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 
-  it('clears externalPathGrants for the forced-plan unattended run (interactive contrast keeps them)', () => {
+  it('clears externalPathGrants for the forced-plan unattended run (interactive contrast keeps them)', async () => {
     const grant = makeGrant({
       provider: 'codex',
       access: 'write',
@@ -1834,7 +1855,7 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
       path: '/outside'
     })
     // Interactive (no scheduledTaskId): the grant survives normalization.
-    const interactive = compose(
+    const interactive = await compose(
       { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
       {
         provider: 'codex',
@@ -1845,7 +1866,7 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
     )
     expect((interactive.externalPathGrants ?? []).length).toBeGreaterThan(0)
     // The SAME run as a scheduled occurrence is forced to plan AND its grants cleared.
-    const unattended = compose(
+    const unattended = await compose(
       { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
       {
         provider: 'codex',
@@ -1859,8 +1880,8 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
     expect(unattended.externalPathGrants).toEqual([])
   })
 
-  it('leaves an INTERACTIVE elevated run untouched (clamp is scoped strictly to scheduledTaskId)', () => {
-    const payload = compose(
+  it('leaves an INTERACTIVE elevated run untouched (clamp is scoped strictly to scheduledTaskId)', async () => {
+    const payload = await compose(
       { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
       { provider: 'codex', approvalMode: 'auto_edit', appRunId: 'run-1' }
     )
@@ -1871,7 +1892,7 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
 describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
   const SECRET = Buffer.from('1234567890abcdef'.repeat(4), 'hex')
 
-  function composeUnattended(
+  async function composeUnattended(
     elevation: { level: 'default' | 'full_access'; mode: string } | null,
     chatOverrides: Partial<ChatRecord> = {
       provider: 'codex',
@@ -1879,7 +1900,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     },
     inputOverrides: Record<string, unknown> = {},
     settingsOverrides: Partial<AppSettings> = {}
-  ): ComposerRunPayload {
+  ): Promise<ComposerRunPayload> {
     const chat = makeChat(chatOverrides)
     const { deps } = makeDeps(chat, settingsOverrides)
     const service = new ComposerService({
@@ -1900,7 +1921,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
             }
           : null
     })
-    return service.composeRun({
+    return await service.composeRun({
       chatId: chat.appChatId,
       provider: 'codex',
       workspace: chat.workspacePath,
@@ -1913,7 +1934,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     })
   }
 
-  it('verified full_access → auto_edit + workspace_write perms + grants KEPT + signed', () => {
+  it('verified full_access → auto_edit + workspace_write perms + grants KEPT + signed', async () => {
     const grant = makeGrant({
       provider: 'codex',
       access: 'write',
@@ -1921,7 +1942,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
       path: '/outside',
       duration: 'workspace'
     })
-    const payload = composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
+    const payload = await composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
       externalPathGrants: [grant]
     })
     expect(payload.approvalMode).toBe('auto_edit')
@@ -1959,8 +1980,8 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     ).toBe(true)
   })
 
-  it('fork 4B: elevated unattended allows simulatorCanvas only with an explicit workspace grant', () => {
-    const payload = composeUnattended(
+  it('fork 4B: elevated unattended allows simulatorCanvas only with an explicit workspace grant', async () => {
+    const payload = await composeUnattended(
       { level: 'full_access', mode: 'auto_edit' },
       undefined,
       {},
@@ -1985,8 +2006,8 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
   })
 
-  it('honors a verified full-access ack for GA GPT-5.6 scheduled runs (5.5 parity)', () => {
-    const payload = composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
+  it('honors a verified full-access ack for GA GPT-5.6 scheduled runs (5.5 parity)', async () => {
+    const payload = await composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
       selectedModelType: 'gpt-5.6-sol'
     })
 
@@ -1997,12 +2018,12 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
   })
 
-  it('rechecks current service policy for a verified elevated scheduled run', () => {
+  it('rechecks current service policy for a verified elevated scheduled run', async () => {
     const revokedServices = {
       ...makeSettings().agenticServices,
       shellCommands: 'deny' as const
     }
-    const payload = composeUnattended(
+    const payload = await composeUnattended(
       { level: 'full_access', mode: 'auto_edit' },
       undefined,
       {},
@@ -2033,8 +2054,8 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     ).toBe(true)
   })
 
-  it('verified default → default preset', () => {
-    const payload = composeUnattended(
+  it('verified default → default preset', async () => {
+    const payload = await composeUnattended(
       { level: 'default', mode: 'default' },
       { provider: 'codex', providerMetadata: { approvalMode: 'default' } }
     )
@@ -2045,8 +2066,8 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 
-  it('no ack (resolve → null) → plan approvalMode + plan no-ask floor (P1 regression); tampered/stale surface here as null too', () => {
-    const payload = composeUnattended(null)
+  it('no ack (resolve → null) → plan approvalMode + plan no-ask floor (P1 regression); tampered/stale surface here as null too', async () => {
+    const payload = await composeUnattended(null)
     expect(payload.approvalMode).toBe('plan')
     // Posture inversion (2026-08-04): the unattended fallback is the plan
     // no-ask floor, not read_only (Ask) — no modals with nobody attending.
