@@ -196,25 +196,69 @@ private messages, or customer data.
 Simulator Canvas is a chat-owned Canvas dock surface for Apple's iOS Simulator.
 It is optional and never auto-installs Xcode or Simulator.app.
 
-Setup and usage:
+### Setup and usage
 
 1. Install Xcode (and open it once so platforms install) if you want local
    Simulator support. TaskWraith does not download or provision Xcode for you.
 2. In a chat, open the composer **Canvas** menu and choose **Open Simulator
    Canvas**.
-3. Preview uses `simctl` screenshots of a booted device.
-4. Tap, type, and scroll need **Screen Watch** with **View & Control** on the
-   Simulator window — preview alone is not input control.
+3. Preview uses `simctl` screenshots of a booted device. The dock bezel follows
+   the last frame’s width/height when available; a **Stale frame** badge appears
+   when the screenshot is older than ~4s. Use the toolbar **Poll** control
+   (1s / 1.5s / 2s) to change preview cadence.
+4. For human tap/type/swipe drive, install Facebook's **idb** (opt-in; never
+   auto-installed):
+   - Companion (Homebrew): `brew tap facebook/fb && brew install idb-companion`
+   - Client (pip): `pip3 install fb-idb` (Python 3.6+)
+   - Confirm with `idb list-targets`. Docs: https://fbidb.io
+5. Actuation is ready only when `idb` is on PATH **and** a Simulator controller
+   lease is held for the chat. Preview / View & Control alone never invents
+   device drive.
 
-Agents:
+### Hybrid ownership (controller lease + session)
+
+Simulator Canvas uses a chat-scoped **hybrid** control model:
+
+- `SimulatorSessionStore` keeps the last screenshot metadata (udid, width,
+  height, capturedAt) for coordinate mapping.
+- `SimulatorControllerLease` distinguishes human View & Control from a run’s
+  controller token. Human bezel gestures need a human lease; mutating
+  `simulator_*` MCP tools mint a run lease for the active chat/run.
+- `SimulatorHostControl` owns simctl host actions (open / boot / screenshot /
+  install / launch / terminate) behind that lease + session pairing.
+- `IdbClient` is the opt-in actuation path (tap / type / swipe). Without idb,
+  gestures are recorded and deferred — never silently pretended to drive.
+- On app quit, `simulatorHostService.dispose()` releases owned Simulator.app /
+  booted devices TaskWraith spawned.
+
+Hardware buttons (Home / Lock / Rotate) are not wired yet; the panel footer
+notes them as future. A truncated AX dump tool (`simulator_inspect` via
+`idb ui describe-all` or similar) is also a follow-up — `IdbClient` does not
+expose describe-all today, and adding a full tree would be a larger catalog +
+truncation design.
+
+### Agents and policy
 
 - `simulator_status` is prompt-free (read-only capability / device inventory).
 - Mutating Simulator Canvas tools stay under the workspace **simulatorCanvas**
   agentic-service policy (Ask / Allow / Deny), like other attended surfaces.
 
-Honest residual risk: attaching the Simulator window for View & Control is
-ordinary OS-window control (Screen Watch), not idb or XCUITest. Treat it like
-any other attached app window.
+### Unattended / scheduled runs (fork 4B)
+
+Scheduled and other unattended runs do **not** inherit a silent simctl mutate
+path from Accept Edits / Full Access:
+
+- Plan-floor / read-only unattended: keep **ask** (timer deny) — no change.
+- Elevated unattended **without** an explicit `simulatorCanvas` workspace
+  grant: force **ask** so Accept Edits cannot silently boot/install/launch.
+- Elevated unattended **with** an explicit `simulatorCanvas` workspace grant:
+  **allow** (session grants still auto-approve at the approval gate when the
+  signed posture is ask).
+- Global **deny** is preserved either way.
+
+Honest residual risk: preview frames come from `simctl`; device control uses
+idb when installed and a controller lease is held. Without idb, gestures are
+recorded and deferred.
 
 ## Discord Context
 
