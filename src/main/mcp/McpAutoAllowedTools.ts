@@ -184,6 +184,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // Thread Introspection read-only verbs — bounded pack metadata / full pack read.
   'tw_introspection_list',
   'tw_introspection_read',
+  // TaskWraith-owned skills — catalog + body fetch (no mutation).
+  'skill_list',
+  'skill_read',
   // Agent-programmed-graph reads: a bounded JOIN on lane settlement and a
   // structured lane-output fetch. Neither mutates anything — await polls the
   // persisted round's lane statuses; lane_result reads durable transcript

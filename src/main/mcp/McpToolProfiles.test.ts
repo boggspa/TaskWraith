@@ -72,6 +72,13 @@ import {
   GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V13_MESH_MCP_DIRECT_TOOLS,
   GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V14_ADDED_TOOL_NAMES,
+  GATEWAY_V14_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V14_MCP_DIRECT_TOOLS,
+  GATEWAY_V14_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V14_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V14_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   compactGatewayV8MeshToolDefinitionsForTransport,
@@ -316,12 +323,12 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
     const freshGatewayChars = serializedChars(
-      GATEWAY_V13_MCP_DIRECT_TOOLS,
+      GATEWAY_V14_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
       compactGatewayV13ToolDefinitionsForTransport
     )
     const freshMeshGatewayChars = serializedChars(
-      GATEWAY_V13_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V14_MESH_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
       (selected) =>
         compactGatewayV13ToolDefinitionsForTransport(
@@ -681,7 +688,11 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V13_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES,
-      ...GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V14_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V14_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V14_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -705,7 +716,7 @@ describe('catalogue reachability', () => {
   })
 
   it('makes project_reference_list discoverable on gateway-v12 without enlarging the direct surface', () => {
-    // Skills worktree growth must mint v13+ — v12 ADDED stays list-only.
+    // Skills surface growth minted v14 — v12 ADDED stays list-only.
     expect(GATEWAY_V12_ADDED_TOOL_NAMES).toEqual(['project_reference_list'])
     expect(GATEWAY_V11_MCP_HIDDEN_TOOL_NAMES).not.toContain('project_reference_list')
     expect(FULL_MCP_ADVERTISE_TOOLS).not.toContain('project_reference_list')
@@ -747,6 +758,25 @@ describe('catalogue reachability', () => {
     expect(GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES).not.toContain('delegate_wave')
     expect(GATEWAY_V13_MCP_DIRECT_TOOLS).toContain('delegate_wave')
     expect(TASKWRAITH_MCP_TOOLS).toContain('delegate_wave')
+  })
+
+
+  it('makes skill_list/skill_read discoverable on gateway-v14 without enlarging the direct surface', () => {
+    expect(GATEWAY_V14_ADDED_TOOL_NAMES).toEqual(['skill_list', 'skill_read'])
+    for (const tool of GATEWAY_V14_ADDED_TOOL_NAMES) {
+      expect(GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES).not.toContain(tool)
+      expect(FULL_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V14_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V14_MESH_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V14_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+      // Frozen catalogues must stay clean of skill tools.
+      expect(GATEWAY_V12_ADDED_TOOL_NAMES).not.toContain(tool)
+      expect(GATEWAY_V13_ADDED_TOOL_NAMES).not.toContain(tool)
+    }
+    expect(GATEWAY_V14_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V13_MCP_DIRECT_TOOLS)
+    expect(GATEWAY_V14_MESH_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V13_MESH_MCP_DIRECT_TOOLS)
   })
 
   it('grows the newest gateway generation rather than mutating a frozen one', () => {
@@ -803,13 +833,22 @@ describe('catalogue reachability', () => {
     ])
     expect(GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V12_MCP_HIDDEN_TOOL_NAMES)
     expect(GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V12_MESH_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V14_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V13_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V14_ADDED_TOOL_NAMES
+    ])
+    expect(GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V14_ADDED_TOOL_NAMES
+    ])
     for (const tool of [
       ...GATEWAY_V3_ADDED_TOOL_NAMES,
       ...GATEWAY_V4_ADDED_TOOL_NAMES,
       ...GATEWAY_V5_ADDED_TOOL_NAMES,
       ...GATEWAY_V10_ADDED_TOOL_NAMES,
       ...GATEWAY_V11_ADDED_TOOL_NAMES,
-      ...GATEWAY_V12_ADDED_TOOL_NAMES
+      ...GATEWAY_V12_ADDED_TOOL_NAMES,
+      ...GATEWAY_V14_ADDED_TOOL_NAMES
     ]) {
       expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
       // Additions are discoverable capabilities, never new direct surface.
@@ -885,6 +924,12 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v13-mesh')).toBe(
       GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES
     )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v14')).toBe(
+      GATEWAY_V14_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v14-mesh')).toBe(
+      GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES
+    )
     // An unknown or missing id must not inherit a newer surface.
     expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v5')).toBe(
@@ -935,11 +980,23 @@ describe('catalogue reachability', () => {
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v13-mesh')).toBe(
       GATEWAY_V13_MESH_MCP_ADVERTISE_TOOLS
     )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v14')).toBe(
+      GATEWAY_V14_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v14-mesh')).toBe(
+      GATEWAY_V14_MESH_MCP_ADVERTISE_TOOLS
+    )
     expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v13')).toBe(
       GATEWAY_V13_MCP_DIRECT_TOOLS
     )
     expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v13-mesh')).toBe(
       GATEWAY_V13_MESH_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v14')).toBe(
+      GATEWAY_V14_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v14-mesh')).toBe(
+      GATEWAY_V14_MESH_MCP_DIRECT_TOOLS
     )
   })
 

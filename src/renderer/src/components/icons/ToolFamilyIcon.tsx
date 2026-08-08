@@ -286,6 +286,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'tw_introspection_read':
     case 'tw_introspection_review':
       return 'audit'
+    case 'skill_list':
+    case 'skill_read':
+      return 'memory'
     case 'tw_recall_find':
     case 'tw_recall_read':
     case 'tw_recall_read_events':

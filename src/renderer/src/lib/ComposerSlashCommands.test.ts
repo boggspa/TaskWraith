@@ -10,6 +10,7 @@ import {
   matchLeadingSlashCommand,
   matchStandaloneSlashCommandToken,
   paletteCoreForProvider,
+  skillPromptTemplatesFromSkills,
   slashCommandDispatchPrefix,
   wrapPaletteItemAsSlashCommand,
   type ComposerSlashCommand
@@ -459,11 +460,15 @@ describe('ComposerSlashCommands', () => {
       expect(matchStandaloneSlashCommandToken('Fix /goal,today', '/goal')).toBeNull()
       expect(matchStandaloneSlashCommandToken('Fix /goal: today', '/goal')).toBeNull()
       expect(matchStandaloneSlashCommandToken('Fix /goal. today', '/goal')).toBeNull()
-      expect(matchStandaloneSlashCommandToken('See https://example.test/goal today', '/goal')).toBeNull()
+      expect(
+        matchStandaloneSlashCommandToken('See https://example.test/goal today', '/goal')
+      ).toBeNull()
     })
 
     it('does not match multi-word command declarations as inline tokens', () => {
-      expect(matchStandaloneSlashCommandToken('Reload /commands reload', '/commands reload')).toBeNull()
+      expect(
+        matchStandaloneSlashCommandToken('Reload /commands reload', '/commands reload')
+      ).toBeNull()
     })
   })
 
@@ -520,6 +525,63 @@ describe('ComposerSlashCommands', () => {
         paletteItems: CODEX_PALETTE_CORE
       })
       expect(result.some((entry) => entry.command === '/mcp')).toBe(true)
+    })
+  })
+
+  describe('skillPromptTemplatesFromSkills', () => {
+    it('maps skills to /skill-<id> prompt-template commands', () => {
+      const commands = skillPromptTemplatesFromSkills([
+        {
+          id: 'Review Diff',
+          name: 'Review Diff',
+          description: 'Review the workspace diff.',
+          body: 'Read the diff and report risks.'
+        },
+        {
+          id: 'commit-style',
+          name: 'Commit Style',
+          description: 'Match commit style.'
+        }
+      ])
+
+      expect(commands).toHaveLength(2)
+      expect(commands[0]).toMatchObject({
+        kind: 'prompt-template',
+        command: '/skill-review-diff',
+        label: 'Review Diff',
+        description: 'Review the workspace diff.',
+        group: 'Discovery',
+        template: 'Read the diff and report risks.'
+      })
+      expect(commands[1].command).toBe('/skill-commit-style')
+      expect(commands[1].template).toContain('Apply the "Commit Style" skill')
+      expect(commands[1].template).toContain('skill_read')
+    })
+
+    it('skips blank ids and dedupes slash tokens', () => {
+      const commands = skillPromptTemplatesFromSkills([
+        { id: '  ', name: 'Nope', description: '' },
+        { id: 'Foo', name: 'First', description: 'a' },
+        { id: 'foo', name: 'Second', description: 'b' }
+      ])
+      expect(commands).toHaveLength(1)
+      expect(commands[0].label).toBe('First')
+    })
+
+    it('can be appended through buildComposerSlashCommandRegistry extraCommands', () => {
+      const extras = skillPromptTemplatesFromSkills([
+        { id: 'demo', name: 'Demo', description: 'Demo skill', body: 'Do the demo.' }
+      ])
+      const result = buildComposerSlashCommandRegistry({
+        provider: 'codex',
+        paletteItems: CODEX_PALETTE_CORE,
+        extraCommands: extras
+      })
+      const skillEntry = result.find((entry) => entry.command === '/skill-demo')
+      expect(skillEntry?.kind).toBe('prompt-template')
+      expect(skillEntry && skillEntry.kind === 'prompt-template' && skillEntry.template).toBe(
+        'Do the demo.'
+      )
     })
   })
 

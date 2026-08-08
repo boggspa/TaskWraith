@@ -857,6 +857,10 @@ export type TaskWraithMcpProfileId =
   // delegate_wave to the fresh direct birth catalogue.
   | 'taskwraith-gateway-v13'
   | 'taskwraith-gateway-v13-mesh'
+  // v14 adds skill_list / skill_read through capability discovery without
+  // changing either v13 direct birth catalogue.
+  | 'taskwraith-gateway-v14'
+  | 'taskwraith-gateway-v14-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

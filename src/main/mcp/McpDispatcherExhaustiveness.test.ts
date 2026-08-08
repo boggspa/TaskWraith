@@ -19,6 +19,7 @@ import { FFMPEG_MCP_TOOL_NAMES } from './FfmpegToolExecutors'
 import { IMAGE_GEN_TOOL_NAMES } from './ImageGenExecutor'
 import { IMAGE_MCP_TOOL_NAMES } from './ImageToolExecutors'
 import { INTROSPECTION_MCP_TOOL_NAMES } from './IntrospectionToolExecutors'
+import { SKILL_MCP_TOOL_NAMES } from './SkillToolExecutors'
 import { LAUNCH_MCP_TOOL_NAMES } from './LaunchToolExecutors'
 import { MESH_MCP_TOOL_NAMES } from './MeshToolExecutors'
 import { SIMULATOR_MCP_TOOL_NAMES } from './SimulatorToolExecutors'
@@ -90,6 +91,7 @@ const DISPATCHER_BRANCH_CONTRACTS = [
   branch('isRecallMcpToolName(toolName)', RECALL_MCP_TOOL_NAMES, 'cross-thread-recall'),
   branch('isThreadMessageMcpToolName(toolName)', THREAD_MESSAGE_MCP_TOOL_NAMES, 'ensemble-control'),
   branch('isIntrospectionMcpToolName(toolName)', INTROSPECTION_MCP_TOOL_NAMES, 'introspection'),
+  branch('isSkillMcpToolName(toolName)', SKILL_MCP_TOOL_NAMES, 'skills'),
   branch('isImageMcpToolName(toolName)', IMAGE_MCP_TOOL_NAMES, 'image-tools'),
   branch('isImageGenMcpToolName(toolName)', IMAGE_GEN_TOOL_NAMES, 'image-tools'),
   branch('isFfmpegMcpToolName(toolName)', FFMPEG_MCP_TOOL_NAMES, 'ffmpeg-tools'),

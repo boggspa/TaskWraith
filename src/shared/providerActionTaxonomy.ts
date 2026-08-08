@@ -64,6 +64,7 @@ export const CANONICAL_DISPATCH_OWNERS = [
   'theme-control',
   'cross-thread-recall',
   'introspection',
+  'skills',
   'image-tools',
   'audio-tools',
   'ffmpeg-tools',
@@ -2044,6 +2045,22 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'introspection',
     'host-state',
     'host-resource'
+  ),
+  skill_list: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'skills',
+    'none',
+    'none'
+  ),
+  skill_read: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'skills',
+    'none',
+    'none'
   ),
   image_edit: tool(
     'workspace_write',

@@ -5120,6 +5120,42 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'skill_list',
+      description:
+        'List enabled TaskWraith skills for the active workspace (user + workspace overlay). Returns bounded metadata (id, name, description, scope) — not full bodies. Read-only. Use skill_read with a skill id for the full body.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {}
+      }
+    },
+    {
+      name: 'skill_read',
+      description:
+        'Read the full body of an enabled TaskWraith skill by id for the active workspace. Read-only. Call skill_list first when the id is unknown.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'Skill id from skill_list or the progressive discovery block.'
+          }
+        },
+        required: ['id']
+      }
+    },
+    {
       name: 'image_edit',
       description:
         'Edit an EXISTING image and return the result as a PNG attachment shown inline in the chat. ' +

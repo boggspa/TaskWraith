@@ -327,6 +327,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   'tw_introspection_list',
   'tw_introspection_read',
   'tw_introspection_review',
+  // TaskWraith-owned skills — progressive disclosure catalog + body fetch.
+  // Read-only; bodies stay behind skill_read. See src/main/mcp/SkillToolExecutors.ts.
+  'skill_list',
+  'skill_read',
   // Image processing — edit (blur/redact/crop/resize) an existing image, or
   // rasterize SVG to PNG. Output rides back as a visible transcript attachment.
   // Gated as a file change (mutating/compute; denied under read-only), NEVER

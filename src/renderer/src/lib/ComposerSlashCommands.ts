@@ -105,7 +105,8 @@ export const CODEX_PALETTE_CORE: CommandPaletteItem[] = [
     id: 'universal-fork',
     command: '/fork',
     label: 'Fork session',
-    description: 'Fork the linked provider session (native on Codex; emulated elsewhere — no Gemini).',
+    description:
+      'Fork the linked provider session (native on Codex; emulated elsewhere — no Gemini).',
     group: 'Discovery',
     source: 'core'
   },
@@ -164,7 +165,8 @@ export const CLI_PROVIDER_PALETTE_CORE: CommandPaletteItem[] = [
     id: 'cli-universal-fork',
     command: '/fork',
     label: 'Fork session',
-    description: 'Fork this chat session (emulated — duplicates transcript into an isolated sibling).',
+    description:
+      'Fork this chat session (emulated — duplicates transcript into an isolated sibling).',
     group: 'Discovery',
     source: 'core'
   }
@@ -238,13 +240,72 @@ export interface ActionCommand extends ComposerSlashCommandBase {
 }
 
 /** Inserts a canned prompt template at the slash position, leaving the
- * caret at `cursorOffset` chars into the template. Foundation for the
- * future skill-discovery channel. */
+ * caret at `cursorOffset` chars into the template. Skill discovery uses
+ * {@link skillPromptTemplatesFromSkills} to build these from effective skills. */
 export interface PromptTemplateCommand extends ComposerSlashCommandBase {
   kind: 'prompt-template'
   template: string
   /** Optional caret offset relative to start of inserted template. */
   cursorOffset?: number
+}
+
+/** Minimal skill shape for optional slash-picker discovery entries. */
+export interface SkillPromptTemplateSource {
+  id: string
+  name: string
+  description: string
+  body?: string
+}
+
+function skillSlashToken(id: string): string {
+  const safe = id
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+  return safe.replace(/^-+|-+$/g, '') || 'skill'
+}
+
+/**
+ * Map enabled skills to prompt-template slash commands (`/skill-<id>`).
+ * Pure helper — callers pass already-resolved effective skills and append
+ * the result via `buildComposerSlashCommandRegistry({ extraCommands })`.
+ */
+export function skillPromptTemplatesFromSkills(
+  skills: readonly SkillPromptTemplateSource[]
+): PromptTemplateCommand[] {
+  const out: PromptTemplateCommand[] = []
+  const seen = new Set<string>()
+  for (const skill of skills ?? []) {
+    const id = (skill.id || '').trim()
+    if (!id) continue
+    const token = skillSlashToken(id)
+    const command = `/skill-${token}`
+    const key = command.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    const name = (skill.name || '').trim() || id
+    const description = (skill.description || '').trim()
+    const body = (skill.body || '').trim()
+    const template = body
+      ? body
+      : [
+          `Apply the "${name}" skill (id: ${id}).`,
+          description ? `Description: ${description}` : '',
+          'Use skill_read with this id if you need the full skill body.'
+        ]
+          .filter(Boolean)
+          .join('\n')
+    out.push({
+      kind: 'prompt-template',
+      id: `skill-${token}`,
+      command,
+      label: name,
+      description: description || `Insert the ${name} skill prompt.`,
+      group: 'Discovery',
+      template
+    })
+  }
+  return out
 }
 
 /** Inserts literal text at the slash position without dispatching
@@ -401,11 +462,7 @@ function escapeRegExp(value: string): string {
 }
 
 function isCommandPlaceholderToken(token: string): boolean {
-  return (
-    /^<[^>\s]+>$/.test(token) ||
-    /^\[[^\]\s]+\]$/.test(token) ||
-    /^\{[^}\s]+\}$/.test(token)
-  )
+  return /^<[^>\s]+>$/.test(token) || /^\[[^\]\s]+\]$/.test(token) || /^\{[^}\s]+\}$/.test(token)
 }
 
 export function hasSlashCommandPlaceholders(command: string): boolean {
