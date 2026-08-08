@@ -845,6 +845,10 @@ export type TaskWraithMcpProfileId =
   | 'taskwraith-gateway-v9-mesh'
   | 'taskwraith-gateway-v10'
   | 'taskwraith-gateway-v10-mesh'
+  // v11 adds Simulator Canvas through capability discovery without changing
+  // either v10 direct birth catalogue.
+  | 'taskwraith-gateway-v11'
+  | 'taskwraith-gateway-v11-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

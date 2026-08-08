@@ -1,7 +1,11 @@
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import type { ProviderId } from '../store/types'
 import type { TaskWraithMcpProfileId } from '../store/types'
-import { MESH_SCENE_MCP_TOOL_NAMES, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import {
+  MESH_SCENE_MCP_TOOL_NAMES,
+  SIMULATOR_MCP_TOOL_NAMES,
+  type TaskWraithMcpToolName
+} from '../TaskWraithMcpTools'
 import { CAPABILITY_GATEWAY_TOOL_NAMES, type CapabilityGatewayToolName } from './McpToolGateway'
 
 export { CAPABILITY_GATEWAY_TOOL_NAMES } from './McpToolGateway'
@@ -496,6 +500,37 @@ export const GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v11 makes the Simulator Canvas family discoverable without enlarging
+ * the normal direct catalogue — same shape as Mesh on v7 and Outlook on v3.
+ * Status stays auto-allowed at the approval gate; mutating verbs still require
+ * the simulatorCanvas service. Direct catalogues remain exact clones of their
+ * immutable v10 predecessors so a receipted pre-v11 session never sees a tool
+ * appear mid-session. Not added to FULL_MCP_ADVERTISE_TOOLS: that v1 snapshot
+ * stays frozen (Mesh followed the same rule).
+ */
+export const GATEWAY_V11_ADDED_TOOL_NAMES = Object.freeze([
+  ...SIMULATOR_MCP_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V11_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V10_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V11_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V11_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V11_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V10_MESH_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V11_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V11_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -716,6 +751,16 @@ export const GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V10_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+export const GATEWAY_V11_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V11_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V11_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V11_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -728,6 +773,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v11-mesh') return GATEWAY_V11_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v11') return GATEWAY_V11_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v10-mesh') return GATEWAY_V10_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v10') return GATEWAY_V10_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v9-mesh') return GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
@@ -749,6 +796,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v11-mesh') return GATEWAY_V11_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v11') return GATEWAY_V11_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v10-mesh') return GATEWAY_V10_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v10') return GATEWAY_V10_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v9-mesh') return GATEWAY_V9_MESH_MCP_DIRECT_TOOLS
@@ -813,7 +862,11 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v10 adds Canvas Browser navigation through discovery without growing
   // either direct catalogue.
   'taskwraith-gateway-v10': GATEWAY_V10_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v10-mesh': GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v10-mesh': GATEWAY_V10_MESH_MCP_ADVERTISE_TOOLS,
+  // v11 adds Simulator Canvas through discovery without growing either direct
+  // catalogue (status auto-allowed; mutators stay on simulatorCanvas).
+  'taskwraith-gateway-v11': GATEWAY_V11_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v11-mesh': GATEWAY_V11_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */
