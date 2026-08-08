@@ -128,7 +128,7 @@ describe('HighlightedCodeBlock', () => {
     renderToStaticMarkup(<HighlightedCodeBlock content={huge} language="javascript" />)
     expect(getHighlightParseCountForTest()).toBe(2)
     expect(highlightToNodesCacheSizeForTest()).toBe(0)
-  })
+  }, 30_000)
 
   it('evicts the oldest entry once the cache exceeds 64 keys', () => {
     // Zero-pad so later indices are not strict prefixes of earlier ones

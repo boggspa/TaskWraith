@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { join } from 'path'
 import { SIMULATOR_APP_CANDIDATE_PATHS } from './SimulatorCapability'
 import { SimulatorHostService } from './SimulatorHostService'
 
 const UDID = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
 const UDID_B = 'BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB'
+const SHOT_TEMP_DIR = '/tmp/simulator-canvas-shot-test'
 
 /** Minimal PNG buffer with IHDR width/height. */
 function fakePng(w: number, h: number): Buffer {
@@ -68,7 +70,7 @@ function makeHost(
       path === SIMULATOR_APP_CANDIDATE_PATHS[0] || path === '/Applications/Xcode.app',
     runSimctl,
     readFile: async () => fakePng(390, 844),
-    mkdtemp: async () => '/tmp/simulator-canvas-shot-test',
+    mkdtemp: async () => SHOT_TEMP_DIR,
     rm: async (path) => {
       removed.push(path)
     },
@@ -293,9 +295,9 @@ describe('SimulatorHostService', () => {
       'io',
       UDID,
       'screenshot',
-      '/tmp/simulator-canvas-shot-test/screenshot.png'
+      join(SHOT_TEMP_DIR, 'screenshot.png')
     ])
-    expect(removed()).toContain('/tmp/simulator-canvas-shot-test')
+    expect(removed()).toContain(SHOT_TEMP_DIR)
   })
 
   it('rejects invalid udid / bundleId / appPath before simctl', async () => {
