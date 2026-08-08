@@ -27,7 +27,7 @@ do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
 
 ### Remaining focus for 1.9.4 (not feature construction)
 
-- **Host Arc** — Wave 4 client cutover still in flight (`docs/HOST_ARC_STATUS.md`); Waves 5–6 not started.
+- **Host Arc** — Wave 4 still active: TUI + Desktop 5c Phase 1–3 + Track3 Mixed family shadows landed (runs/missions/rounds/schedules + Desktop question dual-read); broader AppStore retirement, two empty Host families (`participants`/`artifacts`), and iOS remain. Live tracker is local-only `docs/HOST_ARC_STATUS.md` (gitignored). Waves 5–6 (`.twmission` / adversarial) not started.
 - **Channels** — P1 product path still behind the two-real-Mac People transport proof; no P2 human Chat UI yet.
 - **Real-world QA** — soak the landed Ensemble / lock / Canvas / Host surfaces; fix only what breaks.
 - **App Store** — maintainer-owned submission / review loop (not an engineering reopen).
