@@ -457,10 +457,15 @@ describe('RunQueueService', () => {
         mcpTools: 'ask',
         subThreadDelegation: 'ask',
         canvasInteraction: 'ask',
+        sketchCanvas: 'allow',
+        meshCanvas: 'ask',
+        simulatorCanvas: 'ask',
         crossThreadRead: 'ask',
+        threadMessage: 'ask',
         mediaEditing: 'ask',
         mediaRecording: 'deny',
         canvasEval: 'ask',
+        webBrowsing: 'ask',
         networkAccess: 'allow'
       },
       agenticWorkspaceGrants: []
