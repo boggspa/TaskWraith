@@ -605,6 +605,11 @@ export interface CanvasCallContext {
   chatId?: string
   runId?: string
   workspacePath?: string
+  /**
+   * Ensemble seat that opened the canvas (when present). Device-driver lease
+   * mint uses this as ownerParticipantId.
+   */
+  participantId?: string
   /** Required by CanvasService for the signed-elevated canvas_eval verb. */
   canvasEvalApproval?: CanvasEvalApprovalReceipt
 }

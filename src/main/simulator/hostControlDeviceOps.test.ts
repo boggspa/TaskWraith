@@ -62,4 +62,41 @@ describe('createLeaseEnforcingHostBackedDeviceOps', () => {
     ).toThrow(/canonical chatId/i)
     expect(boot).not.toHaveBeenCalled()
   })
+
+  it('forwards ownerParticipantId into lease.mint when present', () => {
+    const mint = vi.fn((input: { chatId: string; runId: string; ownerParticipantId?: string }) => ({
+      ok: true as const,
+      token: {
+        tokenId: 'tok-seat',
+        chatId: input.chatId,
+        runId: input.runId,
+        kind: 'run' as const,
+        mintedAt: 1,
+        updatedAt: 1,
+        ...(input.ownerParticipantId ? { ownerParticipantId: input.ownerParticipantId } : {})
+      }
+    }))
+    const hostControl = {
+      status: vi.fn(async () => ({ bootedDevices: [] })),
+      boot: vi.fn(),
+      install: vi.fn(),
+      launch: vi.fn(),
+      terminate: vi.fn()
+    } as unknown as HostControlPick
+
+    createLeaseEnforcingHostBackedDeviceOps({
+      hostControl,
+      controllerLease: { mint },
+      chatId: 'chat-a',
+      runId: 'run-1',
+      ownerParticipantId: 'seat-boss',
+      run: async () => ({ stdout: '', stderr: '' })
+    })
+
+    expect(mint).toHaveBeenCalledWith({
+      chatId: 'chat-a',
+      runId: 'run-1',
+      ownerParticipantId: 'seat-boss'
+    })
+  })
 })

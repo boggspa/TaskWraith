@@ -63,6 +63,8 @@ export interface CanvasServiceDeps {
       appChatId?: string
       /** Canonical main-owned run authority for a native-window target. */
       appRunId?: string
+      /** Ensemble seat owner for device-driver controller lease mint. */
+      ownerParticipantId?: string
       /** Opaque main-owned native-window lease; never sourced from canvas_open. */
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
@@ -530,6 +532,7 @@ export class CanvasService implements CanvasController {
     let windowAppRunId: string | undefined
     let deviceAppChatId: string | undefined
     let deviceAppRunId: string | undefined
+    let deviceOwnerParticipantId: string | undefined
     let windowTarget: CanvasWindowOpenTarget | undefined
     if (driverKind === 'window') {
       const chatId = canonicalAuthority(ctx.chatId)
@@ -558,6 +561,8 @@ export class CanvasService implements CanvasController {
       }
       deviceAppChatId = chatId
       deviceAppRunId = runId
+      const ownerParticipantId = canonicalAuthority(ctx.participantId)
+      if (ownerParticipantId) deviceOwnerParticipantId = ownerParticipantId
       const bundleId = (input.bundleId || '').trim()
       if (!bundleId || !isValidBundleId(bundleId)) {
         throw new Error('The device driver requires a valid `bundleId` (e.g. "com.example.App").')
@@ -647,6 +652,7 @@ export class CanvasService implements CanvasController {
         ...(windowAppRunId || deviceAppRunId
           ? { appRunId: windowAppRunId ?? deviceAppRunId }
           : {}),
+        ...(deviceOwnerParticipantId ? { ownerParticipantId: deviceOwnerParticipantId } : {}),
         ...(windowTarget ? { windowTarget } : {}),
         initialSketchDocument: sketchScope
           ? this.deps.store.getSketchDocument(sketchScope) ?? undefined

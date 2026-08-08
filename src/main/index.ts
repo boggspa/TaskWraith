@@ -4147,6 +4147,7 @@ const canvasService = new CanvasService({
       embedded?: boolean
       appChatId?: string
       appRunId?: string
+      ownerParticipantId?: string
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
@@ -4177,6 +4178,9 @@ const canvasService = new CanvasService({
           controllerLease: simulatorControllerLease,
           chatId: opts.appChatId,
           runId: opts.appRunId,
+          ...(opts.ownerParticipantId
+            ? { ownerParticipantId: opts.ownerParticipantId }
+            : {}),
           run: defaultSimctlRunner
         })
       })

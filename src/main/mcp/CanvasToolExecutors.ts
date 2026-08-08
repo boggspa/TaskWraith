@@ -76,6 +76,10 @@ export interface CanvasToolContext {
   appChatId?: string
   appRunId?: string
   workspacePath?: string
+  /** Direct seat id when the tool context carries one. */
+  participantId?: string
+  /** Ensemble run identity — participantId is used for device lease mint. */
+  ensembleRun?: { participantId?: string | null } | null
   canvasEvalApproval?: CanvasEvalApprovalReceipt
   /**
    * Gates the NATIVE window branch of canvas_open_launch on Ensemble
@@ -395,11 +399,14 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
     parentProvider: string
   ): Promise<McpToolExecutionResult> {
     const args = asRecord(rawArgs)
+    const ownerParticipantId =
+      asOptString(context.participantId) || asOptString(context.ensembleRun?.participantId)
     const ctx: CanvasCallContext = {
       provider: parentProvider,
       chatId: context.appChatId,
       runId: context.appRunId,
       workspacePath: context.workspacePath,
+      ...(ownerParticipantId ? { participantId: ownerParticipantId } : {}),
       canvasEvalApproval: context.canvasEvalApproval
     }
     const canvasId = asOptString(args.canvasId)

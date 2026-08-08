@@ -345,6 +345,16 @@ describe('CanvasService', () => {
     )
   })
 
+  it('device open forwards ensemble ownerParticipantId into createDriver opts', async () => {
+    await service.open(
+      { driver: 'device', bundleId: 'com.example.App' },
+      { chatId: 'chat-a', runId: 'run-a', participantId: 'seat-boss' }
+    )
+    expect(lastDriverOpts?.appChatId).toBe('chat-a')
+    expect(lastDriverOpts?.appRunId).toBe('run-a')
+    expect(lastDriverOpts?.ownerParticipantId).toBe('seat-boss')
+  })
+
   it('sketch open records the sketch driver and sketch updates emit redacted metadata', async () => {
     const opened = await service.open({ driver: 'sketch' }, { provider: 'codex' })
     expect(service.status(opened.canvasId, {})?.driver).toBe('sketch')

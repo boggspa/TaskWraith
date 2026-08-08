@@ -126,11 +126,25 @@ function humanControl(
   deps: SimulatorCanvasIpcDeps,
   chatId: string
 ): { chatId: string; controllerTokenId: string } {
-  const claimed = deps.getControllerLease().claimHuman(chatId)
+  const claimed = ensureHumanLease(deps, chatId)
   if (!claimed.ok) {
     throw new Error(claimed.error)
   }
-  return { chatId, controllerTokenId: claimed.token.tokenId }
+  return claimed.control
+}
+
+/** Soft-claim for gestures / idb: fail closed with ok:false, never throw into IPC. */
+function ensureHumanLease(
+  deps: SimulatorCanvasIpcDeps,
+  chatId: string
+):
+  | { ok: true; control: { chatId: string; controllerTokenId: string } }
+  | { ok: false; error: string } {
+  const claimed = deps.getControllerLease().claimHuman(chatId)
+  if (!claimed.ok) {
+    return { ok: false, error: claimed.error }
+  }
+  return { ok: true, control: { chatId, controllerTokenId: claimed.token.tokenId } }
 }
 
 export function registerSimulatorCanvasHandlers(
@@ -274,15 +288,24 @@ export function registerSimulatorCanvasHandlers(
   })
 
   ipcMain.handle('simulator-canvas:tap', async (_event, payload: unknown) => {
-    return deps.getInteraction().tap(parseTap(payload))
+    const gesture = parseTap(payload)
+    const lease = ensureHumanLease(deps, gesture.chatId)
+    if (!lease.ok) return { ok: false as const, error: lease.error }
+    return deps.getInteraction().tap(gesture)
   })
 
   ipcMain.handle('simulator-canvas:type', async (_event, payload: unknown) => {
-    return deps.getInteraction().type(parseType(payload))
+    const gesture = parseType(payload)
+    const lease = ensureHumanLease(deps, gesture.chatId)
+    if (!lease.ok) return { ok: false as const, error: lease.error }
+    return deps.getInteraction().type(gesture)
   })
 
   ipcMain.handle('simulator-canvas:scroll', async (_event, payload: unknown) => {
-    return deps.getInteraction().scroll(parseScroll(payload))
+    const gesture = parseScroll(payload)
+    const lease = ensureHumanLease(deps, gesture.chatId)
+    if (!lease.ok) return { ok: false as const, error: lease.error }
+    return deps.getInteraction().scroll(gesture)
   })
 
   ipcMain.handle('simulator-canvas:inspect', async (_event, chatId: unknown, udid: unknown) => {
@@ -308,7 +331,8 @@ export function registerSimulatorCanvasHandlers(
           'Simulator Canvas button must be one of APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI.'
         )
       }
-      humanControl(deps, id)
+      const lease = ensureHumanLease(deps, id)
+      if (!lease.ok) return { ok: false as const, error: lease.error }
       const idb = deps.getIdb?.()
       if (!idb?.hardwareButton || !idb.isAvailable()) {
         return { ok: false, error: 'idb is not available on PATH.' }
@@ -327,7 +351,8 @@ export function registerSimulatorCanvasHandlers(
           'Simulator Canvas rotate orientation must be PORTRAIT, PORTRAIT_UPSIDE_DOWN, LANDSCAPE_LEFT, or LANDSCAPE_RIGHT.'
         )
       }
-      humanControl(deps, id)
+      const lease = ensureHumanLease(deps, id)
+      if (!lease.ok) return { ok: false as const, error: lease.error }
       const idb = deps.getIdb?.()
       if (!idb?.rotate || !idb.isAvailable()) {
         return { ok: false, error: 'idb is not available on PATH.' }

@@ -37,6 +37,7 @@ import {
   simulatorControllerBadgeText
 } from '../lib/simulatorCanvasGestures'
 import {
+  actuateAfterSoftClaim,
   claimControlFailureMessage,
   isSimulatorFrameStale,
   shouldAcceptSimulatorScreenshotFrame
@@ -619,10 +620,11 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     if (!point) return
     event.preventDefault()
     void (async () => {
-      await ensureHumanLease()
-      if (chatIdRef.current !== chatId) return
-      const result = await api.tap!(buildTapGesture(chatId, point))
-      if (chatIdRef.current !== chatId) return
+      const gated = await actuateAfterSoftClaim(ensureHumanLease, () =>
+        api.tap!(buildTapGesture(chatId, point))
+      )
+      if (chatIdRef.current !== chatId || !gated.ok) return
+      const result = gated.value
       // Never treat recorded-but-deferred as success — surface the host error.
       if (result && result.ok === false) {
         setIssue(result.error || 'Tap was refused.')
@@ -644,10 +646,11 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     const deltaX = event.deltaX
     const deltaY = event.deltaY
     void (async () => {
-      await ensureHumanLease()
-      if (chatIdRef.current !== chatId) return
-      const result = await api.scroll!(buildScrollGesture(chatId, point, deltaX, deltaY))
-      if (chatIdRef.current !== chatId) return
+      const gated = await actuateAfterSoftClaim(ensureHumanLease, () =>
+        api.scroll!(buildScrollGesture(chatId, point, deltaX, deltaY))
+      )
+      if (chatIdRef.current !== chatId || !gated.ok) return
+      const result = gated.value
       if (result && result.ok === false) {
         setIssue(result.error || 'Scroll was refused.')
       }
@@ -665,10 +668,11 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     const text = typeBuffer
     if (!text) return
     void (async () => {
-      await ensureHumanLease()
-      if (chatIdRef.current !== chatId) return
-      const result = await api.type!(buildTypeGesture(chatId, text))
-      if (chatIdRef.current !== chatId) return
+      const gated = await actuateAfterSoftClaim(ensureHumanLease, () =>
+        api.type!(buildTypeGesture(chatId, text))
+      )
+      if (chatIdRef.current !== chatId || !gated.ok) return
+      const result = gated.value
       if (result && result.ok === false) {
         setIssue(result.error || 'Type was refused.')
         return

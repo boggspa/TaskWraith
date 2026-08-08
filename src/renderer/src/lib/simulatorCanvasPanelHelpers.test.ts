@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   SIMULATOR_FRAME_STALE_MS,
+  actuateAfterSoftClaim,
   claimControlFailureMessage,
   isSimulatorFrameStale,
   shouldAcceptSimulatorScreenshotFrame,
@@ -33,6 +34,22 @@ describe('claimControlFailureMessage', () => {
     expect(claimControlFailureMessage({ ok: true, token: 't' })).toBeNull()
     expect(claimControlFailureMessage({ ok: false, error: 'held by run' })).toBe('held by run')
     expect(claimControlFailureMessage({ ok: false })).toBe('Could not claim Simulator control.')
+  })
+})
+
+describe('actuateAfterSoftClaim', () => {
+  it('does not call actuation when soft-claim fails', async () => {
+    const actuate = vi.fn(async () => ({ ok: true }))
+    const result = await actuateAfterSoftClaim(async () => false, actuate)
+    expect(result).toEqual({ ok: false, aborted: true })
+    expect(actuate).not.toHaveBeenCalled()
+  })
+
+  it('actuates only after soft-claim succeeds', async () => {
+    const actuate = vi.fn(async () => ({ ok: true, recorded: true }))
+    const result = await actuateAfterSoftClaim(async () => true, actuate)
+    expect(result).toEqual({ ok: true, value: { ok: true, recorded: true } })
+    expect(actuate).toHaveBeenCalledOnce()
   })
 })
 

@@ -37,6 +37,20 @@ export function claimControlFailureMessage(result: unknown): string | null {
 }
 
 /**
+ * Soft-claim gate for bezel gestures: when ensureHumanLease fails, do not
+ * call tap/type/scroll (or any other actuation).
+ */
+export async function actuateAfterSoftClaim<T>(
+  ensureHumanLease: () => Promise<boolean>,
+  actuate: () => Promise<T>
+): Promise<{ ok: true; value: T } | { ok: false; aborted: true }> {
+  if (!(await ensureHumanLease())) {
+    return { ok: false, aborted: true }
+  }
+  return { ok: true, value: await actuate() }
+}
+
+/**
  * Mesh listForChat rehydrate must not clobber an active or pending Simulator
  * Canvas open for the same chat.
  */
