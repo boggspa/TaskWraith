@@ -274,17 +274,52 @@ export class ProjectReferenceExtractService {
       }
     }
 
+    // Pin the consented locator at request start. Consent/UI already named this
+    // referenceId; a later catalogue edit must not silently retarget the fetch.
+    const pinnedLocator = reference.locator
+
     if (reference.kind === 'url') {
-      return this.extractUrl(reference, consent.consent)
+      return this.extractUrl(reference, consent.consent, pinnedLocator)
     }
     if (reference.kind === 'file') {
-      return this.extractFile(reference, consent.consent)
+      return this.extractFile(reference, consent.consent, pinnedLocator)
     }
     return {
       ok: false,
       code: 'unsupported_kind',
       message: 'Unsupported Project reference kind for extract.'
     }
+  }
+
+  /**
+   * Re-load the catalogue row immediately before fetch/parse. Fail closed when
+   * the locator drifted from the consent-time pin (require re-consent).
+   * In-memory pin only — no extract-source schema bump.
+   */
+  private reloadPinnedReference(
+    projectId: string,
+    referenceId: string,
+    pinnedLocator: string
+  ): { ok: true; reference: ProjectReference } | { ok: false; code: string; message: string } {
+    const reference = this.deps
+      .getReferences()
+      .find((candidate) => candidate.id === referenceId && candidate.projectId === projectId)
+    if (!reference) {
+      return {
+        ok: false,
+        code: 'reference_not_found',
+        message: 'Project reference was not found for this project.'
+      }
+    }
+    if (reference.locator !== pinnedLocator) {
+      return {
+        ok: false,
+        code: 'locator_changed',
+        message:
+          'Project reference locator changed after consent. Re-consent is required before extract.'
+      }
+    }
+    return { ok: true, reference }
   }
 
   private now(): number {
@@ -328,9 +363,12 @@ export class ProjectReferenceExtractService {
 
   private async extractUrl(
     reference: ProjectReference,
-    consent: ProjectReferenceExtractConsent
+    consent: ProjectReferenceExtractConsent,
+    pinnedLocator: string
   ): Promise<ProjectReferenceExtractRequestResult> {
-    const locator = reference.locator.trim()
+    const pinned = this.reloadPinnedReference(reference.projectId, reference.id, pinnedLocator)
+    if (!pinned.ok) return pinned
+    const locator = pinnedLocator.trim()
     let pendingId: string | null = null
     try {
       const fetched = await this.fetchUrlOnce(locator)
@@ -345,8 +383,8 @@ export class ProjectReferenceExtractService {
         }
       }
       const pending = this.deps.store.putPending({
-        projectId: reference.projectId,
-        referenceId: reference.id,
+        projectId: pinned.reference.projectId,
+        referenceId: pinned.reference.id,
         kind: 'url-html',
         consent,
         source,
@@ -376,9 +414,12 @@ export class ProjectReferenceExtractService {
 
   private async extractFile(
     reference: ProjectReference,
-    consent: ProjectReferenceExtractConsent
+    consent: ProjectReferenceExtractConsent,
+    pinnedLocator: string
   ): Promise<ProjectReferenceExtractRequestResult> {
-    const locator = reference.locator
+    const pinned = this.reloadPinnedReference(reference.projectId, reference.id, pinnedLocator)
+    if (!pinned.ok) return pinned
+    const locator = pinnedLocator
     let pendingId: string | null = null
     try {
       const bytes = readLocalFileBytes(locator, MAX_LOCAL_FILE_BYTES)
@@ -388,8 +429,8 @@ export class ProjectReferenceExtractService {
         lower.endsWith('.pdf') || bytes.subarray(0, 5).toString('utf8').startsWith('%PDF-')
       if (isPdf) {
         const pending = this.deps.store.putPending({
-          projectId: reference.projectId,
-          referenceId: reference.id,
+          projectId: pinned.reference.projectId,
+          referenceId: pinned.reference.id,
           kind: 'pdf-text',
           consent,
           source: { locator, contentSha256 },
@@ -433,8 +474,8 @@ export class ProjectReferenceExtractService {
       }
       const officeFormat = format as ProjectReferenceExtractOfficeFormat
       const pending = this.deps.store.putPending({
-        projectId: reference.projectId,
-        referenceId: reference.id,
+        projectId: pinned.reference.projectId,
+        referenceId: pinned.reference.id,
         kind: 'office-text',
         consent,
         source: { locator, contentSha256, officeFormat },

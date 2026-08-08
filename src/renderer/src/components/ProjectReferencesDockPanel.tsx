@@ -56,11 +56,10 @@ import { ProjectReferenceSourceViewer } from './ProjectReferenceSourceViewer'
 
 /** Consent dialog copy for one-shot Project-reference extracts (P1 doctrine). */
 export const PROJECT_REFERENCE_EXTRACT_CONSENT_COPY =
-  'Save a readable text copy into this Project. Agents see it only if you Use next. You can revoke anytime. Does not grant ongoing access.'
+  'Save a readable text copy into this Project. Agents see it only if you Use next. Extract text sent on Use next may remain in provider history, and revoke cannot erase provider memory. You can revoke the Project copy anytime. Does not grant ongoing website or file access.'
 
 /** Tooltip when Studio generate IPC is not bridged in this build. */
-export const PROJECT_STUDIO_IPC_UNAVAILABLE_TOOLTIP =
-  'Studio is unavailable in this build'
+export const PROJECT_STUDIO_IPC_UNAVAILABLE_TOOLTIP = 'Studio is unavailable in this build'
 
 const EXTRACTABLE_FILE_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'pptx', 'md', 'csv', 'tsv'])
 
@@ -79,9 +78,7 @@ export function isProjectStudioGenerateEnabled(input: {
   studioApiAvailable: boolean
   busy: boolean
 }): boolean {
-  return (
-    input.selectedReferenceCount >= 1 && input.studioApiAvailable && !input.busy
-  )
+  return input.selectedReferenceCount >= 1 && input.studioApiAvailable && !input.busy
 }
 
 /** Presentation badge for a saved Studio keepable row (not a new reference kind). */
@@ -145,7 +142,10 @@ export function seedProjectStudioArtifactsForTests(
 ): void {
   studioArtifactSeedsForTests.set(
     projectId,
-    artifacts.map((artifact) => ({ ...artifact, sourceReferenceIds: [...artifact.sourceReferenceIds] }))
+    artifacts.map((artifact) => ({
+      ...artifact,
+      sourceReferenceIds: [...artifact.sourceReferenceIds]
+    }))
   )
 }
 
@@ -235,13 +235,8 @@ interface ProjectStudioBridge {
     draftId: string
     title?: string
   }) => Promise<unknown>
-  discardProjectStudioDraft?: (input: {
-    projectId: string
-    draftId: string
-  }) => Promise<unknown>
-  listProjectStudioArtifacts?: (
-    input: { projectId: string } | string
-  ) => Promise<unknown>
+  discardProjectStudioDraft?: (input: { projectId: string; draftId: string }) => Promise<unknown>
+  listProjectStudioArtifacts?: (input: { projectId: string } | string) => Promise<unknown>
 }
 
 function studioBridge(): ProjectStudioBridge | undefined {
@@ -266,8 +261,7 @@ function studioDraftFromUnknown(value: unknown): ProjectStudioDraftView | null {
     : isRecord(value.draft)
       ? value.draft
       : value
-  const draftId =
-    text(nested.draftId) ?? text(nested.id) ?? text(value.draftId) ?? text(value.id)
+  const draftId = text(nested.draftId) ?? text(nested.id) ?? text(value.draftId) ?? text(value.id)
   const kind = parseProjectStudioKind(nested.kind) ?? parseProjectStudioKind(value.kind)
   const path =
     text(nested.path) ??
@@ -289,7 +283,10 @@ function studioDraftFromUnknown(value: unknown): ProjectStudioDraftView | null {
   }
 }
 
-function studioArtifactsFromUnknown(value: unknown, projectId: string): ProjectStudioArtifactView[] {
+function studioArtifactsFromUnknown(
+  value: unknown,
+  projectId: string
+): ProjectStudioArtifactView[] {
   if (isRecord(value) && value.ok === false) return []
   const list = Array.isArray(value)
     ? value
@@ -821,10 +818,7 @@ export function ProjectReferencesDockPanel({
     return count
   }, [extractsByReferenceId, selectedReferenceIds])
 
-  const studioSelectionIds = useMemo(
-    () => [...selectedReferenceIds],
-    [selectedReferenceIds]
-  )
+  const studioSelectionIds = useMemo(() => [...selectedReferenceIds], [selectedReferenceIds])
   const studioGenerateEnabled = isProjectStudioGenerateEnabled({
     selectedReferenceCount: studioSelectionIds.length,
     studioApiAvailable: canGenerateStudioViaApi,
@@ -1582,10 +1576,7 @@ export function ProjectReferencesDockPanel({
               key={kind}
               type="button"
               disabled={!studioGenerateEnabled}
-              title={
-                studioDisabledTitle ??
-                `Generate a ${label} from selected Use next sources`
-              }
+              title={studioDisabledTitle ?? `Generate a ${label} from selected Use next sources`}
               onClick={() => generateStudioDraft(kind)}
             >
               {studioActing ? `${label}…` : label}

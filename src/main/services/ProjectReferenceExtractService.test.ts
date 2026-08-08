@@ -284,4 +284,74 @@ describe('ProjectReferenceExtractService', () => {
     })
     expect(references[0]).toEqual(before)
   })
+
+  it('fails closed with locator_changed when the URL locator changes after consent pin', async () => {
+    const root = makeRoot()
+    const store = new ProjectReferenceExtractStore(
+      path.join(root, PROJECT_REFERENCE_EXTRACTS_DIR_NAME)
+    )
+    let loads = 0
+    const fetchImpl = vi.fn(
+      async () => new Response('should-not-fetch', { status: 200 })
+    ) as unknown as typeof fetch
+    const service = new ProjectReferenceExtractService({
+      store,
+      getReferences: () => {
+        loads += 1
+        const locator =
+          loads === 1 ? 'https://example.com/consented' : 'https://example.com/mutated'
+        return [ref({ id: 'ref-url', kind: 'url', locator })]
+      },
+      fetchImpl,
+      resolveHost: async () => ['93.184.216.34'],
+      now: () => 1_700_000_000_100
+    })
+
+    const result = await service.requestExtract({
+      projectId: 'project-a',
+      referenceId: 'ref-url',
+      consent
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe('locator_changed')
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(store.getActive('project-a', 'ref-url')).toBeNull()
+  })
+
+  it('fails closed with locator_changed when the file locator changes after consent pin', async () => {
+    const root = makeRoot()
+    const consentedPath = path.join(root, 'consented.pdf')
+    const mutatedPath = path.join(root, 'mutated.pdf')
+    fs.writeFileSync(consentedPath, Buffer.from('%PDF-1.4 consented'))
+    fs.writeFileSync(mutatedPath, Buffer.from('%PDF-1.4 mutated'))
+    const store = new ProjectReferenceExtractStore(
+      path.join(root, PROJECT_REFERENCE_EXTRACTS_DIR_NAME)
+    )
+    let loads = 0
+    const extractPdfText = vi.fn(async () => {
+      throw new Error('must not parse after locator change')
+    })
+    const service = new ProjectReferenceExtractService({
+      store,
+      getReferences: () => {
+        loads += 1
+        const locator = loads === 1 ? consentedPath : mutatedPath
+        return [ref({ id: 'ref-pdf', kind: 'file', locator, title: 'spec.pdf' })]
+      },
+      extractPdfText,
+      now: () => 1_700_000_000_100
+    })
+
+    const result = await service.requestExtract({
+      projectId: 'project-a',
+      referenceId: 'ref-pdf',
+      consent
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe('locator_changed')
+    expect(extractPdfText).not.toHaveBeenCalled()
+    expect(store.getActive('project-a', 'ref-pdf')).toBeNull()
+  })
 })

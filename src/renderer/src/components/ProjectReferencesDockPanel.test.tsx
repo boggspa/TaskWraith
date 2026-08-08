@@ -519,7 +519,13 @@ it('offers Extract… for url/pdf/office rows and disables it when extract IPC i
   expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/Save a readable text copy/)
   expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/Use next/)
   expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/revoke/i)
-  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/Does not grant ongoing access/)
+  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(
+    /Does not grant ongoing (?:website or file )?access/
+  )
+  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(/provider history/i)
+  expect(PROJECT_REFERENCE_EXTRACT_CONSENT_COPY).toMatch(
+    /revoke cannot erase provider memory|cannot erase provider memory/i
+  )
 })
 
 it('shows Extracted badge, View, and Revoke extract when a ready extract is present', () => {
