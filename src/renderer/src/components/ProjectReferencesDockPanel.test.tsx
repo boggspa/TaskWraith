@@ -29,13 +29,19 @@ import {
 import { listProjects, resetProjectsStoreForTests } from '../lib/projectsStore'
 import {
   PROJECT_REFERENCE_EXTRACT_CONSENT_COPY,
+  PROJECT_STUDIO_IPC_UNAVAILABLE_TOOLTIP,
   ProjectReferenceSuggestions,
   ProjectReferencesDockPanel,
   clearProjectReferenceExtractSeedsForTests,
+  clearProjectStudioSeedsForTests,
   isProjectReferenceExtractCandidate,
+  isProjectStudioGenerateEnabled,
   projectReferenceProposalViewsFromUnknown,
+  projectStudioKindBadgeLabel,
   resolveDockDroppedFilePath,
   seedProjectReferenceExtractForTests,
+  seedProjectStudioArtifactsForTests,
+  seedProjectStudioDraftForTests,
   shouldHandleProjectReferencesDockPaste
 } from './ProjectReferencesDockPanel'
 
@@ -43,6 +49,7 @@ beforeEach(() => {
   resetProjectsStoreForTests()
   resetProjectReferenceContextSelectionForTests()
   clearProjectReferenceExtractSeedsForTests()
+  clearProjectStudioSeedsForTests()
   fake.broadcast.cb = null
   fake.api.getProjectsSnapshot.mockReset()
   fake.api.onProjectsChanged.mockReset()
@@ -51,6 +58,10 @@ beforeEach(() => {
   delete (fake.api as { getProjectReferenceExtract?: unknown }).getProjectReferenceExtract
   delete (fake.api as { revokeProjectReferenceExtract?: unknown }).revokeProjectReferenceExtract
   delete (fake.api as { readProjectReferenceExtractText?: unknown }).readProjectReferenceExtractText
+  delete (fake.api as { generateProjectStudioDraft?: unknown }).generateProjectStudioDraft
+  delete (fake.api as { saveProjectStudioDraft?: unknown }).saveProjectStudioDraft
+  delete (fake.api as { discardProjectStudioDraft?: unknown }).discardProjectStudioDraft
+  delete (fake.api as { listProjectStudioArtifacts?: unknown }).listProjectStudioArtifacts
   fake.api.getProjectsSnapshot.mockResolvedValue({
     projects: [],
     workProfiles: [],
@@ -594,4 +605,191 @@ it('shows Extracted badge, View, and Revoke extract when a ready extract is pres
   expect(html).toContain('>View<')
   expect(html).toContain('Revoke extract')
   expect(html).toContain('includes extract')
+})
+
+function seedStudioLibrary(options?: { memberChatIds?: string[] }): void {
+  listProjects()
+  fake.broadcast.cb?.({
+    projects: [
+      {
+        schemaVersion: 1,
+        id: 'project-a',
+        name: 'Alpha',
+        icon: { iconKind: 'seed', seed: 'a' },
+        hue: 1,
+        parentId: null,
+        order: 1,
+        memberChatIds: options?.memberChatIds ?? ['chat-a'],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    workProfiles: [],
+    references: [
+      {
+        id: 'ref-a',
+        projectId: 'project-a',
+        kind: 'file',
+        locator: '/tmp/spec.pdf',
+        title: 'spec.pdf',
+        provenance: { addedBy: 'user', addedAt: 1 },
+        contextPolicy: 'available',
+        updatedAt: 2
+      },
+      {
+        id: 'ref-keepable',
+        projectId: 'project-a',
+        kind: 'file',
+        locator: '/tmp/briefing.md',
+        title: 'Briefing — Alpha',
+        provenance: { addedBy: 'user', addedAt: 3 },
+        contextPolicy: 'available',
+        updatedAt: 3
+      }
+    ]
+  })
+}
+
+it('exports Studio generate enablement: needs selection and IPC', () => {
+  expect(
+    isProjectStudioGenerateEnabled({
+      selectedReferenceCount: 0,
+      studioApiAvailable: true,
+      busy: false
+    })
+  ).toBe(false)
+  expect(
+    isProjectStudioGenerateEnabled({
+      selectedReferenceCount: 1,
+      studioApiAvailable: false,
+      busy: false
+    })
+  ).toBe(false)
+  expect(
+    isProjectStudioGenerateEnabled({
+      selectedReferenceCount: 2,
+      studioApiAvailable: true,
+      busy: true
+    })
+  ).toBe(false)
+  expect(
+    isProjectStudioGenerateEnabled({
+      selectedReferenceCount: 1,
+      studioApiAvailable: true,
+      busy: false
+    })
+  ).toBe(true)
+})
+
+it('renders Studio Briefing / FAQ / Decision log disabled without Use-next selection', () => {
+  seedStudioLibrary()
+
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel projectId="project-a" chatId="chat-a" onClose={() => undefined} />
+  )
+
+  expect(html).toContain('Studio')
+  expect(html).toContain('>Briefing<')
+  expect(html).toContain('>FAQ<')
+  expect(html).toContain('>Decision log<')
+  expect(html).toMatch(/disabled[^>]*>Briefing</)
+  expect(html).toMatch(/disabled[^>]*>FAQ</)
+  expect(html).toMatch(/disabled[^>]*>Decision log</)
+  expect(html).toContain('Select at least one Use next source')
+})
+
+it('keeps Studio buttons disabled with selection when generate IPC is missing', () => {
+  seedStudioLibrary()
+  setProjectReferenceContextSelection('chat-a', 'project-a', ['ref-a'])
+
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel projectId="project-a" chatId="chat-a" onClose={() => undefined} />
+  )
+
+  expect(html).toMatch(/disabled[^>]*>Briefing</)
+  expect(html).toContain(PROJECT_STUDIO_IPC_UNAVAILABLE_TOOLTIP)
+})
+
+it('enables Studio buttons when Use-next selection and generate IPC are present', () => {
+  Object.assign(fake.api, {
+    generateProjectStudioDraft: vi.fn(),
+    saveProjectStudioDraft: vi.fn(),
+    discardProjectStudioDraft: vi.fn(),
+    listProjectStudioArtifacts: vi.fn(async () => [])
+  })
+  seedStudioLibrary()
+  setProjectReferenceContextSelection('chat-a', 'project-a', ['ref-a'])
+
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel projectId="project-a" chatId="chat-a" onClose={() => undefined} />
+  )
+
+  expect(html).not.toMatch(/disabled[^>]*>Briefing</)
+  expect(html).not.toMatch(/disabled[^>]*>FAQ</)
+  expect(html).not.toMatch(/disabled[^>]*>Decision log</)
+  expect(html).toContain('Generate a Briefing from selected Use next sources')
+})
+
+it('offers Save to library / Discard after a seeded Studio draft', () => {
+  Object.assign(fake.api, {
+    generateProjectStudioDraft: vi.fn(),
+    saveProjectStudioDraft: vi.fn(),
+    discardProjectStudioDraft: vi.fn(),
+    listProjectStudioArtifacts: vi.fn(async () => [])
+  })
+  seedStudioLibrary()
+  setProjectReferenceContextSelection('chat-a', 'project-a', ['ref-a'])
+  seedProjectStudioDraftForTests({
+    projectId: 'project-a',
+    draftId: 'draft-1',
+    kind: 'briefing',
+    path: '/tmp/briefing-draft.md',
+    status: 'draft'
+  })
+
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel projectId="project-a" chatId="chat-a" onClose={() => undefined} />
+  )
+
+  expect(html).toContain('Studio draft ready')
+  expect(html).toContain('Save to library')
+  expect(html).toContain('>Discard<')
+})
+
+it('badges saved Studio keepables when companion list is available', () => {
+  Object.assign(fake.api, {
+    generateProjectStudioDraft: vi.fn(),
+    listProjectStudioArtifacts: vi.fn(async () => [
+      {
+        draftId: 'draft-saved',
+        referenceId: 'ref-keepable',
+        kind: 'briefing',
+        title: 'Briefing — Alpha',
+        status: 'saved',
+        sourceReferenceIds: ['ref-a']
+      }
+    ])
+  })
+  seedStudioLibrary()
+  seedProjectStudioArtifactsForTests('project-a', [
+    {
+      draftId: 'draft-saved',
+      referenceId: 'ref-keepable',
+      kind: 'briefing',
+      title: 'Briefing — Alpha',
+      status: 'saved',
+      sourceReferenceIds: ['ref-a']
+    }
+  ])
+
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel projectId="project-a" chatId="chat-a" onClose={() => undefined} />
+  )
+
+  expect(projectStudioKindBadgeLabel('briefing')).toBe('Briefing')
+  expect(projectStudioKindBadgeLabel('faq')).toBe('FAQ')
+  expect(projectStudioKindBadgeLabel('decision-log')).toBe('Decisions')
+  expect(html).toContain('Briefing — Alpha')
+  expect(html).toContain('project-references-dock-studio-badge')
+  expect(html).toContain('>Briefing<')
 })

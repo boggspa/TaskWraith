@@ -15,6 +15,12 @@ import {
   type ProjectReferenceExtract,
   type ProjectReferenceExtractPageSpan
 } from '../../../shared/projectReferenceExtract'
+import {
+  parseProjectStudioKind,
+  parseProjectStudioStatus,
+  type ProjectStudioKind,
+  type ProjectStudioStatus
+} from '../../../shared/projectStudio'
 import { normalizeGitHubReferenceInput, type ProjectReference } from '../../../shared/projects'
 import {
   addProjectReference,
@@ -52,7 +58,101 @@ import { ProjectReferenceSourceViewer } from './ProjectReferenceSourceViewer'
 export const PROJECT_REFERENCE_EXTRACT_CONSENT_COPY =
   'Save a readable text copy into this Project. Agents see it only if you Use next. You can revoke anytime. Does not grant ongoing access.'
 
+/** Tooltip when Studio generate IPC is not bridged in this build. */
+export const PROJECT_STUDIO_IPC_UNAVAILABLE_TOOLTIP =
+  'Studio is unavailable in this build'
+
 const EXTRACTABLE_FILE_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'pptx', 'md', 'csv', 'tsv'])
+
+const PROJECT_STUDIO_KIND_ACTIONS: ReadonlyArray<{
+  kind: ProjectStudioKind
+  label: string
+}> = [
+  { kind: 'briefing', label: 'Briefing' },
+  { kind: 'faq', label: 'FAQ' },
+  { kind: 'decision-log', label: 'Decision log' }
+]
+
+/** Pure enablement for Studio generate buttons (selection + IPC + not busy). */
+export function isProjectStudioGenerateEnabled(input: {
+  selectedReferenceCount: number
+  studioApiAvailable: boolean
+  busy: boolean
+}): boolean {
+  return (
+    input.selectedReferenceCount >= 1 && input.studioApiAvailable && !input.busy
+  )
+}
+
+/** Presentation badge for a saved Studio keepable row (not a new reference kind). */
+export function projectStudioKindBadgeLabel(kind: ProjectStudioKind): string {
+  switch (kind) {
+    case 'briefing':
+      return 'Briefing'
+    case 'faq':
+      return 'FAQ'
+    case 'decision-log':
+      return 'Decisions'
+    default: {
+      const _exhaustive: never = kind
+      return _exhaustive
+    }
+  }
+}
+
+export type ProjectStudioDraftView = {
+  draftId: string
+  kind: ProjectStudioKind
+  path: string
+  status: 'draft'
+  title?: string
+}
+
+export type ProjectStudioArtifactView = {
+  draftId: string
+  kind: ProjectStudioKind
+  title: string
+  status: ProjectStudioStatus
+  sourceReferenceIds: string[]
+  referenceId?: string
+}
+
+const studioDraftSeedsForTests = new Map<string, ProjectStudioDraftView>()
+const studioArtifactSeedsForTests = new Map<string, ProjectStudioArtifactView[]>()
+
+/** Test-only: seed an in-panel Studio draft for Save/Discard markup. */
+export function seedProjectStudioDraftForTests(draft: {
+  projectId: string
+  draftId: string
+  kind: ProjectStudioKind
+  path: string
+  status: 'draft'
+  title?: string
+}): void {
+  studioDraftSeedsForTests.set(draft.projectId, {
+    draftId: draft.draftId,
+    kind: draft.kind,
+    path: draft.path,
+    status: 'draft',
+    ...(draft.title ? { title: draft.title } : {})
+  })
+}
+
+/** Test-only: seed companion Studio artifacts for keepable badges. */
+export function seedProjectStudioArtifactsForTests(
+  projectId: string,
+  artifacts: readonly ProjectStudioArtifactView[]
+): void {
+  studioArtifactSeedsForTests.set(
+    projectId,
+    artifacts.map((artifact) => ({ ...artifact, sourceReferenceIds: [...artifact.sourceReferenceIds] }))
+  )
+}
+
+export function clearProjectStudioSeedsForTests(): void {
+  studioDraftSeedsForTests.clear()
+  studioArtifactSeedsForTests.clear()
+}
 
 /** URL / PDF / Office (and plain markdown/csv) rows that can request a consentful extract. */
 export function isProjectReferenceExtractCandidate(
@@ -121,9 +221,116 @@ function extractApiAvailable(api: ProjectReferenceExtractBridge | undefined): bo
   return typeof api?.extractProjectReference === 'function'
 }
 
+interface ProjectStudioBridge {
+  generateProjectStudioDraft?: (input: {
+    projectId: string
+    kind: ProjectStudioKind
+    referenceIds: string[]
+    title?: string
+    chatId?: string
+    workspacePath?: string
+  }) => Promise<unknown>
+  saveProjectStudioDraft?: (input: {
+    projectId: string
+    draftId: string
+    title?: string
+  }) => Promise<unknown>
+  discardProjectStudioDraft?: (input: {
+    projectId: string
+    draftId: string
+  }) => Promise<unknown>
+  listProjectStudioArtifacts?: (
+    input: { projectId: string } | string
+  ) => Promise<unknown>
+}
+
+function studioBridge(): ProjectStudioBridge | undefined {
+  if (typeof window === 'undefined') return undefined
+  return window.api as unknown as ProjectStudioBridge
+}
+
+function studioGenerateApiAvailable(api: ProjectStudioBridge | undefined): boolean {
+  return typeof api?.generateProjectStudioDraft === 'function'
+}
+
+function studioFailureMessage(value: unknown): string | null {
+  if (!isRecord(value) || value.ok !== false) return null
+  return text(value.message) ?? 'Studio request failed.'
+}
+
+function studioDraftFromUnknown(value: unknown): ProjectStudioDraftView | null {
+  if (!isRecord(value)) return null
+  if (value.ok === false) return null
+  const nested = isRecord(value.artifact)
+    ? value.artifact
+    : isRecord(value.draft)
+      ? value.draft
+      : value
+  const draftId =
+    text(nested.draftId) ?? text(nested.id) ?? text(value.draftId) ?? text(value.id)
+  const kind = parseProjectStudioKind(nested.kind) ?? parseProjectStudioKind(value.kind)
+  const path =
+    text(nested.path) ??
+    text(nested.absolutePath) ??
+    text(nested.relativePath) ??
+    text(value.path) ??
+    text(value.relativePath)
+  const status = parseProjectStudioStatus(nested.status) ?? parseProjectStudioStatus(value.status)
+  // Companion meta always carries status; accept missing status only on ok:true wraps.
+  if (!draftId || !kind || !path) return null
+  if (status !== 'draft' && !(value.ok === true && status == null)) return null
+  const title = text(nested.title) ?? text(value.title) ?? undefined
+  return {
+    draftId,
+    kind,
+    path,
+    status: 'draft',
+    ...(title ? { title } : {})
+  }
+}
+
+function studioArtifactsFromUnknown(value: unknown, projectId: string): ProjectStudioArtifactView[] {
+  if (isRecord(value) && value.ok === false) return []
+  const list = Array.isArray(value)
+    ? value
+    : isRecord(value) && Array.isArray(value.artifacts)
+      ? value.artifacts
+      : isRecord(value) && Array.isArray(value.items)
+        ? value.items
+        : []
+  const artifacts: ProjectStudioArtifactView[] = []
+  for (const entry of list) {
+    if (!isRecord(entry)) continue
+    const entryProjectId = text(entry.projectId)
+    if (entryProjectId && entryProjectId !== projectId) continue
+    const draftId = text(entry.draftId) ?? text(entry.id)
+    const kind = parseProjectStudioKind(entry.kind)
+    const status = parseProjectStudioStatus(entry.status)
+    const title = text(entry.title) ?? 'Studio keepable'
+    if (!draftId || !kind || !status) continue
+    const referenceId = text(entry.referenceId) ?? text(entry.libraryReferenceId) ?? undefined
+    const sourceReferenceIds = Array.isArray(entry.sourceReferenceIds)
+      ? entry.sourceReferenceIds.filter(
+          (id): id is string => typeof id === 'string' && id.trim().length > 0
+        )
+      : []
+    artifacts.push({
+      draftId,
+      kind,
+      title,
+      status,
+      sourceReferenceIds,
+      ...(referenceId ? { referenceId } : {})
+    })
+  }
+  return artifacts
+}
+
 interface ProjectReferencesDockPanelProps {
   projectId: string
   chatId?: string | null
+  /** Active workspace path for Studio draft writes (IPC generate requires it). */
+  workspacePath?: string | null
   contextSelectionEnabled?: boolean
   onClose: () => void
   showCloseButton?: boolean
@@ -501,6 +708,7 @@ export function ProjectReferenceSuggestions({
 export function ProjectReferencesDockPanel({
   projectId,
   chatId,
+  workspacePath,
   contextSelectionEnabled = true,
   onClose,
   showCloseButton = true,
@@ -564,6 +772,28 @@ export function ProjectReferencesDockPanel({
     typeof extractBridgeApi?.readProjectReferenceExtractText === 'function'
   const canRevokeExtractViaApi =
     typeof extractBridgeApi?.revokeProjectReferenceExtract === 'function'
+  const studioBridgeApi = studioBridge()
+  const canGenerateStudioViaApi = studioGenerateApiAvailable(studioBridgeApi)
+  const canSaveStudioViaApi = typeof studioBridgeApi?.saveProjectStudioDraft === 'function'
+  const canDiscardStudioViaApi = typeof studioBridgeApi?.discardProjectStudioDraft === 'function'
+  const canListStudioViaApi = typeof studioBridgeApi?.listProjectStudioArtifacts === 'function'
+  const [studioDraft, setStudioDraft] = useState<ProjectStudioDraftView | null>(
+    () => studioDraftSeedsForTests.get(projectId) ?? null
+  )
+  const [studioActing, setStudioActing] = useState(false)
+  const [studioError, setStudioError] = useState<string | null>(null)
+  const [studioArtifacts, setStudioArtifacts] = useState<ProjectStudioArtifactView[]>(
+    () => studioArtifactSeedsForTests.get(projectId) ?? []
+  )
+  const studioArtifactsByReferenceId = useMemo(() => {
+    const map = new Map<string, ProjectStudioArtifactView>()
+    for (const artifact of studioArtifacts) {
+      if (artifact.status === 'saved' && artifact.referenceId) {
+        map.set(artifact.referenceId, artifact)
+      }
+    }
+    return map
+  }, [studioArtifacts])
   const contextSelection = useSyncExternalStore(
     useCallback(
       (listener) => subscribeProjectReferenceContextSelection(chatId, listener),
@@ -591,12 +821,57 @@ export function ProjectReferencesDockPanel({
     return count
   }, [extractsByReferenceId, selectedReferenceIds])
 
+  const studioSelectionIds = useMemo(
+    () => [...selectedReferenceIds],
+    [selectedReferenceIds]
+  )
+  const studioGenerateEnabled = isProjectStudioGenerateEnabled({
+    selectedReferenceCount: studioSelectionIds.length,
+    studioApiAvailable: canGenerateStudioViaApi,
+    busy: busy || studioActing
+  })
+  const studioDisabledTitle =
+    studioSelectionIds.length < 1
+      ? 'Select at least one Use next source'
+      : !canGenerateStudioViaApi
+        ? PROJECT_STUDIO_IPC_UNAVAILABLE_TOOLTIP
+        : studioActing
+          ? 'Studio is generating…'
+          : undefined
+
   useEffect(() => {
     const refresh = (): void =>
       setReferenceState({ projectId, references: listProjectReferences(projectId) })
     refresh()
     return subscribeProjects(refresh)
   }, [projectId])
+
+  useEffect(() => {
+    setStudioDraft(studioDraftSeedsForTests.get(projectId) ?? null)
+    setStudioError(null)
+    setStudioActing(false)
+    const seeded = studioArtifactSeedsForTests.get(projectId)
+    if (seeded) {
+      setStudioArtifacts(seeded)
+      return
+    }
+    setStudioArtifacts([])
+    if (!canListStudioViaApi) return
+    let cancelled = false
+    void Promise.resolve()
+      .then(() => studioBridgeApi?.listProjectStudioArtifacts?.({ projectId }))
+      .then((result) => {
+        if (cancelled || projectIdRef.current !== projectId) return
+        setStudioArtifacts(studioArtifactsFromUnknown(result, projectId))
+      })
+      .catch(() => {
+        if (cancelled || projectIdRef.current !== projectId) return
+        setStudioArtifacts([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, canListStudioViaApi, studioBridgeApi])
 
   useEffect(() => {
     const seeded: Record<string, ProjectReferenceExtract | null> = {}
@@ -800,6 +1075,142 @@ export function ProjectReferencesDockPanel({
       })
       .finally(() => {
         if (projectIdRef.current === actionProjectId) setBusyProjectId(null)
+      })
+  }
+
+  const refreshStudioArtifacts = useCallback(async (): Promise<void> => {
+    if (!canListStudioViaApi) return
+    try {
+      const result = await studioBridgeApi?.listProjectStudioArtifacts?.({ projectId })
+      if (projectIdRef.current !== projectId) return
+      setStudioArtifacts(studioArtifactsFromUnknown(result, projectId))
+    } catch {
+      if (projectIdRef.current === projectId) setStudioArtifacts([])
+    }
+  }, [canListStudioViaApi, projectId, studioBridgeApi])
+
+  const generateStudioDraft = (kind: ProjectStudioKind): void => {
+    if (!studioGenerateEnabled) return
+    const api = studioBridge()
+    if (typeof api?.generateProjectStudioDraft !== 'function') return
+    const actionProjectId = projectId
+    const referenceIds = [...studioSelectionIds]
+    if (referenceIds.length < 1) return
+    if (!chatId?.trim()) {
+      setStudioError('Open a chat in this Project before generating a Studio draft.')
+      return
+    }
+    if (!workspacePath?.trim()) {
+      setStudioError('Set an active workspace before generating a Studio draft.')
+      return
+    }
+    setStudioActing(true)
+    setStudioError(null)
+    void Promise.resolve()
+      .then(() =>
+        api.generateProjectStudioDraft?.({
+          projectId: actionProjectId,
+          kind,
+          referenceIds,
+          chatId: chatId.trim(),
+          workspacePath: workspacePath.trim()
+        })
+      )
+      .then((result) => {
+        if (projectIdRef.current !== actionProjectId) return
+        const failure = studioFailureMessage(result)
+        if (failure) {
+          setStudioError(failure)
+          return
+        }
+        const draft = studioDraftFromUnknown(result)
+        if (!draft) {
+          setStudioError('Studio draft response was incomplete.')
+          return
+        }
+        setStudioDraft(draft)
+      })
+      .catch((error: unknown) => {
+        if (projectIdRef.current !== actionProjectId) return
+        setStudioError(error instanceof Error ? error.message : 'Studio draft failed.')
+      })
+      .finally(() => {
+        if (projectIdRef.current === actionProjectId) setStudioActing(false)
+      })
+  }
+
+  const saveStudioDraft = (): void => {
+    if (!studioDraft || !canSaveStudioViaApi || studioActing) return
+    const api = studioBridge()
+    if (typeof api?.saveProjectStudioDraft !== 'function') return
+    const actionProjectId = projectId
+    const draftId = studioDraft.draftId
+    setStudioActing(true)
+    setStudioError(null)
+    void Promise.resolve()
+      .then(() =>
+        api.saveProjectStudioDraft?.({
+          projectId: actionProjectId,
+          draftId,
+          ...(studioDraft.title ? { title: studioDraft.title } : {})
+        })
+      )
+      .then((result) => {
+        if (projectIdRef.current !== actionProjectId) return
+        const failure = studioFailureMessage(result)
+        if (failure) {
+          setStudioError(failure)
+          return
+        }
+        setStudioDraft(null)
+        setReferenceState({
+          projectId: actionProjectId,
+          references: listProjectReferences(actionProjectId)
+        })
+        return refreshStudioArtifacts()
+      })
+      .catch((error: unknown) => {
+        if (projectIdRef.current !== actionProjectId) return
+        setStudioError(error instanceof Error ? error.message : 'Could not save Studio draft.')
+      })
+      .finally(() => {
+        if (projectIdRef.current === actionProjectId) setStudioActing(false)
+      })
+  }
+
+  const discardStudioDraft = (): void => {
+    if (!studioDraft || studioActing) return
+    const actionProjectId = projectId
+    const draftId = studioDraft.draftId
+    setStudioActing(true)
+    setStudioError(null)
+    const finishLocalDiscard = (): void => {
+      if (projectIdRef.current !== actionProjectId) return
+      setStudioDraft(null)
+    }
+    if (!canDiscardStudioViaApi) {
+      finishLocalDiscard()
+      setStudioActing(false)
+      return
+    }
+    const api = studioBridge()
+    void Promise.resolve()
+      .then(() =>
+        api?.discardProjectStudioDraft?.({
+          projectId: actionProjectId,
+          draftId
+        })
+      )
+      .then(() => {
+        finishLocalDiscard()
+        return refreshStudioArtifacts()
+      })
+      .catch((error: unknown) => {
+        if (projectIdRef.current !== actionProjectId) return
+        setStudioError(error instanceof Error ? error.message : 'Could not discard Studio draft.')
+      })
+      .finally(() => {
+        if (projectIdRef.current === actionProjectId) setStudioActing(false)
       })
   }
 
@@ -1158,6 +1569,69 @@ export function ProjectReferencesDockPanel({
         </button>
       </div>
 
+      <div className="project-references-dock-studio" aria-label="Studio">
+        <div className="project-references-dock-studio-heading">
+          <span className="project-references-dock-studio-eyebrow">Studio</span>
+          <span className="project-references-dock-studio-hint">
+            From selected Use next sources
+          </span>
+        </div>
+        <div className="project-references-dock-studio-actions" role="toolbar" aria-label="Studio">
+          {PROJECT_STUDIO_KIND_ACTIONS.map(({ kind, label }) => (
+            <button
+              key={kind}
+              type="button"
+              disabled={!studioGenerateEnabled}
+              title={
+                studioDisabledTitle ??
+                `Generate a ${label} from selected Use next sources`
+              }
+              onClick={() => generateStudioDraft(kind)}
+            >
+              {studioActing ? `${label}…` : label}
+            </button>
+          ))}
+        </div>
+        {studioError ? (
+          <p className="project-references-dock-studio-error" role="alert">
+            {studioError}
+          </p>
+        ) : null}
+        {studioDraft ? (
+          <div className="project-references-dock-studio-draft" role="status">
+            <div className="project-references-dock-studio-draft-copy">
+              <strong>Studio draft ready</strong>
+              <span title={studioDraft.path}>
+                {projectStudioKindBadgeLabel(studioDraft.kind)}
+                {studioDraft.title ? ` · ${studioDraft.title}` : ''}
+              </span>
+            </div>
+            <div className="project-references-dock-studio-draft-actions">
+              <button
+                type="button"
+                disabled={studioActing || !canSaveStudioViaApi}
+                title={
+                  canSaveStudioViaApi
+                    ? 'Save this keepable into the Project library'
+                    : PROJECT_STUDIO_IPC_UNAVAILABLE_TOOLTIP
+                }
+                onClick={saveStudioDraft}
+              >
+                Save to library
+              </button>
+              <button
+                type="button"
+                className="danger"
+                disabled={studioActing}
+                onClick={discardStudioDraft}
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       {attention.actionable.length > 0 && (
         <div className="project-references-dock-attention" role="status">
           <span>
@@ -1213,6 +1687,7 @@ export function ProjectReferencesDockPanel({
             const extractReady = extract?.status === 'ready'
             const extractBusy = extractActingReferenceId === reference.id
             const selected = selectedReferenceIds.has(reference.id)
+            const studioKeepable = studioArtifactsByReferenceId.get(reference.id)
             return (
               <article
                 key={reference.id}
@@ -1228,6 +1703,11 @@ export function ProjectReferencesDockPanel({
                     {reference.title}
                     {extractReady ? (
                       <span className="project-references-dock-extract-badge">Extracted</span>
+                    ) : null}
+                    {studioKeepable ? (
+                      <span className="project-references-dock-studio-badge">
+                        {projectStudioKindBadgeLabel(studioKeepable.kind)}
+                      </span>
                     ) : null}
                   </strong>
                   <span title={reference.locator}>{reference.locator}</span>

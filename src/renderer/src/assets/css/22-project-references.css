@@ -111,6 +111,130 @@
   font-size: 11px;
 }
 
+.project-references-dock-studio {
+  margin: 0 16px 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border-subtle));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-1));
+}
+
+.project-references-dock-studio-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.project-references-dock-studio-eyebrow {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.project-references-dock-studio-hint {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.project-references-dock-studio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.project-references-dock-studio-actions button,
+.project-references-dock-studio-draft-actions button {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-references-dock-studio-actions button {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.project-references-dock-studio-actions button:disabled,
+.project-references-dock-studio-draft-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.project-references-dock-studio-error {
+  margin: 7px 0 0;
+  color: var(--danger-text, #ef7b7b);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.project-references-dock-studio-draft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border-subtle));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.project-references-dock-studio-draft-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-references-dock-studio-draft-copy strong {
+  font-size: 11px;
+}
+
+.project-references-dock-studio-draft-copy span {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-references-dock-studio-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.project-references-dock-studio-draft-actions button {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+
+.project-references-dock-studio-draft-actions button.danger {
+  color: var(--danger-text, #ef7b7b);
+}
+
+.project-references-dock-studio-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .project-references-dock-list {
   min-height: 0;
   overflow: auto;
