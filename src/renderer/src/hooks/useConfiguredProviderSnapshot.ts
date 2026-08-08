@@ -138,6 +138,10 @@ const PENDING_CONFIGURED_PROVIDER_SNAPSHOT: ConfiguredProviderSnapshot = {
   providerIds: []
 }
 
+/** Pre-Wave-5c envelope: poll Host until discovery settles or the budget ends. */
+export const CONFIGURED_PROVIDER_SETTLE_ATTEMPTS = 40
+export const CONFIGURED_PROVIDER_SETTLE_INTERVAL_MS = 250
+
 /**
  * Host Arc Wave 5c Phase 1 — pure map from Desktop Host projection state to
  * the configured-provider snapshot leaf consumers already understand.
@@ -211,6 +215,13 @@ export function configuredProviderSnapshotFromHostProjection(
  * start / unknown behaviour (no fabricated recommended panel, no confident
  * empty ready). AntiGravity secret mutations still force a pending empty until
  * the next Host refresh settles, so stale models never flash.
+ *
+ * Wave 5c replaced the old IPC settle poll with a one-shot Host refresh. Live
+ * providers still paint from `LIVE_SELECTABLE_PROVIDER_IDS`, but AntiGravity
+ * only appears once Host admits it with models. If the first pull lands while
+ * discovery reports `provider_source_not_ready`, a missing follow-up ask freezes
+ * AG out for the session. Restore the pre-5c bounded settle envelope against
+ * Host so discovery completion can surface without a secret-mutation refreshKey.
  */
 export function useConfiguredProviderSnapshot(refreshKey = ''): ConfiguredProviderSnapshot {
   const store = useHostProjectionStore()
@@ -245,9 +256,42 @@ export function useConfiguredProviderSnapshot(refreshKey = ''): ConfiguredProvid
     }
   }, [store, blockedForRefreshKey, refreshKey])
 
-  if (blockedForRefreshKey) {
-    return PENDING_CONFIGURED_PROVIDER_SNAPSHOT
-  }
+  const mapped = blockedForRefreshKey
+    ? PENDING_CONFIGURED_PROVIDER_SNAPSHOT
+    : configuredProviderSnapshotFromHostProjection(state)
 
-  return configuredProviderSnapshotFromHostProjection(state)
+  // Bounded settle while Host (or provider discovery) is not ready. Concurrent
+  // with the mount refresh is fine: HostProjectionStore coalesces in-flight
+  // pulls, and later attempts re-ask after discovery can complete.
+  useEffect(() => {
+    if (!store || blockedForRefreshKey || mapped.ready) return
+    let cancelled = false
+    let retryTimer: number | null = null
+    let attemptsRemaining = CONFIGURED_PROVIDER_SETTLE_ATTEMPTS
+
+    const settle = async (): Promise<void> => {
+      try {
+        await store.refresh()
+      } catch {
+        // Store records the failure; keep asking until the budget ends.
+      }
+      if (cancelled) return
+      attemptsRemaining -= 1
+      // Read the store directly: React may not have re-rendered yet, and we
+      // must not schedule another timer once discovery has already settled.
+      const next = configuredProviderSnapshotFromHostProjection(store.getState())
+      if (next.ready || attemptsRemaining <= 0) return
+      retryTimer = window.setTimeout(() => {
+        if (!cancelled) void settle()
+      }, CONFIGURED_PROVIDER_SETTLE_INTERVAL_MS)
+    }
+
+    void settle()
+    return () => {
+      cancelled = true
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
+    }
+  }, [store, blockedForRefreshKey, mapped.ready, refreshKey])
+
+  return mapped
 }

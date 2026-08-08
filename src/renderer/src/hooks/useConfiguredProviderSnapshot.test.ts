@@ -1,6 +1,6 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HOST_WARNING_PROVIDER_SOURCE_NOT_READY,
   type HostSnapshot
@@ -65,6 +65,7 @@ let savedElement: PropertyDescriptor | undefined
 let savedActEnvironment: PropertyDescriptor | undefined
 
 afterEach(() => {
+  vi.useRealTimers()
   act(() => mountedRoot?.unmount())
   mountedRoot = null
   if (savedWindow) Object.defineProperty(globalThis, 'window', savedWindow)
@@ -247,6 +248,76 @@ describe('successful Gemini API mutation refresh signal', () => {
       await Promise.resolve()
     })
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
+  })
+
+  it('settles provider_source_not_ready into AntiGravity without a secret mutation', async () => {
+    // Wave 5c replaced the IPC settle poll with a one-shot Host refresh. If
+    // discovery is still not ready on that first pull, AntiGravity stays
+    // missing for the session unless we ask Host again — live providers still
+    // paint from LIVE_SELECTABLE_PROVIDER_IDS, so only the conditional lane
+    // disappears. This must recover without an AG secret mutation.
+    vi.useFakeTimers()
+    const container = installMinimalRendererDom()
+    let renderedSnapshot: ConfiguredProviderSnapshot = { ready: false, providerIds: [] }
+    let snapshotCalls = 0
+    const notReadySnapshot = hostSnapshot({
+      providers: [],
+      warnings: [
+        {
+          warningId: `${HOST_WARNING_PROVIDER_SOURCE_NOT_READY}:providers`,
+          severity: 'info',
+          code: HOST_WARNING_PROVIDER_SOURCE_NOT_READY,
+          message: 'provider discovery has not completed',
+          at: 1
+        }
+      ]
+    })
+    const antigravitySnapshot = hostSnapshot({
+      providers: [
+        {
+          providerId: 'antigravity',
+          displayProvider: 'AntiGravity',
+          shortCode: 'AG',
+          available: true,
+          modelId: 'agy-model',
+          modelLabel: 'AGY model'
+        }
+      ]
+    })
+    const store = new HostProjectionStore({
+      fetchSnapshot: () => {
+        snapshotCalls += 1
+        return Promise.resolve(snapshotCalls === 1 ? notReadySnapshot : antigravitySnapshot)
+      }
+    })
+    function Harness(): null {
+      renderedSnapshot = useConfiguredProviderSnapshot()
+      return null
+    }
+    await act(async () => {
+      mountedRoot = createRoot(container)
+      mountedRoot.render(
+        // eslint-disable-next-line react/no-children-prop -- props.children required by HostProjectionProviderProps for tsc
+        createElement(HostProjectionProvider, {
+          store,
+          children: createElement(Harness)
+        })
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(renderedSnapshot).toEqual({ ready: false, providerIds: [] })
+    expect(snapshotCalls).toBeGreaterThanOrEqual(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250)
+      await Promise.resolve()
+    })
+    expect(snapshotCalls).toBeGreaterThanOrEqual(2)
+    expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
+    expect(renderedSnapshot.modelsByProvider?.antigravity?.[0]?.id).toBe('agy-model')
+    vi.useRealTimers()
   })
 })
 
