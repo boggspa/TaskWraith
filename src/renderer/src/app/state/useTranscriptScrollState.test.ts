@@ -218,20 +218,27 @@ describe('useTranscriptScrollState', () => {
   })
 
   it('releases follow from an unclassified native scrollbar scroll before the next transcript update', () => {
+    const now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
     ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      vi.fn(() => 1)
-    )
-    vi.stubGlobal('cancelAnimationFrame', vi.fn())
-    useTranscriptScrollState({
+    // Live-edge geometry + messages so layout can arm pinNowAndScheduleTrailing;
+    // unclassified scroll-away must cancel that coalesced frame (mirror wheel).
+    const requestAnimationFrame = vi.fn(() => 42)
+    const cancelAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+    const result = useTranscriptScrollState({
       chatId: 'chat-1',
-      messages: [],
+      messages: [{ id: 'streaming-message' }],
       runCompleteNotice: null,
       streamingActive: true
     })
 
-    // Effect 1 owns the passive native scroll listener. Simulate a scrollbar
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(requestAnimationFrame).toHaveBeenCalled()
+    expect(cancelAnimationFrame).not.toHaveBeenCalled()
+
+    // Effect 0 owns the passive native scroll listener. Simulate a scrollbar
     // drag that Chromium did not pair with a wheel/pointer event on the
     // transcript content element.
     hookHarness.effectFactories[0]?.()
@@ -239,6 +246,118 @@ describe('useTranscriptScrollState', () => {
     hookHarness.listeners.get('scroll')?.({})
 
     expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
+    // Verified user-away stamps gesture-live for Phase-1 deferral.
+    expect(result.lastUserScrollAtRef.current).toBe(now)
+    expect(result.getUserScrollGestureLive()).toBe(true)
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(42)
+  })
+
+  it('clears lastUserScrollAt on chat switch so gesture-live does not carry over', () => {
+    const now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    const result = useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    // Effect 2 owns wheel intent — stamp a live gesture window.
+    hookHarness.effectFactories[2]?.()
+    hookHarness.listeners.get('wheel')?.({ deltaY: 1 })
+    expect(result.lastUserScrollAtRef.current).toBe(now)
+    expect(result.getUserScrollGestureLive()).toBe(true)
+
+    // Effect 4 owns chat-switch restore/snap. Switching must clear the stamp
+    // so Phase-1 does not defer absolute restore on the incoming chat.
+    hookHarness.effectFactories[4]?.()
+    vi.mocked(Date.now).mockReturnValue(now + 50)
+    expect(result.lastUserScrollAtRef.current).toBe(0)
+    expect(result.getUserScrollGestureLive()).toBe(false)
+  })
+
+  it('cancels a pending follow-pin when chat-switch restores with follow off', () => {
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    const requestAnimationFrame = vi.fn(() => 42)
+    const cancelAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+
+    const chatScrollStateByIdRef = {
+      current: new Map([
+        [
+          'chat-1',
+          {
+            autoFollow: false,
+            scrollState: {
+              scrollTop: 500,
+              scrollHeight: 1_000,
+              clientHeight: 200,
+              scrollRatio: 0.625,
+              atBottom: false
+            }
+          }
+        ]
+      ])
+    }
+
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'streaming-message' }],
+      runCompleteNotice: null,
+      streamingActive: true,
+      chatScrollStateByIdRef
+    })
+
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(requestAnimationFrame).toHaveBeenCalled()
+    expect(cancelAnimationFrame).not.toHaveBeenCalled()
+
+    // Cached follow-off → chat-switch plan restores with follow false and must
+    // drop any coalesced pin from the prior chat's streaming layout.
+    hookHarness.effectFactories[4]?.()
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(42)
+    expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
+  })
+
+  it('cancels a pending follow-pin when external restore syncs follow off', () => {
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    const requestAnimationFrame = vi.fn(() => 42)
+    const cancelAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+
+    const result = useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'streaming-message' }],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(requestAnimationFrame).toHaveBeenCalled()
+    expect(cancelAnimationFrame).not.toHaveBeenCalled()
+
+    result.restoreScrollStateWhenReady(
+      {
+        scrollTop: 500,
+        scrollHeight: 1_000,
+        clientHeight: 200,
+        scrollRatio: 0.625,
+        atBottom: false
+      },
+      { syncAutoFollow: true }
+    )
+
+    expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(42)
+    expect(result.lastUserScrollAtRef.current).toBe(0)
   })
 
   it('releases follow when a native scrollbar move outruns the streaming layout snap', () => {

@@ -260,6 +260,13 @@ export function useTranscriptScrollState({
             const restoredAutoFollow = options.autoFollow ?? restoreState.atBottom
             setAutoFollow(restoredAutoFollow)
             userScrolledAwayInFrameRef.current = !restoredAutoFollow
+            // Incoming ownership must not inherit the source chat's gesture
+            // settle window (or a stale downward voucher).
+            lastUserScrollAtRef.current = 0
+            downwardIntentAtRef.current = 0
+            if (!restoredAutoFollow) {
+              followPinScheduler.cancel()
+            }
           }
           return scroller
         },
@@ -293,7 +300,7 @@ export function useTranscriptScrollState({
         }
       }
     },
-    [setAutoFollow]
+    [followPinScheduler, setAutoFollow]
   )
 
   const preserveScrollWhile = useCallback(
@@ -471,6 +478,9 @@ export function useTranscriptScrollState({
       userScrolledAwayInFrameRef.current = true
       jumpInFlightRef.current = false
       downwardIntentAtRef.current = 0
+      // Verified user-away (explicit or unclassified native) — stamp for
+      // Phase-1 gesture deferral. Never set on programmatic / clamp paths.
+      lastUserScrollAtRef.current = Date.now()
       followPinScheduler.cancel()
       lastTranscriptScrollTopRef.current = nextScrollTop
       lastNativeScrollTopRef.current = nextScrollTop
@@ -681,6 +691,9 @@ export function useTranscriptScrollState({
         setAutoFollow(false)
         jumpInFlightRef.current = false
         downwardIntentAtRef.current = 0
+        // Verified user-away — stamp for Phase-1 gesture deferral. Never set
+        // on programmatic scroll (gated above by shouldTreatScrollAsUserScrollAway).
+        lastUserScrollAtRef.current = Date.now()
         followPinScheduler.cancel()
       }
       if (rafId !== null) return
@@ -956,6 +969,13 @@ export function useTranscriptScrollState({
     setAutoFollow(initialAutoFollow)
     userScrolledAwayInFrameRef.current = !initialAutoFollow
     jumpInFlightRef.current = false
+    // Chat ownership change must not carry the prior chat's gesture settle
+    // window or downward voucher into the incoming restore/snap.
+    lastUserScrollAtRef.current = 0
+    downwardIntentAtRef.current = 0
+    if (!initialAutoFollow) {
+      followPinScheduler.cancel()
+    }
     if (unreadFromBottomCountRef.current !== 0) {
       unreadFromBottomCountRef.current = 0
       setUnreadFromBottomCount(0)
