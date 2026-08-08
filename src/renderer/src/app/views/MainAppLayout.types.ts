@@ -587,6 +587,9 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   officeOpenRequest: any
   onOpenOfficeDocument: any
   onRequestOfficeExternalAccess: any
+  citationOpenRequest: any
+  onCitationOpenRequestConsumed: () => void
+  onOpenProjectReferenceCitation: any
   showFirstLaunchSheet: any
   showGeminiTerminal: any
   showJumpToLatestPill: any

@@ -496,6 +496,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   officeOpenRequest,
   onOpenOfficeDocument,
   onRequestOfficeExternalAccess,
+  citationOpenRequest,
+  onCitationOpenRequestConsumed,
+  onOpenProjectReferenceCitation,
   showFirstLaunchSheet,
   showJumpToLatestPill,
   showOnboardingHint,
@@ -2249,6 +2252,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 }
                 onPreviewImage={setPreviewChatMediaRef}
                 onDetachToPane={openMediaPane}
+                onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
                 onOpenSideChatFromMessage={
                   canCreateSideChatFromCurrent ? handleOpenSideChatFromMessage : undefined
                 }
@@ -2591,6 +2595,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onPromoteCollaboratorComment={handleSideTranscriptPromoteCollaboratorComment}
               onPreviewImage={setPreviewChatMediaRef}
               onDetachToPane={openMediaPane}
+              onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
               jumpToMessageRequest={
                 transcriptJumpRequest?.chatId === sideChat.appChatId ? transcriptJumpRequest : null
               }
@@ -2704,6 +2709,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       workspacePath={currentWorkspace?.path}
                       showCloseButton={!isWorkRouteReferencesPinned}
                       onClose={() => closeRightDockPanel('references')}
+                      citationOpenRequest={citationOpenRequest}
+                      onCitationOpenRequestConsumed={onCitationOpenRequestConsumed}
                       resolveOfficeTarget={(locator) => {
                         // Reference locators are absolute. Inside the bound
                         // workspace they open by relative path; outside it

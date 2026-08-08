@@ -720,6 +720,12 @@ import {
   subscribeSimulatorCanvasOpenRequests
 } from './lib/simulatorCanvasLaunch'
 import {
+  clearProjectReferenceCitationOpenRequest,
+  createProjectReferenceCitationOpenRequest,
+  type ProjectReferenceCitationOpenRequest
+} from './lib/projectReferenceCitationOpen'
+import type { ProjectReferenceCitationOpenTarget } from './lib/projectReferenceCitations'
+import {
   readDockSurface,
   resolveDockSurfaceContext,
   writeDockSurface
@@ -2454,6 +2460,9 @@ function App(): React.JSX.Element {
     external?: boolean
   } | null>(null)
   const officeOpenNonceRef = useRef(0)
+  const [citationOpenRequest, setCitationOpenRequest] =
+    useState<ProjectReferenceCitationOpenRequest | null>(null)
+  const citationOpenNonceRef = useRef(0)
   const [showGeminiTerminal, setShowGeminiTerminal] = useState(false)
   const [geminiTerminalInputByChatId, setGeminiTerminalInputForChat] = usePerChatState('')
   const [isChatMediaPanelOpen, setIsChatMediaPanelOpen] = useState(false)
@@ -25573,6 +25582,38 @@ function App(): React.JSX.Element {
     setActiveWorkProjectId(projectId)
     activateRightDockTab('references')
   }
+  /** Transcript citation chip → Work Refs extract viewer. Only when the
+   * focused chat belongs to exactly one Project (same ownership rule as
+   * Media "Add to library"). */
+  const handleOpenProjectReferenceCitation = (
+    target: ProjectReferenceCitationOpenTarget
+  ): void => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    const owners = listProjects().filter(
+      (project) => !project.archived && project.memberChatIds.includes(chatId)
+    )
+    if (owners.length !== 1) return
+    const project = owners[0]
+    if (sidebarActiveTab !== 'projects') {
+      setSidebarActiveTab('projects')
+    }
+    setActiveWorkProjectId(project.id)
+    activateRightDockTab('references')
+    const next = createProjectReferenceCitationOpenRequest(
+      {
+        projectId: project.id,
+        referenceId: target.referenceId,
+        extractId: target.extractId,
+        startOffset: target.startOffset,
+        endOffset: target.endOffset,
+        ...(target.pageNumber !== undefined ? { pageNumber: target.pageNumber } : {})
+      },
+      citationOpenNonceRef.current
+    )
+    citationOpenNonceRef.current = next.nonce
+    setCitationOpenRequest(next)
+  }
   /** Files-tree → Office handoff: an Office-native file (docx/xlsx/pptx/
    * ics/eml) opened from the code editor's tree activates the adjacent
    * Office dock surface and loads it there instead. */
@@ -30989,6 +31030,10 @@ function App(): React.JSX.Element {
     officeOpenRequest,
     onOpenOfficeDocument: handleOpenOfficeDocument,
     onRequestOfficeExternalAccess: handleRequestOfficeExternalAccess,
+    citationOpenRequest,
+    onCitationOpenRequestConsumed: () =>
+      setCitationOpenRequest(clearProjectReferenceCitationOpenRequest()),
+    onOpenProjectReferenceCitation: handleOpenProjectReferenceCitation,
     showFirstLaunchSheet,
     showGeminiTerminal,
     showJumpToLatestPill,
