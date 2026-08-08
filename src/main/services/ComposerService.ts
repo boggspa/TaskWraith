@@ -26,6 +26,7 @@ import {
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
 import {
+  applyUnattendedSimulatorCanvasOverride,
   resolveUnattendedApprovalMode,
   unattendedElevationPresetId,
   unattendedSubThreadDelegationOverride,
@@ -617,7 +618,7 @@ export class ComposerService {
       unattended && unattendedElevation && approvalMode !== 'plan'
         ? unattendedElevationPresetId(unattendedElevation.ack.level)
         : undefined
-    const effectiveRunPermissions = frozenPermissionPosture
+    const resolvedRunPermissions = frozenPermissionPosture
       ? frozenPermissionPosture.effectivePermissions
       : approvalMode === 'plan'
         ? resolveEffectiveRunPermissions({
@@ -650,6 +651,8 @@ export class ComposerService {
               // (→ settings default 'allow'), so force-deny it here. Sub-thread
               // delegation is also denied so elevated unattended loops cannot
               // silently spawn children (interactive Accept/Full WS still allow).
+              // Fork 4B: Simulator Canvas is NOT hard-denied here — see
+              // applyUnattendedSimulatorCanvasOverride after resolve.
               overrides: {
                 networkAccess: 'deny',
                 ...unattendedSubThreadDelegationOverride()
@@ -673,6 +676,12 @@ export class ComposerService {
                   settings,
                   presetId: interactivePermissionPresetId || 'default'
                 })
+    // Fork 4B: demote elevated unattended simulatorCanvas:allow unless an
+    // explicit workspace grant is present; plan-floor keeps ask.
+    const effectiveRunPermissions =
+      unattended && resolvedRunPermissions
+        ? applyUnattendedSimulatorCanvasOverride(resolvedRunPermissions)
+        : resolvedRunPermissions
     const payload: ComposerRunPayload = {
       provider,
       scope,

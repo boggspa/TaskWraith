@@ -43,7 +43,10 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 //     mutating services. Anything not auto-allowed is DENIED — "denied and no
 //     elevation offered". Deliberate attended exceptions (2026-08-08):
 //     `subThreadDelegation` and `simulatorCanvas` stay ASK so their tools can
-//     modal-approve; unattended/scheduled Plan overrides those back to DENY.
+//     modal-approve. Unattended/scheduled Plan hard-denies only
+//     `subThreadDelegation`; fork 4B keeps `simulatorCanvas` at ASK (timer
+//     deny) and demotes elevated Accept Edits / Full WS allow unless an
+//     explicit simulatorCanvas grant is present.
 //     The only other elevation is the proposed-plan document approval (which
 //     flips the chat to Accept Edits and re-dispatches), and the only write is
 //     the product-managed markdown plan artifact (executor-owned carve-out, not

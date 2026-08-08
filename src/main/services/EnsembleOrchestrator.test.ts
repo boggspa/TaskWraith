@@ -19605,6 +19605,8 @@ Next action:
     expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
       'deny'
     )
+    // Fork 4B: plan-floor unattended keeps simulatorCanvas ASK (not hard deny).
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
 
     // Advance to the write-capable Codex participant.
     harness.orchestrator.handleProviderOutput(
@@ -19626,6 +19628,7 @@ Next action:
     expect(harness.dispatched[1].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
       'deny'
     )
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 
   it('P1b: an interactive round (unattended omitted) preserves the write-capable preset', async () => {
@@ -19670,6 +19673,9 @@ Next action:
     expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
       'deny'
     )
+    // Fork 4B: elevated unattended without an explicit simulatorCanvas grant
+    // must not inherit Accept Edits / Full WS allow.
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -19681,6 +19687,43 @@ Next action:
     expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
     expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(false)
     expect(harness.dispatched[1].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
+      'deny'
+    )
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
+  })
+
+  it('fork 4B: elevated unattended allows simulatorCanvas with an explicit workspace grant', async () => {
+    const harness = makeHarness({
+      getSettings: () => ({
+        ...makeSettings(),
+        agenticWorkspaceGrants: [
+          {
+            id: 'sim-grant',
+            provider: 'agents',
+            workspacePath: '/repo',
+            service: 'simulatorCanvas',
+            createdAt: '2026-08-08T00:00:00.000Z',
+            updatedAt: '2026-08-08T00:00:00.000Z'
+          }
+        ]
+      })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run the elevated scheduled occurrence with Simulator grant.',
+      event: { sender: {} as Electron.WebContents },
+      unattended: true,
+      unattendedElevationLevel: 'full_access'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('workspace_write')
+    expect(harness.dispatched[0].effectivePermissions?.workspaceGrantServiceIds).toContain(
+      'simulatorCanvas'
+    )
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.simulatorCanvas).toBe(
+      'allow'
+    )
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
       'deny'
     )
   })

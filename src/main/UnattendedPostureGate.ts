@@ -129,6 +129,66 @@ export function unattendedSubThreadDelegationOverride(): {
   return { agenticServices: { subThreadDelegation: 'deny' } }
 }
 
+/** Structural slice of EffectiveRunPermissions — no store import. */
+export type UnattendedSimulatorCanvasEffective = {
+  presetId: string
+  readOnly: boolean
+  agenticServices: { simulatorCanvas: 'ask' | 'workspace' | 'allow' | 'deny' }
+  workspaceGrantServiceIds: readonly string[]
+}
+
+/**
+ * Fork 4B — unattended Simulator Canvas gate (applied AFTER resolve).
+ *
+ * Unlike `subThreadDelegation` (hard deny on every unattended resolve):
+ *   - plan-floor unattended: KEEP ask (timer deny) — no-op
+ *   - elevated unattended WITHOUT an explicit simulatorCanvas workspace grant:
+ *     force ask so Accept Edits / Full WS cannot silently simctl-mutate
+ *   - elevated unattended WITH an explicit simulatorCanvas workspace grant:
+ *     allow (session grants still auto-approve at the approval gate when the
+ *     signed posture is ask)
+ *
+ * Global deny is preserved either way.
+ */
+export function unattendedSimulatorCanvasOverride(
+  effective: UnattendedSimulatorCanvasEffective
+): { agenticServices: { simulatorCanvas: 'ask' | 'allow' } } | Record<string, never> {
+  const policy = effective.agenticServices.simulatorCanvas
+  if (policy === 'deny') return {}
+
+  const planFloor =
+    effective.readOnly === true ||
+    effective.presetId === 'plan' ||
+    effective.presetId === 'read_only'
+  if (planFloor) return {}
+
+  const hasExplicitGrant = effective.workspaceGrantServiceIds.includes('simulatorCanvas')
+  if (hasExplicitGrant) {
+    return { agenticServices: { simulatorCanvas: 'allow' } }
+  }
+  // Elevated without grant: demote preset allow / grant-tier workspace to ask.
+  if (policy === 'allow' || policy === 'workspace') {
+    return { agenticServices: { simulatorCanvas: 'ask' } }
+  }
+  return {}
+}
+
+/** Merge a fork-4B Simulator Canvas override into already-resolved permissions. */
+export function applyUnattendedSimulatorCanvasOverride<T extends UnattendedSimulatorCanvasEffective>(
+  effective: T
+): T {
+  const override = unattendedSimulatorCanvasOverride(effective)
+  const next = override.agenticServices?.simulatorCanvas
+  if (!next || effective.agenticServices.simulatorCanvas === next) return effective
+  return {
+    ...effective,
+    agenticServices: {
+      ...effective.agenticServices,
+      simulatorCanvas: next
+    }
+  }
+}
+
 /**
  * The minimal WorkflowDefinition shape buildUnattendedElevationAck needs. Kept
  * structural (no store import) so this module stays Electron-free and its unit

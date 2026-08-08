@@ -1815,6 +1815,9 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
     // Attended Plan asks for sub-thread spawn; unattended Plan must deny so the
     // scheduled no-modal floor cannot hang on delegate_to_subthread approval.
     expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
+    // Fork 4B: Simulator Canvas stays ASK on the unattended plan floor (timer
+    // deny) — do NOT mirror subThreadDelegation's hard deny.
+    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 
   it('clears externalPathGrants for the forced-plan unattended run (interactive contrast keeps them)', () => {
@@ -1923,6 +1926,9 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     // Interactive Accept Edits / Full WS allow sub-thread spawn; elevated
     // unattended must not silently auto-allow child seats.
     expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
+    // Fork 4B: elevated unattended must NOT inherit Accept Edits / Full WS
+    // simulatorCanvas:allow without an explicit simulatorCanvas grant.
+    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
     // Elevated ⇒ approvalMode !== 'plan' ⇒ the grant-clear is skipped.
     expect(payload.externalPathGrants).toEqual([grant])
     expect(payload.prompt).toContain('/outside')
@@ -1945,6 +1951,32 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
         }
       )
     ).toBe(true)
+  })
+
+  it('fork 4B: elevated unattended allows simulatorCanvas only with an explicit workspace grant', () => {
+    const payload = composeUnattended(
+      { level: 'full_access', mode: 'auto_edit' },
+      undefined,
+      {},
+      {
+        agenticWorkspaceGrants: [
+          {
+            id: 'sim-grant',
+            provider: 'codex',
+            workspacePath: '/repo',
+            service: 'simulatorCanvas',
+            createdAt: '2026-08-08T00:00:00.000Z',
+            updatedAt: '2026-08-08T00:00:00.000Z'
+          }
+        ]
+      }
+    )
+    expect(payload.approvalMode).toBe('auto_edit')
+    expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
+    expect(payload.effectivePermissions?.workspaceGrantServiceIds).toContain('simulatorCanvas')
+    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('allow')
+    // Sub-thread still hard-denied on every unattended resolve.
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
   })
 
   it('honors a verified full-access ack for GA GPT-5.6 scheduled runs (5.5 parity)', () => {
@@ -2004,6 +2036,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.presetId).toBe('default')
     expect(payload.effectivePermissions?.readOnly).toBe(false)
     expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 
   it('no ack (resolve → null) → plan approvalMode + plan no-ask floor (P1 regression); tampered/stale surface here as null too', () => {
@@ -2014,5 +2047,6 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.presetId).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
     expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 })
