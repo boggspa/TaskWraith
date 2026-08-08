@@ -138,4 +138,26 @@ describe('prepareProjectReferenceCitationsForRender (integration-ready)', () => 
     expect(prepared.displayText).toBe(`Ok ${PROJECT_REFERENCE_CITATION_CHIP_PLACEHOLDER} bad `)
     expect(prepared.segments.filter((s) => s.kind === 'citation')).toHaveLength(1)
   })
+
+  it('degrades missing extracts to referenceId chips when opted in', () => {
+    const token = formatProjectReferenceCitationToken('orphan-ref', 0, 4)
+    const prepared = prepareProjectReferenceCitationsForRender({
+      assistantText: `See ${token}.`,
+      resolveExtract: () => null,
+      degradeMissingExtracts: true
+    })
+    expect(prepared.citations).toEqual([
+      {
+        schemaVersion: 1,
+        referenceId: 'orphan-ref',
+        extractId: 'orphan-ref',
+        title: 'orphan-ref',
+        startOffset: 0,
+        endOffset: 4,
+        quotePreview: ''
+      }
+    ])
+    expect(prepared.segments.filter((s) => s.kind === 'citation')).toHaveLength(1)
+    expect(prepared.displayText).toBe(`See ${PROJECT_REFERENCE_CITATION_CHIP_PLACEHOLDER}.`)
+  })
 })

@@ -621,3 +621,68 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Inline ⟦pref:…⟧ citation chips inside assistant markdown */
+.project-reference-citation-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: min(100%, 28rem);
+  margin: 0 2px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border-subtle));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.88em;
+  line-height: 1.35;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.project-reference-citation-chip.is-interactive {
+  cursor: pointer;
+}
+
+.project-reference-citation-chip.is-interactive:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-primary);
+}
+
+.project-reference-citation-chip.is-static {
+  cursor: default;
+}
+
+.project-reference-citation-chip.is-missing,
+.project-reference-citation-chip.is-revoked {
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  color: var(--text-tertiary);
+}
+
+.project-reference-citation-chip-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-reference-citation-chip.is-missing .project-reference-citation-chip-label,
+.project-reference-citation-chip.is-revoked .project-reference-citation-chip-label {
+  color: var(--text-tertiary);
+}
+
+.project-reference-citation-chip-quote {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+}
+
+.project-reference-citation-chip-quote::before {
+  content: '“';
+}
+
+.project-reference-citation-chip-quote::after {
+  content: '”';
+}

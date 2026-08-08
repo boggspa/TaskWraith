@@ -1,11 +1,34 @@
 import { memo, useMemo, useRef } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { MarkdownMediaContext, type MarkdownMediaContextValue } from './MarkdownMediaContext'
+import {
+  PROJECT_REFERENCE_CITATION_LINK_PREFIX,
+  ProjectReferenceCitationContext
+} from './ProjectReferenceCitationContext'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks } from '../lib/MarkdownBlockSplit'
 import { deepEqual } from '../lib/messagesRenderEqual'
+import {
+  prepareProjectReferenceCitationsForRender,
+  type ProjectReferenceCitationOpenTarget
+} from '../lib/projectReferenceCitations'
+import {
+  PROJECT_REFERENCE_CITATION_CHIP_PLACEHOLDER,
+  PROJECT_REFERENCE_CITATION_OPEN,
+  type ProjectReferenceCitationExtractResolution
+} from '../../../shared/projectReferenceCitation'
 import type { ChatMediaRef } from './ChatMediaPanel'
 import type { ChatRecord } from '../../../main/store/types'
+
+/** Turn `\uFFFC` chip slots into indexed markdown links StableMarkdownBlock can chip-render. */
+function embedProjectReferenceCitationLinks(displayText: string): string {
+  let index = 0
+  return displayText.split(PROJECT_REFERENCE_CITATION_CHIP_PLACEHOLDER).reduce((acc, part, i) => {
+    if (i === 0) return part
+    const link = `[§](${PROJECT_REFERENCE_CITATION_LINK_PREFIX}${index++})`
+    return acc + link + part
+  }, '')
+}
 
 interface MarkdownMessageProps {
   content: string
@@ -22,6 +45,16 @@ interface MarkdownMessageProps {
   onPreviewImage?: (ref: ChatMediaRef) => void
   /** Run id for stream render instrumentation. */
   streamRunId?: string
+  /**
+   * Resolve consentful extract text for `⟦pref:…⟧` citation chips. When omitted
+   * (or a reference is unknown), chips still render in a degraded form labelled
+   * with the referenceId.
+   */
+  resolveProjectReferenceExtract?: (
+    referenceId: string
+  ) => ProjectReferenceCitationExtractResolution | null
+  /** Optional Refs-viewer open handler for citation chip clicks. */
+  onOpenProjectReferenceCitation?: (target: ProjectReferenceCitationOpenTarget) => void
 }
 
 /**
@@ -170,7 +203,10 @@ export function participantsChipEqual(
   return true
 }
 
-export function identityContextEqual(a: ChatRecord | undefined, b: ChatRecord | undefined): boolean {
+export function identityContextEqual(
+  a: ChatRecord | undefined,
+  b: ChatRecord | undefined
+): boolean {
   if (a?.appChatId !== b?.appChatId) return false
   if (!deepEqual(a?.providerMetadata?.agentIdentities, b?.providerMetadata?.agentIdentities)) {
     return false
@@ -185,13 +221,49 @@ function MarkdownMessageImpl({
   workspacePath,
   onPreviewImage,
   streamRunId,
-  allowSafeHtml = false
+  allowSafeHtml = false,
+  resolveProjectReferenceExtract,
+  onOpenProjectReferenceCitation
 }: MarkdownMessageProps) {
+  const resolveExtractRef = useRef(resolveProjectReferenceExtract)
+  resolveExtractRef.current = resolveProjectReferenceExtract
+  const onOpenCitationRef = useRef(onOpenProjectReferenceCitation)
+  onOpenCitationRef.current = onOpenProjectReferenceCitation
+
+  const projectReferenceCitations = useMemo(() => {
+    if (allowSafeHtml || !content.includes(PROJECT_REFERENCE_CITATION_OPEN)) return null
+    return prepareProjectReferenceCitationsForRender({
+      assistantText: content,
+      resolveExtract: (referenceId) => resolveExtractRef.current?.(referenceId) ?? null,
+      degradeMissingExtracts: true
+    })
+  }, [allowSafeHtml, content])
+
+  const markdownContent = useMemo(() => {
+    if (!projectReferenceCitations) return content
+    return embedProjectReferenceCitationLinks(projectReferenceCitations.displayText)
+  }, [content, projectReferenceCitations])
+
+  const citationContext = useMemo(() => {
+    if (!projectReferenceCitations || projectReferenceCitations.citations.length === 0) {
+      return null
+    }
+    return {
+      citations: projectReferenceCitations.citations,
+      ...(onOpenProjectReferenceCitation
+        ? {
+            onOpen: (target: ProjectReferenceCitationOpenTarget) =>
+              onOpenCitationRef.current?.(target)
+          }
+        : {})
+    }
+  }, [projectReferenceCitations, onOpenProjectReferenceCitation])
+
   // useMemo the block split so a re-render NOT caused by a content change
   // (e.g. an identity-registry update) doesn't re-run the O(n) string scan.
   const blocks = useMemo(
-    () => (allowSafeHtml ? null : splitMarkdownIntoBlocks(content)),
-    [allowSafeHtml, content]
+    () => (allowSafeHtml ? null : splitMarkdownIntoBlocks(markdownContent)),
+    [allowSafeHtml, markdownContent]
   )
   const stable = blocks?.stable || []
   const tail = blocks?.tail || null
@@ -215,33 +287,35 @@ function MarkdownMessageImpl({
   return (
     <AgentIdentityContext.Provider value={ctxRef.current}>
       <MarkdownMediaContext.Provider value={mediaCtx}>
-        <div className="message-markdown message-markdown-pro">
-          {allowSafeHtml ? (
-            <StableMarkdownBlock
-              key="safe-html"
-              raw={content}
-              streamRunId={streamRunId}
-              allowSafeHtml
-            />
-          ) : (
-            <>
-              {stable.map((block, index) => (
-                <StableMarkdownBlock
-                  key={`${index}-${block.id}`}
-                  raw={block.raw}
-                  streamRunId={streamRunId}
-                />
-              ))}
-              {tail ? (
-                <StableMarkdownBlock
-                  key={`tail-${stable.length}`}
-                  raw={tail.raw}
-                  streamRunId={streamRunId}
-                />
-              ) : null}
-            </>
-          )}
-        </div>
+        <ProjectReferenceCitationContext.Provider value={citationContext}>
+          <div className="message-markdown message-markdown-pro">
+            {allowSafeHtml ? (
+              <StableMarkdownBlock
+                key="safe-html"
+                raw={content}
+                streamRunId={streamRunId}
+                allowSafeHtml
+              />
+            ) : (
+              <>
+                {stable.map((block, index) => (
+                  <StableMarkdownBlock
+                    key={`${index}-${block.id}`}
+                    raw={block.raw}
+                    streamRunId={streamRunId}
+                  />
+                ))}
+                {tail ? (
+                  <StableMarkdownBlock
+                    key={`tail-${stable.length}`}
+                    raw={tail.raw}
+                    streamRunId={streamRunId}
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
+        </ProjectReferenceCitationContext.Provider>
       </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>
   )
@@ -266,6 +340,8 @@ function propsAreEqual(prev: MarkdownMessageProps, next: MarkdownMessageProps): 
     prev.allowSafeHtml === next.allowSafeHtml &&
     identityContextEqual(prev.chat, next.chat) &&
     prev.streamRunId === next.streamRunId &&
+    prev.resolveProjectReferenceExtract === next.resolveProjectReferenceExtract &&
+    prev.onOpenProjectReferenceCitation === next.onOpenProjectReferenceCitation &&
     markdownMediaSignature(prev.mediaRefs, prev.workspacePath) ===
       markdownMediaSignature(next.mediaRefs, next.workspacePath)
   )

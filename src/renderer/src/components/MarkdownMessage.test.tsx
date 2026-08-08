@@ -193,17 +193,13 @@ describe('MarkdownMessage', () => {
   })
 
   it('PR4: mailto links are external but get NO canvas affordance', () => {
-    const html = renderToStaticMarkup(
-      <MarkdownMessage content={'Mail [me](mailto:a@b.com).'} />
-    )
+    const html = renderToStaticMarkup(<MarkdownMessage content={'Mail [me](mailto:a@b.com).'} />)
     expect(html).toContain('favicon-link')
     expect(html).not.toContain('markdown-open-in-canvas')
   })
 
   it('PR4: path / file links get NO canvas affordance', () => {
-    const html = renderToStaticMarkup(
-      <MarkdownMessage content={'See [file](./src/app.ts).'} />
-    )
+    const html = renderToStaticMarkup(<MarkdownMessage content={'See [file](./src/app.ts).'} />)
     expect(html).not.toContain('markdown-open-in-canvas')
     expect(html).not.toContain('favicon-link')
     expect(html).toContain('data-link-kind="path"')
@@ -305,11 +301,7 @@ describe('MarkdownMessage', () => {
       status: 'unsafe_svg'
     }
     const html = renderToStaticMarkup(
-      <MarkdownMessage
-        content={'![chart](diagram.svg)'}
-        mediaRefs={[svgRef]}
-        workspacePath="/ws"
-      />
+      <MarkdownMessage content={'![chart](diagram.svg)'} mediaRefs={[svgRef]} workspacePath="/ws" />
     )
     expect(html).not.toContain('<img')
     expect(html).toContain('markdown-image-placeholder')
@@ -365,5 +357,55 @@ describe('MarkdownMessage', () => {
     )
     expect(html).not.toContain('class="participant-mention"')
     expect(html).toContain('@Ghost')
+  })
+
+  it('renders a project-reference citation token as a visible chip', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'Claim grounded here ⟦pref:ref-brief:0-5⟧.'}
+        resolveProjectReferenceExtract={(referenceId) =>
+          referenceId === 'ref-brief'
+            ? {
+                extractId: 'extract-1',
+                title: 'Research Brief',
+                extractText: 'hello world'
+              }
+            : null
+        }
+      />
+    )
+    expect(html).toContain('project-reference-citation-chip')
+    expect(html).toContain('Research Brief')
+    expect(html).toContain('hello')
+    expect(html).not.toContain('⟦pref:ref-brief:0-5⟧')
+  })
+
+  it('drops an invalid project-reference citation token without inventing a chip', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'Bad span ⟦pref:ref-brief:0-99⟧ stays clean.'}
+        resolveProjectReferenceExtract={(referenceId) =>
+          referenceId === 'ref-brief'
+            ? {
+                extractId: 'extract-1',
+                title: 'Research Brief',
+                extractText: 'hello world'
+              }
+            : null
+        }
+      />
+    )
+    expect(html).not.toContain('project-reference-citation-chip')
+    expect(html).not.toContain('⟦pref:ref-brief:0-99⟧')
+    expect(html).toContain('stays clean')
+  })
+
+  it('degrades to a referenceId chip when extract resolution is unavailable', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage content={'See ⟦pref:orphan-ref:0-4⟧ for context.'} />
+    )
+    expect(html).toContain('project-reference-citation-chip')
+    expect(html).toContain('orphan-ref')
+    expect(html).not.toContain('⟦pref:orphan-ref:0-4⟧')
   })
 })

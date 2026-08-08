@@ -11,7 +11,9 @@ import {
   PROJECT_REFERENCE_CITATION_CHIP_PLACEHOLDER,
   buildValidatedCitationsFromAssistantText,
   formatProjectReferenceCitationToken,
+  parseCitationsFromAssistantText,
   replaceCitationTokensWithPlaceholders,
+  validateCitation,
   type ProjectReferenceCitationExtractResolution,
   type ProjectReferenceCitationMetadata
 } from '../../../shared/projectReferenceCitation'
@@ -171,23 +173,67 @@ export function projectReferenceCitationChipModel(
 /**
  * Integration-ready entry: parse + validate assistant text against extract
  * resolvers, strip invalid tokens, and return chip segments for a bubble.
+ *
+ * When `degradeMissingExtracts` is true, a span whose reference id does not
+ * resolve still becomes a chip labelled with the referenceId (no quote).
+ * Out-of-range spans against a resolved extract remain fail-closed (dropped).
  */
 export function prepareProjectReferenceCitationsForRender(input: {
   assistantText: string
   resolveExtract: (referenceId: string) => ProjectReferenceCitationExtractResolution | null
+  degradeMissingExtracts?: boolean
 }): {
   displayText: string
   citations: ProjectReferenceCitationMetadata[]
   segments: ProjectReferenceCitationSegment[]
 } {
-  const built = buildValidatedCitationsFromAssistantText(input.assistantText, input.resolveExtract)
-  const segments = segmentAssistantTextWithProjectReferenceCitations(
-    built.displayText,
-    built.citations
-  )
-  return {
-    displayText: built.displayText,
-    citations: built.citations,
-    segments
+  if (!input.degradeMissingExtracts) {
+    const built = buildValidatedCitationsFromAssistantText(
+      input.assistantText,
+      input.resolveExtract
+    )
+    const segments = segmentAssistantTextWithProjectReferenceCitations(
+      built.displayText,
+      built.citations
+    )
+    return {
+      displayText: built.displayText,
+      citations: built.citations,
+      segments
+    }
   }
+
+  const spans = parseCitationsFromAssistantText(input.assistantText)
+  const citations: ProjectReferenceCitationMetadata[] = []
+  const keptTokens: string[] = []
+  const dropTokens: string[] = []
+
+  for (const span of spans) {
+    const resolved = input.resolveExtract(span.referenceId)
+    if (resolved) {
+      const meta = validateCitation(span, resolved.extractText, resolved)
+      if (!meta) {
+        dropTokens.push(span.token)
+        continue
+      }
+      citations.push(meta)
+      keptTokens.push(span.token)
+      continue
+    }
+    citations.push({
+      schemaVersion: 1,
+      referenceId: span.referenceId,
+      extractId: span.referenceId,
+      title: span.referenceId,
+      startOffset: span.startOffset,
+      endOffset: span.endOffset,
+      quotePreview: ''
+    })
+    keptTokens.push(span.token)
+  }
+
+  let displayText = replaceCitationTokensWithPlaceholders(input.assistantText, keptTokens)
+  displayText = replaceCitationTokensWithPlaceholders(displayText, dropTokens, '')
+  const segments = segmentAssistantTextWithProjectReferenceCitations(displayText, citations)
+  return { displayText, citations, segments }
 }
