@@ -96,7 +96,7 @@ import {
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
 import {
-  collectAuthorityDirectedContinuationCandidateIds,
+  collectAuthorityOnlyContinuationCandidateIds,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -18514,14 +18514,21 @@ export class EnsembleOrchestrator {
         }
       }
     } else if (runtime?.orchestrationMode === 'continuous') {
-      for (const participantId of collectAuthorityDirectedContinuationCandidateIds({
-        roundParticipantStatuses: chat.ensemble?.activeRound?.participants,
+      const synthesizerParticipantId =
+        chat.ensemble && resolveForegroundSynthesizerParticipantId(chat.ensemble)
+      const synthesizerInRoster =
+        synthesizerParticipantId &&
+        fullRoster.some((participant) => participant.id === synthesizerParticipantId)
+          ? synthesizerParticipantId
+          : undefined
+      for (const participantId of collectAuthorityOnlyContinuationCandidateIds({
         fannedOutParticipantIds: runtime.fannedOutParticipantIds,
         fanoutReservedParticipantIds: runtime.fanoutReservedParticipantIds,
         yieldReturnParticipantIds: (runtime.yieldReturnStack || []).flatMap((frame) => [
           frame.returnParticipantId,
           frame.targetParticipantId
-        ])
+        ]),
+        synthesizerParticipantId: synthesizerInRoster
       })) {
         admitted.add(participantId)
       }

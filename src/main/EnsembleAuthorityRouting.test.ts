@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  collectAuthorityDirectedContinuationCandidateIds,
+  collectAuthorityOnlyContinuationCandidateIds,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -174,19 +174,24 @@ describe('Continuous Boss ownership helpers', () => {
     ).toBe(false)
   })
 
-  it('collects directed speakers, fan-out, and yield-return seats for auto-continue', () => {
+  it('collects authority-only fan-out, yield-return, and optional synthesizer seats', () => {
     expect(
-      collectAuthorityDirectedContinuationCandidateIds({
-        roundParticipantStatuses: [
-          { participantId: 'boss', status: 'answered' },
-          { participantId: 'worker', status: 'yielded' },
-          { participantId: 'scout', status: 'idle' },
-          { participantId: 'skipped', status: 'skipped' }
-        ],
+      collectAuthorityOnlyContinuationCandidateIds({
         fannedOutParticipantIds: ['reviewer'],
         fanoutReservedParticipantIds: ['builder'],
-        yieldReturnParticipantIds: ['boss', 'worker']
+        yieldReturnParticipantIds: ['boss', 'worker'],
+        synthesizerParticipantId: 'synth'
       }).sort()
-    ).toEqual(['boss', 'builder', 'reviewer', 'worker'])
+    ).toEqual(['boss', 'builder', 'reviewer', 'synth', 'worker'])
+  })
+
+  it('does not admit prior speakers alone for authority-only auto-continue', () => {
+    expect(
+      collectAuthorityOnlyContinuationCandidateIds({
+        fannedOutParticipantIds: [],
+        fanoutReservedParticipantIds: [],
+        yieldReturnParticipantIds: []
+      })
+    ).toEqual([])
   })
 })
