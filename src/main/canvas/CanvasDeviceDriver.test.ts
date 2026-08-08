@@ -1,6 +1,11 @@
 import { join } from 'path'
 import { describe, it, expect } from 'vitest'
 import { CanvasDeviceDriver, type SimctlResult } from './CanvasDeviceDriver'
+import {
+  createHostBackedDeviceOps,
+  createSimctlDeviceOps,
+  type SimctlHostDeviceFacade
+} from '../simulator/SimctlRunner'
 
 const UDID_A = 'AAAAAAAA-1111-2222-3333-444444444444'
 const UDID_B = 'BBBBBBBB-5555-6666-7777-888888888888'
@@ -553,5 +558,79 @@ describe('CanvasDeviceDriver', () => {
     await expect(driver.act({ kind: 'click', ref: 'e1' })).rejects.toThrow(/screenshot-only/)
     await expect(driver.evaluate({ script: '1' })).rejects.toThrow(/screenshot-only/)
     await expect(driver.annotate([])).rejects.toThrow(/screenshot-only/)
+  })
+
+  it('thin-wraps a HostService-shaped facade for boot/install/launch/terminate', async () => {
+    const hostCalls: string[] = []
+    const runnerCalls: string[][] = []
+    const runSimctl = async (args: string[]): Promise<SimctlResult> => {
+      runnerCalls.push(args)
+      if (args[0] === 'list') return bootedList()
+      return ok
+    }
+    const host: SimctlHostDeviceFacade = {
+      status: async () => {
+        hostCalls.push('status')
+        return { bootedDevices: [{ udid: UDID_A }] }
+      },
+      boot: async (udid) => {
+        hostCalls.push(`boot:${udid}`)
+        return { ok: true }
+      },
+      install: async (udid, appPath) => {
+        hostCalls.push(`install:${udid}:${appPath}`)
+        return { ok: true }
+      },
+      launch: async (udid, bundleId) => {
+        hostCalls.push(`launch:${udid}:${bundleId}`)
+        return { ok: true }
+      },
+      terminate: async (udid, bundleId) => {
+        hostCalls.push(`terminate:${udid}:${bundleId}`)
+        return { ok: true }
+      }
+    }
+    const driver = new CanvasDeviceDriver('host-backed', {
+      platform: 'darwin',
+      tmpFile: () => '/tmp/host-backed.png',
+      readScreenshot: async () => fakePng(10, 20),
+      removeFile: async () => {},
+      statPath: async () => ({ isDirectory: () => true }),
+      deviceOps: createHostBackedDeviceOps(host, runSimctl),
+      runSimctl
+    })
+
+    await driver.open({
+      bundleId: 'com.example.App',
+      appPath: '/Users/me/Build/Example.app',
+      device: { udid: UDID_B }
+    })
+    expect(hostCalls).toEqual([
+      'status',
+      `boot:${UDID_B}`,
+      `install:${UDID_B}:/Users/me/Build/Example.app`,
+      `launch:${UDID_B}:com.example.App`
+    ])
+    // Screenshot path-write stays on the shared runner (driver-owned temp).
+    expect(runnerCalls).toContainEqual(['io', UDID_B, 'screenshot', '/tmp/host-backed.png'])
+    await driver.close()
+    expect(hostCalls).toContain(`terminate:${UDID_B}:com.example.App`)
+    expect(runnerCalls).toContainEqual(['shutdown', UDID_B])
+  })
+
+  it('createSimctlDeviceOps preserves argv shape used by legacy runSimctl mocks', async () => {
+    const calls: string[][] = []
+    const runSimctl = async (args: string[]): Promise<SimctlResult> => {
+      calls.push(args)
+      if (args[0] === 'list') return bootedList()
+      return ok
+    }
+    const ops = createSimctlDeviceOps(runSimctl)
+    await ops.listBooted()
+    await ops.launch(UDID_A, 'com.example.App')
+    expect(calls).toEqual([
+      ['list', 'devices', 'booted', '--json'],
+      ['launch', UDID_A, 'com.example.App']
+    ])
   })
 })

@@ -2,7 +2,6 @@
  * Probe whether Xcode Simulator / simctl is available on this host.
  * Never auto-installs; argv-array exec only (no shell).
  */
-import { execFile } from 'child_process'
 import { access } from 'fs/promises'
 import { constants as fsConstants } from 'fs'
 import {
@@ -11,6 +10,9 @@ import {
   type SimulatorCapabilityStatus,
   type SimulatorDeviceInfo
 } from '../../shared/simulatorCanvas'
+import { defaultSimctlRunner, type SimulatorSimctlRunner } from './SimctlRunner'
+
+export type { SimulatorSimctlRunner }
 
 export const SIMULATOR_APP_CANDIDATE_PATHS = [
   '/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app',
@@ -19,10 +21,7 @@ export const SIMULATOR_APP_CANDIDATE_PATHS = [
 
 export const XCODE_APP_CANDIDATE_PATHS = ['/Applications/Xcode.app'] as const
 
-const SIMCTL_TIMEOUT_MS = 60_000
 const MAX_AVAILABLE_DEVICES = 40
-
-export type SimulatorSimctlRunner = (args: string[]) => Promise<{ stdout: string; stderr: string }>
 
 export interface SimulatorCapabilityDeps {
   platform?: NodeJS.Platform
@@ -39,22 +38,6 @@ const defaultPathExists = async (path: string): Promise<boolean> => {
     return false
   }
 }
-
-const defaultSimctl: SimulatorSimctlRunner = (args) =>
-  new Promise((resolve, reject) => {
-    execFile(
-      'xcrun',
-      ['simctl', ...args],
-      { maxBuffer: 16 * 1024 * 1024, timeout: SIMCTL_TIMEOUT_MS },
-      (err, stdout, stderr) => {
-        if (err) {
-          reject(new Error(`simctl ${args[0] ?? ''} failed: ${stderr.trim() || err.message}`))
-        } else {
-          resolve({ stdout, stderr })
-        }
-      }
-    )
-  })
 
 function parseDeviceList(stdout: string): {
   booted: SimulatorDeviceInfo[]
@@ -114,7 +97,7 @@ export async function probeSimulatorCapability(
 ): Promise<SimulatorCapabilityStatus> {
   const platform = deps.platform ?? process.platform
   const pathExists = deps.pathExists ?? defaultPathExists
-  const runSimctl = deps.runSimctl ?? defaultSimctl
+  const runSimctl = deps.runSimctl ?? defaultSimctlRunner
   const docsUrl = SIMULATOR_INSTALL_DOCS_URL
   const installHint = simulatorInstallHint(platform)
 

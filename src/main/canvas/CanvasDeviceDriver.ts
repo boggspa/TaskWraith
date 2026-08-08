@@ -1,6 +1,6 @@
 /**
  * CanvasDeviceDriver — the P4 `device` driver: a screenshot-only preview of an
- * app running in an iOS Simulator, driven entirely through `xcrun simctl`.
+ * app running in an iOS Simulator.
  *
  * Per the design's HARD BLOCKER, we do NOT try to drive Xcode's SwiftUI Canvas
  * (no public API). The native path is: boot a simulator → (optionally install a
@@ -9,14 +9,19 @@
  * no native analog without an extra harness (idb / XCUITest) and are therefore
  * UNSUPPORTED in this build — they throw a clear error rather than pretend.
  *
+ * Host substrate: boot/install/launch/terminate/listBooted/screenshot/shutdown
+ * go through injectable {@link SimctlDeviceOps} (default: shared SimctlRunner
+ * argv helpers; production may pass {@link createHostBackedDeviceOps} over
+ * SimulatorHostService). Prefer `simulator_*` tools for Simulator Canvas QA —
+ * this driver shares that same host substrate and remains screenshot-only.
+ *
  * Security: every simctl call goes through `execFile('xcrun', ['simctl', …])`
  * with an argv ARRAY — there is NO shell, so agent-supplied values (bundle id /
  * app path / udid) cannot inject commands. They are additionally validated
  * (isValidBundleId / isValidSimUdid / isSafeAppBundlePath) for good errors and
- * defence-in-depth. The runner is injected so the orchestration is unit-testable
- * without Xcode.
+ * defence-in-depth. Ops / runner are injected so the orchestration is
+ * unit-testable without Xcode.
  */
-import { execFile } from 'child_process'
 import { chmod, mkdtemp, readFile, rm, stat, unlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -44,15 +49,20 @@ import {
   isValidSimUdid,
   readPngDimensions
 } from './canvasTypes'
+import {
+  createSimctlDeviceOps,
+  defaultSimctlRunner,
+  type SimctlDeviceOps,
+  type SimctlResult,
+  type SimctlRunner
+} from '../simulator/SimctlRunner'
 
-export interface SimctlResult {
-  stdout: string
-  stderr: string
-}
-/** Runs `xcrun simctl <args…>` and resolves its output (rejects on non-zero). */
-export type SimctlRunner = (args: string[]) => Promise<SimctlResult>
+export type { SimctlResult, SimctlRunner, SimctlDeviceOps }
 
 export interface CanvasDeviceDriverDeps {
+  /** Preferred: shared device ops (SimctlRunner or HostService-backed). */
+  deviceOps?: SimctlDeviceOps
+  /** Legacy / test hook — builds default ops when `deviceOps` is omitted. */
   runSimctl?: SimctlRunner
   readScreenshot?: (path: string) => Promise<Buffer>
   statPath?: (path: string) => Promise<{ isDirectory: () => boolean }>
@@ -81,24 +91,6 @@ interface PendingOpenResources {
   launched: boolean
 }
 
-const SIMCTL_TIMEOUT_MS = 60000
-
-const defaultSimctl: SimctlRunner = (args) =>
-  new Promise((resolve, reject) => {
-    execFile(
-      'xcrun',
-      ['simctl', ...args],
-      { maxBuffer: 16 * 1024 * 1024, timeout: SIMCTL_TIMEOUT_MS },
-      (err, stdout, stderr) => {
-        if (err) {
-          reject(new Error(`simctl ${args[0] ?? ''} failed: ${stderr.trim() || err.message}`))
-        } else {
-          resolve({ stdout, stderr })
-        }
-      }
-    )
-  })
-
 function unsupported(verb: string): never {
   throw new Error(
     `canvas_${verb} is not available for the device driver (the iOS simulator preview is screenshot-only in this build).`
@@ -120,7 +112,7 @@ export class CanvasDeviceDriver implements CanvasDriver {
   private readonly pendingOpenResources = new Set<PendingOpenResources>()
   private closePromise: Promise<void> | null = null
 
-  private readonly run: SimctlRunner
+  private readonly ops: SimctlDeviceOps
   private readonly readShot: (path: string) => Promise<Buffer>
   private readonly statPath: (path: string) => Promise<{ isDirectory: () => boolean }>
   private readonly removeFile: (path: string) => Promise<void>
@@ -133,7 +125,8 @@ export class CanvasDeviceDriver implements CanvasDriver {
   private readonly platform: NodeJS.Platform
 
   constructor(sessionId: string, deps: CanvasDeviceDriverDeps = {}) {
-    this.run = deps.runSimctl ?? defaultSimctl
+    const run = deps.runSimctl ?? defaultSimctlRunner
+    this.ops = deps.deviceOps ?? createSimctlDeviceOps(run)
     this.readShot = deps.readScreenshot ?? ((p) => readFile(p))
     this.statPath = deps.statPath ?? ((p) => stat(p))
     this.removeFile = deps.removeFile ?? ((p) => unlink(p))
@@ -194,11 +187,11 @@ export class CanvasDeviceDriver implements CanvasDriver {
         }
         await this.assertAppExists(appPath)
         this.assertOpenActive(generation)
-        await this.run(['install', udid, appPath])
+        await this.ops.install(udid, appPath)
         this.assertOpenActive(generation)
       }
 
-      await this.run(['launch', udid, bundleId])
+      await this.ops.launch(udid, bundleId)
       resources.launched = true
       this.assertOpenActive(generation)
 
@@ -244,7 +237,7 @@ export class CanvasDeviceDriver implements CanvasDriver {
     generation: number,
     resources: PendingOpenResources
   ): Promise<void> {
-    const booted = await this.listBooted()
+    const booted = await this.ops.listBooted()
     this.assertOpenActive(generation)
     resources.udid = want === 'booted' ? (booted[0] ?? '') : want
     if (!resources.udid) {
@@ -255,28 +248,10 @@ export class CanvasDeviceDriver implements CanvasDriver {
     this.pendingOpenResources.add(resources)
     if (want !== 'booted') {
       if (!booted.includes(want)) {
-        await this.run(['boot', want])
+        await this.ops.boot(want)
         resources.bootedByUs = true
         this.assertOpenActive(generation)
       }
-    }
-  }
-
-  private async listBooted(): Promise<string[]> {
-    const { stdout } = await this.run(['list', 'devices', 'booted', '--json'])
-    try {
-      const parsed = JSON.parse(stdout) as {
-        devices?: Record<string, Array<{ udid?: string; state?: string }>>
-      }
-      const out: string[] = []
-      for (const list of Object.values(parsed.devices || {})) {
-        for (const d of list) {
-          if (d.state === 'Booted' && typeof d.udid === 'string') out.push(d.udid)
-        }
-      }
-      return out
-    } catch {
-      return []
     }
   }
 
@@ -321,7 +296,7 @@ export class CanvasDeviceDriver implements CanvasDriver {
       if (this.screenshotWasCancelled(generation)) {
         throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
       }
-      await this.run(['io', udid, 'screenshot', out])
+      await this.ops.screenshotToPath(udid, out)
       if (this.screenshotWasCancelled(generation)) throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
       const png = await this.readShot(out)
       if (this.screenshotWasCancelled(generation)) throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
@@ -522,7 +497,7 @@ export class CanvasDeviceDriver implements CanvasDriver {
     let terminateFailure: unknown
     if (resources.launched) {
       try {
-        await this.run(['terminate', resources.udid, resources.bundleId])
+        await this.ops.terminate(resources.udid, resources.bundleId)
         resources.launched = false
       } catch (error) {
         if (isAlreadyCleanSimctlError('terminate', error)) {
@@ -535,7 +510,7 @@ export class CanvasDeviceDriver implements CanvasDriver {
     let shutdownFailure: unknown
     if (resources.bootedByUs) {
       try {
-        await this.run(['shutdown', resources.udid])
+        await this.ops.shutdown(resources.udid)
         resources.bootedByUs = false
         resources.launched = false
       } catch (error) {
