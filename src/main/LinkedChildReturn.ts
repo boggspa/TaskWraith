@@ -1,4 +1,22 @@
-import type { ChatMessage, ChatRecord } from './store/types'
+import type { ChatMessage, ChatRecord, SubThreadJoinPolicy } from './store/types'
+
+type JoinGroupSource = Pick<SubThreadJoinPolicy, 'groupId'> | null | undefined
+
+/**
+ * UI-only wave identity for parallel sub-thread return cards.
+ * Prefer the durable mailbox event join, then the child's joinPolicy.
+ * Never invent a parent-run or synthetic id when join is absent (side chats / legacy).
+ */
+export function resolveParallelResultWaveId(
+  eventJoin?: JoinGroupSource,
+  childJoin?: JoinGroupSource
+): string | undefined {
+  const fromEvent = typeof eventJoin?.groupId === 'string' ? eventJoin.groupId.trim() : ''
+  if (fromEvent) return fromEvent
+  const fromChild = typeof childJoin?.groupId === 'string' ? childJoin.groupId.trim() : ''
+  if (fromChild) return fromChild
+  return undefined
+}
 
 export type LinkedChildRelation = 'subThread' | 'sideChat'
 export type LinkedChildReturnOutcome = 'done' | 'requires_action' | 'failed' | 'cancelled'

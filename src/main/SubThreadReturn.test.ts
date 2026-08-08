@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRecord } from './store/types'
+import type { ChatRecord, SubThreadJoinPolicy } from './store/types'
 import {
   buildLinkedChildReturnContent,
   decideLinkedChildReturn,
-  markLinkedChildResultReturned
+  markLinkedChildResultReturned,
+  resolveParallelResultWaveId
 } from './LinkedChildReturn'
 
 /**
@@ -364,5 +365,36 @@ describe('opt-in side-chat authority return', () => {
     expect(content).toContain('Side-chat result from Codex side-chat')
     expect(content).toContain('untrusted linked-child output')
     expect(content).toContain('<side_chat_result>\nA bounded result.\n</side_chat_result>')
+  })
+})
+
+describe('resolveParallelResultWaveId', () => {
+  const join = (groupId: string): SubThreadJoinPolicy => ({
+    schemaVersion: 1,
+    groupId,
+    required: true,
+    debounceMs: 250,
+    armedAt: '2026-01-01T00:00:00.000Z',
+    deadlineAt: '2026-01-01T00:05:00.000Z'
+  })
+
+  it('returns the mailbox event join groupId when present', () => {
+    expect(resolveParallelResultWaveId(join('parent-run-1'), join('child-fallback'))).toBe(
+      'parent-run-1'
+    )
+  })
+
+  it('falls back to the child join groupId when the event has no join', () => {
+    expect(resolveParallelResultWaveId(undefined, join('parent-run-2'))).toBe('parent-run-2')
+  })
+
+  it('omits a wave id when neither join carries a groupId (side chats / legacy)', () => {
+    expect(resolveParallelResultWaveId(undefined, undefined)).toBeUndefined()
+    expect(resolveParallelResultWaveId(join('   '), join(''))).toBeUndefined()
+  })
+
+  it('never invents a parent-run or synthetic id', () => {
+    expect(resolveParallelResultWaveId(null, null)).toBeUndefined()
+    expect(resolveParallelResultWaveId({ groupId: undefined as unknown as string }, null)).toBeUndefined()
   })
 })

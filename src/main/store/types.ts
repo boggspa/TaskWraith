@@ -3387,6 +3387,12 @@ export interface ChatMessage {
      * the transcript row is UI/audit projection only; provider context receives
      * the payload through the mailbox continuation instead. */
     mailboxEventId?: string
+    /**
+     * Presentation-only wave id for parallel sub-thread return cards (= join
+     * `groupId`). Absent for side chats and legacy returns with no joinPolicy.
+     * Must not affect PromptComposition / mailbox delivery.
+     */
+    parallelResultWaveId?: string
     providerContextVisibility?: 'projection-only'
     subThreadOutcome?: 'done' | 'requires_action' | 'failed' | 'cancelled'
     /** Relationship of the linked child that produced this return. Missing on

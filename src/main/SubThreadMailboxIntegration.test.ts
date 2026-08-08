@@ -28,6 +28,10 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(producer).toContain('sourceRelation: decision.relation')
     expect(producer).toContain("resultTrust: 'untrusted-child-output'")
     expect(producer).toContain("providerContextVisibility: 'projection-only'")
+    // UI-only wave stamp from durable join.groupId — create + backfill, never invented.
+    expect(producer).toContain('resolveParallelResultWaveId(')
+    expect(producer).toContain('parallelResultWaveId')
+    expect(producer).toContain('mailboxResult.event.join')
   })
 
   it('claims before dispatch, then acknowledges success or releases failure', () => {

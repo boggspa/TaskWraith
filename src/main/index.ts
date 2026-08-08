@@ -1936,7 +1936,8 @@ import {
 import {
   buildLinkedChildReturnContent,
   decideLinkedChildReturn,
-  markLinkedChildResultReturned
+  markLinkedChildResultReturned,
+  resolveParallelResultWaveId
 } from './LinkedChildReturn'
 import {
   buildHostRerunContinuationPrompt,
@@ -8578,6 +8579,12 @@ async function maybePropagateLinkedChildResult(
     content: resultContent
   })
   const returnedAt = Date.now()
+  // Presentation-only wave id (= join.groupId). Side chats and join-less
+  // legacy returns omit it; never invent a parent-run id at return time.
+  const parallelResultWaveId = resolveParallelResultWaveId(
+    mailboxResult.event.join,
+    decision.relation === 'subThread' ? linkedChild.delegationContext?.joinPolicy : undefined
+  )
   // Upgrade/recovery path: an older build may already have projected the
   // transcript card without a durable mailbox event. The enqueue above repairs
   // that gap. Mark the existing card projection-only so later prompt/history
@@ -8590,9 +8597,12 @@ async function maybePropagateLinkedChildResult(
         message.metadata.subThreadId === linkedChild.appChatId &&
         message.metadata.sourceAssistantMessageId === sourceAssistantMessageId
       if (!matchesProjection) return message
+      const waveAlreadyStamped =
+        !parallelResultWaveId || message.metadata?.parallelResultWaveId === parallelResultWaveId
       if (
         message.metadata?.mailboxEventId === mailboxResult.event.id &&
-        message.metadata.providerContextVisibility === 'projection-only'
+        message.metadata.providerContextVisibility === 'projection-only' &&
+        waveAlreadyStamped
       ) {
         return message
       }
@@ -8603,7 +8613,8 @@ async function maybePropagateLinkedChildResult(
           ...message.metadata,
           mailboxEventId: mailboxResult.event.id,
           providerContextVisibility: 'projection-only' as const,
-          linkedChildRelation: decision.relation
+          linkedChildRelation: decision.relation,
+          ...(parallelResultWaveId ? { parallelResultWaveId } : {})
         }
       }
     })
@@ -8667,6 +8678,7 @@ async function maybePropagateLinkedChildResult(
       resultTrust: 'untrusted-child-output',
       lifecycleState: 'returned',
       returnedAt,
+      ...(parallelResultWaveId ? { parallelResultWaveId } : {}),
       ...(returnedMediaRefs.length > 0 ? { mediaRefs: returnedMediaRefs } : {})
     }
   }
