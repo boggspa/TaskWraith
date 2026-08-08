@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import path from 'node:path'
 import type { EffectiveHookCommand, EffectiveHooksSnapshot } from '../../shared/hooks/HookTypes'
 import {
   HOOK_ENV_ALLOWLIST,
@@ -40,9 +41,11 @@ function snapshot(hooks: EffectiveHookCommand[]): EffectiveHooksSnapshot {
 
 describe('buildMinimalHookEnv', () => {
   it('allows only the documented scrub allowlist and drops secrets', () => {
+    const pathValue = path.posix.join(path.posix.sep, 'usr', 'bin')
+    const homeValue = path.posix.join(path.posix.sep, 'Users', 'tw')
     const env = buildMinimalHookEnv({
-      PATH: '/usr/bin',
-      HOME: '/Users/tw',
+      PATH: pathValue,
+      HOME: homeValue,
       USER: 'tw',
       LANG: 'en_US.UTF-8',
       TMPDIR: '/tmp',
@@ -51,8 +54,8 @@ describe('buildMinimalHookEnv', () => {
       NODE_OPTIONS: '--require ./evil.js'
     })
     expect(Object.keys(env).sort()).toEqual([...HOOK_ENV_ALLOWLIST].sort())
-    expect(env.PATH).toBe('/usr/bin')
-    expect(env.HOME).toBe('/Users/tw')
+    expect(env.PATH).toBe(pathValue)
+    expect(env.HOME).toBe(homeValue)
     expect(env.SECRET_TOKEN).toBeUndefined()
     expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
     expect(env.NODE_OPTIONS).toBeUndefined()

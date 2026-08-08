@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import path from 'node:path'
 import { IdbClient } from './IdbClient'
 
 describe('IdbClient', () => {
@@ -12,18 +13,16 @@ describe('IdbClient', () => {
   })
 
   it('resolves idb / idb_companion via the injectable resolver', () => {
+    const idbPath = path.join('/opt', 'homebrew', 'bin', 'idb')
+    const companionPath = path.join('/opt', 'homebrew', 'bin', 'idb_companion')
     const resolveBinary = vi.fn((name: string) =>
-      name === 'idb'
-        ? '/opt/homebrew/bin/idb'
-        : name === 'idb_companion'
-          ? '/opt/homebrew/bin/idb_companion'
-          : null
+      name === 'idb' ? idbPath : name === 'idb_companion' ? companionPath : null
     )
     const client = new IdbClient({ platform: 'darwin', resolveBinary })
     expect(client.isAvailable()).toBe(true)
     expect(client.companionAvailable()).toBe(true)
-    expect(client.resolveIdbPath()).toBe('/opt/homebrew/bin/idb')
-    expect(client.resolveCompanionPath()).toBe('/opt/homebrew/bin/idb_companion')
+    expect(client.resolveIdbPath()).toBe(idbPath)
+    expect(client.resolveCompanionPath()).toBe(companionPath)
   })
 
   it('invokes argv-array commands through the injectable runner (never shell)', async () => {
