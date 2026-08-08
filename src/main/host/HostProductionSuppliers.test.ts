@@ -268,6 +268,80 @@ describe('HostProductionSuppliers questions shadow port (Wave 5c Phase 3)', () =
   })
 })
 
+describe('HostProductionSuppliers Track3 Mixed family shadow ports', () => {
+  it('publishes runs/missions/rounds/schedules from injected ports', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      runs: {
+        listRuns: () => [
+          {
+            runId: 'r1',
+            threadId: 't1',
+            providerId: 'codex',
+            providerOutcome: 'running'
+          }
+        ]
+      },
+      missions: {
+        listMissions: () => [
+          {
+            missionId: 'g1',
+            title: 'Ship it',
+            status: 'active',
+            updatedAt: 1
+          }
+        ]
+      },
+      rounds: {
+        listRounds: () => [
+          {
+            roundId: 'round-1',
+            threadId: 't1',
+            status: 'running',
+            participantIds: ['p1'],
+            providerRunIds: []
+          }
+        ]
+      },
+      schedules: {
+        listSchedules: () => [
+          {
+            scheduleId: 's1',
+            title: 'Morning',
+            enabled: true
+          }
+        ]
+      }
+    })
+    const families = await donor()
+    expect(families.runs).toHaveLength(1)
+    expect(families.missions).toHaveLength(1)
+    expect(families.rounds).toHaveLength(1)
+    expect(families.schedules).toHaveLength(1)
+  })
+
+  it('keeps Track3 families empty when ports are omitted', async () => {
+    const donor = createHostProductionSuppliers({ chatList: makePort([]) })
+    const families = await donor()
+    expect(families.runs).toEqual([])
+    expect(families.missions).toEqual([])
+    expect(families.rounds).toEqual([])
+    expect(families.schedules).toEqual([])
+  })
+
+  it('fails closed when a Track3 family port throws', async () => {
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      runs: {
+        listRuns: () => {
+          throw new Error('run manager unavailable')
+        }
+      }
+    })
+    await expect(donor()).rejects.toThrow('run manager unavailable')
+  })
+})
+
 /* ------------------------------------------------------------------ */
 /*  Thread mapping — single entry                                     */
 /* ------------------------------------------------------------------ */

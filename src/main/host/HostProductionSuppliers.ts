@@ -32,8 +32,12 @@
 import type {
   HostApprovalProjection,
   HostHealthProjection,
+  HostMissionProjection,
   HostProviderModelProjection,
   HostQuestionProjection,
+  HostRoundProjection,
+  HostRunProjection,
+  HostScheduleProjection,
   HostThreadProjection,
   HostUsageObservation,
   HostWorkspaceProjection
@@ -44,6 +48,15 @@ import type {
 } from './AppStoreHostAuthority'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../shared/hostProtocol'
 import type { HostWarningProjection } from '../../shared/hostProtocol'
+import type { HostProductionMissionListPort } from './HostProductionMissionShadow'
+import type { HostProductionRoundListPort } from './HostProductionRoundShadow'
+import type { HostProductionRunListPort } from './HostProductionRunShadow'
+import type { HostProductionScheduleListPort } from './HostProductionScheduleShadow'
+
+export type { HostProductionMissionListPort } from './HostProductionMissionShadow'
+export type { HostProductionRoundListPort } from './HostProductionRoundShadow'
+export type { HostProductionRunListPort } from './HostProductionRunShadow'
+export type { HostProductionScheduleListPort } from './HostProductionScheduleShadow'
 
 /* ------------------------------------------------------------------ */
 /*  Store ports — thin interfaces the composition root adapts         */
@@ -174,6 +187,14 @@ export interface HostProductionSuppliersOptions {
    * shadow port. When absent, questions is an honest empty array.
    */
   readonly questions?: HostProductionQuestionListPort
+  /** Track3 Mixed — optional active-run shadow. Omitted → honest []. */
+  readonly runs?: HostProductionRunListPort
+  /** Track3 Mixed — optional activeGoal→mission shadow. Omitted → honest []. */
+  readonly missions?: HostProductionMissionListPort
+  /** Track3 Mixed — optional ensemble-round shadow. Omitted → honest []. */
+  readonly rounds?: HostProductionRoundListPort
+  /** Track3 Mixed — optional schedule shadow. Omitted → honest []. */
+  readonly schedules?: HostProductionScheduleListPort
 }
 
 /* ------------------------------------------------------------------ */
@@ -332,18 +353,29 @@ export function createHostProductionSuppliers(
       ? options.questions.listQuestions()
       : []
 
+    /* ---- Track3 Mixed family shadows (runs/missions/rounds/schedules) ----
+     * Same fail-closed contract: omitted → honest []; throw propagates. */
+    const runs: HostRunProjection[] = options.runs ? options.runs.listRuns() : []
+    const missions: HostMissionProjection[] = options.missions
+      ? options.missions.listMissions()
+      : []
+    const rounds: HostRoundProjection[] = options.rounds ? options.rounds.listRounds() : []
+    const schedules: HostScheduleProjection[] = options.schedules
+      ? options.schedules.listSchedules()
+      : []
+
     return {
       health: HONEST_HEALTH,
       workspaces,
       threads,
-      runs: [],
-      missions: [],
-      rounds: [],
+      runs,
+      missions,
+      rounds,
       participants: [],
       providers,
       questions,
       approvals,
-      schedules: [],
+      schedules,
       usage: HONEST_USAGE,
       artifacts: [],
       warnings

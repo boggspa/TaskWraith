@@ -73,8 +73,12 @@ import {
   createHostProductionSuppliers,
   type HostProductionApprovalListPort,
   type HostProductionChatListPort,
+  type HostProductionMissionListPort,
   type HostProductionProviderListPort,
-  type HostProductionQuestionListPort
+  type HostProductionQuestionListPort,
+  type HostProductionRoundListPort,
+  type HostProductionRunListPort,
+  type HostProductionScheduleListPort
 } from './HostProductionSuppliers'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import type { HostSessionHostIdentity } from './HostSession'
@@ -218,6 +222,11 @@ export interface HostProductionBootstrapOptions {
    * The guard checks the METHOD (typeof listQuestions === 'function').
    */
   readonly questions?: HostProductionQuestionListPort
+  /** Track3 Mixed — optional family shadows. Omitted → honest empty arrays. */
+  readonly runs?: HostProductionRunListPort
+  readonly missions?: HostProductionMissionListPort
+  readonly rounds?: HostProductionRoundListPort
+  readonly schedules?: HostProductionScheduleListPort
   /**
    * Live Bridge action surface. The root passes its BridgeActionExecutor
    * singleton directly; this module builds the HostBridgeCommandExecutor
@@ -325,6 +334,18 @@ export function createHostProductionBootstrap(
   if (options.questions !== undefined && typeof options.questions.listQuestions !== 'function') {
     throw new Error('HostProductionBootstrap requires questions.listQuestions to be a function')
   }
+  if (options.runs !== undefined && typeof options.runs.listRuns !== 'function') {
+    throw new Error('HostProductionBootstrap requires runs.listRuns to be a function')
+  }
+  if (options.missions !== undefined && typeof options.missions.listMissions !== 'function') {
+    throw new Error('HostProductionBootstrap requires missions.listMissions to be a function')
+  }
+  if (options.rounds !== undefined && typeof options.rounds.listRounds !== 'function') {
+    throw new Error('HostProductionBootstrap requires rounds.listRounds to be a function')
+  }
+  if (options.schedules !== undefined && typeof options.schedules.listSchedules !== 'function') {
+    throw new Error('HostProductionBootstrap requires schedules.listSchedules to be a function')
+  }
   if (
     !options.host ||
     typeof options.host.hostId !== 'string' ||
@@ -352,7 +373,11 @@ export function createHostProductionBootstrap(
     chatList: options.chatList,
     ...(options.providers ? { providers: options.providers } : {}),
     ...(options.approvals ? { approvals: options.approvals } : {}),
-    ...(options.questions ? { questions: options.questions } : {})
+    ...(options.questions ? { questions: options.questions } : {}),
+    ...(options.runs ? { runs: options.runs } : {}),
+    ...(options.missions ? { missions: options.missions } : {}),
+    ...(options.rounds ? { rounds: options.rounds } : {}),
+    ...(options.schedules ? { schedules: options.schedules } : {})
   })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
 
