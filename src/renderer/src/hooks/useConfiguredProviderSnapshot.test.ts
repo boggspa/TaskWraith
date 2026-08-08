@@ -221,10 +221,7 @@ describe('successful Gemini API mutation refresh signal', () => {
     await act(async () => {
       mountedRoot = createRoot(container)
       mountedRoot.render(
-        createElement(HostProjectionProvider, {
-          store,
-          children: createElement(Harness)
-        })
+        createElement(HostProjectionProvider, { store }, createElement(Harness))
       )
     })
     // useHostProjection refreshes on mount; settle the first Host fetch.
