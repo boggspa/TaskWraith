@@ -6350,6 +6350,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .participant-health-chip.provider-ollama {
   color: var(--provider-ollama-color, var(--text-primary));
 }
+.participant-health-chip.provider-antigravity {
+  color: var(--provider-antigravity-color, var(--text-primary));
+}
 /* Ollama-backed display brands — the health chip spoofs the upstream brand
  * hue (e.g. Qwen → Alibaba) so "Alibaba / Planner" reads in the brand colour,
  * matching the transcript header + @-mention chips. */

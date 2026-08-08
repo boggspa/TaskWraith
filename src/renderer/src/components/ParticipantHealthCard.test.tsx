@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
@@ -64,5 +65,37 @@ describe('ParticipantHealthCard', () => {
     const html = renderToStaticMarkup(<ParticipantHealthCard message={message} />)
     expect(html).toContain('participant-health-chip provider-deepseek')
     expect(html).toContain('DeepSeek / Reviewer')
+  })
+
+  it('paints AntiGravity health chips with the provider hue class and CSS tint', () => {
+    const message = healthMessage()
+    message.metadata = {
+      kind: 'ensembleParticipantHealth',
+      okCount: 1,
+      totalCount: 1,
+      entries: [
+        {
+          participantId: 'agy-scout',
+          provider: 'antigravity',
+          model: 'gemini-api:gemini-2.5-flash',
+          displayProviderLabel: 'AntiGravity',
+          displayHueClass: 'antigravity',
+          role: 'K2.7Scout',
+          status: 'ok'
+        }
+      ]
+    }
+
+    const html = renderToStaticMarkup(<ParticipantHealthCard message={message} />)
+    const css = readFileSync(
+      new URL('../assets/css/02-transcript-messages-fx.css', import.meta.url),
+      'utf8'
+    )
+
+    expect(html).toContain('participant-health-chip provider-antigravity')
+    expect(html).toContain('AntiGravity / K2.7Scout')
+    expect(css).toMatch(
+      /\.participant-health-chip\.provider-antigravity\s*\{\s*color: var\(--provider-antigravity-color/
+    )
   })
 })
