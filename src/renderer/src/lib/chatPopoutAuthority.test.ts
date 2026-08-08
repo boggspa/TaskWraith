@@ -66,7 +66,7 @@ describe('chat popout authority projection', () => {
     expect(appSource).toContain('const refreshProductOperationsStatus = async () => {')
     expect(appSource).toContain('    refreshProductOperationsStatus,')
     expect(appSource).toContain(
-      'if (isChatPopoutWindow) return\n    void window.api.getScheduledTasks(currentWorkspace?.id)'
+      'if (isChatPopoutWindow) return\n    const workspaceId = currentChatWorkspace?.id || currentWorkspace?.id\n    void window.api.getScheduledTasks(workspaceId)'
     )
     expect(appSource).not.toContain('onScheduledTaskDue')
     expect(appSource).toContain(

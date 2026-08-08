@@ -207,7 +207,7 @@ describe('WorkspaceLockPillView', () => {
       '{showWorkspaceGitAboveRows && (\n                        <GitHubSatelliteRow'
     )
     expect(composer).toContain(
-      'composerWorktreeSelection?.effectiveWorkspacePath || currentWorkspace.path'
+      'composerWorktreeSelection?.effectiveWorkspacePath ||\n                          composerGitActionBasePath ||\n                          currentWorkspace.path'
     )
     expect(worktreePopover).not.toContain('<WorkspaceLockPill')
     expect(lockPill).toContain('createPortal')
