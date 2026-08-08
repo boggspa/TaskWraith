@@ -1269,8 +1269,16 @@ import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
 import { MeshSceneStore } from './mesh/MeshSceneStore'
 import { registerMeshSceneHandlers } from './ipc/meshSceneHandlers'
 import { registerSimulatorCanvasHandlers } from './ipc/simulatorCanvasHandlers'
+import { IdbClient } from './simulator/IdbClient'
+import { SimulatorControllerLease } from './simulator/SimulatorControllerLease'
+import { SimulatorHostControl } from './simulator/SimulatorHostControl'
 import { SimulatorHostService } from './simulator/SimulatorHostService'
 import { SimulatorInteractionBridge } from './simulator/SimulatorInteractionBridge'
+import { SimulatorSessionStore } from './simulator/SimulatorSessionStore'
+import {
+  createHostBackedDeviceOps,
+  defaultSimctlRunner
+} from './simulator/SimctlRunner'
 import {
   createLaunchToolExecutors,
   isLaunchMcpToolName,
@@ -4075,7 +4083,18 @@ const meshSceneService = new MeshSceneService({
 })
 const meshToolExecutors = createMeshToolExecutors(meshSceneService)
 const simulatorHostService = new SimulatorHostService()
-const simulatorToolExecutors = createSimulatorToolExecutors(simulatorHostService)
+const simulatorSessionStore = new SimulatorSessionStore()
+const simulatorControllerLease = new SimulatorControllerLease()
+const simulatorIdbClient = new IdbClient()
+const simulatorHostControl = new SimulatorHostControl({
+  host: simulatorHostService,
+  controllerLease: simulatorControllerLease,
+  sessionStore: simulatorSessionStore
+})
+const simulatorToolExecutors = createSimulatorToolExecutors({
+  hostControl: simulatorHostControl,
+  controllerLease: simulatorControllerLease
+})
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
   getControlStatus: (chatId) => {
     const status = nativeWindowCoordinatorRef?.statusForChat(chatId)
@@ -4085,6 +4104,19 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
       canControl: Boolean(status?.control),
       hasObservation: Boolean(status?.observation)
     }
+  },
+  hasControllerLease: (chatId) => Boolean(simulatorControllerLease.peek(chatId)),
+  idb: simulatorIdbClient,
+  getActuationTarget: (chatId) => {
+    const session = simulatorSessionStore.get(chatId)
+    const udid = session?.udid || session?.lastFrame?.udid
+    if (!udid) return null
+    const frame = session?.lastFrame
+    // Prefer last screenshot dimensions; fall back to iPhone logical defaults so
+    // idb can drive after boot before the first successful frame lands.
+    const width = frame && frame.width > 0 ? frame.width : 390
+    const height = frame && frame.height > 0 ? frame.height : 844
+    return { udid, width, height }
   }
 })
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
@@ -4114,7 +4146,11 @@ const canvasService = new CanvasService({
         opts.windowTarget
       )
     }
-    if (kind === 'device') return new CanvasDeviceDriver(sessionId)
+    if (kind === 'device') {
+      return new CanvasDeviceDriver(sessionId, {
+        deviceOps: createHostBackedDeviceOps(simulatorHostService, defaultSimctlRunner)
+      })
+    }
     if (kind === 'html') {
       return new CanvasRenderDriver(sessionId, {
         render: (html, width, height) =>
@@ -5915,8 +5951,13 @@ registerMeshSceneHandlers(ipcMain, {
 })
 
 registerSimulatorCanvasHandlers(ipcMain, {
-  getHost: () => simulatorHostService,
-  getInteraction: () => simulatorInteractionBridge
+  getHostControl: () => simulatorHostControl,
+  getControllerLease: () => simulatorControllerLease,
+  getSessionStore: () => simulatorSessionStore,
+  getInteraction: () => simulatorInteractionBridge,
+  getIdb: () => simulatorIdbClient,
+  getRequestingWindow: (event) => BrowserWindow.fromWebContents(event.sender),
+  showOpenDialog: (window, options) => dialog.showOpenDialog(window, options)
 })
 
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.
@@ -8214,6 +8255,9 @@ runManager.onChange((event) => {
           error instanceof Error ? error.message : String(error)
         )
       })
+    // Simulator Canvas hybrid ownership: release run-owned controller unless
+    // it was already transferred away from this runId.
+    simulatorControllerLease.releaseForRun(event.session.runId)
   }
   if (event.type === 'removed') {
     approvalService?.cancelForRun(event.session.runId, 'run-removed')
@@ -47773,6 +47817,7 @@ if (isGeminiMcpBridgeProcess) {
       // Guarded: if bootstrap construction ever throws, an unguarded call here
       // would raise a TypeError that masks the original startup failure.
       hostSupervisor?.stopSync()
+      void simulatorHostService.dispose()
       teardownCanvasSurfacesForWindowClose()
       if (nativeWindowExpirySweepTimer) {
         clearInterval(nativeWindowExpirySweepTimer)

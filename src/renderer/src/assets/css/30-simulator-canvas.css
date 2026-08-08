@@ -172,6 +172,28 @@
   background: #090b10;
 }
 
+.simulator-canvas-bezel.is-stale {
+  box-shadow:
+    inset 0 0 0 1px rgba(230, 168, 60, 0.28),
+    0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+.simulator-canvas-stale {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(230, 168, 60, 0.45);
+  background: rgba(20, 16, 8, 0.78);
+  color: rgba(255, 220, 150, 0.95);
+  font:
+    650 10px/1.2 system-ui,
+    sans-serif;
+  pointer-events: none;
+}
+
 .simulator-canvas-bezel.is-tablet .simulator-canvas-bezel-screen {
   border-radius: 16px;
   margin-top: 8px;
@@ -232,6 +254,59 @@
     sans-serif;
 }
 
+.simulator-canvas-controller-chip {
+  align-self: flex-start;
+  margin: 0 12px 8px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  background: var(--button-bg, rgba(127, 127, 127, 0.1));
+  color: var(--text-primary);
+  font:
+    600 10px/1.3 system-ui,
+    sans-serif;
+  letter-spacing: 0.01em;
+  opacity: 0.88;
+}
+
+.simulator-canvas-controller-chip.is-agent {
+  border-color: rgba(106, 168, 255, 0.35);
+  background: rgba(106, 168, 255, 0.12);
+}
+
+.simulator-canvas-controller-chip.is-human {
+  border-color: rgba(80, 180, 120, 0.35);
+  background: rgba(80, 180, 120, 0.1);
+}
+
+.simulator-canvas-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 12px 10px;
+}
+
+.simulator-canvas-qa-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.simulator-canvas-qa-input {
+  flex: 1 1 160px;
+  min-width: 140px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 7px;
+  background: var(--panel-bg, rgba(20, 22, 28, 0.55));
+  color: inherit;
+  font:
+    11px/1.2 system-ui,
+    sans-serif;
+}
+
 .simulator-canvas-bezel.is-interactive .simulator-canvas-bezel-screen {
   cursor: crosshair;
 }
@@ -289,4 +364,13 @@
 .simulator-canvas-issue {
   color: var(--status-failed, #e5484d);
   background: rgba(229, 72, 77, 0.08);
+}
+
+.simulator-canvas-footer {
+  margin: 0 12px 12px;
+  padding-top: 2px;
+  font:
+    10px/1.35 system-ui,
+    sans-serif;
+  opacity: 0.55;
 }

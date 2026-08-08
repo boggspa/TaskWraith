@@ -1283,19 +1283,24 @@ const api = {
   },
 
   // Simulator Canvas — main-owned simctl / Simulator.app host actions for the
-  // dock bezel. Renderer passes only udid / app path / bundle id; no MCP here.
+  // dock bezel. Mutating verbs take chatId so main can mint a human controller.
   simulatorCanvas: {
     status: () => ipcRenderer.invoke('simulator-canvas:status'),
-    openApp: () => ipcRenderer.invoke('simulator-canvas:open-app'),
+    claimControl: (chatId: string) => ipcRenderer.invoke('simulator-canvas:claim-control', chatId),
+    session: (chatId: string) => ipcRenderer.invoke('simulator-canvas:session', chatId),
+    openApp: (chatId: string) => ipcRenderer.invoke('simulator-canvas:open-app', chatId),
     listDevices: () => ipcRenderer.invoke('simulator-canvas:list-devices'),
-    boot: (udid: string) => ipcRenderer.invoke('simulator-canvas:boot', udid),
-    install: (udid: string, appPath: string) =>
-      ipcRenderer.invoke('simulator-canvas:install', udid, appPath),
-    launch: (udid: string, bundleId: string) =>
-      ipcRenderer.invoke('simulator-canvas:launch', udid, bundleId),
-    terminate: (udid: string, bundleId?: string) =>
-      ipcRenderer.invoke('simulator-canvas:terminate', udid, bundleId),
-    screenshot: (udid: string) => ipcRenderer.invoke('simulator-canvas:screenshot', udid),
+    boot: (chatId: string, udid: string) =>
+      ipcRenderer.invoke('simulator-canvas:boot', chatId, udid),
+    pickApp: (chatId: string) => ipcRenderer.invoke('simulator-canvas:pick-app', chatId),
+    install: (chatId: string, udid: string, appPath: string) =>
+      ipcRenderer.invoke('simulator-canvas:install', chatId, udid, appPath),
+    launch: (chatId: string, udid: string, bundleId: string) =>
+      ipcRenderer.invoke('simulator-canvas:launch', chatId, udid, bundleId),
+    terminate: (chatId: string, udid: string, bundleId?: string) =>
+      ipcRenderer.invoke('simulator-canvas:terminate', chatId, udid, bundleId),
+    screenshot: (chatId: string, udid: string) =>
+      ipcRenderer.invoke('simulator-canvas:screenshot', chatId, udid),
     interactionStatus: (chatId: string) =>
       ipcRenderer.invoke('simulator-canvas:interaction-status', chatId),
     tap: (payload: { chatId: string; x: number; y: number }) =>

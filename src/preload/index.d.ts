@@ -1282,18 +1282,35 @@ declare global {
       }
       simulatorCanvas: {
         status: () => Promise<{ ok: true; status: SimulatorCapabilityStatus }>
-        openApp: () => Promise<SimulatorHostActionResult>
+        claimControl: (chatId: string) => Promise<unknown>
+        session: (chatId: string) => Promise<unknown>
+        openApp: (chatId: string) => Promise<SimulatorHostActionResult>
         listDevices: () => Promise<{
           ok: boolean
           error?: string
           devices?: SimulatorDeviceInfo[]
           status?: SimulatorCapabilityStatus
         }>
-        boot: (udid: string) => Promise<SimulatorHostActionResult>
-        install: (udid: string, appPath: string) => Promise<SimulatorHostActionResult>
-        launch: (udid: string, bundleId: string) => Promise<SimulatorHostActionResult>
-        terminate: (udid: string, bundleId?: string) => Promise<SimulatorHostActionResult>
-        screenshot: (udid: string) => Promise<SimulatorHostActionResult>
+        boot: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
+        pickApp: (
+          chatId: string
+        ) => Promise<{ ok: boolean; canceled: boolean; appPath?: string; error?: string }>
+        install: (
+          chatId: string,
+          udid: string,
+          appPath: string
+        ) => Promise<SimulatorHostActionResult>
+        launch: (
+          chatId: string,
+          udid: string,
+          bundleId: string
+        ) => Promise<SimulatorHostActionResult>
+        terminate: (
+          chatId: string,
+          udid: string,
+          bundleId?: string
+        ) => Promise<SimulatorHostActionResult>
+        screenshot: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
         interactionStatus: (chatId: string) => Promise<SimulatorInteractionStatus>
         tap: (payload: SimulatorTapGesture) => Promise<SimulatorGestureResult>
         type: (payload: SimulatorTypeGesture) => Promise<SimulatorGestureResult>

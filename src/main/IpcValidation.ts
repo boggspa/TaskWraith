@@ -367,15 +367,18 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'mesh-scene:close-presentation': ['nonEmptyString', 'nonEmptyString'],
   'mesh-scene:delete': ['nonEmptyString', 'nonEmptyString'],
   // Simulator Canvas host actions (simctl / Simulator.app). Main-window dock
-  // only; renderer passes udid / paths / bundle ids for the invoked action.
+  // only; mutating verbs take chatId first so human control can auto-claim.
   'simulator-canvas:status': [],
-  'simulator-canvas:open-app': [],
+  'simulator-canvas:claim-control': ['nonEmptyString'],
+  'simulator-canvas:session': ['nonEmptyString'],
+  'simulator-canvas:open-app': ['nonEmptyString'],
   'simulator-canvas:list-devices': [],
-  'simulator-canvas:boot': ['nonEmptyString'],
-  'simulator-canvas:install': ['nonEmptyString', 'nonEmptyString'],
-  'simulator-canvas:launch': ['nonEmptyString', 'nonEmptyString'],
-  'simulator-canvas:terminate': ['nonEmptyString', 'optionalString'],
-  'simulator-canvas:screenshot': ['nonEmptyString'],
+  'simulator-canvas:boot': ['nonEmptyString', 'nonEmptyString'],
+  'simulator-canvas:pick-app': ['nonEmptyString'],
+  'simulator-canvas:install': ['nonEmptyString', 'nonEmptyString', 'nonEmptyString'],
+  'simulator-canvas:launch': ['nonEmptyString', 'nonEmptyString', 'nonEmptyString'],
+  'simulator-canvas:terminate': ['nonEmptyString', 'nonEmptyString', 'optionalString'],
+  'simulator-canvas:screenshot': ['nonEmptyString', 'nonEmptyString'],
   // Human bezel gestures — gated in SimulatorInteractionBridge; no silent control.
   'simulator-canvas:interaction-status': ['nonEmptyString'],
   'simulator-canvas:tap': ['object'],
