@@ -457,6 +457,31 @@ describe('TranscriptScroll', () => {
         decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 0.25, gestureLive: true })
       ).toBe('skip')
     })
+
+    it('falls back to default epsilon for negative / NaN / Infinity overrides', () => {
+      // Sub-default delta must still skip when a bad override is ignored.
+      for (const epsilonPx of [-1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+        expect(
+          decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 0.5, epsilonPx })
+        ).toBe('skip')
+        expect(
+          decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 0.51, epsilonPx })
+        ).toBe('apply')
+      }
+    })
+
+    it('honours a finite non-negative epsilon override', () => {
+      expect(
+        decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 1.5, epsilonPx: 2 })
+      ).toBe('skip')
+      expect(
+        decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 2.1, epsilonPx: 2 })
+      ).toBe('apply')
+      // Zero is a valid override: any positive delta clears the gate.
+      expect(
+        decidePhase1AnchorCorrection({ ...ready, absDeltaPx: 0.1, epsilonPx: 0 })
+      ).toBe('apply')
+    })
   })
 
   describe('shouldRearmPhase1DeferOnSkip', () => {
@@ -485,6 +510,48 @@ describe('TranscriptScroll', () => {
       expect(shouldRearmPhase1DeferOnSkip({ ...pendingSoft, skipNext: true })).toBe(false)
       expect(shouldRearmPhase1DeferOnSkip({ ...pendingSoft, atBottom: true })).toBe(false)
       expect(shouldRearmPhase1DeferOnSkip({ ...pendingSoft, hasAnchor: false })).toBe(false)
+    })
+
+    it('soft !converged skip re-arms; hard skips clear the pending defer', () => {
+      // Matrix: decidePhase1AnchorCorrection skip reason × shouldRearm.
+      // Soft (!measureConverged) is the only re-armable skip; hard gates clear.
+      const softSkip = {
+        skipNext: false,
+        measureConverged: false,
+        atBottom: false,
+        hasAnchor: true,
+        absDeltaPx: 12,
+        gestureLive: false
+      }
+      expect(decidePhase1AnchorCorrection(softSkip)).toBe('skip')
+      expect(
+        shouldRearmPhase1DeferOnSkip({
+          deferredPending: true,
+          skipNext: softSkip.skipNext,
+          atBottom: softSkip.atBottom,
+          hasAnchor: softSkip.hasAnchor,
+          measureConverged: softSkip.measureConverged
+        })
+      ).toBe(true)
+
+      const hardCases = [
+        { ...softSkip, measureConverged: true, skipNext: true },
+        { ...softSkip, measureConverged: true, atBottom: true },
+        { ...softSkip, measureConverged: true, hasAnchor: false },
+        { ...softSkip, measureConverged: true, absDeltaPx: 0.25 }
+      ] as const
+      for (const hard of hardCases) {
+        expect(decidePhase1AnchorCorrection(hard)).toBe('skip')
+        expect(
+          shouldRearmPhase1DeferOnSkip({
+            deferredPending: true,
+            skipNext: hard.skipNext,
+            atBottom: hard.atBottom,
+            hasAnchor: hard.hasAnchor,
+            measureConverged: hard.measureConverged
+          })
+        ).toBe(false)
+      }
     })
   })
 

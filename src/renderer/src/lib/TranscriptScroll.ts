@@ -171,9 +171,11 @@ export type Phase1AnchorCorrectionDecision = 'skip' | 'defer' | 'apply'
 
 /**
  * Decide whether Phase-1 absolute anchor correction should write this
- * pre-paint pass (cut 2a). Hard gates (`skipNext`, convergence, bottom,
- * missing anchor, sub-epsilon delta) skip entirely; a live user gesture
- * defers without arming the programmatic scroll guard; otherwise apply.
+ * pre-paint pass (cut 2a). Hard gates (`skipNext`, bottom, missing anchor,
+ * sub-epsilon delta) skip entirely. Soft skip (`!measureConverged`) also
+ * returns `'skip'` but is re-armable via `shouldRearmPhase1DeferOnSkip`. A
+ * live user gesture defers without arming the programmatic scroll guard;
+ * otherwise apply.
  */
 export function decidePhase1AnchorCorrection(input: {
   skipNext: boolean
@@ -185,7 +187,9 @@ export function decidePhase1AnchorCorrection(input: {
   epsilonPx?: number
 }): Phase1AnchorCorrectionDecision {
   const epsilon =
-    typeof input.epsilonPx === 'number' && Number.isFinite(input.epsilonPx)
+    typeof input.epsilonPx === 'number' &&
+    Number.isFinite(input.epsilonPx) &&
+    input.epsilonPx >= 0
       ? input.epsilonPx
       : PHASE1_ANCHOR_CORRECTION_EPSILON_PX
   if (input.skipNext) return 'skip'
