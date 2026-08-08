@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 195 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 198 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1462,11 +1462,37 @@ Press a hardware button on a simulator via `idb ui button` (HOME, LOCK, SIDE_BUT
 
 ## simulator_rotate
 
-Rotate a simulator via `idb ui rotate CLOCKWISE|COUNTER_CLOCKWISE`. Requires an active run controller lease and idb. Some idb builds only accept absolute orientations — failures return a clear error. Gated via the Simulator Canvas service.
+Rotate a simulator via `idb ui rotate PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT`. Requires an active run controller lease and idb. Gated via the Simulator Canvas service.
 
 - Access: governed by your run permission role
 - Required args: udid, direction
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_rotate","arguments":{"udid":"text","direction":"text"}}}}`
+
+## simulator_tap
+
+Tap a simulator via `idb ui tap`. x/y are normalized 0..1 bezel coordinates, mapped to device points using the chat session frame (or optional width/height point extents). Requires an active run controller lease and idb. Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid, x, y
+- Optional args: width, height
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_tap","arguments":{"udid":"text","x":0,"y":0}}}}`
+
+## simulator_type
+
+Type text into the focused simulator field via `idb ui text`. Requires an active run controller lease and idb. Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid, text
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_type","arguments":{"udid":"text","text":"text"}}}}`
+
+## simulator_scroll
+
+Scroll/swipe a simulator via `idb ui swipe`. x/y are normalized 0..1 origin; deltaX/deltaY are device-point deltas (finger moves opposite the delta, matching the human bezel bridge). Optional width/height supply point extents when the session has none. Requires an active run controller lease and idb. Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid, x, y, deltaX, deltaY
+- Optional args: width, height
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_scroll","arguments":{"udid":"text","x":0,"y":0,"deltaX":0,"deltaY":0}}}}`
 
 ## theme_tokens_get
 

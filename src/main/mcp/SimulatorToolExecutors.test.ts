@@ -31,8 +31,16 @@ const runCtx = { appChatId: 'chat-1', appRunId: 'run-1', participantId: 'seat-a'
 const udid = '11111111-1111-1111-1111-111111111111'
 
 function fakeIdb(
-  overrides: Partial<Pick<IdbClient, 'isAvailable' | 'describeAll' | 'hardwareButton' | 'rotate'>> = {}
-): Pick<IdbClient, 'isAvailable' | 'describeAll' | 'hardwareButton' | 'rotate'> {
+  overrides: Partial<
+    Pick<
+      IdbClient,
+      'isAvailable' | 'describeAll' | 'hardwareButton' | 'rotate' | 'tap' | 'text' | 'swipe'
+    >
+  > = {}
+): Pick<
+  IdbClient,
+  'isAvailable' | 'describeAll' | 'hardwareButton' | 'rotate' | 'tap' | 'text' | 'swipe'
+> {
   return {
     isAvailable: () => true,
     describeAll: vi.fn(async () => ({
@@ -42,6 +50,9 @@ function fakeIdb(
     })),
     hardwareButton: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
     rotate: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+    tap: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+    text: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+    swipe: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
     ...overrides
   }
 }
@@ -72,6 +83,8 @@ function fakeHost(
         pngBase64: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
         width: 2,
         height: 2,
+        pointWidth: 1,
+        pointHeight: 1,
         capturedAt: '2026-08-07T00:00:00.000Z',
         udid
       }
@@ -293,13 +306,13 @@ describe('SimulatorToolExecutors', () => {
       (
         await executeSimulatorTool(
           'simulator_rotate',
-          { udid, direction: 'clockwise' },
+          { udid, direction: 'LANDSCAPE_RIGHT' },
           runCtx,
           'codex'
         )
       ).structuredContent
-    ).toMatchObject({ ok: true, direction: 'clockwise' })
-    expect(idb.rotate).toHaveBeenCalledWith(udid, 'clockwise')
+    ).toMatchObject({ ok: true, direction: 'LANDSCAPE_RIGHT' })
+    expect(idb.rotate).toHaveBeenCalledWith(udid, 'LANDSCAPE_RIGHT')
 
     expect(
       (
@@ -315,7 +328,7 @@ describe('SimulatorToolExecutors', () => {
       (
         await executeSimulatorTool(
           'simulator_rotate',
-          { udid, direction: 'upside-down' },
+          { udid, direction: 'clockwise' },
           runCtx,
           'codex'
         )
@@ -323,6 +336,102 @@ describe('SimulatorToolExecutors', () => {
     ).toBe(true)
 
     for (const tool of ['simulator_button', 'simulator_rotate'] as const) {
+      expect(TASKWRAITH_TOOL_ACTIONS[tool].service).toBe('simulatorCanvas')
+      expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has(tool)).toBe(false)
+    }
+  })
+
+  it('simulator_tap / type / scroll require lease + idb and map normalized coords via session point dims', async () => {
+    const idb = fakeIdb()
+    const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-hid' })
+    const getActuationTarget = vi.fn(() => ({
+      udid,
+      pointWidth: 390,
+      pointHeight: 844,
+      width: 780,
+      height: 1688
+    }))
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl: fakeHost(),
+      controllerLease,
+      idb,
+      getActuationTarget
+    })
+
+    expect(
+      (await executeSimulatorTool('simulator_tap', { udid, x: 0.5, y: 0.25 }, {}, 'codex'))
+        .isError
+    ).toBe(true)
+    expect(idb.tap).not.toHaveBeenCalled()
+
+    expect(
+      (
+        await executeSimulatorTool(
+          'simulator_tap',
+          { udid, x: 0.5, y: 0.25 },
+          runCtx,
+          'codex'
+        )
+      ).structuredContent
+    ).toMatchObject({ ok: true, tool: 'simulator_tap', udid, x: 195, y: 211 })
+    expect(idb.tap).toHaveBeenCalledWith(udid, 195, 211)
+    expect(getActuationTarget).toHaveBeenCalledWith('chat-1')
+
+    expect(
+      (
+        await executeSimulatorTool(
+          'simulator_type',
+          { udid, text: 'hello' },
+          runCtx,
+          'codex'
+        )
+      ).structuredContent
+    ).toMatchObject({ ok: true, tool: 'simulator_type', udid })
+    expect(idb.text).toHaveBeenCalledWith(udid, 'hello')
+
+    // Agent scroll deltas are point-space (no pixel→point rescale).
+    expect(
+      (
+        await executeSimulatorTool(
+          'simulator_scroll',
+          { udid, x: 0.5, y: 0.5, deltaX: 0, deltaY: -80 },
+          runCtx,
+          'codex'
+        )
+      ).structuredContent
+    ).toMatchObject({ ok: true, tool: 'simulator_scroll', udid })
+    expect(idb.swipe).toHaveBeenCalledWith(udid, 195, 422, 195, 502)
+
+    // Optional width/height args supply point extents when session has none.
+    const noSession = createSimulatorToolExecutors({
+      hostControl: fakeHost(),
+      controllerLease: new SimulatorControllerLease({ createId: () => 'tok-args' }),
+      idb: fakeIdb(),
+      getActuationTarget: () => null
+    })
+    expect(
+      (
+        await noSession.executeSimulatorTool(
+          'simulator_tap',
+          { udid, x: 1, y: 1, width: 100, height: 200 },
+          runCtx,
+          'codex'
+        )
+      ).structuredContent
+    ).toMatchObject({ ok: true, x: 100, y: 200 })
+
+    expect(
+      (
+        await noSession.executeSimulatorTool(
+          'simulator_tap',
+          { udid, x: 0.5, y: 0.5 },
+          runCtx,
+          'codex'
+        )
+      ).isError
+    ).toBe(true)
+
+    for (const tool of ['simulator_tap', 'simulator_type', 'simulator_scroll'] as const) {
       expect(TASKWRAITH_TOOL_ACTIONS[tool].service).toBe('simulatorCanvas')
       expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has(tool)).toBe(false)
     }

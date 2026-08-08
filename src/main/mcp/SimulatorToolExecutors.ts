@@ -7,11 +7,17 @@ import {
 import type { SimulatorHostControl } from '../simulator/SimulatorHostControl'
 import type { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
 import type { IdbClient } from '../simulator/IdbClient'
+import type { SimulatorActuationTarget } from '../simulator/SimulatorInteractionBridge'
 import type { SimulatorHostActionResult } from '../../shared/simulatorCanvas'
 import {
   isSimulatorHardwareButton,
   isSimulatorRotateDirection
 } from '../../shared/simulatorCanvas'
+import {
+  clamp01,
+  mapNormalizedScroll,
+  mapNormalizedTap
+} from '../simulator/simulatorGestureMapping'
 
 /** Main-side alias retained for MCP dispatch callers. The shared catalogue owns membership. */
 export const SIMULATOR_MCP_TOOL_NAMES_MAIN = SIMULATOR_MCP_TOOL_NAMES
@@ -29,7 +35,10 @@ const SIMULATOR_MUTATING_TOOLS: ReadonlySet<SimulatorMcpToolName> = new Set([
   'simulator_launch',
   'simulator_terminate',
   'simulator_button',
-  'simulator_rotate'
+  'simulator_rotate',
+  'simulator_tap',
+  'simulator_type',
+  'simulator_scroll'
 ])
 
 export function isSimulatorMcpToolName(value: string): value is SimulatorMcpToolName {
@@ -58,8 +67,16 @@ export interface SimulatorToolExecutorDeps {
     'status' | 'openSimulatorApp' | 'boot' | 'install' | 'launch' | 'terminate' | 'screenshot'
   >
   controllerLease: Pick<SimulatorControllerLease, 'mint'>
-  /** Required for inspect / button / rotate (idb argv-array path). */
-  idb: Pick<IdbClient, 'isAvailable' | 'describeAll' | 'hardwareButton' | 'rotate'>
+  /** Required for inspect / button / rotate / HID (idb argv-array path). */
+  idb: Pick<
+    IdbClient,
+    'isAvailable' | 'describeAll' | 'hardwareButton' | 'rotate' | 'tap' | 'text' | 'swipe'
+  >
+  /**
+   * Session point dims for normalizing agent bezel coords. Optional width/height
+   * args on tap/scroll override when the session has no frame yet.
+   */
+  getActuationTarget?: (chatId: string) => SimulatorActuationTarget | null
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -72,6 +89,14 @@ function stringValue(value: unknown, limit = 4_096): string | undefined {
   return typeof value === 'string' && value.trim() && value.trim().length <= limit
     ? value.trim()
     : undefined
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function jsonResult(
@@ -148,6 +173,44 @@ function requireIdb(
   )
 }
 
+function resolveAgentPointExtents(
+  toolName: SimulatorMcpToolName,
+  args: Record<string, unknown>,
+  chatId: string,
+  getActuationTarget: ((chatId: string) => SimulatorActuationTarget | null) | undefined
+):
+  | { ok: true; pointWidth: number; pointHeight: number }
+  | { ok: false; result: McpToolExecutionResult } {
+  const argW = positiveNumber(args.width) ?? positiveNumber(args.pointWidth)
+  const argH = positiveNumber(args.height) ?? positiveNumber(args.pointHeight)
+  if (argW && argH) {
+    return { ok: true, pointWidth: Math.round(argW), pointHeight: Math.round(argH) }
+  }
+  const target = getActuationTarget?.(chatId) ?? null
+  const pointWidth =
+    target && typeof target.pointWidth === 'number' && target.pointWidth > 0
+      ? target.pointWidth
+      : target && typeof target.width === 'number' && target.width > 0
+        ? target.width
+        : undefined
+  const pointHeight =
+    target && typeof target.pointHeight === 'number' && target.pointHeight > 0
+      ? target.pointHeight
+      : target && typeof target.height === 'number' && target.height > 0
+        ? target.height
+        : undefined
+  if (pointWidth && pointHeight) {
+    return { ok: true, pointWidth: Math.round(pointWidth), pointHeight: Math.round(pointHeight) }
+  }
+  return {
+    ok: false,
+    result: fail(
+      toolName,
+      'Point size required: take a simulator_screenshot first, or pass width/height (device points).'
+    )
+  }
+}
+
 /**
  * Factory so this dispatch stays independently testable without Electron.
  * Prefer SimulatorHostControl so mutating verbs enforce the controller lease.
@@ -155,7 +218,7 @@ function requireIdb(
 export function createSimulatorToolExecutors(
   deps: SimulatorToolExecutorDeps
 ): SimulatorToolExecutors {
-  const { hostControl, controllerLease, idb } = deps
+  const { hostControl, controllerLease, idb, getActuationTarget } = deps
   return {
     async executeSimulatorTool(toolName, rawArgs, context, _parentProvider) {
       const args = asRecord(rawArgs)
@@ -235,38 +298,134 @@ export function createSimulatorToolExecutors(
           if (missing) return missing
           const direction = args.direction
           if (!isSimulatorRotateDirection(direction)) {
-            return fail(toolName, '`direction` must be clockwise or counterclockwise.')
+            return fail(
+              toolName,
+              '`direction` must be PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT.'
+            )
           }
           const rotated = await idb.rotate(udid, direction)
           if (!rotated.ok) {
-            return fail(
-              toolName,
-              rotated.error ||
-                'simulator_rotate failed. This idb build may only accept absolute orientations (PORTRAIT/LANDSCAPE_*), not relative CLOCKWISE/COUNTER_CLOCKWISE.'
-            )
+            return fail(toolName, rotated.error || 'simulator_rotate failed.')
           }
           return jsonResult({ ok: true, tool: toolName, udid, direction })
         }
 
-        // simulator_screenshot — chat-readable; no controller required.
-        const chatId = stringValue(context.appChatId, 256)
-        const shot = await hostControl.screenshot(udid, chatId ? { chatId } : undefined)
-        if (!shot.ok || !shot.frame) {
-          return fail(toolName, shot.error || 'Screenshot failed.')
-        }
-        const { pngBase64, width, height, capturedAt, udid: frameUdid } = shot.frame
-        return jsonResult(
-          {
+        if (toolName === 'simulator_tap') {
+          const missing = requireIdb(toolName, idb)
+          if (missing) return missing
+          const xNorm = finiteNumber(args.x)
+          const yNorm = finiteNumber(args.y)
+          if (xNorm === undefined || yNorm === undefined) {
+            return fail(toolName, '`x` and `y` are required (normalized 0..1 bezel space).')
+          }
+          const extents = resolveAgentPointExtents(
+            toolName,
+            args,
+            control!.chatId,
+            getActuationTarget
+          )
+          if (!extents.ok) return extents.result
+          const point = mapNormalizedTap(clamp01(xNorm), clamp01(yNorm), extents)
+          const tapped = await idb.tap(udid, point.x, point.y)
+          if (!tapped.ok) {
+            return fail(toolName, tapped.error || 'simulator_tap failed.')
+          }
+          return jsonResult({
             ok: true,
             tool: toolName,
-            udid: frameUdid,
-            mimeType: 'image/png',
-            width,
-            height,
-            capturedAt
-          },
-          [{ type: 'image', mimeType: 'image/png', data: pngBase64 }]
-        )
+            udid,
+            x: point.x,
+            y: point.y,
+            pointWidth: extents.pointWidth,
+            pointHeight: extents.pointHeight
+          })
+        }
+
+        if (toolName === 'simulator_type') {
+          const missing = requireIdb(toolName, idb)
+          if (missing) return missing
+          if (typeof args.text !== 'string') {
+            return fail(toolName, '`text` is required.')
+          }
+          const typed = await idb.text(udid, args.text)
+          if (!typed.ok) {
+            return fail(toolName, typed.error || 'simulator_type failed.')
+          }
+          return jsonResult({ ok: true, tool: toolName, udid, length: args.text.length })
+        }
+
+        if (toolName === 'simulator_scroll') {
+          const missing = requireIdb(toolName, idb)
+          if (missing) return missing
+          const xNorm = finiteNumber(args.x)
+          const yNorm = finiteNumber(args.y)
+          const deltaX = finiteNumber(args.deltaX)
+          const deltaY = finiteNumber(args.deltaY)
+          if (
+            xNorm === undefined ||
+            yNorm === undefined ||
+            deltaX === undefined ||
+            deltaY === undefined
+          ) {
+            return fail(
+              toolName,
+              '`x`, `y`, `deltaX`, and `deltaY` are required (x/y normalized 0..1; deltas in device points).'
+            )
+          }
+          const extents = resolveAgentPointExtents(
+            toolName,
+            args,
+            control!.chatId,
+            getActuationTarget
+          )
+          if (!extents.ok) return extents.result
+          // Agent deltas are already point-space — omit pixel dims so no rescale.
+          const swipe = mapNormalizedScroll(clamp01(xNorm), clamp01(yNorm), deltaX, deltaY, {
+            pointWidth: extents.pointWidth,
+            pointHeight: extents.pointHeight
+          })
+          const swiped = await idb.swipe(
+            udid,
+            swipe.startX,
+            swipe.startY,
+            swipe.endX,
+            swipe.endY
+          )
+          if (!swiped.ok) {
+            return fail(toolName, swiped.error || 'simulator_scroll failed.')
+          }
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            udid,
+            ...swipe,
+            pointWidth: extents.pointWidth,
+            pointHeight: extents.pointHeight
+          })
+        }
+
+        if (toolName === 'simulator_screenshot') {
+          const chatId = stringValue(context.appChatId, 256)
+          const shot = await hostControl.screenshot(udid, chatId ? { chatId } : undefined)
+          if (!shot.ok || !shot.frame) {
+            return fail(toolName, shot.error || 'Screenshot failed.')
+          }
+          const { pngBase64, width, height, capturedAt, udid: frameUdid } = shot.frame
+          return jsonResult(
+            {
+              ok: true,
+              tool: toolName,
+              udid: frameUdid,
+              mimeType: 'image/png',
+              width,
+              height,
+              capturedAt
+            },
+            [{ type: 'image', mimeType: 'image/png', data: pngBase64 }]
+          )
+        }
+
+        return fail(toolName, `Unhandled simulator tool: ${toolName}`)
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'Simulator Canvas operation failed.'

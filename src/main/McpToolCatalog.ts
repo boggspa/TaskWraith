@@ -4673,7 +4673,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'simulator_rotate',
       description:
-        'Rotate a simulator via `idb ui rotate CLOCKWISE|COUNTER_CLOCKWISE`. Requires an active run controller lease and idb. Some idb builds only accept absolute orientations — failures return a clear error. Gated via the Simulator Canvas service.',
+        'Rotate a simulator via `idb ui rotate PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT`. Requires an active run controller lease and idb. Gated via the Simulator Canvas service.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -4686,11 +4686,112 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           udid: { type: 'string', description: 'Simulator device UDID.' },
           direction: {
             type: 'string',
-            enum: ['clockwise', 'counterclockwise'],
-            description: 'Relative rotate direction.'
+            enum: ['PORTRAIT', 'PORTRAIT_UPSIDE_DOWN', 'LANDSCAPE_LEFT', 'LANDSCAPE_RIGHT'],
+            description: 'Absolute device orientation accepted by Facebook idb.'
           }
         },
         required: ['udid', 'direction']
+      }
+    },
+    {
+      name: 'simulator_tap',
+      description:
+        'Tap a simulator via `idb ui tap`. x/y are normalized 0..1 bezel coordinates, mapped to device points using the chat session frame (or optional width/height point extents). Requires an active run controller lease and idb. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID.' },
+          x: {
+            type: 'number',
+            description: 'Normalized horizontal position in bezel space (0..1).'
+          },
+          y: {
+            type: 'number',
+            description: 'Normalized vertical position in bezel space (0..1).'
+          },
+          width: {
+            type: 'number',
+            description:
+              'Optional device-point width when no session screenshot dims are available.'
+          },
+          height: {
+            type: 'number',
+            description:
+              'Optional device-point height when no session screenshot dims are available.'
+          }
+        },
+        required: ['udid', 'x', 'y']
+      }
+    },
+    {
+      name: 'simulator_type',
+      description:
+        'Type text into the focused simulator field via `idb ui text`. Requires an active run controller lease and idb. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID.' },
+          text: { type: 'string', description: 'Text to type into the focused field.' }
+        },
+        required: ['udid', 'text']
+      }
+    },
+    {
+      name: 'simulator_scroll',
+      description:
+        'Scroll/swipe a simulator via `idb ui swipe`. x/y are normalized 0..1 origin; deltaX/deltaY are device-point deltas (finger moves opposite the delta, matching the human bezel bridge). Optional width/height supply point extents when the session has none. Requires an active run controller lease and idb. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID.' },
+          x: {
+            type: 'number',
+            description: 'Normalized horizontal origin in bezel space (0..1).'
+          },
+          y: {
+            type: 'number',
+            description: 'Normalized vertical origin in bezel space (0..1).'
+          },
+          deltaX: {
+            type: 'number',
+            description:
+              'Horizontal scroll delta in device points (positive = content moves right).'
+          },
+          deltaY: {
+            type: 'number',
+            description:
+              'Vertical scroll delta in device points (positive = content moves down).'
+          },
+          width: {
+            type: 'number',
+            description:
+              'Optional device-point width when no session screenshot dims are available.'
+          },
+          height: {
+            type: 'number',
+            description:
+              'Optional device-point height when no session screenshot dims are available.'
+          }
+        },
+        required: ['udid', 'x', 'y', 'deltaX', 'deltaY']
       }
     },
     {

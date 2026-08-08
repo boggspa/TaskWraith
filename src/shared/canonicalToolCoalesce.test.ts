@@ -171,6 +171,9 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     expect(catalogToolAgenticService('simulator_launch')).toBe('simulatorCanvas')
     expect(catalogToolAgenticService('simulator_screenshot')).toBe('simulatorCanvas')
     expect(catalogToolAgenticService('simulator_terminate')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_tap')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_type')).toBe('simulatorCanvas')
+    expect(catalogToolAgenticService('simulator_scroll')).toBe('simulatorCanvas')
     for (const tool of ['tw_recall_find', 'tw_recall_read', 'tw_recall_read_events']) {
       expect(catalogToolAgenticService(tool)).toBe('crossThreadRead')
     }

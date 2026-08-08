@@ -30,7 +30,10 @@ export const SIMULATOR_MCP_TOOL_NAMES = [
   'simulator_terminate',
   'simulator_inspect',
   'simulator_button',
-  'simulator_rotate'
+  'simulator_rotate',
+  'simulator_tap',
+  'simulator_type',
+  'simulator_scroll'
 ] as const
 
 /** Mutating simulator control tools (approval-gated via simulatorCanvas). */
@@ -42,7 +45,10 @@ export const SIMULATOR_MUTATING_MCP_TOOL_NAMES = [
   'simulator_screenshot',
   'simulator_terminate',
   'simulator_button',
-  'simulator_rotate'
+  'simulator_rotate',
+  'simulator_tap',
+  'simulator_type',
+  'simulator_scroll'
 ] as const
 
 export const TASKWRAITH_MCP_TOOLS = [
@@ -287,9 +293,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   ...MESH_SCENE_MCP_TOOL_NAMES,
   // Simulator Canvas — TaskWraith-owned Simulator.app / simctl / idb host.
   // Status + inspect are auto-allowed observation; open/boot/install/launch/
-  // screenshot/terminate/button/rotate gate on the dedicated simulatorCanvas
-  // service (Accept Edits allow; Ask/Plan ask with grant-immunity under Plan).
-  // Catalog visibility is never itself a grant.
+  // screenshot/terminate/button/rotate/tap/type/scroll gate on the dedicated
+  // simulatorCanvas service (Accept Edits allow; Ask/Plan ask with
+  // grant-immunity under Plan). Catalog visibility is never itself a grant.
   ...SIMULATOR_MCP_TOOL_NAMES,
   // Agent-accessed appearance. A DATA channel over an allowlist of typed theme
   // tokens (see shared/agentThemeTokens) — never CSS text, never a selector, and

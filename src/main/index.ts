@@ -4091,10 +4091,38 @@ const simulatorHostControl = new SimulatorHostControl({
   controllerLease: simulatorControllerLease,
   sessionStore: simulatorSessionStore
 })
+const simulatorActuationTargetForChat = (chatId: string) => {
+  const session = simulatorSessionStore.get(chatId)
+  const udid = session?.udid || session?.lastFrame?.udid
+  if (!udid) return null
+  const frame = session?.lastFrame
+  // Prefer last-frame point extents for idb; never feed PNG IHDR pixels as
+  // device points. Fall back to iPhone logical defaults before the first frame.
+  const pointWidth =
+    frame && frame.pointWidth > 0
+      ? frame.pointWidth
+      : frame && frame.width > 0
+        ? Math.max(1, Math.round(frame.width / 2))
+        : 390
+  const pointHeight =
+    frame && frame.pointHeight > 0
+      ? frame.pointHeight
+      : frame && frame.height > 0
+        ? Math.max(1, Math.round(frame.height / 2))
+        : 844
+  return {
+    udid,
+    pointWidth,
+    pointHeight,
+    ...(frame && frame.width > 0 ? { width: frame.width } : {}),
+    ...(frame && frame.height > 0 ? { height: frame.height } : {})
+  }
+}
 const simulatorToolExecutors = createSimulatorToolExecutors({
   hostControl: simulatorHostControl,
   controllerLease: simulatorControllerLease,
-  idb: simulatorIdbClient
+  idb: simulatorIdbClient,
+  getActuationTarget: simulatorActuationTargetForChat
 })
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
   getControlStatus: (chatId) => {
@@ -4108,17 +4136,7 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
   },
   hasControllerLease: (chatId) => Boolean(simulatorControllerLease.peek(chatId)),
   idb: simulatorIdbClient,
-  getActuationTarget: (chatId) => {
-    const session = simulatorSessionStore.get(chatId)
-    const udid = session?.udid || session?.lastFrame?.udid
-    if (!udid) return null
-    const frame = session?.lastFrame
-    // Prefer last screenshot dimensions; fall back to iPhone logical defaults so
-    // idb can drive after boot before the first successful frame lands.
-    const width = frame && frame.width > 0 ? frame.width : 390
-    const height = frame && frame.height > 0 ? frame.height : 844
-    return { udid, width, height }
-  }
+  getActuationTarget: simulatorActuationTargetForChat
 })
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
