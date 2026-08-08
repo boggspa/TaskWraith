@@ -208,6 +208,24 @@ describe('provider palette contrast', () => {
     }
   })
 
+  it('keeps first-class seat hues on the Participants reachable chip strip', () => {
+    for (const provider of [
+      'codex',
+      'claude',
+      'gemini',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama',
+      'antigravity',
+      'pi',
+      'mistral',
+      'deepseek'
+    ]) {
+      expect(transcriptCss).toContain(`.participant-health-chip.provider-${provider}`)
+    }
+  })
+
   it('keeps every static swatch AA-readable on pure white and pure black', () => {
     for (const [provider, hex] of Object.entries(STATIC_PROVIDER_COLORS)) {
       expect(contrastAgainstWhite(hex), `${provider} on white`).toBeGreaterThanOrEqual(4.5)
