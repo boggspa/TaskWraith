@@ -4,7 +4,8 @@ import {
   isSimulatorMcpToolName,
   SIMULATOR_MCP_TOOL_NAMES
 } from './SimulatorToolExecutors'
-import type { SimulatorHostService } from '../simulator/SimulatorHostService'
+import type { SimulatorHostControl } from '../simulator/SimulatorHostControl'
+import { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
 import type { SimulatorCapabilityStatus } from '../../shared/simulatorCanvas'
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import { MCP_AUTO_ALLOWED_TOOLS } from './McpAutoAllowedTools'
@@ -25,15 +26,23 @@ const statusFixture: SimulatorCapabilityStatus = {
   docsUrl: 'https://developer.apple.com/xcode/'
 }
 
-function fakeHost(overrides: Partial<SimulatorHostService> = {}): SimulatorHostService {
+const runCtx = { appChatId: 'chat-1', appRunId: 'run-1', participantId: 'seat-a' }
+
+function fakeHost(
+  overrides: Partial<SimulatorHostControl> = {}
+): Pick<
+  SimulatorHostControl,
+  'status' | 'openSimulatorApp' | 'boot' | 'install' | 'launch' | 'terminate' | 'screenshot'
+> {
+  const status = {
+    ...statusFixture,
+    simulatorAppRunning: false,
+    ownedByUs: false,
+    ownedPid: null
+  }
   return {
-    status: vi.fn(async () => statusFixture),
-    openSimulatorApp: vi.fn(async () => ({ ok: true, status: statusFixture })),
-    listDevices: vi.fn(async () => ({
-      ok: true,
-      devices: statusFixture.availableDevices,
-      status: statusFixture
-    })),
+    status: vi.fn(async () => status),
+    openSimulatorApp: vi.fn(async () => ({ ok: true, status })),
     boot: vi.fn(async (udid: string) => ({ ok: true, udid })),
     install: vi.fn(async (udid: string) => ({ ok: true, udid })),
     launch: vi.fn(async (udid: string) => ({ ok: true, udid })),
@@ -49,9 +58,11 @@ function fakeHost(overrides: Partial<SimulatorHostService> = {}): SimulatorHostS
         udid
       }
     })),
-    getOwnedSimulatorPid: vi.fn(() => null),
     ...overrides
-  } as unknown as SimulatorHostService
+  } as Pick<
+    SimulatorHostControl,
+    'status' | 'openSimulatorApp' | 'boot' | 'install' | 'launch' | 'terminate' | 'screenshot'
+  >
 }
 
 describe('SimulatorToolExecutors', () => {
@@ -63,8 +74,11 @@ describe('SimulatorToolExecutors', () => {
   })
 
   it('simulator_status returns host.status() without approval taxonomy service', async () => {
-    const host = fakeHost()
-    const { executeSimulatorTool } = createSimulatorToolExecutors(host)
+    const hostControl = fakeHost()
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl,
+      controllerLease: new SimulatorControllerLease()
+    })
     const result = await executeSimulatorTool('simulator_status', {}, {}, 'claude')
     expect(result.isError).toBeFalsy()
     expect(result.structuredContent).toMatchObject({
@@ -72,26 +86,40 @@ describe('SimulatorToolExecutors', () => {
       tool: 'simulator_status',
       status: statusFixture
     })
-    expect(host.status).toHaveBeenCalledOnce()
+    expect(hostControl.status).toHaveBeenCalledOnce()
     expect(TASKWRAITH_TOOL_ACTIONS.simulator_status.service).toBe('mcpTools')
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('simulator_status')).toBe(true)
   })
 
-  it('simulator_open / boot / install / launch / terminate route to the host', async () => {
-    const host = fakeHost()
-    const { executeSimulatorTool } = createSimulatorToolExecutors(host)
+  it('simulator_open / boot / install / launch / terminate require run context + lease', async () => {
+    const hostControl = fakeHost()
+    const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-run' })
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl,
+      controllerLease
+    })
     const udid = '11111111-1111-1111-1111-111111111111'
-    expect((await executeSimulatorTool('simulator_open', {}, {}, 'codex')).isError).toBeFalsy()
-    expect(host.openSimulatorApp).toHaveBeenCalledOnce()
+
+    expect((await executeSimulatorTool('simulator_open', {}, {}, 'codex')).isError).toBe(true)
+    expect(hostControl.openSimulatorApp).not.toHaveBeenCalled()
+
     expect(
-      (await executeSimulatorTool('simulator_boot', { udid }, {}, 'codex')).structuredContent
+      (await executeSimulatorTool('simulator_open', {}, runCtx, 'codex')).isError
+    ).toBeFalsy()
+    expect(hostControl.openSimulatorApp).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      controllerTokenId: 'tok-run'
+    })
+
+    expect(
+      (await executeSimulatorTool('simulator_boot', { udid }, runCtx, 'codex')).structuredContent
     ).toMatchObject({ ok: true, udid })
     expect(
       (
         await executeSimulatorTool(
           'simulator_install',
           { udid, appPath: '/tmp/Demo.app' },
-          {},
+          runCtx,
           'codex'
         )
       ).structuredContent
@@ -101,7 +129,7 @@ describe('SimulatorToolExecutors', () => {
         await executeSimulatorTool(
           'simulator_launch',
           { udid, bundleId: 'com.example.Demo' },
-          {},
+          runCtx,
           'codex'
         )
       ).structuredContent
@@ -111,7 +139,7 @@ describe('SimulatorToolExecutors', () => {
         await executeSimulatorTool(
           'simulator_terminate',
           { udid, bundleId: 'com.example.Demo' },
-          {},
+          runCtx,
           'codex'
         )
       ).structuredContent
@@ -128,13 +156,35 @@ describe('SimulatorToolExecutors', () => {
     }
   })
 
+  it('fails when another run already holds the controller', async () => {
+    const hostControl = fakeHost()
+    const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-1' })
+    expect(controllerLease.mint({ chatId: 'chat-1', runId: 'run-holder' }).ok).toBe(true)
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl,
+      controllerLease
+    })
+    const result = await executeSimulatorTool(
+      'simulator_boot',
+      { udid: '11111111-1111-1111-1111-111111111111' },
+      { appChatId: 'chat-1', appRunId: 'run-other' },
+      'codex'
+    )
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error || '')).toMatch(/another run/i)
+    expect(hostControl.boot).not.toHaveBeenCalled()
+  })
+
   it('simulator_screenshot returns an image block and keeps base64 out of structuredContent', async () => {
-    const host = fakeHost()
-    const { executeSimulatorTool } = createSimulatorToolExecutors(host)
+    const hostControl = fakeHost()
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl,
+      controllerLease: new SimulatorControllerLease()
+    })
     const result = await executeSimulatorTool(
       'simulator_screenshot',
       { udid: '11111111-1111-1111-1111-111111111111' },
-      {},
+      runCtx,
       'claude'
     )
     expect(result.isError).toBeFalsy()
@@ -151,17 +201,21 @@ describe('SimulatorToolExecutors', () => {
   })
 
   it('requires udid / appPath / bundleId before calling the host', async () => {
-    const host = fakeHost()
-    const { executeSimulatorTool } = createSimulatorToolExecutors(host)
-    expect((await executeSimulatorTool('simulator_boot', {}, {}, 'claude')).isError).toBe(true)
-    expect(host.boot).not.toHaveBeenCalled()
+    const hostControl = fakeHost()
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl,
+      controllerLease: new SimulatorControllerLease()
+    })
+    expect((await executeSimulatorTool('simulator_boot', {}, runCtx, 'claude')).isError).toBe(true)
+    expect(hostControl.boot).not.toHaveBeenCalled()
     expect(
-      (await executeSimulatorTool('simulator_install', { udid: 'booted' }, {}, 'claude')).isError
+      (await executeSimulatorTool('simulator_install', { udid: 'booted' }, runCtx, 'claude'))
+        .isError
     ).toBe(true)
-    expect(host.install).not.toHaveBeenCalled()
+    expect(hostControl.install).not.toHaveBeenCalled()
     expect(
-      (await executeSimulatorTool('simulator_launch', { udid: 'booted' }, {}, 'claude')).isError
+      (await executeSimulatorTool('simulator_launch', { udid: 'booted' }, runCtx, 'claude')).isError
     ).toBe(true)
-    expect(host.launch).not.toHaveBeenCalled()
+    expect(hostControl.launch).not.toHaveBeenCalled()
   })
 })
