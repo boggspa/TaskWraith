@@ -63,8 +63,7 @@ import type { OllamaPromptIntent } from './OllamaPromptIntent'
 import {
   appendOllamaStickyAskRemnant,
   boundOllamaStickyAskExcerpt,
-  extractOllamaStickyAskText,
-  OLLAMA_STICKY_ASK_MAX_CHARS
+  extractOllamaStickyAskText
 } from './OllamaStickyAsk'
 
 export {
