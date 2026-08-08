@@ -13,6 +13,9 @@ import type {
   ProviderId,
   ToolActivity
 } from '../../../main/store/types'
+
+/** Full chat or list-summary row — summary hydration stamps `lastRun` when `runs` is empty. */
+type CloseoutChildChat = ChatRecord & { lastRun?: ChatRun }
 import { computeGoalRuntimeTiming } from '../../../main/GoalState'
 import {
   TASKWRAITH_CLOSEOUT_KIND,
@@ -70,7 +73,7 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   aiSummary?: CloseoutAiSummary
   fileChanges?: CloseoutFileChange[]
   /** Optional live children — status enrichment without waiting on return cards. */
-  childChats?: ChatRecord[]
+  childChats?: CloseoutChildChat[]
   now?: Date
 }): ChatMessage {
   const { chat, run, completedAt, exitCode } = input
@@ -146,7 +149,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   aiSummary?: CloseoutAiSummary
   fileChanges?: CloseoutFileChange[]
   /** Optional live children — status enrichment without waiting on return cards. */
-  childChats?: ChatRecord[]
+  childChats?: CloseoutChildChat[]
   now?: Date
 }): ChatMessage {
   const { chat, round, completedAt } = input
@@ -1602,7 +1605,7 @@ export function collectCloseoutSubagentDelegations(input: {
   messages: ChatMessage[]
   parentRunIds: ReadonlySet<string>
   window?: { startedAt: string; completedAt: string }
-  childChats?: ChatRecord[]
+  childChats?: CloseoutChildChat[]
 }): CloseoutSubagentDelegation[] {
   const rows = new Map<string, CloseoutSubagentDelegation>()
   const childById = new Map(
@@ -1760,7 +1763,7 @@ function messageInSubagentCloseoutScope(
 function resolveCloseoutSubagentStatus(input: {
   isReturn: boolean
   outcome: unknown
-  child?: ChatRecord
+  child?: CloseoutChildChat
   fallback: CloseoutSubagentDelegationStatus
 }): CloseoutSubagentDelegationStatus {
   // Durable terminal signals first — a return card (or resultReturnedAt) must
@@ -1782,7 +1785,7 @@ function resolveCloseoutSubagentStatus(input: {
   return input.fallback
 }
 
-function statusFromChildChat(child: ChatRecord): CloseoutSubagentDelegationStatus | null {
+function statusFromChildChat(child: CloseoutChildChat): CloseoutSubagentDelegationStatus | null {
   if (child.delegationContext?.dispatchError) return 'failed'
   if (child.delegationContext?.resultReturnedAt) return 'returned'
   // List-summary hydration often leaves `runs: []` but stamps `lastRun`.

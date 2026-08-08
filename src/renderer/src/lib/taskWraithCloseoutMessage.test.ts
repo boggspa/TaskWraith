@@ -15,7 +15,9 @@ import {
   upsertTaskWraithCloseoutMessage
 } from './taskWraithCloseoutMessage'
 
-function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
+function chat(overrides: Partial<ChatRecord> & { lastRun?: ChatRun } = {}): ChatRecord & {
+  lastRun?: ChatRun
+} {
   return {
     appChatId: 'chat-1',
     title: 'Chat',
@@ -26,7 +28,7 @@ function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides
-  } as ChatRecord
+  } as ChatRecord & { lastRun?: ChatRun }
 }
 
 function message(
@@ -1613,7 +1615,7 @@ Next action:
                 subThreadId: 'child-a',
                 subThreadProvider: 'codex',
                 subThreadTitle: 'Worker A',
-                subThreadOutcome: 'success',
+                subThreadOutcome: 'done',
                 parallelResultWaveId: run.runId
               }
             ),
@@ -1719,10 +1721,18 @@ Next action:
     const round: EnsembleRoundState = {
       roundId: 'round-delegations',
       status: 'completed',
+      prompt: 'Delegate inside this round',
       startedAt: '2026-08-08T12:00:00.000Z',
       endedAt: '2026-08-08T12:02:00.000Z',
       participants: [
-        { participantId: 'p1', status: 'answered', order: 1, runId: 'round-run-1' }
+        {
+          participantId: 'p1',
+          provider: 'claude',
+          role: 'Worker',
+          status: 'answered',
+          order: 1,
+          runId: 'round-run-1'
+        }
       ]
     }
     const closeout = buildTaskWraithRoundCloseoutMessage({
@@ -1845,7 +1855,7 @@ Next action:
               subThreadId: 'wave-child',
               subThreadProvider: 'codex',
               subThreadTitle: 'Wave child',
-              subThreadOutcome: 'success',
+              subThreadOutcome: 'done',
               parallelResultWaveId: waveId
             }),
             timestamp: '2026-08-08T12:01:10.000Z'
@@ -1924,7 +1934,7 @@ Next action:
               subThreadId: 'child-late',
               subThreadProvider: 'codex',
               subThreadTitle: 'Late child',
-              subThreadOutcome: 'success',
+              subThreadOutcome: 'done',
               parallelResultWaveId: run.runId
             }),
             timestamp: '2026-08-08T12:02:00.000Z'
@@ -2035,7 +2045,7 @@ Next action:
             subThreadId: 'child-summary',
             subThreadProvider: 'codex',
             subThreadTitle: 'Summary child',
-            subThreadOutcome: 'success',
+            subThreadOutcome: 'done',
             parallelResultWaveId: 'run-summary'
           }),
           timestamp: '2026-08-08T12:00:40.000Z'
@@ -2073,7 +2083,7 @@ Next action:
             subThreadId: 'child-race',
             subThreadProvider: 'codex',
             subThreadTitle: 'Race child',
-            subThreadOutcome: 'success',
+            subThreadOutcome: 'done',
             parallelResultWaveId: 'run-race'
           }),
           timestamp: '2026-08-08T12:02:00.000Z'

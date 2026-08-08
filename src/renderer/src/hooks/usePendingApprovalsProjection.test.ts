@@ -79,6 +79,7 @@ function projection(
     workspaces: [],
     threads: [],
     providers: [],
+    questions: [],
     approvals,
     usage: { availability: 'unavailable' },
     warningCodes: [],

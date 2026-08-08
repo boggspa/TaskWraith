@@ -58,7 +58,7 @@ const lateReturn: ChatMessage = {
     subThreadId: 'child-a',
     subThreadProvider: 'codex',
     subThreadTitle: 'Worker A',
-    subThreadOutcome: 'success',
+    subThreadOutcome: 'done',
     parallelResultWaveId: runId
   }),
   // After parent completedAt — still affiliated via wave/join stamps.
