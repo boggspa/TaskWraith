@@ -4,8 +4,23 @@
  */
 import { execFile } from 'child_process'
 import { findExecutableOnHost } from '../HostToolResolver'
+import {
+  isSimulatorHardwareButton,
+  isSimulatorRotateDirection,
+  type SimulatorHardwareButton,
+  type SimulatorInspectResult,
+  type SimulatorRotateDirection
+} from '../../shared/simulatorCanvas'
 
 const IDB_TIMEOUT_MS = 60_000
+/** Truncate AX dumps before they swamp MCP/transcript budgets. */
+const DESCRIBE_ALL_MAX_CHARS = 200_000
+const DESCRIBE_ALL_MAX_NODES = 500
+
+const ROTATE_DIRECTION_TO_IDB: Record<SimulatorRotateDirection, string> = {
+  clockwise: 'CLOCKWISE',
+  counterclockwise: 'COUNTER_CLOCKWISE'
+}
 
 export type IdbExecRunner = (
   binary: string,
@@ -83,6 +98,78 @@ function parseListTargets(stdout: string): IdbTarget[] {
     })
   }
   return targets
+}
+
+function tryParseJson(stdout: string): unknown | undefined {
+  const trimmed = stdout.trim()
+  if (!trimmed) return undefined
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function countTreeNodes(value: unknown, budget: number): number {
+  if (budget <= 0) return 0
+  if (value === null || typeof value !== 'object') return 1
+  if (Array.isArray(value)) {
+    let count = 1
+    for (const child of value) {
+      count += countTreeNodes(child, budget - count)
+      if (count >= budget) return count
+    }
+    return count
+  }
+  let count = 1
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    count += countTreeNodes(child, budget - count)
+    if (count >= budget) return count
+  }
+  return count
+}
+
+function truncateAxTree(tree: unknown): { tree: unknown; truncated: boolean } {
+  const serialized = JSON.stringify(tree)
+  if (serialized.length > DESCRIBE_ALL_MAX_CHARS) {
+    if (Array.isArray(tree)) {
+      const kept: unknown[] = []
+      let chars = 2 // []
+      for (const node of tree) {
+        const piece = JSON.stringify(node)
+        const next = chars + piece.length + (kept.length > 0 ? 1 : 0)
+        if (next > DESCRIBE_ALL_MAX_CHARS || kept.length >= DESCRIBE_ALL_MAX_NODES) {
+          return { tree: kept, truncated: true }
+        }
+        kept.push(node)
+        chars = next
+      }
+      return { tree: kept, truncated: true }
+    }
+    return {
+      tree: {
+        truncated: true,
+        preview: serialized.slice(0, DESCRIBE_ALL_MAX_CHARS),
+        originalChars: serialized.length
+      },
+      truncated: true
+    }
+  }
+  const nodes = countTreeNodes(tree, DESCRIBE_ALL_MAX_NODES + 1)
+  if (nodes > DESCRIBE_ALL_MAX_NODES && Array.isArray(tree)) {
+    return { tree: tree.slice(0, DESCRIBE_ALL_MAX_NODES), truncated: true }
+  }
+  if (nodes > DESCRIBE_ALL_MAX_NODES) {
+    return {
+      tree: {
+        truncated: true,
+        preview: serialized.slice(0, Math.min(serialized.length, DESCRIBE_ALL_MAX_CHARS)),
+        originalNodes: nodes
+      },
+      truncated: true
+    }
+  }
+  return { tree, truncated: false }
 }
 
 export class IdbClient {
@@ -196,5 +283,80 @@ export class IdbClient {
         udid
       )
     )
+  }
+
+  /**
+   * Accessibility tree dump via `idb ui describe-all`. Prefer JSON stdout;
+   * retry with `--json` when the first parse fails. Large trees are truncated.
+   */
+  async describeAll(udid: string): Promise<SimulatorInspectResult> {
+    const id = typeof udid === 'string' ? udid.trim() : ''
+    if (!id) {
+      return { ok: false, error: 'idb describe-all requires a udid.' }
+    }
+    const first = await this.exec(withUdid(['ui', 'describe-all'], id))
+    let parsed = first.ok ? tryParseJson(first.stdout) : undefined
+    if (parsed === undefined) {
+      const retry = await this.exec(withUdid(['ui', 'describe-all', '--json'], id))
+      if (!retry.ok) {
+        return {
+          ok: false,
+          error:
+            retry.error ||
+            first.error ||
+            'idb ui describe-all failed (stdout was not JSON).'
+        }
+      }
+      parsed = tryParseJson(retry.stdout)
+      if (parsed === undefined) {
+        return {
+          ok: false,
+          error: 'idb ui describe-all returned non-JSON output.'
+        }
+      }
+    }
+    const { tree, truncated } = truncateAxTree(parsed)
+    return { ok: true, tree, truncated }
+  }
+
+  async hardwareButton(udid: string, button: SimulatorHardwareButton): Promise<IdbExecResult> {
+    if (!isSimulatorHardwareButton(button)) {
+      return {
+        ok: false,
+        stdout: '',
+        stderr: '',
+        error:
+          'idb ui button requires an allowlisted HID name (APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI).'
+      }
+    }
+    const id = typeof udid === 'string' ? udid.trim() : ''
+    if (!id) {
+      return { ok: false, stdout: '', stderr: '', error: 'idb ui button requires a udid.' }
+    }
+    return this.exec(withUdid(['ui', 'button', button], id))
+  }
+
+  /**
+   * Relative rotate via `idb ui rotate CLOCKWISE|COUNTER_CLOCKWISE`.
+   * Some idb builds only accept absolute orientations (PORTRAIT/LANDSCAPE_*);
+   * those fail with a clear companion/CLI error rather than a silent fallback.
+   */
+  async rotate(
+    udid: string,
+    direction: SimulatorRotateDirection
+  ): Promise<IdbExecResult> {
+    if (!isSimulatorRotateDirection(direction)) {
+      return {
+        ok: false,
+        stdout: '',
+        stderr: '',
+        error: 'idb ui rotate requires an allowlisted direction (clockwise|counterclockwise).'
+      }
+    }
+    const id = typeof udid === 'string' ? udid.trim() : ''
+    if (!id) {
+      return { ok: false, stdout: '', stderr: '', error: 'idb ui rotate requires a udid.' }
+    }
+    return this.exec(withUdid(['ui', 'rotate', ROTATE_DIRECTION_TO_IDB[direction]], id))
   }
 }

@@ -43,9 +43,9 @@ export const SIMULATOR_TOOLS: readonly SimulatorToolEntry[] = [
     companionBinaryName: 'idb_companion',
     label: 'idb (iOS Development Bridge)',
     purpose:
-      'Drives tap, type, and swipe on a booted iOS Simulator for Simulator Canvas View & Control.',
+      'Drives tap, type, swipe, hardware buttons, rotate, and AX inspect on a booted iOS Simulator for Simulator Canvas View & Control.',
     missingConsequence:
-      'Without idb, Simulator Canvas stays preview-only: simctl screenshots still work, but human bezel gestures are recorded and not actuated.',
+      'Without idb, Simulator Canvas stays preview-only: simctl screenshots still work, but human bezel gestures and hardware controls are recorded and not actuated.',
     source: 'Meta / Facebook',
     docsUrl: SIMULATOR_TOOL_DOCS_URL,
     installCommands: [

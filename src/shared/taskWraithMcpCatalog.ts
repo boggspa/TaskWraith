@@ -19,7 +19,7 @@ export const MESH_SCENE_MCP_TOOL_NAMES = [
   'mesh_scene_delete'
 ] as const
 
-/** Simulator Canvas MCP surface — status is auto-allowed; the rest gate on simulatorCanvas. */
+/** Simulator Canvas MCP surface — status/inspect are auto-allowed; the rest gate on simulatorCanvas. */
 export const SIMULATOR_MCP_TOOL_NAMES = [
   'simulator_status',
   'simulator_open',
@@ -27,7 +27,10 @@ export const SIMULATOR_MCP_TOOL_NAMES = [
   'simulator_install',
   'simulator_launch',
   'simulator_screenshot',
-  'simulator_terminate'
+  'simulator_terminate',
+  'simulator_inspect',
+  'simulator_button',
+  'simulator_rotate'
 ] as const
 
 /** Mutating simulator control tools (approval-gated via simulatorCanvas). */
@@ -37,7 +40,9 @@ export const SIMULATOR_MUTATING_MCP_TOOL_NAMES = [
   'simulator_install',
   'simulator_launch',
   'simulator_screenshot',
-  'simulator_terminate'
+  'simulator_terminate',
+  'simulator_button',
+  'simulator_rotate'
 ] as const
 
 export const TASKWRAITH_MCP_TOOLS = [
@@ -280,11 +285,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // capability_search; a fresh mesh-authorised participant can receive it
   // directly. Catalog visibility is never itself a grant.
   ...MESH_SCENE_MCP_TOOL_NAMES,
-  // Simulator Canvas — TaskWraith-owned Simulator.app / simctl host. Status is
-  // auto-allowed capability probe; open/boot/install/launch/screenshot/terminate
-  // gate on the dedicated simulatorCanvas service (Accept Edits allow; Ask/Plan
-  // ask with grant-immunity under Plan). Catalog visibility is never itself a
-  // grant.
+  // Simulator Canvas — TaskWraith-owned Simulator.app / simctl / idb host.
+  // Status + inspect are auto-allowed observation; open/boot/install/launch/
+  // screenshot/terminate/button/rotate gate on the dedicated simulatorCanvas
+  // service (Accept Edits allow; Ask/Plan ask with grant-immunity under Plan).
+  // Catalog visibility is never itself a grant.
   ...SIMULATOR_MCP_TOOL_NAMES,
   // Agent-accessed appearance. A DATA channel over an allowlist of typed theme
   // tokens (see shared/agentThemeTokens) — never CSS text, never a selector, and

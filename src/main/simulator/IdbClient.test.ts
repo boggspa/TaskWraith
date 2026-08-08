@@ -140,4 +140,113 @@ describe('IdbClient', () => {
       error: 'idb ui failed: companion down'
     })
   })
+
+  it('describeAll prefers parsed JSON from ui describe-all and truncates large trees', async () => {
+    const calls: string[][] = []
+    const nodes = Array.from({ length: 520 }, (_, i) => ({ AXLabel: `n${i}` }))
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        calls.push([...args])
+        return { stdout: JSON.stringify(nodes), stderr: '' }
+      }
+    })
+    const described = await client.describeAll('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    expect(calls[0]).toEqual([
+      'ui',
+      'describe-all',
+      '--udid',
+      'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
+    ])
+    expect(described.ok).toBe(true)
+    expect(described.truncated).toBe(true)
+    expect(Array.isArray(described.tree)).toBe(true)
+    expect((described.tree as unknown[]).length).toBeLessThanOrEqual(500)
+  })
+
+  it('describeAll retries with --json when the first stdout is not JSON', async () => {
+    const calls: string[][] = []
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        calls.push([...args])
+        if (args.includes('--json')) {
+          return { stdout: JSON.stringify([{ AXLabel: 'Home' }]), stderr: '' }
+        }
+        return { stdout: 'not-json', stderr: '' }
+      }
+    })
+    const described = await client.describeAll('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    expect(calls).toEqual([
+      ['ui', 'describe-all', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['ui', 'describe-all', '--json', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
+    ])
+    expect(described).toEqual({
+      ok: true,
+      tree: [{ AXLabel: 'Home' }],
+      truncated: false
+    })
+  })
+
+  it('hardwareButton allowlists HID names and emits ui button argv', async () => {
+    const calls: string[][] = []
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        calls.push([...args])
+        return { stdout: '', stderr: '' }
+      }
+    })
+    await expect(
+      client.hardwareButton('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'HOME')
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      client.hardwareButton('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'LOCK')
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      client.hardwareButton('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'SIDE_BUTTON')
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      client.hardwareButton('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'not-a-button' as never)
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/allowlisted|invalid|button/i)
+    })
+    expect(calls).toEqual([
+      ['ui', 'button', 'HOME', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['ui', 'button', 'LOCK', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['ui', 'button', 'SIDE_BUTTON', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
+    ])
+  })
+
+  it('rotate maps clockwise/counterclockwise to ui rotate argv', async () => {
+    const calls: string[][] = []
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        calls.push([...args])
+        return { stdout: '', stderr: '' }
+      }
+    })
+    await expect(
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'clockwise')
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'counterclockwise')
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'sideways' as never)
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/allowlisted|invalid|direction|rotate/i)
+    })
+    expect(calls).toEqual([
+      ['ui', 'rotate', 'CLOCKWISE', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['ui', 'rotate', 'COUNTER_CLOCKWISE', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
+    ])
+  })
 })

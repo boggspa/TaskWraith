@@ -215,9 +215,11 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'canvas_navigate',
         'delegate_to_subthread',
         'simulator_boot',
+        'simulator_button',
         'simulator_install',
         'simulator_launch',
         'simulator_open',
+        'simulator_rotate',
         'simulator_screenshot',
         'simulator_terminate'
       ].sort()
@@ -232,7 +234,9 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'simulator_install',
       'simulator_launch',
       'simulator_screenshot',
-      'simulator_terminate'
+      'simulator_terminate',
+      'simulator_button',
+      'simulator_rotate'
     ] as const) {
       expect(TASKWRAITH_TOOL_ACTIONS[tool].service).toBe('simulatorCanvas')
     }
@@ -241,17 +245,21 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
-  it('auto-allows simulator_status and keeps mutating simulator tools gated', () => {
+  it('auto-allows simulator_status / simulator_inspect and keeps mutating simulator tools gated', () => {
     const autoAllowed = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
     expect(autoAllowed.has('simulator_status')).toBe(true)
+    expect(autoAllowed.has('simulator_inspect')).toBe(true)
     expect(TASKWRAITH_TOOL_ACTIONS.simulator_status.service).toBe('mcpTools')
+    expect(TASKWRAITH_TOOL_ACTIONS.simulator_inspect.service).toBe('mcpTools')
     for (const tool of [
       'simulator_open',
       'simulator_boot',
       'simulator_install',
       'simulator_launch',
       'simulator_screenshot',
-      'simulator_terminate'
+      'simulator_terminate',
+      'simulator_button',
+      'simulator_rotate'
     ] as const) {
       expect(autoAllowed.has(tool)).toBe(false)
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)

@@ -4095,7 +4095,8 @@ const simulatorHostControl = new SimulatorHostControl({
 })
 const simulatorToolExecutors = createSimulatorToolExecutors({
   hostControl: simulatorHostControl,
-  controllerLease: simulatorControllerLease
+  controllerLease: simulatorControllerLease,
+  idb: simulatorIdbClient
 })
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
   getControlStatus: (chatId) => {

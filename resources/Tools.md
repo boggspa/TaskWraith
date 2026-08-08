@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 192 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 195 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1443,6 +1443,30 @@ Terminate a running app on a simulator by bundle id. Gated via the Simulator Can
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: udid, bundleId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_terminate","arguments":{"udid":"text","bundleId":"text"}}}}`
+
+## simulator_inspect
+
+Dump a truncated accessibility tree for a simulator via `idb ui describe-all` (JSON). Observation-only; auto-allowed. Requires idb on PATH. Large trees are truncated (~200KB / ~500 nodes) with `truncated: true`.
+
+- Access: read-only (no approval needed)
+- Required args: udid
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_inspect","arguments":{"udid":"text"}}}}`
+
+## simulator_button
+
+Press a hardware button on a simulator via `idb ui button` (HOME, LOCK, SIDE_BUTTON, SIRI, APPLE_PAY). Requires an active run controller lease and idb. Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid, button
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_button","arguments":{"udid":"text","button":"text"}}}}`
+
+## simulator_rotate
+
+Rotate a simulator via `idb ui rotate CLOCKWISE|COUNTER_CLOCKWISE`. Requires an active run controller lease and idb. Some idb builds only accept absolute orientations — failures return a clear error. Gated via the Simulator Canvas service.
+
+- Access: governed by your run permission role
+- Required args: udid, direction
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_rotate","arguments":{"udid":"text","direction":"text"}}}}`
 
 ## theme_tokens_get
 

@@ -1906,6 +1906,31 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'application-resource'
   ),
+  // AX dump is observation-only (truncated tree); auto-allowed like status.
+  simulator_inspect: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'simulator-canvas',
+    'none',
+    'none'
+  ),
+  simulator_button: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  simulator_rotate: tool(
+    'orchestration',
+    'simulatorCanvas',
+    'application.mutate',
+    'simulator-canvas',
+    'host-state',
+    'application-resource'
+  ),
   theme_tokens_get: tool(
     'workspace_read',
     'mcpTools',

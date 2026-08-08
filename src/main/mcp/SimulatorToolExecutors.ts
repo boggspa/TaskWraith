@@ -6,7 +6,12 @@ import {
 } from '../../shared/taskWraithMcpCatalog'
 import type { SimulatorHostControl } from '../simulator/SimulatorHostControl'
 import type { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
+import type { IdbClient } from '../simulator/IdbClient'
 import type { SimulatorHostActionResult } from '../../shared/simulatorCanvas'
+import {
+  isSimulatorHardwareButton,
+  isSimulatorRotateDirection
+} from '../../shared/simulatorCanvas'
 
 /** Main-side alias retained for MCP dispatch callers. The shared catalogue owns membership. */
 export const SIMULATOR_MCP_TOOL_NAMES_MAIN = SIMULATOR_MCP_TOOL_NAMES
@@ -22,7 +27,9 @@ const SIMULATOR_MUTATING_TOOLS: ReadonlySet<SimulatorMcpToolName> = new Set([
   'simulator_boot',
   'simulator_install',
   'simulator_launch',
-  'simulator_terminate'
+  'simulator_terminate',
+  'simulator_button',
+  'simulator_rotate'
 ])
 
 export function isSimulatorMcpToolName(value: string): value is SimulatorMcpToolName {
@@ -51,6 +58,8 @@ export interface SimulatorToolExecutorDeps {
     'status' | 'openSimulatorApp' | 'boot' | 'install' | 'launch' | 'terminate' | 'screenshot'
   >
   controllerLease: Pick<SimulatorControllerLease, 'mint'>
+  /** Required for inspect / button / rotate (idb argv-array path). */
+  idb: Pick<IdbClient, 'isAvailable' | 'describeAll' | 'hardwareButton' | 'rotate'>
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -128,6 +137,17 @@ function requireRunController(
   }
 }
 
+function requireIdb(
+  toolName: SimulatorMcpToolName,
+  idb: Pick<IdbClient, 'isAvailable'>
+): McpToolExecutionResult | null {
+  if (idb.isAvailable()) return null
+  return fail(
+    toolName,
+    'idb is not available on PATH. Install idb-companion and fb-idb first (see ADVANCED_OPTIONAL_SETUP).'
+  )
+}
+
 /**
  * Factory so this dispatch stays independently testable without Electron.
  * Prefer SimulatorHostControl so mutating verbs enforce the controller lease.
@@ -135,7 +155,7 @@ function requireRunController(
 export function createSimulatorToolExecutors(
   deps: SimulatorToolExecutorDeps
 ): SimulatorToolExecutors {
-  const { hostControl, controllerLease } = deps
+  const { hostControl, controllerLease, idb } = deps
   return {
     async executeSimulatorTool(toolName, rawArgs, context, _parentProvider) {
       const args = asRecord(rawArgs)
@@ -175,6 +195,57 @@ export function createSimulatorToolExecutors(
         if (toolName === 'simulator_terminate') {
           const bundleId = stringValue(args.bundleId, 256)
           return actionResult(toolName, await hostControl.terminate(udid, bundleId, control!))
+        }
+
+        if (toolName === 'simulator_inspect') {
+          const missing = requireIdb(toolName, idb)
+          if (missing) return missing
+          const described = await idb.describeAll(udid)
+          if (!described.ok) {
+            return fail(toolName, described.error || 'simulator_inspect failed.')
+          }
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            udid,
+            tree: described.tree,
+            truncated: Boolean(described.truncated)
+          })
+        }
+
+        if (toolName === 'simulator_button') {
+          const missing = requireIdb(toolName, idb)
+          if (missing) return missing
+          const button = args.button
+          if (!isSimulatorHardwareButton(button)) {
+            return fail(
+              toolName,
+              '`button` must be one of APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI.'
+            )
+          }
+          const pressed = await idb.hardwareButton(udid, button)
+          if (!pressed.ok) {
+            return fail(toolName, pressed.error || 'simulator_button failed.')
+          }
+          return jsonResult({ ok: true, tool: toolName, udid, button })
+        }
+
+        if (toolName === 'simulator_rotate') {
+          const missing = requireIdb(toolName, idb)
+          if (missing) return missing
+          const direction = args.direction
+          if (!isSimulatorRotateDirection(direction)) {
+            return fail(toolName, '`direction` must be clockwise or counterclockwise.')
+          }
+          const rotated = await idb.rotate(udid, direction)
+          if (!rotated.ok) {
+            return fail(
+              toolName,
+              rotated.error ||
+                'simulator_rotate failed. This idb build may only accept absolute orientations (PORTRAIT/LANDSCAPE_*), not relative CLOCKWISE/COUNTER_CLOCKWISE.'
+            )
+          }
+          return jsonResult({ ok: true, tool: toolName, udid, direction })
         }
 
         // simulator_screenshot — chat-readable; no controller required.

@@ -4630,6 +4630,70 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'simulator_inspect',
+      description:
+        'Dump a truncated accessibility tree for a simulator via `idb ui describe-all` (JSON). Observation-only; auto-allowed. Requires idb on PATH. Large trees are truncated (~200KB / ~500 nodes) with `truncated: true`.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID.' }
+        },
+        required: ['udid']
+      }
+    },
+    {
+      name: 'simulator_button',
+      description:
+        'Press a hardware button on a simulator via `idb ui button` (HOME, LOCK, SIDE_BUTTON, SIRI, APPLE_PAY). Requires an active run controller lease and idb. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID.' },
+          button: {
+            type: 'string',
+            enum: ['APPLE_PAY', 'HOME', 'LOCK', 'SIDE_BUTTON', 'SIRI'],
+            description: 'Allowlisted HID button name.'
+          }
+        },
+        required: ['udid', 'button']
+      }
+    },
+    {
+      name: 'simulator_rotate',
+      description:
+        'Rotate a simulator via `idb ui rotate CLOCKWISE|COUNTER_CLOCKWISE`. Requires an active run controller lease and idb. Some idb builds only accept absolute orientations — failures return a clear error. Gated via the Simulator Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: { type: 'string', description: 'Simulator device UDID.' },
+          direction: {
+            type: 'string',
+            enum: ['clockwise', 'counterclockwise'],
+            description: 'Relative rotate direction.'
+          }
+        },
+        required: ['udid', 'direction']
+      }
+    },
+    {
       name: 'tw_recall_find',
       description:
         'Find past runs on OTHER threads to answer "how far did <provider> get with <task> <when> in <workspace>?". Resolves deliberately-vague references (a provider alias, an approximate time like "yesterday ~6pm", a workspace name, a task description) to a ranked, bounded set of candidate runs. Returns the host interpretation, a verdict (one|many|none), and STRUCTURAL candidate metadata only — never prompt or transcript text. Call tw_recall_read with a candidate runId to read how far it got. Read-only. Discovery in your OWN workspace is allowed; other workspaces require user approval. On "many" disambiguate from the metadata or ask the user; on "none" say you could not find it — never guess.',

@@ -174,9 +174,10 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'canvas_sketch_get',
   'canvas_network',
   'canvas_console',
-  // Simulator Canvas capability probe — installed/simctl/booted metadata only.
+  // Simulator Canvas capability probe + truncated AX dump (observation only).
   // Mutating simulator_* verbs stay gated on simulatorCanvas.
   'simulator_status',
+  'simulator_inspect',
   // Thread Introspection read-only verbs — bounded pack metadata / full pack read.
   'tw_introspection_list',
   'tw_introspection_read',

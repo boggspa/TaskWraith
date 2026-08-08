@@ -135,6 +135,43 @@ export interface SimulatorScrollGesture {
   deltaY: number
 }
 
+/** idb `ui button` HID names — strict allowlist for MCP/IPC. */
+export const SIMULATOR_HARDWARE_BUTTONS = [
+  'APPLE_PAY',
+  'HOME',
+  'LOCK',
+  'SIDE_BUTTON',
+  'SIRI'
+] as const
+
+export type SimulatorHardwareButton = (typeof SIMULATOR_HARDWARE_BUTTONS)[number]
+
+/** Relative rotate directions mapped to idb `ui rotate` argv. */
+export const SIMULATOR_ROTATE_DIRECTIONS = ['clockwise', 'counterclockwise'] as const
+
+export type SimulatorRotateDirection = (typeof SIMULATOR_ROTATE_DIRECTIONS)[number]
+
+export function isSimulatorHardwareButton(value: unknown): value is SimulatorHardwareButton {
+  return (
+    typeof value === 'string' &&
+    (SIMULATOR_HARDWARE_BUTTONS as readonly string[]).includes(value)
+  )
+}
+
+export function isSimulatorRotateDirection(value: unknown): value is SimulatorRotateDirection {
+  return (
+    typeof value === 'string' &&
+    (SIMULATOR_ROTATE_DIRECTIONS as readonly string[]).includes(value)
+  )
+}
+
+export interface SimulatorInspectResult {
+  ok: boolean
+  tree?: unknown
+  error?: string
+  truncated?: boolean
+}
+
 export const SIMULATOR_MISSING_MACOS_HINT =
   'Simulator Canvas needs Xcode’s Simulator.app and `xcrun simctl`. Install Xcode from the App Store or developer.apple.com, then open it once so the platforms install.'
 
