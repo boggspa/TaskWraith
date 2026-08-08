@@ -23,6 +23,7 @@
 
 import type { HostMainComposition, HostMainCompositionInput } from './HostMainComposition'
 import type { HostLocalServer, HostLocalServerOptions } from './HostLocalServer'
+import type { HostAuthority } from './HostAuthority'
 import type { AppStoreHostAuthorityHealthProvider } from './AppStoreHostAuthority'
 import type { HostHealthProjection } from '../../shared/hostProtocol'
 
@@ -158,7 +159,12 @@ export function createHostSupervisor(input: HostSupervisorInput): HostSupervisor
       hostId,
       hostVersion,
       session: composition.session,
-      authority: composition.authority,
+      authority: new Proxy(composition.authority as HostAuthority & Record<string | symbol, unknown>, {
+        get(target, prop, receiver) {
+          if (prop === 'exportTwMission') return composition.exportTwMission.bind(composition)
+          return Reflect.get(target, prop, receiver)
+        }
+      }) as unknown as HostAuthority & { exportTwMission: typeof composition.exportTwMission },
       log: log ? (line: string) => log(`[host-supervisor] ${line}`) : undefined,
       now
     })

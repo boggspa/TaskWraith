@@ -65,7 +65,8 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'deltas.since',
   'receipt.lookup',
   'health.get',
-  'command.submit'
+  'command.submit',
+  'twmission.export'
 ] as const
 
 export type HostLocalTransportRequestKind = (typeof HOST_LOCAL_TRANSPORT_REQUEST_KINDS)[number]
@@ -122,6 +123,13 @@ export type HostLocalTransportRequest =
       kind: 'command.submit'
       params: HostCommand
     }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'twmission.export'
+      params: Record<string, never>
+    }
 
 export type HostLocalTransportClientFrame = HostLocalTransportHello | HostLocalTransportRequest
 
@@ -138,6 +146,7 @@ export type HostLocalTransportSuccessResult =
   | { kind: 'receipt.lookup'; receipt: HostCommandReceipt }
   | { kind: 'health.get'; frame: HostHealthFrame }
   | { kind: 'command.submit'; receipt: HostCommandReceipt }
+  | { kind: 'twmission.export'; result: Record<string, unknown> }
 
 export type HostLocalTransportResponse =
   | {
@@ -338,6 +347,9 @@ function decodeSuccessResult(
     case 'command.submit':
       if (!hasHostReceiptShape(value.receipt)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'command.submit', receipt: value.receipt } }
+    case 'twmission.export':
+      if (!isRecord(value.result)) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'twmission.export', result: value.result } }
     default:
       return fail('invalid_payload')
   }
@@ -447,6 +459,19 @@ export function decodeHostLocalTransportClientFrame(
             id: id.value,
             kind: 'command.submit',
             params: value.params
+          }
+        }
+      }
+      case 'twmission.export': {
+        if (!isEmptyParams(value.params)) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'twmission.export',
+            params: {}
           }
         }
       }

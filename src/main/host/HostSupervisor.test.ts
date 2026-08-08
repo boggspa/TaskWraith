@@ -90,12 +90,29 @@ function mockServer(): MockServer & HostLocalServer {
   return server as unknown as MockServer & HostLocalServer
 }
 
+/**
+ * Mock authority built as a class with PROTOTYPE methods so the suite
+ * catches spread-operator facade breaks (spread skips prototype members).
+ * Methods are assigned on the prototype explicitly — NOT arrow fields
+ * (which become own properties and defeat the regression pin).
+ */
+class MockHostAuthority {
+  // placeholder — methods assigned on prototype below
+}
+MockHostAuthority.prototype.snapshot = vi.fn()
+MockHostAuthority.prototype.deltas = vi.fn()
+MockHostAuthority.prototype.command = vi.fn()
+MockHostAuthority.prototype.receipt = vi.fn()
+MockHostAuthority.prototype.health = vi.fn()
+MockHostAuthority.prototype.shutdown = vi.fn()
+
 function mockComposition(): MockComposition & HostMainComposition {
   return {
-    authority: {
-      command: vi.fn(),
-      getHealth: vi.fn()
-    } as unknown as HostAuthority,
+    authority: new MockHostAuthority() as unknown as HostAuthority,
+    exportTwMission: vi.fn().mockResolvedValue({
+      ok: true as const,
+      bundle: { manifest: { hostId: 'test', exportedAt: new Date().toISOString() }, snapshot: {} as Record<string, unknown> }
+    }),
     session: {
       bind: vi.fn(),
       unbind: vi.fn()
@@ -234,6 +251,13 @@ describe('HostSupervisor', () => {
 
       expect(createComposition).toHaveBeenCalledWith(input.compositionInput)
       expect(createServer).toHaveBeenCalledOnce()
+      const serverOptions = createServer.mock.calls[0][0]
+      const auth = serverOptions.authority as Record<string, unknown>
+      // P0 regression pin: all HostAuthority prototype methods MUST survive the facade.
+      // Object spread loses prototype members; Proxy preserves them.
+      for (const method of ['snapshot', 'deltas', 'command', 'receipt', 'health', 'shutdown', 'exportTwMission']) {
+        expect(typeof auth[method]).toBe('function')
+      }
       expect(supervisor.isRunning).toBe(true)
       expect(supervisor.isStopped).toBe(false)
     })

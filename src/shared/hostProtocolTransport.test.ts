@@ -232,6 +232,9 @@ describe('hostProtocolTransport Wave 3.2', () => {
         case 'command.submit':
           frame = { ...base, kind, params: sampleCommand() }
           break
+        case 'twmission.export':
+          frame = { ...base, kind, params: {} }
+          break
         default: {
           const _never: never = kind
           throw new Error(`unhandled ${_never}`)

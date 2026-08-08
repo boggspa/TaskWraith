@@ -699,6 +699,61 @@ describe('HostLocalServer', () => {
       expect(authority.command).toHaveBeenCalledTimes(1)
     })
 
+    it('twmission.export returns host_unavailable when exportTwMission not on authority', async () => {
+      const client = await authAndConnect()
+      client.writeLine(JSON.stringify(makeRequest('twmission.export' as never, 'r7')))
+      const frame = await client.readFrame()
+      expect(frame.type).toBe('response')
+      if (frame.type === 'response') {
+        expect(frame.ok).toBe(false)
+        if (!frame.ok) {
+          expect(frame.error.code).toBe('host_unavailable')
+        }
+      }
+      client.close()
+    })
+
+    it('twmission.export routes to authority.exportTwMission when available', async () => {
+      const exportTwMission = vi.fn().mockResolvedValue({
+        ok: true,
+        bundle: { schemaVersion: 1, protocolVersion: 2, manifest: {}, snapshot: {} },
+        bytes: new Uint8Array([1, 2, 3])
+      })
+      // Rebuild server with the augmented authority for this test only
+      await server.stop()
+      const twServer = new HostLocalServer({
+        userDataPath,
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: { ...authority, exportTwMission } as unknown as HostAuthority & {
+          exportTwMission: typeof exportTwMission
+        },
+        maxClients: 4,
+        now: () => 1754300000000
+      })
+      await twServer.start()
+      const twToken = readFileSync(twServer.tokenPath, 'utf8').trim()
+      const client = await connectClient(twServer.socketPath)
+      client.writeLine(JSON.stringify(makeClientHello(twToken)))
+      const welcome = await client.readFrame()
+      expect(welcome.type).toBe('welcome')
+
+      client.writeLine(JSON.stringify(makeRequest('twmission.export' as never, 'r8')))
+      const frame = await client.readFrame()
+      expect(frame.type).toBe('response')
+      if (frame.type === 'response') {
+        expect(frame.ok).toBe(true)
+        if (frame.ok) {
+          expect(frame.result.kind).toBe('twmission.export')
+          expect(frame.result.result.ok).toBe(true)
+        }
+      }
+      client.close()
+      expect(exportTwMission).toHaveBeenCalledTimes(1)
+      await twServer.stop()
+    })
+
     it('response ids correlate to request ids', async () => {
       const client = await authAndConnect()
       client.writeLine(JSON.stringify(makeRequest('health.get' as never, 'id-42')))

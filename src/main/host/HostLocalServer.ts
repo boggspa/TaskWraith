@@ -71,8 +71,15 @@ export interface HostLocalServerOptions {
   hostVersion: string
   /** Authenticated session binder. */
   session: HostSession
-  /** Transport-neutral Authority facade for request routing. */
-  authority: HostAuthority
+  /** Transport-neutral Authority facade for request routing.
+   *  HostMainComposition extends HostAuthority with optional exportTwMission
+   *  (Wave 5 AC9); the server gates on typeof === 'function'. */
+  authority: HostAuthority & {
+    exportTwMission?: (
+      context: HostAuthorityCallContext,
+      options?: { readonly exportedAt?: string; readonly redactionNotes?: readonly string[] }
+    ) => Promise<{ ok: boolean; error?: string; bundle?: unknown; bytes?: Uint8Array }>
+  }
   /** Platform for path construction; defaults to process.platform. */
   platform?: NodeJS.Platform
   /** Maximum concurrent client connections; defaults to 6. */
@@ -574,6 +581,8 @@ export class HostLocalServer {
         return this.handleHealth(context, frame.id)
       case 'command.submit':
         return this.handleCommand(context, frame.id, frame.params)
+      case 'twmission.export':
+        return this.handleTwMissionExport(context, frame.id)
       default:
         return null
     }
@@ -697,6 +706,40 @@ export class HostLocalServer {
     const success: HostLocalTransportSuccessResult = {
       kind: 'command.submit',
       receipt: result.value
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
+  }
+
+  private async handleTwMissionExport(
+    context: HostAuthorityCallContext,
+    id: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const exportTwMission = this.options.authority.exportTwMission as
+      | ((
+          ctx: HostAuthorityCallContext,
+          opts?: { readonly exportedAt?: string; readonly redactionNotes?: readonly string[] }
+        ) => Promise<{ ok: boolean; error?: unknown; bundle?: unknown; bytes?: unknown }>)
+      | undefined
+    if (typeof exportTwMission !== 'function') {
+      return errorFrame(id, { code: 'host_unavailable' })
+    }
+    const result = await exportTwMission(context)
+    if (!result.ok) {
+      return errorFrame(id, {
+        code: authorityErrorToTransportCode(
+          typeof result.error === 'string' ? 'host_unavailable' : 'host_unavailable'
+        )
+      })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'twmission.export',
+      result: result as Record<string, unknown>
     }
     return {
       type: 'response',
