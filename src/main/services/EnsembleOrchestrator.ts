@@ -27,6 +27,10 @@ import {
   providerLabel,
   resolveForegroundSynthesizerParticipantId
 } from '../EnsemblePrompt'
+import {
+  resolveRunSkillHookContext,
+  type RunSkillHookContext
+} from '../skillsHooks/resolveRunSkillHookContext'
 import { buildProviderShellRoutingPrompt } from '../ProviderShellRoutingPrompt'
 import {
   ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON,
@@ -14648,6 +14652,25 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Progressive skill discovery + SessionStart stdout for ensemble seat prompts.
+   * Global / missing workspace paths return empty (PromptComposition parity).
+   */
+  private async resolveParticipantSkillHookContext(
+    chat: ChatRecord
+  ): Promise<RunSkillHookContext> {
+    const isGlobalRun = (chat.scope ?? 'workspace') === 'global'
+    const workspacePath =
+      !isGlobalRun && typeof chat.workspacePath === 'string' ? chat.workspacePath.trim() : ''
+    if (!workspacePath) return {}
+    return resolveRunSkillHookContext({
+      workspacePath,
+      workspaceId: chat.workspaceId || undefined,
+      isGlobalRun: false,
+      allowWorkspaceHooks: this.deps.getSettings().trustWorkspaceHooks === true
+    })
+  }
+
   private async runRound(
     runtime: ActiveRoundRuntime,
     participants: EnsembleParticipant[],
@@ -15256,6 +15279,7 @@ export class EnsembleOrchestrator {
       const promptChat = latestPromptChat?.ensemble
         ? { ...dispatchChat, messages: latestPromptChat.messages }
         : dispatchChat
+      const skillHookContext = await this.resolveParticipantSkillHookContext(promptChat)
       const promptProjection = buildEnsembleParticipantPromptProjection({
         chat: promptChat,
         config: ensembleConfigForRound,
@@ -15273,7 +15297,8 @@ export class EnsembleOrchestrator {
         slimTurn,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
-        authorityRoutingCheckpoint: run.authorityRoutingCheckpoint
+        authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
+        ...skillHookContext
       })
       const prompt = promptProjection.prompt
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({
@@ -15305,7 +15330,8 @@ export class EnsembleOrchestrator {
               authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
               // Same dispatch, same evidence — reuse the sample rather than
               // re-shelling git for the resume-failure fallback.
-              ...(workspaceChurnStanza ? { workspaceChurnStanza } : {})
+              ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
+              ...skillHookContext
             })
           : undefined
       const resumeFallbackPrompt = resumeFallbackProjection
@@ -17328,6 +17354,11 @@ export class EnsembleOrchestrator {
     // though the fan-out had launched successfully.
     const dispatchStartPromises: Array<Promise<void>> = []
     const acceptedLaneRuns: ActiveParticipantRun[] = []
+    // One shared resolve for the pass — SessionStart fires once per workspace,
+    // and the sync lane mapper below cannot await.
+    const fanoutSkillHookContext = await this.resolveParticipantSkillHookContext(
+      this.deps.getChat(runtime.chatId) || chat
+    )
     const completionPromises = laneRuns.map((run) => {
       const participant = run.participant
       const dispatchChat = this.deps.getChat(runtime.chatId) || chat
@@ -17422,7 +17453,8 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         chatContextTurns,
         dynamicStateSnapshot,
-        effectiveApprovalMode: permissions.approvalMode
+        effectiveApprovalMode: permissions.approvalMode,
+        ...fanoutSkillHookContext
         // No `workspaceChurnStanza` here, deliberately: lanes in this pass run
         // CONCURRENTLY, so a sample taken now would blend siblings' in-flight
         // writes with no way to attribute them, and `isolation: 'worktree'`

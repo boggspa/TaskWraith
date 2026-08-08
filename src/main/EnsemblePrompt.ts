@@ -90,6 +90,10 @@ import {
   type EnsemblePromptTransportProfile
 } from './antigravity/AntigravityEnsemblePromptProfile'
 import { buildOllamaEnsemblePromptCapsuleProjection } from './ollama/OllamaEnsemblePromptProfile'
+import {
+  buildSkillDiscoveryBlock,
+  type SkillDiscoveryEntry
+} from './skills/SkillPromptInjection'
 
 // 1.0.4-AR2 — this ceiling originally mirrored a renderer-local
 // constant. It now comes from shared/ensembleLimits so a renderer/main
@@ -173,6 +177,16 @@ export interface BuildEnsemblePromptInput {
    * omits the section entirely.
    */
   workspaceChurnStanza?: string
+  /**
+   * Progressive skill discovery (name + one-line description). Same field as
+   * PromptComposition; orchestrator resolves via resolveRunSkillHookContext.
+   */
+  skillDiscoverySkills?: readonly SkillDiscoveryEntry[]
+  /**
+   * Capped SessionStart hook stdout for this workspace turn. Same field as
+   * PromptComposition; omitted on global / missing workspace paths.
+   */
+  sessionStartContext?: string | null
 }
 
 /**
@@ -1323,6 +1337,7 @@ export function buildEnsembleParticipantPromptProjection(
         return lines
       })(),
       ...(input.workspaceChurnStanza ? ['', input.workspaceChurnStanza] : []),
+      ...skillHookContextLines(input),
       '',
       'New since your previous turn (tagged transcript):',
       deltaTranscript || '[No new panel activity since your previous turn.]',
@@ -1373,6 +1388,7 @@ export function buildEnsembleParticipantPromptProjection(
     // are round-volatile evidence, and it reads directly above the roster whose
     // members it describes.
     ...(input.workspaceChurnStanza ? ['', input.workspaceChurnStanza] : []),
+    ...skillHookContextLines(input),
     '',
     'Participant roster:',
     roster || '- No other enabled participants.',
@@ -2095,6 +2111,20 @@ function buildSeatCompactionSummaryBlock(participant: EnsembleParticipant): stri
         sanitizeText(summary.text).slice(0, 8_000)
       ].join('\n')
     : ''
+}
+
+/** PromptComposition-parity skill discovery + SessionStart blocks for ensemble seats. */
+function skillHookContextLines(input: BuildEnsemblePromptInput): string[] {
+  const lines: string[] = []
+  const skillBlock = buildSkillDiscoveryBlock(input.skillDiscoverySkills || [])
+  if (skillBlock) {
+    lines.push('', skillBlock)
+  }
+  const sessionStartContext = (input.sessionStartContext || '').trim()
+  if (sessionStartContext) {
+    lines.push('', '## SessionStart hook context', '', sessionStartContext)
+  }
+  return lines
 }
 
 function resolveSeatTranscriptChars(

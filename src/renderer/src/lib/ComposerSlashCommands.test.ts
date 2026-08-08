@@ -583,6 +583,27 @@ describe('ComposerSlashCommands', () => {
         'Do the demo.'
       )
     })
+
+    it('accepts EffectiveSkill-shaped records from live discovery', () => {
+      // Live discovery passes EffectiveSkill rows; only id/name/description/body
+      // are required for the slash mapper.
+      const effectiveLike = {
+        id: 'live-skill',
+        name: 'Live Skill',
+        description: 'From skills IPC',
+        body: 'Apply the live skill.',
+        scope: 'workspace' as const,
+        source: 'workspace' as const,
+        updatedAt: '2026-08-08T00:00:00.000Z'
+      }
+      const commands = skillPromptTemplatesFromSkills([effectiveLike])
+      expect(commands[0]).toMatchObject({
+        kind: 'prompt-template',
+        command: '/skill-live-skill',
+        group: 'Discovery',
+        template: 'Apply the live skill.'
+      })
+    })
   })
 
   describe('group ordering', () => {

@@ -104,6 +104,24 @@ function chat(): ChatRecord {
 }
 
 describe('Ensemble prompt composition', () => {
+  it('accepts skillDiscoverySkills + sessionStartContext on the projection input', () => {
+    const projection = buildEnsembleParticipantPromptProjection({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Continue.',
+      roundId: 'round-skills',
+      skillDiscoverySkills: [
+        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+      ],
+      sessionStartContext: 'branch=main'
+    })
+    expect(projection.prompt).toContain('## Available skills')
+    expect(projection.prompt).toContain('Deploy (`deploy`): Ship the build.')
+    expect(projection.prompt).toContain('## SessionStart hook context')
+    expect(projection.prompt).toContain('branch=main')
+  })
+
   it('biases order with provider mentions without hiding transcript from others', () => {
     const ordered = getOrderedEnsembleParticipants(ensemble, '@codex please')
     expect(ordered.map((participant) => participant.provider)).toEqual([

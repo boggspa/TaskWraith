@@ -7,6 +7,7 @@ import {
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { composeRunPrompt, type ComposeRunPromptResult } from '../PromptComposition'
+import { resolveRunSkillHookContext } from '../skillsHooks/resolveRunSkillHookContext'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -563,21 +564,31 @@ export class ComposerService {
         : typeof input.workspace === 'string' && input.workspace.trim()
           ? input.workspace.trim()
           : ''
-    const skillDiscoverySkills =
-      !graphContextIsolated &&
-      workspacePathForSkills &&
-      this.deps.resolveSkillDiscoverySkills
-        ? this.deps.resolveSkillDiscoverySkills(
-            workspacePathForSkills,
-            chat.workspaceId || undefined
-          )
-        : undefined
-    const sessionStartContext =
-      !graphContextIsolated &&
-      workspacePathForSkills &&
-      this.deps.resolveSessionStartContext
-        ? await this.deps.resolveSessionStartContext(workspacePathForSkills)
-        : undefined
+    // Prefer explicit deps (unit tests / legacy wiring); otherwise the shared
+    // helper resolves progressive skills + SessionStart once per workspace.
+    let skillDiscoverySkills:
+      | readonly { id: string; name: string; description: string }[]
+      | undefined
+    let sessionStartContext: string | null | undefined
+    if (!graphContextIsolated && workspacePathForSkills) {
+      if (this.deps.resolveSkillDiscoverySkills || this.deps.resolveSessionStartContext) {
+        skillDiscoverySkills = this.deps.resolveSkillDiscoverySkills?.(
+          workspacePathForSkills,
+          chat.workspaceId || undefined
+        )
+        sessionStartContext = this.deps.resolveSessionStartContext
+          ? await this.deps.resolveSessionStartContext(workspacePathForSkills)
+          : undefined
+      } else {
+        const skillHookContext = await resolveRunSkillHookContext({
+          workspacePath: workspacePathForSkills,
+          workspaceId: chat.workspaceId || undefined,
+          allowWorkspaceHooks: settings.trustWorkspaceHooks === true
+        })
+        skillDiscoverySkills = skillHookContext.skillDiscoverySkills
+        sessionStartContext = skillHookContext.sessionStartContext
+      }
+    }
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,

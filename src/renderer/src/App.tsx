@@ -357,12 +357,14 @@ import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
   CommandPaletteItem,
   ComposerSlashCommand,
+  PromptTemplateCommand,
   SlashCommandRunContext
 } from './lib/ComposerSlashCommands'
 import {
   buildComposerSlashCommandRegistry,
   paletteCoreForProvider
 } from './lib/ComposerSlashCommands'
+import { loadComposerSkillSlashPromptTemplates } from './lib/composerSlashSkillDiscovery'
 import { parsePositiveIntArg, parseSlashToggleArg } from './lib/ensembleSlashCommandArgs'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
 import { ProposedPlanApprovalModal } from './components/ProposedPlanApprovalModal'
@@ -2050,6 +2052,10 @@ function App(): React.JSX.Element {
   const [pluginActivation, setPluginActivation] = useState<TaskWraithPluginActivationSnapshot | null>(
     null
   )
+  /** Live `/skill-*` prompt-templates from effective user/workspace skills. */
+  const [skillSlashPromptTemplates, setSkillSlashPromptTemplates] = useState<PromptTemplateCommand[]>(
+    []
+  )
   const [selectedRuntimeProfileByChatId, setSelectedRuntimeProfileByChatId] = useState<
     Record<string, string>
   >({})
@@ -2735,6 +2741,20 @@ function App(): React.JSX.Element {
       workspaces,
       currentWorkspace: currentChatWorkspace
     }) || undefined
+  const skillSlashWorkspaceId = currentChatWorkspace?.id || currentChat?.workspaceId || null
+  useEffect(() => {
+    let cancelled = false
+    void loadComposerSkillSlashPromptTemplates(
+      undefined,
+      currentWorkspacePath || null,
+      skillSlashWorkspaceId
+    ).then((templates) => {
+      if (!cancelled) setSkillSlashPromptTemplates(templates)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [currentWorkspacePath, skillSlashWorkspaceId])
   const currentComposerWorktreeSelection = composerWorktreeSelectionForChat(
     composerWorktreeByChatId,
     currentChat?.appChatId,
@@ -27232,7 +27252,7 @@ function App(): React.JSX.Element {
   const composerSlashCommands: ComposerSlashCommand[] = buildComposerSlashCommandRegistry({
     provider: slashCommandProvider,
     paletteItems: slashPaletteItems,
-    extraCommands: composerSlashExtraCommands,
+    extraCommands: [...composerSlashExtraCommands, ...skillSlashPromptTemplates],
     capabilities: slashCommandProviderCapabilities
   })
 
@@ -28019,44 +28039,47 @@ function App(): React.JSX.Element {
         capabilities:
           providerCapabilitiesByProvider[slashProvider] ||
           (slashProvider === currentProvider ? currentProviderCapabilities : undefined),
-        extraCommands: paneSlashCommandHelpers.buildScopedComposerSlashExtraCommands({
-          chat,
-          provider: slashProvider,
-          workspace,
-          isEnsembleChat: chat.chatKind === 'ensemble',
-          selectedParticipant: slashParticipant,
-          activeGoal: chat.activeGoal || null,
-          attachedWindow: attachedWindow?.chatId === chat.appChatId ? attachedWindow : null,
-          handleCancelCommand: () => handleCancelMultiviewPane(paneIndex, chat.appChatId),
-          handlePickFilesCommand: () =>
-            handleMultiviewPanePickAttachments(paneIndex, chat.appChatId),
-          handleCopyTranscriptCommand: () =>
-            handleMultiviewPaneCopyTranscript(paneIndex, chat.appChatId),
-          handleAttachWindowCommand: (ctx) =>
-            preserveForFocusedFlow(
-              ctx,
-              'Screen Watch attaches from the focused pane. This pane is now focused; run /screen again.'
-            ),
-          handleDetachWindowCommand: (ctx) =>
-            preserveForFocusedFlow(
-              ctx,
-              'Screen Watch detaches from the focused pane. This pane is now focused; run /detach-screen again.'
-            ),
-          openWorkspacePopoutCommand: (kind) => {
-            if (!workspace?.path) return
-            void window.api.openWorkspacePopout({ kind, workspacePath: workspace.path })
-          },
-          openSideChatCommand: () => {
-            focusPane()
-            window.alert('Side-chat commands open from the focused pane. This pane is now focused.')
-          },
-          handleGoalCommand: (ctx) =>
-            preserveForFocusedFlow(
-              ctx,
-              'Goal commands edit the focused pane. This pane is now focused; run /goal again.'
-            ),
-          focusPaneForFocusedFlow: focusPane
-        })
+        extraCommands: [
+          ...paneSlashCommandHelpers.buildScopedComposerSlashExtraCommands({
+            chat,
+            provider: slashProvider,
+            workspace,
+            isEnsembleChat: chat.chatKind === 'ensemble',
+            selectedParticipant: slashParticipant,
+            activeGoal: chat.activeGoal || null,
+            attachedWindow: attachedWindow?.chatId === chat.appChatId ? attachedWindow : null,
+            handleCancelCommand: () => handleCancelMultiviewPane(paneIndex, chat.appChatId),
+            handlePickFilesCommand: () =>
+              handleMultiviewPanePickAttachments(paneIndex, chat.appChatId),
+            handleCopyTranscriptCommand: () =>
+              handleMultiviewPaneCopyTranscript(paneIndex, chat.appChatId),
+            handleAttachWindowCommand: (ctx) =>
+              preserveForFocusedFlow(
+                ctx,
+                'Screen Watch attaches from the focused pane. This pane is now focused; run /screen again.'
+              ),
+            handleDetachWindowCommand: (ctx) =>
+              preserveForFocusedFlow(
+                ctx,
+                'Screen Watch detaches from the focused pane. This pane is now focused; run /detach-screen again.'
+              ),
+            openWorkspacePopoutCommand: (kind) => {
+              if (!workspace?.path) return
+              void window.api.openWorkspacePopout({ kind, workspacePath: workspace.path })
+            },
+            openSideChatCommand: () => {
+              focusPane()
+              window.alert('Side-chat commands open from the focused pane. This pane is now focused.')
+            },
+            handleGoalCommand: (ctx) =>
+              preserveForFocusedFlow(
+                ctx,
+                'Goal commands edit the focused pane. This pane is now focused; run /goal again.'
+              ),
+            focusPaneForFocusedFlow: focusPane
+          }),
+          ...skillSlashPromptTemplates
+        ]
       })
     },
     [
@@ -28069,6 +28092,7 @@ function App(): React.JSX.Element {
       handleMultiviewPanePickAttachments,
       paneSlashCommandHelpers,
       providerCapabilitiesByProvider,
+      skillSlashPromptTemplates
     ]
   )
   const handleSelectMultiviewLayout = useCallback(
