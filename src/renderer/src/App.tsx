@@ -25584,7 +25584,9 @@ function App(): React.JSX.Element {
   }
   /** Transcript citation chip → Work Refs extract viewer. Only when the
    * focused chat belongs to exactly one Project (same ownership rule as
-   * Media "Add to library"). */
+   * Media "Add to library"). When chips degrade to extractId === referenceId
+   * (no sync resolver), resolve the ready extract id via IPC before the dock
+   * consumes the request. */
   const handleOpenProjectReferenceCitation = (
     target: ProjectReferenceCitationOpenTarget
   ): void => {
@@ -25600,19 +25602,44 @@ function App(): React.JSX.Element {
     }
     setActiveWorkProjectId(project.id)
     activateRightDockTab('references')
-    const next = createProjectReferenceCitationOpenRequest(
-      {
-        projectId: project.id,
-        referenceId: target.referenceId,
-        extractId: target.extractId,
-        startOffset: target.startOffset,
-        endOffset: target.endOffset,
-        ...(target.pageNumber !== undefined ? { pageNumber: target.pageNumber } : {})
-      },
-      citationOpenNonceRef.current
-    )
-    citationOpenNonceRef.current = next.nonce
-    setCitationOpenRequest(next)
+    const projectId = project.id
+    const degradedExtractId =
+      !target.extractId || target.extractId === target.referenceId
+    void (async () => {
+      let extractId = target.extractId
+      if (degradedExtractId) {
+        try {
+          const extract = await window.api?.getProjectReferenceExtract?.({
+            projectId,
+            referenceId: target.referenceId
+          })
+          if (
+            extract &&
+            typeof extract === 'object' &&
+            extract.status === 'ready' &&
+            typeof extract.id === 'string' &&
+            extract.id.length > 0
+          ) {
+            extractId = extract.id
+          }
+        } catch {
+          // Dock still prefers a ready cache / waits for hydrate.
+        }
+      }
+      const next = createProjectReferenceCitationOpenRequest(
+        {
+          projectId,
+          referenceId: target.referenceId,
+          extractId,
+          startOffset: target.startOffset,
+          endOffset: target.endOffset,
+          ...(target.pageNumber !== undefined ? { pageNumber: target.pageNumber } : {})
+        },
+        citationOpenNonceRef.current
+      )
+      citationOpenNonceRef.current = next.nonce
+      setCitationOpenRequest(next)
+    })()
   }
   /** Files-tree → Office handoff: an Office-native file (docx/xlsx/pptx/
    * ics/eml) opened from the code editor's tree activates the adjacent
