@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 199 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 202 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1063,12 +1063,12 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 
 ## delegate_wave
 
-Spawn a wave of 2–20 fresh context-isolated sub-threads in one call (spawn-only; no recall / subThreadId). Each worker needs provider + prompt; optional model / reasoningEffort / kimiThinking per worker. Results always return to the parent. Optional join knobs bind to a host-allocated waveId. One approval covers the whole wave when required; worker count is also capped by Settings → General → Max Wave Agents. Not auto-allowed; Ollama excludes it like other sub-thread tools.
+Spawn a wave of 2+ fresh context-isolated sub-threads in one call. Each worker needs provider + prompt (optional model / reasoningEffort / kimiThinking). Waves are spawn-only (no subThreadId / recall). Results always return to the parent; optional join knobs (required/quorum/deadlineMs/debounceMs) bind to a host-allocated waveId group — never the parent run id. One approval covers the whole wave when required; worker count is capped by Settings → General → Max Wave Agents.
 
-- Access: governed by your run permission role (subThreadDelegation)
+- Access: governed by your run permission role
 - Required args: workers
 - Optional args: join
-- Example: `{"taskwraith_tool":{"name":"delegate_wave","arguments":{"workers":[{"provider":"text","prompt":"text"},{"provider":"text","prompt":"text"}]}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"delegate_wave","arguments":{"workers":[]}}}}`
 
 ## scout_brief
 
@@ -1590,6 +1590,22 @@ Update review status for a Memory Proposal (approve, reject, or expire). Whiteli
 - Required args: packId, proposalId
 - Optional args: status, reviewNote, expiresAt
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_introspection_review","arguments":{"packId":"text","proposalId":"text"}}}}`
+
+## skill_list
+
+List enabled TaskWraith skills for the active workspace (user + workspace overlay). Returns bounded metadata (id, name, description, scope) — not full bodies. Read-only. Use skill_read with a skill id for the full body.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"skill_list","arguments":{}}}}`
+
+## skill_read
+
+Read the full body of an enabled TaskWraith skill by id for the active workspace. Read-only. Call skill_list first when the id is unknown.
+
+- Access: read-only (no approval needed)
+- Required args: id
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"skill_read","arguments":{"id":"text"}}}}`
 
 ## image_edit
 
