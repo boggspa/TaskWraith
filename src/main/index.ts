@@ -47718,8 +47718,8 @@ if (isGeminiMcpBridgeProcess) {
         }),
         // Track3 Mixed Wave B — family shadows. Lazy arrows where sources may
         // sit after this call in the whenReady block; runManager/AppStore are
-        // module-scope and safe either way. Capabilities stay withheld until
-        // Cap deliberately opens them.
+        // module-scope and safe either way. Domain family capability ads are
+        // opened in HostProductionBootstrap once real ports feed them.
         runs: createHostProductionRunShadow({
           listActive: () =>
             RUN_MANAGER_PROVIDERS.flatMap((provider) =>
@@ -47801,8 +47801,8 @@ if (isGeminiMcpBridgeProcess) {
               }
             })
         }),
-        // Track4 Mixed — last empty families. Capabilities stay withheld
-        // until W4-B deliberately opens ads.
+        // Track4 Mixed — last empty families. Domain capability ads for
+        // artifacts/ensemble are already offered from HostProductionBootstrap.
         participants: createHostProductionParticipantShadow({
           listParticipants: () =>
             AppStore.getChatList().flatMap((chat) => {
@@ -47850,7 +47850,7 @@ if (isGeminiMcpBridgeProcess) {
         }),
         artifacts: createHostProductionArtifactShadow({
           listArtifacts: () =>
-            canvasStore.listSessions().flatMap((session) => {
+            canvasStore.listSessionsStrict().flatMap((session) => {
               const createdAt = Date.parse(session.createdAt)
               if (!Number.isFinite(createdAt) || createdAt < 0) return []
               // Privacy: never forward URL / body / screenshot bytes.
