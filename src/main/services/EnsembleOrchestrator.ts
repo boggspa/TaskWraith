@@ -20485,7 +20485,7 @@ export class EnsembleOrchestrator {
         selection,
         chatId: runtime.chatId,
         provider: participant.provider,
-        workspacePath: permissions.workspacePath ?? workspacePath,
+        workspacePath,
         projects: this.deps.listProjects(),
         references: this.deps.listProjectReferences(),
         externalPathGrants: permissions.externalPathGrants,

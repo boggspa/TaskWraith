@@ -137,10 +137,7 @@ describe('resolveProjectReferenceContext', () => {
       projects: [project],
       references,
       extractLoader: {
-        getActiveExtract: () => null,
-        readExtractText: () => {
-          throw new Error('must not read extract text without an active ready extract')
-        }
+        getActiveExtract: () => null
       }
     })
     expect(context.references[0]).toMatchObject({
@@ -184,8 +181,7 @@ describe('resolveProjectReferenceContext', () => {
       references,
       extractLoader: {
         getActiveExtract: (projectId, referenceId) =>
-          projectId === project.id && referenceId === 'site' ? readyExtract : null,
-        readExtractText: (extractId) => (extractId === readyExtract.id ? body : null)
+          projectId === project.id && referenceId === 'site' ? readyExtract : null
       }
     })
     expect(context.references[0].access).toBe('catalogue-only')
@@ -236,8 +232,7 @@ describe('resolveProjectReferenceContext', () => {
       projects: [project],
       references,
       extractLoader: {
-        getActiveExtract: () => baseReady,
-        readExtractText: () => bodyA
+        getActiveExtract: () => baseReady
       }
     })
     const contextB = resolveProjectReferenceContext({
@@ -251,8 +246,7 @@ describe('resolveProjectReferenceContext', () => {
         getActiveExtract: () => ({
           ...baseReady,
           text: { charCount: bodyB.length, truncated: false, artifactSha256: digestB }
-        }),
-        readExtractText: () => bodyB
+        })
       }
     })
     const serializedA = serializeResolvedProjectReferenceContext(contextA)
@@ -287,8 +281,7 @@ describe('resolveProjectReferenceContext', () => {
       projects: [project],
       references,
       extractLoader: {
-        getActiveExtract: () => readyExtract,
-        readExtractText: () => body
+        getActiveExtract: () => readyExtract
       }
     })
     const appendix = formatProjectReferenceExtractsPromptAppendix(context, {
@@ -354,8 +347,7 @@ describe('resolveProjectReferenceContext', () => {
       projects: [project],
       references,
       extractLoader: {
-        getActiveExtract: () => readyExtract,
-        readExtractText: () => oversized
+        getActiveExtract: () => readyExtract
       }
     })
     const appendix = formatProjectReferenceExtractsPromptAppendix(context, {

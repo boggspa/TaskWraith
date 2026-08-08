@@ -41,9 +41,9 @@ export function bootstrapProjectReferenceExtracts(input: {
       registerProjectReferenceExtractHandlers({
         assertSenderCanManageProjects,
         requestExtract: (request) => service.requestExtract(request),
-        getActiveExtract: ({ projectId, referenceId }) => service.getActive(projectId, referenceId),
-        revokeExtract: ({ extractId }) => service.revoke(extractId),
-        readExtractText: ({ extractId, maxChars }) => service.readText(extractId, maxChars)
+        getActiveExtract: (projectId, referenceId) => service.getActive(projectId, referenceId),
+        revokeExtract: (extractId) => service.revoke(extractId),
+        readExtractText: (extractId) => service.readText(extractId)
       })
     }
   }

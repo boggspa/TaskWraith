@@ -826,10 +826,10 @@ describe('executeCanvasTool', () => {
   })
 
   it('canvas_open device forwards ensemble participantId into open context', async () => {
-    let seenCtx: { participantId?: string } | null = null
+    let seenParticipantId: string | undefined
     const controller = fakeController({
       open: async (_input, openCtx) => {
-        seenCtx = openCtx
+        seenParticipantId = openCtx.participantId
         return {
           canvasId: 'cd-seat',
           url: 'device://booted/com.example.App',
@@ -849,7 +849,7 @@ describe('executeCanvasTool', () => {
       'claude'
     )
     expect(result.isError).toBeFalsy()
-    expect(seenCtx?.participantId).toBe('seat-boss')
+    expect(seenParticipantId).toBe('seat-boss')
   })
 
   it('canvas_sketch_open opens a sketch-driver canvas and returns the document', async () => {
