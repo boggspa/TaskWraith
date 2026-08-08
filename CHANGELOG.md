@@ -44,7 +44,7 @@ do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
 
 ### Remaining focus for 1.9.4 (not feature construction)
 
-- **Host Arc** — Wave 4 source population Cap-landed (Track3+Track4: 13 real Host families) + Wave 5 `.twmission` scaffold (`d282b96a1`, not AC9 PASS) + Wave 6 P0/P1 clears (`61aa722a8`, `e88522bcb`/`threadId`); iOS Host v2, broader AppStore retirement, and AC1–6 PASS remain open. Live tracker local-only `docs/HOST_ARC_STATUS.md`.
+- **Host Arc** — Wave 4 source population Cap-landed (Track3+Track4: 13 real Host families) + AC9 `.twmission` capture + export seam landed (`742fdbf56`/`fd4b5883f`/`9a7adfa07`, K3-PASS) + iOS HostProtocol Swift port (`20311f19a`) + P0 Proxy facade fix; renderer consumption (counts-only for runs/missions/rounds/schedules/participants/artifacts), broader AppStore retirement, and AC1–6 PASS remain open. Live tracker local-only `docs/HOST_ARC_STATUS.md`.
 - **Channels** — P1 product path still behind the two-real-Mac People transport proof; no P2 human Chat UI yet.
 - **Real-world QA** — soak the landed Ensemble / lock / Canvas / Host surfaces; fix only what breaks.
 - **App Store** — maintainer-owned submission / review loop (not an engineering reopen).
