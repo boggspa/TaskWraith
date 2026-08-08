@@ -1,0 +1,136 @@
+/**
+ * Host Arc Wave 5 — `.twmission` scaffold pins (not AC9 PASS).
+ */
+
+import { describe, expect, it } from 'vitest'
+import {
+  HOST_PROJECTION_VERSION,
+  HOST_PROTOCOL_VERSION,
+  type HostSnapshot
+} from '../../../shared/hostProtocol'
+import { exportTwMissionBundle } from './TwMissionExport'
+import { importTwMissionBundleBytes } from './TwMissionImport'
+import { TW_MISSION_MAX_BUNDLE_BYTES } from './TwMissionTypes'
+
+function minimalSnapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
+  return {
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
+    generatedAt: '2026-08-08T00:00:00.000Z',
+    generation: 1,
+    cursor: 3,
+    freshness: 'live',
+    health: {
+      hostStatus: 'ok',
+      connectionPhase: 'live',
+      supervised: true,
+      freshness: 'live'
+    },
+    workspaces: [],
+    threads: [],
+    runs: [],
+    missions: [],
+    rounds: [],
+    participants: [],
+    providers: [],
+    questions: [],
+    approvals: [],
+    schedules: [],
+    usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
+    artifacts: [],
+    warnings: [],
+    recovery: { reopenStatus: 'clean' },
+    ...overrides
+  }
+}
+
+describe('twmission scaffold', () => {
+  it('round-trips export → import as a detached replay', () => {
+    const snapshot = minimalSnapshot({
+      participants: [
+        {
+          id: 'p1',
+          providerId: 'codex',
+          role: 'Worker',
+          order: 0,
+          enabled: true,
+          active: false
+        }
+      ]
+    })
+    const exported = exportTwMissionBundle({
+      snapshot,
+      cursorRange: { generation: 1, fromCursor: 0, toCursor: 3 },
+      exportedAt: '2026-08-08T01:00:00.000Z',
+      hostId: 'host-test'
+    })
+    expect(exported.ok).toBe(true)
+    if (!exported.ok) return
+
+    const imported = importTwMissionBundleBytes(exported.bytes)
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    expect(imported.replay.snapshot.participants).toHaveLength(1)
+    expect(imported.replay.manifest.integrityDigest).toBe(exported.bundle.manifest.integrityDigest)
+    expect(imported.replay.manifest.redaction.transcriptsOmitted).toBe(true)
+    expect(imported.replay.manifest.redaction.artifactBodiesOmitted).toBe(true)
+  })
+
+  it('is deterministic across a second identical export/import', () => {
+    const snapshot = minimalSnapshot()
+    const input = {
+      snapshot,
+      cursorRange: { generation: 2, fromCursor: 1, toCursor: 4 },
+      exportedAt: '2026-08-08T02:00:00.000Z'
+    }
+    const a = exportTwMissionBundle(input)
+    const b = exportTwMissionBundle(input)
+    expect(a.ok && b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    expect(a.bundle.manifest.integrityDigest).toBe(b.bundle.manifest.integrityDigest)
+    const ia = importTwMissionBundleBytes(a.bytes)
+    const ib = importTwMissionBundleBytes(b.bytes)
+    expect(ia.ok && ib.ok).toBe(true)
+    if (!ia.ok || !ib.ok) return
+    expect(ia.replay.manifest.integrityDigest).toBe(ib.replay.manifest.integrityDigest)
+  })
+
+  it('rejects a truncated / tampered integrity digest', () => {
+    const exported = exportTwMissionBundle({
+      snapshot: minimalSnapshot(),
+      cursorRange: { generation: 1, fromCursor: 0, toCursor: 0 },
+      exportedAt: '2026-08-08T03:00:00.000Z'
+    })
+    expect(exported.ok).toBe(true)
+    if (!exported.ok) return
+    const text = Buffer.from(exported.bytes).toString('utf8')
+    const tampered = text.replace(exported.bundle.manifest.integrityDigest, '0'.repeat(64))
+    const imported = importTwMissionBundleBytes(new TextEncoder().encode(tampered))
+    expect(imported.ok).toBe(false)
+    if (imported.ok) return
+    expect(imported.error).toMatch(/integrityDigest mismatch/)
+  })
+
+  it('rejects oversized bundles', () => {
+    const huge = new Uint8Array(TW_MISSION_MAX_BUNDLE_BYTES + 1)
+    const imported = importTwMissionBundleBytes(huge)
+    expect(imported.ok).toBe(false)
+    if (imported.ok) return
+    expect(imported.error).toMatch(/size ceiling/)
+  })
+
+  it('never claims live Host mutation — import returns detached replay only', () => {
+    const exported = exportTwMissionBundle({
+      snapshot: minimalSnapshot(),
+      cursorRange: { generation: 1, fromCursor: 0, toCursor: 1 },
+      exportedAt: '2026-08-08T04:00:00.000Z'
+    })
+    expect(exported.ok).toBe(true)
+    if (!exported.ok) return
+    const imported = importTwMissionBundleBytes(exported.bytes)
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    // Structural pin: only manifest + snapshot — no authority/journal handles.
+    expect(Object.keys(imported.replay).sort()).toEqual(['manifest', 'snapshot'])
+  })
+})
