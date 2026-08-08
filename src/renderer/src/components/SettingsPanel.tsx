@@ -95,6 +95,8 @@ import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 // `WorkspaceRemoteAccessToggle` in Settings → Workspaces.
 import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsPanel'
+import { SkillsSettingsPanelHost } from './SkillsSettingsPanel'
+import { HooksSettingsPanelHost } from './HooksSettingsPanel'
 // BridgeNetworkingPanel + ApnsConfigPanel were previously rendered
 // under the "Bridge Networking" tab. They now live inside `PairingPage`
 // (the "Devices" tab) so the iOS pair flow + daemon/APNs configuration
@@ -2783,6 +2785,8 @@ export type SettingsTab =
   | 'mcp-servers'
   | 'runtime-profiles'
   | 'plugins'
+  | 'skills'
+  | 'hooks'
   | 'key-commands'
   | 'approval-ledger'
   | 'thread-introspection'
@@ -3025,7 +3029,6 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     aliases: [
       'plugins',
       'extensions',
-      'skills',
       'connectors',
       'marketplace',
       'installed',
@@ -3033,6 +3036,38 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
       'capability bundles'
     ],
     scope: 'global'
+  },
+  {
+    id: 'skills',
+    label: 'Skills',
+    group: 'integrations',
+    description: 'User and workspace skill libraries — enablement, create, delete, and Finder roots.',
+    aliases: [
+      'skills',
+      'skill library',
+      'skill.md',
+      'agent skills',
+      'workspace skills',
+      'user skills'
+    ],
+    scope: 'workspace'
+  },
+  {
+    id: 'hooks',
+    label: 'Hooks',
+    group: 'integrations',
+    description:
+      'Host-mediated shell hooks for SessionStart, PreToolUse, PostToolUse, and Stop lifecycle events.',
+    aliases: [
+      'hooks',
+      'shell hooks',
+      'session start',
+      'pre tool use',
+      'post tool use',
+      'stop hook',
+      'lifecycle hooks'
+    ],
+    scope: 'workspace'
   },
   {
     id: 'local-servers',
@@ -8997,11 +9032,29 @@ export function SettingsPanel({
                 <article className="settings-mcp-management-card">
                   <strong>Skills</strong>
                   <p>
-                    Provider-owned skills should be visible here with their enabled state and tool
-                    names.
+                    Manage user and workspace skill libraries — enablement, create, delete, and
+                    Finder roots.
                   </p>
-                  <PillButton size="compact" variant="secondary" disabled>
-                    Audit surface planned
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
+                    onClick={() => setActiveTab('skills')}
+                  >
+                    Open Skills
+                  </PillButton>
+                </article>
+                <article className="settings-mcp-management-card">
+                  <strong>Hooks</strong>
+                  <p>
+                    Configure host-mediated shell hooks for SessionStart, PreToolUse, PostToolUse,
+                    and Stop.
+                  </p>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
+                    onClick={() => setActiveTab('hooks')}
+                  >
+                    Open Hooks
                   </PillButton>
                 </article>
               </div>
@@ -11555,6 +11608,22 @@ export function SettingsPanel({
           <ThreadIntrospectionSettingsPanel
             workspaceId={currentWorkspace?.id ?? null}
             workspacePath={currentWorkspace?.path ?? null}
+          />
+        )}
+
+        {activeTab === 'skills' && (
+          <SkillsSettingsPanelHost
+            workspaceId={currentWorkspace?.id ?? null}
+            workspacePath={currentWorkspace?.path ?? null}
+            workspaceLabel={currentWorkspace?.displayName ?? currentWorkspace?.path ?? null}
+          />
+        )}
+
+        {activeTab === 'hooks' && (
+          <HooksSettingsPanelHost
+            workspaceId={currentWorkspace?.id ?? null}
+            workspacePath={currentWorkspace?.path ?? null}
+            workspaceLabel={currentWorkspace?.displayName ?? currentWorkspace?.path ?? null}
           />
         )}
 

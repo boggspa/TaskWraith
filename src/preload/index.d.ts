@@ -1830,6 +1830,47 @@ declare global {
       ) => Promise<TaskWraithPluginCatalogSnapshot>
       updatePlugin: (pluginId: string) => Promise<TaskWraithPluginCatalogSnapshot>
       uninstallPlugin: (pluginId: string) => Promise<TaskWraithPluginCatalogSnapshot>
+      listUserSkills: () => Promise<import('../shared/skills/SkillTypes').SkillRecord[]>
+      listWorkspaceSkills: (payload: {
+        workspacePath: string
+        workspaceId?: string
+      }) => Promise<import('../shared/skills/SkillTypes').SkillRecord[]>
+      upsertSkill: (
+        payload: import('../shared/skills/SkillTypes').UpsertSkillInput & {
+          scope: import('../shared/skills/SkillTypes').SkillScope
+          workspacePath?: string
+          workspaceId?: string
+        }
+      ) => Promise<import('../shared/skills/SkillTypes').SkillRecord>
+      deleteSkill: (payload: {
+        scope: import('../shared/skills/SkillTypes').SkillScope
+        id: string
+        workspacePath?: string
+      }) => Promise<{ ok: true; deleted: boolean }>
+      setSkillEnabled: (payload: {
+        scope: import('../shared/skills/SkillTypes').SkillScope
+        id: string
+        enabled: boolean
+        workspacePath?: string
+        workspaceId?: string
+      }) => Promise<import('../shared/skills/SkillTypes').SkillRecord>
+      revealSkillsRoot: (payload: {
+        scope: import('../shared/skills/SkillTypes').SkillScope
+        workspacePath?: string
+      }) => Promise<{ ok: boolean; error?: string; path?: string }>
+      getUserHooks: () => Promise<import('../shared/hooks/HookTypes').HooksConfigSnapshot>
+      getWorkspaceHooks: (
+        workspacePath: string
+      ) => Promise<import('../shared/hooks/HookTypes').HooksConfigSnapshot>
+      upsertHook: (
+        request: import('../shared/hooks/HookTypes').UpsertHookRequest
+      ) => Promise<import('../shared/hooks/HookTypes').HooksConfigSnapshot>
+      deleteHook: (
+        request: import('../shared/hooks/HookTypes').DeleteHookRequest
+      ) => Promise<import('../shared/hooks/HookTypes').HooksConfigSnapshot>
+      setHookEnabled: (
+        request: import('../shared/hooks/HookTypes').SetHookEnabledRequest
+      ) => Promise<import('../shared/hooks/HookTypes').HooksConfigSnapshot>
       getWorkspaces: () => Promise<WorkspaceRecord[]>
       addOrUpdateWorkspace: (
         path: string,
@@ -2454,6 +2495,7 @@ declare global {
         blocked?: string
         pack?: MemoryProposalPack
         conventionEntryId?: string
+        skillId?: string
       }>
       runManualIntrospection: (input: {
         windowStart: string

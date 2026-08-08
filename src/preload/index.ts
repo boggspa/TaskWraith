@@ -1811,6 +1811,31 @@ const api = {
     ipcRenderer.invoke('plugins:update', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
   uninstallPlugin: (pluginId: string) =>
     ipcRenderer.invoke('plugins:uninstall', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
+  // Skills / Hooks Settings (Wave A) — mirrors skillsHooksSettingsApi expectations.
+  listUserSkills: () => ipcRenderer.invoke('skills:list-user'),
+  listWorkspaceSkills: (payload: { workspacePath: string; workspaceId?: string }) =>
+    ipcRenderer.invoke('skills:list-workspace', payload),
+  upsertSkill: (payload: unknown) => ipcRenderer.invoke('skills:upsert', payload),
+  deleteSkill: (payload: {
+    scope: 'user' | 'workspace'
+    id: string
+    workspacePath?: string
+  }) => ipcRenderer.invoke('skills:delete', payload),
+  setSkillEnabled: (payload: {
+    scope: 'user' | 'workspace'
+    id: string
+    enabled: boolean
+    workspacePath?: string
+    workspaceId?: string
+  }) => ipcRenderer.invoke('skills:set-enabled', payload),
+  revealSkillsRoot: (payload: { scope: 'user' | 'workspace'; workspacePath?: string }) =>
+    ipcRenderer.invoke('skills:reveal-root', payload),
+  getUserHooks: () => ipcRenderer.invoke('hooks:get-user'),
+  getWorkspaceHooks: (workspacePath: string) =>
+    ipcRenderer.invoke('hooks:get-workspace', workspacePath),
+  upsertHook: (request: unknown) => ipcRenderer.invoke('hooks:upsert', request),
+  deleteHook: (request: unknown) => ipcRenderer.invoke('hooks:delete', request),
+  setHookEnabled: (request: unknown) => ipcRenderer.invoke('hooks:set-enabled', request),
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
   addOrUpdateWorkspace: (path: string, partial: any = {}) =>
     ipcRenderer.invoke('add-or-update-workspace', path, partial),

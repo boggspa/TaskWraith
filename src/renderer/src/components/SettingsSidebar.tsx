@@ -134,6 +134,16 @@ function SettingsTabSymbolIcon({ tab }: { tab: SettingsTab }) {
         <path d="M6.4 2.4h3.2v3.2H6.4zM2.8 8.8H6v3.2H2.8zM10 8.8h3.2v3.2H10z" />
         <path d="M8 5.6v1.7M6 10.4H4.4M10 10.4h1.6M6 10.4h4" />
       </svg>
+    ) : tab === 'skills' ? (
+      <svg {...common}>
+        <path d="M4 2.8h6.2L12.4 5v8.2H4z" />
+        <path d="M10.2 2.8V5h2.2M5.6 7.4h4.8M5.6 9.6h4.8M5.6 11.8h3.2" />
+      </svg>
+    ) : tab === 'hooks' ? (
+      <svg {...common}>
+        <path d="M5.2 3.2v5.2a2.8 2.8 0 1 0 2.8 2.8" />
+        <path d="M5.2 5.4h3.4M10.8 3.8v2.4h2" />
+      </svg>
     ) : tab === 'local-servers' ? (
       <svg {...common}>
         <rect x="2.6" y="3" width="10.8" height="3.5" rx="1" />

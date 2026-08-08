@@ -109,4 +109,39 @@ describe('Settings tabs', () => {
     expect(html).toContain('Data')
     expect(html).toContain('aria-selected="true"')
   })
+
+  it('exposes Skills and Hooks tabs under Integrations', () => {
+    const tabsById = Object.fromEntries(SETTINGS_TABS.map((tab) => [tab.id, tab]))
+    const visibleIds = getVisibleSettingsTabs().map((tab) => tab.id)
+
+    expect(visibleIds).toContain('skills')
+    expect(visibleIds).toContain('hooks')
+    expect(tabsById.skills?.group).toBe('integrations')
+    expect(tabsById.hooks?.group).toBe('integrations')
+    expect(settingsTabMatchesQuery(tabsById.skills, 'skill library')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById.hooks, 'pre tool use')).toBe(true)
+
+    const skillsHtml = renderToStaticMarkup(
+      <SettingsSidebar
+        activeTab="skills"
+        onTabChange={vi.fn()}
+        onBackToApp={vi.fn()}
+        appVersion="1.1.0"
+      />
+    )
+    expect(skillsHtml).toContain('Skills')
+    expect(skillsHtml).toContain('Integrations')
+    expect(skillsHtml).toContain('aria-selected="true"')
+
+    const hooksHtml = renderToStaticMarkup(
+      <SettingsSidebar
+        activeTab="hooks"
+        onTabChange={vi.fn()}
+        onBackToApp={vi.fn()}
+        appVersion="1.1.0"
+      />
+    )
+    expect(hooksHtml).toContain('Hooks')
+    expect(hooksHtml).toContain('aria-selected="true"')
+  })
 })

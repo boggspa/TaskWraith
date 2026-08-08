@@ -443,6 +443,23 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'plugins:update',
   'plugins:uninstall',
 
+  // Skills Settings + progressive skill discovery store.
+  'skills:list-effective',
+  'skills:list-user',
+  'skills:list-workspace',
+  'skills:upsert',
+  'skills:delete',
+  'skills:set-enabled',
+  'skills:reveal-root',
+
+  // Host shell hooks Settings + effective merge.
+  'hooks:get-effective',
+  'hooks:get-user',
+  'hooks:get-workspace',
+  'hooks:upsert',
+  'hooks:delete',
+  'hooks:set-enabled',
+
   // Provider credentials, login processes, and host-wide provider bridges.
   'store-claude-api-key',
   'clear-claude-api-key',
