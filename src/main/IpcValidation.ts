@@ -316,6 +316,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'hooks:upsert': ['object'],
   'hooks:delete': ['object'],
   'hooks:set-enabled': ['object'],
+  'hooks:reveal-root': ['object'],
   'get-extension-secret-status': [],
   'set-extension-secret': ['object', 'string'],
   'clear-extension-secret': ['object'],

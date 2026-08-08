@@ -7,9 +7,11 @@ import {
   type HookScope
 } from '../../../shared/hooks/HookTypes'
 import {
+  countEffectiveHooksAfterTrust,
   getSkillsHooksSettingsApi,
   hooksIpcReady,
-  loadAllHooks
+  loadAllHooks,
+  readAskBeforeHookCommands
 } from '../lib/skillsHooksSettingsApi'
 import { PillButton } from './PillButton'
 
@@ -18,9 +20,13 @@ export interface HooksSettingsPanelProps {
   onUpsert: (hook: HookCommand) => void | Promise<void>
   onDelete: (hook: HookCommand) => void | Promise<void>
   onSetEnabled: (hook: HookCommand, enabled: boolean) => void | Promise<void>
+  onRevealRoot?: (scope: HookScope) => void | Promise<void>
   /** When true, host may execute workspace-scoped `.taskwraith/hooks.json` hooks. */
   trustWorkspaceHooks?: boolean
   onTrustWorkspaceHooksChange?: (enabled: boolean) => void | Promise<void>
+  /** When true, host should approve each hook shell command before running it. */
+  askBeforeHookCommands?: boolean
+  onAskBeforeHookCommandsChange?: (enabled: boolean) => void | Promise<void>
   workspaceLabel?: string
   busy?: boolean
   error?: string | null
@@ -60,8 +66,11 @@ export function HooksSettingsPanel({
   onUpsert,
   onDelete,
   onSetEnabled,
+  onRevealRoot,
   trustWorkspaceHooks = false,
   onTrustWorkspaceHooksChange,
+  askBeforeHookCommands = false,
+  onAskBeforeHookCommandsChange,
   workspaceLabel,
   busy = false,
   error = null,
@@ -74,6 +83,11 @@ export function HooksSettingsPanel({
   const [timeoutMs, setTimeoutMs] = useState(30_000)
   const [onError, setOnError] = useState<HookOnError>('continue')
   const [formError, setFormError] = useState<string | null>(null)
+
+  const effectiveCount = useMemo(
+    () => countEffectiveHooksAfterTrust(hooks, trustWorkspaceHooks),
+    [hooks, trustWorkspaceHooks]
+  )
 
   const grouped = useMemo(() => {
     const map = new Map<HookEvent, HookCommand[]>()
@@ -167,11 +181,52 @@ export function HooksSettingsPanel({
               Host-mediated shell hooks grouped by lifecycle event. Configure command, matcher,
               timeout, and on-error behavior.
             </p>
+            <p className="settings-hint" role="status" aria-live="polite">
+              Effective hooks after merge:{' '}
+              <strong data-testid="hooks-effective-count">{effectiveCount}</strong>
+              {trustWorkspaceHooks
+                ? ' (user + trusted workspace)'
+                : ' (user only — workspace hooks excluded until trusted)'}
+            </p>
           </div>
+          {onRevealRoot ? (
+            <div className="settings-mcp-header-actions">
+              <PillButton
+                size="compact"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => void onRevealRoot('user')}
+              >
+                Reveal user hooks.json
+              </PillButton>
+              <PillButton
+                size="compact"
+                variant="secondary"
+                disabled={busy || !workspaceLabel}
+                onClick={() => void onRevealRoot('workspace')}
+                title={
+                  workspaceLabel
+                    ? `Reveal hooks.json for ${workspaceLabel}`
+                    : 'Select a workspace to reveal its hooks.json'
+                }
+              >
+                Reveal workspace hooks.json
+              </PillButton>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div className="settings-group span-all">
+      <div className="settings-group span-all settings-hooks-trust">
+        <div className="settings-mcp-section-title">
+          <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+            Workspace trust
+          </h4>
+          <p className="settings-hint">
+            Workspace hooks live in an agent-writable file. Keep this off unless you trust that
+            tree.
+          </p>
+        </div>
         <label className="settings-effects-check-row" style={{ margin: 0 }}>
           <input
             type="checkbox"
@@ -180,12 +235,33 @@ export function HooksSettingsPanel({
             aria-label="Trust workspace hooks"
             onChange={(event) => void onTrustWorkspaceHooksChange?.(event.target.checked)}
           />
-          <span>Trust workspace hooks</span>
+          <span>
+            <strong>Trust workspace hooks</strong>
+          </span>
         </label>
         <p className="settings-hint">
-          Off by default. When enabled, TaskWraith may execute workspace-scoped hooks from{' '}
-          <code>.taskwraith/hooks.json</code>. That file is agent-writable — treat this as a
-          trust decision, not a convenience toggle.
+          Off by default. When on, TaskWraith may execute workspace-scoped commands from{' '}
+          <code>.taskwraith/hooks.json</code>. That file is agent-writable — this is a trust
+          decision, not a convenience toggle. User-scoped hooks always remain available.
+        </p>
+      </div>
+
+      <div className="settings-group span-all settings-hooks-ask-before">
+        <label className="settings-effects-check-row" style={{ margin: 0 }}>
+          <input
+            type="checkbox"
+            checked={askBeforeHookCommands}
+            disabled={busy || !onAskBeforeHookCommandsChange}
+            aria-label="Ask before running hook commands"
+            onChange={(event) => void onAskBeforeHookCommandsChange?.(event.target.checked)}
+          />
+          <span>Ask before running hook commands</span>
+        </label>
+        <p className="settings-hint">
+          Off by default so Settings-authored user hooks stay friction-free. When enabled, Pre /
+          Post / Stop hook commands prompt via the shell-command approval path. SessionStart runs at
+          compose time without a run id, so ask-before currently denies those commands until a
+          dedicated dialog lands.
         </p>
       </div>
 
@@ -350,6 +426,7 @@ export function HooksSettingsPanelHost({
   const ipcReady = hooksIpcReady(api)
   const [hooks, setHooks] = useState<HookCommand[]>([])
   const [trustWorkspaceHooks, setTrustWorkspaceHooks] = useState(false)
+  const [askBeforeHookCommands, setAskBeforeHookCommands] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -379,6 +456,7 @@ export function HooksSettingsPanelHost({
       .then((settings) => {
         if (cancelled) return
         setTrustWorkspaceHooks(settings?.trustWorkspaceHooks === true)
+        setAskBeforeHookCommands(readAskBeforeHookCommands(settings))
       })
       .catch((err) => {
         if (cancelled) return
@@ -477,6 +555,31 @@ export function HooksSettingsPanelHost({
     [api, refresh, workspacePath]
   )
 
+  const onRevealRoot = useCallback(
+    async (scope: HookScope) => {
+      try {
+        setBusy(true)
+        setError(null)
+        if (api?.revealHooksRoot) {
+          const result = await api.revealHooksRoot({
+            scope,
+            ...(scope === 'workspace' && workspacePath ? { workspacePath } : {})
+          })
+          if (!result.ok) {
+            setError(result.error || 'Failed to reveal hooks.json.')
+          }
+          return
+        }
+        setError('Reveal hooks.json is unavailable until hooks:reveal-root is wired.')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [api, workspacePath]
+  )
+
   const onTrustWorkspaceHooksChange = useCallback(async (enabled: boolean) => {
     setTrustWorkspaceHooks(enabled)
     if (typeof window === 'undefined' || typeof window.api?.updateSettings !== 'function') {
@@ -494,14 +597,40 @@ export function HooksSettingsPanelHost({
     }
   }, [])
 
+  const onAskBeforeHookCommandsChange = useCallback(async (enabled: boolean) => {
+    // Session stub always updates; persistence is best-effort until AppSettings lands.
+    setAskBeforeHookCommands(enabled)
+    if (typeof window === 'undefined' || typeof window.api?.updateSettings !== 'function') {
+      return
+    }
+    try {
+      setBusy(true)
+      setError(null)
+      await window.api.updateSettings({ askBeforeHookCommands: enabled })
+    } catch (err) {
+      // Prefer keeping the session stub over surfacing a hard error for an
+      // unlanded settings key — sibling agents may still be wiring sanitizers.
+      setError(
+        err instanceof Error
+          ? `Ask-before preference kept for this session (${err.message}).`
+          : 'Ask-before preference kept for this session.'
+      )
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
   return (
     <HooksSettingsPanel
       hooks={hooks}
       onUpsert={onUpsert}
       onDelete={onDelete}
       onSetEnabled={onSetEnabled}
+      onRevealRoot={onRevealRoot}
       trustWorkspaceHooks={trustWorkspaceHooks}
       onTrustWorkspaceHooksChange={onTrustWorkspaceHooksChange}
+      askBeforeHookCommands={askBeforeHookCommands}
+      onAskBeforeHookCommandsChange={onAskBeforeHookCommandsChange}
       workspaceLabel={workspaceLabel ?? undefined}
       busy={busy}
       error={error}

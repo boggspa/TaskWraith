@@ -16,7 +16,12 @@ import type {
   SetHookEnabledRequest,
   UpsertHookRequest
 } from '../../../shared/hooks/HookTypes'
-import type { SkillRecord, SkillScope, UpsertSkillInput } from '../../../shared/skills/SkillTypes'
+import type {
+  EffectiveSkill,
+  SkillRecord,
+  SkillScope,
+  UpsertSkillInput
+} from '../../../shared/skills/SkillTypes'
 import {
   normalizeProviderHarnessPostureMap,
   type ProviderHarnessPostureMap
@@ -28,6 +33,11 @@ export interface SkillsIpcApi {
     workspacePath: string
     workspaceId?: string
   }) => Promise<SkillRecord[]>
+  /** Enabled skills after workspace-over-user merge (main `skills:list-effective`). */
+  listEffectiveSkills?: (payload: {
+    workspacePath: string
+    workspaceId?: string
+  }) => Promise<EffectiveSkill[]>
   upsertSkill?: (
     payload: UpsertSkillInput & {
       scope: SkillScope
@@ -59,6 +69,10 @@ export interface HooksIpcApi {
   upsertHook?: (request: UpsertHookRequest) => Promise<HooksConfigSnapshot>
   deleteHook?: (request: DeleteHookRequest) => Promise<HooksConfigSnapshot>
   setHookEnabled?: (request: SetHookEnabledRequest) => Promise<HooksConfigSnapshot>
+  revealHooksRoot?: (payload: {
+    scope: 'user' | 'workspace'
+    workspacePath?: string
+  }) => Promise<{ ok: boolean; error?: string; path?: string }>
 }
 
 export type SkillsHooksSettingsApi = SkillsIpcApi & HooksIpcApi
@@ -129,6 +143,40 @@ export function mergeHookLists(user: HookCommand[], workspace: HookCommand[]): H
   for (const hook of user) byId.set(hook.id, hook)
   for (const hook of workspace) byId.set(hook.id, hook)
   return [...byId.values()]
+}
+
+/**
+ * Count hooks that host execution would admit after merge:
+ * enabled user hooks, plus enabled workspace hooks only when trusted.
+ * Workspace rows win on id collision (matching HooksStore.resolveEffectiveHooks).
+ */
+export function countEffectiveHooksAfterTrust(
+  hooks: HookCommand[],
+  trustWorkspaceHooks: boolean
+): number {
+  const byId = new Map<string, HookCommand>()
+  for (const hook of hooks) {
+    if (hook.scope !== 'user') continue
+    if (!hook.enabled) continue
+    byId.set(hook.id, hook)
+  }
+  if (trustWorkspaceHooks) {
+    for (const hook of hooks) {
+      if (hook.scope !== 'workspace') continue
+      if (!hook.enabled) {
+        byId.delete(hook.id)
+        continue
+      }
+      byId.set(hook.id, hook)
+    }
+  }
+  return byId.size
+}
+
+/** Best-effort read of optional ask-before-run preference (sibling may land the field). */
+export function readAskBeforeHookCommands(settings: unknown): boolean {
+  if (!settings || typeof settings !== 'object') return false
+  return (settings as Record<string, unknown>).askBeforeHookCommands === true
 }
 
 /** Read Wave C provider harness posture from app settings (best-effort). */

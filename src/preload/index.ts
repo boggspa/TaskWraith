@@ -1815,6 +1815,8 @@ const api = {
   listUserSkills: () => ipcRenderer.invoke('skills:list-user'),
   listWorkspaceSkills: (payload: { workspacePath: string; workspaceId?: string }) =>
     ipcRenderer.invoke('skills:list-workspace', payload),
+  listEffectiveSkills: (payload: { workspacePath: string; workspaceId?: string }) =>
+    ipcRenderer.invoke('skills:list-effective', payload),
   upsertSkill: (payload: unknown) => ipcRenderer.invoke('skills:upsert', payload),
   deleteSkill: (payload: {
     scope: 'user' | 'workspace'
@@ -1836,6 +1838,8 @@ const api = {
   upsertHook: (request: unknown) => ipcRenderer.invoke('hooks:upsert', request),
   deleteHook: (request: unknown) => ipcRenderer.invoke('hooks:delete', request),
   setHookEnabled: (request: unknown) => ipcRenderer.invoke('hooks:set-enabled', request),
+  revealHooksRoot: (payload: { scope: 'user' | 'workspace'; workspacePath?: string }) =>
+    ipcRenderer.invoke('hooks:reveal-root', payload),
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
   addOrUpdateWorkspace: (path: string, partial: any = {}) =>
     ipcRenderer.invoke('add-or-update-workspace', path, partial),

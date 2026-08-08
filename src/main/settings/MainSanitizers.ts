@@ -205,6 +205,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'geminiApiRuntime',
   'providerHarnessPosture',
   'trustWorkspaceHooks',
+  'askBeforeHookCommands',
   'userMcpServers',
   'geminiMcpBridgeEnabled',
   'geminiMcpBridgeLastStatus',
@@ -2018,6 +2019,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('trustWorkspaceHooks' in sanitized) {
       if (typeof sanitized.trustWorkspaceHooks !== 'boolean') {
         delete sanitized.trustWorkspaceHooks
+      }
+    }
+    if ('askBeforeHookCommands' in sanitized) {
+      if (typeof sanitized.askBeforeHookCommands !== 'boolean') {
+        delete sanitized.askBeforeHookCommands
       }
     }
     if ('nativeSubAgentRequests' in sanitized) {

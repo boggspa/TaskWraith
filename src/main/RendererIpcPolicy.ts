@@ -462,6 +462,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'hooks:upsert',
   'hooks:delete',
   'hooks:set-enabled',
+  'hooks:reveal-root',
 
   // Provider credentials, login processes, and host-wide provider bridges.
   'store-claude-api-key',

@@ -2414,6 +2414,14 @@ export interface AppSettings {
    * default (undefined/false) keeps execution limited to user-scoped hooks.
    */
   trustWorkspaceHooks?: boolean
+  /**
+   * When true, each host shell hook command must be approved before it runs.
+   * Default (undefined/false) keeps Settings-authored user hooks friction-free.
+   * Call sites should supply `requestApproval` (typically via
+   * `requestAgenticServiceApproval` for `shellCommands`); when the setting is
+   * on without a callback, hooks deny-by-default.
+   */
+  askBeforeHookCommands?: boolean
   userMcpServers?: UserMcpServerConfig[]
   codexUsageCredential?: {
     encryptedAccessToken?: string

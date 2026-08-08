@@ -44,6 +44,7 @@ export function createSkillsHooksSubsystem(
 
   registerHooksHandlers({
     hooksStore,
+    revealPathInFinder: options.revealPathInFinder,
     requireRegisteredWorkspace: options.requireRegisteredWorkspace,
     assertSenderScope: options.assertSenderScope,
     isMainRendererSender: options.isMainRendererSender,

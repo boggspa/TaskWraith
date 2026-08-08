@@ -1835,6 +1835,10 @@ declare global {
         workspacePath: string
         workspaceId?: string
       }) => Promise<import('../shared/skills/SkillTypes').SkillRecord[]>
+      listEffectiveSkills: (payload: {
+        workspacePath: string
+        workspaceId?: string
+      }) => Promise<import('../shared/skills/SkillTypes').EffectiveSkill[]>
       upsertSkill: (
         payload: import('../shared/skills/SkillTypes').UpsertSkillInput & {
           scope: import('../shared/skills/SkillTypes').SkillScope
@@ -1871,6 +1875,10 @@ declare global {
       setHookEnabled: (
         request: import('../shared/hooks/HookTypes').SetHookEnabledRequest
       ) => Promise<import('../shared/hooks/HookTypes').HooksConfigSnapshot>
+      revealHooksRoot: (payload: {
+        scope: 'user' | 'workspace'
+        workspacePath?: string
+      }) => Promise<{ ok: boolean; error?: string; path?: string }>
       getWorkspaces: () => Promise<WorkspaceRecord[]>
       addOrUpdateWorkspace: (
         path: string,

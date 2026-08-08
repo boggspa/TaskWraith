@@ -1204,6 +1204,22 @@ describe('MainSanitizers settings patches', () => {
     }
   })
 
+  it('accepts only an explicit boolean askBeforeHookCommands preference', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    expect(sanitizeSettingsPatch({ askBeforeHookCommands: true }).askBeforeHookCommands).toBe(true)
+    expect(sanitizeSettingsPatch({ askBeforeHookCommands: false }).askBeforeHookCommands).toBe(
+      false
+    )
+    for (const value of [undefined, null, 'true', 1, {}]) {
+      expect(
+        'askBeforeHookCommands' in
+          sanitizeSettingsPatch({ askBeforeHookCommands: value as boolean })
+      ).toBe(false)
+    }
+  })
+
   it('preserves the General auto-update checkbox setting', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
