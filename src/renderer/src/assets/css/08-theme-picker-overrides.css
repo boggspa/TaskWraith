@@ -16,7 +16,7 @@
   animation: child-agent-thread-flash 1.1s ease-out;
 }
 
-/* ----- Spawn block (the "Spawned N agents" disclosure) ----- */
+/* ----- Spawn block (the "Agents · N agents" disclosure) ----- */
 .child-agent-spawn-block {
   margin: 8px 0 6px 24px;
   border-radius: var(--radius-md);
@@ -24,32 +24,29 @@
   background: color-mix(in srgb, var(--panel-elevated-bg) 50%, transparent);
   overflow: hidden;
 }
-.child-agent-spawn-block-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.child-agent-spawn-block > .collapsed-activity-stack {
+  margin: 0;
+}
+.child-agent-spawn-block .collapsed-activity-stack-summary {
   width: 100%;
   padding: 7px 12px;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  color: var(--text-primary);
-  font: inherit;
   font-size: var(--font-size-sm);
-  text-align: left;
+  color: var(--text-primary);
 }
-.child-agent-spawn-block-header:hover {
+.child-agent-spawn-block .collapsed-activity-stack-summary:hover {
   background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
-.child-agent-spawn-block-chevron {
-  transition: transform 140ms ease;
-  color: var(--text-tertiary);
-  flex-shrink: 0;
+.child-agent-spawn-block .collapsed-activity-stack-label {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-.child-agent-spawn-block-chevron.expanded { transform: rotate(180deg); }
-.child-agent-spawn-block-title strong {
+.child-agent-spawn-block-count {
   color: var(--text-primary);
   font-weight: 600;
+  flex-shrink: 0;
 }
 .child-agent-spawn-block-collapsed-pills {
   display: inline-flex;

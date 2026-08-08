@@ -21,9 +21,7 @@ export function providerDisplayName(provider?: ProviderId | string): string {
 }
 
 export function agentInvocationRouteLabel(source: AgentInvocationSource): string {
-  return source === 'taskwraith-subthread'
-    ? 'Durable sub-thread'
-    : 'Provider tool call in this transcript'
+  return source === 'taskwraith-subthread' ? 'Durable sub-thread' : 'Provider-native'
 }
 
 export function childAgentStateLabel(state: ChildAgentState): string {

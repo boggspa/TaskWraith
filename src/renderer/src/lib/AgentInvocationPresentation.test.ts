@@ -8,9 +8,7 @@ import {
 
 describe('AgentInvocationPresentation', () => {
   it('keeps the route distinction explicit', () => {
-    expect(agentInvocationRouteLabel('provider-native')).toBe(
-      'Provider tool call in this transcript'
-    )
+    expect(agentInvocationRouteLabel('provider-native')).toBe('Provider-native')
     expect(agentInvocationRouteLabel('taskwraith-subthread')).toBe('Durable sub-thread')
   })
 

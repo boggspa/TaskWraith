@@ -1329,9 +1329,45 @@ describe('ActivityStack agent invocation presentation', () => {
     )
 
     expect(html).not.toContain('Provider Native')
-    expect(html).toContain('Provider tool call in this transcript')
-    expect(html).toContain('Invocation prompt')
-    expect(html).toContain('Provider-native activity')
+    expect(html).not.toContain('Provider tool call in this transcript')
+    expect(html).not.toContain('Invocation prompt')
+    expect(html).not.toContain('Provider-native activity')
+    expect(html).not.toContain('Invocation result')
+    expect(html).toContain('Provider-native')
+    expect(html).toContain('Prompt')
+    expect(html).toContain('Activity · 1')
+  })
+
+  it('labels multi-agent spawn blocks as Agents + N agents via CollapsedTranscriptRow', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="claude"
+        activities={[
+          makeWriteActivity({
+            id: 'task-a',
+            toolName: 'Task',
+            displayName: 'Task',
+            category: 'task',
+            status: 'running',
+            parameters: { prompt: 'Review the current diff' }
+          }),
+          makeWriteActivity({
+            id: 'task-b',
+            toolName: 'Task',
+            displayName: 'Task',
+            category: 'task',
+            status: 'running',
+            parameters: { prompt: 'Draft a fix plan' }
+          })
+        ]}
+      />
+    )
+
+    expect(html).not.toContain('Agent Invocations')
+    expect(html).toContain('collapsed-activity-stack')
+    expect(html).toContain('collapsed-activity-stack-meta')
+    expect(html).toContain('Agents')
+    expect(html).toContain('2 agents')
   })
 
   it('renders child-agent identities with named identicons', () => {

@@ -89,6 +89,7 @@ import {
   useDiffHoverPreviewState
 } from './DiffHoverPreview'
 import { TranscriptFileTarget } from './TranscriptFileTarget'
+import { CollapsedTranscriptRow } from './CollapsedTranscriptRow'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
@@ -2635,7 +2636,7 @@ function ActivityImageBlocks({ blocks }: { blocks: ReturnType<typeof extractMcpI
 
 /**
  * Spawn block — collapsed summary that precedes the individual provider-native
- * invocation cards when 2+ agents are spawned in the same message.
+ * agent cards when 2+ agents are spawned in the same message.
  */
 function ChildAgentSpawnBlock({ threads }: { threads: ChildAgentThread[] }) {
   const [expanded, setExpanded] = useState(true)
@@ -2651,57 +2652,47 @@ function ChildAgentSpawnBlock({ threads }: { threads: ChildAgentThread[] }) {
     }
   }
 
+  const agentCountLabel = `${threads.length} ${threads.length === 1 ? 'agent' : 'agents'}`
+
   return (
     <div className={`child-agent-spawn-block ${expanded ? 'is-expanded' : 'is-collapsed'}`}>
-      <button
-        type="button"
-        className="child-agent-spawn-block-header"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-      >
-        <svg
-          className={`child-agent-spawn-block-chevron ${expanded ? 'expanded' : ''}`}
-          width="11"
-          height="11"
-          viewBox="0 0 12 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-        >
-          <polyline points="3,4.5 6,7.5 9,4.5" />
-        </svg>
-        <span className="child-agent-spawn-block-title">
-          Agent Invocations <strong>{threads.length}</strong>
-        </span>
-        {!expanded && (
-          <span className="child-agent-spawn-block-collapsed-pills" aria-hidden>
-            {threads.map((thread) => (
-              <span
-                key={thread.id}
-                className="child-agent-spawn-block-pill"
-                style={
-                  thread.identity
-                    ? { color: thread.identity.color, borderColor: thread.identity.color }
-                    : undefined
-                }
-              >
-                <AgentIdentityIcon
-                  identity={thread.identity}
-                  seed={thread.id}
-                  color={thread.identity?.color}
-                  size={14}
-                  className="child-agent-spawn-block-pill-icon"
-                />
-                {thread.identity?.name || thread.name}
+      <CollapsedTranscriptRow
+        header={null}
+        metaLabel="Agents"
+        label={agentCountLabel}
+        labelContent={
+          <>
+            <span className="child-agent-spawn-block-count">{agentCountLabel}</span>
+            {!expanded ? (
+              <span className="child-agent-spawn-block-collapsed-pills" aria-hidden>
+                {threads.map((thread) => (
+                  <span
+                    key={thread.id}
+                    className="child-agent-spawn-block-pill"
+                    style={
+                      thread.identity
+                        ? { color: thread.identity.color, borderColor: thread.identity.color }
+                        : undefined
+                    }
+                  >
+                    <AgentIdentityIcon
+                      identity={thread.identity}
+                      seed={thread.id}
+                      color={thread.identity?.color}
+                      size={14}
+                      className="child-agent-spawn-block-pill-icon"
+                    />
+                    {thread.identity?.name || thread.name}
+                  </span>
+                ))}
               </span>
-            ))}
-          </span>
-        )}
-      </button>
-      {expanded && (
+            ) : null}
+          </>
+        }
+        expanded={expanded}
+        onToggle={setExpanded}
+        ariaTargetLabel="agents"
+      >
         <div className="child-agent-spawn-block-body">
           {threads.map((thread) => {
             const identity = thread.identity
@@ -2741,7 +2732,7 @@ function ChildAgentSpawnBlock({ threads }: { threads: ChildAgentThread[] }) {
             )
           })}
         </div>
-      )}
+      </CollapsedTranscriptRow>
     </div>
   )
 }
@@ -3588,15 +3579,13 @@ function ChildAgentThreadCard({
           </div>
           {thread.seedPrompt && (
             <div className="child-agent-section">
-              <div className="child-agent-section-title">Invocation prompt</div>
+              <div className="child-agent-section-title">Prompt</div>
               <pre className="child-agent-seed-prompt">{thread.seedPrompt}</pre>
             </div>
           )}
           {activities.length > 0 && (
             <div className="child-agent-section">
-              <div className="child-agent-section-title">
-                Provider-native activity · {activities.length}
-              </div>
+              <div className="child-agent-section-title">Activity · {activities.length}</div>
               <div className="child-agent-activities">
                 {activities.map((childActivity) => (
                   <ActivityRow
@@ -3618,12 +3607,12 @@ function ChildAgentThreadCard({
           )}
           {thread.finalResult && (
             <div className="child-agent-section">
-              <div className="child-agent-section-title">Invocation result</div>
+              <div className="child-agent-section-title">Result</div>
               <div className="child-agent-result">{thread.finalResult}</div>
             </div>
           )}
           {!thread.seedPrompt && activities.length === 0 && !thread.finalResult && (
-            <div className="child-agent-empty">No agent invocation output captured yet.</div>
+            <div className="child-agent-empty">No agent output captured yet.</div>
           )}
         </div>
       )}
