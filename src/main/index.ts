@@ -1355,10 +1355,16 @@ import {
 } from './mcp/SkillToolExecutors'
 import { createSkillsHooksSubsystem, getSkillsHooksSubsystem } from './skillsHooks/registerSkillsHooksSubsystem'
 import {
+  resolveRunSkillHookContext,
+  setRunSkillHookHostDepsBuilder
+} from './skillsHooks/resolveRunSkillHookContext'
+import {
+  createHookRunEventEmitter,
   runPostToolUseHooks,
   runPreToolUseHooks,
-  runSessionStartHooksForWorkspace,
-  runStopHooks
+  runStopHooks,
+  withHostToolHooks,
+  type HostHookIntegrationDeps
 } from './hooks/hostHookIntegration'
 import { isRemoteOriginRun, markRemoteOriginRun } from './RemoteOriginRuns'
 import { createThreadMessageAccessResolver } from './ThreadMessageAccessResolver'
@@ -3442,7 +3448,13 @@ const scheduledOccurrenceTransaction = new ScheduledOccurrenceTransaction({
 // dispatch path touches only id/isDestroyed/send).
 let composerServiceRef: ComposerService | null = null
 /** Late-bound Stop hook firer from whenReady (Wave A host hooks). */
-let fireStopHooksForWorkspaceRef: ((workspacePath: string, status?: string) => void) | null = null
+let fireStopHooksForWorkspaceRef:
+  | ((
+      workspacePath: string,
+      status?: string,
+      route?: { appRunId?: string; appChatId?: string; provider?: ProviderId }
+    ) => void)
+  | null = null
 const headlessRunSender = new Proxy(
   {},
   {
@@ -8334,7 +8346,11 @@ runManager.onChange((event) => {
     workspaceLockRunLifecycle.terminal(event.session.runId)
     const stopWorkspace = (event.session.workspacePath || '').trim()
     if (stopWorkspace) {
-      fireStopHooksForWorkspaceRef?.(stopWorkspace, event.session.status)
+      fireStopHooksForWorkspaceRef?.(stopWorkspace, event.session.status, {
+        appRunId: event.session.runId,
+        appChatId: event.session.appChatId,
+        provider: event.session.provider
+      })
     }
   }
   if (
@@ -10757,14 +10773,14 @@ function recoverPersistedSoloChatWakeups(): void {
   }
 }
 
-function composeDelegatedProviderPrompts(args: {
+async function composeDelegatedProviderPrompts(args: {
   provider: ProviderId
   subThread: ChatRecord
   prompt: string
   approvalMode: string
   model?: string
   resumeSessionId?: string
-}): { prompt: string; resumeFallbackPrompt?: string } {
+}): Promise<{ prompt: string; resumeFallbackPrompt?: string }> {
   // Grok's default ACP transport opens a fresh session each turn. Legacy Kimi
   // seats also need host transcript injection, while marked Kimi Code 0.26+
   // seats rehydrate provider history with session/resume. Recalled delegated
@@ -10800,6 +10816,13 @@ function composeDelegatedProviderPrompts(args: {
     coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
     grokMcpAdvertised: args.provider === 'grok' ? taskWraithMcpAdvertised : undefined
   })
+  const isGlobalRun = (args.subThread.scope ?? 'workspace') === 'global'
+  const skillHookContext = await resolveRunSkillHookContext({
+    workspacePath: args.subThread.workspacePath,
+    workspaceId: args.subThread.workspaceId,
+    isGlobalRun,
+    allowWorkspaceHooks: settings.trustWorkspaceHooks === true
+  })
   const promptInput = {
     provider: args.provider,
     finalPrompt: args.prompt,
@@ -10808,7 +10831,7 @@ function composeDelegatedProviderPrompts(args: {
     resumeSessionId: args.resumeSessionId,
     nextModel: args.model,
     codexHandoffsApplied: [],
-    isGlobalRun: (args.subThread.scope ?? 'workspace') === 'global',
+    isGlobalRun,
     approvalMode: args.approvalMode,
     // Sub-threads are never plan-workflow chats, so a read-only delegated
     // turn is a recon turn: the child should report findings, not plan.
@@ -10817,7 +10840,8 @@ function composeDelegatedProviderPrompts(args: {
     nativeSubAgentRequests: settings.nativeSubAgentRequests,
     taskWraithMcpAdvertised,
     taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
-    ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {})
+    ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
+    ...skillHookContext
   } satisfies Parameters<typeof composeRunPrompt>[0]
   const prompt = composeRunPrompt(promptInput).contextualPrompt
   if (!kimiNativeSessionResume) return { prompt }
@@ -11297,7 +11321,7 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
       const approvalMode = workerPermissions.effectivePermissions.approvalMode
       let providerPrompts: { prompt: string; resumeFallbackPrompt?: string }
       try {
-        providerPrompts = composeDelegatedProviderPrompts({
+        providerPrompts = await composeDelegatedProviderPrompts({
           provider: chat.provider,
           subThread: chat,
           prompt: event.prompt,
@@ -13874,6 +13898,56 @@ const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
 }
 
 const requestAgenticServiceApproval = createApprovalOrchestration(requestAgenticServiceApprovalDeps)
+
+/**
+ * Shared deps for host shell hook call sites (SessionStart / Pre / Post / Stop).
+ * Emits durable lifecycle run-events when a run id is known; otherwise the
+ * emitter falls back to console.debug. When `askBeforeHookCommands` is on and
+ * a provider is available, each command goes through `shellCommands` approval;
+ * SessionStart (compose-time, no provider/run) relies on the deny-by-default
+ * stub inside `resolveHostHookIntegrationDeps`.
+ */
+function buildHostHookCallDeps(input: {
+  hooksStore: HostHookIntegrationDeps['hooksStore']
+  workspacePath: string
+  appChatId?: string
+  appRunId?: string
+  provider?: ProviderId
+}): HostHookIntegrationDeps {
+  const settings = AppStore.getSettings()
+  const askBeforeHookCommands = settings.askBeforeHookCommands === true
+  const emitRunEvent = createHookRunEventEmitter({
+    append: (eventInput) => appendDurableRunEvent(eventInput),
+    appChatId: input.appChatId,
+    appRunId: input.appRunId
+  })
+  const deps: HostHookIntegrationDeps = {
+    hooksStore: input.hooksStore,
+    allowWorkspaceHooks: settings.trustWorkspaceHooks === true,
+    askBeforeHookCommands,
+    emitRunEvent
+  }
+  if (askBeforeHookCommands && input.provider) {
+    const provider = input.provider
+    const workspacePath = input.workspacePath
+    // Omit runId on purpose when the run may already be terminal (Stop): the
+    // approval orchestrator fail-closes claimed-terminal runIds. Pre/Post still
+    // benefit from ledger correlation via emitRunEvent's appRunId.
+    deps.requestApproval = async (command: string) =>
+      requestAgenticServiceApproval(null, provider, 'shellCommands', workspacePath, {
+        method: `${provider}-host-hook/command`,
+        title: 'Approve host hook command',
+        body: command,
+        preview: {
+          kind: 'tool',
+          toolName: 'host_shell_hook',
+          params: { command }
+        },
+        forcePrompt: true
+      })
+  }
+  return deps
+}
 
 const requestMainApprovalDeps: RequestMainApprovalDeps = {
   getApprovalService: () => approvalService,
@@ -19811,64 +19885,102 @@ async function canUseClaudeSdkTool(
   }
   if (nativeSubAgentDecision) return nativeSubAgentDecision
   if (approvalIdentity.kind === 'provider-native') {
-    // WS-B dual-stack: rather than quarantining native FS/shell to the broker,
-    // run the shared canonical workspace preflight. Native FS calls whose paths
-    // resolve INSIDE the active workspace are allowed again (reads directly;
-    // writes routed through the agentic-service ledger below); out-of-workspace
-    // paths are denied. The Claude Agent SDK runs tools with cwd=workspace but
-    // provides no hard filesystem/egress sandbox, so native shell stays fail-
-    // closed here (runtimeSandboxed:false) — the namespaced broker
-    // run_shell_command, which IS workspace-bounded, remains available.
-    //
-    // `provider` is REQUIRED by the 1.9.2 gate, which refuses to resolve a bare
-    // native alias without an adapter identity; the pre-1.9.2 call site omitted
-    // it. An unclassifiable native name still falls back to the broker-only
-    // containment message via the mapper's `not_applicable` arm.
-    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
-      provider: 'claude',
+    // Host Pre/Post for provider-native tools only — TaskWraith MCP already
+    // fires hooks inside executeGeminiMcpTool; wiring both would double-fire.
+    const claudeNativeWorkspace =
+      payload.scope === 'global' ? undefined : payload.workspace
+    const claudeHooksStore = getSkillsHooksSubsystem()?.hooksStore
+    const hookedNative = await withHostToolHooks<
+      | { behavior: 'allow'; updatedInput: Record<string, unknown> }
+      | { behavior: 'deny'; message: string }
+    >({
+      workspacePath: claudeNativeWorkspace,
       toolName,
-      rawToolCall: updatedInput,
-      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
-      runtimeSandboxed: false
-    })
-    const nativeDecision = classifyNativeWorkspacePreflightDecision(
-      'Claude',
-      toolName,
-      nativeWorkspacePreflight
-    )
-    if (nativeDecision.action === 'deny') {
-      return { behavior: 'deny', message: nativeDecision.message }
-    }
-    if (nativeDecision.action === 'allow') {
-      return { behavior: 'allow', updatedInput }
-    }
-    const nativeWorkspaceAllowed = await requestAgenticServiceApproval(
-      sender,
-      'claude',
-      nativeDecision.service,
-      payload.scope === 'global' ? undefined : payload.workspace,
-      {
-        method: 'claude/canUseTool',
-        title:
-          nativeDecision.service === 'shellCommands'
-            ? 'Approve Claude shell command'
-            : 'Approve Claude file change',
-        body: toolName,
-        preview: buildAcpToolApprovalPreview({
+      deps:
+        claudeNativeWorkspace && claudeHooksStore
+          ? buildHostHookCallDeps({
+              hooksStore: claudeHooksStore,
+              workspacePath: claudeNativeWorkspace,
+              appChatId: route.appChatId,
+              appRunId: route.appRunId,
+              provider: 'claude'
+            })
+          : null,
+      run: async () => {
+        // WS-B dual-stack: rather than quarantining native FS/shell to the broker,
+        // run the shared canonical workspace preflight. Native FS calls whose paths
+        // resolve INSIDE the active workspace are allowed again (reads directly;
+        // writes routed through the agentic-service ledger below); out-of-workspace
+        // paths are denied. The Claude Agent SDK runs tools with cwd=workspace but
+        // provides no hard filesystem/egress sandbox, so native shell stays fail-
+        // closed here (runtimeSandboxed:false) — the namespaced broker
+        // run_shell_command, which IS workspace-bounded, remains available.
+        //
+        // `provider` is REQUIRED by the 1.9.2 gate, which refuses to resolve a bare
+        // native alias without an adapter identity; the pre-1.9.2 call site omitted
+        // it. An unclassifiable native name still falls back to the broker-only
+        // containment message via the mapper's `not_applicable` arm.
+        const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+          provider: 'claude',
           toolName,
           rawToolCall: updatedInput,
-          service: nativeDecision.service,
-          cwd: payload.scope === 'global' ? undefined : payload.workspace
-        }),
-        runId: route.appRunId
+          workspacePath: claudeNativeWorkspace,
+          runtimeSandboxed: false
+        })
+        const nativeDecision = classifyNativeWorkspacePreflightDecision(
+          'Claude',
+          toolName,
+          nativeWorkspacePreflight
+        )
+        if (nativeDecision.action === 'deny') {
+          return { behavior: 'deny', message: nativeDecision.message }
+        }
+        if (nativeDecision.action === 'allow') {
+          return { behavior: 'allow', updatedInput }
+        }
+        const nativeWorkspaceAllowed = await requestAgenticServiceApproval(
+          sender,
+          'claude',
+          nativeDecision.service,
+          claudeNativeWorkspace,
+          {
+            method: 'claude/canUseTool',
+            title:
+              nativeDecision.service === 'shellCommands'
+                ? 'Approve Claude shell command'
+                : 'Approve Claude file change',
+            body: toolName,
+            preview: buildAcpToolApprovalPreview({
+              toolName,
+              rawToolCall: updatedInput,
+              service: nativeDecision.service,
+              cwd: claudeNativeWorkspace
+            }),
+            runId: route.appRunId
+          }
+        )
+        if (!claudeRunAcceptsTools()) {
+          return denyInactiveRun()
+        }
+        return nativeWorkspaceAllowed
+          ? { behavior: 'allow', updatedInput }
+          : { behavior: 'deny', message: `TaskWraith denied Claude tool ${toolName}.` }
+      },
+      outcomeFromResult: (decision) => (decision.behavior === 'allow' ? 'ok' : 'deny'),
+      onHookError: (phase, error) => {
+        console.warn(
+          `[hooks] ${phase === 'pre' ? 'Pre' : 'Post'}ToolUse failed:`,
+          error
+        )
       }
-    )
-    if (!claudeRunAcceptsTools()) {
-      return denyInactiveRun()
+    })
+    if (hookedNative.blocked) {
+      return {
+        behavior: 'deny',
+        message: hookedNative.reason || 'Blocked by TaskWraith PreToolUse hook.'
+      }
     }
-    return nativeWorkspaceAllowed
-      ? { behavior: 'allow', updatedInput }
-      : { behavior: 'deny', message: `TaskWraith denied Claude tool ${toolName}.` }
+    return hookedNative.result
   }
   // Auto-allow side-effect-free TaskWraith tools before the agentic-
   // service gate. The MCP dispatcher already skips approval for
@@ -29346,6 +29458,29 @@ function handleCodexServerRequest(message: any) {
     )
     return
   }
+  void settleCodexNativeApprovalRequest(message, respondingClient, state, method, params).catch(
+    (error) => {
+      const reason =
+        error instanceof Error ? error.message : 'Codex approval request could not be settled.'
+      try {
+        respondingClient.reject(message.id, reason)
+      } catch {
+        // The Codex client may have closed while the approval was pending.
+      }
+    }
+  )
+}
+
+async function settleCodexNativeApprovalRequest(
+  message: any,
+  respondingClient: {
+    respond: (id: number | string, payload: unknown) => void
+    reject: (id: number | string, reason: string) => void
+  },
+  state: CodexRunState,
+  method: string,
+  params: any
+): Promise<void> {
   const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
   const structuralItemId = params?.itemId || params?.item_id || params?.item?.id
   const structuralApproval = resolveCodexStructuralApproval({
@@ -29430,328 +29565,386 @@ function handleCodexServerRequest(message: any) {
     toolName: codexCanonicalToolName || probedToolName,
     source: { ...params, request_id: message.id }
   })
-  if (
-    isMcpAutoAllowedForRun(codexCanonicalToolName, state.effectivePermissions, codexToolArgs, {
-      appRunId: state.appRunId,
-      appChatId: state.appChatId
-    })
-  ) {
-    if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-      respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
-    } else if (method === 'tool/requestUserInput') {
-      respondingClient.respond(message.id, { answers: {} })
-    } else {
-      respondingClient.respond(message.id, { decision: 'accept' })
-    }
-    return
-  }
-  let externalPathDetection: PendingExternalPathDetection | undefined
-  try {
-    const detection = detectExternalPathForProviderApproval({
-      provider: 'codex',
-      appChatId: state.appChatId,
-      appRunId: state.appRunId,
-      toolName: probedToolName,
-      method,
-      params,
-      workspacePath: workspacePathForCodexApproval
-    })
-    if (detection) {
-      externalPathDetection = detection
-      formatted.title = externalPathApprovalTitle()
-      formatted.body = externalPathApprovalBody(detection)
-    }
-  } catch (err) {
-    // Detector is best-effort. If it throws, fall through to the
-    // generic approval flow — the user still gets the standard
-    // accept/decline buttons.
-    console.warn('[ExternalPathDetector] codex registration probe failed', err)
-  }
-  const gateService =
-    service === 'mcpTools' &&
-    isReadOnlyBlockedTool(codexCanonicalToolName, state.effectivePermissions, codexToolArgs)
-      ? ('shellCommands' as AgenticServiceId)
-      : service
-  const codexCanvasEvalApproval =
-    gateService === 'canvasEval'
-      ? createCanvasEvalApprovalReceiptFromCanonicalArgs(codexToolArgs, approvalId)
-      : undefined
-  if (gateService === 'canvasEval' && !codexCanvasEvalApproval) {
-    respondingClient.reject(
-      message.id,
-      'TaskWraith blocked canvas_eval because no canonical script receipt was available.'
-    )
-    return
-  }
-  if (codexCanvasEvalApproval) {
-    primeNativeCanvasCompatCorrelation({
-      provider: 'codex',
-      route: state,
-      toolName: 'canvas_eval',
-      source: { ...params, request_id: message.id },
-      canvasEvalApproval: codexCanvasEvalApproval
-    })
-  }
-  const nativePreflight = resolveNativeApprovalPreflight({
-    provider: 'codex',
-    service: gateService,
-    workspacePath: workspacePathForCodexApproval,
-    runId: state.appRunId,
-    externalPathDetection,
-    toolName: codexCanonicalToolName || probedToolName,
-    toolArgs: codexToolArgs,
-    // The RAW exec command (argv or string) — same lookup chain the approval
-    // formatter uses — so a pure `git status` is allowed under every posture.
-    shellCommand:
-      params?.command ?? params?.commandLine ?? params?.exec?.command ?? params?.item?.command,
-    // Canvas tools carry their target surface in the args; a surface-scoped
-    // grant is only allowed to match the window the user actually approved.
-    surfaceId:
-      typeof params?.canvasId === 'string' ? params.canvasId.trim() || undefined : undefined
-  })
-  const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
-  const postureApprovalOnly = isPostureApprovalOnlyService(
-    nativePreflight.kind === 'none' ? undefined : nativePreflight.effectivePermissions?.presetId,
-    gateService
-  )
-  const actions: AgentApprovalAction[] = externalPathDetection
-    ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
-    : gateService === 'canvasEval' || postureApprovalOnly
-      ? ['accept', 'decline', 'cancel']
-      : nativePreflight.kind === 'ask'
-        ? approvalActionsForPolicy(
-            nativePreflight.policy,
-            workspacePathForCodexApproval,
-            gateService
-          )
-        : ['accept', 'acceptForSession', 'decline', 'cancel']
-  const previewForDecision = {
-    ...(formatted.preview || {}),
-    actions,
-    ...(externalPathDetection && externalPathDetection.path
-      ? {
-          externalPathDetection: externalPathApprovalPreview(externalPathDetection)
-        }
-      : {})
-  }
-  const codexEnsembleApproval = gateService
-    ? ensembleApprovalContext(state.ensembleRun, gateService, workspacePathForCodexApproval)
-    : undefined
-  const codexApprovalTitle = codexEnsembleApproval
-    ? `${codexEnsembleApproval.label}: ${formatted.title}`
-    : formatted.title
-  const codexApprovalBody = codexEnsembleApproval
-    ? `${codexEnsembleApproval.bodyPrefix}\n\n${formatted.body}`
-    : formatted.body
-  const codexApprovalPreview: any = {
-    ...previewForDecision,
-    ...(gateService === 'canvasEval'
-      ? {
-          toolName: 'canvas_eval',
-          params: codexToolArgs,
-          securityClass: 'signed-elevated',
-          requiresExactDesktopReview: true,
-          requestOnly: true,
-          ...(codexCanvasEvalApproval ? { canvasEvalReceipt: codexCanvasEvalApproval } : {})
-        }
-      : {}),
-    ...(postureApprovalOnly
-      ? {
-          requestOnly: true,
-          requestOnlyReason: 'run-posture-approval-only'
-        }
-      : {}),
-    ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
-  }
-  const codexPlanArtifactWriteMetadata =
-    gateService && nativePreflight.kind === 'deny'
-      ? planArtifactWriteApprovalMetadata({
-          workflowMode: state.workflowMode,
-          effectivePermissions: state.effectivePermissions,
-          globalFileChangesPolicy: AppStore.getSettings().agenticServices?.fileChanges,
-          service: gateService,
-          workspacePath: workspacePathForCodexApproval,
-          request: { preview: previewForDecision }
-        })
-      : null
-  if (gateService && nativePreflight.kind === 'deny' && codexPlanArtifactWriteMetadata) {
-    auditService.recordAutomaticApprovalDecision(
-      'codex',
-      { appRunId: state.appRunId, appChatId: state.appChatId },
-      gateService,
-      workspacePathForCodexApproval,
-      {
-        method,
-        title: codexApprovalTitle,
-        body: codexApprovalBody,
-        preview: codexApprovalPreview
-      },
-      'autoAllow',
-      'plan_artifact',
-      'request',
-      {
-        policy: nativePreflight.policy,
-        ...codexPlanArtifactWriteMetadata,
-        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
-      }
-    )
-    stampPlanArtifactPathOnPendingPlan(state.appChatId, codexPlanArtifactWriteMetadata)
-    if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-      respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
-    } else if (method === 'item/permissions/requestApproval') {
-      respondingClient.respond(message.id, {
-        permissions: params?.permissions || {},
-        scope: 'turn'
+  const hostHookToolName =
+    (structuralApproval.kind === 'resolved' ? structuralApproval.catalogTool : '') ||
+    codexCanonicalToolName ||
+    probedToolName ||
+    String(method || 'codex-approval')
+  // Provider-native commandExecution/fileChange only — TaskWraith MCP already
+  // fires hooks inside executeGeminiMcpTool; wrapping elicitation/auto-allow
+  // here would double-fire (same rule as Claude canUseTool).
+  const isCodexProviderNativeHostHook = structuralApproval.kind === 'resolved'
+  const settleApprovalDecision = async (): Promise<'ok' | 'deny' | 'deferred'> => {
+    if (
+      isMcpAutoAllowedForRun(codexCanonicalToolName, state.effectivePermissions, codexToolArgs, {
+        appRunId: state.appRunId,
+        appChatId: state.appChatId
       })
-    } else if (method === 'tool/requestUserInput') {
-      respondingClient.respond(message.id, { answers: {} })
-    } else {
-      respondingClient.respond(message.id, { decision: 'accept' })
+    ) {
+      if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
+        respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+      } else if (method === 'tool/requestUserInput') {
+        respondingClient.respond(message.id, { answers: {} })
+      } else {
+        respondingClient.respond(message.id, { decision: 'accept' })
+      }
+      return 'ok'
     }
-    return
-  }
-  if (gateService && nativePreflight.kind === 'deny') {
-    auditService.recordAutomaticApprovalDecision(
-      'codex',
-      { appRunId: state.appRunId, appChatId: state.appChatId },
-      gateService,
-      workspacePathForCodexApproval,
-      {
+    let externalPathDetection: PendingExternalPathDetection | undefined
+    try {
+      const detection = detectExternalPathForProviderApproval({
+        provider: 'codex',
+        appChatId: state.appChatId,
+        appRunId: state.appRunId,
+        toolName: probedToolName,
         method,
-        title: codexApprovalTitle,
-        body: codexApprovalBody,
-        preview: codexApprovalPreview
-      },
-      'autoDeny',
-      'policy',
-      'request',
-      {
-        policy: nativePreflight.policy,
-        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {}),
-        ...(externalPathDetection ? { externalPathDetected: true } : {})
-      }
-    )
-    respondingClient.reject(message.id, agenticServiceDisabledMessage(gateService))
-    sendAgentCompatError(state.sender, 'codex', agenticServiceBlockedMessage(gateService), state)
-    return
-  }
-  if (gateService && nativePreflight.kind === 'allow') {
-    auditService.recordAutomaticApprovalDecision(
-      'codex',
-      { appRunId: state.appRunId, appChatId: state.appChatId },
-      gateService,
-      workspacePathForCodexApproval,
-      {
-        method,
-        title: codexApprovalTitle,
-        body: codexApprovalBody,
-        preview: codexApprovalPreview
-      },
-      'autoAllow',
-      nativePreflight.reason,
-      nativePreflight.scope,
-      {
-        policy: nativePreflight.policy,
-        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {}),
-        ...(nativePreflight.reason === 'session_yolo'
-          ? { yoloEnabledAt: sessionYoloState.enabledAt }
-          : {})
-      }
-    )
-    if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-      respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
-    } else if (method === 'item/permissions/requestApproval') {
-      respondingClient.respond(message.id, {
-        permissions: params?.permissions || {},
-        scope:
-          nativePreflight.scope === 'session' || nativePreflight.scope === 'workspace'
-            ? 'session'
-            : 'turn'
+        params,
+        workspacePath: workspacePathForCodexApproval
       })
-    } else if (method === 'tool/requestUserInput') {
-      respondingClient.respond(message.id, { answers: {} })
-    } else {
-      respondingClient.respond(message.id, { decision: 'accept' })
+      if (detection) {
+        externalPathDetection = detection
+        formatted.title = externalPathApprovalTitle()
+        formatted.body = externalPathApprovalBody(detection)
+      }
+    } catch (err) {
+      // Detector is best-effort. If it throws, fall through to the
+      // generic approval flow — the user still gets the standard
+      // accept/decline buttons.
+      console.warn('[ExternalPathDetector] codex registration probe failed', err)
     }
-    return
-  }
-
-  formatted.preview = codexApprovalPreview
-
-  const registered = approvalService?.registerCodex(approvalId, {
-    rpcId: message.id,
-    method,
-    params,
-    service: gateService,
-    workspacePath: workspacePathForCodexApproval,
-    runId: state.appRunId,
-    allowedActions: actions,
-    externalPathDetection
-  })
-  if (registered !== true) {
-    respondingClient.reject(message.id, 'TaskWraith is not accepting new approval requests.')
-    return
-  }
-  runManager.registerApproval(state.appRunId, approvalId)
-  scheduleApprovalTimeout({
-    approvalId,
-    provider: 'codex',
-    route: { appRunId: state.appRunId, appChatId: state.appChatId },
-    kind: method
-  })
-  const approvalPayload = {
-    provider: 'codex',
-    appRunId: state.appRunId,
-    appChatId: state.appChatId,
-    id: approvalId,
-    approvalId,
-    requestId: message.id,
-    method,
-    params: gateService === 'canvasEval' ? codexToolArgs : params,
-    title: codexApprovalTitle,
-    body: codexApprovalBody,
-    preview: formatted.preview,
-    actions
-  }
-  // Keep the exact native payload transient for the desktop reviewer while
-  // projecting canvas_fill values (including nested permission-retry routes)
-  // out of both durable approval stores.
-  const durableApprovalPayload = redactCanvasFillValueForDurableStorage(approvalPayload)
-  appendDurableRunEventForRoute(
-    'codex',
-    { appRunId: state.appRunId, appChatId: state.appChatId },
-    'approval_request',
-    'control',
-    codexApprovalTitle,
-    durableApprovalPayload,
-    undefined,
-    codexCanvasEvalApproval
-  )
-  recordApprovalLedgerRequest(
-    'codex',
-    { appRunId: state.appRunId, appChatId: state.appChatId },
-    durableApprovalPayload,
-    {
+    const gateService =
+      service === 'mcpTools' &&
+      isReadOnlyBlockedTool(codexCanonicalToolName, state.effectivePermissions, codexToolArgs)
+        ? ('shellCommands' as AgenticServiceId)
+        : service
+    const codexCanvasEvalApproval =
+      gateService === 'canvasEval'
+        ? createCanvasEvalApprovalReceiptFromCanonicalArgs(codexToolArgs, approvalId)
+        : undefined
+    if (gateService === 'canvasEval' && !codexCanvasEvalApproval) {
+      respondingClient.reject(
+        message.id,
+        'TaskWraith blocked canvas_eval because no canonical script receipt was available.'
+      )
+      return 'deny'
+    }
+    if (codexCanvasEvalApproval) {
+      primeNativeCanvasCompatCorrelation({
+        provider: 'codex',
+        route: state,
+        toolName: 'canvas_eval',
+        source: { ...params, request_id: message.id },
+        canvasEvalApproval: codexCanvasEvalApproval
+      })
+    }
+    const nativePreflight = resolveNativeApprovalPreflight({
+      provider: 'codex',
       service: gateService,
       workspacePath: workspacePathForCodexApproval,
-      metadata: {
-        policy,
-        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
-      },
-      canvasEvalApproval: codexCanvasEvalApproval
+      runId: state.appRunId,
+      externalPathDetection,
+      toolName: codexCanonicalToolName || probedToolName,
+      toolArgs: codexToolArgs,
+      // The RAW exec command (argv or string) — same lookup chain the approval
+      // formatter uses — so a pure `git status` is allowed under every posture.
+      shellCommand:
+        params?.command ?? params?.commandLine ?? params?.exec?.command ?? params?.item?.command,
+      // Canvas tools carry their target surface in the args; a surface-scoped
+      // grant is only allowed to match the window the user actually approved.
+      surfaceId:
+        typeof params?.canvasId === 'string' ? params.canvasId.trim() || undefined : undefined
+    })
+    const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
+    const postureApprovalOnly = isPostureApprovalOnlyService(
+      nativePreflight.kind === 'none' ? undefined : nativePreflight.effectivePermissions?.presetId,
+      gateService
+    )
+    const actions: AgentApprovalAction[] = externalPathDetection
+      ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
+      : gateService === 'canvasEval' || postureApprovalOnly
+        ? ['accept', 'decline', 'cancel']
+        : nativePreflight.kind === 'ask'
+          ? approvalActionsForPolicy(
+              nativePreflight.policy,
+              workspacePathForCodexApproval,
+              gateService
+            )
+          : ['accept', 'acceptForSession', 'decline', 'cancel']
+    const previewForDecision = {
+      ...(formatted.preview || {}),
+      actions,
+      ...(externalPathDetection && externalPathDetection.path
+        ? {
+            externalPathDetection: externalPathApprovalPreview(externalPathDetection)
+          }
+        : {})
     }
-  )
-  safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
-  // Fan out a wake-push to any paired iOS device. Summary uses
-  // formatted.title (already curated for the user-facing approval
-  // modal); falls back to `method` for unfamiliar Codex shapes.
-  notifyPairedDevicesOfApproval({
-    approvalId,
-    workspaceId: workspaceIdForApprovalPush(workspacePathForCodexApproval),
-    threadId: state.threadId ?? state.appChatId,
-    summary: codexApprovalTitle || `Codex approval: ${method}`
+    const codexEnsembleApproval = gateService
+      ? ensembleApprovalContext(state.ensembleRun, gateService, workspacePathForCodexApproval)
+      : undefined
+    const codexApprovalTitle = codexEnsembleApproval
+      ? `${codexEnsembleApproval.label}: ${formatted.title}`
+      : formatted.title
+    const codexApprovalBody = codexEnsembleApproval
+      ? `${codexEnsembleApproval.bodyPrefix}\n\n${formatted.body}`
+      : formatted.body
+    const codexApprovalPreview: any = {
+      ...previewForDecision,
+      ...(gateService === 'canvasEval'
+        ? {
+            toolName: 'canvas_eval',
+            params: codexToolArgs,
+            securityClass: 'signed-elevated',
+            requiresExactDesktopReview: true,
+            requestOnly: true,
+            ...(codexCanvasEvalApproval ? { canvasEvalReceipt: codexCanvasEvalApproval } : {})
+          }
+        : {}),
+      ...(postureApprovalOnly
+        ? {
+            requestOnly: true,
+            requestOnlyReason: 'run-posture-approval-only'
+          }
+        : {}),
+      ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
+    }
+    const codexPlanArtifactWriteMetadata =
+      gateService && nativePreflight.kind === 'deny'
+        ? planArtifactWriteApprovalMetadata({
+            workflowMode: state.workflowMode,
+            effectivePermissions: state.effectivePermissions,
+            globalFileChangesPolicy: AppStore.getSettings().agenticServices?.fileChanges,
+            service: gateService,
+            workspacePath: workspacePathForCodexApproval,
+            request: { preview: previewForDecision }
+          })
+        : null
+    if (gateService && nativePreflight.kind === 'deny' && codexPlanArtifactWriteMetadata) {
+      auditService.recordAutomaticApprovalDecision(
+        'codex',
+        { appRunId: state.appRunId, appChatId: state.appChatId },
+        gateService,
+        workspacePathForCodexApproval,
+        {
+          method,
+          title: codexApprovalTitle,
+          body: codexApprovalBody,
+          preview: codexApprovalPreview
+        },
+        'autoAllow',
+        'plan_artifact',
+        'request',
+        {
+          policy: nativePreflight.policy,
+          ...codexPlanArtifactWriteMetadata,
+          ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
+        }
+      )
+      stampPlanArtifactPathOnPendingPlan(state.appChatId, codexPlanArtifactWriteMetadata)
+      if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
+        respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+      } else if (method === 'item/permissions/requestApproval') {
+        respondingClient.respond(message.id, {
+          permissions: params?.permissions || {},
+          scope: 'turn'
+        })
+      } else if (method === 'tool/requestUserInput') {
+        respondingClient.respond(message.id, { answers: {} })
+      } else {
+        respondingClient.respond(message.id, { decision: 'accept' })
+      }
+      return 'ok'
+    }
+    if (gateService && nativePreflight.kind === 'deny') {
+      auditService.recordAutomaticApprovalDecision(
+        'codex',
+        { appRunId: state.appRunId, appChatId: state.appChatId },
+        gateService,
+        workspacePathForCodexApproval,
+        {
+          method,
+          title: codexApprovalTitle,
+          body: codexApprovalBody,
+          preview: codexApprovalPreview
+        },
+        'autoDeny',
+        'policy',
+        'request',
+        {
+          policy: nativePreflight.policy,
+          ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {}),
+          ...(externalPathDetection ? { externalPathDetected: true } : {})
+        }
+      )
+      respondingClient.reject(message.id, agenticServiceDisabledMessage(gateService))
+      sendAgentCompatError(state.sender, 'codex', agenticServiceBlockedMessage(gateService), state)
+      return 'deny'
+    }
+    if (gateService && nativePreflight.kind === 'allow') {
+      auditService.recordAutomaticApprovalDecision(
+        'codex',
+        { appRunId: state.appRunId, appChatId: state.appChatId },
+        gateService,
+        workspacePathForCodexApproval,
+        {
+          method,
+          title: codexApprovalTitle,
+          body: codexApprovalBody,
+          preview: codexApprovalPreview
+        },
+        'autoAllow',
+        nativePreflight.reason,
+        nativePreflight.scope,
+        {
+          policy: nativePreflight.policy,
+          ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {}),
+          ...(nativePreflight.reason === 'session_yolo'
+            ? { yoloEnabledAt: sessionYoloState.enabledAt }
+            : {})
+        }
+      )
+      if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
+        respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+      } else if (method === 'item/permissions/requestApproval') {
+        respondingClient.respond(message.id, {
+          permissions: params?.permissions || {},
+          scope:
+            nativePreflight.scope === 'session' || nativePreflight.scope === 'workspace'
+              ? 'session'
+              : 'turn'
+        })
+      } else if (method === 'tool/requestUserInput') {
+        respondingClient.respond(message.id, { answers: {} })
+      } else {
+        respondingClient.respond(message.id, { decision: 'accept' })
+      }
+      return 'ok'
+    }
+
+    formatted.preview = codexApprovalPreview
+
+    const registered = approvalService?.registerCodex(approvalId, {
+      rpcId: message.id,
+      method,
+      params,
+      service: gateService,
+      workspacePath: workspacePathForCodexApproval,
+      runId: state.appRunId,
+      allowedActions: actions,
+      externalPathDetection,
+      // Deferred PostToolUse: skip Post at registration; resolve fires ok/deny.
+      ...(isCodexProviderNativeHostHook && hostHookToolName
+        ? { hostHookToolName }
+        : {})
+    })
+    if (registered !== true) {
+      respondingClient.reject(message.id, 'TaskWraith is not accepting new approval requests.')
+      return 'deny'
+    }
+    runManager.registerApproval(state.appRunId, approvalId)
+    scheduleApprovalTimeout({
+      approvalId,
+      provider: 'codex',
+      route: { appRunId: state.appRunId, appChatId: state.appChatId },
+      kind: method
+    })
+    const approvalPayload = {
+      provider: 'codex',
+      appRunId: state.appRunId,
+      appChatId: state.appChatId,
+      id: approvalId,
+      approvalId,
+      requestId: message.id,
+      method,
+      params: gateService === 'canvasEval' ? codexToolArgs : params,
+      title: codexApprovalTitle,
+      body: codexApprovalBody,
+      preview: formatted.preview,
+      actions
+    }
+    // Keep the exact native payload transient for the desktop reviewer while
+    // projecting canvas_fill values (including nested permission-retry routes)
+    // out of both durable approval stores.
+    const durableApprovalPayload = redactCanvasFillValueForDurableStorage(approvalPayload)
+    appendDurableRunEventForRoute(
+      'codex',
+      { appRunId: state.appRunId, appChatId: state.appChatId },
+      'approval_request',
+      'control',
+      codexApprovalTitle,
+      durableApprovalPayload,
+      undefined,
+      codexCanvasEvalApproval
+    )
+    recordApprovalLedgerRequest(
+      'codex',
+      { appRunId: state.appRunId, appChatId: state.appChatId },
+      durableApprovalPayload,
+      {
+        service: gateService,
+        workspacePath: workspacePathForCodexApproval,
+        metadata: {
+          policy,
+          ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
+        },
+        canvasEvalApproval: codexCanvasEvalApproval
+      }
+    )
+    safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
+    // Fan out a wake-push to any paired iOS device. Summary uses
+    // formatted.title (already curated for the user-facing approval
+    // modal); falls back to `method` for unfamiliar Codex shapes.
+    notifyPairedDevicesOfApproval({
+      approvalId,
+      workspaceId: workspaceIdForApprovalPush(workspacePathForCodexApproval),
+      threadId: state.threadId ?? state.appChatId,
+      summary: codexApprovalTitle || `Codex approval: ${method}`
+    })
+    return 'deferred'
+  }
+
+  if (!isCodexProviderNativeHostHook) {
+    await settleApprovalDecision()
+    return
+  }
+
+  const codexHooksStore = getSkillsHooksSubsystem()?.hooksStore
+  const hooked = await withHostToolHooks<'ok' | 'deny' | 'deferred'>({
+    workspacePath: workspacePathForCodexApproval,
+    toolName: hostHookToolName,
+    deps:
+      workspacePathForCodexApproval && codexHooksStore
+        ? buildHostHookCallDeps({
+            hooksStore: codexHooksStore,
+            workspacePath: workspacePathForCodexApproval,
+            appChatId: state.appChatId,
+            appRunId: state.appRunId,
+            provider: 'codex'
+          })
+        : null,
+    run: settleApprovalDecision,
+    outcomeFromResult: (outcome) => (outcome === 'deferred' ? null : outcome),
+    onHookError: (phase, error) => {
+      console.warn(
+        `[hooks] ${phase === 'pre' ? 'Pre' : 'Post'}ToolUse failed:`,
+        error
+      )
+    }
   })
+  if (hooked.blocked) {
+    respondingClient.reject(
+      message.id,
+      hooked.reason || 'Blocked by TaskWraith PreToolUse hook.'
+    )
+    sendAgentCompatError(
+      state.sender,
+      'codex',
+      hooked.reason || 'Blocked by TaskWraith PreToolUse hook.',
+      state
+    )
+  }
 }
+
 
 function maybeRequestCodexHostRerun(
   state: CodexRunState,
@@ -35516,7 +35709,13 @@ async function executeGeminiMcpTool(
         const pre = await runPreToolUseHooks(
           hostHooksWorkspace,
           { toolName: String(toolName) },
-          { hooksStore, allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true }
+          buildHostHookCallDeps({
+            hooksStore,
+            workspacePath: hostHooksWorkspace,
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            provider: parentProvider
+          })
         )
         if (pre.blocked) {
           return {
@@ -38510,7 +38709,7 @@ async function executeGeminiMcpTool(
       }
       const recalledProviderSessionId =
         recallResolution.mode === 'recall' ? recallResolution.resumeSessionId : undefined
-      const providerPrompts = composeDelegatedProviderPrompts({
+      const providerPrompts = await composeDelegatedProviderPrompts({
         provider: providerArg,
         subThread,
         prompt: promptArg,
@@ -39340,7 +39539,13 @@ async function executeGeminiMcpTool(
         void runPostToolUseHooks(
           hostHooksWorkspace,
           { toolName: String(toolName) },
-          { hooksStore, allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true }
+          buildHostHookCallDeps({
+            hooksStore,
+            workspacePath: hostHooksWorkspace,
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            provider: parentProvider
+          })
         ).catch((error) => {
           console.warn('[hooks] PostToolUse failed:', error)
         })
@@ -45239,6 +45444,12 @@ if (isGeminiMcpBridgeProcess) {
             coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
             grokMcpAdvertised: provider === 'grok' ? bridgeTaskWraithMcpAdvertised : undefined
           })
+          const bridgeSkillHookContext = await resolveRunSkillHookContext({
+            workspacePath: workspaceRecord?.path || chat.workspacePath,
+            workspaceId: workspaceRecord?.id || chat.workspaceId,
+            isGlobalRun: isGlobalScope,
+            allowWorkspaceHooks: bridgeSettings.trustWorkspaceHooks === true
+          })
           const bridgePromptInput = {
             provider,
             finalPrompt: action.text,
@@ -45269,7 +45480,8 @@ if (isGeminiMcpBridgeProcess) {
                     inheritedModel
                   )
                 }
-              : {})
+              : {}),
+            ...bridgeSkillHookContext
           } satisfies Parameters<typeof composeRunPrompt>[0]
           const composed = composeRunPrompt(bridgePromptInput)
           // Rotation-safe recovery prompt: the provider seat check can null
@@ -49118,8 +49330,9 @@ if (isGeminiMcpBridgeProcess) {
       requireNonEmptyString
     })
     // Skills + Hooks Settings IPC + stores (Wave A).
-    // SessionStart: ComposerService awaits resolveSessionStartContext once per
-    // workspace (sessionStartHooksFired) and injects stdout into this turn.
+    // SessionStart: resolveRunSkillHookContext (shared by ComposerService,
+    // Ensemble, bridge, and delegated compose) awaits once per workspace and
+    // injects stdout into this turn.
     // Stop: fireStopHooksForWorkspace on terminal. Pre/Post run inside
     // executeGeminiMcpTool via getSkillsHooksSubsystem().
     const { skillsStore, hooksStore } = createSkillsHooksSubsystem({
@@ -49135,16 +49348,29 @@ if (isGeminiMcpBridgeProcess) {
       isMainRendererSender,
       requireNonEmptyString
     })
-    const sessionStartContextByWorkspace = new Map<string, string>()
-    const sessionStartHooksFired = new Set<string>()
-    const fireStopHooksForWorkspace = (workspacePath: string, status?: string): void => {
+    setRunSkillHookHostDepsBuilder((workspacePath) =>
+      buildHostHookCallDeps({ hooksStore, workspacePath })
+    )
+    const fireStopHooksForWorkspace = (
+      workspacePath: string,
+      status?: string,
+      route?: { appRunId?: string; appChatId?: string; provider?: ProviderId }
+    ): void => {
       const path = workspacePath.trim()
       if (!path) return
-      void runStopHooks(path, { status }, { hooksStore, allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true }).catch(
-        (error) => {
-          console.warn('[hooks] Stop failed:', error)
-        }
-      )
+      void runStopHooks(
+        path,
+        { status },
+        buildHostHookCallDeps({
+          hooksStore,
+          workspacePath: path,
+          appChatId: route?.appChatId,
+          appRunId: route?.appRunId,
+          provider: route?.provider
+        })
+      ).catch((error) => {
+        console.warn('[hooks] Stop failed:', error)
+      })
     }
     fireStopHooksForWorkspaceRef = fireStopHooksForWorkspace
     const launchManager = new LaunchManager({
@@ -49686,33 +49912,8 @@ if (isGeminiMcpBridgeProcess) {
       appStore: AppStore,
       getSettings: () => AppStore.getSettings(),
       projectReferenceExtractLoader: projectReferenceExtracts.extractLoader,
-      resolveSkillDiscoverySkills: (workspacePath, workspaceId) =>
-        skillsStore.resolveEffectiveSkills(workspacePath, workspaceId).map((skill) => ({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description
-        })),
-      resolveSessionStartContext: async (workspacePath) => {
-        const path = workspacePath.trim()
-        if (!path) return undefined
-        if (sessionStartContextByWorkspace.has(path) || sessionStartHooksFired.has(path)) {
-          return sessionStartContextByWorkspace.get(path)
-        }
-        sessionStartHooksFired.add(path)
-        try {
-          const outcome = await runSessionStartHooksForWorkspace(path, {
-            hooksStore,
-            allowWorkspaceHooks: AppStore.getSettings().trustWorkspaceHooks === true
-          })
-          if (outcome.sessionStartContext) {
-            sessionStartContextByWorkspace.set(path, outcome.sessionStartContext)
-          }
-          return outcome.sessionStartContext || undefined
-        } catch (error) {
-          console.warn('[hooks] SessionStart failed:', error)
-          return sessionStartContextByWorkspace.get(path)
-        }
-      },
+      // Skills + SessionStart resolve via resolveRunSkillHookContext (shared
+      // cache + setRunSkillHookHostDepsBuilder registered above).
       signRunPermissionPosture: signRunPosture,
       resolveFrozenPermissionPosture: (input) => {
         const candidate = AppStore.getRunQueueJob(input.appRunId)
@@ -51520,7 +51721,9 @@ if (isGeminiMcpBridgeProcess) {
               saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot)
             },
             skillsStore,
-            now: () => new Date().toISOString()
+            now: () => new Date().toISOString(),
+            assertWorkspacePath: (workspacePath) =>
+              requireRegisteredWorkspace(workspacePath, 'Workspace')
           },
           packId,
           proposalId
@@ -55166,6 +55369,22 @@ if (isGeminiMcpBridgeProcess) {
       getApnsTokenStore: () => bridgeApnsTokenStoreRef,
       isUserAtDesktop: userIsAtDesktop,
       workspaceIdForPath: workspaceIdForApprovalPush,
+      fireCodexNativePostToolUseHook: (input) => {
+        const hooksStore = getSkillsHooksSubsystem()?.hooksStore
+        if (!hooksStore) return
+        void runPostToolUseHooks(
+          input.workspacePath,
+          { toolName: input.toolName, outcome: input.outcome },
+          buildHostHookCallDeps({
+            hooksStore,
+            workspacePath: input.workspacePath,
+            appRunId: input.runId,
+            provider: 'codex'
+          })
+        ).catch((error) => {
+          console.warn('[hooks] PostToolUse failed:', error)
+        })
+      },
       publishApprovalRunEvent: (approvalEvent) => {
         publishRunEvent('agent-output', approvalEvent.provider, approvalEvent)
         try {
