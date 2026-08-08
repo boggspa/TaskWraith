@@ -27,6 +27,7 @@ import {
   getPendingSimulatorCanvasOpenRequest,
   subscribeSimulatorCanvasOpenRequests
 } from '../lib/simulatorCanvasLaunch'
+import { shouldOpenMeshFromChatRehydrate } from '../lib/simulatorCanvasPanelHelpers'
 import { MeshCanvasPanel, toMeshSceneSummary } from './MeshCanvasPanel'
 import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
 
@@ -269,6 +270,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   // Async completions race chat switches; compare-and-drop stale ones.
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
+  const showSimulatorRef = useRef(showSimulator)
+  showSimulatorRef.current = showSimulator
 
   const openMeshSurface = useCallback((): void => {
     setShowSimulator(false)
@@ -341,9 +344,18 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       .listForChat(chatId)
       .then((records) => {
         if (cancelled || chatIdRef.current !== chatId) return
-        if (records.map(toMeshSceneSummary).some((scene) => scene?.presentedAt)) {
-          openMeshSurface()
+        if (!records.map(toMeshSceneSummary).some((scene) => scene?.presentedAt)) return
+        // Do not clobber an active Simulator surface or a pending composer open.
+        if (
+          !shouldOpenMeshFromChatRehydrate({
+            showSimulator: showSimulatorRef.current,
+            chatId,
+            pendingSimulatorChatId: getPendingSimulatorCanvasOpenRequest()?.chatId ?? null
+          })
+        ) {
+          return
         }
+        openMeshSurface()
       })
       .catch(() => undefined)
     return () => {

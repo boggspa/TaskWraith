@@ -159,6 +159,12 @@ export function CanvasComposerButton({
     }
     setBusyMode('simulator')
     try {
+      // Same cheap main getChat soft-check as Mesh — renderer draft ids can
+      // briefly outlive a reaped welcome chat after reload.
+      if (!(await hasMeshCanvasChatAuthority(chatId))) {
+        setError('Simulator Canvas requires an active chat.')
+        return
+      }
       requestSimulatorCanvasOpen(chatId)
       setOpen(false)
     } catch (error) {

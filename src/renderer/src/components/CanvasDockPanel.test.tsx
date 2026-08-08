@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
@@ -103,9 +105,9 @@ describe('canvasSummaryLabel', () => {
 
   it('never labels a sketch with its internal sketch:// url', () => {
     expect(canvasSummaryLabel({ driver: 'sketch', url: 'sketch://abc-def' })).toBe('Sketch canvas')
-    expect(canvasSummaryLabel({ driver: 'sketch', title: 'Sketch Canvas', url: 'sketch://x' })).toBe(
-      'Sketch Canvas'
-    )
+    expect(
+      canvasSummaryLabel({ driver: 'sketch', title: 'Sketch Canvas', url: 'sketch://x' })
+    ).toBe('Sketch Canvas')
   })
 })
 
@@ -150,6 +152,24 @@ describe('isHostOccluded', () => {
       contains: () => false
     } as unknown as Parameters<typeof isHostOccluded>[0]
     expect(isHostOccluded(collapsed, () => overlay)).toBe(false)
+  })
+})
+
+describe('CanvasDockPanel mesh/simulator surface races', () => {
+  it('listForChat mesh rehydrate consults the simulator override guard before openMeshSurface', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('shouldOpenMeshFromChatRehydrate')
+    expect(source).toContain('getPendingSimulatorCanvasOpenRequest()?.chatId')
+    // Rehydrate must not open Mesh when Simulator is already showing or pending.
+    const rehydrateBlock = source.slice(
+      source.indexOf('listForChat(chatId)'),
+      source.indexOf('// The composer can explicitly open Mesh Canvas')
+    )
+    expect(rehydrateBlock).toContain('shouldOpenMeshFromChatRehydrate')
+    expect(rehydrateBlock).toContain('openMeshSurface()')
   })
 })
 
