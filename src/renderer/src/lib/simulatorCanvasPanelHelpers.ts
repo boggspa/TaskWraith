@@ -2,7 +2,11 @@
  * Pure helpers for SimulatorCanvasPanel — frame freshness, screenshot race
  * filtering, and claim-control result surfacing.
  */
-import type { SimulatorScreenshotFrame } from '../../../shared/simulatorCanvas'
+import {
+  isSimulatorRotateDirection,
+  type SimulatorRotateDirection,
+  type SimulatorScreenshotFrame
+} from '../../../shared/simulatorCanvas'
 
 /** Live preview is marked stale when the last accepted frame is older than this. */
 export const SIMULATOR_FRAME_STALE_MS = 4000
@@ -48,6 +52,19 @@ export async function actuateAfterSoftClaim<T>(
     return { ok: false, aborted: true }
   }
   return { ok: true, value: await actuate() }
+}
+
+/** Adopt server/session absolute orientation when present and allowlisted. */
+export function orientationFromSessionPayload(
+  value: unknown
+): SimulatorRotateDirection | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as { orientation?: unknown; session?: { orientation?: unknown } }
+  if (isSimulatorRotateDirection(record.orientation)) return record.orientation
+  if (isSimulatorRotateDirection(record.session?.orientation)) {
+    return record.session.orientation
+  }
+  return null
 }
 
 /**

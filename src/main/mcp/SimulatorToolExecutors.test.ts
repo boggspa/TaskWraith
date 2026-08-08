@@ -7,6 +7,7 @@ import {
 import type { SimulatorHostControl } from '../simulator/SimulatorHostControl'
 import type { IdbClient } from '../simulator/IdbClient'
 import { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
+import { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import type { SimulatorCapabilityStatus } from '../../shared/simulatorCanvas'
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import { MCP_AUTO_ALLOWED_TOOLS } from './McpAutoAllowedTools'
@@ -313,6 +314,52 @@ describe('SimulatorToolExecutors', () => {
       ).structuredContent
     ).toMatchObject({ ok: true, direction: 'LANDSCAPE_RIGHT' })
     expect(idb.rotate).toHaveBeenCalledWith(udid, 'LANDSCAPE_RIGHT')
+
+    const sessionStore = new SimulatorSessionStore({ now: () => 't' })
+    const withSession = createSimulatorToolExecutors({
+      hostControl: fakeHost(),
+      controllerLease: new SimulatorControllerLease({ createId: () => 'tok-orient' }),
+      idb: fakeIdb(),
+      sessionStore
+    })
+    expect(
+      (
+        await withSession.executeSimulatorTool(
+          'simulator_rotate',
+          { udid, direction: 'PORTRAIT_UPSIDE_DOWN' },
+          runCtx,
+          'codex'
+        )
+      ).structuredContent
+    ).toMatchObject({ ok: true, direction: 'PORTRAIT_UPSIDE_DOWN' })
+    expect(sessionStore.get('chat-1')?.orientation).toBe('PORTRAIT_UPSIDE_DOWN')
+
+    const failingIdb = fakeIdb({
+      rotate: vi.fn(async () => ({
+        ok: false as const,
+        stdout: '',
+        stderr: '',
+        error: 'rotate failed'
+      }))
+    })
+    const failStore = new SimulatorSessionStore({ now: () => 't' })
+    const failing = createSimulatorToolExecutors({
+      hostControl: fakeHost(),
+      controllerLease: new SimulatorControllerLease({ createId: () => 'tok-orient-fail' }),
+      idb: failingIdb,
+      sessionStore: failStore
+    })
+    expect(
+      (
+        await failing.executeSimulatorTool(
+          'simulator_rotate',
+          { udid, direction: 'LANDSCAPE_LEFT' },
+          runCtx,
+          'codex'
+        )
+      ).isError
+    ).toBe(true)
+    expect(failStore.get('chat-1')?.orientation).toBeUndefined()
 
     expect(
       (

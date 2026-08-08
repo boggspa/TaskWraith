@@ -4122,7 +4122,8 @@ const simulatorToolExecutors = createSimulatorToolExecutors({
   hostControl: simulatorHostControl,
   controllerLease: simulatorControllerLease,
   idb: simulatorIdbClient,
-  getActuationTarget: simulatorActuationTargetForChat
+  getActuationTarget: simulatorActuationTargetForChat,
+  sessionStore: simulatorSessionStore
 })
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
   getControlStatus: (chatId) => {

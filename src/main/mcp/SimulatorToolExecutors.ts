@@ -8,6 +8,7 @@ import type { SimulatorHostControl } from '../simulator/SimulatorHostControl'
 import type { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
 import type { IdbClient } from '../simulator/IdbClient'
 import type { SimulatorActuationTarget } from '../simulator/SimulatorInteractionBridge'
+import type { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import type { SimulatorHostActionResult } from '../../shared/simulatorCanvas'
 import {
   isSimulatorHardwareButton,
@@ -77,6 +78,8 @@ export interface SimulatorToolExecutorDeps {
    * args on tap/scroll override when the session has no frame yet.
    */
   getActuationTarget?: (chatId: string) => SimulatorActuationTarget | null
+  /** Chat-scoped session store — persist last absolute orientation on rotate. */
+  sessionStore?: Pick<SimulatorSessionStore, 'upsert'>
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -218,7 +221,7 @@ function resolveAgentPointExtents(
 export function createSimulatorToolExecutors(
   deps: SimulatorToolExecutorDeps
 ): SimulatorToolExecutors {
-  const { hostControl, controllerLease, idb, getActuationTarget } = deps
+  const { hostControl, controllerLease, idb, getActuationTarget, sessionStore } = deps
   return {
     async executeSimulatorTool(toolName, rawArgs, context, _parentProvider) {
       const args = asRecord(rawArgs)
@@ -307,6 +310,7 @@ export function createSimulatorToolExecutors(
           if (!rotated.ok) {
             return fail(toolName, rotated.error || 'simulator_rotate failed.')
           }
+          sessionStore?.upsert(control!.chatId, { orientation: direction })
           return jsonResult({ ok: true, tool: toolName, udid, direction })
         }
 

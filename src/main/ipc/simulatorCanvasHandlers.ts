@@ -41,7 +41,7 @@ export interface SimulatorCanvasIpcDeps {
     | 'screenshot'
   >
   getControllerLease: () => Pick<SimulatorControllerLease, 'claimHuman' | 'peek' | 'release'>
-  getSessionStore?: () => Pick<SimulatorSessionStore, 'get'>
+  getSessionStore?: () => Pick<SimulatorSessionStore, 'get' | 'upsert'>
   getInteraction: () => Pick<
     SimulatorInteractionBridge,
     'interactionStatus' | 'tap' | 'type' | 'scroll'
@@ -280,10 +280,12 @@ export function registerSimulatorCanvasHandlers(
     const id = requiredString(chatId, 'chatId')
     const status = deps.getInteraction().interactionStatus(id)
     const controller = deps.getControllerLease().peek(id)
+    const orientation = deps.getSessionStore?.().get(id)?.orientation
     return {
       ...status,
       controllerLeaseHeld: Boolean(controller) || Boolean(status.controllerLeaseHeld),
-      controllerKind: controller?.kind ?? null
+      controllerKind: controller?.kind ?? null,
+      ...(orientation ? { orientation } : {})
     }
   })
 
@@ -357,7 +359,11 @@ export function registerSimulatorCanvasHandlers(
       if (!idb?.rotate || !idb.isAvailable()) {
         return { ok: false, error: 'idb is not available on PATH.' }
       }
-      return idb.rotate(requiredString(udid, 'udid'), direction)
+      const result = await idb.rotate(requiredString(udid, 'udid'), direction)
+      if (result.ok) {
+        deps.getSessionStore?.().upsert(id, { orientation: direction })
+      }
+      return result
     }
   )
 }

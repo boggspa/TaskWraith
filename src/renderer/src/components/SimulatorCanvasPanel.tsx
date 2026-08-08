@@ -40,6 +40,7 @@ import {
   actuateAfterSoftClaim,
   claimControlFailureMessage,
   isSimulatorFrameStale,
+  orientationFromSessionPayload,
   shouldAcceptSimulatorScreenshotFrame
 } from '../lib/simulatorCanvasPanelHelpers'
 import { unwrapSimulatorCapabilityStatus } from '../lib/simulatorCanvasStatus'
@@ -242,6 +243,11 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     }
   }, [chatId])
 
+  const adoptServerOrientation = useCallback((payload: unknown): void => {
+    const next = orientationFromSessionPayload(payload)
+    if (next) setOrientation(next)
+  }, [])
+
   const refreshInteraction = useCallback(async (): Promise<void> => {
     const api = getSimulatorCanvasBridge()
     if (!api?.interactionStatus) {
@@ -252,10 +258,23 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
       const next = await api.interactionStatus(chatId)
       if (chatIdRef.current !== chatId) return
       setInteraction(next)
+      adoptServerOrientation(next)
     } catch {
       if (chatIdRef.current === chatId) setInteraction(null)
     }
-  }, [chatId])
+  }, [adoptServerOrientation, chatId])
+
+  const refreshSessionOrientation = useCallback(async (): Promise<void> => {
+    const api = getSimulatorCanvasBridge()
+    if (!api?.session) return
+    try {
+      const payload = await api.session(chatId)
+      if (chatIdRef.current !== chatId) return
+      adoptServerOrientation(payload)
+    } catch {
+      // Session restore is best-effort; local cycle stays until a poll succeeds.
+    }
+  }, [adoptServerOrientation, chatId])
 
   useEffect(() => {
     void refreshStatus()
@@ -283,6 +302,8 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         }
       }
       if (!cancelled && chatIdRef.current === chatId) {
+        // Session first so Rotate label matches any prior agent/host rotate.
+        await refreshSessionOrientation()
         await refreshInteraction()
       }
     }
@@ -293,7 +314,7 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         void api.releaseControl(chatId)
       }
     }
-  }, [chatId, refreshInteraction])
+  }, [chatId, refreshInteraction, refreshSessionOrientation])
 
   useEffect(() => {
     void refreshInteraction()

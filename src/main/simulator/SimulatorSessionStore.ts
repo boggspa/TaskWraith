@@ -5,6 +5,8 @@
  * independently of the run-owned controller lease. Frame PNG bytes are never
  * retained — only last-frame metadata for dock restore.
  */
+import type { SimulatorRotateDirection } from '../../shared/simulatorCanvas'
+
 export interface SimulatorSessionFrameMeta {
   /** Screenshot pixel extents. */
   width: number
@@ -20,6 +22,11 @@ export interface SimulatorSessionRecord {
   chatId: string
   udid?: string
   lastFrame?: SimulatorSessionFrameMeta
+  /**
+   * Last absolute orientation applied via IPC/MCP rotate. Used so the dock
+   * Rotate control stays in sync after agent/host rotates.
+   */
+  orientation?: SimulatorRotateDirection
   simulatorAppOpen?: boolean
   ownedSimulatorPid?: number | null
   updatedAt: string

@@ -4,6 +4,7 @@ import {
   actuateAfterSoftClaim,
   claimControlFailureMessage,
   isSimulatorFrameStale,
+  orientationFromSessionPayload,
   shouldAcceptSimulatorScreenshotFrame,
   shouldOpenMeshFromChatRehydrate
 } from './simulatorCanvasPanelHelpers'
@@ -50,6 +51,22 @@ describe('actuateAfterSoftClaim', () => {
     const result = await actuateAfterSoftClaim(async () => true, actuate)
     expect(result).toEqual({ ok: true, value: { ok: true, recorded: true } })
     expect(actuate).toHaveBeenCalledOnce()
+  })
+})
+
+describe('orientationFromSessionPayload', () => {
+  it('reads allowlisted orientation from session or interaction-status payloads', () => {
+    expect(orientationFromSessionPayload(null)).toBeNull()
+    expect(orientationFromSessionPayload({ orientation: 'clockwise' })).toBeNull()
+    expect(orientationFromSessionPayload({ orientation: 'LANDSCAPE_RIGHT' })).toBe(
+      'LANDSCAPE_RIGHT'
+    )
+    expect(
+      orientationFromSessionPayload({
+        ok: true,
+        session: { orientation: 'PORTRAIT_UPSIDE_DOWN' }
+      })
+    ).toBe('PORTRAIT_UPSIDE_DOWN')
   })
 })
 

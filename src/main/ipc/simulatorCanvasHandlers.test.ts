@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { SIMULATOR_VIEW_CONTROL_REQUIRED } from '../../shared/simulatorCanvas'
 import { SIMULATOR_HUMAN_CONTROLLER_RUN_ID } from '../simulator/SimulatorControllerLease'
+import { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import { registerSimulatorCanvasHandlers } from './simulatorCanvasHandlers'
 
 describe('registerSimulatorCanvasHandlers', () => {
@@ -329,6 +330,107 @@ describe('registerSimulatorCanvasHandlers', () => {
       controllerLeaseHeld: true,
       controllerKind: 'run'
     })
+  })
+
+  it('persists successful rotate orientation on the chat session and exposes it via session + interaction-status', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, handler)
+      })
+    } as unknown as IpcMain
+    const sessionStore = new SimulatorSessionStore({ now: () => 'now' })
+    const upsertSpy = vi.spyOn(sessionStore, 'upsert')
+    const idb = {
+      isAvailable: vi.fn(() => true),
+      companionAvailable: vi.fn(() => true),
+      describeAll: vi.fn(),
+      hardwareButton: vi.fn(),
+      rotate: vi.fn(
+        async (): Promise<{ ok: boolean; stdout: string; stderr: string; error?: string }> => ({
+          ok: true,
+          stdout: '',
+          stderr: ''
+        })
+      )
+    }
+    registerSimulatorCanvasHandlers(ipcMain, {
+      getHostControl: () =>
+        ({
+          status: vi.fn(),
+          openSimulatorApp: vi.fn(),
+          listDevices: vi.fn(),
+          boot: vi.fn(),
+          install: vi.fn(),
+          launch: vi.fn(),
+          terminate: vi.fn(),
+          screenshot: vi.fn()
+        }) as never,
+      getControllerLease: () => ({
+        claimHuman: vi.fn((chatId: string) => ({
+          ok: true as const,
+          token: {
+            tokenId: 'human-tok',
+            chatId,
+            runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
+            kind: 'human' as const,
+            mintedAt: 1,
+            updatedAt: 1
+          }
+        })),
+        peek: () => null,
+        release: vi.fn()
+      }),
+      getSessionStore: () => sessionStore,
+      getInteraction: () =>
+        ({
+          interactionStatus: vi.fn(() => ({
+            canControl: true,
+            actuationReady: true,
+            reason: 'ready',
+            hasObservation: true,
+            controllerLeaseHeld: true
+          })),
+          tap: vi.fn(),
+          type: vi.fn(),
+          scroll: vi.fn()
+        }) as never,
+      getIdb: () => idb
+    })
+
+    const event = {} as IpcMainInvokeEvent
+    expect(
+      await handlers.get('simulator-canvas:rotate')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        'LANDSCAPE_LEFT'
+      )
+    ).toEqual({ ok: true, stdout: '', stderr: '' })
+    expect(upsertSpy).toHaveBeenCalledWith('chat-1', {
+      orientation: 'LANDSCAPE_LEFT'
+    })
+    expect(await handlers.get('simulator-canvas:session')?.(event, 'chat-1')).toMatchObject({
+      ok: true,
+      session: { orientation: 'LANDSCAPE_LEFT' }
+    })
+    expect(
+      await handlers.get('simulator-canvas:interaction-status')?.(event, 'chat-1')
+    ).toMatchObject({
+      orientation: 'LANDSCAPE_LEFT'
+    })
+
+    idb.rotate.mockResolvedValueOnce({ ok: false, stdout: '', stderr: '', error: 'boom' })
+    upsertSpy.mockClear()
+    expect(
+      await handlers.get('simulator-canvas:rotate')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        'PORTRAIT'
+      )
+    ).toMatchObject({ ok: false })
+    expect(upsertSpy).not.toHaveBeenCalled()
   })
 
   it('validates button/rotate allowlists before claiming human control', async () => {

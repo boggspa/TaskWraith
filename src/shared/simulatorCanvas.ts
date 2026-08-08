@@ -132,6 +132,11 @@ export interface SimulatorInteractionStatus {
    * Absent/null when no lease is held.
    */
   controllerKind?: SimulatorControllerKind | null
+  /**
+   * Last absolute orientation stored on the chat session after a successful
+   * IPC/MCP rotate. Absent until the first successful rotate in-process.
+   */
+  orientation?: SimulatorRotateDirection
 }
 
 export interface SimulatorGestureResult {

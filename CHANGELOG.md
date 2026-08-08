@@ -23,7 +23,7 @@ do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
 
 ### Simulator Canvas (source-ahead)
 
-- **Simulator Canvas dock.** Optional chat-owned iOS Simulator preview via Composer → Canvas → Open Simulator Canvas; `simctl` screenshots for the bezel, mutating agent tools under the `simulatorCanvas` policy, and honest preview-only human gestures until device-native idb actuation ships (see `ADVANCED_OPTIONAL_SETUP.md`).
+- **Simulator Canvas dock.** Optional chat-owned iOS Simulator preview via Composer → Canvas → Open Simulator Canvas; `simctl` screenshots for the bezel; human tap/type/swipe and Home/Lock/Rotate via idb when a controller lease is held and idb is ready; agent HID tools (`simulator_tap` / `type` / `scroll` / `button` / `rotate`) under the `simulatorCanvas` policy; absolute orientations (`PORTRAIT` / `PORTRAIT_UPSIDE_DOWN` / `LANDSCAPE_LEFT` / `LANDSCAPE_RIGHT`); human lease release on dock close (see `ADVANCED_OPTIONAL_SETUP.md`).
 
 ### Remaining focus for 1.9.4 (not feature construction)
 

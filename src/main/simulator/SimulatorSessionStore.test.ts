@@ -44,4 +44,16 @@ describe('SimulatorSessionStore', () => {
     expect(store.get('chat-a')).toBeNull()
     expect(store.get('chat-b')?.udid).toBe('BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB')
   })
+
+  it('stores last absolute orientation for chat-scoped rotate UI sync', () => {
+    const store = new SimulatorSessionStore({ now: () => 't' })
+    expect(store.get('chat-a')?.orientation).toBeUndefined()
+
+    const updated = store.upsert('chat-a', { orientation: 'LANDSCAPE_RIGHT' })
+    expect(updated.orientation).toBe('LANDSCAPE_RIGHT')
+    expect(store.get('chat-a')?.orientation).toBe('LANDSCAPE_RIGHT')
+
+    store.upsert('chat-a', { orientation: 'PORTRAIT_UPSIDE_DOWN' })
+    expect(store.get('chat-a')?.orientation).toBe('PORTRAIT_UPSIDE_DOWN')
+  })
 })
