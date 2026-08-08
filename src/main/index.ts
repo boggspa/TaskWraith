@@ -53453,7 +53453,10 @@ if (isGeminiMcpBridgeProcess) {
       // usage.json (welcome wall-clock + activity heatmaps + Providers-tab
       // token totals). Solo runs record via the renderer's handleProviderExit;
       // ensemble runs complete inside the orchestrator and never hit that path.
-      recordUsage: (entry) => AppStore.recordUsage(entry)
+      recordUsage: (entry) => AppStore.recordUsage(entry),
+      listProjects: () => AppStore.getProjects(),
+      listProjectReferences: () => AppStore.getProjectReferences(),
+      projectReferenceExtractLoader: projectReferenceExtracts.extractLoader
     })
 
     // ── Audit orchestrator (Slice A — live wiring) ───────────────────────────
@@ -53885,9 +53888,8 @@ if (isGeminiMcpBridgeProcess) {
           })
           if (absorbed?.status === 'steered') return absorbed
         }
-        // P1 F6 — selection is forwarded for the orchestrator appendix helper.
-        // EnsembleOrchestrator wiring lands via /tmp/work-refs-ensemble-appendix.patch
-        // when peer dirt clears; until then startRound ignores the extra field.
+        // P1 F6 — Use-next selection is stored on the round runtime and
+        // re-resolved per seat into the Project reference prompt appendix.
         const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
@@ -53906,7 +53908,7 @@ if (isGeminiMcpBridgeProcess) {
           ...(projectReferenceContextSelection
             ? { projectReferenceContextSelection }
             : {})
-        } as Parameters<NonNullable<typeof ensembleOrchestratorRef>['startRound']>[0])
+        })
         return ensembleStartResult
       }
     )

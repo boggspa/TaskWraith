@@ -218,6 +218,14 @@ import {
   type DiscordContextReadMetadata,
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
+import { formatEnsembleProjectReferenceAppendix } from '../EnsembleProjectReferenceAppendix'
+import {
+  formatProjectReferenceExtractsPromptAppendix,
+  resolveProjectReferenceContext,
+  type ProjectReferenceExtractLoader
+} from './ProjectReferenceContextService'
+import type { ProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
+import type { Project, ProjectReference } from '../../shared/projects'
 import {
   contextPercent,
   isContextWindowProviderId,
@@ -693,6 +701,10 @@ export interface EnsembleOrchestratorDeps {
     runId: string | undefined
     metadata: Record<string, unknown>
   }) => void
+  /** Authoritative Project registry readers for Use-next appendix resolve. */
+  listProjects?: () => readonly Project[]
+  listProjectReferences?: () => readonly ProjectReference[]
+  projectReferenceExtractLoader?: ProjectReferenceExtractLoader
 }
 
 /**
@@ -3215,6 +3227,8 @@ interface QueuedRoundEntry {
   /** Context snapshots are runtime-only; persisted rows retain a presence
    * marker so restart recovery can quarantine rather than silently drop them. */
   discordContextSnapshots?: DiscordContextSnapshot[]
+  /** P1 F6 — Use-next selection for this queued entry (re-resolved per seat). */
+  projectReferenceContextSelection?: ProjectReferenceContextSelection
 }
 
 interface YieldReturnFrame {
@@ -3447,6 +3461,11 @@ interface ActiveRoundRuntime {
    * grants — matches pre-AT4 behaviour for those rounds.
    */
   externalPathGrants?: ExternalPathGrant[]
+  /**
+   * P1 F6 — composer Use-next Project reference selection for this round.
+   * Re-resolved per seat against the live Project registry; never grants access.
+   */
+  projectReferenceContextSelection?: ProjectReferenceContextSelection
   /**
    * Set for a scheduled/workflow occurrence; forces read-only
    * participant postures (no unattended auto-accept of edits).
@@ -4248,6 +4267,7 @@ export class EnsembleOrchestrator {
     fanoutPolicy?: EnsembleFanoutPolicy
     externalPathGrants?: ExternalPathGrant[]
     discordContextSnapshots?: DiscordContextSnapshot[]
+    projectReferenceContextSelection?: ProjectReferenceContextSelection
   }): EnsembleQueuedSteerResult {
     return this.absorbMidRunSteeringWithReceipt(input).result
   }
@@ -4262,6 +4282,7 @@ export class EnsembleOrchestrator {
     fanoutPolicy?: EnsembleFanoutPolicy
     externalPathGrants?: ExternalPathGrant[]
     discordContextSnapshots?: DiscordContextSnapshot[]
+    projectReferenceContextSelection?: ProjectReferenceContextSelection
   }): { result: EnsembleQueuedSteerResult; receipt?: MidRunSteeringAppendReceipt } {
     const text = input.text.trim()
     if (!text || !this.canAbsorbMidRunSteering(input.chatId, input.roundId)) {
@@ -4281,7 +4302,8 @@ export class EnsembleOrchestrator {
       dmTargetParticipantId: input.dmTargetParticipantId,
       fanoutPolicy: input.fanoutPolicy,
       externalPathGrants,
-      discordContextSnapshots
+      discordContextSnapshots,
+      projectReferenceContextSelection: input.projectReferenceContextSelection
     })
     const receipt = this.deps.appendMidRunSteering!({
       chatId: input.chatId,
@@ -4351,6 +4373,7 @@ export class EnsembleOrchestrator {
       fanoutPolicy?: EnsembleFanoutPolicy
       externalPathGrants: ExternalPathGrant[]
       discordContextSnapshots: DiscordContextSnapshot[]
+      projectReferenceContextSelection?: ProjectReferenceContextSelection
     }
   ): void {
     if (input.imageAttachments.length > 0) {
@@ -4412,6 +4435,9 @@ export class EnsembleOrchestrator {
         ...input.discordContextSnapshots
       ]
     }
+    if (input.projectReferenceContextSelection) {
+      runtime.projectReferenceContextSelection = input.projectReferenceContextSelection
+    }
   }
 
   /** Absorb the next FIFO queued prompt into the live round. Returns true when absorbed. */
@@ -4443,7 +4469,8 @@ export class EnsembleOrchestrator {
       dmTargetParticipantId: nextEntry.dmTargetParticipantId,
       fanoutPolicy: nextEntry.fanoutPolicy,
       externalPathGrants: nextEntry.externalPathGrants,
-      discordContextSnapshots: nextEntry.discordContextSnapshots
+      discordContextSnapshots: nextEntry.discordContextSnapshots,
+      projectReferenceContextSelection: nextEntry.projectReferenceContextSelection
     })
     if (absorbed.status === 'steered') return true
     runtime.queuedPrompts = previousQueue
@@ -4485,6 +4512,11 @@ export class EnsembleOrchestrator {
      */
     externalPathGrants?: ExternalPathGrant[]
     discordContextSnapshots?: DiscordContextSnapshot[]
+    /**
+     * P1 F6 — renderer Use-next selection. MAIN re-resolves per seat at
+     * prompt assembly; selection grants no filesystem or network access.
+     */
+    projectReferenceContextSelection?: ProjectReferenceContextSelection
     /**
      * Legacy request for read-only concurrent fan-out for this round.
      * Prefer `fanoutPolicy`; `true` maps to `read_only`.
@@ -4608,7 +4640,8 @@ export class EnsembleOrchestrator {
           imageThumbnails,
           dmTargetParticipantId: input.dmTargetParticipantId,
           externalPathGrants: input.externalPathGrants,
-          discordContextSnapshots: input.discordContextSnapshots
+          discordContextSnapshots: input.discordContextSnapshots,
+          projectReferenceContextSelection: input.projectReferenceContextSelection
         })
         const absorbed = absorption.result
         if (absorbed.status === 'steered') {
@@ -4637,7 +4670,10 @@ export class EnsembleOrchestrator {
             this.deps.getChat(input.chatId)?.ensemble,
             input
           ),
-          discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
+          discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots),
+          ...(input.projectReferenceContextSelection
+            ? { projectReferenceContextSelection: input.projectReferenceContextSelection }
+            : {})
         })
         this.updateChatRound(input.chatId, (round) =>
           round ? { ...round, ...this.queuedPromptFields(existing.queuedPrompts) } : round
@@ -4670,7 +4706,10 @@ export class EnsembleOrchestrator {
           this.deps.getChat(input.chatId)?.ensemble,
           input
         ),
-        discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
+        discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots),
+        ...(input.projectReferenceContextSelection
+          ? { projectReferenceContextSelection: input.projectReferenceContextSelection }
+          : {})
       })
       this.updateChatRound(input.chatId, (round) =>
         round
@@ -4702,7 +4741,8 @@ export class EnsembleOrchestrator {
       input.unattendedElevationLevel,
       undefined,
       input.onRoundReserved,
-      input.prepareFreshChat
+      input.prepareFreshChat,
+      input.projectReferenceContextSelection
     )
     return { status: 'started', roundId }
   }
@@ -4844,7 +4884,11 @@ export class EnsembleOrchestrator {
         recovered.selected.fanoutPolicy ?? input.fanoutPolicy,
         undefined,
         undefined,
-        undefined
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        recovered.selected.projectReferenceContextSelection
       )
       this.appendRoundStatus(
         input.chatId,
@@ -4910,7 +4954,8 @@ export class EnsembleOrchestrator {
       dmTargetParticipantId: selected.dmTargetParticipantId,
       fanoutPolicy: selected.fanoutPolicy ?? input.fanoutPolicy,
       externalPathGrants: selected.externalPathGrants,
-      discordContextSnapshots: selected.discordContextSnapshots
+      discordContextSnapshots: selected.discordContextSnapshots,
+      projectReferenceContextSelection: selected.projectReferenceContextSelection
     })
     const absorbed = absorption.result
     if (absorbed.status === 'steered') {
@@ -14213,7 +14258,8 @@ export class EnsembleOrchestrator {
     unattendedElevationLevel?: UnattendedElevationLevel,
     startAfterCancellation?: Promise<unknown>,
     onRoundReserved?: (roundId: string) => void,
-    prepareFreshChat?: (chat: ChatRecord) => ChatRecord
+    prepareFreshChat?: (chat: ChatRecord) => ChatRecord,
+    projectReferenceContextSelection?: ProjectReferenceContextSelection
   ): string {
     const storedChat = this.deps.getChat(chatId)
     if (!storedChat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -14421,6 +14467,9 @@ export class EnsembleOrchestrator {
       ...(startAfterCancellation ? { startAfterCancellation } : {}),
       ...(selfReflective ? { selfReflective: true } : {}),
       ...(externalPathGrants.length > 0 ? { externalPathGrants: [...externalPathGrants] } : {}),
+      ...(projectReferenceContextSelection
+        ? { projectReferenceContextSelection }
+        : {}),
       ...(unattended ? { unattended: true } : {}),
       ...(unattended && unattendedElevationLevel ? { unattendedElevationLevel } : {})
     }
@@ -15231,9 +15280,15 @@ export class EnsembleOrchestrator {
         provider: participant.provider,
         effectivePermissions: permissions
       })
+      const projectReferenceAppendix = this.buildProjectReferenceAppendixForSeat(
+        runtime,
+        participant,
+        permissions,
+        dispatchChat.workspacePath
+      )
       const promptWithDiscordContext = `${shellRoutingPrompt}${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
-      )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
+      )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
       const resumeFallbackProjection =
         slimTurn && (participant.provider === 'kimi' || participant.provider === 'codex')
           ? buildEnsembleParticipantPromptProjection({
@@ -15256,7 +15311,7 @@ export class EnsembleOrchestrator {
       const resumeFallbackPrompt = resumeFallbackProjection
         ? `${shellRoutingPrompt}${resumeFallbackProjection.prompt}${formatDiscordContextPromptAppendix(
             runtime.discordContextSnapshots
-          )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
+          )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
         : undefined
       // The adapter may use either the slim prompt or its cold-session
       // fallback. Receipt only rows present in BOTH possible prompts; that is
@@ -17380,9 +17435,15 @@ export class EnsembleOrchestrator {
         provider: participant.provider,
         effectivePermissions: permissions
       })
+      const projectReferenceAppendix = this.buildProjectReferenceAppendixForSeat(
+        runtime,
+        participant,
+        permissions,
+        dispatchChat.workspacePath
+      )
       const promptWithDiscordContext = `${shellRoutingPrompt}${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
-      )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
+      )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
       // Mirror the serial path: thread per-participant reasoning/thinking into
       // the fan-out payload too, else a concurrent round silently runs every
       // participant at provider-default reasoning regardless of its config.
@@ -18415,9 +18476,9 @@ export class EnsembleOrchestrator {
    *    confirmation turns were a measured waste pattern).
    *
    * When assign_work was never used, Continuous still avoids full-roster
-   * churn by admitting directed seats from the just-finished pass
-   * (answered/yielded/sleeping, fan-out targets, yield-return stack) plus
-   * Boss/acting Captain.
+   * churn by admitting authority-directed seats only (fan-out / reserved
+   * fan-out / yield-return / foreground synthesizer when configured) plus
+   * Boss/acting Captain. Prior speakers are not re-seeded from round status.
    *
    * Fail-open: missing Continuous runtime / empty directed admit set keeps
    * the full roster; an open poll keeps the full roster (voting is the whole
@@ -20365,6 +20426,46 @@ export class EnsembleOrchestrator {
       },
       'round-updated'
     )
+  }
+
+  /**
+   * Per-seat Project reference Use-next appendix. Catalogue for every seat;
+   * consentful extract bodies only for non-BG seats. Fail soft on stale
+   * selection so a deleted Project cannot kill seat dispatch.
+   */
+  private buildProjectReferenceAppendixForSeat(
+    runtime: ActiveRoundRuntime,
+    participant: EnsembleParticipant,
+    permissions: EffectiveRunPermissions,
+    workspacePath?: string
+  ): string {
+    const selection = runtime.projectReferenceContextSelection
+    if (!selection || !this.deps.listProjects || !this.deps.listProjectReferences) return ''
+    try {
+      const context = resolveProjectReferenceContext({
+        selection,
+        chatId: runtime.chatId,
+        provider: participant.provider,
+        workspacePath: permissions.workspacePath ?? workspacePath,
+        projects: this.deps.listProjects(),
+        references: this.deps.listProjectReferences(),
+        externalPathGrants: permissions.externalPathGrants,
+        ...(this.deps.projectReferenceExtractLoader
+          ? { extractLoader: this.deps.projectReferenceExtractLoader }
+          : {})
+      })
+      const catalogue = formatEnsembleProjectReferenceAppendix({
+        context,
+        backgroundLane: isBackgroundParticipant(participant)
+      })
+      if (isBackgroundParticipant(participant)) return catalogue
+      return `${catalogue}${formatProjectReferenceExtractsPromptAppendix(context, {
+        readExtractText: (id) =>
+          this.deps.projectReferenceExtractLoader?.readExtractText(id) ?? null
+      })}`
+    } catch {
+      return ''
+    }
   }
 
   private resolveParticipantPermissions(

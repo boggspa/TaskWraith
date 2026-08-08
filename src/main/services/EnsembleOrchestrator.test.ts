@@ -322,6 +322,9 @@ function makeHarness(
     releaseProviderSessionPersistenceDecision?: (runId: string) => void
     appendMidRunSteering?: EnsembleOrchestratorDeps['appendMidRunSteering']
     getPendingMidRunSteeringEntryIds?: EnsembleOrchestratorDeps['getPendingMidRunSteeringEntryIds']
+    listProjects?: EnsembleOrchestratorDeps['listProjects']
+    listProjectReferences?: EnsembleOrchestratorDeps['listProjectReferences']
+    projectReferenceExtractLoader?: EnsembleOrchestratorDeps['projectReferenceExtractLoader']
   } = {}
 ) {
   let chat = options.initialChat
@@ -476,6 +479,13 @@ function makeHarness(
           releaseProviderSessionPersistenceDecision:
             options.releaseProviderSessionPersistenceDecision
         }
+      : {}),
+    ...(options.listProjects ? { listProjects: options.listProjects } : {}),
+    ...(options.listProjectReferences
+      ? { listProjectReferences: options.listProjectReferences }
+      : {}),
+    ...(options.projectReferenceExtractLoader
+      ? { projectReferenceExtractLoader: options.projectReferenceExtractLoader }
       : {})
   })
   return {
@@ -4235,6 +4245,126 @@ describe('EnsembleOrchestrator', () => {
     for (const payload of harness.dispatched) {
       expect(payload.prompt).toContain('External Discord channel snapshot context')
       expect(payload.prompt).toContain('alice: CI failed on linux.')
+    }
+  })
+
+  it('appends project_reference_context to seat prompts; BG seats omit extract bodies', async () => {
+    const { createHash } = await import('node:crypto')
+    type Project = import('../../shared/projects').Project
+    type ProjectReference = import('../../shared/projects').ProjectReference
+    type ProjectReferenceExtract = import('../../shared/projectReferenceExtract').ProjectReferenceExtract
+
+    const project: Project = {
+      schemaVersion: 1,
+      id: 'project-ensemble-refs',
+      name: 'Ensemble Refs',
+      icon: { iconKind: 'seed', seed: 'e' },
+      hue: 2,
+      parentId: null,
+      order: 1,
+      memberChatIds: ['ensemble-chat'],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const references: ProjectReference[] = [
+      {
+        id: 'brief-url',
+        projectId: project.id,
+        kind: 'url',
+        locator: 'https://example.com/ensemble-brief',
+        title: 'Ensemble brief',
+        provenance: { addedBy: 'user', addedAt: 1 },
+        contextPolicy: 'available',
+        updatedAt: 1
+      }
+    ]
+    const extractBody = 'Consentful extract body for Ensemble Use-next.'
+    const digest = createHash('sha256').update(extractBody, 'utf8').digest('hex')
+    const readyExtract: ProjectReferenceExtract = {
+      schemaVersion: 1,
+      id: 'extract-brief-1',
+      projectId: project.id,
+      referenceId: 'brief-url',
+      kind: 'url-html',
+      status: 'ready',
+      consent: { at: 1, actor: 'user', scope: 'this-reference', chatId: 'ensemble-chat' },
+      source: { locator: 'https://example.com/ensemble-brief' },
+      text: { charCount: extractBody.length, truncated: false, artifactSha256: digest },
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const selection = {
+      schemaVersion: 1 as const,
+      projectId: project.id,
+      referenceIds: ['brief-url']
+    }
+    const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    try {
+      const harness = makeHarness({
+        listProjects: () => [project],
+        listProjectReferences: () => references,
+        projectReferenceExtractLoader: {
+          getActiveExtract: (projectId, referenceId) =>
+            projectId === project.id && referenceId === 'brief-url' ? readyExtract : null,
+          readExtractText: (extractId) => (extractId === readyExtract.id ? extractBody : null)
+        }
+      })
+      harness.chat.ensemble!.bossmanParticipantId = 'claude'
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'claude',
+          provider: 'claude',
+          enabled: true,
+          role: 'Boss',
+          instructions: 'Coordinate.',
+          order: 1,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'background-shell',
+          provider: 'codex',
+          enabled: true,
+          role: 'BG',
+          instructions: 'Detached checks.',
+          order: 2,
+          permissionPresetId: 'read_only',
+          stageRole: 'background'
+        }
+      ]
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: '@BG check the brief while Boss plans.',
+        event: { sender: {} as Electron.WebContents },
+        projectReferenceContextSelection: selection
+      })
+
+      await vi.waitFor(() => {
+        expect(harness.dispatched.some((run) => run.ensembleRun?.participantId === 'claude')).toBe(
+          true
+        )
+        expect(
+          harness.dispatched.some((run) => run.ensembleRun?.participantId === 'background-shell')
+        ).toBe(true)
+      })
+
+      const bossPrompt = harness.dispatched.find(
+        (run) => run.ensembleRun?.participantId === 'claude'
+      )?.prompt
+      const bgPrompt = harness.dispatched.find(
+        (run) => run.ensembleRun?.participantId === 'background-shell'
+      )?.prompt
+      expect(bossPrompt).toContain('<project_reference_context>')
+      expect(bossPrompt).toContain('https://example.com/ensemble-brief')
+      expect(bossPrompt).toContain('<project_reference_extracts>')
+      expect(bossPrompt).toContain(extractBody)
+      expect(bgPrompt).toContain('<project_reference_context>')
+      expect(bgPrompt).not.toContain('<project_reference_extracts>')
+      expect(bgPrompt).not.toContain(extractBody)
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
+      else process.env.TASKWRAITH_CONCURRENT_LANES = previous
     }
   })
 
