@@ -138,6 +138,89 @@ describe('SkillsStore', () => {
     expect(() => store.deleteWorkspaceSkill('../not-absolute', 'x')).toThrow(/absolute/i)
   })
 
+  it('rejects skill directory symlink escapes that leave the skills root', () => {
+    const store = makeStore()
+    const skillsRoot = path.join(userDataPath, 'skills')
+    fs.mkdirSync(skillsRoot, { recursive: true })
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-skills-outside-'))
+    const outsideSkill = path.join(outside, 'payload')
+    fs.mkdirSync(outsideSkill, { recursive: true })
+    fs.writeFileSync(path.join(outsideSkill, 'SKILL.md'), '---\nname: Outside\n---\nleak\n', 'utf8')
+
+    const linkPath = path.join(skillsRoot, 'symlink-escape')
+    try {
+      fs.symlinkSync(outsideSkill, linkPath, 'dir')
+    } catch (err) {
+      const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : ''
+      // SKIP (documented): platform/sandbox could not create a directory symlink
+      // (common on Windows without elevation). Realpath containment still runs
+      // whenever a link exists; this assertion cannot be exercised here.
+      if (code === 'EPERM' || code === 'EACCES' || process.platform === 'win32') {
+        fs.rmSync(outside, { recursive: true, force: true })
+        return
+      }
+      throw err
+    }
+
+    expect(() =>
+      store.upsertUserSkill({
+        id: 'symlink-escape',
+        name: 'Escaped',
+        body: 'should not write outside'
+      })
+    ).toThrow(/escape|path/i)
+
+    expect(fs.readFileSync(path.join(outsideSkill, 'SKILL.md'), 'utf8')).toContain('leak')
+    expect(fs.existsSync(path.join(outsideSkill, 'meta.json'))).toBe(false)
+
+    // Listing must skip the escaped symlink entry rather than treating it as a skill.
+    expect(store.listUserSkills().map((s) => s.id)).not.toContain('symlink-escape')
+
+    expect(() => store.deleteUserSkill('symlink-escape')).toThrow(/escape|path/i)
+    expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true)
+    expect(fs.existsSync(path.join(outsideSkill, 'SKILL.md'))).toBe(true)
+
+    fs.rmSync(outside, { recursive: true, force: true })
+  })
+
+  it('rejects workspace skill directory symlink escapes that leave the skills root', () => {
+    const store = makeStore()
+    const skillsRoot = path.join(workspacePath, '.taskwraith', 'skills')
+    fs.mkdirSync(skillsRoot, { recursive: true })
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-skills-ws-outside-'))
+    const outsideSkill = path.join(outside, 'payload')
+    fs.mkdirSync(outsideSkill, { recursive: true })
+    fs.writeFileSync(path.join(outsideSkill, 'SKILL.md'), '---\nname: Outside\n---\nleak\n', 'utf8')
+
+    const linkPath = path.join(skillsRoot, 'ws-symlink-escape')
+    try {
+      fs.symlinkSync(outsideSkill, linkPath, 'dir')
+    } catch (err) {
+      const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : ''
+      // SKIP (documented): directory symlink unavailable on this platform/sandbox.
+      if (code === 'EPERM' || code === 'EACCES' || process.platform === 'win32') {
+        fs.rmSync(outside, { recursive: true, force: true })
+        return
+      }
+      throw err
+    }
+
+    expect(() =>
+      store.upsertWorkspaceSkill(workspacePath, {
+        id: 'ws-symlink-escape',
+        name: 'Escaped',
+        body: 'should not write outside'
+      })
+    ).toThrow(/escape|path/i)
+
+    expect(store.listWorkspaceSkills(workspacePath).map((s) => s.id)).not.toContain(
+      'ws-symlink-escape'
+    )
+    expect(fs.readFileSync(path.join(outsideSkill, 'SKILL.md'), 'utf8')).toContain('leak')
+
+    fs.rmSync(outside, { recursive: true, force: true })
+  })
+
   it('setEnabled toggles without losing body and persists across list', () => {
     const store = makeStore()
     store.upsertUserSkill({

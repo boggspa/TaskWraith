@@ -163,6 +163,79 @@ describe('SkillPatchApply', () => {
     expect(skillsStore.listUserSkills()).toHaveLength(0)
   })
 
+  it('rejects relative workspacePath for workspace-scoped skill_patch', () => {
+    const skillsStore = new SkillsStore({
+      userDataPath,
+      now: () => new Date(NOW)
+    })
+    const prop = proposal({
+      skillPatchDiff: JSON.stringify({
+        skillId: 'rel-ws',
+        skillScope: 'workspace',
+        body: 'never write via relative workspace'
+      })
+    })
+    const result = applySkillPatch({
+      skillsStore,
+      proposal: prop,
+      pack: pack({
+        proposals: [prop],
+        workspacePath: path.join('relative', 'workspace')
+      }),
+      nowIso: NOW
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.blocked).toBe('workspace_path_required')
+    expect(skillsStore.listUserSkills()).toHaveLength(0)
+  })
+
+  it('uses injected assertWorkspacePath for workspace-scoped skill_patch', () => {
+    const skillsStore = new SkillsStore({
+      userDataPath,
+      now: () => new Date(NOW)
+    })
+    const prop = proposal({
+      skillPatchDiff: JSON.stringify({
+        skillId: 'asserted-ws',
+        skillScope: 'workspace',
+        name: 'Asserted',
+        body: 'validated workspace path'
+      })
+    })
+    const asserted = path.join(workspacePath, 'canonical')
+    fs.mkdirSync(asserted, { recursive: true })
+    let seen: string | undefined
+    const result = applySkillPatch({
+      skillsStore,
+      proposal: prop,
+      pack: pack({ proposals: [prop], workspacePath }),
+      nowIso: NOW,
+      assertWorkspacePath: (raw) => {
+        seen = raw
+        return asserted
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(seen).toBe(workspacePath)
+    expect(
+      fs.existsSync(path.join(asserted, '.taskwraith', 'skills', 'asserted-ws', 'SKILL.md'))
+    ).toBe(true)
+
+    const blocked = applySkillPatch({
+      skillsStore,
+      proposal: prop,
+      pack: pack({ proposals: [prop], workspacePath }),
+      nowIso: NOW,
+      assertWorkspacePath: () => {
+        throw new Error('Workspace must be selected through TaskWraith before it can be used.')
+      }
+    })
+    expect(blocked.ok).toBe(false)
+    if (blocked.ok) return
+    expect(blocked.blocked).toBe('workspace_path_required')
+  })
+
   it('rollback restores the previous skill body from the apply receipt snapshot', () => {
     const skillsStore = new SkillsStore({
       userDataPath,

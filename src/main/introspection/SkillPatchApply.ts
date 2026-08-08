@@ -6,6 +6,7 @@
  * rollback snapshot on the proposal receipt. There is no MCP apply path.
  */
 
+import * as path from 'path'
 import type {
   MemoryProposal,
   MemoryProposalApplyReceipt,
@@ -53,6 +54,11 @@ export interface SkillPatchApplyDeps {
   proposal: MemoryProposal
   pack: MemoryProposalPack
   nowIso: string
+  /**
+   * Optional registered-style workspace validator (e.g. requireRegisteredWorkspace).
+   * When absent, workspace-scoped apply still requires an absolute path.
+   */
+  assertWorkspacePath?: (workspacePath: string) => string
 }
 
 export type ApplySkillPatchResult =
@@ -148,6 +154,46 @@ function defaultSkillScope(pack: MemoryProposalPack): SkillScope {
   return pack.workspacePath?.trim() ? 'workspace' : 'user'
 }
 
+export function resolveWorkspaceSkillApplyPath(
+  workspacePath: string | undefined,
+  assertWorkspacePath?: (workspacePath: string) => string
+):
+  | { ok: true; workspacePath: string }
+  | { ok: false; blocked: SkillPatchApplyBlockReason; error?: string } {
+  const raw = workspacePath?.trim()
+  if (!raw) {
+    return { ok: false, blocked: 'workspace_path_required' }
+  }
+  if (!path.isAbsolute(raw)) {
+    return {
+      ok: false,
+      blocked: 'workspace_path_required',
+      error: 'Workspace path must be absolute.'
+    }
+  }
+  if (!assertWorkspacePath) {
+    return { ok: true, workspacePath: path.resolve(raw) }
+  }
+  try {
+    const asserted = assertWorkspacePath(raw)
+    const normalized = typeof asserted === 'string' ? asserted.trim() : ''
+    if (!normalized || !path.isAbsolute(normalized)) {
+      return {
+        ok: false,
+        blocked: 'workspace_path_required',
+        error: 'Workspace path must be absolute.'
+      }
+    }
+    return { ok: true, workspacePath: path.resolve(normalized) }
+  } catch (err) {
+    return {
+      ok: false,
+      blocked: 'workspace_path_required',
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+}
+
 export function resolveSkillPatchTarget(
   proposal: MemoryProposal,
   pack: MemoryProposalPack
@@ -174,8 +220,11 @@ export function resolveSkillPatchTarget(
     ? (sanitizeSkillIdCandidate(requestedId) as string)
     : skillIdForProposal(proposal.id)
   const skillScope = parsed?.skillScope ?? defaultSkillScope(pack)
-  if (skillScope === 'workspace' && !pack.workspacePath?.trim()) {
-    return { ok: false, blocked: 'workspace_path_required' }
+  if (skillScope === 'workspace') {
+    const workspacePath = pack.workspacePath?.trim()
+    if (!workspacePath || !path.isAbsolute(workspacePath)) {
+      return { ok: false, blocked: 'workspace_path_required' }
+    }
   }
 
   const name =
@@ -203,12 +252,13 @@ function findExistingSkill(
   skillsStore: SkillPatchApplyDeps['skillsStore'],
   skillScope: SkillScope,
   skillId: string,
-  pack: MemoryProposalPack
+  workspacePath: string | undefined,
+  workspaceId: string | undefined
 ): SkillRecord | null {
   const list =
     skillScope === 'user'
       ? skillsStore.listUserSkills()
-      : skillsStore.listWorkspaceSkills(pack.workspacePath || '', pack.workspaceId)
+      : skillsStore.listWorkspaceSkills(workspacePath || '', workspaceId)
   return list.find((item) => item.id === skillId) ?? null
 }
 
@@ -227,17 +277,17 @@ function buildRollbackSnapshot(existing: SkillRecord | null): MemoryProposalSkil
 function upsertSkill(
   skillsStore: SkillPatchApplyDeps['skillsStore'],
   target: ResolvedSkillPatchTarget,
-  pack: MemoryProposalPack,
+  workspacePath: string | undefined,
+  workspaceId: string | undefined,
   input: UpsertSkillInput
 ): SkillRecord {
   if (target.skillScope === 'user') {
     return skillsStore.upsertUserSkill(input)
   }
-  const workspacePath = pack.workspacePath?.trim()
   if (!workspacePath) {
     throw new Error('Workspace path is required for workspace skill apply.')
   }
-  return skillsStore.upsertWorkspaceSkill(workspacePath, input, pack.workspaceId)
+  return skillsStore.upsertWorkspaceSkill(workspacePath, input, workspaceId)
 }
 
 export function applySkillPatch(deps: SkillPatchApplyDeps): ApplySkillPatchResult {
@@ -251,13 +301,34 @@ export function applySkillPatch(deps: SkillPatchApplyDeps): ApplySkillPatchResul
   }
 
   const { target } = resolved
+  let workspacePath: string | undefined
+  if (target.skillScope === 'workspace') {
+    const workspace = resolveWorkspaceSkillApplyPath(
+      deps.pack.workspacePath,
+      deps.assertWorkspacePath
+    )
+    if (!workspace.ok) {
+      return { ok: false, blocked: workspace.blocked, ...(workspace.error ? { error: workspace.error } : {}) }
+    }
+    workspacePath = workspace.workspacePath
+  }
+
   let existing: SkillRecord | null
   try {
-    existing = findExistingSkill(deps.skillsStore, target.skillScope, target.skillId, deps.pack)
+    existing = findExistingSkill(
+      deps.skillsStore,
+      target.skillScope,
+      target.skillId,
+      workspacePath,
+      deps.pack.workspaceId
+    )
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/escape|Invalid skill id/i.test(message)) {
       return { ok: false, blocked: 'skill_patch_path_escape', error: message }
+    }
+    if (/absolute|workspace path/i.test(message)) {
+      return { ok: false, blocked: 'workspace_path_required', error: message }
     }
     return { ok: false, blocked: 'skill_patch_invalid_target', error: message }
   }
@@ -272,11 +343,20 @@ export function applySkillPatch(deps: SkillPatchApplyDeps): ApplySkillPatchResul
   }
 
   try {
-    upsertSkill(deps.skillsStore, target, deps.pack, upsertInput)
+    upsertSkill(
+      deps.skillsStore,
+      target,
+      workspacePath,
+      deps.pack.workspaceId,
+      upsertInput
+    )
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/escape|Invalid skill id/i.test(message)) {
       return { ok: false, blocked: 'skill_patch_path_escape', error: message }
+    }
+    if (/absolute|workspace path/i.test(message)) {
+      return { ok: false, blocked: 'workspace_path_required', error: message }
     }
     return { ok: false, blocked: 'skill_patch_invalid_target', error: message }
   }
@@ -304,6 +384,7 @@ export function rollbackSkillPatch(input: {
   applyReceipt: MemoryProposalApplyReceipt
   workspacePath?: string
   workspaceId?: string
+  assertWorkspacePath?: (workspacePath: string) => string
 }): RollbackSkillPatchResult {
   const { applyReceipt, skillsStore } = input
   if (applyReceipt.target !== 'TaskWraithSkill') {
@@ -318,17 +399,25 @@ export function rollbackSkillPatch(input: {
     return { ok: false, blocked: 'skill_patch_path_escape' }
   }
 
+  let workspacePath: string | undefined
+  if (skillScope === 'workspace') {
+    const workspace = resolveWorkspaceSkillApplyPath(
+      input.workspacePath,
+      input.assertWorkspacePath
+    )
+    if (!workspace.ok) {
+      return { ok: false, blocked: workspace.blocked, ...(workspace.error ? { error: workspace.error } : {}) }
+    }
+    workspacePath = workspace.workspacePath
+  }
+
   const snapshot = applyReceipt.rollbackSnapshot
   try {
     if (!snapshot || snapshot.previousBody == null) {
       if (skillScope === 'user') {
         skillsStore.deleteUserSkill(skillId)
       } else {
-        const workspacePath = input.workspacePath?.trim()
-        if (!workspacePath) {
-          return { ok: false, blocked: 'workspace_path_required' }
-        }
-        skillsStore.deleteWorkspaceSkill(workspacePath, skillId)
+        skillsStore.deleteWorkspaceSkill(workspacePath as string, skillId)
       }
       return { ok: true }
     }
@@ -343,17 +432,16 @@ export function rollbackSkillPatch(input: {
     if (skillScope === 'user') {
       skillsStore.upsertUserSkill(upsertInput)
     } else {
-      const workspacePath = input.workspacePath?.trim()
-      if (!workspacePath) {
-        return { ok: false, blocked: 'workspace_path_required' }
-      }
-      skillsStore.upsertWorkspaceSkill(workspacePath, upsertInput, input.workspaceId)
+      skillsStore.upsertWorkspaceSkill(workspacePath as string, upsertInput, input.workspaceId)
     }
     return { ok: true }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/escape|Invalid skill id/i.test(message)) {
       return { ok: false, blocked: 'skill_patch_path_escape', error: message }
+    }
+    if (/absolute|workspace path/i.test(message)) {
+      return { ok: false, blocked: 'workspace_path_required', error: message }
     }
     return { ok: false, blocked: 'skill_patch_invalid_target', error: message }
   }

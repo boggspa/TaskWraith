@@ -33,6 +33,70 @@ function pathWithinRoot(candidate: string, root: string): boolean {
   return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel))
 }
 
+function realpathNative(input: string): string {
+  return typeof fs.realpathSync.native === 'function'
+    ? fs.realpathSync.native(input)
+    : fs.realpathSync(input)
+}
+
+/**
+ * Lexical + realpath containment under an intended skills root.
+ * Rejects skill-dir symlink escapes that leave the root after resolution.
+ */
+function assertContainedUnderSkillsRoot(
+  candidate: string,
+  root: string,
+  label: string
+): string {
+  const resolvedRoot = path.resolve(root)
+  const resolvedCandidate = path.resolve(candidate)
+  if (!pathWithinRoot(resolvedCandidate, resolvedRoot)) {
+    throw new Error(`Skill path escapes root: ${label}`)
+  }
+
+  let realRoot: string
+  try {
+    realRoot = realpathNative(resolvedRoot)
+  } catch {
+    // Root does not exist yet — only the lexical check is available.
+    return resolvedCandidate
+  }
+
+  if (fs.existsSync(resolvedCandidate)) {
+    let realCandidate: string
+    try {
+      realCandidate = realpathNative(resolvedCandidate)
+    } catch {
+      throw new Error(`Skill path escapes root: ${label}`)
+    }
+    if (!pathWithinRoot(realCandidate, realRoot)) {
+      throw new Error(`Skill path escapes root: ${label}`)
+    }
+    return realCandidate
+  }
+
+  // Missing leaf: ensure the deepest existing ancestor stays under the real root
+  // (blocks intermediate symlink hops that leave the skills root).
+  let cursor = resolvedCandidate
+  while (!fs.existsSync(cursor)) {
+    const parent = path.dirname(cursor)
+    if (parent === cursor) break
+    cursor = parent
+  }
+  if (fs.existsSync(cursor)) {
+    let realAncestor: string
+    try {
+      realAncestor = realpathNative(cursor)
+    } catch {
+      throw new Error(`Skill path escapes root: ${label}`)
+    }
+    if (!pathWithinRoot(realAncestor, realRoot)) {
+      throw new Error(`Skill path escapes root: ${label}`)
+    }
+  }
+  return resolvedCandidate
+}
+
 function assertSafeSkillId(id: string): string {
   const trimmed = id.trim()
   if (
@@ -161,10 +225,7 @@ export class SkillsStore {
     const safeId = assertSafeSkillId(id)
     const resolvedRoot = path.resolve(root)
     const candidate = path.resolve(resolvedRoot, safeId)
-    if (!pathWithinRoot(candidate, resolvedRoot)) {
-      throw new Error(`Skill path escapes root: ${id}`)
-    }
-    return candidate
+    return assertContainedUnderSkillsRoot(candidate, resolvedRoot, safeId)
   }
 
   listUserSkills(): SkillRecord[] {
@@ -265,20 +326,29 @@ export class SkillsStore {
   private listSkillsInRoot(root: string, scope: SkillScope, workspaceId?: string): SkillRecord[] {
     const resolvedRoot = path.resolve(root)
     if (!fs.existsSync(resolvedRoot)) return []
-    const entries = fs.readdirSync(resolvedRoot, { withFileTypes: true })
+    let containedRoot: string
+    try {
+      containedRoot = assertContainedUnderSkillsRoot(resolvedRoot, resolvedRoot, 'skills-root')
+    } catch {
+      return []
+    }
+    const entries = fs.readdirSync(containedRoot, { withFileTypes: true })
     const skills: SkillRecord[] = []
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue
+      // Dirent.isDirectory() follows symlinks; also accept symlink entries and
+      // let resolveSkillDirectory reject escapes after realpath.
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
       try {
         const record = this.readSkillRecord(
-          this.resolveSkillDirectory(resolvedRoot, entry.name),
+          this.resolveSkillDirectory(containedRoot, entry.name),
           entry.name,
           scope,
-          workspaceId
+          workspaceId,
+          containedRoot
         )
         if (record) skills.push(record)
       } catch {
-        // Skip unsafe or unreadable entries.
+        // Skip unsafe or unreadable entries (including symlink escapes).
       }
     }
     return skills.sort((a, b) => a.id.localeCompare(b.id))
@@ -288,14 +358,18 @@ export class SkillsStore {
     skillDir: string,
     id: string,
     scope: SkillScope,
-    workspaceId?: string
+    workspaceId?: string,
+    skillsRoot?: string
   ): SkillRecord | null {
-    const skillPath = path.join(skillDir, SKILL_FILE)
+    const root = skillsRoot ?? path.dirname(skillDir)
+    const containedDir = assertContainedUnderSkillsRoot(skillDir, root, id)
+    const skillPath = path.join(containedDir, SKILL_FILE)
     if (!fs.existsSync(skillPath)) return null
-    const raw = fs.readFileSync(skillPath, 'utf8')
+    const containedSkillPath = assertContainedUnderSkillsRoot(skillPath, root, id)
+    const raw = fs.readFileSync(containedSkillPath, 'utf8')
     const parsed = parseSkillMarkdown(raw)
-    const meta = readMeta(path.join(skillDir, META_FILE))
-    const stats = fs.statSync(skillPath)
+    const meta = readMeta(path.join(containedDir, META_FILE))
+    const stats = fs.statSync(containedSkillPath)
     const updatedAt =
       (typeof meta?.updatedAt === 'string' && meta.updatedAt) || stats.mtime.toISOString()
     const enabled =
@@ -335,15 +409,16 @@ export class SkillsStore {
     const updatedAt = this.now().toISOString()
 
     this.ensureRoot(root)
-    const skillDir = this.resolveSkillDirectory(root, id)
+    const containedRoot = assertContainedUnderSkillsRoot(root, root, 'skills-root')
+    // Reject pre-existing symlink escapes before mkdir/write can follow them.
+    const skillDir = this.resolveSkillDirectory(containedRoot, id)
     fs.mkdirSync(skillDir, { recursive: true, mode: 0o700 })
+    const containedDir = assertContainedUnderSkillsRoot(skillDir, containedRoot, id)
 
     const markdown = renderSkillMarkdown({ name, description, enabled, body })
-    const skillPath = path.join(skillDir, SKILL_FILE)
-    if (!pathWithinRoot(skillPath, path.resolve(root))) {
-      throw new Error(`Skill path escapes root: ${id}`)
-    }
-    fs.writeFileSync(skillPath, markdown, 'utf8')
+    const skillPath = path.join(containedDir, SKILL_FILE)
+    const containedSkillPath = assertContainedUnderSkillsRoot(skillPath, containedRoot, id)
+    fs.writeFileSync(containedSkillPath, markdown, 'utf8')
     const meta: SkillMetaFile = {
       id,
       updatedAt,
@@ -351,7 +426,12 @@ export class SkillsStore {
       name,
       description
     }
-    fs.writeFileSync(path.join(skillDir, META_FILE), `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
+    const metaPath = assertContainedUnderSkillsRoot(
+      path.join(containedDir, META_FILE),
+      containedRoot,
+      id
+    )
+    fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
 
     return {
       id,
@@ -367,9 +447,20 @@ export class SkillsStore {
   }
 
   private deleteInRoot(root: string, id: string): boolean {
-    const skillDir = this.resolveSkillDirectory(root, id)
+    const containedRoot = fs.existsSync(root)
+      ? assertContainedUnderSkillsRoot(root, root, 'skills-root')
+      : path.resolve(root)
+    const skillDir = this.resolveSkillDirectory(containedRoot, id)
     if (!fs.existsSync(skillDir)) return false
-    fs.rmSync(skillDir, { recursive: true, force: true })
+    // Refuse to delete through a symlink that escapes the skills root.
+    const containedDir = assertContainedUnderSkillsRoot(skillDir, containedRoot, id)
+    const lstat = fs.lstatSync(skillDir)
+    if (lstat.isSymbolicLink()) {
+      // Contained symlink only: remove the link inode, not a followed target tree.
+      fs.unlinkSync(skillDir)
+      return true
+    }
+    fs.rmSync(containedDir, { recursive: true, force: true })
     return true
   }
 

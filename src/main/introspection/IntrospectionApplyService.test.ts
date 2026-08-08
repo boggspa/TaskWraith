@@ -227,6 +227,71 @@ describe('applyMemoryProposal', () => {
     expect(store.updateMemoryProposal).not.toHaveBeenCalled()
   })
 
+  it('blocks workspace skill_patch when pack workspacePath is relative', () => {
+    const skillsStore = new SkillsStore({
+      userDataPath: skillUserDataPath,
+      now: () => new Date(NOW)
+    })
+    const store = makeStore({
+      pack: pack({
+        workspacePath: path.join('relative', 'workspace'),
+        proposals: [
+          proposal({
+            kind: 'skill_patch',
+            scope: 'skill',
+            skillPatchDiff: JSON.stringify({
+              skillId: 'rel-blocked',
+              skillScope: 'workspace',
+              body: 'nope'
+            })
+          })
+        ]
+      })
+    })
+    const result = applyMemoryProposal(
+      { store, skillsStore, now: () => NOW },
+      'pack-1',
+      'prop-1'
+    )
+    expect(result).toEqual({ ok: false, blocked: 'workspace_path_required' })
+    expect(store.updateMemoryProposal).not.toHaveBeenCalled()
+  })
+
+  it('forwards assertWorkspacePath into skill_patch apply', () => {
+    const skillsStore = new SkillsStore({
+      userDataPath: skillUserDataPath,
+      now: () => new Date(NOW)
+    })
+    const store = makeStore({
+      pack: pack({
+        workspacePath: skillWorkspacePath,
+        proposals: [
+          proposal({
+            kind: 'skill_patch',
+            scope: 'skill',
+            skillPatchDiff: JSON.stringify({
+              skillId: 'assert-forward',
+              skillScope: 'workspace',
+              name: 'Assert Forward',
+              body: 'forwarded'
+            })
+          })
+        ]
+      })
+    })
+    const assertWorkspacePath = vi.fn((raw: string) => {
+      expect(raw).toBe(skillWorkspacePath)
+      return skillWorkspacePath
+    })
+    const result = applyMemoryProposal(
+      { store, skillsStore, now: () => NOW, assertWorkspacePath },
+      'pack-1',
+      'prop-1'
+    )
+    expect(result.ok).toBe(true)
+    expect(assertWorkspacePath).toHaveBeenCalledTimes(1)
+  })
+
   it('is idempotent when the proposal is already applied', () => {
     const appliedPack = pack({
       proposals: [

@@ -73,6 +73,8 @@ export interface IntrospectionApplyServiceDeps {
     | 'deleteWorkspaceSkill'
   >
   now: () => string
+  /** Optional registered-style workspace path validator for workspace skill_patch apply. */
+  assertWorkspacePath?: (workspacePath: string) => string
 }
 
 function blockReasonForKind(kind: MemoryProposalKind): ApplyMemoryProposalBlockReason {
@@ -212,7 +214,8 @@ function applySkillPatchProposal(
     skillsStore: deps.skillsStore,
     proposal,
     pack,
-    nowIso
+    nowIso,
+    ...(deps.assertWorkspacePath ? { assertWorkspacePath: deps.assertWorkspacePath } : {})
   })
   if (!applied.ok) {
     return { ok: false, blocked: applied.blocked }
