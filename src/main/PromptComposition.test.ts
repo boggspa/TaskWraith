@@ -609,6 +609,31 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.applicationLog).toContain('active goal injected')
   })
 
+  it('injects progressive skill discovery and SessionStart hook context when provided', () => {
+    const result = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Use the skill.',
+      messages: [],
+      chatContextTurns: 6,
+      resumeSessionId: 'codex-session-1',
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      skillDiscoverySkills: [
+        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+      ],
+      sessionStartContext: 'branch=main'
+    })
+
+    expect(result.contextualPrompt).toContain('## Available skills')
+    expect(result.contextualPrompt).toContain('Deploy (`deploy`): Ship the build.')
+    expect(result.contextualPrompt).toContain('## SessionStart hook context')
+    expect(result.contextualPrompt).toContain('branch=main')
+    expect(result.applicationLog).toContain('skill discovery injected')
+    expect(result.applicationLog).toContain('session-start hook context injected')
+  })
+
   it('does not inject paused active goals', () => {
     const result = composeRunPrompt({
       provider: 'codex',

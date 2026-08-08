@@ -21,6 +21,14 @@ Post-`v1.9.3` source-ahead. Ensemble Continuous routing landed here after the
 tagged tip; treat the Ensemble / lock floor as **done until real issues hit** —
 do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
 
+### Skills, Hooks, and harness posture (source-ahead)
+
+- **Skills / Hooks Settings.** User- and workspace-scoped skill libraries and host shell hook configs are editable in Settings, with IPC + preload bridges (`skills:*` / `hooks:*`) over `SkillsStore` / `HooksStore`.
+- **Host shell hooks.** Settings-authored SessionStart / PreToolUse / PostToolUse / Stop commands run through `HostShellHookRunner` (capped SessionStart stdout for prompt injection). Compose primes SessionStart once per workspace and accepts `sessionStartContext`; Stop fires on run terminal. v1 executes user-scoped hooks only (workspace `.taskwraith/hooks.json` is agent-writable and not auto-run) with a scrubbed hook env; PreToolUse exceptions fail closed.
+- **`skill_list` / `skill_read` MCP.** Progressive skill discovery: seats see a compact prompt catalog, then pull metadata or full bodies via read-only MCP tools (gateway v12 / auto-allowed reads).
+- **Skill Patch Manager.** Approved Thread Introspection `skill_patch` proposals can apply into TaskWraith-owned skills (user/workspace) with rollback via the Settings apply path — still no MCP apply tool.
+- **Provider harness posture.** Per-provider passthrough controls for native skill/hook harness surfaces (Claude / Cursor / Pi / Kimi) so TaskWraith-owned skills/hooks and provider-native ones can coexist without silent double-injection.
+
 ### Ensemble Continuous ownership (source-ahead)
 
 - **Continuous Boss ownership.** In Continuous mode, an acting Boss/Captain with remaining serial seats must make an explicit routing decision (`select_participants` / skip / summon, targeted yield, unique foreground `@mention`, or accepted fan-out) before ordinary writers advance; a quiet answer re-summons authority. Continuous pass 1 may select/skip; Turn-bound still preserves the full first pass.

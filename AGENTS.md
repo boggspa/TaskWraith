@@ -956,7 +956,10 @@ Kimi, Cursor, Grok, Mistral Vibe, and local Ollama when their runtime-specific
 admission and broker setup succeeds. The conditional AntiGravity Gemini API-key
 lane advertises the TaskWraith tool catalog as Gemini function declarations and
 executes those calls in-process; the official agy print-mode lane attaches no
-MCP server, plugin, or hook.
+MCP server, plugin, or **user** hook. Separately, TaskWraith may install a
+temporary host-owned PreToolUse approval bridge for that print-mode lane so
+native tool calls share the same Ask/approval orchestration as other providers
+— that bridge is not a user-configured hooks surface.
 Pi is deliberately not a generic MCP client. In an Ensemble lane only,
 TaskWraith may attach one explicit app-owned Pi extension that exposes the fixed
 coordination list (`ensemble_yield`, `ensemble_send`, `ensemble_fanout`,

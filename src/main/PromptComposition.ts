@@ -40,6 +40,7 @@ import {
   pruneContiguousCompactionPrefix,
   type ContextCompactionProvenance
 } from '../shared/contextCompaction'
+import { buildSkillDiscoveryBlock } from './skills/SkillPromptInjection'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -930,6 +931,17 @@ export interface ComposeRunPromptInput {
    * acknowledge (see ThreadMessageContext).
    */
   pendingThreadMessages?: readonly ThreadMessageEvent[]
+  /**
+   * Enabled skills for progressive disclosure (name + one-line description).
+   * Full bodies stay behind `skill_list` / `skill_read` MCP tools.
+   */
+  skillDiscoverySkills?: readonly { id: string; name: string; description: string }[]
+  /**
+   * Capped stdout collected from SessionStart host hooks for this turn.
+   * Callers that await `runSessionStartHooksForWorkspace` may pass the result
+   * here; sync compose paths omit it.
+   */
+  sessionStartContext?: string | null
 }
 
 export interface ComposeRunPromptResult {
@@ -1243,6 +1255,18 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   }
   if (compactionSummaryBlock) {
     applicationLog = `${applicationLog}; prior-session compaction summary injected`
+  }
+
+  const skillDiscoveryBlock = buildSkillDiscoveryBlock(input.skillDiscoverySkills || [])
+  if (skillDiscoveryBlock) {
+    contextualPrompt = `${skillDiscoveryBlock}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; skill discovery injected`
+  }
+
+  const sessionStartContext = (input.sessionStartContext || '').trim()
+  if (sessionStartContext) {
+    contextualPrompt = `## SessionStart hook context\n\n${sessionStartContext}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; session-start hook context injected`
   }
 
   // (3) Write-capable cloud/runtime preamble. Keep this compact and invariant:

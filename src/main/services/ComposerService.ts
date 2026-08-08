@@ -243,6 +243,19 @@ export interface ComposerServiceDeps {
    * current chat/lane has an active Full Access grant.
    */
   isTrustedSessionGranted?: (scope: TrustedSessionScope) => boolean
+  /**
+   * Progressive skill discovery for prompt composition. Optional so unit tests
+   * that don't exercise SkillsStore omit it.
+   */
+  resolveSkillDiscoverySkills?: (
+    workspacePath: string,
+    workspaceId?: string
+  ) => readonly { id: string; name: string; description: string }[]
+  /**
+   * Optional SessionStart hook stdout already collected for this turn.
+   * Compose stays sync; callers that await host hooks may pass the result.
+   */
+  resolveSessionStartContext?: (workspacePath: string) => string | null | undefined
 }
 
 export class ComposerService {
@@ -542,6 +555,27 @@ export class ComposerService {
       metadataBoolean(chat, 'kimiAcpNativeSession') === true &&
       isKimiAcpProductionPosture(chat.providerMetadata?.kimiAcpPostureVersion)
     )
+    const workspacePathForSkills =
+      scope !== 'global' && typeof chat.workspacePath === 'string' && chat.workspacePath.trim()
+        ? chat.workspacePath.trim()
+        : typeof input.workspace === 'string' && input.workspace.trim()
+          ? input.workspace.trim()
+          : ''
+    const skillDiscoverySkills =
+      !graphContextIsolated &&
+      workspacePathForSkills &&
+      this.deps.resolveSkillDiscoverySkills
+        ? this.deps.resolveSkillDiscoverySkills(
+            workspacePathForSkills,
+            chat.workspaceId || undefined
+          )
+        : undefined
+    const sessionStartContext =
+      !graphContextIsolated &&
+      workspacePathForSkills &&
+      this.deps.resolveSessionStartContext
+        ? this.deps.resolveSessionStartContext(workspacePathForSkills)
+        : undefined
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
@@ -563,6 +597,8 @@ export class ComposerService {
       activeGoal,
       taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
       taskWraithMcpAdvertised,
+      ...(skillDiscoverySkills ? { skillDiscoverySkills } : {}),
+      ...(sessionStartContext ? { sessionStartContext } : {}),
       ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
       ...(provider === 'ollama'
         ? {

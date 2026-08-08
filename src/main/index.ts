@@ -1348,6 +1348,18 @@ import {
   isIntrospectionMcpToolName,
   type IntrospectionToolContext
 } from './mcp/IntrospectionToolExecutors'
+import {
+  createSkillToolExecutors,
+  executeSkillTool,
+  isSkillMcpToolName
+} from './mcp/SkillToolExecutors'
+import { createSkillsHooksSubsystem, getSkillsHooksSubsystem } from './skillsHooks/registerSkillsHooksSubsystem'
+import {
+  runPostToolUseHooks,
+  runPreToolUseHooks,
+  runSessionStartHooksForWorkspace,
+  runStopHooks
+} from './hooks/hostHookIntegration'
 import { isRemoteOriginRun, markRemoteOriginRun } from './RemoteOriginRuns'
 import { createThreadMessageAccessResolver } from './ThreadMessageAccessResolver'
 import {
@@ -1913,6 +1925,7 @@ import {
   claudeDispatchPrompt,
   normalizeClaudeEffortFlagForModel
 } from './ClaudeCliArgs'
+import { resolveProviderHarnessPosture } from '../shared/providerHarnessPosture'
 import { getSubThreadResumeSessionId, resolveSubThreadRecall } from './SubThreadRecall'
 import {
   bridgeTranscriptActivityIsLive,
@@ -3428,6 +3441,8 @@ const scheduledOccurrenceTransaction = new ScheduledOccurrenceTransaction({
 // and is recorded. Every other access resolves to a no-op fn (defensive — the
 // dispatch path touches only id/isDestroyed/send).
 let composerServiceRef: ComposerService | null = null
+/** Late-bound Stop hook firer from whenReady (Wave A host hooks). */
+let fireStopHooksForWorkspaceRef: ((workspacePath: string, status?: string) => void) | null = null
 const headlessRunSender = new Proxy(
   {},
   {
@@ -5644,6 +5659,14 @@ const introspectionToolExecutors = createIntrospectionToolExecutors({
     return chat?.workspacePath || context.workspacePath
   },
   now: () => new Date().toISOString()
+})
+
+const skillToolExecutors = createSkillToolExecutors({
+  skillsStore: {
+    resolveEffectiveSkills: (workspacePath, workspaceId) =>
+      getSkillsHooksSubsystem()?.skillsStore.resolveEffectiveSkills(workspacePath, workspaceId) ??
+      []
+  }
 })
 
 // M11 (1.0.7) — sticky AppWatch: per-chat remembered attachment snapshots,
@@ -8309,6 +8332,10 @@ runManager.onChange((event) => {
     // Work-lock cleanup is the first terminal side effect. It must run even
     // when later persistence-authority checks return early.
     workspaceLockRunLifecycle.terminal(event.session.runId)
+    const stopWorkspace = (event.session.workspacePath || '').trim()
+    if (stopWorkspace) {
+      fireStopHooksForWorkspaceRef?.(stopWorkspace, event.session.status)
+    }
   }
   if (
     event.session.appChatId &&
@@ -20630,7 +20657,11 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       model,
       providerSessionId: payload.providerSessionId || null,
       claudeReasoningEffort: payload.claudeReasoningEffort || null,
-      claudeFastMode: payload.claudeFastMode
+      claudeFastMode: payload.claudeFastMode,
+      harnessPosture: resolveProviderHarnessPosture(
+        'claude',
+        AppStore.getSettings().providerHarnessPosture
+      )
     }),
     // External grants are consumed only by the TaskWraith broker. Opaque
     // provider CLIs never receive widened native directory authority.
@@ -21550,7 +21581,11 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
           coordinationExtensionPath: preparedTaskWraithTools.path,
           coordinationToolNames: preparedTaskWraithTools.toolNames
         }
-      : {})
+      : {}),
+    harnessPosture: resolveProviderHarnessPosture(
+      'pi',
+      AppStore.getSettings().providerHarnessPosture
+    )
   })
 
   // Base env (PATH + TASKWRAITH markers) → credential firewall → pi switches.
@@ -23560,7 +23595,11 @@ async function runKimiAcpProvider(
       selectedModelAlias: kimiModelConfig,
       preserveSessionState: preserveKimiSessionState,
       strictCleanup: preserveKimiSessionState,
-      fs: kimiHomeFsAdapter
+      fs: kimiHomeFsAdapter,
+      harnessPosture: resolveProviderHarnessPosture(
+        'kimi',
+        AppStore.getSettings().providerHarnessPosture
+      )
     })
     if (!home.ok) {
       settleVisibleProviderSetupFailure({
@@ -27285,7 +27324,11 @@ async function compactKimiProviderContext(payload: {
     thinkingEnabled: participant.thinkingEnabled ?? true,
     preserveSessionState: true,
     strictCleanup: true,
-    fs: kimiHomeFsAdapter
+    fs: kimiHomeFsAdapter,
+    harnessPosture: resolveProviderHarnessPosture(
+      'kimi',
+      AppStore.getSettings().providerHarnessPosture
+    )
   })
   if (!home.ok) return { ok: false, error: home.message }
   if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
@@ -35462,6 +35505,45 @@ async function executeGeminiMcpTool(
       isError: true
     }
   }
+  // Host PreToolUse hooks (Wave A): user-authored shell commands may block the tool.
+  {
+    const hostHooksWorkspace = (
+      workspacePath || (context.scope === 'workspace' ? resolve(context.cwd) : '')
+    ).trim()
+    const hooksStore = getSkillsHooksSubsystem()?.hooksStore
+    if (hostHooksWorkspace && hooksStore) {
+      try {
+        const pre = await runPreToolUseHooks(
+          hostHooksWorkspace,
+          { toolName: String(toolName) },
+          { hooksStore, allowWorkspaceHooks: false }
+        )
+        if (pre.blocked) {
+          return {
+            ...mcpStructuredJsonResult({
+              ok: false,
+              tool: toolName,
+              error: pre.reason || 'Blocked by TaskWraith PreToolUse hook.'
+            }),
+            isError: true
+          }
+        }
+      } catch (error) {
+        console.warn('[hooks] PreToolUse failed:', error)
+        return {
+          ...mcpStructuredJsonResult({
+            ok: false,
+            tool: toolName,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'PreToolUse hook failed closed.'
+          }),
+          isError: true
+        }
+      }
+    }
+  }
   let cwd = resolveScopedDirectory(
     context.scope,
     baseCwd,
@@ -36671,6 +36753,15 @@ async function executeGeminiMcpTool(
       markDispatchHandled('introspection')
       applyRichResult(
         await introspectionToolExecutors.executeIntrospectionTool(toolName, args, context)
+      )
+    } else if (isSkillMcpToolName(toolName)) {
+      markDispatchHandled('skills')
+      const skillChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+      applyRichResult(
+        await executeSkillTool(skillToolExecutors, toolName, args, {
+          workspacePath: skillChat?.workspacePath || context.workspacePath,
+          workspaceId: skillChat?.workspaceId || undefined
+        })
       )
     } else if (isImageMcpToolName(toolName)) {
       markDispatchHandled('image-tools')
@@ -39239,6 +39330,22 @@ async function executeGeminiMcpTool(
       )
     }
     completeHostCommandTerminalProjection(hostCommandProjection)
+    // Host PostToolUse hooks (Wave A) — fire-and-forget; never block release.
+    {
+      const hostHooksWorkspace = (
+        workspacePath || (context.scope === 'workspace' ? resolve(context.cwd) : '')
+      ).trim()
+      const hooksStore = getSkillsHooksSubsystem()?.hooksStore
+      if (hostHooksWorkspace && hooksStore) {
+        void runPostToolUseHooks(
+          hostHooksWorkspace,
+          { toolName: String(toolName) },
+          { hooksStore, allowWorkspaceHooks: false }
+        ).catch((error) => {
+          console.warn('[hooks] PostToolUse failed:', error)
+        })
+      }
+    }
   }
 }
 
@@ -49010,6 +49117,57 @@ if (isGeminiMcpBridgeProcess) {
       isMainRendererSender,
       requireNonEmptyString
     })
+    // Skills + Hooks Settings IPC + stores (Wave A).
+    // SessionStart: kickSessionStartHooks primes stdout into
+    // sessionStartContextByWorkspace for the next compose; await
+    // runSessionStartHooksForWorkspace when a caller can inject into THIS turn.
+    // Stop: fireStopHooksForWorkspace on terminal. Pre/Post run inside
+    // executeGeminiMcpTool via getSkillsHooksSubsystem().
+    const { skillsStore, hooksStore } = createSkillsHooksSubsystem({
+      userDataPath: app.getPath('userData'),
+      revealPathInFinder,
+      requireRegisteredWorkspace,
+      assertSenderScope: (event, workspacePath) =>
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-file',
+          workspacePath,
+          operation: 'read'
+        }),
+      isMainRendererSender,
+      requireNonEmptyString
+    })
+    const sessionStartContextByWorkspace = new Map<string, string>()
+    const sessionStartHooksFired = new Set<string>()
+    const kickSessionStartHooks = (workspacePath: string): void => {
+      const path = workspacePath.trim()
+      if (!path) return
+      // Fire SessionStart at most once per workspacePath until cleared; still
+      // return any previously cached context on later compose kicks.
+      if (sessionStartHooksFired.has(path)) return
+      sessionStartHooksFired.add(path)
+      void runSessionStartHooksForWorkspace(path, {
+        hooksStore,
+        allowWorkspaceHooks: false
+      })
+        .then((outcome) => {
+          if (outcome.sessionStartContext) {
+            sessionStartContextByWorkspace.set(path, outcome.sessionStartContext)
+          }
+        })
+        .catch((error) => {
+          console.warn('[hooks] SessionStart failed:', error)
+        })
+    }
+    const fireStopHooksForWorkspace = (workspacePath: string, status?: string): void => {
+      const path = workspacePath.trim()
+      if (!path) return
+      void runStopHooks(path, { status }, { hooksStore, allowWorkspaceHooks: false }).catch(
+        (error) => {
+          console.warn('[hooks] Stop failed:', error)
+        }
+      )
+    }
+    fireStopHooksForWorkspaceRef = fireStopHooksForWorkspace
     const launchManager = new LaunchManager({
       store: new LaunchAttemptStore(join(app.getPath('userData'), 'launch-attempts.json')),
       platform: process.platform,
@@ -49549,6 +49707,16 @@ if (isGeminiMcpBridgeProcess) {
       appStore: AppStore,
       getSettings: () => AppStore.getSettings(),
       projectReferenceExtractLoader: projectReferenceExtracts.extractLoader,
+      resolveSkillDiscoverySkills: (workspacePath, workspaceId) =>
+        skillsStore.resolveEffectiveSkills(workspacePath, workspaceId).map((skill) => ({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description
+        })),
+      resolveSessionStartContext: (workspacePath) => {
+        kickSessionStartHooks(workspacePath)
+        return sessionStartContextByWorkspace.get(workspacePath.trim()) || undefined
+      },
       signRunPermissionPosture: signRunPosture,
       resolveFrozenPermissionPosture: (input) => {
         const candidate = AppStore.getRunQueueJob(input.appRunId)
@@ -51355,6 +51523,7 @@ if (isGeminiMcpBridgeProcess) {
                 AppStore.getRepoConventionIndexes(workspaceId),
               saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot)
             },
+            skillsStore,
             now: () => new Date().toISOString()
           },
           packId,

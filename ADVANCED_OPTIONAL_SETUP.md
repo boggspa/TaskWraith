@@ -28,6 +28,7 @@ tool-capable providers.
 | Discord Context | Bot token and guild IDs for read-only composer context. | Supported optional context attachment |
 | Creative app automation | Install Final Cut Pro, Logic Pro, or Blender and approve macOS Automation prompts. | Super experimental / WIP |
 | Custom external MCP servers | Add, import, validate, and export definitions in Settings -> Integrations -> MCP Servers. | Supported advanced surface |
+| Provider skills/hooks posture | Settings → Skills (or Hooks) → Provider passthrough. | Supported advanced surface |
 
 ## Ollama Local Models
 
@@ -310,6 +311,38 @@ External setup may include:
 
 Do not use this path on important production projects until you have tested the
 exact workflow on disposable media and understand the approval prompts.
+
+## TaskWraith host shell hooks (user vs workspace)
+
+TaskWraith can run Settings-authored shell hooks at SessionStart, PreToolUse,
+PostToolUse, and Stop. User hooks live under app `userData/hooks.json`.
+Workspace hooks may be stored at `{workspace}/.taskwraith/hooks.json`.
+
+That workspace file is inside the agent-writable tree, so v1 does **not**
+auto-execute workspace-scoped hooks. Host execution runs `scope === 'user'`
+hooks only unless a future trusted opt-in passes `allowWorkspaceHooks: true`.
+Hook processes receive a scrubbed env (PATH, HOME, USER, LANG, TMPDIR) — never
+the full host `process.env`.
+
+## Provider Skills / Hooks Posture
+
+Managed launches can clamp or allow each provider's native skills and hooks
+surfaces. Open **Settings → Skills** (or **Hooks**) and use the **Provider
+passthrough** section to set per-provider posture:
+
+- **TaskWraith only (`tw-only`)** — prefer TaskWraith-owned skills/hooks; native
+  discovery stays clamped where the transport supports it (Codex via private
+  `CODEX_HOME`).
+- **Allow native** — omit the empty/suppress clamps so the provider may load its
+  own skills/hooks (Claude omits empty `--setting-sources` only when both
+  channels allow native).
+- **Suppress native** — keep today's fail-safe clamps (Claude empty
+  `--setting-sources`, Pi `--no-skills`, Kimi empty isolated `skills/` dir).
+
+Defaults: Claude / Pi / Kimi suppress both; Cursor allows native both; Codex and
+other providers are tw-only. Cursor Path-B cannot fully suppress account
+skills/hooks under `~/.cursor` — the Settings UI discloses that limit when
+suppress is selected.
 
 ## Custom External MCP Servers
 
