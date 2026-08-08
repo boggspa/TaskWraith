@@ -734,6 +734,7 @@ import { filterProjectReferenceLegacyArtifactRefsForPendingDeletion } from './se
 import { createProjectReferenceOwnershipWorkerLoader } from './ProjectReferenceOwnershipWorkerScan'
 import { ProjectReferenceProposalService } from './services/ProjectReferenceProposalService'
 import { bootstrapProjectReferenceExtracts } from './projectReferenceExtractBootstrap'
+import { bootstrapProjectStudio } from './projectStudioBootstrap'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
 import { ExecutionGraphRepository } from './executionGraph/ExecutionGraphRepository'
@@ -8086,6 +8087,15 @@ const projectReferenceProposalService = new ProjectReferenceProposalService({
 const projectReferenceExtracts = bootstrapProjectReferenceExtracts({
   userDataPath: app.getPath('userData'),
   getReferences: () => AppStore.getProjectReferences()
+})
+
+const projectStudio = bootstrapProjectStudio({
+  userDataPath: app.getPath('userData'),
+  getActiveExtract: (projectId, referenceId) =>
+    projectReferenceExtracts.extractLoader.getActiveExtract(projectId, referenceId),
+  readExtractText: (extractId) =>
+    projectReferenceExtracts.extractLoader.readExtractText(extractId),
+  applyReferenceOp: (op) => AppStore.applyProjectReferenceOp(op)
 })
 
 const projectReferenceToolExecutors = createProjectReferenceToolExecutors({
@@ -49865,6 +49875,7 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderCanManageProjects: assertMainRendererSender
     })
     projectReferenceExtracts.registerHandlers(assertMainRendererSender)
+    projectStudio.registerHandlers(assertMainRendererSender)
     // Authoritative project changes fan out to the main window; the renderer
     // facade reconciles its optimistic snapshot from this event. The payload
     // is the full registry state: { projects, workProfiles }.
