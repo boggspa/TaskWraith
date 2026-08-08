@@ -697,6 +697,18 @@ describe('EnsembleOrchestrator', () => {
         )
       ).toBe(false)
 
+      // Continuous Boss must explicitly keep the remaining Worker before a
+      // quiet answer advances past the authority-routing checkpoint. Prefer the
+      // exact id — two seats share the Worker role in this fixture.
+      const bossSelection = await harness.orchestrator.bossmanControlForRun(
+        harness.dispatched[1].appRunId,
+        {
+          action: 'select_participants',
+          participantIds: ['later'],
+          reason: 'Keep the later Worker after Cursor recovery.'
+        }
+      )
+      expect(bossSelection).toMatchObject({ ok: true, action: 'select_participants' })
       completeDispatchedRun(harness, 1)
       for (let i = 0; i < 20; i += 1) await Promise.resolve()
       expect(harness.dispatched).toHaveLength(3)
@@ -11571,6 +11583,23 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
+    // Continuous Boss with remaining seats must resolve the selectionRequired
+    // checkpoint before a yield-to-user can close the round.
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Return control to the user.',
+        'user'
+      )
+    ).toEqual({
+      kind: 'authority_routing_decision_required',
+      pass: 1,
+      requirement: 'later_pass_selection'
+    })
+    const preserve = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'skip_intervention'
+    })
+    expect(preserve).toMatchObject({ ok: true, action: 'skip_intervention' })
     expectYielded(
       harness.orchestrator.markYielded(
         harness.dispatched[0].appRunId!,
@@ -11599,6 +11628,15 @@ Next action:
         event: { sender: {} as Electron.WebContents }
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const bossSelection = await harness.orchestrator.bossmanControlForRun(
+        harness.dispatched[0].appRunId,
+        {
+          action: 'select_participants',
+          participantRoles: ['Worker'],
+          reason: 'Hand the next turn to Worker.'
+        }
+      )
+      expect(bossSelection).toMatchObject({ ok: true, action: 'select_participants' })
       harness.orchestrator.handleProviderOutput(
         'claude',
         { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -15750,6 +15788,14 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('codex') // Boss speaks first
 
+    // Continuous Boss must keep Worker before a quiet answer can advance.
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'select_participants',
+      participantRoles: ['Worker'],
+      reason: 'Keep Worker for the implementation slice.'
+    })
+    expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
+
     // Boss (codex) answers without a mention.
     const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('codex', bossRun, {
@@ -15821,10 +15867,16 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('codex') // Boss speaks first
 
-    // Boss (codex) YIELDS — the status that used to block the priority re-summon.
-    // No target is passed, so NO yield-return frame is created: the ONLY path that
-    // can bring the Boss back is the priority @-mention under test (yield-return
-    // already allows yielded, and would confound the assertion).
+    // Continuous Boss must clear the selectionRequired checkpoint before a
+    // targetless yield is accepted. Keep Worker, then yield without a target so
+    // NO yield-return frame is created: the ONLY path that can bring the Boss
+    // back is the priority @-mention under test.
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'select_participants',
+      participantRoles: ['Worker'],
+      reason: 'Keep Worker after an explicit Boss yield.'
+    })
+    expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
     const bossRunId = harness.dispatched[0].appRunId!
     expectYielded(harness.orchestrator.markYielded(bossRunId, 'Worker, take it.'))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
@@ -15888,6 +15940,12 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'select_participants',
+      participantRoles: ['Worker'],
+      reason: 'Keep Worker so the hop-budget note can be isolated.'
+    })
+    expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
     const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
     harness.orchestrator.handleProviderOutput('codex', bossRun, {
@@ -15960,6 +16018,12 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossKeep = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'select_participants',
+      participantRoles: ['Worker'],
+      reason: 'Keep Worker so the failed-run note can be isolated.'
+    })
+    expect(bossKeep).toMatchObject({ ok: true, action: 'select_participants' })
     const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
     harness.orchestrator.handleProviderOutput('codex', bossRun, {
@@ -18041,8 +18105,10 @@ Next action:
       { type: 'content', text: 'BOSS-SYNTHESIS after the fan-out wave.' }
     )
     completeDispatchedRun(harness, 3)
+    // Authority-only Continuous auto-continue re-admits Boss (and fan-out
+    // targets), not unanswered ordinary writers, after a productive synthesis.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5), { timeout: 1000 })
-    expect(harness.dispatched[4].ensembleRun?.participantId).toBe('worker')
+    expect(harness.dispatched[4].ensembleRun?.participantId).toBe('boss')
     await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
   })
 

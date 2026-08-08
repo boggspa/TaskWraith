@@ -332,7 +332,9 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
         expect(harness.dispatched).toHaveLength(3)
         expect(rowIndex(harness, 'LATE-OWNER-SYNTHESIS.')).toBeGreaterThanOrEqual(0)
       })
-      expect(harness.dispatched[2].provider).toBe('codex')
+      // Authority-only Continuous auto-continue admits the fan-out target
+      // (Reviewer/claude), not the answered prior speaker alone (Lead/codex).
+      expect(harness.dispatched[2].provider).toBe('claude')
       expect(
         harness.chat.messages.some(
           (message) =>
