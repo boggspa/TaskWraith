@@ -291,12 +291,7 @@ describe('SimulatorHostService', () => {
       capturedAt: '2026-08-07T12:00:00.000Z',
       udid: UDID
     })
-    expect(calls).toContainEqual([
-      'io',
-      UDID,
-      'screenshot',
-      join(SHOT_TEMP_DIR, 'screenshot.png')
-    ])
+    expect(calls).toContainEqual(['io', UDID, 'screenshot', join(SHOT_TEMP_DIR, 'screenshot.png')])
     expect(removed()).toContain(SHOT_TEMP_DIR)
   })
 
