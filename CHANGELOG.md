@@ -8,6 +8,15 @@ to answer.
 
 ## Unreleased
 
+### Work Project references (source-ahead)
+
+- **Discover → review → import.** Agents can `project_reference_list` and propose sources with optional claimed preview snippets; the Work Refs dock accepts drag/drop, paste, and GitHub connectors for human-owned catalogue adds.
+- **Consentful extracts.** Explicit Extract… saves a readable URL/PDF/Office text copy into the Project; Use next can inject bounded extract bodies. Catalogue rows still grant no live access; revoke deletes the local extract (provider history may retain disclosed text).
+- **Ensemble Use next.** Ensemble rounds can carry a Project reference selection; seats get catalogue disclosure, and non-BG seats may receive extract bodies. BG lanes stay catalogue-only.
+- **Studio-lite keepables.** Briefing / FAQ / Decision log drafts from ready extracts save into the Project library as ordinary file references.
+- **Citation chips.** Assistant `⟦pref:…⟧` tokens render as chips in markdown (open-to-viewer wiring optional).
+
+
 Post-`v1.9.3` source-ahead. Ensemble Continuous routing landed here after the
 tagged tip; treat the Ensemble / lock floor as **done until real issues hit** —
 do not reopen Boss/Captain lock-scheduling or contention rewrites on paper.
