@@ -24,16 +24,23 @@
  *              edge case, and a half-width card with empty space next to it
  *              reads as a rendering fault rather than as a design.
  *
- * Pairing is per RUN of adjacent lane rows: anything else in the transcript —
- * a tool row, a round header, the Boss's synthesis — ends the run, and the next
- * lane row starts a fresh one at the left column. That keeps reading order
- * honest: a pair is always two lanes that were genuinely adjacent, never two
- * that a scrolled-past row happened to bring together.
+ * Pairing is per RUN of adjacent same-kind lane rows: anything else in the
+ * transcript — a tool row, a round header, the Boss's synthesis, or a lane of
+ * the other pairable kind — ends the run, and the next lane row starts a fresh
+ * one at the left column. That keeps reading order honest: a pair is always two
+ * lanes that were genuinely adjacent and the same kind (fan-out result with
+ * fan-out result, or sub-thread return with sub-thread return), never two that
+ * a scrolled-past row happened to bring together, and never a heterogeneous
+ * fan-out/return couple. Wave ids never reorder the transcript for pairing.
  */
 import type { ChatMessage, FanoutLaneLayout } from '../../../main/store/types'
 import { isEnsembleFanoutResultMessage } from '../../../shared/fanoutLaneGrouping'
+import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
 
 export type FanoutLaneSlot = 'lead' | 'trail' | 'solo'
+
+/** Pairable row kinds that may form a two-across run. Runs stay kind-homogeneous. */
+type PairableLaneKind = 'fanoutResult' | 'subThreadReturn'
 
 /** DOM attribute the CSS grid rules and the measurement pass both read. */
 export const FANOUT_LANE_SLOT_ATTRIBUTE = 'data-fanout-slot'
@@ -87,16 +94,19 @@ export function classifyFanoutLaneSlots(
 
   let index = 0
   while (index < messages.length) {
-    if (!isLaneRow(messages[index])) {
+    const kind = pairableLaneKind(messages[index])
+    if (!kind) {
       index += 1
       continue
     }
-    // Walk to the end of this run of adjacent lane rows, then pair off from its
-    // START. Pairing from the start (rather than from wherever we happen to be)
-    // is what keeps a run's slots stable as later rows stream in: appending a
-    // lane can only ever change the slot of the run's LAST row.
-    let end = index
-    while (end < messages.length && isLaneRow(messages[end])) end += 1
+    // Walk to the end of this run of adjacent same-kind lane rows, then pair
+    // off from its START. Pairing from the start (rather than from wherever we
+    // happen to be) is what keeps a run's slots stable as later rows stream in:
+    // appending a lane can only ever change the slot of the run's LAST row.
+    // A different pairable kind ends the run rather than joining it — fan-out
+    // results and sub-thread returns never share a pair.
+    let end = index + 1
+    while (end < messages.length && pairableLaneKind(messages[end]) === kind) end += 1
     for (let cursor = index; cursor < end; cursor += 2) {
       if (cursor + 1 < end) {
         slots.set(keyAt(cursor), 'lead')
@@ -110,6 +120,9 @@ export function classifyFanoutLaneSlots(
   return slots
 }
 
-function isLaneRow(message: ChatMessage | undefined): boolean {
-  return Boolean(message) && isEnsembleFanoutResultMessage(message as ChatMessage)
+function pairableLaneKind(message: ChatMessage | undefined): PairableLaneKind | null {
+  if (!message) return null
+  if (isEnsembleFanoutResultMessage(message)) return 'fanoutResult'
+  if (isSubThreadReturnMessage(message)) return 'subThreadReturn'
+  return null
 }
