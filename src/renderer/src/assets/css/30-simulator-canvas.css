@@ -366,6 +366,14 @@
   background: rgba(229, 72, 77, 0.08);
 }
 
+.simulator-canvas-hardware {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0 12px 8px;
+}
+
 .simulator-canvas-footer {
   margin: 0 12px 12px;
   padding-top: 2px;
@@ -373,4 +381,8 @@
     10px/1.35 system-ui,
     sans-serif;
   opacity: 0.55;
+}
+
+.simulator-canvas-footer code {
+  font-size: 0.95em;
 }

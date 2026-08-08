@@ -49,10 +49,23 @@ describe('registerSimulatorCanvasHandlers', () => {
       scroll: vi.fn(async () => ({ ok: false, error: SIMULATOR_VIEW_CONTROL_REQUIRED }))
     }
 
+    const idb = {
+      isAvailable: vi.fn(() => true),
+      companionAvailable: vi.fn(() => true),
+      describeAll: vi.fn(async () => ({
+        ok: true,
+        tree: [{ AXLabel: 'Home' }],
+        truncated: false
+      })),
+      hardwareButton: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+      rotate: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' }))
+    }
+
     registerSimulatorCanvasHandlers(ipcMain, {
       getHostControl: () => hostControl as never,
       getControllerLease: () => ({ claimHuman, peek: () => null }),
-      getInteraction: () => interaction
+      getInteraction: () => interaction,
+      getIdb: () => idb
     })
 
     const expected = [
@@ -70,7 +83,10 @@ describe('registerSimulatorCanvasHandlers', () => {
       'simulator-canvas:interaction-status',
       'simulator-canvas:tap',
       'simulator-canvas:type',
-      'simulator-canvas:scroll'
+      'simulator-canvas:scroll',
+      'simulator-canvas:inspect',
+      'simulator-canvas:button',
+      'simulator-canvas:rotate'
     ]
     expect([...handlers.keys()].sort()).toEqual([...expected].sort())
 
@@ -80,8 +96,8 @@ describe('registerSimulatorCanvasHandlers', () => {
       status: {
         installed: true,
         platform: 'darwin',
-        idbAvailable: false,
-        idbCompanionAvailable: false
+        idbAvailable: true,
+        idbCompanionAvailable: true
       }
     })
     expect(await handlers.get('simulator-canvas:claim-control')?.(event, 'chat-1')).toMatchObject({
@@ -161,6 +177,49 @@ describe('registerSimulatorCanvasHandlers', () => {
     )
     expect(claimHuman).toHaveBeenCalled()
     expect(interaction.tap).toHaveBeenCalledWith({ chatId: 'chat-1', x: 0.5, y: 0.25 })
+
+    expect(
+      await handlers.get('simulator-canvas:inspect')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
+      )
+    ).toEqual({
+      ok: true,
+      tree: [{ AXLabel: 'Home' }],
+      truncated: false
+    })
+    expect(idb.describeAll).toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+
+    claimHuman.mockClear()
+    expect(
+      await handlers.get('simulator-canvas:button')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        'HOME'
+      )
+    ).toEqual({ ok: true, stdout: '', stderr: '' })
+    expect(claimHuman).toHaveBeenCalledWith('chat-1')
+    expect(idb.hardwareButton).toHaveBeenCalledWith(
+      'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+      'HOME'
+    )
+
+    claimHuman.mockClear()
+    expect(
+      await handlers.get('simulator-canvas:rotate')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        'clockwise'
+      )
+    ).toEqual({ ok: true, stdout: '', stderr: '' })
+    expect(claimHuman).toHaveBeenCalledWith('chat-1')
+    expect(idb.rotate).toHaveBeenCalledWith(
+      'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+      'clockwise'
+    )
   })
 
   it('opens a native .app picker and merges controller kind into interaction status', async () => {

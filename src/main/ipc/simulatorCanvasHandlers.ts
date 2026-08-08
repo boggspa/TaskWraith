@@ -17,10 +17,12 @@ import type { SimulatorHostControl } from '../simulator/SimulatorHostControl'
 import type { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
 import type { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import type { SimulatorInteractionBridge } from '../simulator/SimulatorInteractionBridge'
-import type {
-  SimulatorScrollGesture,
-  SimulatorTapGesture,
-  SimulatorTypeGesture
+import {
+  isSimulatorHardwareButton,
+  isSimulatorRotateDirection,
+  type SimulatorScrollGesture,
+  type SimulatorTapGesture,
+  type SimulatorTypeGesture
 } from '../../shared/simulatorCanvas'
 
 export interface SimulatorCanvasIpcDeps {
@@ -41,8 +43,14 @@ export interface SimulatorCanvasIpcDeps {
     SimulatorInteractionBridge,
     'interactionStatus' | 'tap' | 'type' | 'scroll'
   >
-  /** Optional idb probe — merges idbAvailable into capability status for the panel CTA. */
-  getIdb?: () => Pick<IdbClient, 'isAvailable' | 'companionAvailable'>
+  /**
+   * idb surface — status merges availability; inspect/button/rotate call through
+   * the argv-array client (never shell).
+   */
+  getIdb?: () => Pick<
+    IdbClient,
+    'isAvailable' | 'companionAvailable' | 'describeAll' | 'hardwareButton' | 'rotate'
+  >
   /** Optional native .app picker (mesh-import style). Path field remains when omitted. */
   getRequestingWindow?: (event: IpcMainInvokeEvent) => BrowserWindow | null
   showOpenDialog?: (
@@ -256,4 +264,51 @@ export function registerSimulatorCanvasHandlers(
   ipcMain.handle('simulator-canvas:scroll', async (_event, payload: unknown) => {
     return deps.getInteraction().scroll(parseScroll(payload))
   })
+
+  ipcMain.handle('simulator-canvas:inspect', async (_event, chatId: unknown, udid: unknown) => {
+    // Read-only AX dump — chatId validates the caller identity; no controller lease.
+    requiredString(chatId, 'chatId')
+    const idb = deps.getIdb?.()
+    if (!idb?.describeAll) {
+      return { ok: false, error: 'idb is not available for Simulator Canvas inspect.' }
+    }
+    if (!idb.isAvailable()) {
+      return { ok: false, error: 'idb is not available on PATH.' }
+    }
+    return idb.describeAll(requiredString(udid, 'udid'))
+  })
+
+  ipcMain.handle(
+    'simulator-canvas:button',
+    async (_event, chatId: unknown, udid: unknown, button: unknown) => {
+      const id = requiredString(chatId, 'chatId')
+      humanControl(deps, id)
+      if (!isSimulatorHardwareButton(button)) {
+        throw new Error(
+          'Simulator Canvas button must be one of APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI.'
+        )
+      }
+      const idb = deps.getIdb?.()
+      if (!idb?.hardwareButton || !idb.isAvailable()) {
+        return { ok: false, error: 'idb is not available on PATH.' }
+      }
+      return idb.hardwareButton(requiredString(udid, 'udid'), button)
+    }
+  )
+
+  ipcMain.handle(
+    'simulator-canvas:rotate',
+    async (_event, chatId: unknown, udid: unknown, direction: unknown) => {
+      const id = requiredString(chatId, 'chatId')
+      humanControl(deps, id)
+      if (!isSimulatorRotateDirection(direction)) {
+        throw new Error('Simulator Canvas rotate direction must be clockwise or counterclockwise.')
+      }
+      const idb = deps.getIdb?.()
+      if (!idb?.rotate || !idb.isAvailable()) {
+        return { ok: false, error: 'idb is not available on PATH.' }
+      }
+      return idb.rotate(requiredString(udid, 'udid'), direction)
+    }
+  )
 }

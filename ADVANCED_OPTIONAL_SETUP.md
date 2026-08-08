@@ -231,15 +231,23 @@ Simulator Canvas uses a chat-scoped **hybrid** control model:
 - On app quit, `simulatorHostService.dispose()` releases owned Simulator.app /
   booted devices TaskWraith spawned.
 
-Hardware buttons (Home / Lock / Rotate) are not wired yet; the panel footer
-notes them as future. A truncated AX dump tool (`simulator_inspect` via
-`idb ui describe-all` or similar) is also a follow-up — `IdbClient` does not
-expose describe-all today, and adding a full tree would be a larger catalog +
-truncation design.
+Hardware controls (when actuation is ready — idb on PATH + controller lease):
+
+- Panel **Home** / **Lock** → `idb ui button HOME|LOCK` (also MCP
+  `simulator_button` with allowlisted HID names: APPLE_PAY, HOME, LOCK,
+  SIDE_BUTTON, SIRI).
+- Panel **Rotate** → `idb ui rotate CLOCKWISE` (MCP `simulator_rotate` with
+  `clockwise` / `counterclockwise`). Some idb builds only accept absolute
+  orientations (`PORTRAIT` / `LANDSCAPE_*`); those return a clear error rather
+  than a silent fallback.
+- AX inspect: MCP/IPC `simulator_inspect` runs `idb ui describe-all` and returns
+  a **truncated** JSON tree (~200KB or ~500 nodes, `truncated: true` when capped).
+  Observation-only and auto-allowed like `simulator_status`.
 
 ### Agents and policy
 
-- `simulator_status` is prompt-free (read-only capability / device inventory).
+- `simulator_status` and `simulator_inspect` are prompt-free (capability probe /
+  truncated AX dump).
 - Mutating Simulator Canvas tools stay under the workspace **simulatorCanvas**
   agentic-service policy (Ask / Allow / Deny), like other attended surfaces.
 

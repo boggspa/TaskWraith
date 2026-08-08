@@ -1313,7 +1313,13 @@ const api = {
       y: number
       deltaX: number
       deltaY: number
-    }) => ipcRenderer.invoke('simulator-canvas:scroll', payload)
+    }) => ipcRenderer.invoke('simulator-canvas:scroll', payload),
+    inspect: (chatId: string, udid: string) =>
+      ipcRenderer.invoke('simulator-canvas:inspect', chatId, udid),
+    button: (chatId: string, udid: string, button: string) =>
+      ipcRenderer.invoke('simulator-canvas:button', chatId, udid, button),
+    rotate: (chatId: string, udid: string, direction: string) =>
+      ipcRenderer.invoke('simulator-canvas:rotate', chatId, udid, direction)
   },
 
   // QMOD (1.0.3) — `ask_user_question` MCP tool bridge. Main fires

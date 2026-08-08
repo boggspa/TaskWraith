@@ -214,8 +214,11 @@ import type {
   SimulatorCapabilityStatus,
   SimulatorDeviceInfo,
   SimulatorGestureResult,
+  SimulatorHardwareButton,
   SimulatorHostActionResult,
+  SimulatorInspectResult,
   SimulatorInteractionStatus,
+  SimulatorRotateDirection,
   SimulatorScrollGesture,
   SimulatorTapGesture,
   SimulatorTypeGesture
@@ -1315,6 +1318,17 @@ declare global {
         tap: (payload: SimulatorTapGesture) => Promise<SimulatorGestureResult>
         type: (payload: SimulatorTypeGesture) => Promise<SimulatorGestureResult>
         scroll: (payload: SimulatorScrollGesture) => Promise<SimulatorGestureResult>
+        inspect: (chatId: string, udid: string) => Promise<SimulatorInspectResult>
+        button: (
+          chatId: string,
+          udid: string,
+          button: SimulatorHardwareButton
+        ) => Promise<{ ok: boolean; error?: string }>
+        rotate: (
+          chatId: string,
+          udid: string,
+          direction: SimulatorRotateDirection
+        ) => Promise<{ ok: boolean; error?: string }>
       }
       onAgentQuestionRequested: (
         handler: (request: {

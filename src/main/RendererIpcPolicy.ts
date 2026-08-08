@@ -358,6 +358,9 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'simulator-canvas:tap',
   'simulator-canvas:type',
   'simulator-canvas:scroll',
+  'simulator-canvas:inspect',
+  'simulator-canvas:button',
+  'simulator-canvas:rotate',
 
   // Office suite documents live in the main window's right dock only; there
   // is no office popout surface, so secondary renderers have no claim on

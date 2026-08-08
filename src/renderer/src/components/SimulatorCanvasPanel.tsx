@@ -11,8 +11,11 @@ import {
   type SimulatorDeviceInfo,
   type SimulatorFormFactor,
   type SimulatorGestureResult,
+  type SimulatorHardwareButton,
   type SimulatorHostActionResult,
+  type SimulatorInspectResult,
   type SimulatorInteractionStatus,
+  type SimulatorRotateDirection,
   type SimulatorScreenshotFrame,
   type SimulatorScrollGesture,
   type SimulatorTapGesture,
@@ -72,13 +75,32 @@ type SimulatorCanvasBridge = {
   tap?: (payload: SimulatorTapGesture) => Promise<SimulatorGestureResult>
   type?: (payload: SimulatorTypeGesture) => Promise<SimulatorGestureResult>
   scroll?: (payload: SimulatorScrollGesture) => Promise<SimulatorGestureResult>
+  inspect?: (chatId: string, udid: string) => Promise<SimulatorInspectResult>
+  button?: (
+    chatId: string,
+    udid: string,
+    button: SimulatorHardwareButton
+  ) => Promise<{ ok: boolean; error?: string }>
+  rotate?: (
+    chatId: string,
+    udid: string,
+    direction: SimulatorRotateDirection
+  ) => Promise<{ ok: boolean; error?: string }>
 }
 
 const SCREENSHOT_POLL_MS = 1500
 const INTERACTION_POLL_MS = 2000
 const BRIDGE_MISSING_HINT = 'Restart TaskWraith to load the Simulator Canvas bridge.'
 
-type BusyKind = 'refresh' | 'open' | 'boot' | 'install' | 'launch' | 'terminate' | null
+type BusyKind =
+  | 'refresh'
+  | 'open'
+  | 'boot'
+  | 'install'
+  | 'launch'
+  | 'terminate'
+  | 'hardware'
+  | null
 
 function getSimulatorCanvasBridge(): SimulatorCanvasBridge | undefined {
   const api = (window as unknown as { api?: { simulatorCanvas?: SimulatorCanvasBridge } }).api
@@ -569,6 +591,60 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     })
   }
 
+  const pressHardwareButton = (button: SimulatorHardwareButton): void => {
+    if (!gesturesEnabled || !selectedUdid) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.button) {
+      setIssue(BRIDGE_MISSING_HINT)
+      return
+    }
+    setBusy('hardware')
+    setIssue(null)
+    void api
+      .button(chatId, selectedUdid, button)
+      .then((result) => {
+        if (chatIdRef.current !== chatId) return
+        if (result && result.ok === false) {
+          setIssue(result.error || `${button} was refused.`)
+        }
+      })
+      .catch((error: unknown) => {
+        if (chatIdRef.current === chatId) {
+          setIssue(error instanceof Error ? error.message : String(error))
+        }
+      })
+      .finally(() => {
+        if (chatIdRef.current === chatId) setBusy(null)
+      })
+  }
+
+  const rotateDevice = (direction: SimulatorRotateDirection): void => {
+    if (!gesturesEnabled || !selectedUdid) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.rotate) {
+      setIssue(BRIDGE_MISSING_HINT)
+      return
+    }
+    setBusy('hardware')
+    setIssue(null)
+    void api
+      .rotate(chatId, selectedUdid, direction)
+      .then((result) => {
+        if (chatIdRef.current !== chatId) return
+        if (result && result.ok === false) {
+          setIssue(result.error || 'Rotate was refused.')
+        }
+      })
+      .catch((error: unknown) => {
+        if (chatIdRef.current === chatId) {
+          setIssue(error instanceof Error ? error.message : String(error))
+        }
+      })
+      .finally(() => {
+        if (chatIdRef.current === chatId) setBusy(null)
+      })
+  }
+
   if (!bridge?.status) {
     return (
       <section className="simulator-canvas-panel" aria-label="Simulator Canvas">
@@ -842,6 +918,39 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
           </PillButton>
         </div>
       ) : null}
+
+      <div className="simulator-canvas-hardware" aria-label="Simulator hardware controls">
+        <PillButton
+          size="compact"
+          onClick={() => pressHardwareButton('HOME')}
+          disabled={!gesturesEnabled || busy !== null || !selectedUdid}
+          loading={busy === 'hardware'}
+        >
+          Home
+        </PillButton>
+        <PillButton
+          size="compact"
+          onClick={() => pressHardwareButton('LOCK')}
+          disabled={!gesturesEnabled || busy !== null || !selectedUdid}
+          loading={busy === 'hardware'}
+        >
+          Lock
+        </PillButton>
+        <PillButton
+          size="compact"
+          onClick={() => rotateDevice('clockwise')}
+          disabled={!gesturesEnabled || busy !== null || !selectedUdid}
+          loading={busy === 'hardware'}
+        >
+          Rotate
+        </PillButton>
+      </div>
+
+      <div className="simulator-canvas-footer" role="note">
+        Home / Lock use <code>idb ui button</code>. Rotate uses{' '}
+        <code>idb ui rotate CLOCKWISE</code> (needs a supporting idb build). Agents can call{' '}
+        <code>simulator_inspect</code> for a truncated AX tree.
+      </div>
 
       {issue && (
         <div className="simulator-canvas-issue" role="alert">
