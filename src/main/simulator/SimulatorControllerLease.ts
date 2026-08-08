@@ -167,23 +167,21 @@ export class SimulatorControllerLease {
     return { ok: true, token: cloneToken(token) }
   }
 
-  /** Human dock claim — always authoritative; takes over any run holder. */
+  /**
+   * Human dock claim — always authoritative; takes over any run holder.
+   * Always mints a fresh tokenId so a previous agent (or prior human) token
+   * cannot continue to assert control after the dock claims.
+   */
   claimHuman(chatId: string): SimulatorControllerResult {
     const id = requireId(chatId)
     if (!id) return fail('invalid_input', 'Simulator human claim requires chatId.')
-    const existing = this.byChat.get(id)
-    if (existing?.kind === 'human' && existing.runId === SIMULATOR_HUMAN_CONTROLLER_RUN_ID) {
-      const next: SimulatorControllerToken = { ...existing, updatedAt: this.now() }
-      this.byChat.set(id, next)
-      return { ok: true, token: cloneToken(next) }
-    }
     const at = this.now()
     const token: SimulatorControllerToken = {
-      tokenId: existing?.tokenId ?? this.createId(),
+      tokenId: this.createId(),
       chatId: id,
       runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
       kind: 'human',
-      mintedAt: existing?.mintedAt ?? at,
+      mintedAt: at,
       updatedAt: at
     }
     this.byChat.set(id, token)

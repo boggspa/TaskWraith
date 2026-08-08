@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   SIMULATOR_DEVICE_PRESETS,
   SIMULATOR_INSTALL_DOCS_URL,
+  nextSimulatorRotateDirection,
   type SimulatorCapabilityStatus,
   type SimulatorDeviceInfo,
   type SimulatorFormFactor,
@@ -35,6 +36,11 @@ import {
   previewOnlyBannerText,
   simulatorControllerBadgeText
 } from '../lib/simulatorCanvasGestures'
+import {
+  claimControlFailureMessage,
+  isSimulatorFrameStale,
+  shouldAcceptSimulatorScreenshotFrame
+} from '../lib/simulatorCanvasPanelHelpers'
 import { unwrapSimulatorCapabilityStatus } from '../lib/simulatorCanvasStatus'
 import { PillButton } from './PillButton'
 
@@ -45,6 +51,7 @@ export interface SimulatorCanvasPanelProps {
 type SimulatorCanvasBridge = {
   status: () => Promise<SimulatorCapabilityStatus | { ok: true; status: SimulatorCapabilityStatus }>
   claimControl?: (chatId: string) => Promise<unknown>
+  releaseControl?: (chatId: string) => Promise<unknown>
   session?: (chatId: string) => Promise<unknown>
   openApp: (chatId: string) => Promise<SimulatorHostActionResult>
   boot: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
@@ -189,9 +196,12 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   const [typeBuffer, setTypeBuffer] = useState('')
   const [appPath, setAppPath] = useState('')
   const [bundleId, setBundleId] = useState('')
+  const [orientation, setOrientation] = useState<SimulatorRotateDirection>('PORTRAIT')
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const screenRef = useRef<HTMLDivElement | null>(null)
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
+  const nextOrientation = nextSimulatorRotateDirection(orientation)
 
   const refreshStatus = useCallback(async (): Promise<SimulatorCapabilityStatus | null> => {
     const api = getSimulatorCanvasBridge()
@@ -253,11 +263,34 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   useEffect(() => {
     const api = getSimulatorCanvasBridge()
     // Human dock is authoritative for this surface — claim controller on open so
-    // idb actuationReady can arm without waiting for the first mutate.
-    if (api?.claimControl) {
-      void api.claimControl(chatId).then(() => {
-        if (chatIdRef.current === chatId) void refreshInteraction()
-      })
+    // idb actuationReady can arm without waiting for the first mutate. Await the
+    // claim (and surface ok:false) before the first interaction refresh.
+    // Release the human token on unmount / chat switch / hide (CanvasDock
+    // unmounts this panel when showSimulator becomes false).
+    let cancelled = false
+    const claimThenRefresh = async (): Promise<void> => {
+      if (api?.claimControl) {
+        try {
+          const result = await api.claimControl(chatId)
+          if (cancelled || chatIdRef.current !== chatId) return
+          const failure = claimControlFailureMessage(result)
+          if (failure) setIssue(failure)
+        } catch (error) {
+          if (!cancelled && chatIdRef.current === chatId) {
+            setIssue(error instanceof Error ? error.message : String(error))
+          }
+        }
+      }
+      if (!cancelled && chatIdRef.current === chatId) {
+        await refreshInteraction()
+      }
+    }
+    void claimThenRefresh()
+    return () => {
+      cancelled = true
+      if (api?.releaseControl) {
+        void api.releaseControl(chatId)
+      }
     }
   }, [chatId, refreshInteraction])
 
@@ -281,27 +314,43 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
 
   const formFactor = resolveSimulatorFormFactor(selectedDevice?.name)
   const gesturesEnabled = canSendSimulatorGestures(interaction)
+  const hardwareControlsEnabled =
+    selectedBooted && Boolean(interaction?.actuationReady) && gesturesEnabled
   const banner = previewOnlyBannerText(interaction)
   const controllerBadge = simulatorControllerBadgeText(interaction)
   const canMutateHost = Boolean(selectedUdid) && busy === null
+  const frameStale = isSimulatorFrameStale(frame, nowMs)
 
   useEffect(() => {
+    if (!frame) return
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now())
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [frame])
+
+  useEffect(() => {
+    // Clear immediately on device change so the prior udid's frame cannot linger.
+    setFrame(null)
     const api = getSimulatorCanvasBridge()
     if (!api?.screenshot || !selectedUdid || !selectedBooted) {
-      setFrame(null)
       return
     }
+    const pollUdid = selectedUdid
     let cancelled = false
     let timer: number | null = null
 
     const poll = async (): Promise<void> => {
       try {
-        const result = await api.screenshot(chatId, selectedUdid)
+        const result = await api.screenshot(chatId, pollUdid)
         if (cancelled || chatIdRef.current !== chatId) return
         const nextFrame = frameFromResult(result)
-        if (nextFrame) setFrame(nextFrame)
+        if (nextFrame && shouldAcceptSimulatorScreenshotFrame(nextFrame, pollUdid)) {
+          setFrame(nextFrame)
+          setNowMs(Date.now())
+        }
       } catch {
-        // Preview is best-effort; keep the last good frame.
+        // Preview is best-effort; keep the last good frame for this udid only.
       } finally {
         if (!cancelled && chatIdRef.current === chatId) {
           timer = window.setTimeout(() => {
@@ -539,6 +588,29 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     return mapPointerToBezelNorm(event.clientX, event.clientY, el.getBoundingClientRect())
   }
 
+  /** Soft-claim human control when the mount claim/lease is missing (e.g. after release race). */
+  const ensureHumanLease = async (): Promise<boolean> => {
+    if (interaction?.controllerLeaseHeld) return true
+    const api = getSimulatorCanvasBridge()
+    if (!api?.claimControl) return false
+    try {
+      const result = await api.claimControl(chatId)
+      if (chatIdRef.current !== chatId) return false
+      const failure = claimControlFailureMessage(result)
+      if (failure) {
+        setIssue(failure)
+        return false
+      }
+      await refreshInteraction()
+      return true
+    } catch (error) {
+      if (chatIdRef.current === chatId) {
+        setIssue(error instanceof Error ? error.message : String(error))
+      }
+      return false
+    }
+  }
+
   const handleBezelPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (!gesturesEnabled) return
     const api = getSimulatorCanvasBridge()
@@ -546,11 +618,18 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     const point = pointFromEvent(event)
     if (!point) return
     event.preventDefault()
-    void api.tap(buildTapGesture(chatId, point)).then((result) => {
+    void (async () => {
+      await ensureHumanLease()
+      if (chatIdRef.current !== chatId) return
+      const result = await api.tap!(buildTapGesture(chatId, point))
       if (chatIdRef.current !== chatId) return
       // Never treat recorded-but-deferred as success — surface the host error.
       if (result && result.ok === false) {
         setIssue(result.error || 'Tap was refused.')
+      }
+    })().catch((error: unknown) => {
+      if (chatIdRef.current === chatId) {
+        setIssue(error instanceof Error ? error.message : String(error))
       }
     })
   }
@@ -562,14 +641,21 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     const point = pointFromEvent(event)
     if (!point) return
     event.preventDefault()
-    void api
-      .scroll(buildScrollGesture(chatId, point, event.deltaX, event.deltaY))
-      .then((result) => {
-        if (chatIdRef.current !== chatId) return
-        if (result && result.ok === false) {
-          setIssue(result.error || 'Scroll was refused.')
-        }
-      })
+    const deltaX = event.deltaX
+    const deltaY = event.deltaY
+    void (async () => {
+      await ensureHumanLease()
+      if (chatIdRef.current !== chatId) return
+      const result = await api.scroll!(buildScrollGesture(chatId, point, deltaX, deltaY))
+      if (chatIdRef.current !== chatId) return
+      if (result && result.ok === false) {
+        setIssue(result.error || 'Scroll was refused.')
+      }
+    })().catch((error: unknown) => {
+      if (chatIdRef.current === chatId) {
+        setIssue(error instanceof Error ? error.message : String(error))
+      }
+    })
   }
 
   const submitTypeBuffer = (): void => {
@@ -578,7 +664,10 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     if (!api?.type) return
     const text = typeBuffer
     if (!text) return
-    void api.type(buildTypeGesture(chatId, text)).then((result) => {
+    void (async () => {
+      await ensureHumanLease()
+      if (chatIdRef.current !== chatId) return
+      const result = await api.type!(buildTypeGesture(chatId, text))
       if (chatIdRef.current !== chatId) return
       if (result && result.ok === false) {
         setIssue(result.error || 'Type was refused.')
@@ -588,11 +677,15 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
       if (result?.ok === true) {
         setTypeBuffer('')
       }
+    })().catch((error: unknown) => {
+      if (chatIdRef.current === chatId) {
+        setIssue(error instanceof Error ? error.message : String(error))
+      }
     })
   }
 
   const pressHardwareButton = (button: SimulatorHardwareButton): void => {
-    if (!gesturesEnabled || !selectedUdid) return
+    if (!hardwareControlsEnabled || !selectedUdid) return
     const api = getSimulatorCanvasBridge()
     if (!api?.button) {
       setIssue(BRIDGE_MISSING_HINT)
@@ -618,13 +711,14 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
       })
   }
 
-  const rotateDevice = (direction: SimulatorRotateDirection): void => {
-    if (!gesturesEnabled || !selectedUdid) return
+  const rotateDevice = (): void => {
+    if (!hardwareControlsEnabled || !selectedUdid) return
     const api = getSimulatorCanvasBridge()
     if (!api?.rotate) {
       setIssue(BRIDGE_MISSING_HINT)
       return
     }
+    const direction = nextOrientation
     setBusy('hardware')
     setIssue(null)
     void api
@@ -633,7 +727,9 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         if (chatIdRef.current !== chatId) return
         if (result && result.ok === false) {
           setIssue(result.error || 'Rotate was refused.')
+          return
         }
+        setOrientation(direction)
       })
       .catch((error: unknown) => {
         if (chatIdRef.current === chatId) {
@@ -867,7 +963,7 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
 
       <div className="simulator-canvas-stage">
         <div
-          className={`simulator-canvas-bezel is-${formFactor}${gesturesEnabled ? ' is-interactive' : ''}`}
+          className={`simulator-canvas-bezel is-${formFactor}${gesturesEnabled ? ' is-interactive' : ''}${frameStale ? ' is-stale' : ''}`}
           data-form-factor={formFactor}
           aria-label={`${formFactor === 'tablet' ? 'iPad' : 'iPhone'} simulator preview`}
         >
@@ -892,6 +988,11 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
                   : 'Boot a device to start the live preview.'}
               </div>
             )}
+            {frameStale ? (
+              <div className="simulator-canvas-stale" role="status">
+                Stale
+              </div>
+            ) : null}
           </div>
           <div className="simulator-canvas-bezel-home" aria-hidden="true" />
         </div>
@@ -923,7 +1024,7 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         <PillButton
           size="compact"
           onClick={() => pressHardwareButton('HOME')}
-          disabled={!gesturesEnabled || busy !== null || !selectedUdid}
+          disabled={!hardwareControlsEnabled || busy !== null || !selectedUdid}
           loading={busy === 'hardware'}
         >
           Home
@@ -931,24 +1032,25 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         <PillButton
           size="compact"
           onClick={() => pressHardwareButton('LOCK')}
-          disabled={!gesturesEnabled || busy !== null || !selectedUdid}
+          disabled={!hardwareControlsEnabled || busy !== null || !selectedUdid}
           loading={busy === 'hardware'}
         >
           Lock
         </PillButton>
         <PillButton
           size="compact"
-          onClick={() => rotateDevice('clockwise')}
-          disabled={!gesturesEnabled || busy !== null || !selectedUdid}
+          onClick={() => rotateDevice()}
+          disabled={!hardwareControlsEnabled || busy !== null || !selectedUdid}
           loading={busy === 'hardware'}
+          title={`Current ${orientation} → next ${nextOrientation}`}
         >
-          Rotate
+          Rotate → {nextOrientation}
         </PillButton>
       </div>
 
       <div className="simulator-canvas-footer" role="note">
-        Home / Lock use <code>idb ui button</code>. Rotate uses{' '}
-        <code>idb ui rotate CLOCKWISE</code> (needs a supporting idb build). Agents can call{' '}
+        Home / Lock use <code>idb ui button</code>. Rotate cycles absolute orientations via{' '}
+        <code>idb ui rotate {nextOrientation}</code> (now {orientation}). Agents can call{' '}
         <code>simulator_inspect</code> for a truncated AX tree.
       </div>
 

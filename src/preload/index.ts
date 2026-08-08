@@ -1287,6 +1287,8 @@ const api = {
   simulatorCanvas: {
     status: () => ipcRenderer.invoke('simulator-canvas:status'),
     claimControl: (chatId: string) => ipcRenderer.invoke('simulator-canvas:claim-control', chatId),
+    releaseControl: (chatId: string) =>
+      ipcRenderer.invoke('simulator-canvas:release-control', chatId),
     session: (chatId: string) => ipcRenderer.invoke('simulator-canvas:session', chatId),
     openApp: (chatId: string) => ipcRenderer.invoke('simulator-canvas:open-app', chatId),
     listDevices: () => ipcRenderer.invoke('simulator-canvas:list-devices'),

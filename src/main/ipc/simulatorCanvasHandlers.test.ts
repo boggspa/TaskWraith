@@ -61,9 +61,21 @@ describe('registerSimulatorCanvasHandlers', () => {
       rotate: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' }))
     }
 
+    const release = vi.fn((input: { chatId: string; runId: string }) => ({
+      ok: true as const,
+      token: {
+        tokenId: 'human-tok',
+        chatId: input.chatId,
+        runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
+        kind: 'human' as const,
+        mintedAt: 1,
+        updatedAt: 1
+      }
+    }))
+
     registerSimulatorCanvasHandlers(ipcMain, {
       getHostControl: () => hostControl as never,
-      getControllerLease: () => ({ claimHuman, peek: () => null }),
+      getControllerLease: () => ({ claimHuman, peek: () => null, release }),
       getInteraction: () => interaction,
       getIdb: () => idb
     })
@@ -71,6 +83,7 @@ describe('registerSimulatorCanvasHandlers', () => {
     const expected = [
       'simulator-canvas:status',
       'simulator-canvas:claim-control',
+      'simulator-canvas:release-control',
       'simulator-canvas:session',
       'simulator-canvas:open-app',
       'simulator-canvas:list-devices',
@@ -103,6 +116,22 @@ describe('registerSimulatorCanvasHandlers', () => {
     expect(await handlers.get('simulator-canvas:claim-control')?.(event, 'chat-1')).toMatchObject({
       ok: true,
       token: { tokenId: 'human-tok', kind: 'human' }
+    })
+    expect(await handlers.get('simulator-canvas:release-control')?.(event, 'chat-1')).toEqual({
+      ok: true,
+      released: true,
+      token: {
+        tokenId: 'human-tok',
+        chatId: 'chat-1',
+        runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
+        kind: 'human',
+        mintedAt: 1,
+        updatedAt: 1
+      }
+    })
+    expect(release).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID
     })
     expect(await handlers.get('simulator-canvas:open-app')?.(event, 'chat-1')).toEqual({ ok: true })
     expect(await handlers.get('simulator-canvas:list-devices')?.(event)).toEqual({
@@ -212,13 +241,13 @@ describe('registerSimulatorCanvasHandlers', () => {
         event,
         'chat-1',
         'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
-        'clockwise'
+        'PORTRAIT'
       )
     ).toEqual({ ok: true, stdout: '', stderr: '' })
     expect(claimHuman).toHaveBeenCalledWith('chat-1')
     expect(idb.rotate).toHaveBeenCalledWith(
       'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
-      'clockwise'
+      'PORTRAIT'
     )
   })
 
@@ -265,7 +294,8 @@ describe('registerSimulatorCanvasHandlers', () => {
             updatedAt: 1
           }
         })),
-        peek
+        peek,
+        release: vi.fn()
       }),
       getInteraction: () =>
         ({
@@ -299,6 +329,78 @@ describe('registerSimulatorCanvasHandlers', () => {
       controllerLeaseHeld: true,
       controllerKind: 'run'
     })
+  })
+
+  it('validates button/rotate allowlists before claiming human control', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, handler)
+      })
+    } as unknown as IpcMain
+    const claimHuman = vi.fn((chatId: string) => ({
+      ok: true as const,
+      token: {
+        tokenId: 'human-tok',
+        chatId,
+        runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
+        kind: 'human' as const,
+        mintedAt: 1,
+        updatedAt: 1
+      }
+    }))
+    const idb = {
+      isAvailable: vi.fn(() => true),
+      companionAvailable: vi.fn(() => true),
+      describeAll: vi.fn(),
+      hardwareButton: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' })),
+      rotate: vi.fn(async () => ({ ok: true, stdout: '', stderr: '' }))
+    }
+    registerSimulatorCanvasHandlers(ipcMain, {
+      getHostControl: () =>
+        ({
+          status: vi.fn(),
+          openSimulatorApp: vi.fn(),
+          listDevices: vi.fn(),
+          boot: vi.fn(),
+          install: vi.fn(),
+          launch: vi.fn(),
+          terminate: vi.fn(),
+          screenshot: vi.fn()
+        }) as never,
+      getControllerLease: () => ({ claimHuman, peek: () => null, release: vi.fn() }),
+      getInteraction: () =>
+        ({
+          interactionStatus: vi.fn(),
+          tap: vi.fn(),
+          type: vi.fn(),
+          scroll: vi.fn()
+        }) as never,
+      getIdb: () => idb
+    })
+
+    const event = {} as IpcMainInvokeEvent
+    await expect(
+      handlers.get('simulator-canvas:button')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        'NOT_A_BUTTON'
+      )
+    ).rejects.toThrow(/APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI/)
+    expect(claimHuman).not.toHaveBeenCalled()
+    expect(idb.hardwareButton).not.toHaveBeenCalled()
+
+    await expect(
+      handlers.get('simulator-canvas:rotate')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        'clockwise'
+      )
+    ).rejects.toThrow(/PORTRAIT|orientation|direction/i)
+    expect(claimHuman).not.toHaveBeenCalled()
+    expect(idb.rotate).not.toHaveBeenCalled()
   })
 
   it('rejects malformed string identities before calling the host', async () => {
@@ -338,7 +440,8 @@ describe('registerSimulatorCanvasHandlers', () => {
             updatedAt: 1
           }
         })),
-        peek: () => null
+        peek: () => null,
+        release: vi.fn()
       }),
       getInteraction: () => interaction
     })

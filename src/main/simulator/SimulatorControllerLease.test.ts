@@ -135,6 +135,62 @@ describe('SimulatorControllerLease', () => {
     ).toBe(true)
   })
 
+  it('claimHuman mints a fresh tokenId and invalidates the previous run token', () => {
+    let n = 0
+    const lease = new SimulatorControllerLease({
+      now: () => 10_000 + n,
+      createId: () => `tok-${++n}`
+    })
+    const minted = lease.mint({ chatId: 'chat-a', runId: 'run-1' })
+    expect(minted.ok).toBe(true)
+    if (!minted.ok) return
+    expect(minted.token.tokenId).toBe('tok-1')
+    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'tok-1', runId: 'run-1' })).toBe(true)
+
+    const claimed = lease.claimHuman('chat-a')
+    expect(claimed.ok).toBe(true)
+    if (!claimed.ok) return
+    expect(claimed.token.tokenId).toBe('tok-2')
+    expect(claimed.token.tokenId).not.toBe(minted.token.tokenId)
+    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'tok-1' })).toBe(false)
+    expect(
+      lease.isValid({
+        chatId: 'chat-a',
+        tokenId: 'tok-2',
+        runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID
+      })
+    ).toBe(true)
+  })
+
+  it('claimHuman always rotates tokenId even when human already holds control', () => {
+    let n = 0
+    const lease = new SimulatorControllerLease({
+      now: () => 11_000 + n,
+      createId: () => `human-${++n}`
+    })
+    const first = lease.claimHuman('chat-a')
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    expect(first.token.tokenId).toBe('human-1')
+
+    const second = lease.claimHuman('chat-a')
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.token.tokenId).toBe('human-2')
+    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'human-1' })).toBe(false)
+    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'human-2' })).toBe(true)
+  })
+
+  it('mint by an agent conflicts while human holds control', () => {
+    const lease = new SimulatorControllerLease({ createId: () => 'tok-h' })
+    expect(lease.claimHuman('chat-a').ok).toBe(true)
+    const conflict = lease.mint({ chatId: 'chat-a', runId: 'run-2' })
+    expect(conflict).toMatchObject({ ok: false, code: 'conflict' })
+    if (conflict.ok) return
+    expect(conflict.holder?.kind).toBe('human')
+    expect(conflict.holder?.runId).toBe(SIMULATOR_HUMAN_CONTROLLER_RUN_ID)
+  })
+
   it('release requires the holding run', () => {
     const lease = new SimulatorControllerLease({ createId: () => 'tok-1' })
     expect(lease.mint({ chatId: 'chat-a', runId: 'run-1' }).ok).toBe(true)

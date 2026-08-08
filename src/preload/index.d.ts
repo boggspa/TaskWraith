@@ -1286,6 +1286,7 @@ declare global {
       simulatorCanvas: {
         status: () => Promise<{ ok: true; status: SimulatorCapabilityStatus }>
         claimControl: (chatId: string) => Promise<unknown>
+        releaseControl: (chatId: string) => Promise<unknown>
         session: (chatId: string) => Promise<unknown>
         openApp: (chatId: string) => Promise<SimulatorHostActionResult>
         listDevices: () => Promise<{

@@ -14,7 +14,10 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, OpenDialogOptions } from 'electron'
 import type { IdbClient } from '../simulator/IdbClient'
 import type { SimulatorHostControl } from '../simulator/SimulatorHostControl'
-import type { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
+import {
+  SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
+  type SimulatorControllerLease
+} from '../simulator/SimulatorControllerLease'
 import type { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import type { SimulatorInteractionBridge } from '../simulator/SimulatorInteractionBridge'
 import {
@@ -37,7 +40,7 @@ export interface SimulatorCanvasIpcDeps {
     | 'terminate'
     | 'screenshot'
   >
-  getControllerLease: () => Pick<SimulatorControllerLease, 'claimHuman' | 'peek'>
+  getControllerLease: () => Pick<SimulatorControllerLease, 'claimHuman' | 'peek' | 'release'>
   getSessionStore?: () => Pick<SimulatorSessionStore, 'get'>
   getInteraction: () => Pick<
     SimulatorInteractionBridge,
@@ -154,6 +157,23 @@ export function registerSimulatorCanvasHandlers(
       return { ok: false, error: claimed.error, code: claimed.code }
     }
     return { ok: true, token: claimed.token }
+  })
+
+  ipcMain.handle('simulator-canvas:release-control', async (_event, chatId: unknown) => {
+    const id = requiredString(chatId, 'chatId')
+    const released = deps.getControllerLease().release({
+      chatId: id,
+      runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID
+    })
+    // Unmount / hide must be idempotent: missing lease or a non-human holder
+    // is not an error — never force-release an agent token from the dock.
+    if (!released.ok) {
+      if (released.code === 'not_found' || released.code === 'not_holder') {
+        return { ok: true, released: false, code: released.code }
+      }
+      return { ok: false, error: released.error, code: released.code }
+    }
+    return { ok: true, released: true, token: released.token }
   })
 
   ipcMain.handle('simulator-canvas:session', async (_event, chatId: unknown) => {
@@ -282,12 +302,13 @@ export function registerSimulatorCanvasHandlers(
     'simulator-canvas:button',
     async (_event, chatId: unknown, udid: unknown, button: unknown) => {
       const id = requiredString(chatId, 'chatId')
-      humanControl(deps, id)
+      // Validate allowlist before humanControl so a bad arg cannot steal the lease.
       if (!isSimulatorHardwareButton(button)) {
         throw new Error(
           'Simulator Canvas button must be one of APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI.'
         )
       }
+      humanControl(deps, id)
       const idb = deps.getIdb?.()
       if (!idb?.hardwareButton || !idb.isAvailable()) {
         return { ok: false, error: 'idb is not available on PATH.' }
@@ -300,10 +321,13 @@ export function registerSimulatorCanvasHandlers(
     'simulator-canvas:rotate',
     async (_event, chatId: unknown, udid: unknown, direction: unknown) => {
       const id = requiredString(chatId, 'chatId')
-      humanControl(deps, id)
+      // Validate allowlist before humanControl so a bad arg cannot steal the lease.
       if (!isSimulatorRotateDirection(direction)) {
-        throw new Error('Simulator Canvas rotate direction must be clockwise or counterclockwise.')
+        throw new Error(
+          'Simulator Canvas rotate orientation must be PORTRAIT, PORTRAIT_UPSIDE_DOWN, LANDSCAPE_LEFT, or LANDSCAPE_RIGHT.'
+        )
       }
+      humanControl(deps, id)
       const idb = deps.getIdb?.()
       if (!idb?.rotate || !idb.isAvailable()) {
         return { ok: false, error: 'idb is not available on PATH.' }

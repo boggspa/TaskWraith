@@ -370,6 +370,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // only; mutating verbs take chatId first so human control can auto-claim.
   'simulator-canvas:status': [],
   'simulator-canvas:claim-control': ['nonEmptyString'],
+  'simulator-canvas:release-control': ['nonEmptyString'],
   'simulator-canvas:session': ['nonEmptyString'],
   'simulator-canvas:open-app': ['nonEmptyString'],
   'simulator-canvas:list-devices': [],
