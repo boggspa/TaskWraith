@@ -141,6 +141,10 @@ import {
 } from '../lib/ensembleRoundCards'
 import { isEnsembleFanoutViewportHeaderMessage } from '../lib/ensembleFanoutViewportGroups'
 import {
+  buildParallelResultViewportRanges,
+  isParallelResultViewportHeaderMessage
+} from '../lib/parallelResultViewportGroups'
+import {
   createTranscriptScrollAnimator,
   type TranscriptScrollAnimator
 } from '../lib/transcriptSmoothScroll'
@@ -162,6 +166,7 @@ import {
 } from './CollapsedTranscriptRow'
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
+import { ParallelResultViewportHeader } from './ParallelResultViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import { classifyFanoutLaneSlots, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
 import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
@@ -845,6 +850,7 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     msg.role === 'system' &&
     !isEnsembleRoundHeaderMessage(msg) &&
     !isEnsembleFanoutViewportHeaderMessage(msg) &&
+    !isParallelResultViewportHeaderMessage(msg) &&
     !isHumanCollaboratorComment(msg) &&
     // A DELIVERED contribution is a person's words, not app chrome. Left in,
     // it folds to an anonymous "System" one-liner and — next to any other
@@ -2791,6 +2797,23 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    // Parallel sub-thread / side-chat return waves share the same disclosure
+    // shape as fan-out viewports, but their membership is join-wave based and
+    // must not share expansion state with ensemble fan-out headers.
+    const [expandedParallelResultViewports, setExpandedParallelResultViewports] = useState<
+      Set<string>
+    >(new Set())
+    const setParallelResultViewportExpanded = useCallback(
+      (viewportId: string, expanded: boolean) => {
+        setExpandedParallelResultViewports((prev) => {
+          const next = new Set(prev)
+          if (expanded) next.add(viewportId)
+          else next.delete(viewportId)
+          return next
+        })
+      },
+      []
+    )
     // 1.0.7 — lifted live-viewport expansion (the collapsed tool/thinking
     // viewport's Expand toggle). Held here — NOT inside ActivityStack — for
     // the same survival reason as `activityExpansionByRow`, but keyed by
@@ -2947,6 +2970,10 @@ export const TranscriptPanel = memo(
       () => Array.from(expandedFanoutViewports).sort().join('\u0000'),
       [expandedFanoutViewports]
     )
+    const parallelResultViewportExpansionKey = useMemo(
+      () => Array.from(expandedParallelResultViewports).sort().join('\u0000'),
+      [expandedParallelResultViewports]
+    )
     const activeRoundProjectionKey = useMemo(
       () => ensembleActiveRoundProjectionKey(roundCardChat?.ensemble?.activeRound),
       [roundCardChat?.ensemble?.activeRound]
@@ -2971,7 +2998,8 @@ export const TranscriptPanel = memo(
           roundSummariesKey,
           fanoutRunProjectionKey,
           manualRoundExpansionKey,
-          fanoutViewportExpansionKey
+          fanoutViewportExpansionKey,
+          parallelResultViewportExpansionKey
         ].join('\u0001'),
       [
         activeRoundProjectionKey,
@@ -2979,6 +3007,7 @@ export const TranscriptPanel = memo(
         fanoutViewportExpansionKey,
         isThinking,
         manualRoundExpansionKey,
+        parallelResultViewportExpansionKey,
         roundCardChat?.appChatId,
         roundCardChat?.chatKind,
         roundCardChat?.ensemble?.lastRoundSummary,
@@ -2987,17 +3016,40 @@ export const TranscriptPanel = memo(
       ]
     )
     const buildRoundCardRanges = useCallback(
-      (messages: readonly ChatMessage[]) =>
-        buildEnsembleRoundCardRowsWithRanges({
+      (messages: readonly ChatMessage[]) => {
+        // Round cards (and ensemble fan-out viewports nested inside them) first;
+        // parallel-result waves compose on the already-folded display list so
+        // solo parents and ensemble rounds share one disclosure path.
+        const roundRanges = buildEnsembleRoundCardRowsWithRanges({
           chat: roundCardChat,
           displayMessages: messages as ChatMessage[],
           collapseOlderRounds: roundCardCollapseEnabled,
           manualRoundExpansion,
           expandedFanoutViewportIds: expandedFanoutViewports,
           hasLiveRunEvidence: isThinking
-        }),
+        })
+        const composedMessages = roundRanges.map((range) => range.message)
+        const parallelRanges = buildParallelResultViewportRanges({
+          chatId: roundCardChat?.appChatId || '',
+          messages: composedMessages,
+          sourceOffset: 0,
+          expandedViewportIds: expandedParallelResultViewports
+        })
+        // Remap composed-list indexes back onto the original source spans so
+        // incremental regrouping still keys off participantFilteredMessages.
+        return parallelRanges.map((range) => {
+          const first = roundRanges[range.startIndex]
+          const last = roundRanges[Math.max(range.startIndex, range.endIndex - 1)]
+          return {
+            message: range.message,
+            startIndex: first?.startIndex ?? range.startIndex,
+            endIndex: last?.endIndex ?? range.endIndex
+          }
+        })
+      },
       [
         expandedFanoutViewports,
+        expandedParallelResultViewports,
         isThinking,
         manualRoundExpansion,
         roundCardChat,
@@ -4027,6 +4079,7 @@ export const TranscriptPanel = memo(
             const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
+            const isParallelResultViewportHeader = isParallelResultViewportHeaderMessage(msg)
             const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
             const isSideChatSeedMessage = Boolean(
@@ -4108,6 +4161,7 @@ export const TranscriptPanel = memo(
               : !isDelegationCard &&
                   !isReturnCard &&
                   !isFanoutViewportHeader &&
+                  !isParallelResultViewportHeader &&
                   !isToolActivityStack &&
                   !isParticipantHealth &&
                   !isProviderRunFailure &&
@@ -4119,6 +4173,8 @@ export const TranscriptPanel = memo(
               ? 'round transcript'
               : isFanoutViewportHeader
                 ? 'fan-out'
+              : isParallelResultViewportHeader
+                ? 'parallel result'
               : msg.role === 'user'
                 ? 'user message'
                 : isThreadMessageCard
@@ -4396,7 +4452,9 @@ export const TranscriptPanel = memo(
               subThreadExpanded: expandedSubThreadResults.has(rowKey),
               fanoutExpanded: isFanoutViewportHeader
                 ? expandedFanoutViewports.has(msg.id)
-                : expandedFanoutResults.has(rowKey),
+                : isParallelResultViewportHeader
+                  ? expandedParallelResultViewports.has(msg.id)
+                  : expandedFanoutResults.has(rowKey),
               liveViewportExpanded,
               collapsedStackKey,
               superGroupKey,
@@ -4527,6 +4585,12 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     message={msg}
                     onSetExpanded={setFanoutViewportExpanded}
+                  />
+                ) : isParallelResultViewportHeader ? (
+                  <ParallelResultViewportHeader
+                    key={msg.id}
+                    message={msg}
+                    onSetExpanded={setParallelResultViewportExpanded}
                   />
                 ) : isDelegationCard || isReturnCard ? (
                   <div

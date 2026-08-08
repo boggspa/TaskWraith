@@ -6140,7 +6140,8 @@ export function SettingsPanel({
                       </select>
                       <small>
                         How each seat&rsquo;s result card sits in the transcript when a fan-out
-                        runs. Side by side fits twice as many lanes on screen; a lane with no
+                        runs, and the same two-across layout for parallel sub-thread return
+                        cards. Side by side fits twice as many lanes on screen; a lane with no
                         neighbour still spans the full width.
                       </small>
                     </label>

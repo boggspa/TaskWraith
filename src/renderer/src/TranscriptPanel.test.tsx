@@ -832,6 +832,129 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('The worker turn has begun.')
   })
 
+  it('folds a complete parallel-result wave under a Sub-thread viewport header', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'return-a',
+        role: 'tool',
+        content: '↩ Result from Codex sub-thread (Worker A):\n\nPARALLEL_RETURN_A',
+        timestamp: '2026-08-08T00:00:01.000Z',
+        metadata: {
+          kind: 'subThreadReturn',
+          subThreadId: 'child-a',
+          subThreadProvider: 'codex',
+          subThreadTitle: 'Worker A',
+          parallelResultWaveId: 'wave-parent-1'
+        }
+      },
+      {
+        id: 'return-b',
+        role: 'tool',
+        content: '↩ Result from Claude sub-thread (Worker B):\n\nPARALLEL_RETURN_B',
+        timestamp: '2026-08-08T00:00:02.000Z',
+        metadata: {
+          kind: 'subThreadReturn',
+          subThreadId: 'child-b',
+          subThreadProvider: 'claude',
+          subThreadTitle: 'Worker B',
+          parallelResultWaveId: 'wave-parent-1'
+        }
+      },
+      {
+        id: 'after-wave',
+        role: 'user',
+        content: 'Thanks — continue.',
+        timestamp: '2026-08-08T00:00:03.000Z'
+      }
+    ]
+    const chat = {
+      appChatId: 'solo-parallel-returns',
+      title: 'Solo parallel returns',
+      chatKind: 'single',
+      provider: 'claude',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages,
+      runs: []
+    } as ChatRecord
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentChat: chat,
+          messages
+        })}
+      />
+    )
+
+    expect(html).toContain('parallel-result-viewport-header')
+    expect(html).toContain('Sub-thread')
+    expect(html).toContain('2 lanes')
+    expect(html).not.toContain('PARALLEL_RETURN_A')
+    expect(html).not.toContain('PARALLEL_RETURN_B')
+    expect(html).toContain('Thanks — continue.')
+  })
+
+  it('stamps data-fanout-slot on adjacent open subThreadReturn rows when paired', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'open-return-a',
+        role: 'tool',
+        content: '↩ Result from Codex sub-thread (A):\n\nopen-a',
+        timestamp: '2026-08-08T00:00:01.000Z',
+        metadata: {
+          kind: 'subThreadReturn',
+          subThreadId: 'child-open-a',
+          subThreadProvider: 'codex',
+          subThreadTitle: 'A',
+          parallelResultWaveId: 'wave-still-open'
+        }
+      },
+      {
+        id: 'open-return-b',
+        role: 'tool',
+        content: '↩ Result from Claude sub-thread (B):\n\nopen-b',
+        timestamp: '2026-08-08T00:00:02.000Z',
+        metadata: {
+          kind: 'subThreadReturn',
+          subThreadId: 'child-open-b',
+          subThreadProvider: 'claude',
+          subThreadTitle: 'B',
+          parallelResultWaveId: 'wave-still-open'
+        }
+      }
+    ]
+    const chat = {
+      appChatId: 'solo-open-returns',
+      title: 'Solo open returns',
+      chatKind: 'single',
+      provider: 'claude',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages,
+      runs: []
+    } as ChatRecord
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          fanoutLaneLayout: 'paired',
+          currentChat: chat,
+          messages
+        })}
+      />
+    )
+
+    // No later focus → wave stays ordinary cards; W3 pairing stamps slots.
+    expect(html).not.toContain('parallel-result-viewport-header')
+    expect(html).toContain('data-fanout-slot="lead"')
+    expect(html).toContain('data-fanout-slot="trail"')
+  })
+
   it('ignores legacy completion-claim support metadata in the transcript', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
