@@ -47744,7 +47744,7 @@ if (isGeminiMcpBridgeProcess) {
                   objective: goal.objective,
                   status: goal.status,
                   updatedAt: goal.updatedAt,
-                  threadId: chat.id,
+                  threadId: chat.appChatId,
                   ...(activeRoundId ? { activeRoundId } : {})
                 }
               ]
@@ -47767,7 +47767,7 @@ if (isGeminiMcpBridgeProcess) {
               return [
                 {
                   roundId: round.roundId,
-                  threadId: chat.id,
+                  threadId: chat.appChatId,
                   status: round.status,
                   live: isEnsembleRoundDispatchLive(round),
                   participantIds,
