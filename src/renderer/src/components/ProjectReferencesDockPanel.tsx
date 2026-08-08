@@ -52,6 +52,7 @@ import {
   classifyPastedReferenceText,
   type DockIngestCandidate
 } from '../lib/projectReferencesDockIngest'
+import type { ProjectReferenceCitationOpenRequest } from '../lib/projectReferenceCitationOpen'
 import { ProjectReferenceSourceViewer } from './ProjectReferenceSourceViewer'
 
 /** Consent dialog copy for one-shot Project-reference extracts (P1 doctrine). */
@@ -340,6 +341,13 @@ interface ProjectReferencesDockPanelProps {
   resolveOfficeTarget?: (locator: string) => { path: string; external: boolean } | null
   /** Opens a resolved Office target in the dock surface. */
   onOpenInOffice?: (target: { path: string; external: boolean }) => void
+  /**
+   * One-shot citation-chip handoff: open the extract viewer for this extractId.
+   * Consumed by nonce (officeOpenRequest-shaped); cleared via onCitationOpenRequestConsumed.
+   */
+  citationOpenRequest?: ProjectReferenceCitationOpenRequest | null
+  /** Clear App's pending citationOpenRequest after this panel consumes it. */
+  onCitationOpenRequestConsumed?: () => void
 }
 
 /**
@@ -710,7 +718,9 @@ export function ProjectReferencesDockPanel({
   onClose,
   showCloseButton = true,
   resolveOfficeTarget,
-  onOpenInOffice
+  onOpenInOffice,
+  citationOpenRequest,
+  onCitationOpenRequestConsumed
 }: ProjectReferencesDockPanelProps): JSX.Element {
   const projectIdRef = useRef(projectId)
   projectIdRef.current = projectId
@@ -1349,22 +1359,22 @@ export function ProjectReferencesDockPanel({
       })
   }
 
-  const viewExtract = (reference: ProjectReference): void => {
+  const openExtractViewer = (
+    reference: ProjectReference | undefined,
+    extractId: string,
+    cachedExtract?: ProjectReferenceExtract | null
+  ): void => {
     const api = extractBridge()
-    const extract = extractsByReferenceId[reference.id]
-    if (
-      !extract ||
-      extract.status !== 'ready' ||
-      typeof api?.readProjectReferenceExtractText !== 'function'
-    ) {
+    if (typeof api?.readProjectReferenceExtractText !== 'function') {
       window.alert('Extract text is unavailable.')
       return
     }
-    setExtractActingReferenceId(reference.id)
+    const actingReferenceId = reference?.id ?? null
+    if (actingReferenceId) setExtractActingReferenceId(actingReferenceId)
     void Promise.resolve()
       .then(() =>
         api.readProjectReferenceExtractText?.({
-          extractId: extract.id
+          extractId
         })
       )
       .then((result) => {
@@ -1379,12 +1389,12 @@ export function ProjectReferencesDockPanel({
           return
         }
         setViewerState({
-          title: reference.title,
+          title: reference?.title || 'Extract',
           text: parsed.text,
           ...(parsed.pages
             ? { pages: parsed.pages }
-            : extract.text?.pages
-              ? { pages: extract.text.pages }
+            : cachedExtract?.text?.pages
+              ? { pages: cachedExtract.text.pages }
               : {})
         })
       })
@@ -1392,9 +1402,38 @@ export function ProjectReferencesDockPanel({
         window.alert(error instanceof Error ? error.message : 'Could not read extract text.')
       })
       .finally(() => {
-        setExtractActingReferenceId((current) => (current === reference.id ? null : current))
+        if (!actingReferenceId) return
+        setExtractActingReferenceId((current) => (current === actingReferenceId ? null : current))
       })
   }
+
+  const viewExtract = (reference: ProjectReference): void => {
+    const extract = extractsByReferenceId[reference.id]
+    if (!extract || extract.status !== 'ready') {
+      window.alert('Extract text is unavailable.')
+      return
+    }
+    openExtractViewer(reference, extract.id, extract)
+  }
+
+  const lastCitationOpenNonceRef = useRef<number | null>(null)
+  const onCitationOpenRequestConsumedRef = useRef(onCitationOpenRequestConsumed)
+  onCitationOpenRequestConsumedRef.current = onCitationOpenRequestConsumed
+  useEffect(() => {
+    if (!citationOpenRequest) return
+    if (citationOpenRequest.nonce === lastCitationOpenNonceRef.current) return
+    if (citationOpenRequest.projectId && citationOpenRequest.projectId !== projectId) return
+    lastCitationOpenNonceRef.current = citationOpenRequest.nonce
+    const reference = references.find((entry) => entry.id === citationOpenRequest.referenceId)
+    const extractId = citationOpenRequest.extractId
+    const cached = reference ? extractsByReferenceId[reference.id] : null
+    onCitationOpenRequestConsumedRef.current?.()
+    queueMicrotask(() => {
+      openExtractViewer(reference, extractId, cached)
+    })
+    // openExtractViewer closes over the latest bridge/extracts; nonce gates re-entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [citationOpenRequest, projectId, references, extractsByReferenceId])
 
   const revokeExtract = (reference: ProjectReference): void => {
     const api = extractBridge()

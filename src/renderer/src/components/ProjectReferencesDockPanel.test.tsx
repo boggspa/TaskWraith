@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, expect, it, vi } from 'vitest'
 
@@ -798,4 +800,16 @@ it('badges saved Studio keepables when companion list is available', () => {
   expect(html).toContain('Briefing — Alpha')
   expect(html).toContain('project-references-dock-studio-badge')
   expect(html).toContain('>Briefing<')
+})
+
+it('wires citationOpenRequest into the extract viewer open path', () => {
+  const source = readFileSync(
+    join(process.cwd(), 'src/renderer/src/components/ProjectReferencesDockPanel.tsx'),
+    'utf8'
+  )
+  expect(source).toContain('citationOpenRequest')
+  expect(source).toContain('onCitationOpenRequestConsumed')
+  // Consume path must read by the request extractId (not only the View button cache).
+  expect(source).toMatch(/citationOpenRequest\.extractId/)
+  expect(source).toContain('readProjectReferenceExtractText')
 })
