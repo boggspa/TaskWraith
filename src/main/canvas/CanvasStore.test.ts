@@ -51,6 +51,18 @@ describe('CanvasStore', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('listSessions soft-empties on corrupt JSON; listSessionsStrict fails closed', () => {
+    writeFileSync(join(dir, 'canvas-sessions.json'), '{not-json')
+    // Best-effort product path keeps UI up with an empty list.
+    expect(store.listSessions()).toEqual([])
+    // Host honesty path must not paint a false-empty artifacts family.
+    expect(() => store.listSessionsStrict()).toThrow()
+  })
+
+  it('listSessionsStrict treats a missing sessions file as measured none', () => {
+    expect(store.listSessionsStrict()).toEqual([])
+  })
+
   it('round-trips sessions and is idempotent on id', () => {
     store.upsertSession(session('a'))
     store.upsertSession(session('a', { status: 'closed' }))

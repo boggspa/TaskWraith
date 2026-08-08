@@ -614,6 +614,17 @@ export class CanvasStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }
 
+  /**
+   * Host Arc honesty path — corrupt / redirected session ledgers throw
+   * instead of painting a false-empty artifacts family. Missing file → [].
+   */
+  listSessionsStrict(): CanvasSessionRecord[] {
+    return readJsonArrayStrict(this.sessionsPath)
+      .map((item) => normalizeSessionRecord(item))
+      .filter((item): item is CanvasSessionRecord => Boolean(item))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
   getSession(id: string): CanvasSessionRecord | null {
     return this.listSessions().find((session) => session.id === id) || null
   }
