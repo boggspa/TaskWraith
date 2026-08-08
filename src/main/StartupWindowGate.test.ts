@@ -37,4 +37,14 @@ describe('StartupWindowGate', () => {
     expect(ensembleHandler).toBeGreaterThan(runAgentHandler)
     expect(gateRelease).toBeGreaterThan(ensembleHandler)
   })
+
+  it('keeps the iOS Remote tray path behind the startup gate', () => {
+    const trayAction = indexSource.indexOf("label: 'Show TaskWraith'")
+    const trayActionEnd = indexSource.indexOf("label: 'Quit TaskWraith'", trayAction)
+    const traySource = indexSource.slice(trayAction, trayActionEnd)
+
+    expect(trayAction).toBeGreaterThanOrEqual(0)
+    expect(trayActionEnd).toBeGreaterThan(trayAction)
+    expect(traySource).toContain('startupWindowGate.requestWindow(createWindow)')
+  })
 })

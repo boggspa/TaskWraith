@@ -46705,7 +46705,7 @@ if (isGeminiMcpBridgeProcess) {
                     mainWindow.show()
                     mainWindow.focus()
                   } else {
-                    createWindow()
+                    startupWindowGate.requestWindow(createWindow)
                   }
                 }
               },
