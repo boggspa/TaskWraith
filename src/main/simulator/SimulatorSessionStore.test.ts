@@ -21,13 +21,17 @@ describe('SimulatorSessionStore', () => {
 
     const withFrame = store.upsert('chat-a', {
       lastFrame: {
-        width: 390,
-        height: 844,
+        width: 780,
+        height: 1688,
+        pointWidth: 390,
+        pointHeight: 844,
         capturedAt: '2026-08-08T00:00:01.000Z',
         udid: 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
       }
     })
-    expect(withFrame.lastFrame?.width).toBe(390)
+    expect(withFrame.lastFrame?.width).toBe(780)
+    expect(withFrame.lastFrame?.pointWidth).toBe(390)
+    expect(withFrame.lastFrame?.pointHeight).toBe(844)
     expect(withFrame.udid).toBe('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
     expect(store.get('chat-a')).toEqual(withFrame)
   })

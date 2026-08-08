@@ -57,10 +57,37 @@ export interface SimulatorCapabilityStatus {
 
 export interface SimulatorScreenshotFrame {
   pngBase64: string
+  /** Screenshot pixel extents (simctl PNG IHDR). Not idb coordinate space. */
   width: number
   height: number
+  /**
+   * Device-point extents for idb tap/swipe. Defaults to half the pixel size
+   * (retina @2x) with a floor of 1; callers may override when AX root is known.
+   */
+  pointWidth: number
+  pointHeight: number
   capturedAt: string
   udid: string
+}
+
+/** Derive idb point extents from screenshot pixels (default retina @2x). */
+export function simulatorPointSizeFromPixels(
+  width: number,
+  height: number,
+  override?: Partial<{ pointWidth: number; pointHeight: number }>
+): { pointWidth: number; pointHeight: number } {
+  const overrideW = override?.pointWidth
+  const overrideH = override?.pointHeight
+  return {
+    pointWidth:
+      typeof overrideW === 'number' && Number.isFinite(overrideW) && overrideW > 0
+        ? Math.round(overrideW)
+        : Math.max(1, Math.round(width / 2)),
+    pointHeight:
+      typeof overrideH === 'number' && Number.isFinite(overrideH) && overrideH > 0
+        ? Math.round(overrideH)
+        : Math.max(1, Math.round(height / 2))
+  }
 }
 
 export interface SimulatorHostActionResult {
@@ -146,10 +173,33 @@ export const SIMULATOR_HARDWARE_BUTTONS = [
 
 export type SimulatorHardwareButton = (typeof SIMULATOR_HARDWARE_BUTTONS)[number]
 
-/** Relative rotate directions mapped to idb `ui rotate` argv. */
-export const SIMULATOR_ROTATE_DIRECTIONS = ['clockwise', 'counterclockwise'] as const
+/**
+ * Absolute orientations accepted by Facebook idb `ui rotate`
+ * (`PORTRAIT` / `PORTRAIT_UPSIDE_DOWN` / `LANDSCAPE_LEFT` / `LANDSCAPE_RIGHT`).
+ */
+export const SIMULATOR_ROTATE_DIRECTIONS = [
+  'PORTRAIT',
+  'PORTRAIT_UPSIDE_DOWN',
+  'LANDSCAPE_LEFT',
+  'LANDSCAPE_RIGHT'
+] as const
 
 export type SimulatorRotateDirection = (typeof SIMULATOR_ROTATE_DIRECTIONS)[number]
+
+/** Panel cycle order: portrait → landscape_right → portrait_upside_down → landscape_left. */
+export const SIMULATOR_ROTATE_CYCLE: readonly SimulatorRotateDirection[] = [
+  'PORTRAIT',
+  'LANDSCAPE_RIGHT',
+  'PORTRAIT_UPSIDE_DOWN',
+  'LANDSCAPE_LEFT'
+]
+
+export function nextSimulatorRotateDirection(
+  current: SimulatorRotateDirection
+): SimulatorRotateDirection {
+  const idx = SIMULATOR_ROTATE_CYCLE.indexOf(current)
+  return SIMULATOR_ROTATE_CYCLE[(idx < 0 ? 0 : idx + 1) % SIMULATOR_ROTATE_CYCLE.length]!
+}
 
 export function isSimulatorHardwareButton(value: unknown): value is SimulatorHardwareButton {
   return (

@@ -19,6 +19,11 @@ import {
   type SimulatorTypeGesture
 } from '../../shared/simulatorCanvas'
 import type { IdbClient } from './IdbClient'
+import {
+  clamp01,
+  mapNormalizedScroll,
+  mapNormalizedTap
+} from './simulatorGestureMapping'
 
 export type SimulatorControlProbe = (chatId: string) => {
   canControl: boolean
@@ -27,8 +32,12 @@ export type SimulatorControlProbe = (chatId: string) => {
 
 export type SimulatorActuationTarget = {
   udid: string
-  width: number
-  height: number
+  /** Authoritative idb point extents. */
+  pointWidth: number
+  pointHeight: number
+  /** Optional screenshot pixel extents for human scroll delta rescale. */
+  width?: number
+  height?: number
 }
 
 export type SimulatorIdbSurface = Pick<IdbClient, 'isAvailable' | 'tap' | 'text' | 'swipe'>
@@ -57,18 +66,6 @@ export interface SimulatorRecordedGesture {
   payload: SimulatorTapGesture | SimulatorTypeGesture | SimulatorScrollGesture
 }
 
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  if (value <= 0) return 0
-  if (value >= 1) return 1
-  return value
-}
-
-function clamp(value: number, min: number, max: number): number {
-  if (max < min) return min
-  return Math.min(max, Math.max(min, value))
-}
-
 function requireChatId(chatId: unknown): string {
   if (typeof chatId !== 'string' || !chatId.trim() || chatId.trim() !== chatId) {
     throw new Error('Simulator Canvas chatId is invalid.')
@@ -83,8 +80,40 @@ function requireFiniteNumber(value: unknown, label: string): number {
   return value
 }
 
-function toDevicePoint(norm: number, extent: number): number {
-  return Math.round(clamp01(norm) * Math.max(0, extent))
+function resolvePointExtents(target: SimulatorActuationTarget): {
+  pointWidth: number
+  pointHeight: number
+  pixelWidth?: number
+  pixelHeight?: number
+} | null {
+  // Never feed PNG IHDR pixels as idb extents. Prefer explicit points; else @2x derive.
+  let pointWidth =
+    typeof target.pointWidth === 'number' && target.pointWidth > 0 ? target.pointWidth : 0
+  let pointHeight =
+    typeof target.pointHeight === 'number' && target.pointHeight > 0
+      ? target.pointHeight
+      : 0
+  if (!(pointWidth > 0 && pointHeight > 0)) {
+    if (
+      typeof target.width === 'number' &&
+      target.width > 0 &&
+      typeof target.height === 'number' &&
+      target.height > 0
+    ) {
+      pointWidth = Math.max(1, Math.round(target.width / 2))
+      pointHeight = Math.max(1, Math.round(target.height / 2))
+    } else {
+      return null
+    }
+  }
+  return {
+    pointWidth,
+    pointHeight,
+    pixelWidth:
+      typeof target.width === 'number' && target.width > 0 ? target.width : undefined,
+    pixelHeight:
+      typeof target.height === 'number' && target.height > 0 ? target.height : undefined
+  }
 }
 
 export class SimulatorInteractionBridge {
@@ -177,14 +206,12 @@ export class SimulatorInteractionBridge {
       return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
     }
     const target = this.getActuationTarget?.(chatId) ?? null
-    if (!target) {
+    const extents = target ? resolvePointExtents(target) : null
+    if (!target || !extents) {
       return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
     }
-    const result = await this.idb.tap(
-      target.udid,
-      toDevicePoint(gesture.x, target.width),
-      toDevicePoint(gesture.y, target.height)
-    )
+    const point = mapNormalizedTap(gesture.x, gesture.y, extents)
+    const result = await this.idb.tap(target.udid, point.x, point.y)
     return result.ok
       ? { ok: true, recorded: true }
       : { ok: false, error: result.error || SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
@@ -232,14 +259,24 @@ export class SimulatorInteractionBridge {
       return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
     }
     const target = this.getActuationTarget?.(chatId) ?? null
-    if (!target) {
+    const extents = target ? resolvePointExtents(target) : null
+    if (!target || !extents) {
       return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
     }
-    const startX = toDevicePoint(gesture.x, target.width)
-    const startY = toDevicePoint(gesture.y, target.height)
-    const endX = Math.round(clamp(startX - gesture.deltaX, 0, target.width))
-    const endY = Math.round(clamp(startY - gesture.deltaY, 0, target.height))
-    const result = await this.idb.swipe(target.udid, startX, startY, endX, endY)
+    const swipe = mapNormalizedScroll(
+      gesture.x,
+      gesture.y,
+      gesture.deltaX,
+      gesture.deltaY,
+      extents
+    )
+    const result = await this.idb.swipe(
+      target.udid,
+      swipe.startX,
+      swipe.startY,
+      swipe.endX,
+      swipe.endY
+    )
     return result.ok
       ? { ok: true, recorded: true }
       : { ok: false, error: result.error || SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }

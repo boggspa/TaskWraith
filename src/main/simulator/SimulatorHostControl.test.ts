@@ -45,6 +45,8 @@ describe('SimulatorHostControl', () => {
           pngBase64: 'aa',
           width: 2,
           height: 2,
+          pointWidth: 1,
+          pointHeight: 1,
           capturedAt: 't',
           udid: UDID
         }
@@ -69,5 +71,7 @@ describe('SimulatorHostControl', () => {
     // Screenshot remains readable without a controller.
     expect((await gate.screenshot(UDID, { chatId: 'chat-a' })).ok).toBe(true)
     expect(sessions.get('chat-a')?.lastFrame?.width).toBe(2)
+    expect(sessions.get('chat-a')?.lastFrame?.pointWidth).toBe(1)
+    expect(sessions.get('chat-a')?.lastFrame?.pointHeight).toBe(1)
   })
 })

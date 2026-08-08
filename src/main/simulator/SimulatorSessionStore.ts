@@ -6,8 +6,12 @@
  * retained — only last-frame metadata for dock restore.
  */
 export interface SimulatorSessionFrameMeta {
+  /** Screenshot pixel extents. */
   width: number
   height: number
+  /** Device-point extents for idb (not PNG IHDR pixels). */
+  pointWidth: number
+  pointHeight: number
   capturedAt: string
   udid: string
 }

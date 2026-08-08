@@ -79,13 +79,24 @@ export class SimulatorHostControl {
   async screenshot(udid: string, opts?: { chatId?: string }): Promise<SimulatorHostActionResult> {
     const result = await this.host.screenshot(udid)
     if (result.ok && result.frame && opts?.chatId) {
+      const frame = result.frame
+      const pointWidth =
+        typeof frame.pointWidth === 'number' && frame.pointWidth > 0
+          ? frame.pointWidth
+          : Math.max(1, Math.round(frame.width / 2))
+      const pointHeight =
+        typeof frame.pointHeight === 'number' && frame.pointHeight > 0
+          ? frame.pointHeight
+          : Math.max(1, Math.round(frame.height / 2))
       this.sessionStore.upsert(opts.chatId, {
-        udid: result.frame.udid,
+        udid: frame.udid,
         lastFrame: {
-          width: result.frame.width,
-          height: result.frame.height,
-          capturedAt: result.frame.capturedAt,
-          udid: result.frame.udid
+          width: frame.width,
+          height: frame.height,
+          pointWidth,
+          pointHeight,
+          capturedAt: frame.capturedAt,
+          udid: frame.udid
         }
       })
     }

@@ -284,6 +284,8 @@ describe('SimulatorHostService', () => {
       pngBase64: fakePng(390, 844).toString('base64'),
       width: 390,
       height: 844,
+      pointWidth: 195,
+      pointHeight: 422,
       capturedAt: '2026-08-07T12:00:00.000Z',
       udid: UDID
     })

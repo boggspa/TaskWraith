@@ -222,7 +222,7 @@ describe('IdbClient', () => {
     ])
   })
 
-  it('rotate maps clockwise/counterclockwise to ui rotate argv', async () => {
+  it('rotate maps absolute orientations to ui rotate argv', async () => {
     const calls: string[][] = []
     const client = new IdbClient({
       platform: 'darwin',
@@ -233,20 +233,28 @@ describe('IdbClient', () => {
       }
     })
     await expect(
-      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'clockwise')
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'PORTRAIT')
     ).resolves.toMatchObject({ ok: true })
     await expect(
-      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'counterclockwise')
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'LANDSCAPE_RIGHT')
     ).resolves.toMatchObject({ ok: true })
     await expect(
-      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'sideways' as never)
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'PORTRAIT_UPSIDE_DOWN')
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'LANDSCAPE_LEFT')
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      client.rotate('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'CLOCKWISE' as never)
     ).resolves.toMatchObject({
       ok: false,
-      error: expect.stringMatching(/allowlisted|invalid|direction|rotate/i)
+      error: expect.stringMatching(/allowlisted|invalid|direction|orient|rotate/i)
     })
     expect(calls).toEqual([
-      ['ui', 'rotate', 'CLOCKWISE', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
-      ['ui', 'rotate', 'COUNTER_CLOCKWISE', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
+      ['ui', 'rotate', 'PORTRAIT', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['ui', 'rotate', 'LANDSCAPE_RIGHT', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['ui', 'rotate', 'PORTRAIT_UPSIDE_DOWN', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['ui', 'rotate', 'LANDSCAPE_LEFT', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
     ])
   })
 })

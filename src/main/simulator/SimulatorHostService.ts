@@ -20,6 +20,7 @@ import { constants as fsConstants } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
+  simulatorPointSizeFromPixels,
   type SimulatorCapabilityStatus,
   type SimulatorDeviceInfo,
   type SimulatorHostActionResult,
@@ -515,10 +516,13 @@ export class SimulatorHostService {
       await this.runSimctl(['io', valid, 'screenshot', out])
       const png = await this.readFile(out)
       const { width, height } = readPngDimensions(png)
+      const { pointWidth, pointHeight } = simulatorPointSizeFromPixels(width, height)
       const frame: SimulatorScreenshotFrame = {
         pngBase64: png.toString('base64'),
         width,
         height,
+        pointWidth,
+        pointHeight,
         capturedAt: this.now(),
         udid: valid
       }

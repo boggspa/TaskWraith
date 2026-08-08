@@ -17,11 +17,6 @@ const IDB_TIMEOUT_MS = 60_000
 const DESCRIBE_ALL_MAX_CHARS = 200_000
 const DESCRIBE_ALL_MAX_NODES = 500
 
-const ROTATE_DIRECTION_TO_IDB: Record<SimulatorRotateDirection, string> = {
-  clockwise: 'CLOCKWISE',
-  counterclockwise: 'COUNTER_CLOCKWISE'
-}
-
 export type IdbExecRunner = (
   binary: string,
   args: readonly string[]
@@ -337,9 +332,8 @@ export class IdbClient {
   }
 
   /**
-   * Relative rotate via `idb ui rotate CLOCKWISE|COUNTER_CLOCKWISE`.
-   * Some idb builds only accept absolute orientations (PORTRAIT/LANDSCAPE_*);
-   * those fail with a clear companion/CLI error rather than a silent fallback.
+   * Absolute rotate via `idb ui rotate PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT`.
+   * Relative CLOCKWISE/COUNTER_CLOCKWISE are rejected — Facebook idb expects absolutes.
    */
   async rotate(
     udid: string,
@@ -350,13 +344,14 @@ export class IdbClient {
         ok: false,
         stdout: '',
         stderr: '',
-        error: 'idb ui rotate requires an allowlisted direction (clockwise|counterclockwise).'
+        error:
+          'idb ui rotate requires an allowlisted orientation (PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT).'
       }
     }
     const id = typeof udid === 'string' ? udid.trim() : ''
     if (!id) {
       return { ok: false, stdout: '', stderr: '', error: 'idb ui rotate requires a udid.' }
     }
-    return this.exec(withUdid(['ui', 'rotate', ROTATE_DIRECTION_TO_IDB[direction]], id))
+    return this.exec(withUdid(['ui', 'rotate', direction], id))
   }
 }

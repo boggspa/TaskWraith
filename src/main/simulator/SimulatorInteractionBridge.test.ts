@@ -153,8 +153,10 @@ describe('SimulatorInteractionBridge', () => {
       idb,
       getActuationTarget: () => ({
         udid: 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
-        width: 390,
-        height: 844
+        pointWidth: 390,
+        pointHeight: 844,
+        width: 780,
+        height: 1688
       }),
       now: () => 42
     })
@@ -163,7 +165,13 @@ describe('SimulatorInteractionBridge', () => {
       ok: true,
       recorded: true
     })
+    // Tap must use point extents (390×844), not raw PNG pixel dims (780×1688).
     expect(idb.tap).toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 195, 211)
+    expect(idb.tap).not.toHaveBeenCalledWith(
+      'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+      390,
+      422
+    )
 
     expect(await bridge.type({ chatId: 'chat-1', text: 'hello' })).toEqual({
       ok: true,
@@ -174,13 +182,32 @@ describe('SimulatorInteractionBridge', () => {
     expect(
       await bridge.scroll({ chatId: 'chat-1', x: 0.5, y: 0.5, deltaX: 0, deltaY: -80 })
     ).toEqual({ ok: true, recorded: true })
+    // Scroll deltas scale into point space (pixels→points ≈ 0.5): -80 → -40.
     expect(idb.swipe).toHaveBeenCalledWith(
       'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
       195,
       422,
       195,
-      502
+      462
     )
+  })
+
+  it('tap rejects raw PNG pixel extents when only point dims are authoritative', async () => {
+    const idb = mockIdb()
+    const bridge = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb,
+      getActuationTarget: () => ({
+        udid: 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        pointWidth: 390,
+        pointHeight: 844,
+        width: 1170,
+        height: 2532
+      })
+    })
+    await bridge.tap({ chatId: 'chat-1', x: 1, y: 1 })
+    expect(idb.tap).toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 390, 844)
   })
 
   it('stays deferred when idb is ready but no session actuation target exists', async () => {

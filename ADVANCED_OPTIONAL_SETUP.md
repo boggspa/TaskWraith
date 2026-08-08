@@ -236,10 +236,10 @@ Hardware controls (when actuation is ready — idb on PATH + controller lease):
 - Panel **Home** / **Lock** → `idb ui button HOME|LOCK` (also MCP
   `simulator_button` with allowlisted HID names: APPLE_PAY, HOME, LOCK,
   SIDE_BUTTON, SIRI).
-- Panel **Rotate** → `idb ui rotate CLOCKWISE` (MCP `simulator_rotate` with
-  `clockwise` / `counterclockwise`). Some idb builds only accept absolute
-  orientations (`PORTRAIT` / `LANDSCAPE_*`); those return a clear error rather
-  than a silent fallback.
+- Panel **Rotate** cycles absolute orientations
+  (`PORTRAIT` → `LANDSCAPE_RIGHT` → `PORTRAIT_UPSIDE_DOWN` → `LANDSCAPE_LEFT`)
+  via `idb ui rotate <ORIENTATION>` (MCP `simulator_rotate` with the same
+  allowlist).
 - AX inspect: MCP/IPC `simulator_inspect` runs `idb ui describe-all` and returns
   a **truncated** JSON tree (~200KB or ~500 nodes, `truncated: true` when capped).
   Observation-only and auto-allowed like `simulator_status`.
