@@ -5,9 +5,12 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type JSX
+  type DragEvent,
+  type JSX,
+  type ClipboardEvent
 } from 'react'
 
+import { normalizeGitHubReferenceInput } from '../../../shared/projects'
 import {
   addProjectReference,
   listProjectReferences,
@@ -33,6 +36,11 @@ import {
   referencesForActiveProject,
   type ProjectReferencesDockState
 } from '../lib/projectReferencesDockState'
+import {
+  classifyDroppedPath,
+  classifyPastedReferenceText,
+  type DockIngestCandidate
+} from '../lib/projectReferencesDockIngest'
 
 interface ProjectReferencesDockPanelProps {
   projectId: string
@@ -46,9 +54,7 @@ interface ProjectReferencesDockPanelProps {
    * through the chat's external access grants (consent happens in the Office
    * panel). Returns null when the reference is not an office document.
    */
-  resolveOfficeTarget?: (
-    locator: string
-  ) => { path: string; external: boolean } | null
+  resolveOfficeTarget?: (locator: string) => { path: string; external: boolean } | null
   /** Opens a resolved Office target in the dock surface. */
   onOpenInOffice?: (target: { path: string; external: boolean }) => void
 }
@@ -58,6 +64,13 @@ interface ProjectReferencesDockPanelProps {
  * It is not a ProjectReference: a suggestion grants no authority and does not
  * join the catalogue until a human explicitly accepts it.
  */
+export type ProjectReferenceProposalPreviewSourceView =
+  | 'web_search'
+  | 'web_fetch'
+  | 'document_extract'
+  | 'agent_context'
+  | 'manual'
+
 export interface ProjectReferenceProposalView {
   proposalId: string
   projectId: string
@@ -67,9 +80,78 @@ export interface ProjectReferenceProposalView {
     title: string
   }
   reason?: string
+  /** Untrusted agent-claimed review snippet — never treated as host-fetched proof. */
+  previewSnippet?: string
+  previewSource?: ProjectReferenceProposalPreviewSourceView
   proposedAt: number
   provider?: string
   runId: string
+}
+
+const PROPOSAL_PREVIEW_SOURCES = new Set<ProjectReferenceProposalPreviewSourceView>([
+  'web_search',
+  'web_fetch',
+  'document_extract',
+  'agent_context',
+  'manual'
+])
+
+/**
+ * Resolve a dropped File's absolute path. Prefer legacy `File.path` when
+ * present (tests + older Electron), else Electron 39's preload
+ * `window.api.getPathForFile`.
+ */
+export function resolveDockDroppedFilePath(file: File): string {
+  const legacyPath = (file as File & { path?: string }).path
+  if (typeof legacyPath === 'string' && legacyPath.trim()) return legacyPath.trim()
+  try {
+    const bridged = typeof window !== 'undefined' ? window.api?.getPathForFile?.(file) : undefined
+    return typeof bridged === 'string' ? bridged.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+function droppedItemIsDirectory(file: File, item: DataTransferItem | null): boolean {
+  const entry = item && typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null
+  if (entry && typeof entry.isDirectory === 'boolean') return entry.isDirectory
+  // No path-stat IPC in the renderer: do not guess from extension / empty type.
+  void file
+  return false
+}
+
+function isEditablePasteTarget(element: Element | null): boolean {
+  if (!element) return false
+  const tag = element.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  const html = element as HTMLElement
+  if (html.isContentEditable) return true
+  return Boolean(element.closest?.('[contenteditable=""], [contenteditable="true"]'))
+}
+
+function isInsideComposer(element: Element | null): boolean {
+  if (!element || typeof element.closest !== 'function') return false
+  return Boolean(element.closest('.composer-area, .composer-surface'))
+}
+
+/**
+ * Paste ingest is dock-scoped: the event target must be the dock (or its
+ * dropzone), and the focused control must not be an editable field or the
+ * chat composer.
+ */
+export function shouldHandleProjectReferencesDockPaste(input: {
+  eventTarget: EventTarget | null
+  activeElement: Element | null
+}): boolean {
+  if (isEditablePasteTarget(input.activeElement) || isInsideComposer(input.activeElement)) {
+    return false
+  }
+  const target =
+    input.eventTarget && typeof (input.eventTarget as Element).closest === 'function'
+      ? (input.eventTarget as Element)
+      : null
+  if (!target) return false
+  return Boolean(target.closest('.project-references-dock, .project-references-dock-dropzone'))
 }
 
 interface ProjectReferenceProposalState {
@@ -103,6 +185,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
+}
+
+function proposalPreviewFromUnknown(item: Record<string, unknown>): {
+  previewSnippet?: string
+  previewSource?: ProjectReferenceProposalPreviewSourceView
+} {
+  const previewSnippet = text(item.previewSnippet) ?? undefined
+  const previewSourceRaw = text(item.previewSource)
+  const previewSource =
+    previewSourceRaw &&
+    PROPOSAL_PREVIEW_SOURCES.has(previewSourceRaw as ProjectReferenceProposalPreviewSourceView)
+      ? (previewSourceRaw as ProjectReferenceProposalPreviewSourceView)
+      : undefined
+  if (!previewSnippet || !previewSource) return {}
+  return { previewSnippet, previewSource }
 }
 
 /**
@@ -140,11 +237,13 @@ export function projectReferenceProposalViewsFromUnknown(
     seen.add(proposalId)
     const reason = text(item.reason) ?? undefined
     const provider = text(item.provider) ?? undefined
+    const preview = proposalPreviewFromUnknown(item)
     proposals.push({
       proposalId,
       projectId: itemProjectId,
       candidate: { kind, locator, title },
       ...(reason ? { reason } : {}),
+      ...preview,
       proposedAt:
         typeof item.proposedAt === 'number' && Number.isFinite(item.proposedAt)
           ? item.proposedAt
@@ -228,6 +327,16 @@ export function ProjectReferenceSuggestions({
                   {proposal.reason && (
                     <span className="project-reference-suggestion-reason">{proposal.reason}</span>
                   )}
+                  {proposal.previewSnippet && proposal.previewSource && (
+                    <span className="project-reference-suggestion-preview">
+                      <span className="project-reference-suggestion-preview-label">
+                        Agent-claimed · {proposal.previewSource}
+                      </span>
+                      <span className="project-reference-suggestion-preview-snippet">
+                        {proposal.previewSnippet}
+                      </span>
+                    </span>
+                  )}
                 </div>
                 <div className="project-reference-suggestion-actions">
                   <button
@@ -295,6 +404,8 @@ export function ProjectReferencesDockPanel({
   const proposalsError = proposalState.projectId === projectId ? proposalState.error : null
   const [busyProjectId, setBusyProjectId] = useState<string | null>(null)
   const busy = busyProjectId === projectId
+  const [dragOver, setDragOver] = useState(false)
+  const dragDepthRef = useRef(0)
   const contextSelection = useSyncExternalStore(
     useCallback(
       (listener) => subscribeProjectReferenceContextSelection(chatId, listener),
@@ -491,6 +602,82 @@ export function ProjectReferencesDockPanel({
     runAction(() => addProjectReference({ projectId, kind: 'url', locator }))
   }
 
+  const addGitHub = (): void => {
+    const input = window.prompt(
+      'GitHub resource (owner/repo, a github.com URL, or github://owner/repo/path@ref)'
+    )
+    const trimmed = input?.trim()
+    if (!trimmed) return
+    const locator = normalizeGitHubReferenceInput(trimmed)
+    if (!locator) {
+      window.alert('Use owner/repo, a github.com URL, or github://owner/repo[/path][@ref].')
+      return
+    }
+    runAction(() => addProjectReference({ projectId, kind: 'connector', locator }))
+  }
+
+  const ingestCandidate = (candidate: DockIngestCandidate): void => {
+    runAction(() =>
+      addProjectReference({
+        projectId,
+        kind: candidate.kind,
+        locator: candidate.locator
+      })
+    )
+  }
+
+  const handleDockDragEnter = (event: DragEvent<HTMLElement>): void => {
+    if (![...event.dataTransfer.types].includes('Files')) return
+    event.preventDefault()
+    dragDepthRef.current += 1
+    setDragOver(true)
+  }
+
+  const handleDockDragOver = (event: DragEvent<HTMLElement>): void => {
+    if (![...event.dataTransfer.types].includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const handleDockDragLeave = (event: DragEvent<HTMLElement>): void => {
+    if (![...event.dataTransfer.types].includes('Files')) return
+    event.preventDefault()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setDragOver(false)
+  }
+
+  const handleDockDrop = (event: DragEvent<HTMLElement>): void => {
+    event.preventDefault()
+    dragDepthRef.current = 0
+    setDragOver(false)
+    const files = Array.from(event.dataTransfer.files || [])
+    const items = Array.from(event.dataTransfer.items || [])
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]
+      const item = items[index] ?? null
+      const path = resolveDockDroppedFilePath(file)
+      if (!path) continue
+      const candidate = classifyDroppedPath(path, droppedItemIsDirectory(file, item))
+      if (candidate) ingestCandidate(candidate)
+    }
+  }
+
+  const handleDockPaste = (event: ClipboardEvent<HTMLElement>): void => {
+    if (
+      !shouldHandleProjectReferencesDockPaste({
+        eventTarget: event.target,
+        activeElement: typeof document !== 'undefined' ? document.activeElement : null
+      })
+    ) {
+      return
+    }
+    const textValue = event.clipboardData?.getData('text/plain') ?? ''
+    const candidate = classifyPastedReferenceText(textValue)
+    if (!candidate) return
+    event.preventDefault()
+    ingestCandidate(candidate)
+  }
+
   const reviewProposal = (
     proposal: ProjectReferenceProposalView,
     decision: 'approve' | 'reject'
@@ -562,7 +749,16 @@ export function ProjectReferencesDockPanel({
   }
 
   return (
-    <section className="project-references-dock" aria-label="Project references">
+    <section
+      className={`project-references-dock${dragOver ? ' is-drop-target' : ''}`}
+      aria-label="Project references"
+      tabIndex={0}
+      onDragEnter={handleDockDragEnter}
+      onDragOver={handleDockDragOver}
+      onDragLeave={handleDockDragLeave}
+      onDrop={handleDockDrop}
+      onPaste={handleDockPaste}
+    >
       <header className="project-references-dock-header">
         <div>
           <span className="project-references-dock-eyebrow">Project library</span>
@@ -607,6 +803,9 @@ export function ProjectReferencesDockPanel({
         <button type="button" disabled={busy} onClick={addLink}>
           + Link
         </button>
+        <button type="button" disabled={busy} onClick={addGitHub}>
+          + GitHub
+        </button>
       </div>
 
       {attention.actionable.length > 0 && (
@@ -615,9 +814,7 @@ export function ProjectReferencesDockPanel({
             Needs attention:{' '}
             {[
               attention.missing.length > 0 ? `${attention.missing.length} missing` : null,
-              attention.unverified.length > 0
-                ? `${attention.unverified.length} unverified`
-                : null
+              attention.unverified.length > 0 ? `${attention.unverified.length} unverified` : null
             ]
               .filter(Boolean)
               .join(' · ')}
@@ -655,7 +852,8 @@ export function ProjectReferencesDockPanel({
         />
         {references.length === 0 ? (
           <div className="project-references-dock-empty">
-            Add files, folders, or links you want to find again in this Project.
+            Drop files or folders, paste a path, URL, or GitHub repo, or use + File / + Folder / +
+            Link / + GitHub.
           </div>
         ) : (
           references.map((reference) => {

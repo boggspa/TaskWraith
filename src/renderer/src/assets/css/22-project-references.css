@@ -4,6 +4,12 @@
   height: 100%;
   flex-direction: column;
   color: var(--text-primary);
+  outline: none;
+}
+
+.project-references-dock.is-drop-target {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .project-references-dock-header {
@@ -94,6 +100,7 @@
 
 .project-references-dock-add {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 10px 16px;
 }
@@ -214,6 +221,35 @@
 
 .project-reference-suggestion-reason {
   color: var(--text-secondary);
+}
+
+.project-reference-suggestion-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+
+.project-reference-suggestion-preview-label {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.project-reference-suggestion-preview-snippet {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .project-reference-suggestion-actions {
