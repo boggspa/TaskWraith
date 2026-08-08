@@ -8,7 +8,8 @@ import {
 } from './CursorCliArgs'
 import type { EffectiveRunPermissions } from '../store/types'
 
-const mcpDeniedPermissions: Pick<EffectiveRunPermissions, 'agenticServices'> = {
+const mcpDeniedPermissions: Pick<EffectiveRunPermissions, 'agenticServices' | 'presetId'> = {
+  presetId: 'custom',
   agenticServices: {
     shellCommands: 'allow',
     fileChanges: 'allow',

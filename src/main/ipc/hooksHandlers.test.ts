@@ -29,10 +29,10 @@ describe('registerHooksHandlers', () => {
   it('rejects non-main renderer senders on hooks channels', async () => {
     const deps = {
       hooksStore: {
-        getUserHooks: vi.fn(() => ({ schemaVersion: 1, hooks: [] })),
-        getWorkspaceHooks: vi.fn(() => ({ schemaVersion: 1, hooks: [] })),
+        getUserHooks: vi.fn(() => ({ schemaVersion: 1 as const, hooks: [] })),
+        getWorkspaceHooks: vi.fn(() => ({ schemaVersion: 1 as const, hooks: [] })),
         resolveEffectiveHooks: vi.fn(() => ({
-          schemaVersion: 1,
+          schemaVersion: 1 as const,
           workspacePath: '/tmp/ws',
           hooks: []
         })),
@@ -65,8 +65,8 @@ describe('registerHooksHandlers', () => {
     const registered = '/registered/ws'
     const deps = {
       hooksStore: {
-        getUserHooks: vi.fn(() => ({ schemaVersion: 1, hooks: [] })),
-        getWorkspaceHooks: vi.fn(() => ({ schemaVersion: 1, hooks: [] })),
+        getUserHooks: vi.fn(() => ({ schemaVersion: 1 as const, hooks: [] })),
+        getWorkspaceHooks: vi.fn(() => ({ schemaVersion: 1 as const, hooks: [] })),
         resolveEffectiveHooks: vi.fn(),
         upsertHook: vi.fn(),
         deleteHook: vi.fn(),

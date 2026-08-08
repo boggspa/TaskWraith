@@ -41,7 +41,7 @@ export interface BuildCursorCliArgsInput {
   approvalMode?: string | null
   /** Canonical main-resolved posture. An explicit MCP deny suppresses every
    * bridge approval/force flag even if a stale caller claims a bridge is live. */
-  effectivePermissions?: Pick<EffectiveRunPermissions, 'agenticServices'> | null
+  effectivePermissions?: Pick<EffectiveRunPermissions, 'agenticServices' | 'presetId'> | null
   /**
    * Qualification-only exact-version containment input. Production Path-B uses
    * the separate contained builders below and never relies on this flag.

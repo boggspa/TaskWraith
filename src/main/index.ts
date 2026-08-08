@@ -39065,7 +39065,7 @@ async function executeGeminiMcpTool(
           } catch {
             // Best-effort.
           }
-          const providerPrompts = composeDelegatedProviderPrompts({
+          const providerPrompts = await composeDelegatedProviderPrompts({
             provider: worker.provider,
             subThread,
             prompt: worker.prompt,

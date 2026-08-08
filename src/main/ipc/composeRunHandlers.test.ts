@@ -28,7 +28,7 @@ function handlerFor(channel: string): RegisteredHandler {
 
 function createDeps(): ComposeRunHandlersDeps {
   return {
-    composeRun: vi.fn(() => ({ provider: 'codex' }) as ComposerRunPayload),
+    composeRun: vi.fn(async () => ({ provider: 'codex' }) as ComposerRunPayload),
     requireNonEmptyString: vi.fn((value: unknown, label: string) => {
       if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} required`)
       return value.trim()
@@ -215,7 +215,7 @@ describe('registerComposeRunHandlers', () => {
       appRunId: 'run-test-1',
       scheduledTaskId: 'scheduled-test-1'
     }
-    deps.composeRun = vi.fn(() => composed)
+    deps.composeRun = vi.fn(async () => composed)
     deps.resolveSenderComposeAuthority = vi.fn((_event, raw) => ({
       input: raw,
       mainOwnedAttachments: true

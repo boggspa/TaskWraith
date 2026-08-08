@@ -12,6 +12,8 @@ import type { HostShellHookRunEvent } from './HostShellHookRunner'
 
 const WORKSPACE = '/tmp/tw-hook-integration-ws'
 
+type HookShellCall = { cwd: string; command: string; timeoutMs: number }
+
 function makeHook(
   overrides: Partial<EffectiveHookCommand> & Pick<EffectiveHookCommand, 'id' | 'event' | 'command'>
 ): EffectiveHookCommand {
@@ -65,7 +67,11 @@ describe('createHostShellHookRunner workspace gate', () => {
     deps: HostHookIntegrationDeps
     runShell: ReturnType<typeof vi.fn>
   } {
-    const runShell = vi.fn(async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }))
+    const runShell = vi.fn(async (_input: HookShellCall) => ({
+      exitCode: 0,
+      stdout: 'ok',
+      stderr: ''
+    }))
     return {
       deps: {
         hooksStore: {
@@ -216,7 +222,11 @@ describe('createHookRunEventEmitter', () => {
 
 describe('withHostToolHooks', () => {
   it('blocks run when PreToolUse fails closed and skips Post', async () => {
-    const runShell = vi.fn(async () => ({ exitCode: 2, stdout: '', stderr: 'nope' }))
+    const runShell = vi.fn(async (_input: HookShellCall) => ({
+      exitCode: 2,
+      stdout: '',
+      stderr: 'nope'
+    }))
     const run = vi.fn(async () => 'should-not-run')
     const result = await withHostToolHooks({
       workspacePath: WORKSPACE,
@@ -257,7 +267,11 @@ describe('withHostToolHooks', () => {
   })
 
   it('runs the tool and fire-and-forgets PostToolUse with outcome', async () => {
-    const runShell = vi.fn(async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }))
+    const runShell = vi.fn(async (_input: HookShellCall) => ({
+      exitCode: 0,
+      stdout: 'ok',
+      stderr: ''
+    }))
     const run = vi.fn(async () => ({ decision: 'accept' as const }))
     const result = await withHostToolHooks({
       workspacePath: WORKSPACE,
@@ -295,7 +309,11 @@ describe('withHostToolHooks', () => {
   })
 
   it('skips Post when outcomeFromResult returns null (deferred ask path)', async () => {
-    const runShell = vi.fn(async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }))
+    const runShell = vi.fn(async (_input: HookShellCall) => ({
+      exitCode: 0,
+      stdout: 'ok',
+      stderr: ''
+    }))
     const result = await withHostToolHooks({
       workspacePath: WORKSPACE,
       toolName: 'run_shell_command',

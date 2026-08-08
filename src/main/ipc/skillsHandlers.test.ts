@@ -82,7 +82,7 @@ describe('registerSkillsHandlers auth', () => {
         resolveEffectiveSkills: vi.fn(() => []),
         getLibrarySnapshot: vi.fn(),
         upsertUserSkill: vi.fn(),
-        upsertWorkspaceSkill: vi.fn((workspacePath: string, input) =>
+        upsertWorkspaceSkill: vi.fn((_workspacePath: string, input) =>
           skill({
             id: input.id || 'new',
             name: input.name,
