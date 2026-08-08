@@ -33,6 +33,11 @@ import {
 import { getProviderLabel } from './providerLabels'
 import { extractUsageCountsFromCandidate } from './usageStats'
 import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
+import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
+import {
+  isSubThreadReturnMessage,
+  linkedChildReturnRelation
+} from '../components/SubThreadReturnCardModel'
 
 type CloseoutPlacement = {
   sourceRunId?: string
@@ -99,8 +104,13 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     input.fileChanges !== undefined
       ? normalizeCloseoutFileChanges(input.fileChanges)
       : collectCloseoutFileChanges(chat.messages, (message) => message.runId === run.runId)
-  // Commits + File Changes render in the Task-complete epic stack from
-  // metadata — keep the close-out bubble to Worked-for + prose.
+  const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
+    messages: chat.messages,
+    parentRunIds: runIds,
+    window: { startedAt: run.startedAt, completedAt }
+  })
+  // Commits + File Changes + Sub-threads render in the Task-complete epic stack
+  // from metadata — keep the close-out bubble to Worked-for + prose.
 
   return {
     id: taskWraithRunCloseoutId(run.runId),
@@ -118,7 +128,10 @@ export function buildTaskWraithRunCloseoutMessage(input: {
       ...(run.activeGoalId ? { closeoutGoalId: run.activeGoalId } : {}),
       ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
-      ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {})
+      ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
+      ...(closeoutSubagentDelegations.length > 0
+        ? { closeoutSubagentDelegations }
+        : {})
     }
   }
 }
@@ -161,8 +174,13 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
           chat.messages,
           (message) => message.metadata?.ensembleRoundId === round.roundId
         )
-  // Participants + Commits + File Changes render in the Task-complete epic
-  // stack. The close-out bubble above it keeps Worked-for + Close-out prose only.
+  const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
+    messages: chat.messages,
+    parentRunIds: roundRunIds,
+    window: { startedAt: round.startedAt, completedAt }
+  })
+  // Participants + Sub-threads + Commits + File Changes render in the
+  // Task-complete epic stack. The close-out bubble keeps Worked-for + prose.
 
   return {
     id: taskWraithRoundCloseoutId(round.roundId),
@@ -180,7 +198,10 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
       ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
       ...(participantTable ? { closeoutParticipantTable: participantTable } : {}),
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
-      ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {})
+      ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
+      ...(closeoutSubagentDelegations.length > 0
+        ? { closeoutSubagentDelegations }
+        : {})
     }
   }
 }
@@ -244,7 +265,8 @@ export function isSameTaskWraithCloseout(existing: ChatMessage, next: ChatMessag
     JSON.stringify(a?.closeoutParticipantTable ?? null) ===
       JSON.stringify(b?.closeoutParticipantTable ?? null) &&
     sameCloseoutTombstoneList(a?.closeoutCommits, b?.closeoutCommits) &&
-    sameCloseoutTombstoneList(a?.closeoutFileChanges, b?.closeoutFileChanges)
+    sameCloseoutTombstoneList(a?.closeoutFileChanges, b?.closeoutFileChanges) &&
+    sameCloseoutTombstoneList(a?.closeoutSubagentDelegations, b?.closeoutSubagentDelegations)
   )
 }
 
@@ -283,6 +305,14 @@ export function upsertTaskWraithCloseoutMessage(
     }
     if (!nextMeta.closeoutParticipantTable && previous.metadata?.closeoutParticipantTable) {
       nextMeta.closeoutParticipantTable = previous.metadata.closeoutParticipantTable
+    }
+    if (
+      (!Array.isArray(nextMeta.closeoutSubagentDelegations) ||
+        nextMeta.closeoutSubagentDelegations.length === 0) &&
+      Array.isArray(previous.metadata?.closeoutSubagentDelegations) &&
+      previous.metadata.closeoutSubagentDelegations.length > 0
+    ) {
+      nextMeta.closeoutSubagentDelegations = previous.metadata.closeoutSubagentDelegations
     }
     const next = [...messages]
     next[existingIndex] = { ...previous, ...closeout, metadata: nextMeta }
@@ -1529,6 +1559,237 @@ function formatParticipantWorkCell(turns: number, tokens: number, estimated: boo
 function formatParticipantTokenCell(totalTokens: number, estimated = false): string {
   if (totalTokens <= 0) return '—'
   return `${estimated ? '~' : ''}${formatContextTokens(totalTokens)}`
+}
+
+/** Visible sub-thread rows in the Task-complete epic stack (metadata may keep more). */
+export const CLOSEOUT_SUBAGENT_TABLE_LIMIT = 8
+
+export type CloseoutSubagentDelegationStatus =
+  | 'created'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'returned'
+  | 'unknown'
+
+/** Slim sub-thread / Agent Invocation row for the Task-complete epic stack. */
+export type CloseoutSubagentDelegation = {
+  subThreadId: string
+  /** Seed for `assignAgentIdentityFromSeed` — same as subThreadId. */
+  identitySeed: string
+  title: string
+  provider: ProviderId
+  parentProvider?: ProviderId
+  status: CloseoutSubagentDelegationStatus
+  promptPreview?: string
+}
+
+/**
+ * Harvest durable parent-transcript sub-thread delegation/return cards into
+ * Task-complete rows. Cards usually lack `message.runId`; scope via join
+ * groupId / parallelResultWaveId / waveId ∈ parentRunIds (or wave ids affiliated
+ * through the run/round time window), else the time window for unstamped cards.
+ * Side-chat returns are excluded. Dedupes by subThreadId (return outcome wins).
+ */
+export function collectCloseoutSubagentDelegations(input: {
+  messages: ChatMessage[]
+  parentRunIds: ReadonlySet<string>
+  window?: { startedAt: string; completedAt: string }
+  childChats?: ChatRecord[]
+}): CloseoutSubagentDelegation[] {
+  const rows = new Map<string, CloseoutSubagentDelegation>()
+  const childById = new Map(
+    (input.childChats || [])
+      .filter((child) => typeof child.appChatId === 'string' && child.appChatId)
+      .map((child) => [child.appChatId, child] as const)
+  )
+  const affiliatedGroupIds = expandCloseoutSubagentGroupIds(
+    input.messages,
+    input.parentRunIds,
+    input.window
+  )
+
+  for (const message of input.messages) {
+    const isDelegation = isSubThreadDelegationMessage(message)
+    const isReturn = isSubThreadReturnMessage(message)
+    if (!isDelegation && !isReturn) continue
+    if (isReturn && linkedChildReturnRelation(message) === 'sideChat') continue
+    if (!messageInSubagentCloseoutScope(message, affiliatedGroupIds, input.window)) continue
+
+    const metadata = message.metadata || {}
+    const subThreadId =
+      typeof metadata.subThreadId === 'string' ? metadata.subThreadId.trim() : ''
+    if (!subThreadId) continue
+
+    const provider =
+      typeof metadata.subThreadProvider === 'string'
+        ? (metadata.subThreadProvider as ProviderId)
+        : undefined
+    if (!provider) continue
+
+    const title =
+      (typeof metadata.subThreadTitle === 'string' && metadata.subThreadTitle.trim()) ||
+      'Untitled sub-thread'
+    const parentProvider =
+      typeof metadata.parentProvider === 'string'
+        ? (metadata.parentProvider as ProviderId)
+        : undefined
+    const promptPreview =
+      (typeof metadata.delegationPromptPreview === 'string' &&
+        metadata.delegationPromptPreview.trim()) ||
+      (typeof metadata.delegationPrompt === 'string' && metadata.delegationPrompt.trim()) ||
+      undefined
+
+    const existing = rows.get(subThreadId)
+    const status = resolveCloseoutSubagentStatus({
+      isReturn,
+      outcome: metadata.subThreadOutcome,
+      child: childById.get(subThreadId),
+      fallback: existing?.status || 'created'
+    })
+
+    rows.set(subThreadId, {
+      subThreadId,
+      identitySeed: subThreadId,
+      title:
+        (existing?.title && existing.title !== 'Untitled sub-thread' ? existing.title : title) ||
+        title,
+      provider: existing?.provider || provider,
+      ...(existing?.parentProvider || parentProvider
+        ? { parentProvider: existing?.parentProvider || parentProvider }
+        : {}),
+      status: isReturn
+        ? status
+        : existing && existing.status !== 'created' && existing.status !== 'unknown'
+          ? existing.status
+          : status,
+      ...(existing?.promptPreview || promptPreview
+        ? { promptPreview: existing?.promptPreview || promptPreview }
+        : {})
+    })
+  }
+
+  return Array.from(rows.values())
+}
+
+/** Affinity set: parent run ids plus `wave-*` groups observed inside the window. */
+function expandCloseoutSubagentGroupIds(
+  messages: ChatMessage[],
+  parentRunIds: ReadonlySet<string>,
+  window?: { startedAt: string; completedAt: string }
+): Set<string> {
+  const affiliated = new Set(parentRunIds)
+  for (const message of messages) {
+    if (!isSubThreadDelegationMessage(message) && !isSubThreadReturnMessage(message)) continue
+    if (isSubThreadReturnMessage(message) && linkedChildReturnRelation(message) === 'sideChat') {
+      continue
+    }
+    const groupIds = closeoutSubagentGroupIds(message)
+    if (groupIds.length === 0) continue
+    const runBound =
+      Boolean(message.runId && parentRunIds.has(message.runId)) ||
+      groupIds.some((id) => parentRunIds.has(id))
+    const inWindow = messageInCloseoutTimeWindow(message, window)
+    if (runBound) {
+      for (const id of groupIds) affiliated.add(id)
+      continue
+    }
+    // delegate_wave stamps groupId=waveId (never the parent run id). Affiliate
+    // in-window wave-* groups so those workers still land on this closeout.
+    if (inWindow) {
+      for (const id of groupIds) {
+        if (id.startsWith('wave-')) affiliated.add(id)
+      }
+    }
+  }
+  return affiliated
+}
+
+function closeoutSubagentGroupIds(message: ChatMessage): string[] {
+  const metadata = message.metadata || {}
+  const ids: string[] = []
+  const joinGroupId =
+    metadata.joinPolicy &&
+    typeof metadata.joinPolicy === 'object' &&
+    typeof (metadata.joinPolicy as { groupId?: unknown }).groupId === 'string'
+      ? (metadata.joinPolicy as { groupId: string }).groupId.trim()
+      : ''
+  if (joinGroupId) ids.push(joinGroupId)
+  if (typeof metadata.waveId === 'string' && metadata.waveId.trim()) {
+    ids.push(metadata.waveId.trim())
+  }
+  if (typeof metadata.parallelResultWaveId === 'string' && metadata.parallelResultWaveId.trim()) {
+    ids.push(metadata.parallelResultWaveId.trim())
+  }
+  return ids
+}
+
+function messageInCloseoutTimeWindow(
+  message: ChatMessage,
+  window?: { startedAt: string; completedAt: string }
+): boolean {
+  if (!window) return false
+  const ts = Date.parse(message.timestamp)
+  const start = Date.parse(window.startedAt)
+  const end = Date.parse(window.completedAt)
+  if (!Number.isFinite(ts) || !Number.isFinite(start) || !Number.isFinite(end)) return false
+  return ts >= start && ts <= end
+}
+
+function messageInSubagentCloseoutScope(
+  message: ChatMessage,
+  affiliatedGroupIds: ReadonlySet<string>,
+  window?: { startedAt: string; completedAt: string }
+): boolean {
+  if (message.runId && affiliatedGroupIds.has(message.runId)) return true
+  const groupIds = closeoutSubagentGroupIds(message)
+  if (groupIds.length > 0) {
+    return groupIds.some((id) => affiliatedGroupIds.has(id))
+  }
+  // Cards without join/wave stamps fall back to the run/round time window.
+  return messageInCloseoutTimeWindow(message, window)
+}
+
+function resolveCloseoutSubagentStatus(input: {
+  isReturn: boolean
+  outcome: unknown
+  child?: ChatRecord
+  fallback: CloseoutSubagentDelegationStatus
+}): CloseoutSubagentDelegationStatus {
+  if (input.child) {
+    const fromChild = statusFromChildChat(input.child)
+    if (fromChild) return fromChild
+  }
+  if (input.isReturn) {
+    const outcome =
+      typeof input.outcome === 'string' ? input.outcome.trim().toLowerCase() : ''
+    if (outcome === 'failed' || outcome === 'error') return 'failed'
+    if (outcome === 'cancelled' || outcome === 'canceled') return 'cancelled'
+    if (outcome === 'success' || outcome === 'completed' || outcome === 'done') return 'returned'
+    return 'returned'
+  }
+  return input.fallback
+}
+
+function statusFromChildChat(child: ChatRecord): CloseoutSubagentDelegationStatus | null {
+  if (child.delegationContext?.dispatchError) return 'failed'
+  if (child.delegationContext?.resultReturnedAt) return 'returned'
+  const lastRun = child.runs?.[child.runs.length - 1]
+  if (!lastRun) return 'created'
+  if (
+    lastRun.status === 'running' ||
+    lastRun.status === 'queued' ||
+    lastRun.status === 'starting' ||
+    lastRun.status === 'active' ||
+    lastRun.status === 'paused'
+  ) {
+    return 'running'
+  }
+  if (lastRun.status === 'failed' || lastRun.status === 'error') return 'failed'
+  if (lastRun.status === 'cancelled' || lastRun.status === 'canceled') return 'cancelled'
+  if (lastRun.status === 'success' || lastRun.status === 'completed') return 'completed'
+  return null
 }
 
 /** Visible commit rows in the Task-complete epic stack (metadata keeps the rest). */

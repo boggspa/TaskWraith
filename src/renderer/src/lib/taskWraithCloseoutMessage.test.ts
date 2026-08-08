@@ -1570,4 +1570,320 @@ Next action:
       'Two participants compared approaches and converged on the simpler fix.'
     )
   })
+
+  it('tombstones scoped sub-thread delegations onto run closeout metadata (not prose)', () => {
+    const run: ChatRun = {
+      runId: 'run-delegate-1',
+      provider: 'claude',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:01:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        provider: 'claude',
+        messages: [
+          {
+            ...message('u1', 'user', 'Spin workers.'),
+            runId: run.runId,
+            timestamp: '2026-08-08T12:00:01.000Z'
+          },
+          {
+            ...message('del-a', 'system', '↪ Delegated to Codex sub-thread (Worker A).', {
+              kind: 'subThreadDelegation',
+              subThreadId: 'child-a',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Worker A',
+              parentProvider: 'claude',
+              delegationPromptPreview: 'Review the diff.',
+              returnResultToParent: true,
+              joinPolicy: { groupId: run.runId }
+            }),
+            timestamp: '2026-08-08T12:00:10.000Z'
+          },
+          {
+            ...message(
+              'ret-a',
+              'tool',
+              '↩ Result from Codex sub-thread (Worker A):\n\nLooks clean.',
+              {
+                kind: 'subThreadReturn',
+                subThreadId: 'child-a',
+                subThreadProvider: 'codex',
+                subThreadTitle: 'Worker A',
+                subThreadOutcome: 'success',
+                parallelResultWaveId: run.runId
+              }
+            ),
+            timestamp: '2026-08-08T12:00:40.000Z'
+          },
+          {
+            ...message('del-noise', 'system', '↪ Other run delegation.', {
+              kind: 'subThreadDelegation',
+              subThreadId: 'child-other',
+              subThreadProvider: 'grok',
+              subThreadTitle: 'Other',
+              joinPolicy: { groupId: 'run-other' }
+            }),
+            timestamp: '2026-08-08T12:00:20.000Z'
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!
+    })
+
+    expect(closeout.metadata?.closeoutSubagentDelegations).toEqual([
+      expect.objectContaining({
+        subThreadId: 'child-a',
+        provider: 'codex',
+        title: 'Worker A',
+        status: 'returned',
+        parentProvider: 'claude'
+      })
+    ])
+    expect(closeout.metadata?.closeoutSubagentDelegations).toHaveLength(1)
+    expect(closeout.content).not.toContain('Worker A')
+    expect(closeout.content).not.toContain('Sub-threads')
+    expect(closeout.content).not.toContain('child-a')
+  })
+
+  it('omits closeoutSubagentDelegations when the run has no sub-thread cards', () => {
+    const run: ChatRun = {
+      runId: 'run-empty-delegations',
+      provider: 'codex',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:00:10.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [{ ...message('a1', 'assistant', 'Done.'), runId: run.runId }],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!
+    })
+    expect(closeout.metadata?.closeoutSubagentDelegations).toBeUndefined()
+  })
+
+  it('dedupes delegation + return for the same subThreadId into one row', () => {
+    const run: ChatRun = {
+      runId: 'run-dedupe',
+      provider: 'claude',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:01:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('del', 'system', '↪ Delegated.', {
+              kind: 'subThreadDelegation',
+              subThreadId: 'same-child',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Same child',
+              joinPolicy: { groupId: run.runId }
+            }),
+            timestamp: '2026-08-08T12:00:05.000Z'
+          },
+          {
+            ...message('ret', 'tool', '↩ Result', {
+              kind: 'subThreadReturn',
+              subThreadId: 'same-child',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Same child',
+              subThreadOutcome: 'failed',
+              parallelResultWaveId: run.runId
+            }),
+            timestamp: '2026-08-08T12:00:50.000Z'
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!
+    })
+    expect(closeout.metadata?.closeoutSubagentDelegations).toHaveLength(1)
+    expect(closeout.metadata?.closeoutSubagentDelegations?.[0]).toMatchObject({
+      subThreadId: 'same-child',
+      status: 'failed'
+    })
+  })
+
+  it('scopes round closeout sub-thread rows to round run join groups', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-delegations',
+      status: 'completed',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:02:00.000Z',
+      participants: [
+        { participantId: 'p1', status: 'answered', order: 1, runId: 'round-run-1' }
+      ]
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [
+            {
+              id: 'p1',
+              provider: 'claude',
+              model: 'claude-sonnet-4-7',
+              role: 'Worker',
+              order: 1,
+              enabled: true
+            }
+          ]
+        } as unknown as ChatRecord['ensemble'],
+        messages: [
+          {
+            ...message('del-in', 'system', '↪ In round.', {
+              kind: 'subThreadDelegation',
+              subThreadId: 'round-child',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Round child',
+              joinPolicy: { groupId: 'round-run-1' }
+            }),
+            timestamp: '2026-08-08T12:00:30.000Z'
+          },
+          {
+            ...message('del-out', 'system', '↪ Other round.', {
+              kind: 'subThreadDelegation',
+              subThreadId: 'other-child',
+              subThreadProvider: 'grok',
+              subThreadTitle: 'Other child',
+              joinPolicy: { groupId: 'other-run' }
+            }),
+            timestamp: '2026-08-08T12:00:40.000Z'
+          }
+        ],
+        runs: [
+          {
+            runId: 'round-run-1',
+            provider: 'claude',
+            startedAt: round.startedAt,
+            endedAt: round.endedAt,
+            status: 'success',
+            ensembleRoundId: round.roundId,
+            ensembleParticipantId: 'p1'
+          }
+        ]
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+    expect(closeout.metadata?.closeoutSubagentDelegations).toEqual([
+      expect.objectContaining({ subThreadId: 'round-child', title: 'Round child' })
+    ])
+    expect(
+      closeout.metadata?.closeoutSubagentDelegations?.some((row) => row.subThreadId === 'other-child')
+    ).toBe(false)
+  })
+
+  it('excludes side-chat returns from the subagent closeout table', () => {
+    const run: ChatRun = {
+      runId: 'run-sidechat',
+      provider: 'claude',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:01:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('side', 'tool', '↩ Result from side chat', {
+              kind: 'subThreadReturn',
+              linkedChildRelation: 'sideChat',
+              subThreadId: 'side-1',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Side',
+              parallelResultWaveId: run.runId
+            }),
+            timestamp: '2026-08-08T12:00:30.000Z'
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!
+    })
+    expect(closeout.metadata?.closeoutSubagentDelegations).toBeUndefined()
+  })
+
+  it('includes delegate_wave cards whose groupId is a wave-* id (not the parent run id)', () => {
+    const run: ChatRun = {
+      runId: 'run-wave-parent',
+      provider: 'claude',
+      startedAt: '2026-08-08T12:00:00.000Z',
+      endedAt: '2026-08-08T12:02:00.000Z',
+      status: 'success'
+    }
+    const waveId = 'wave-parent-chat-99'
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('del-wave', 'system', '↪ Wave worker.', {
+              kind: 'subThreadDelegation',
+              subThreadId: 'wave-child',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Wave child',
+              waveId,
+              joinPolicy: { groupId: waveId }
+            }),
+            timestamp: '2026-08-08T12:00:30.000Z'
+          },
+          {
+            ...message('ret-wave', 'tool', '↩ Result', {
+              kind: 'subThreadReturn',
+              subThreadId: 'wave-child',
+              subThreadProvider: 'codex',
+              subThreadTitle: 'Wave child',
+              subThreadOutcome: 'success',
+              parallelResultWaveId: waveId
+            }),
+            timestamp: '2026-08-08T12:01:10.000Z'
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!
+    })
+    expect(closeout.metadata?.closeoutSubagentDelegations).toEqual([
+      expect.objectContaining({
+        subThreadId: 'wave-child',
+        status: 'returned',
+        title: 'Wave child'
+      })
+    ])
+  })
+
+  it('preserves closeoutSubagentDelegations on upsert when a rebuild harvests none', () => {
+    const existing = message('taskwraith-closeout-run-run-1', 'system', 'Worked for 1s.', {
+      kind: TASKWRAITH_CLOSEOUT_KIND,
+      closeoutScope: 'run',
+      closeoutSubagentDelegations: [
+        {
+          subThreadId: 'kept',
+          identitySeed: 'kept',
+          title: 'Kept',
+          provider: 'codex',
+          status: 'returned'
+        }
+      ]
+    })
+    const next = message('taskwraith-closeout-run-run-1', 'system', 'Worked for 1s.', {
+      kind: TASKWRAITH_CLOSEOUT_KIND,
+      closeoutScope: 'run'
+    })
+    const updated = upsertTaskWraithCloseoutMessage([existing], next, { sourceRunId: 'run-1' })
+    expect(updated[0].metadata?.closeoutSubagentDelegations).toEqual([
+      expect.objectContaining({ subThreadId: 'kept' })
+    ])
+  })
 })

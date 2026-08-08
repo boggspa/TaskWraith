@@ -75,6 +75,53 @@ describe('RunCompleteEpicStack', () => {
     expect(html).not.toContain('run-complete-epic-status')
   })
 
+  it('renders Sub-threads with agent identity and route status', () => {
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack
+        subagentDelegations={[
+          {
+            subThreadId: 'child-a',
+            identitySeed: 'child-a',
+            title: 'Worker A',
+            provider: 'codex',
+            parentProvider: 'claude',
+            status: 'returned'
+          },
+          {
+            subThreadId: 'child-b',
+            identitySeed: 'child-b',
+            title: 'Worker B',
+            provider: 'claude',
+            status: 'created'
+          }
+        ]}
+      />
+    )
+    expect(html).toContain('aria-label="Sub-threads"')
+    expect(html).toContain('Sub-threads')
+    expect(html).toContain('2 sub-threads')
+    expect(html).toContain('Worker A')
+    expect(html).toContain('Claude → Codex')
+    expect(html).toContain('status-answered')
+    expect(html).toContain('Returned')
+    expect(html).toContain('run-complete-epic-subagent')
+  })
+
+  it('caps visible sub-threads and notes the overflow', () => {
+    const rows = Array.from({ length: 10 }, (_, index) => ({
+      subThreadId: `child-${index}`,
+      identitySeed: `child-${index}`,
+      title: `Worker ${index + 1}`,
+      provider: 'codex' as const,
+      status: 'created' as const
+    }))
+    const html = renderToStaticMarkup(<RunCompleteEpicStack subagentDelegations={rows} />)
+    expect(html).toContain('Worker 1')
+    expect(html).toContain('Worker 8')
+    expect(html).not.toContain('Worker 9')
+    expect(html).toContain('2 more sub-threads not shown.')
+  })
+
   it('caps visible commits and notes the overflow', () => {
     const commits = Array.from({ length: 10 }, (_, index) => ({
       hash: `${(index + 1).toString(16).padStart(9, '0')}abcdef`,

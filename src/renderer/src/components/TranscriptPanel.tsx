@@ -50,7 +50,8 @@ import {
 import type {
   CloseoutCommit,
   CloseoutFileChange,
-  CloseoutParticipantTable
+  CloseoutParticipantTable,
+  CloseoutSubagentDelegation
 } from '../lib/taskWraithCloseoutMessage'
 import { CloseoutFileChangesSection } from './CloseoutFileChangesSection'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
@@ -2589,14 +2590,18 @@ export const TranscriptPanel = memo(
             : null) as CloseoutCommit[] | null,
           fileChanges: (Array.isArray(message.metadata.closeoutFileChanges)
             ? message.metadata.closeoutFileChanges
-            : null) as CloseoutFileChange[] | null
+            : null) as CloseoutFileChange[] | null,
+          subagentDelegations: (Array.isArray(message.metadata.closeoutSubagentDelegations)
+            ? message.metadata.closeoutSubagentDelegations
+            : null) as CloseoutSubagentDelegation[] | null
         }
       }
       return {
         messageId: null as string | null,
         participantTable: null,
         commits: null,
-        fileChanges: null
+        fileChanges: null,
+        subagentDelegations: null
       }
     }, [resolvedMessages])
     const latestCloseoutMessageId = runCompleteCloseoutTables.messageId
@@ -2605,19 +2610,26 @@ export const TranscriptPanel = memo(
     )
     const latestCloseoutHasCommits = Boolean(runCompleteCloseoutTables.commits?.length)
     const latestCloseoutHasFileChanges = Boolean(runCompleteCloseoutTables.fileChanges?.length)
+    const latestCloseoutHasSubagents = Boolean(
+      runCompleteCloseoutTables.subagentDelegations?.length
+    )
     // Any epic tombstone on the latest close-out means that message owns the
-    // Task Complete outer card (Participants / File changes / Commits nested
-    // inside). Suppress the sibling footer card in that case.
+    // Task Complete outer card (Participants / Sub-threads / File changes /
+    // Commits nested inside). Suppress the sibling footer card in that case.
     const latestCloseoutHostsTaskComplete =
       latestCloseoutHasParticipants ||
       latestCloseoutHasCommits ||
-      latestCloseoutHasFileChanges
+      latestCloseoutHasFileChanges ||
+      latestCloseoutHasSubagents
     const footerParticipantTable = latestCloseoutHostsTaskComplete
       ? null
       : runCompleteCloseoutTables.participantTable
     const footerCommits = latestCloseoutHostsTaskComplete
       ? null
       : runCompleteCloseoutTables.commits
+    const footerSubagentDelegations = latestCloseoutHostsTaskComplete
+      ? null
+      : runCompleteCloseoutTables.subagentDelegations
     const footerShowsLiveFileChanges =
       !latestCloseoutHostsTaskComplete &&
       (!isGlobal || displayFileChangeSummaries.length > 0) &&
@@ -2626,6 +2638,7 @@ export const TranscriptPanel = memo(
     const showFooterRunCompleteEpicStack =
       Boolean(footerParticipantTable?.rows?.length) ||
       Boolean(footerCommits?.length) ||
+      Boolean(footerSubagentDelegations?.length) ||
       footerShowsLiveFileChanges
     // Live Workbench file rows fold into the latest close-out Task Complete
     // card when that close-out has epic tables but no file tombstone.
@@ -5311,10 +5324,16 @@ export const TranscriptPanel = memo(
                         const fileChanges = (Array.isArray(msg.metadata?.closeoutFileChanges)
                           ? msg.metadata.closeoutFileChanges
                           : null) as CloseoutFileChange[] | null
+                        const subagentDelegations = (Array.isArray(
+                          msg.metadata?.closeoutSubagentDelegations
+                        )
+                          ? msg.metadata.closeoutSubagentDelegations
+                          : null) as CloseoutSubagentDelegation[] | null
                         const hasEpic =
                           Boolean(participantTable?.rows?.length) ||
                           Boolean(commits?.length) ||
-                          Boolean(fileChanges?.length)
+                          Boolean(fileChanges?.length) ||
+                          Boolean(subagentDelegations?.length)
                         if (!hasEpic) return null
                         const isLatestCloseout = msg.id === latestCloseoutMessageId
                         const closeoutDurationMs =
@@ -5437,6 +5456,7 @@ export const TranscriptPanel = memo(
                             </div>
                             <RunCompleteEpicStack
                               participantTable={participantTable}
+                              subagentDelegations={subagentDelegations}
                               commits={commits}
                               fileChanges={fileChangesNode}
                             />
@@ -5778,6 +5798,7 @@ export const TranscriptPanel = memo(
               {showFooterRunCompleteEpicStack && (
               <RunCompleteEpicStack
                 participantTable={footerParticipantTable}
+                subagentDelegations={footerSubagentDelegations}
                 commits={footerCommits}
                 fileChanges={
                   footerShowsLiveFileChanges ? (

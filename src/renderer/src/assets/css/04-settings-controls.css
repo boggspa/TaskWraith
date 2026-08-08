@@ -4697,6 +4697,31 @@ input:disabled, select:disabled, textarea:disabled {
   overflow: hidden;
 }
 
+.run-complete-epic-subagent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.run-complete-epic-subagent-icon {
+  flex: 0 0 auto;
+}
+
+.run-complete-epic-subagent-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.run-complete-epic-subagent-title {
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .run-complete-epic-seat .seat-change-message.is-inline,
 .run-complete-epic-seat .seat-change-message.is-inline .seat-change-row {
   max-width: 100%;

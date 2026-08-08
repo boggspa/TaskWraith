@@ -3455,6 +3455,26 @@ export interface ChatMessage {
       deletions?: number
       owners?: DiffFileSummaryOwner[]
     }>
+    /**
+     * Slim Sub-threads / Agent Invocation rows for the Task-complete epic stack.
+     * Tombstoned at close-out time from durable parent delegation/return cards.
+     */
+    closeoutSubagentDelegations?: Array<{
+      subThreadId: string
+      identitySeed: string
+      title: string
+      provider: ProviderId
+      parentProvider?: ProviderId
+      status:
+        | 'created'
+        | 'running'
+        | 'completed'
+        | 'failed'
+        | 'cancelled'
+        | 'returned'
+        | 'unknown'
+      promptPreview?: string
+    }>
     /** User pin timestamp (ms since epoch). Missing means not pinned. */
     pinnedAt?: number
     /** User thumbs feedback on an ASSISTANT message. This field is the render

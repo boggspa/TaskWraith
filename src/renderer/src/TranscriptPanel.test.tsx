@@ -581,6 +581,43 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('Awaiting your next prompt.')
   })
 
+  it('hosts Task Complete from Sub-threads tombstone alone', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'closeout-subagents',
+              role: 'system',
+              content: 'Worked for 12s.\n\nClose-out:\n\nDone.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutSubagentDelegations: [
+                  {
+                    subThreadId: 'child-a',
+                    identitySeed: 'child-a',
+                    title: 'Worker A',
+                    provider: 'codex',
+                    parentProvider: 'claude',
+                    status: 'returned'
+                  }
+                ]
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('run-complete-card')
+    expect(html).toContain('Sub-threads')
+    expect(html).toContain('Worker A')
+    expect(html).toContain('Claude → Codex')
+    expect((html.match(/run-complete-card/g) || []).length).toBe(1)
+  })
+
   it('folds live file changes into the closeout Task Complete when no file tombstone', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
