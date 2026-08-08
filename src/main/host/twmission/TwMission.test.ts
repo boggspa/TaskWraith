@@ -119,6 +119,53 @@ describe('twmission scaffold', () => {
     expect(imported.error).toMatch(/size ceiling/)
   })
 
+  it('round-trips redaction notes after filtering empty strings identically', () => {
+    const exported = exportTwMissionBundle({
+      snapshot: minimalSnapshot(),
+      cursorRange: { generation: 1, fromCursor: 0, toCursor: 1 },
+      exportedAt: '2026-08-08T05:00:00.000Z',
+      redactionNotes: ['kept', '', 'also-kept']
+    })
+    expect(exported.ok).toBe(true)
+    if (!exported.ok) return
+    expect(exported.bundle.manifest.redaction.notes).toEqual(['kept', 'also-kept'])
+    const imported = importTwMissionBundleBytes(exported.bytes)
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    expect(imported.replay.manifest.integrityDigest).toBe(exported.bundle.manifest.integrityDigest)
+    expect(imported.replay.manifest.redaction.notes).toEqual(['kept', 'also-kept'])
+  })
+
+  it('rejects unsupported schemaVersion / protocolVersion / projectionVersion', () => {
+    const exported = exportTwMissionBundle({
+      snapshot: minimalSnapshot(),
+      cursorRange: { generation: 1, fromCursor: 0, toCursor: 0 },
+      exportedAt: '2026-08-08T06:00:00.000Z'
+    })
+    expect(exported.ok).toBe(true)
+    if (!exported.ok) return
+    const raw = JSON.parse(Buffer.from(exported.bytes).toString('utf8')) as {
+      manifest: Record<string, unknown>
+      snapshot: unknown
+    }
+    raw.manifest.schemaVersion = 999
+    const badSchema = importTwMissionBundleBytes(new TextEncoder().encode(JSON.stringify(raw)))
+    expect(badSchema.ok).toBe(false)
+    if (!badSchema.ok) expect(badSchema.error).toMatch(/schemaVersion/)
+
+    raw.manifest.schemaVersion = 1
+    raw.manifest.protocolVersion = 999
+    const badProto = importTwMissionBundleBytes(new TextEncoder().encode(JSON.stringify(raw)))
+    expect(badProto.ok).toBe(false)
+    if (!badProto.ok) expect(badProto.error).toMatch(/protocolVersion/)
+
+    raw.manifest.protocolVersion = HOST_PROTOCOL_VERSION
+    raw.manifest.projectionVersion = 999
+    const badProj = importTwMissionBundleBytes(new TextEncoder().encode(JSON.stringify(raw)))
+    expect(badProj.ok).toBe(false)
+    if (!badProj.ok) expect(badProj.error).toMatch(/projectionVersion/)
+  })
+
   it('never claims live Host mutation — import returns detached replay only', () => {
     const exported = exportTwMissionBundle({
       snapshot: minimalSnapshot(),

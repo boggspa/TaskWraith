@@ -73,13 +73,12 @@ function parseManifest(
     redaction: {
       transcriptsOmitted: true,
       artifactBodiesOmitted: true,
-      ...(Array.isArray(raw.redaction.notes)
-        ? {
-            notes: raw.redaction.notes.filter(
-              (n): n is string => typeof n === 'string' && n.length > 0
-            )
-          }
-        : {})
+      ...(() => {
+        const notes = Array.isArray(raw.redaction.notes)
+          ? raw.redaction.notes.filter((n): n is string => typeof n === 'string' && n.length > 0)
+          : []
+        return notes.length > 0 ? { notes } : {}
+      })()
     },
     integrityDigest: raw.integrityDigest
   }

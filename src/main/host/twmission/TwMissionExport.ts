@@ -71,9 +71,12 @@ export function exportTwMissionBundle(input: TwMissionExportInput): TwMissionExp
     redaction: {
       transcriptsOmitted: true as const,
       artifactBodiesOmitted: true as const,
-      ...(input.redactionNotes && input.redactionNotes.length > 0
-        ? { notes: [...input.redactionNotes] }
-        : {})
+      ...(() => {
+        const notes = (input.redactionNotes || []).filter(
+          (n): n is string => typeof n === 'string' && n.length > 0
+        )
+        return notes.length > 0 ? { notes } : {}
+      })()
     },
     snapshot: decoded.value
   }
