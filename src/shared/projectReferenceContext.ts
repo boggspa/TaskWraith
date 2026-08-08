@@ -16,10 +16,20 @@ export interface ProjectReferenceContextSelection {
   referenceIds: string[]
 }
 
-export type ProjectReferenceContextAccess =
-  | 'workspace'
-  | 'external-grant'
-  | 'catalogue-only'
+export type ProjectReferenceContextAccess = 'workspace' | 'external-grant' | 'catalogue-only'
+
+/**
+ * Consentful extract metadata attached at Use-next resolve time.
+ * Bodies stay out of this posture payload — only digests bind the disclosure.
+ */
+export interface ResolvedProjectReferenceContextExtract {
+  extractId: string
+  status: 'ready'
+  charCount: number
+  truncated: boolean
+  /** sha256 hex of the durable extract text (not the injected prompt body). */
+  contentDigest: string
+}
 
 export interface ResolvedProjectReferenceContextItem {
   id: string
@@ -29,8 +39,11 @@ export interface ResolvedProjectReferenceContextItem {
   /**
    * Main's run-time access classification. `catalogue-only` is label-only:
    * it grants no filesystem/network access and produces no content snapshot.
+   * A ready extract never widens this into a live fetch/path grant.
    */
   access: ProjectReferenceContextAccess
+  /** Present only when an active ready extract exists for this reference. */
+  extract?: ResolvedProjectReferenceContextExtract
 }
 
 /** Main-resolved, posture-signed context that is safe to dispatch. */
@@ -54,6 +67,40 @@ function isProjectReferenceKind(value: unknown): value is ProjectReferenceKind {
 
 function isContextAccess(value: unknown): value is ProjectReferenceContextAccess {
   return value === 'workspace' || value === 'external-grant' || value === 'catalogue-only'
+}
+
+function isSha256Hex(value: string): boolean {
+  return /^[0-9a-f]{64}$/.test(value)
+}
+
+function parseResolvedExtract(value: unknown): ResolvedProjectReferenceContextExtract | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Record<string, unknown>
+  const extractId = boundedString(input.extractId, MAX_PROJECT_REFERENCE_CONTEXT_ID_LENGTH)
+  const contentDigest = boundedString(input.contentDigest, 64)
+  const charCount =
+    typeof input.charCount === 'number' &&
+    Number.isSafeInteger(input.charCount) &&
+    input.charCount >= 0
+      ? input.charCount
+      : null
+  if (
+    !extractId ||
+    input.status !== 'ready' ||
+    charCount === null ||
+    typeof input.truncated !== 'boolean' ||
+    !contentDigest ||
+    !isSha256Hex(contentDigest.toLowerCase())
+  ) {
+    return null
+  }
+  return {
+    extractId,
+    status: 'ready',
+    charCount,
+    truncated: input.truncated,
+    contentDigest: contentDigest.toLowerCase()
+  }
 }
 
 /** Strict enough for the main trust boundary, deterministic enough to queue. */
@@ -125,8 +172,21 @@ export function parseResolvedProjectReferenceContext(
     if ((item.kind === 'url' || item.kind === 'connector') && item.access !== 'catalogue-only') {
       return null
     }
+    let extract: ResolvedProjectReferenceContextExtract | undefined
+    if ('extract' in item) {
+      const parsedExtract = parseResolvedExtract(item.extract)
+      if (!parsedExtract) return null
+      extract = parsedExtract
+    }
     seen.add(id)
-    references.push({ id, kind: item.kind, title, locator, access: item.access })
+    references.push({
+      id,
+      kind: item.kind,
+      title,
+      locator,
+      access: item.access,
+      ...(extract ? { extract } : {})
+    })
   }
   return { schemaVersion: 1, projectId, projectName, references }
 }
@@ -144,24 +204,55 @@ export function serializeResolvedProjectReferenceContext(
       kind: reference.kind,
       title: reference.title,
       locator: reference.locator,
-      access: reference.access
+      access: reference.access,
+      ...(reference.extract
+        ? {
+            extract: {
+              extractId: reference.extract.extractId,
+              status: reference.extract.status,
+              charCount: reference.extract.charCount,
+              truncated: reference.extract.truncated,
+              contentDigest: reference.extract.contentDigest
+            }
+          }
+        : {})
     }))
   })
 }
 
 /** Locator-free projection suitable for transcript and run-event metadata. */
-export function projectReferenceContextDisclosure(
-  value: ResolvedProjectReferenceContext
-): {
+export function projectReferenceContextDisclosure(value: ResolvedProjectReferenceContext): {
   schemaVersion: 1
   projectId: string
   projectName: string
-  references: Array<Pick<ResolvedProjectReferenceContextItem, 'id' | 'kind' | 'title' | 'access'>>
+  references: Array<
+    Pick<ResolvedProjectReferenceContextItem, 'id' | 'kind' | 'title' | 'access'> & {
+      extract?: Pick<
+        ResolvedProjectReferenceContextExtract,
+        'extractId' | 'status' | 'charCount' | 'truncated'
+      >
+    }
+  >
 } {
   return {
     schemaVersion: 1,
     projectId: value.projectId,
     projectName: value.projectName,
-    references: value.references.map(({ id, kind, title, access }) => ({ id, kind, title, access }))
+    references: value.references.map(({ id, kind, title, access, extract }) => ({
+      id,
+      kind,
+      title,
+      access,
+      ...(extract
+        ? {
+            extract: {
+              extractId: extract.extractId,
+              status: extract.status,
+              charCount: extract.charCount,
+              truncated: extract.truncated
+            }
+          }
+        : {})
+    }))
   }
 }

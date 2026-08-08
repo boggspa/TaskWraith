@@ -34,7 +34,11 @@ describe('Project reference context codecs', () => {
       })
     ).toBeNull()
     expect(
-      parseProjectReferenceContextSelection({ schemaVersion: 2, projectId: 'p', referenceIds: ['r'] })
+      parseProjectReferenceContextSelection({
+        schemaVersion: 2,
+        projectId: 'p',
+        referenceIds: ['r']
+      })
     ).toBeNull()
   })
 
@@ -63,9 +67,7 @@ describe('Project reference context codecs', () => {
 
     expect(resolved).not.toBeNull()
     expect(serializeResolvedProjectReferenceContext(resolved!)).toContain('/workspace/Plan.docx')
-    expect(projectReferenceContextDisclosure(resolved!)).not.toHaveProperty(
-      'references.0.locator'
-    )
+    expect(projectReferenceContextDisclosure(resolved!)).not.toHaveProperty('references.0.locator')
     expect(JSON.stringify(projectReferenceContextDisclosure(resolved!))).not.toContain(
       '/workspace/Plan.docx'
     )
@@ -88,5 +90,41 @@ describe('Project reference context codecs', () => {
         ]
       })
     ).toBeNull()
+  })
+
+  it('round-trips ready extract metadata with content digests (never full text)', () => {
+    const digest = 'a'.repeat(64)
+    const resolved = parseResolvedProjectReferenceContext({
+      schemaVersion: 1,
+      projectId: 'project-a',
+      projectName: 'Alpha',
+      references: [
+        {
+          id: 'ref-url',
+          kind: 'url',
+          title: 'Brief',
+          locator: 'https://example.com/brief',
+          access: 'catalogue-only',
+          extract: {
+            extractId: 'extract-1',
+            status: 'ready',
+            charCount: 12,
+            truncated: true,
+            contentDigest: digest
+          }
+        }
+      ]
+    })
+    expect(resolved?.references[0].extract).toEqual({
+      extractId: 'extract-1',
+      status: 'ready',
+      charCount: 12,
+      truncated: true,
+      contentDigest: digest
+    })
+    const serialized = serializeResolvedProjectReferenceContext(resolved!)
+    expect(serialized).toContain(digest)
+    expect(serialized).toContain('extract-1')
+    expect(serialized).not.toContain('full extract body')
   })
 })
