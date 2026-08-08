@@ -2700,6 +2700,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       key={activeWorkProjectId}
                       projectId={activeWorkProjectId}
                       chatId={currentChat?.appChatId}
+                      workspacePath={currentWorkspace?.path}
                       showCloseButton={!isWorkRouteReferencesPinned}
                       onClose={() => closeRightDockPanel('references')}
                       resolveOfficeTarget={(locator) => {
