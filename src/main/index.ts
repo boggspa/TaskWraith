@@ -675,6 +675,7 @@ import { scheduledSealComposedFacts } from './scheduling/ScheduledOccurrenceSeal
 import { createCursorScheduledOccurrenceSealService } from './scheduling/ScheduledOccurrenceSealBootstrap'
 import type { ScheduledOccurrenceSealService } from './scheduling/ScheduledOccurrenceSealService'
 import type { ScheduledOccurrenceTerminalStatus } from './ScheduledOccurrenceMutationSemantics'
+import { isTerminalScheduledTaskStatus } from './ScheduledOccurrenceMutationSemantics'
 import { assertPinnedWorkspaceTarget } from './WorkspaceTargetAuthority'
 import {
   WorkflowLoopEngine,
@@ -875,6 +876,10 @@ import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { createHostProductionProviderAdmission } from './host/HostProductionProviderAdmission'
 import { createHostProductionApprovalShadow } from './host/HostProductionApprovalShadow'
 import { createHostProductionQuestionShadow } from './host/HostProductionQuestionShadow'
+import { createHostProductionRunShadow } from './host/HostProductionRunShadow'
+import { createHostProductionMissionShadow } from './host/HostProductionMissionShadow'
+import { createHostProductionRoundShadow } from './host/HostProductionRoundShadow'
+import { createHostProductionScheduleShadow } from './host/HostProductionScheduleShadow'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -47663,6 +47668,91 @@ if (isGeminiMcpBridgeProcess) {
               createdAt: r.createdAt,
               ...(r.threadId ? { threadId: r.threadId } : {})
             }))
+        }),
+        // Track3 Mixed Wave B — family shadows. Lazy arrows where sources may
+        // sit after this call in the whenReady block; runManager/AppStore are
+        // module-scope and safe either way. Capabilities stay withheld until
+        // Cap deliberately opens them.
+        runs: createHostProductionRunShadow({
+          listActive: () =>
+            RUN_MANAGER_PROVIDERS.flatMap((provider) =>
+              runManager.getActiveByProvider(provider).map((session) => ({
+                runId: session.runId,
+                providerId: session.provider,
+                status: session.status,
+                startedAt: session.startedAt,
+                ...(session.appChatId ? { appChatId: session.appChatId } : {})
+              }))
+            )
+        }),
+        missions: createHostProductionMissionShadow({
+          listGoals: () =>
+            AppStore.getChatList().flatMap((chat) => {
+              const goal = chat.activeGoal
+              if (!goal) return []
+              const activeRoundId = chat.ensemble?.activeRound?.roundId
+              return [
+                {
+                  id: goal.id,
+                  objective: goal.objective,
+                  status: goal.status,
+                  updatedAt: goal.updatedAt,
+                  threadId: chat.id,
+                  ...(activeRoundId ? { activeRoundId } : {})
+                }
+              ]
+            })
+        }),
+        rounds: createHostProductionRoundShadow({
+          listRounds: () =>
+            AppStore.getChatList().flatMap((chat) => {
+              const round = chat.ensemble?.activeRound
+              if (!round) return []
+              const participants = Array.isArray(round.participants) ? round.participants : []
+              const participantIds = participants
+                .map((p) => p.participantId)
+                .filter((id): id is string => typeof id === 'string' && id.length > 0)
+              const providerRunIds = participants
+                .map((p) => p.runId)
+                .filter((id): id is string => typeof id === 'string' && id.length > 0)
+              const startedAt = Date.parse(round.startedAt)
+              const endedAt = round.endedAt ? Date.parse(round.endedAt) : NaN
+              return [
+                {
+                  roundId: round.roundId,
+                  threadId: chat.id,
+                  status: round.status,
+                  live: isEnsembleRoundDispatchLive(round),
+                  participantIds,
+                  providerRunIds,
+                  ...(Number.isFinite(startedAt) && startedAt >= 0
+                    ? { startedAt: Math.floor(startedAt) }
+                    : {}),
+                  ...(Number.isFinite(endedAt) && endedAt >= 0
+                    ? { endedAt: Math.floor(endedAt) }
+                    : {})
+                }
+              ]
+            })
+        }),
+        schedules: createHostProductionScheduleShadow({
+          listSchedules: () =>
+            AppStore.getScheduledTasks().map((task) => {
+              // Privacy: never launder prompt/displayPrompt onto Host title.
+              // Cap has not defined a safe human label yet — use the id.
+              const nextFireAt = Date.parse(task.runAt)
+              return {
+                scheduleId: task.id,
+                title: task.id,
+                // ScheduledTask has no enabled boolean — terminal statuses
+                // (completed/failed/cancelled) are not armed for Host.
+                enabled: !isTerminalScheduledTaskStatus(task.status),
+                threadId: task.chatId,
+                ...(Number.isFinite(nextFireAt) && nextFireAt >= 0
+                  ? { nextFireAt: Math.floor(nextFireAt) }
+                  : {})
+              }
+            })
         })
       })
     } catch (error) {
