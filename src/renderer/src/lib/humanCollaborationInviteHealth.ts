@@ -81,6 +81,17 @@ export function classifyHumanCollaborationRelayUrls(
   }
 }
 
+export function sameStringSetMembers(
+  left: ReadonlySet<string>,
+  right: ReadonlySet<string>
+): boolean {
+  if (left.size !== right.size) return false
+  for (const value of left) {
+    if (!right.has(value)) return false
+  }
+  return true
+}
+
 function classifyRelayUrl(url: string): 'loopback' | 'lan' | 'remote' {
   try {
     const parsed = new URL(url)

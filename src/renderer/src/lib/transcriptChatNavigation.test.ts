@@ -47,6 +47,20 @@ describe('transcript chat navigation integration', () => {
     expect(emptyPane).not.toContain('openEmbedded')
   })
 
+  it('adopts the single visible chat only when entering multiview', () => {
+    const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const layoutHandler = source.slice(
+      source.indexOf('const handleSelectMultiviewLayout ='),
+      source.indexOf('const renderMultiviewPaneCell =')
+    )
+
+    expect(layoutHandler).toContain(
+      'const seedChatId = multiview.isMultiview ? null : currentChatIdRef.current'
+    )
+    expect(layoutHandler).toContain('multiview.setLayout(layout, seedChatId)')
+    expect(layoutHandler).not.toContain('multiview.setLayout(layout)')
+  })
+
   it('keeps external restore ownership until the chat-switch effect observes it', () => {
     const source = readFileSync(
       new URL('../app/state/useTranscriptScrollState.ts', import.meta.url),

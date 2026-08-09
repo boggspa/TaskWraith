@@ -4,6 +4,7 @@ import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { AgentQuestionState } from './AgentQuestionCard'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
+import { reusePairedRemoteDevices } from '../lib/pairedRemoteDevices'
 import {
   ApprovalsFooterPopover,
   ApprovalsShieldIcon,
@@ -83,6 +84,7 @@ export function CollapsedSidebarCornerPill({
   const [openPanel, setOpenPanel] = useState<CornerPillPanel | null>(null)
   const [settingsPane, setSettingsPane] = useState<SidebarSettingsMenuPane>('root')
   const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
+  const pairedDevicesRef = useRef(pairedDevices)
   const [remoteDeviceConnected, setRemoteDeviceConnected] = useState(false)
 
   const togglePanel = useCallback((panel: CornerPillPanel) => {
@@ -103,12 +105,20 @@ export function CollapsedSidebarCornerPill({
         const devices = (await window.api.bridgeListPairedDevices()) as PairedRemoteDeviceSummary[]
         if (!cancelled) {
           const list = devices ?? []
-          setPairedDevices(list)
+          const stableList = reusePairedRemoteDevices(pairedDevicesRef.current, list)
+          if (stableList !== pairedDevicesRef.current) {
+            pairedDevicesRef.current = stableList
+            setPairedDevices(stableList)
+          }
           setRemoteDeviceConnected(list.some((device) => device.connected))
         }
       } catch {
         if (!cancelled) {
-          setPairedDevices([])
+          const stableList = reusePairedRemoteDevices(pairedDevicesRef.current, [])
+          if (stableList !== pairedDevicesRef.current) {
+            pairedDevicesRef.current = stableList
+            setPairedDevices(stableList)
+          }
           setRemoteDeviceConnected(false)
         }
       }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { classifyHumanCollaborationRelayUrls } from './humanCollaborationInviteHealth'
+import {
+  classifyHumanCollaborationRelayUrls,
+  sameStringSetMembers
+} from './humanCollaborationInviteHealth'
 
 describe('classifyHumanCollaborationRelayUrls', () => {
   it('separates LAN, remote, and loopback relay doors', () => {
@@ -37,5 +40,15 @@ describe('classifyHumanCollaborationRelayUrls', () => {
     expect(classifyHumanCollaborationRelayUrls(['ws://172.20.0.4:8787']).lanAvailable).toBe(
       true
     )
+  })
+})
+
+describe('sameStringSetMembers', () => {
+  it('treats order as irrelevant and detects membership changes', () => {
+    expect(sameStringSetMembers(new Set(['chat-a', 'chat-b']), new Set(['chat-b', 'chat-a']))).toBe(
+      true
+    )
+    expect(sameStringSetMembers(new Set(['chat-a']), new Set(['chat-b']))).toBe(false)
+    expect(sameStringSetMembers(new Set(['chat-a']), new Set(['chat-a', 'chat-b']))).toBe(false)
   })
 })

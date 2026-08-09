@@ -36,6 +36,7 @@ import {
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
 import {
   classifyHumanCollaborationRelayUrls,
+  sameStringSetMembers,
   type HumanCollaborationInviteCopyResult,
   type HumanCollaborationInviteHealth
 } from './lib/humanCollaborationInviteHealth'
@@ -1655,6 +1656,7 @@ function App(): React.JSX.Element {
   const [connectedCollaborationChatIds, setConnectedCollaborationChatIds] = useState<Set<string>>(
     new Set()
   )
+  const connectedCollaborationChatIdsRef = useRef(connectedCollaborationChatIds)
   useEffect(() => {
     if (typeof window.api.humanCollaborationConnectedChatIds !== 'function') return
     let cancelled = false
@@ -1662,7 +1664,11 @@ function App(): React.JSX.Element {
       void window.api
         .humanCollaborationConnectedChatIds()
         .then((ids) => {
-          if (!cancelled) setConnectedCollaborationChatIds(new Set(ids || []))
+          if (cancelled) return
+          const next = new Set(ids || [])
+          if (sameStringSetMembers(connectedCollaborationChatIdsRef.current, next)) return
+          connectedCollaborationChatIdsRef.current = next
+          setConnectedCollaborationChatIds(next)
         })
         .catch(() => {})
     }
@@ -28265,9 +28271,14 @@ function App(): React.JSX.Element {
   )
   const handleSelectMultiviewLayout = useCallback(
     (layout: MultiviewLayout) => {
-      multiview.setLayout(layout)
+      // The single-pane host has no reason to duplicate its chat into hook
+      // state until the user actually splits. Adopt it exactly once on entry;
+      // after that pane records are authoritative and later layout changes
+      // must never copy the legacy singleton into an empty focused pane.
+      const seedChatId = multiview.isMultiview ? null : currentChatIdRef.current
+      multiview.setLayout(layout, seedChatId)
     },
-    [multiview.setLayout]
+    [multiview.isMultiview, multiview.setLayout]
   )
   const renderMultiviewPaneCell = (
     viewerChatId: string,

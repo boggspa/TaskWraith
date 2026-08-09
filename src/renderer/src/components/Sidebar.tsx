@@ -44,6 +44,7 @@ import { selectRecentChats } from '../lib/recentChatsList'
 import { isContentlessRemoteDraftChat } from '../../../main/remote/RemoteDraftChats'
 import { normalizeThreadTitle } from '../../../shared/threadTitles'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
+import { reusePairedRemoteDevices } from '../lib/pairedRemoteDevices'
 import { ActiveRunsSection } from './ActiveRunsSection'
 import { LocalServersSection } from './LocalServersSection'
 import { ProjectsSidebarView } from './ProjectsSidebarView'
@@ -3276,6 +3277,7 @@ export function Sidebar({
   )
   const [remoteDeviceConnected, setRemoteDeviceConnected] = useState(false)
   const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
+  const pairedDevicesRef = useRef(pairedDevices)
   const startupExpandedWorkspaceId = defaultExpandedWorkspaceId(workspaces, currentWorkspace)
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() =>
     defaultExpandedWorkspaceIds(workspaces, currentWorkspace)
@@ -4205,12 +4207,20 @@ export function Sidebar({
         const devices = (await window.api.bridgeListPairedDevices()) as PairedRemoteDeviceSummary[]
         if (!cancelled) {
           const list = devices ?? []
-          setPairedDevices(list)
+          const stableList = reusePairedRemoteDevices(pairedDevicesRef.current, list)
+          if (stableList !== pairedDevicesRef.current) {
+            pairedDevicesRef.current = stableList
+            setPairedDevices(stableList)
+          }
           setRemoteDeviceConnected(list.some((device) => device.connected))
         }
       } catch {
         if (!cancelled) {
-          setPairedDevices([])
+          const stableList = reusePairedRemoteDevices(pairedDevicesRef.current, [])
+          if (stableList !== pairedDevicesRef.current) {
+            pairedDevicesRef.current = stableList
+            setPairedDevices(stableList)
+          }
           setRemoteDeviceConnected(false)
         }
       }
