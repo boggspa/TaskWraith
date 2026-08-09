@@ -157,7 +157,7 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
       approvalMode: 'default',
       readOnly: false,
       agenticServices: {
-        shellCommands: 'ask',
+        shellCommands: 'allow',
         fileChanges: 'deny'
       }
     })
