@@ -98,10 +98,7 @@ type GridStyle = Record<string, string>
 
 export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
   const gridRef = useRef<HTMLDivElement | null>(null)
-  const fallbackFocusSnapshot = useCallback(
-    () => props.focusedPaneIndex,
-    [props.focusedPaneIndex]
-  )
+  const fallbackFocusSnapshot = useCallback(() => props.focusedPaneIndex, [props.focusedPaneIndex])
   const focusedPaneIndex = useSyncExternalStore(
     props.focusStore?.subscribe ?? (() => () => undefined),
     props.focusStore?.getSnapshot ?? fallbackFocusSnapshot,

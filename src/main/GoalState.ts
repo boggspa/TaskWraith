@@ -1,3 +1,4 @@
+import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
 import type {
   ActiveGoal,
   ActiveGoalMode,
@@ -8,6 +9,8 @@ import type {
   GoalRuntimeLedgerStatus,
   ProviderId
 } from './store/types'
+
+export { activeGoalModeLabel }
 
 export const MAX_ACTIVE_GOAL_OBJECTIVE_CHARS = 4000
 export const MAX_ACTIVE_GOAL_REASON_CHARS = 800
@@ -53,22 +56,6 @@ export function resolveActiveGoalForProvider(
   const mode = resolveActiveGoalMode(provider, options)
   if (goal.provider === provider && goal.mode === mode) return goal
   return { ...goal, provider, mode }
-}
-
-export function activeGoalModeLabel(mode: ActiveGoalMode): string {
-  switch (mode) {
-    case 'codex_native':
-      return 'Native Codex goal'
-    case 'claude_native':
-      return 'Native Claude goal'
-    case 'grok_native':
-      return 'Native Grok goal'
-    case 'ollama_harness':
-      return 'Ollama managed'
-    case 'taskwraith_steered':
-    default:
-      return 'Guided by TaskWraith'
-  }
 }
 
 export interface GoalRuntimeTiming {

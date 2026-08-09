@@ -25,7 +25,7 @@ import {
   normalizeEnsembleFanoutPolicy
 } from '../../lib/ensembleFanoutPolicy'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../../../shared/ensembleFanoutIsolation'
-import { activeGoalModeLabel } from '../../../../main/GoalState'
+import { activeGoalModeLabel } from '../../../../shared/activeGoalPresentation'
 import { isImageAttachmentPath } from '../../lib/imageAttachments'
 import {
   MIN_RIGHT_PANEL_WIDTH,

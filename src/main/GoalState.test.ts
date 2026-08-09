@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { activeGoalModeLabel as sharedActiveGoalModeLabel } from '../shared/activeGoalPresentation'
 import {
   activeGoalModeLabel,
   computeGoalRuntimeTiming,
@@ -47,6 +48,25 @@ describe('shouldMintFreshGoalIdentity (C2 P2 — fresh goal identity)', () => {
 })
 
 describe('GoalState', () => {
+  it('re-exports every shared goal mode label without presentation drift', () => {
+    const modes = [
+      'codex_native',
+      'claude_native',
+      'grok_native',
+      'ollama_harness',
+      'taskwraith_steered'
+    ] as const
+
+    expect(activeGoalModeLabel).toBe(sharedActiveGoalModeLabel)
+    expect(modes.map(activeGoalModeLabel)).toEqual([
+      'Native Codex goal',
+      'Native Claude goal',
+      'Native Grok goal',
+      'Ollama managed',
+      'Guided by TaskWraith'
+    ])
+  })
+
   it('retains an explicit objective source without guessing for legacy callers', () => {
     const userGoal = createActiveGoal('codex', 'Ship the safe continuation checkpoint', {
       now: new Date('2026-08-02T10:00:00Z'),
