@@ -126,6 +126,10 @@ export class AntigravityPermissionLeaseAbortedError extends Error {
   }
 }
 
+function throwIfPermissionLeaseAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new AntigravityPermissionLeaseAbortedError()
+}
+
 function isRecord(value: unknown): value is JsonObject {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -173,18 +177,28 @@ async function readOptionalRegularFile(
   }
 }
 
-async function writeAtomic(path: string, content: string): Promise<void> {
+async function writeAtomic(path: string, content: string, signal?: AbortSignal): Promise<void> {
+  throwIfPermissionLeaseAborted(signal)
   const directory = dirname(path)
   await mkdir(directory, { recursive: true, mode: 0o700 })
+  throwIfPermissionLeaseAborted(signal)
   try {
     await chmod(directory, 0o700)
   } catch {
     // POSIX modes are best-effort on filesystems that do not expose them.
   }
+  throwIfPermissionLeaseAborted(signal)
   const tempPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`)
   try {
-    await writeFile(tempPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    await writeFile(tempPath, content, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+      ...(signal ? { signal } : {})
+    })
+    throwIfPermissionLeaseAborted(signal)
     await rename(tempPath, path)
+    throwIfPermissionLeaseAborted(signal)
     try {
       await chmod(path, 0o600)
     } catch {
@@ -443,13 +457,16 @@ export async function recoverInterruptedAntigravityHookLease(hooksPath: string):
 }
 
 async function installHookOverlay(
-  overlay: NonNullable<AntigravityPermissionLeaseRequest['hookOverlay']>
+  overlay: NonNullable<AntigravityPermissionLeaseRequest['hookOverlay']>,
+  signal?: AbortSignal
 ): Promise<{ release: () => Promise<void> }> {
   const hooksPath = resolve(overlay.hooksPath)
   if (!overlay.hookName || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(overlay.hookName)) {
     throw new Error('AntiGravity hook overlay requires a namespaced hook name.')
   }
+  throwIfPermissionLeaseAborted(signal)
   await recoverInterruptedAntigravityHookLease(hooksPath)
+  throwIfPermissionLeaseAborted(signal)
   const existingOriginalContent = await readOptionalRegularFile(hooksPath)
   const originalContent = existingOriginalContent ?? ''
   const original = parseSettings(originalContent || '{}', 'AntiGravity hooks configuration')
@@ -466,9 +483,10 @@ async function installHookOverlay(
     installedSha256: sha256(installedContent)
   }
   const receiptPath = hookReceiptPathFor(hooksPath)
-  await writeAtomic(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
   try {
-    await writeAtomic(hooksPath, installedContent)
+    await writeAtomic(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, signal)
+    await writeAtomic(hooksPath, installedContent, signal)
+    throwIfPermissionLeaseAborted(signal)
   } catch (error) {
     await cleanHookReceipt(hooksPath, receiptPath, receipt).catch(() => undefined)
     throw error
@@ -482,7 +500,9 @@ async function installPermissionLease(
   input: AntigravityPermissionLeaseRequest
 ): Promise<AntigravityPermissionLeaseReceipt> {
   const settingsPath = resolve(input.settingsPath)
+  throwIfPermissionLeaseAborted(input.signal)
   await recoverInterruptedAntigravityPermissionLease(settingsPath)
+  throwIfPermissionLeaseAborted(input.signal)
   const existingOriginalContent = await readOptionalRegularFile(settingsPath)
   const originalContent = existingOriginalContent ?? ''
   const original = parseSettings(originalContent || '{}', 'AntiGravity settings')
@@ -501,9 +521,10 @@ async function installPermissionLease(
     installedScalars: installed.installedScalars
   }
   const receiptPath = receiptPathFor(settingsPath)
-  await writeAtomic(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
   try {
-    await writeAtomic(settingsPath, installedContent)
+    await writeAtomic(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, input.signal)
+    await writeAtomic(settingsPath, installedContent, input.signal)
+    throwIfPermissionLeaseAborted(input.signal)
   } catch (error) {
     await cleanReceipt(settingsPath, receiptPath, receipt).catch(() => undefined)
     throw error
@@ -557,26 +578,33 @@ export class AntigravityPermissionLeaseCoordinator {
       throw new AntigravityPermissionLeaseAbortedError()
     }
 
-    let receipt: AntigravityPermissionLeaseReceipt
+    let receipt: AntigravityPermissionLeaseReceipt | undefined
+    let hookRelease: (() => Promise<void>) | undefined
     try {
       receipt = await installPermissionLease(input)
-    } catch (error) {
-      releaseQueue()
-      throw error
-    }
-    let hookRelease: (() => Promise<void>) | undefined
-    if (input.hookOverlay) {
-      try {
-        hookRelease = (await installHookOverlay(input.hookOverlay)).release
-      } catch (error) {
-        await cleanReceipt(
-          receipt.settingsPath,
-          receiptPathFor(receipt.settingsPath),
-          receipt
-        ).catch(() => undefined)
-        releaseQueue()
-        throw error
+      throwIfPermissionLeaseAborted(input.signal)
+      if (input.hookOverlay) {
+        hookRelease = (await installHookOverlay(input.hookOverlay, input.signal)).release
       }
+      throwIfPermissionLeaseAborted(input.signal)
+    } catch (error) {
+      let cleanupError: unknown
+      try {
+        await hookRelease?.()
+      } catch (releaseError) {
+        cleanupError = releaseError
+      }
+      if (receipt) {
+        try {
+          await recoverInterruptedAntigravityPermissionLease(receipt.settingsPath)
+        } catch (releaseError) {
+          cleanupError ??= releaseError
+        }
+      }
+      releaseQueue()
+      if (input.signal?.aborted) throw new AntigravityPermissionLeaseAbortedError()
+      if (cleanupError) throw cleanupError
+      throw error
     }
 
     let releaseOperation: Promise<void> | undefined

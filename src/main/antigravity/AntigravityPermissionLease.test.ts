@@ -283,6 +283,41 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     await expect(recoverInterruptedAntigravityPermissionLease(settingsPath)).resolves.toBe(false)
   })
 
+  it('cleans the published settings receipt when cancellation arrives during setup', async () => {
+    const { directory, settingsPath, original } = await makeSettings({
+      model: 'gemini-3.1-pro-high'
+    })
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const controller = new AbortController()
+    const input = {
+      settingsPath,
+      workspacePath: '/Users/test/Cancelled',
+      allowShell: true,
+      allowWrite: false
+    } as Parameters<AntigravityPermissionLeaseCoordinator['acquire']>[0]
+    // The sixth read is immediately before the settings replacement: the
+    // receipt has been published, but no child can exist yet. The cancellation
+    // must restore that receipt instead of leaving the next run serialized on
+    // a stale global permission overlay.
+    let signalReads = 0
+    Object.defineProperty(input, 'signal', {
+      enumerable: true,
+      get: () => {
+        signalReads += 1
+        if (signalReads >= 6) controller.abort()
+        return controller.signal
+      }
+    })
+
+    await expect(coordinator.acquire(input)).rejects.toBeInstanceOf(
+      AntigravityPermissionLeaseAbortedError
+    )
+    expect(await readFile(settingsPath, 'utf8')).toBe(original)
+    await expect(
+      readFile(join(directory, '.taskwraith-permission-lease.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('serializes incompatible global overlays and lets a queued cancellation leave cleanly', async () => {
     const { settingsPath } = await makeSettings({ model: 'gemini-3.1-pro-high' })
     const coordinator = new AntigravityPermissionLeaseCoordinator()
