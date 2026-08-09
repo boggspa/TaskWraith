@@ -4465,6 +4465,8 @@ export const TranscriptPanel = memo(
                 : currentRun?.runId === msg.runId
                   ? currentRun
                   : null
+            const assistantRunProvider =
+              providerIdFromUnknown(assistantRun?.provider) || currentProvider
             const assistantRunModel = assistantRun?.actualModel || assistantRun?.requestedModel || null
             const assistantRevealProvider =
               providerIdFromUnknown(msg.metadata?.ensembleProvider) ||
@@ -4496,7 +4498,7 @@ export const TranscriptPanel = memo(
             ) : null
             const assistantRunModelKey =
               msg.role === 'assistant' || isGuestReply
-                ? `${assistantRun?.runId || ''}:${assistantRunModel || ''}`
+                ? `${assistantRun?.runId || ''}:${assistantRunProvider}:${assistantRunModel || ''}`
                 : ''
             const renameContinuity =
               msg.role === 'assistant'
@@ -5111,8 +5113,8 @@ export const TranscriptPanel = memo(
                         } =
                           formatAssistantMessageLabel(
                             assistantLabelMessage,
-                            currentProviderLabel,
-                            currentProvider,
+                            getProviderLabel(assistantRunProvider),
+                            assistantRunProvider,
                             {
                               isEnsembleChat: currentChat?.chatKind === 'ensemble',
                               soloModelId: assistantRunModel

@@ -276,6 +276,67 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('>Assistant</span>')
   })
 
+  it('keeps each solo assistant row attributed to its completed run after the composer provider changes', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentProviderLabel: 'Cursor',
+          currentProvider: 'cursor',
+          currentChat: {
+            appChatId: 'provider-switch-chat',
+            title: 'Provider switch',
+            provider: 'cursor',
+            createdAt: 0,
+            updatedAt: 0,
+            archived: false,
+            messages: [],
+            runs: [
+              {
+                runId: 'run-codex',
+                provider: 'codex',
+                startedAt: '2026-08-09T22:00:00.000Z',
+                requestedModel: 'gpt-5.3-codex-spark',
+                status: 'success'
+              },
+              {
+                runId: 'run-kimi',
+                provider: 'kimi',
+                startedAt: '2026-08-09T22:02:00.000Z',
+                actualModel: 'kimi-k2.7-code',
+                status: 'completed'
+              }
+            ]
+          } as ChatRecord,
+          messages: [
+            {
+              id: 'assistant-codex',
+              role: 'assistant',
+              content: 'CODEX_WRITE_QA_OK',
+              timestamp: '2026-08-09T22:01:00.000Z',
+              runId: 'run-codex'
+            },
+            {
+              id: 'assistant-kimi',
+              role: 'assistant',
+              content: 'KIMI_WRITE_QA_OK',
+              timestamp: '2026-08-09T22:03:00.000Z',
+              runId: 'run-kimi'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('class="message-meta provider-codex"')
+    expect(html).toContain('class="message-meta provider-kimi"')
+    expect(html).toContain('>Codex</span>')
+    expect(html).toContain('>Kimi</span>')
+    expect(html).toContain('title="Model: 5.3-Codex-Spark"')
+    expect(html).toContain('title="Model: K2.7 Coding"')
+    expect(html).not.toContain('class="message-meta provider-cursor"')
+  })
+
   it('renders the active Ensemble participant role in the working indicator', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
