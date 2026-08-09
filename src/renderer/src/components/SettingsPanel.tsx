@@ -6961,15 +6961,15 @@ export function SettingsPanel({
               </div>
 
               {/*
-                1.0.5-EW26 — Kimi (Moonshot) compatibility filter.
-                On by default. Ensemble-mode Kimi
-                participants get their prompt context scanned by
-                `src/main/lib/kimiSanitiser.ts` before spawn:
+                1.0.5-EW26 — Kimi / DeepSeek / Z.ai compatibility filter.
+                On by default. Ensemble-mode Kimi participants and
+                DeepSeek or Z.ai models selected through Pi get their prompt
+                context scanned by `src/main/lib/kimiSanitiser.ts` before spawn:
                 sentences containing curated trigger keywords
                 (Tiananmen, Xinjiang, Hong Kong protests, US-China
                 relations, etc.) are replaced with a redacted
-                placeholder so Kimi can still participate without
-                triggering Moonshot's content_filter rejection.
+                placeholder so the affected participant can still participate
+                without triggering an upstream content-filter rejection.
                 Other participants always see the unfiltered prompt.
               */}
               <div className="settings-group">
@@ -6987,15 +6987,16 @@ export function SettingsPanel({
                     checked={Boolean(kimiSanitiserEnabled)}
                     onChange={(e) => onChange({ kimiSanitiserEnabled: e.target.checked })}
                   />
-                  Kimi compatibility filter (Moonshot)
+                  Kimi, DeepSeek &amp; Z.ai compatibility filter
                 </label>
                 <p className="settings-hint">
-                  When enabled, prompts dispatched to Kimi participants in ensemble chats are
-                  pre-scanned and any sentence containing a known Moonshot-rejected topic
-                  (Tiananmen, Xinjiang, Hong Kong protests, Tibet sovereignty, Taiwan independence,
-                  Falun Gong, US-China relations summaries, etc.) is replaced with a redacted
-                  placeholder so Kimi can still participate. Other panelists always see the
-                  unfiltered prompt. Your transcript is never modified — only Kimi&apos;s view. A
+                  When enabled, prompts dispatched to Kimi participants — plus DeepSeek and Z.ai
+                  models selected through Pi — in ensemble chats are pre-scanned. Any sentence
+                  containing a known content-filter trigger (Tiananmen, Xinjiang, Hong Kong
+                  protests, Tibet sovereignty, Taiwan independence, Falun Gong, US-China relations
+                  summaries, etc.) is replaced with a redacted placeholder so that participant can
+                  still participate. Other panelists always see the unfiltered prompt. Your
+                  transcript is never modified — only the affected participant&apos;s view. A
                   diagnostic note appears whenever the filter fires.
                 </p>
                 <label
@@ -7013,7 +7014,7 @@ export function SettingsPanel({
                     checked={kimiClassifierEnabled}
                     onChange={(e) => updateKimiClassifierEnabled(e.target.checked)}
                   />
-                  Kimi classifier retry pass
+                  Kimi classifier retry pass (Moonshot only)
                 </label>
                 <p className="settings-hint">
                   When enabled, Kimi content-filter retries can escalate from keyword redaction to a
@@ -7029,7 +7030,7 @@ export function SettingsPanel({
                   committed={kimiSanitiserCustomKeywords ?? ''}
                   onCommit={(value) => onChange({ kimiSanitiserCustomKeywords: value })}
                   placeholder={
-                    '# Add phrases you have seen trigger Moonshot rejection.\n# Lines starting with # are comments.\n# Example:\nSouth China Sea\nNine Dash Line'
+                    '# Add phrases you have seen trigger an upstream rejection.\n# Lines starting with # are comments.\n# Example:\nSouth China Sea\nNine Dash Line'
                   }
                   rows={4}
                   disabled={!kimiSanitiserEnabled}
