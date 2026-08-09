@@ -4674,7 +4674,7 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .run-complete-epic-row.is-commits {
-  grid-template-columns: 5.5rem minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(5rem, 0.6fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(5rem, 0.6fr) minmax(0, 1.2fr) 5.5rem;
 }
 
 .run-complete-epic-row:first-child {

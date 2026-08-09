@@ -135,6 +135,39 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('2 more commits not shown.')
   })
 
+  it('orders commit columns as Seat, Changes, Message, Hash and colors diff counts', () => {
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack
+        commits={[
+          {
+            hash: '83bbc32c8abcdef',
+            subject: 'fix(ios): resolve iPad transcript',
+            stats: '3 files, +197 −42'
+          }
+        ]}
+      />
+    )
+    const headerStart = html.indexOf('class="run-complete-epic-row is-header is-commits"')
+    const rowStart = html.indexOf('class="run-complete-epic-row is-commits"', headerStart + 1)
+    const headerHtml = html.slice(headerStart, rowStart)
+    const rowHtml = html.slice(rowStart)
+
+    expect(headerHtml).toContain(
+      '<span role="columnheader">Seat</span><span role="columnheader">Changes</span><span role="columnheader">Message</span><span role="columnheader">Hash</span>'
+    )
+    expect(rowHtml.indexOf('run-complete-epic-seat')).toBeLessThan(
+      rowHtml.indexOf('run-complete-epic-stats')
+    )
+    expect(rowHtml.indexOf('run-complete-epic-stats')).toBeLessThan(
+      rowHtml.indexOf('run-complete-epic-subject')
+    )
+    expect(rowHtml.indexOf('run-complete-epic-subject')).toBeLessThan(
+      rowHtml.indexOf('run-complete-epic-hash')
+    )
+    expect(rowHtml).toContain('<span class="composer-diff-add">+197</span>')
+    expect(rowHtml).toContain('<span class="composer-diff-del">−42</span>')
+  })
+
   it('renders compact closeout file changes without workbench interactions', () => {
     const html = renderToStaticMarkup(
       <RunCompleteEpicStack

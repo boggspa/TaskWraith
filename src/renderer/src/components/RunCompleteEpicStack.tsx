@@ -29,6 +29,32 @@ function asSeatLink(value: unknown): SeatChangeLink | null {
   return link
 }
 
+function CloseoutCommitStats({ stats }: { stats?: string }): ReactNode {
+  if (!stats) return '—'
+
+  return (
+    <span className="run-complete-epic-stats-value">
+      {stats.split(/([+]\d[\d,]*|[−-]\d[\d,]*)/g).map((part, index) => {
+        if (part.startsWith('+')) {
+          return (
+            <span className="composer-diff-add" key={`${index}-${part}`}>
+              {part}
+            </span>
+          )
+        }
+        if (/^[−-]\d/.test(part)) {
+          return (
+            <span className="composer-diff-del" key={`${index}-${part}`}>
+              {part}
+            </span>
+          )
+        }
+        return part
+      })}
+    </span>
+  )
+}
+
 /** Same glyph vocabulary as the old close-out markdown table / roster chips. */
 function CloseoutStatusGlyph({ status }: { status: string }): ReactNode {
   const label = status.trim() || 'Unknown'
@@ -243,21 +269,15 @@ export function RunCompleteEpicStack({
           </div>
           <div className="file-change-summary-list run-complete-epic-list" role="table">
             <div className="run-complete-epic-row is-header is-commits" role="row">
-              <span role="columnheader">Hash</span>
-              <span role="columnheader">Message</span>
               <span role="columnheader">Seat</span>
               <span role="columnheader">Changes</span>
+              <span role="columnheader">Message</span>
+              <span role="columnheader">Hash</span>
             </div>
             {commitRows.map((commit) => {
               const seatLink = asSeatLink(commit.seatLink)
               return (
                 <div className="run-complete-epic-row is-commits" role="row" key={commit.hash}>
-                  <span className="run-complete-epic-hash" role="cell">
-                    <code>{commit.hash.slice(0, 9)}</code>
-                  </span>
-                  <span className="run-complete-epic-subject" role="cell" title={commit.subject}>
-                    {commit.subject || '—'}
-                  </span>
                   <span className="run-complete-epic-seat" role="cell">
                     {seatLink ? (
                       <SeatChangeInlineStrip link={seatLink} />
@@ -266,7 +286,13 @@ export function RunCompleteEpicStack({
                     )}
                   </span>
                   <span className="run-complete-epic-stats" role="cell">
-                    {commit.stats || '—'}
+                    <CloseoutCommitStats stats={commit.stats} />
+                  </span>
+                  <span className="run-complete-epic-subject" role="cell" title={commit.subject}>
+                    {commit.subject || '—'}
+                  </span>
+                  <span className="run-complete-epic-hash" role="cell">
+                    <code>{commit.hash.slice(0, 9)}</code>
                   </span>
                 </div>
               )
