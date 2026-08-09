@@ -1321,6 +1321,13 @@ const api = {
       ipcRenderer.invoke('simulator-canvas:rotate', chatId, udid, direction)
   },
 
+  // Simulator control setup is deliberately separate from AppDrive. It only
+  // enables local iOS Simulator actuation from Canvas.
+  simulatorControl: {
+    status: () => ipcRenderer.invoke('simulator-control:setup-status'),
+    setup: () => ipcRenderer.invoke('simulator-control:setup')
+  },
+
   // QMOD (1.0.3) — `ask_user_question` MCP tool bridge. Main fires
   // `agent-question-requested` when an agent calls the tool; renderer
   // responds via `answer-agent-question` (with the user's pick) or

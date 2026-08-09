@@ -413,6 +413,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'simulator-canvas:inspect': ['nonEmptyString', 'nonEmptyString'],
   'simulator-canvas:button': ['nonEmptyString', 'nonEmptyString', 'nonEmptyString'],
   'simulator-canvas:rotate': ['nonEmptyString', 'nonEmptyString', 'nonEmptyString'],
+  // Simulator control is a user-initiated local setup flow. These stay separate
+  // from AppDrive, which has its own consent and transport boundary.
+  'simulator-control:setup-status': [],
+  'simulator-control:setup': [],
   // Changelog sheet (update-pill feature): `changelog-snapshot` is a no-arg
   // read returning ProductChangelogSnapshot | null; `mark-changelog-seen`
   // persists the last-seen version. The handler coerces a missing/empty

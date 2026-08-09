@@ -133,6 +133,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'claudeBinaryPath',
   'kimiBinaryPath',
   'cliPathDirectories',
+  'simulatorControlEnabled',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
   'piCerebrasMaxCompletionTokens',
@@ -1713,6 +1714,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       // against an unpredictable cwd) and strips control characters that would
       // corrupt the joined PATH.
       sanitized.cliPathDirectories = normalizeCliPathDirectories(sanitized.cliPathDirectories)
+    }
+    if ('simulatorControlEnabled' in sanitized) {
+      if (typeof sanitized.simulatorControlEnabled !== 'boolean') {
+        delete sanitized.simulatorControlEnabled
+      }
     }
     if ('piCerebrasMaxCompletionTokens' in sanitized) {
       if (sanitized.piCerebrasMaxCompletionTokens === null) {

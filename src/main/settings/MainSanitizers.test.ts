@@ -1023,6 +1023,17 @@ describe('MainSanitizers settings patches', () => {
     ).toEqual(['/opt/homebrew/bin', '~/.local/bin'])
   })
 
+  it('persists the Simulator control switch and drops malformed values', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    expect(sanitizeSettingsPatch({ simulatorControlEnabled: false }).simulatorControlEnabled).toBe(
+      false
+    )
+    expect(
+      'simulatorControlEnabled' in
+        sanitizeSettingsPatch({ simulatorControlEnabled: 'nope' as unknown as boolean })
+    ).toBe(false)
+  })
+
   it('refuses relative and control-character entries in cliPathDirectories', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

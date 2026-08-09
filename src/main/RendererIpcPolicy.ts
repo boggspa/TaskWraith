@@ -365,6 +365,10 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'simulator-canvas:inspect',
   'simulator-canvas:button',
   'simulator-canvas:rotate',
+  // Simulator control can install a local companion, so only the primary
+  // settings/canvas renderer may request its status or begin setup.
+  'simulator-control:setup-status',
+  'simulator-control:setup',
   'simulator-canvas:claim-control',
   'simulator-canvas:pick-app',
   'simulator-canvas:session',

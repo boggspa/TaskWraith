@@ -229,6 +229,10 @@ import type {
   SimulatorTypeGesture
 } from '../shared/simulatorCanvas'
 import type {
+  SimulatorControlSetupResult,
+  SimulatorControlSetupStatus
+} from '../shared/simulatorControlSetup'
+import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason
 } from '../main/services/GitSnapshotPublisher'
@@ -1335,6 +1339,10 @@ declare global {
           udid: string,
           direction: SimulatorRotateDirection
         ) => Promise<{ ok: boolean; error?: string }>
+      }
+      simulatorControl: {
+        status: () => Promise<SimulatorControlSetupStatus>
+        setup: () => Promise<SimulatorControlSetupResult>
       }
       onAgentQuestionRequested: (
         handler: (request: {

@@ -2349,6 +2349,12 @@ export interface AppSettings {
    * `shared/cliPathDirectories.ts`.
    */
   cliPathDirectories?: string[]
+  /**
+   * Enables user and agent actuation in Simulator Canvas after the local
+   * Simulator control companion has been set up. Preview and screenshots stay
+   * available when this is off.
+   */
+  simulatorControlEnabled?: boolean
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
   /**

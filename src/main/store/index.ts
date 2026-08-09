@@ -2202,6 +2202,10 @@ const defaultSettings: AppSettings = {
   userName: '',
   claudeBinaryPath: '',
   kimiBinaryPath: '',
+  // Preserve existing Simulator Canvas behavior for upgrading users. This is
+  // only a local actuation switch; per-chat approval and controller leases
+  // remain required before any device input can be sent.
+  simulatorControlEnabled: true,
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   ollamaDefaultModel: '',
   defaultGeminiAuthProfileId: null,
@@ -4838,6 +4842,10 @@ export class AppStore {
         typeof stored.workflowBudgetKillEnabled === 'boolean'
           ? stored.workflowBudgetKillEnabled
           : defaultSettings.workflowBudgetKillEnabled,
+      simulatorControlEnabled:
+        typeof stored.simulatorControlEnabled === 'boolean'
+          ? stored.simulatorControlEnabled
+          : defaultSettings.simulatorControlEnabled,
       approvalTimeouts: {
         ...defaultSettings.approvalTimeouts,
         ...(storedApprovalTimeouts || {}),
