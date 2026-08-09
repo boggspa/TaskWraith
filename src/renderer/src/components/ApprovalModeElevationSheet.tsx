@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { ApprovalElevationTier } from '../lib/approvalElevation'
+import { RiskAcknowledgementSheetSurface } from './RiskAcknowledgementSheet'
 
 /**
  * Permission-mode ELEVATION warning sheet (mirrors the Claude / Codex desktop
@@ -34,7 +35,7 @@ const PROVIDER_LABEL: Readonly<Record<string, string>> = {
 }
 
 function providerLabel(provider: string): string {
-  return PROVIDER_LABEL[provider] ?? (provider.charAt(0).toUpperCase() + provider.slice(1))
+  return PROVIDER_LABEL[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1)
 }
 
 export const APPROVAL_ELEVATION_ACK_CHECKBOX_ID = 'approval-elevation-ack'
@@ -57,89 +58,53 @@ export function ApprovalModeElevationSheetSurface({
   const isFull = tier === 2
   const isHostFullAccess = isFull && permissionPresetId === 'full_access'
   const elevatedLabel = isHostFullAccess ? 'Full Access' : 'Full WS Access'
-  const canConfirm = !isFull || acknowledged
 
   return (
-    <div className="creative-approval-backdrop" role="presentation" onMouseDown={onCancel}>
-      <div
-        className="creative-approval-modal approval-elevation-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="approval-elevation-title"
-        data-elevation-tier={tier}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header className="creative-approval-modal-header">
-          <span className="creative-approval-modal-eyebrow" aria-hidden>
-            {isFull ? elevatedLabel : 'Permission change'}
-          </span>
-          <h2 id="approval-elevation-title" className="creative-approval-modal-title">
-            {isFull
-              ? `Enable ${elevatedLabel} for ${name}?`
-              : `Let agents edit files in ${where}?`}
-          </h2>
-        </header>
-
-        {isFull ? (
+    <RiskAcknowledgementSheetSurface
+      titleId="approval-elevation-title"
+      eyebrow={isFull ? elevatedLabel : 'Permission change'}
+      title={isFull ? `Enable ${elevatedLabel} for ${name}?` : `Let agents edit files in ${where}?`}
+      description={
+        isFull ? (
           <>
-            <p className="creative-approval-modal-description">
-              {elevatedLabel} lets {name} create, edit, run,
-              and delete files in {where} <strong>without approving each action</strong>.
-              {isHostFullAccess
-                ? ' For providers with host-shell support, it may also remove workspace sandboxing for this chat or lane so local signing or keychain-backed tools can run.'
-                : ' It remains workspace-scoped; use Full Access only when the lane needs host-level shell authority.'}
-            </p>
-            <p className="creative-approval-modal-description approval-elevation-caution">
-              {isHostFullAccess
-                ? 'Other chats and ensemble participants are unchanged. External publishing, Canvas eval, media recording, per-call-only prompts, and globally blocked actions still prompt or deny.'
-                : 'Only enable this on a disposable VM or a device you can fully recover. You can revoke it at any time from the permission picker.'}
-            </p>
-            <label
-              className="approval-elevation-ack"
-              htmlFor={APPROVAL_ELEVATION_ACK_CHECKBOX_ID}
-            >
-              <input
-                id={APPROVAL_ELEVATION_ACK_CHECKBOX_ID}
-                type="checkbox"
-                checked={acknowledged}
-                onChange={(event) => onAcknowledgedChange(event.target.checked)}
-              />
-              <span>I understand the risks and am on a disposable or recoverable device.</span>
-            </label>
+            {elevatedLabel} lets {name} create, edit, run, and delete files in {where}{' '}
+            <strong>without approving each action</strong>.
+            {isHostFullAccess
+              ? ' For providers with host-shell support, it may also remove workspace sandboxing for this chat or lane so local signing or keychain-backed tools can run.'
+              : ' It remains workspace-scoped; use Full Access only when the lane needs host-level shell authority.'}
           </>
         ) : (
-          <p className="creative-approval-modal-description">
+          <>
             In Accept Edits, agents can create, edit, and delete files in {where}. Every change
             stays visible, and you can drop back to Ask at any time. This notice shows once per
             workspace and covers every agent and model working here.
-          </p>
-        )}
-
-        <footer className="creative-approval-modal-actions">
-          <button
-            type="button"
-            className="creative-approval-modal-reject"
-            title="Keep the current safer permission mode."
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="creative-approval-modal-approve-once"
-            title={
-              isFull
-                ? `Let ${name} use ${elevatedLabel} until you lower the mode.`
-                : `Let agents edit files in ${where}; individual risky actions can still be reviewed.`
-            }
-            onClick={onConfirm}
-            disabled={!canConfirm}
-          >
-            {isFull ? `Enable ${elevatedLabel}` : 'Continue'}
-          </button>
-        </footer>
-      </div>
-    </div>
+          </>
+        )
+      }
+      caution={
+        isFull
+          ? isHostFullAccess
+            ? 'Other chats and ensemble participants are unchanged. External publishing, Canvas eval, media recording, per-call-only prompts, and globally blocked actions still prompt or deny.'
+            : 'Only enable this on a disposable VM or a device you can fully recover. You can revoke it at any time from the permission picker.'
+          : undefined
+      }
+      acknowledgementId={isFull ? APPROVAL_ELEVATION_ACK_CHECKBOX_ID : undefined}
+      acknowledgementLabel={
+        isFull ? 'I understand the risks and am on a disposable or recoverable device.' : undefined
+      }
+      acknowledged={acknowledged}
+      onAcknowledgedChange={onAcknowledgedChange}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      cancelTitle="Keep the current safer permission mode."
+      confirmLabel={isFull ? `Enable ${elevatedLabel}` : 'Continue'}
+      confirmTitle={
+        isFull
+          ? `Let ${name} use ${elevatedLabel} until you lower the mode.`
+          : `Let agents edit files in ${where}; individual risky actions can still be reviewed.`
+      }
+      riskLevel={isFull ? 'high' : 'standard'}
+    />
   )
 }
 
