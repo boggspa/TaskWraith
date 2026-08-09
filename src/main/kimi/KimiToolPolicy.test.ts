@@ -89,6 +89,20 @@ describe('isKimiSafeMcpTool', () => {
     expect(isKimiSafeMcpTool(request('mcp__taskwraith__not_read_file'))).toBe(false)
     expect(isKimiSafeMcpTool(request('mcp__taskwraith__read_file_suffix'))).toBe(false)
   })
+  it('admits Mesh Canvas calls to the central approval broker on Ask and Plan seats', () => {
+    const request: KimiToolPolicyRequest = {
+      toolName: 'mcp__taskwraith__mesh_scene_apply',
+      toolKind: 'other'
+    }
+
+    expect(isKimiSafeMcpTool(request)).toBe(true)
+    expect(
+      classifyKimiToolPermission(
+        request,
+        opts({ writeCapable: false, isSafeMcpTool: isKimiSafeMcpTool })
+      )
+    ).toBe('allow')
+  })
   it('recognises the tool name from rawToolCall.rawInput too', () => {
     expect(
       isKimiSafeMcpTool({

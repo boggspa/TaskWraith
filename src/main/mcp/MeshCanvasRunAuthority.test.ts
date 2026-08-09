@@ -35,7 +35,7 @@ function permissions(
 }
 
 describe('meshCanvasParticipantCanRequestAccess', () => {
-  it('exposes Mesh Canvas directly for Accept Edits so the call can prompt', () => {
+  it('exposes and auto-allows Mesh Canvas directly for Accept Edits', () => {
     const effective = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
@@ -63,7 +63,7 @@ describe('meshCanvasParticipantCanRequestAccess', () => {
     })
 
     expect(effective.approvalMode).toBe('default')
-    expect(effective.agenticServices.meshCanvas).toBe('ask')
+    expect(effective.agenticServices.meshCanvas).toBe('allow')
     expect(meshCanvasParticipantCanRequestAccess(effective)).toBe(true)
   })
 

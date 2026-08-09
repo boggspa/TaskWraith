@@ -41,8 +41,8 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 //
 //   plan ("Plan" — the strict floor): NO mid-run permission asks for ordinary
 //     mutating services. Anything not auto-allowed is DENIED — "denied and no
-//     elevation offered". Deliberate attended exceptions (2026-08-08):
-//     `subThreadDelegation` and `simulatorCanvas` stay ASK so their tools can
+//     elevation offered". Deliberate attended exceptions (2026-08-09):
+//     `subThreadDelegation`, `meshCanvas`, and `simulatorCanvas` stay ASK so their tools can
 //     modal-approve. Unattended/scheduled Plan hard-denies only
 //     `subThreadDelegation`; fork 4B keeps `simulatorCanvas` at ASK (timer
 //     deny) and demotes elevated Accept Edits / Full WS allow unless an
@@ -60,8 +60,8 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 //
 // plan is therefore a strict SUBSET of read_only in reachable authority for
 // ordinary services: it only ever TIGHTENS read_only's ASK to DENY, never the
-// reverse — except the attended subThreadDelegation / simulatorCanvas carve-
-// outs above. The deny-survival line in effectiveAgenticSettings still
+// reverse — except the attended subThreadDelegation / Mesh Canvas / Simulator
+// Canvas carve-outs above. The deny-survival line in effectiveAgenticSettings still
 // preserves every global DENY across the key-by-key rebuild, and the grant-
 // hold below keeps standing grants from zero-clicking read_only's asks (and
 // Plan's modal instruments).
@@ -91,8 +91,8 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
 
 // `plan` = the no-ask floor for ordinary mutating services. Plan must not
 // interrupt mid-run for shell/file/canvas/… — those stay DENY and elevate only
-// via the plan document. Deliberate exceptions (2026-08-08): subThreadDelegation
-// and simulatorCanvas are ASK so their tools stay reachable with a request
+// via the plan document. Deliberate exceptions (2026-08-09): subThreadDelegation,
+// meshCanvas, and simulatorCanvas are ASK so their tools stay reachable with a request
 // modal on Plan seats (grant-held via PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES).
 // Generic mcpTools stays DENY; scoped TaskWraith broker attach may still list
 // the gated instrument set without reopening the full MCP ask surface.
@@ -104,7 +104,7 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   subThreadDelegation: 'ask',
   canvasInteraction: 'deny',
   sketchCanvas: 'deny',
-  meshCanvas: 'deny',
+  meshCanvas: 'ask',
   simulatorCanvas: 'ask',
   crossThreadRead: 'deny',
   threadMessage: 'deny',
@@ -158,6 +158,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // Accept Edits authorizes TaskWraith sub-thread delegation as a standard
       // brokered tool (no per-call modal). Ask/Plan remain modal-gated.
       subThreadDelegation: 'allow',
+      // Chat-owned Mesh Canvas authoring remains inside TaskWraith's durable
+      // scene store; workspace imports are jailed and copied into its vault.
+      meshCanvas: 'allow',
       // Same Accept Edits authorization for Simulator Canvas control.
       simulatorCanvas: 'allow'
     }
@@ -269,13 +272,13 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'webBrowsing'
 ]
 
-// Plan's deliberate per-invocation instruments (2026-08-08): sub-thread
-// delegation and Simulator Canvas stay ASK under Plan and must not be
+// Plan's deliberate per-invocation instruments (2026-08-09): sub-thread
+// delegation, Mesh Canvas, and Simulator Canvas stay ASK under Plan and must not be
 // zero-clicked by a standing grant minted under Accept Edits / Full WS /
 // Full Access. Kept exported so the approval gate folds them into
 // neverAutoAllow.
 export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
-  new Set<AgenticServiceId>(['subThreadDelegation', 'simulatorCanvas'])
+  new Set<AgenticServiceId>(['subThreadDelegation', 'meshCanvas', 'simulatorCanvas'])
 
 // The Ask tier's defining property is PER-INVOCATION human approval: anything
 // the map asks for must genuinely prompt, so a standing workspace grant or an

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_EDITING_TOOLS } from '../TaskWraithMcpTools'
+import { MEDIA_EDITING_TOOLS, MESH_SCENE_MCP_TOOL_NAMES } from '../TaskWraithMcpTools'
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
@@ -209,7 +209,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
-  it('RECON INSTRUMENT INVARIANT: canvas_navigate + sub-thread + simulator controls, never auto-allowed', () => {
+  it('RECON INSTRUMENT INVARIANT: declared Ask instruments are never auto-allowed', () => {
     // Growing this tier is a capability-governance decision, not a convenience.
     expect([...RECON_INSTRUMENT_ADVERTISE_TOOLS].sort()).toEqual(
       [
@@ -217,6 +217,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'canvas_navigate',
         'delegate_to_subthread',
         'delegate_wave',
+        ...MESH_SCENE_MCP_TOOL_NAMES,
         'simulator_boot',
         'simulator_button',
         'simulator_install',
@@ -386,6 +387,13 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     expect(isReadOnlyAdvertisedTool('canvas_open')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_screenshot')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_close')).toBe(false)
+  })
+
+  it('advertises every Mesh Canvas action to Ask as an approval-queued instrument', () => {
+    for (const tool of MESH_SCENE_MCP_TOOL_NAMES) {
+      expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
+      expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has(tool)).toBe(false)
+    }
   })
 
   it('advertises Sketch open/get to read_only while keeping updates gated', () => {
