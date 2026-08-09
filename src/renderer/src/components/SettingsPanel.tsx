@@ -2323,6 +2323,30 @@ const MCP_TOOL_OVERRIDES: Partial<
     policyKey: 'fileChanges',
     description: 'Applies a structured patch with file-change audit output.'
   },
+  mesh_topology_convert: {
+    label: 'Mesh Topology Convert',
+    transcript: 'Converted mesh topology',
+    group: 'canvas',
+    iconRef: 'tool:mesh-convert',
+    policyKey: 'meshCanvas',
+    description: 'Converts a primitive or imported mesh node into revisioned editable topology.'
+  },
+  mesh_topology_inspect: {
+    label: 'Mesh Topology Inspect',
+    transcript: 'Inspected mesh topology',
+    group: 'canvas',
+    iconRef: 'tool:mesh-inspect',
+    policyKey: 'meshCanvas',
+    description: 'Reads bounded pages of mesh vertices, edges, faces, UV loops, bones, or summary.'
+  },
+  mesh_topology_edit: {
+    label: 'Mesh Topology Edit',
+    transcript: 'Edited mesh topology',
+    group: 'canvas',
+    iconRef: 'tool:mesh-edit',
+    policyKey: 'meshCanvas',
+    description: 'Applies an atomic CAS batch of topology, UV, sculpt, or rigging operations.'
+  },
   delegate_to_subthread: {
     label: 'Delegate to sub-thread',
     transcript: 'Delegated sub-thread',
@@ -2692,6 +2716,9 @@ const MCP_ICON_REF_FAMILIES: Record<string, ToolFamily> = {
   'tool:ide': 'handoff',
   'tool:image': 'image',
   'tool:media': 'video',
+  'tool:mesh-convert': 'mesh-convert',
+  'tool:mesh-inspect': 'mesh-inspect',
+  'tool:mesh-edit': 'mesh-edit',
   'tool:memory': 'memory',
   'tool:patch': 'patch',
   'tool:replace': 'edit',

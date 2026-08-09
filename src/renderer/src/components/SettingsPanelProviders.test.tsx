@@ -545,6 +545,19 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('<code>tool:workspace</code>')
   })
 
+  it('renders dedicated Mesh Topology rows and icon references in Provider Tools', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+
+    expect(html).toContain('<strong>Mesh Topology Convert</strong>')
+    expect(html).toContain('<strong>Mesh Topology Inspect</strong>')
+    expect(html).toContain('<strong>Mesh Topology Edit</strong>')
+    expect(html).toContain('<code>tool:mesh-convert</code>')
+    expect(html).toContain('<code>tool:mesh-inspect</code>')
+    expect(html).toContain('<code>tool:mesh-edit</code>')
+  })
+
   it('renders every canonical TaskWraith MCP tool in Provider Tools', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
