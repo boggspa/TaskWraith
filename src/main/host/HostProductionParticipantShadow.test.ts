@@ -12,6 +12,7 @@ import {
 function entry(overrides: Partial<HostParticipantShadowEntry> = {}): HostParticipantShadowEntry {
   return {
     id: 'p-1',
+    threadId: 'thread-1',
     providerId: 'codex',
     role: 'Worker',
     order: 1,
@@ -33,7 +34,19 @@ describe('mapParticipantShadowsToHostParticipants', () => {
     const rows = mapParticipantShadowsToHostParticipants([entry()])
     expect(rows).toHaveLength(1)
     expect(rows[0].id).toBe('p-1')
+    expect(rows[0].threadId).toBe('thread-1')
     expect(rows[0].providerId).toBe('codex')
+  })
+
+  it('keeps copied roster ids distinct by their owning thread', () => {
+    const rows = mapParticipantShadowsToHostParticipants([
+      entry({ threadId: 'thread-a', id: 'shared-seat' }),
+      entry({ threadId: 'thread-b', id: 'shared-seat' })
+    ])
+    expect(rows.map(({ threadId, id }) => ({ threadId, id }))).toEqual([
+      { threadId: 'thread-a', id: 'shared-seat' },
+      { threadId: 'thread-b', id: 'shared-seat' }
+    ])
   })
 
   it('carries required role/order/enabled/active and optional model/stage/status', () => {
@@ -58,12 +71,15 @@ describe('mapParticipantShadowsToHostParticipants', () => {
     expect('status' in rows[0]).toBe(false)
   })
 
-  it('skips rows without usable id or providerId', () => {
+  it('skips rows without a usable thread-scoped identity or providerId', () => {
     const rows = mapParticipantShadowsToHostParticipants([
       entry({ id: '' }),
       entry({ id: '   ' }),
+      entry({ threadId: '' }),
+      entry({ threadId: '   ' }),
       entry({ providerId: '' }),
-      entry({ id: 'y'.repeat(4096) })
+      entry({ id: 'y'.repeat(4096) }),
+      entry({ threadId: 't'.repeat(300), id: 'p'.repeat(300) })
     ])
     expect(rows).toEqual([])
   })
@@ -117,7 +133,8 @@ describe('mapParticipantShadowsToHostParticipants', () => {
         'providerId',
         'role',
         'stage',
-        'status'
+        'status',
+        'threadId'
       ].sort()
     )
     expect(JSON.stringify(rows[0])).not.toContain('DO NOT LEAK')

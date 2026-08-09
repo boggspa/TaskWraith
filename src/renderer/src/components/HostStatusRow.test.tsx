@@ -33,15 +33,19 @@ import {
   describeHostProviders,
   describeHostAwaitingApprovals
 } from './HostStatusRow'
-import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
+import {
+  HOST_PROJECTION_VERSION,
+  HOST_PROTOCOL_VERSION,
+  HOST_WARNING_PROVIDER_SOURCE_NOT_READY
+} from '../../../shared/hostProtocol'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import type { HostSnapshot } from '../../../shared/hostProtocol'
 
 function snapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
   return {
-    protocolVersion: 2,
-    projectionVersion: 1,
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
     generatedAt: '2026-08-06T12:00:00.000Z',
     generation: 3,
     cursor: 42,

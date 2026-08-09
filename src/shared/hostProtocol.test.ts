@@ -26,6 +26,7 @@ import {
   decodeHostSnapshotFrame,
   evaluateHostIdempotencyFingerprints,
   evaluateHostIdempotencyReplay,
+  encodeHostParticipantEntityId,
   intersectHostCapabilities,
   isHostCommandFingerprint,
   normalizeHostCommandFingerprint,
@@ -119,7 +120,7 @@ describe('Host protocol Wave 2A contract', () => {
         type: 'host.hello',
         protocolVersion: 2,
         controlProtocolCompat: 1,
-        projectionVersion: 1,
+        projectionVersion: 2,
         client,
         capabilities: ['bootstrap', 'snapshot', 'deltas', 'commands', 'receipts']
       }
@@ -738,6 +739,21 @@ describe('Host protocol Wave 2A contract', () => {
 })
 
 describe('Host protocol Wave 2D-1 read frames', () => {
+  it('encodes participant identity from thread + roster id without aliases', () => {
+    expect(encodeHostParticipantEntityId('thread:a', 'seat:b')).toEqual({
+      ok: true,
+      value: 'pt1:8:thread:a:6:seat:b'
+    })
+    expect(encodeHostParticipantEntityId('thread:a:seat', 'b')).not.toEqual(
+      encodeHostParticipantEntityId('thread:a', 'seat:b')
+    )
+    expect(encodeHostParticipantEntityId(' thread', 'seat')).toMatchObject({ ok: false })
+    expect(encodeHostParticipantEntityId('t'.repeat(300), 'p'.repeat(300))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('exceeds')
+    })
+  })
+
   it('round-trips decodeHostSnapshot for empty and populated compact snapshots', () => {
     const empty = createEmptyHostSnapshot({ generation: 2, cursor: 5 })
     const decodedEmpty = decodeHostSnapshot(empty)
@@ -807,6 +823,7 @@ describe('Host protocol Wave 2D-1 read frames', () => {
     })
     populated.participants.push({
       id: 'p1',
+      threadId: 'thread-1',
       providerId: 'cursor',
       role: 'CursorWork3',
       modelId: 'grok-4.5',
@@ -883,6 +900,13 @@ describe('Host protocol Wave 2D-1 read frames', () => {
 
     const decoded = decodeHostSnapshot(JSON.parse(JSON.stringify(populated)))
     expect(decoded).toEqual({ ok: true, value: populated })
+
+    const missingParticipantThread = JSON.parse(JSON.stringify(populated))
+    delete missingParticipantThread.participants[0].threadId
+    expect(decodeHostSnapshot(missingParticipantThread)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('participants[0].threadId is required')
+    })
   })
 
   it('rejects adversarial snapshot values without inventing families', () => {

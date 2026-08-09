@@ -21,7 +21,7 @@ export const HOST_PROTOCOL_VERSION = 2 as const
  * Projection schema version carried inside snapshots/deltas.
  * Bump when HostSnapshot field semantics change incompatibly.
  */
-export const HOST_PROJECTION_VERSION = 1 as const
+export const HOST_PROJECTION_VERSION = 2 as const
 
 /** Control protocol v1 retained for negotiation / compatibility advertising. */
 export const HOST_CONTROL_PROTOCOL_COMPAT_VERSION = 1 as const
@@ -176,6 +176,8 @@ export interface HostProviderModelProjection {
 
 export interface HostParticipantProjection {
   id: string
+  /** Owning app chat id. Participant ids are only unique within this thread. */
+  threadId: string
   providerId: string
   role: string
   modelId?: string
@@ -677,6 +679,41 @@ function isOptionalString(
   max = HOST_PROTOCOL_MAX_STRING
 ): value is string | undefined {
   return value === undefined || isNonEmptyString(value, max)
+}
+
+const HOST_UNSAFE_IDENTIFIER_CONTROL_RE = /[\u0000-\u001f\u007f]/
+
+function isSafeHostEntityIdComponent(value: unknown): value is string {
+  return (
+    isNonEmptyString(value, HOST_PROTOCOL_MAX_ID) &&
+    value.trim() === value &&
+    !HOST_UNSAFE_IDENTIFIER_CONTROL_RE.test(value)
+  )
+}
+
+/**
+ * Stable participant delta identity.
+ *
+ * Ensemble roster ids can be copied between chats, so `participant.id` alone
+ * is not globally unique. This tagged length-prefixed encoding is reversible,
+ * unambiguous when either component contains `:`, and bounded to the normal
+ * Host entity-id limit without hashing or truncation.
+ */
+export function encodeHostParticipantEntityId(
+  threadId: unknown,
+  participantId: unknown
+): HostDecodeResult<string> {
+  if (!isSafeHostEntityIdComponent(threadId)) {
+    return { ok: false, error: 'participant threadId is empty, oversized, or unsafe' }
+  }
+  if (!isSafeHostEntityIdComponent(participantId)) {
+    return { ok: false, error: 'participant id is empty, oversized, or unsafe' }
+  }
+  const entityId = `pt1:${threadId.length}:${threadId}:${participantId.length}:${participantId}`
+  if (entityId.length > HOST_PROTOCOL_MAX_ID) {
+    return { ok: false, error: 'participant composite entity id exceeds Host id bound' }
+  }
+  return { ok: true, value: entityId }
 }
 
 function isNonNegativeInt(value: unknown): value is number {
@@ -2109,6 +2146,13 @@ function decodeHostParticipantProjection(
   if (!isNonEmptyString(value.id, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.id is required` }
   }
+  if (!isNonEmptyString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is required` }
+  }
+  const entityId = encodeHostParticipantEntityId(value.threadId, value.id)
+  if (!entityId.ok) {
+    return { ok: false, error: `${label} has invalid identity: ${entityId.error}` }
+  }
   if (!isNonEmptyString(value.providerId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.providerId is required` }
   }
@@ -2135,6 +2179,7 @@ function decodeHostParticipantProjection(
   }
   const participant: HostParticipantProjection = {
     id: value.id,
+    threadId: value.threadId,
     providerId: value.providerId,
     role: value.role,
     order: value.order,

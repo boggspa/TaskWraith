@@ -48825,6 +48825,7 @@ if (isGeminiMcpBridgeProcess) {
                 const roundStatus = statusById.get(participant.id)
                 return {
                   id: participant.id,
+                  threadId: chat.appChatId,
                   providerId: participant.provider,
                   role: participant.role,
                   order: participant.order,

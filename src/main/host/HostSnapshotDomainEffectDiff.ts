@@ -20,6 +20,8 @@
  * - Deterministic family then entityId order.
  * - Reject duplicate / ambiguous / unsafe / overlong ids and provider
  *   composite collisions without truncation.
+ * - Participant entity ids include their owning thread because roster ids are
+ *   thread-scoped and may be copied into side chats.
  * - Provider entity ids use a reversible tagged length-prefixed encoding
  *   that always distinguishes model-absent from model-present and remains
  *   unambiguous when components contain ':' (no hash / truncation).
@@ -29,6 +31,7 @@
 import {
   HOST_PROTOCOL_MAX_ID,
   decodeHostSnapshot,
+  encodeHostParticipantEntityId,
   type HostApprovalProjection,
   type HostArtifactProjection,
   type HostDeltaFamily,
@@ -399,6 +402,18 @@ function entityIdOf(
   if (family === 'provider') {
     return providerCompositeEntityId(entity as HostProviderModelProjection)
   }
+  if (family === 'participant') {
+    const participant = entity as HostParticipantProjection
+    const encoded = encodeHostParticipantEntityId(participant.threadId, participant.id)
+    if (encoded.ok) return { ok: true, entityId: encoded.value }
+    return {
+      ok: false,
+      failure: {
+        reason: encoded.error.includes('exceeds') ? 'overlong_entity_id' : 'unsafe_entity_id',
+        detail: encoded.error
+      }
+    }
+  }
 
   const record = entity as Record<string, unknown>
   let raw: unknown
@@ -417,9 +432,6 @@ function entityIdOf(
       break
     case 'round':
       raw = (entity as HostRoundProjection).roundId
-      break
-    case 'participant':
-      raw = (entity as HostParticipantProjection).id
       break
     case 'question':
       raw = (entity as HostQuestionProjection).questionId

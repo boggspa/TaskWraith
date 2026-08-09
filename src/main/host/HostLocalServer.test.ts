@@ -25,6 +25,7 @@ import {
 } from '../../shared/hostProtocolTransport'
 import {
   HOST_PROTOCOL_VERSION,
+  HOST_PROJECTION_VERSION,
   type HostCommand,
   type HostCommandReceipt,
   type HostCursorPosition,
@@ -57,7 +58,7 @@ function makeClientHello(token: string): HostLocalTransportClientFrame {
     hello: {
       type: 'host.hello',
       protocolVersion: HOST_PROTOCOL_VERSION,
-      projectionVersion: 1,
+      projectionVersion: HOST_PROJECTION_VERSION,
       client: {
         clientId: 'test-client',
         clientClass: 'test',
@@ -102,7 +103,7 @@ function mockHostSession(
         type: 'host.welcome',
         protocolVersion: HOST_PROTOCOL_VERSION,
         controlProtocolCompat: 1,
-        projectionVersion: 1,
+        projectionVersion: HOST_PROJECTION_VERSION,
         hostId: 'test-host',
         hostVersion: '0.0.0-test',
         sessionId: sid,
@@ -185,7 +186,7 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
 function makeEmptySnapshot(): HostSnapshot {
   return {
     protocolVersion: HOST_PROTOCOL_VERSION,
-    projectionVersion: 1,
+    projectionVersion: HOST_PROJECTION_VERSION,
     generatedAt: '2026-08-04T00:00:00.000Z',
     generation: 0,
     cursor: 0,

@@ -24,7 +24,7 @@ import Foundation
 
 public enum HostProtocolConstants {
     public static let protocolVersion = 2
-    public static let projectionVersion = 1
+    public static let projectionVersion = 2
     public static let controlProtocolCompatVersion = 1
     public static let maxString = 16_000
     public static let maxID = 512
@@ -508,6 +508,7 @@ public struct HostRoundProjection: Codable, Sendable, Equatable {
 // Family 7: participants
 public struct HostParticipantProjection: Codable, Sendable, Equatable {
     public var id: String
+    public var threadId: String
     public var providerId: String
     public var role: String
     public var modelId: String?
@@ -518,11 +519,12 @@ public struct HostParticipantProjection: Codable, Sendable, Equatable {
     public var active: Bool
 
     public init(
-        id: String, providerId: String, role: String,
+        id: String, threadId: String, providerId: String, role: String,
         modelId: String? = nil, stage: HostParticipantStage? = nil,
         order: Int, enabled: Bool, status: String? = nil, active: Bool
     ) {
         self.id = id
+        self.threadId = threadId
         self.providerId = providerId
         self.role = role
         self.modelId = modelId
@@ -1257,6 +1259,32 @@ public enum HostDecodeResult<T>: Equatable where T: Equatable {
     case error(String)
 }
 
+private func isSafeHostEntityIdComponent(_ value: String) -> Bool {
+    let length = value.utf16.count
+    guard length > 0, length <= HostProtocolConstants.maxID else { return false }
+    guard value.trimmingCharacters(in: .whitespacesAndNewlines) == value else { return false }
+    return !value.unicodeScalars.contains { scalar in
+        scalar.value <= 0x1F || scalar.value == 0x7F
+    }
+}
+
+/// Stable participant delta identity. Mirrors TS `encodeHostParticipantEntityId`.
+public func encodeHostParticipantEntityId(
+    threadId: String, participantId: String
+) -> HostDecodeResult<String> {
+    guard isSafeHostEntityIdComponent(threadId) else {
+        return .error("participant threadId is empty, oversized, or unsafe")
+    }
+    guard isSafeHostEntityIdComponent(participantId) else {
+        return .error("participant id is empty, oversized, or unsafe")
+    }
+    let entityId = "pt1:\(threadId.utf16.count):\(threadId):\(participantId.utf16.count):\(participantId)"
+    guard entityId.utf16.count <= HostProtocolConstants.maxID else {
+        return .error("participant composite entity id exceeds Host id bound")
+    }
+    return .ok(entityId)
+}
+
 /// Deterministic capability intersection: host offer ∩ client request.
 /// Preserves host offer order, dedupes, and never invents capabilities.
 public func intersectHostCapabilities(
@@ -1423,6 +1451,20 @@ public func decodeHostSnapshot(from data: Data) -> HostDecodeResult<HostSnapshot
     if let arr = raw["schedules"] as? [Any], arr.count > maxColl { return .error("schedules exceeds max collection") }
     if let arr = raw["artifacts"] as? [Any], arr.count > maxColl { return .error("artifacts exceeds max collection") }
     if let arr = raw["warnings"] as? [Any], arr.count > maxColl { return .error("warnings exceeds max collection") }
+    if let participants = raw["participants"] as? [[String: Any]] {
+        for (index, participant) in participants.enumerated() {
+            guard let threadId = participant["threadId"] as? String,
+                  let participantId = participant["id"] as? String
+            else {
+                return .error("participants[\(index)] threadId/id is required")
+            }
+            guard case .ok = encodeHostParticipantEntityId(
+                threadId: threadId, participantId: participantId)
+            else {
+                return .error("participants[\(index)] identity is invalid")
+            }
+        }
+    }
     // Now do full Codable decode
     do {
         let snapshot = try decoder.decode(HostSnapshot.self, from: data)

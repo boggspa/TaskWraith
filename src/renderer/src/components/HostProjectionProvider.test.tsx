@@ -15,15 +15,19 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import type { HostSnapshot } from '../../../shared/hostProtocol'
+import {
+  HOST_PROJECTION_VERSION,
+  HOST_PROTOCOL_VERSION,
+  type HostSnapshot
+} from '../../../shared/hostProtocol'
 import { useHostProjection } from '../hooks/useHostProjection'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import { HostProjectionProvider, useHostProjectionStore } from './HostProjectionProvider'
 
 function snapshot(): HostSnapshot {
   return {
-    protocolVersion: 2,
-    projectionVersion: 1,
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
     generatedAt: '2026-08-06T12:00:00.000Z',
     generation: 3,
     cursor: 42,

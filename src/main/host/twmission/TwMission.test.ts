@@ -51,6 +51,7 @@ describe('twmission scaffold', () => {
       participants: [
         {
           id: 'p1',
+          threadId: 'thread-1',
           providerId: 'codex',
           role: 'Worker',
           order: 0,

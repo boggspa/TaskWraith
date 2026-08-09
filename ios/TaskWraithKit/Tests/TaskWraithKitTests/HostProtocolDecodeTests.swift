@@ -24,7 +24,7 @@ struct HostProtocolDecodeTests {
         let decoded = try JSONDecoder().decode(HostSnapshot.self, from: data)
 
         #expect(decoded.protocolVersion == 2)
-        #expect(decoded.projectionVersion == 1)
+        #expect(decoded.projectionVersion == 2)
         #expect(decoded.freshness == .live)
         #expect(decoded.generation == 42)
         #expect(decoded.cursor == 7)
@@ -57,6 +57,7 @@ struct HostProtocolDecodeTests {
 
         // Participants
         #expect(decoded.participants.count == 1)
+        #expect(decoded.participants[0].threadId == "thread-1")
         #expect(decoded.participants[0].stage == .worker)
 
         // Providers
@@ -108,10 +109,58 @@ struct HostProtocolDecodeTests {
         #expect(decoded.generation == 42)
     }
 
+    @Test("decodeHostSnapshot requires participant thread ownership")
+    func participantThreadIdRequired() throws {
+        let encoded = try JSONEncoder().encode(makeFullSnapshot())
+        var raw = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        var participants = try #require(raw["participants"] as? [[String: Any]])
+        participants[0].removeValue(forKey: "threadId")
+        raw["participants"] = participants
+
+        let result = decodeHostSnapshot(
+            from: try JSONSerialization.data(withJSONObject: raw)
+        )
+        guard case .error(let message) = result else {
+            Issue.record("expected .error, got \(result)")
+            return
+        }
+        #expect(message.contains("participants[0]"))
+    }
+
+    @Test("participant entity identity is thread-scoped and bounded")
+    func participantEntityIdentity() throws {
+        #expect(
+            encodeHostParticipantEntityId(
+                threadId: "thread:a", participantId: "seat:b")
+                == .ok("pt1:8:thread:a:6:seat:b")
+        )
+        #expect(
+            encodeHostParticipantEntityId(
+                threadId: "thread:a:seat", participantId: "b")
+                != encodeHostParticipantEntityId(
+                    threadId: "thread:a", participantId: "seat:b")
+        )
+        #expect(
+            encodeHostParticipantEntityId(threadId: " thread", participantId: "seat")
+                == .error("participant threadId is empty, oversized, or unsafe")
+        )
+        let tooLong = encodeHostParticipantEntityId(
+            threadId: String(repeating: "t", count: 300),
+            participantId: String(repeating: "p", count: 300)
+        )
+        guard case .error(let message) = tooLong else {
+            Issue.record("expected .error, got \(tooLong)")
+            return
+        }
+        #expect(message.contains("exceeds"))
+    }
+
     @Test("decodeHostSnapshot rejects unknown protocol version")
     func rejectUnknownProtocolVersion() throws {
         let data = """
-        {"protocolVersion":99,"projectionVersion":1,"generatedAt":"2025-01-01T00:00:00Z",
+        {"protocolVersion":99,"projectionVersion":2,"generatedAt":"2025-01-01T00:00:00Z",
          "generation":0,"cursor":0,"freshness":"live",
          "health":{"hostStatus":"ok","connectionPhase":"live","supervised":true,"freshness":"live"},
          "workspaces":[],"threads":[],"runs":[],"missions":[],"rounds":[],
@@ -130,7 +179,7 @@ struct HostProtocolDecodeTests {
     @Test("decodeHostSnapshot rejects bad freshness enum")
     func rejectBadFreshness() throws {
         let data = """
-        {"protocolVersion":2,"projectionVersion":1,"generatedAt":"2025-01-01T00:00:00Z",
+        {"protocolVersion":2,"projectionVersion":2,"generatedAt":"2025-01-01T00:00:00Z",
          "generation":0,"cursor":0,"freshness":"banana",
          "health":{"hostStatus":"ok","connectionPhase":"live","supervised":true,"freshness":"live"},
          "workspaces":[],"threads":[],"runs":[],"missions":[],"rounds":[],
@@ -148,7 +197,7 @@ struct HostProtocolDecodeTests {
     @Test("decodeHostSnapshot rejects missing health")
     func rejectMissingHealth() throws {
         let data = """
-        {"protocolVersion":2,"projectionVersion":1,"generatedAt":"2025-01-01T00:00:00Z",
+        {"protocolVersion":2,"projectionVersion":2,"generatedAt":"2025-01-01T00:00:00Z",
          "generation":0,"cursor":0,"freshness":"live",
          "workspaces":[],"threads":[],"runs":[],"missions":[],"rounds":[],
          "participants":[],"providers":[],"questions":[],"approvals":[],
@@ -168,7 +217,7 @@ struct HostProtocolDecodeTests {
         let oversized = Array(repeating: "x", count: HostProtocolConstants.maxCollection + 1)
             .map { _ in ["id": "too-many"] as [String: Any] }
         var raw: [String: Any] = [
-            "protocolVersion": 2, "projectionVersion": 1,
+            "protocolVersion": 2, "projectionVersion": 2,
             "generatedAt": "2025-01-01T00:00:00Z", "generation": 0, "cursor": 0,
             "freshness": "live",
             "health": ["hostStatus": "ok", "connectionPhase": "live", "supervised": true, "freshness": "live"],
@@ -217,7 +266,7 @@ struct HostProtocolDecodeTests {
     @Test("BootstrapHello decodes with capabilities")
     func bootstrapHelloDecodes() throws {
         let json = """
-        {"type":"host.hello","protocolVersion":2,"projectionVersion":1,
+        {"type":"host.hello","protocolVersion":2,"projectionVersion":2,
          "client":{"clientId":"ios-1","clientClass":"ios","clientVersion":"1.0"},
          "capabilities":["bootstrap","snapshot","health"]}
         """.data(using: .utf8)!
@@ -235,7 +284,7 @@ struct HostProtocolDecodeTests {
     func bootstrapWelcomeDecodes() throws {
         let json = """
         {"type":"host.welcome","protocolVersion":2,"controlProtocolCompat":1,
-         "projectionVersion":1,"hostId":"mac-studio-1","hostVersion":"1.9.4",
+         "projectionVersion":2,"hostId":"mac-studio-1","hostVersion":"1.9.4",
          "sessionId":"sess-abc","generation":1,"cursor":0,
          "authenticatedClient":{"clientId":"ios-1","clientClass":"ios","clientVersion":"1.0"},
          "capabilities":["bootstrap","snapshot","health"],"freshness":"live"}
@@ -254,7 +303,7 @@ struct HostProtocolDecodeTests {
     @Test("BootstrapHello rejects wrong type")
     func bootstrapHelloRejectsWrongType() throws {
         let json = """
-        {"type":"host.welcome","protocolVersion":2,"projectionVersion":1,
+        {"type":"host.welcome","protocolVersion":2,"projectionVersion":2,
          "client":{"clientId":"ios-1","clientClass":"ios","clientVersion":"1.0"},
          "capabilities":[]}
         """.data(using: .utf8)!
@@ -523,10 +572,10 @@ struct HostProtocolDecodeTests {
         let json = """
         {"kind":"deltas","generation":1,"fromCursor":0,"toCursor":2,
          "deltas":[
-           {"protocolVersion":2,"projectionVersion":1,"generation":1,
+           {"protocolVersion":2,"projectionVersion":2,"generation":1,
             "cursor":1,"previousCursor":0,"kind":"upsert","family":"thread",
             "entityId":"t1","at":"2025-01-01T00:00:00Z"},
-           {"protocolVersion":2,"projectionVersion":1,"generation":1,
+           {"protocolVersion":2,"projectionVersion":2,"generation":1,
             "cursor":2,"previousCursor":1,"kind":"upsert","family":"thread",
             "entityId":"t2","at":"2025-01-01T00:00:01Z"}
          ]}
@@ -686,7 +735,7 @@ struct HostProtocolDecodeTests {
     private func makeFullSnapshot() -> HostSnapshot {
         HostSnapshot(
             protocolVersion: 2,
-            projectionVersion: 1,
+            projectionVersion: 2,
             generatedAt: "2025-01-01T00:00:00Z",
             generation: 42,
             cursor: 7,
@@ -738,7 +787,8 @@ struct HostProtocolDecodeTests {
             ],
             participants: [
                 HostParticipantProjection(
-                    id: "p-1", providerId: "antigravity", role: "SolBoss",
+                    id: "p-1", threadId: "thread-1",
+                    providerId: "antigravity", role: "SolBoss",
                     modelId: "gemini-3.1-pro", stage: .worker,
                     order: 1, enabled: true, active: true)
             ],

@@ -181,14 +181,17 @@ function mapEnsemble(
     round.participantIds.length > 0
       ? round.participantIds
       : (round.waves ?? []).flatMap((wave) => wave.participantIds)
-  const byId = new Map(snapshot.participants.map((participant) => [participant.id, participant]))
+  const threadParticipants = snapshot.participants.filter(
+    (participant) => participant.threadId === thread.id
+  )
+  const byId = new Map(threadParticipants.map((participant) => [participant.id, participant]))
   const ordered = participantIds
     .map((id) => byId.get(id))
     .filter((participant): participant is HostParticipantProjection => Boolean(participant))
   const roster =
     ordered.length > 0
       ? ordered
-      : snapshot.participants.filter((participant) => participant.enabled).slice()
+      : threadParticipants.filter((participant) => participant.enabled).slice()
 
   if (roster.length === 0) return undefined
 

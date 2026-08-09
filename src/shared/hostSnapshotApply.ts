@@ -25,6 +25,7 @@ import {
   decodeHostDeltaEnvelope,
   decodeHostHealthProjection,
   decodeHostSnapshot,
+  encodeHostParticipantEntityId,
   type HostApprovalProjection,
   type HostArtifactProjection,
   type HostCursor,
@@ -110,8 +111,11 @@ function entityIdOf(family: HostDeltaFamily, entity: unknown): string | null {
   switch (family) {
     case 'workspace':
     case 'thread':
-    case 'participant':
       return typeof record.id === 'string' ? record.id : null
+    case 'participant': {
+      const encoded = encodeHostParticipantEntityId(record.threadId, record.id)
+      return encoded.ok ? encoded.value : null
+    }
     case 'run':
       return typeof record.runId === 'string' ? record.runId : null
     case 'mission':

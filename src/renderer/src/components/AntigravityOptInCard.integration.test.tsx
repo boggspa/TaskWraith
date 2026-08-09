@@ -1,7 +1,11 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HOST_PROTOCOL_VERSION, type HostSnapshot } from '../../../shared/hostProtocol'
+import {
+  HOST_PROJECTION_VERSION,
+  HOST_PROTOCOL_VERSION,
+  type HostSnapshot
+} from '../../../shared/hostProtocol'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
 import { HostProjectionProvider } from './HostProjectionProvider'
@@ -209,7 +213,7 @@ describe('AntigravityOptInCard successful mutation integration', () => {
     let renderedSnapshot: ConfiguredProviderSnapshot = { ready: false, providerIds: [] }
     const antigravityHostSnapshot = {
       protocolVersion: HOST_PROTOCOL_VERSION,
-      projectionVersion: 1,
+      projectionVersion: HOST_PROJECTION_VERSION,
       generatedAt: '2026-08-07T12:00:00.000Z',
       generation: 1,
       cursor: 1,

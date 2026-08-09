@@ -9,6 +9,7 @@
 
 import {
   assertHostSnapshotFamilies,
+  encodeHostParticipantEntityId,
   HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_MAX_ID,
   HOST_PROTOCOL_MAX_SHORT,
@@ -814,6 +815,9 @@ function projectParticipant(
 ): HostDecodeResult<HostParticipantProjection> {
   const label = `participants[${index}]`
   if (!isValidId(raw.id)) return { ok: false, error: `${label}.id is invalid` }
+  if (!isValidId(raw.threadId)) return { ok: false, error: `${label}.threadId is invalid` }
+  const entityId = encodeHostParticipantEntityId(raw.threadId, raw.id)
+  if (!entityId.ok) return { ok: false, error: `${label} identity is invalid: ${entityId.error}` }
   if (!isValidId(raw.providerId)) return { ok: false, error: `${label}.providerId is invalid` }
   if (typeof raw.role !== 'string' || raw.role.length === 0) {
     return { ok: false, error: `${label}.role is required` }
@@ -830,6 +834,7 @@ function projectParticipant(
   }
   const out: HostParticipantProjection = {
     id: raw.id,
+    threadId: raw.threadId,
     providerId: raw.providerId,
     role: truncatePresentation(raw.role, HOST_PROTOCOL_MAX_SHORT).text,
     order: raw.order,
@@ -1203,7 +1208,10 @@ export function projectHostSnapshot(
     input.participants,
     'participants',
     projectParticipant,
-    (p) => p.id,
+    (p) => {
+      const identity = encodeHostParticipantEntityId(p.threadId, p.id)
+      return identity.ok ? identity.value : p.id
+    },
     truncationWarnings,
     at
   )

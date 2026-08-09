@@ -153,6 +153,7 @@ describe('hostProjectionMap', () => {
         participants: [
           {
             id: 'p1',
+            threadId: 'ens-1',
             providerId: 'claude',
             role: 'Boss',
             order: 1,
@@ -162,6 +163,7 @@ describe('hostProjectionMap', () => {
           },
           {
             id: 'p2',
+            threadId: 'ens-1',
             providerId: 'codex',
             role: 'Worker',
             order: 2,
@@ -187,6 +189,81 @@ describe('hostProjectionMap', () => {
       role: 'Worker',
       next: true
     })
+  })
+
+  it('never joins copied participant ids across threads for an idle round', () => {
+    const mapped = mapHostSnapshotToControlSnapshot(
+      snapshotWithThread({
+        threads: [
+          {
+            id: 'ens-a',
+            workspaceId: 'ws-1',
+            title: 'A',
+            chatKind: 'ensemble',
+            archived: false,
+            pinned: false,
+            updatedAt: 1,
+            messageCount: 0,
+            activeRoundId: 'round-a'
+          },
+          {
+            id: 'ens-b',
+            workspaceId: 'ws-1',
+            title: 'B',
+            chatKind: 'ensemble',
+            archived: false,
+            pinned: false,
+            updatedAt: 1,
+            messageCount: 0,
+            activeRoundId: 'round-b'
+          }
+        ],
+        runs: [],
+        rounds: [
+          {
+            roundId: 'round-a',
+            threadId: 'ens-a',
+            status: 'completed',
+            participantIds: [],
+            providerRunIds: []
+          },
+          {
+            roundId: 'round-b',
+            threadId: 'ens-b',
+            status: 'completed',
+            participantIds: [],
+            providerRunIds: []
+          }
+        ],
+        participants: [
+          {
+            id: 'shared-seat',
+            threadId: 'ens-a',
+            providerId: 'claude',
+            role: 'A worker',
+            order: 1,
+            enabled: true,
+            active: false
+          },
+          {
+            id: 'shared-seat',
+            threadId: 'ens-b',
+            providerId: 'claude',
+            role: 'B worker',
+            order: 1,
+            enabled: true,
+            active: false
+          }
+        ]
+      })
+    )
+
+    expect(mapped.threads.find((thread) => thread.id === 'ens-a')?.ensemble?.participants).toEqual([
+      expect.objectContaining({ id: 'shared-seat', role: 'A worker' })
+    ])
+    expect(mapped.threads.find((thread) => thread.id === 'ens-b')?.ensemble?.participants).toEqual([
+      expect.objectContaining({ id: 'shared-seat', role: 'B worker' })
+    ])
   })
 
   it('builds preview-only thread detail without fabricating transcript history', () => {

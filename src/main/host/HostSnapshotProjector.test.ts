@@ -111,6 +111,7 @@ function baseInput(
     participants: [
       {
         id: 'p1',
+        threadId: 'thread-1',
         providerId: 'codex',
         role: 'Boss',
         modelId: 'gpt-5.6',
@@ -454,6 +455,37 @@ describe('HostSnapshotProjector', () => {
     expect(badThreadWorkspace).toMatchObject({
       ok: false,
       error: 'threads[0].workspaceId is invalid'
+    })
+
+    const missingParticipantThread = projectHostSnapshot(
+      baseInput({
+        participants: [
+          {
+            ...baseInput().participants[0]!,
+            threadId: undefined
+          } as unknown as HostSnapshotProjectorInput['participants'][number]
+        ]
+      })
+    )
+    expect(missingParticipantThread).toMatchObject({
+      ok: false,
+      error: 'participants[0].threadId is invalid'
+    })
+
+    const overlongParticipantIdentity = projectHostSnapshot(
+      baseInput({
+        participants: [
+          {
+            ...baseInput().participants[0]!,
+            threadId: 't'.repeat(300),
+            id: 'p'.repeat(300)
+          }
+        ]
+      })
+    )
+    expect(overlongParticipantIdentity).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('participant composite entity id exceeds')
     })
   })
 

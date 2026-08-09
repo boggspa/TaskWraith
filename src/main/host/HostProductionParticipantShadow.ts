@@ -18,7 +18,10 @@
  * - every listParticipants call re-reads (no cache of a moving set).
  */
 
-import type { HostParticipantProjection } from '../../shared/hostProtocol'
+import {
+  encodeHostParticipantEntityId,
+  type HostParticipantProjection
+} from '../../shared/hostProtocol'
 
 /** Wire id bound — matches hostProtocol HOST_PROTOCOL_MAX_ID. */
 const HOST_PARTICIPANT_ID_MAX = 512
@@ -39,6 +42,7 @@ const KNOWN_STAGES = new Set<NonNullable<HostParticipantProjection['stage']>>([
  */
 export interface HostParticipantShadowEntry {
   readonly id: string
+  readonly threadId: string
   readonly providerId: string
   readonly role: string
   readonly order: number
@@ -92,6 +96,8 @@ export function mapParticipantShadowsToHostParticipants(
   const rows: HostParticipantProjection[] = []
   for (const entry of entries) {
     if (!entry || !isUsableId(entry.id) || entry.id.length > HOST_PARTICIPANT_ID_MAX) continue
+    const entityId = encodeHostParticipantEntityId(entry.threadId, entry.id)
+    if (!entityId.ok) continue
     if (!isUsableId(entry.providerId) || entry.providerId.length > HOST_PARTICIPANT_ID_MAX) continue
     if (typeof entry.role !== 'string' || entry.role.trim().length === 0) continue
     if (typeof entry.enabled !== 'boolean' || typeof entry.active !== 'boolean') continue
@@ -102,6 +108,7 @@ export function mapParticipantShadowsToHostParticipants(
     // ALLOWLIST REBUILD: never forward instructions / permissions / sessions.
     const row: HostParticipantProjection = {
       id: entry.id,
+      threadId: entry.threadId,
       providerId: entry.providerId,
       role: boundText(entry.role.trim(), HOST_PARTICIPANT_SHORT_MAX),
       order: entry.order,

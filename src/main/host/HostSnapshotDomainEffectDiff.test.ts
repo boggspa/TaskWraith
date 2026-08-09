@@ -197,6 +197,7 @@ describe('diffHostSnapshotDomainEffects', () => {
       participants: [
         {
           id: 'p1',
+          threadId: 'th-1',
           providerId: 'cursor',
           role: 'CursorWork',
           order: 1,
@@ -300,7 +301,7 @@ describe('diffHostSnapshotDomainEffects', () => {
       'run:upsert:run-1',
       'mission:upsert:m-1',
       'round:upsert:r-1',
-      'participant:upsert:p1',
+      'participant:upsert:pt1:4:th-1:2:p1',
       'provider:upsert:p1:6:cursor:8:grok-4.5',
       'question:upsert:q-1',
       'approval:upsert:a-1',
@@ -356,6 +357,44 @@ describe('diffHostSnapshotDomainEffects', () => {
       'recovery:upsert:recovery',
       'health:upsert:health'
     ])
+  })
+
+  it('diffs copied participant ids independently by owning thread', () => {
+    const before = baseSnapshot({
+      participants: [
+        {
+          id: 'shared-seat',
+          threadId: 'thread-a',
+          providerId: 'codex',
+          role: 'Worker A',
+          order: 1,
+          enabled: true,
+          active: false
+        },
+        {
+          id: 'shared-seat',
+          threadId: 'thread-b',
+          providerId: 'codex',
+          role: 'Worker B',
+          order: 1,
+          enabled: true,
+          active: false
+        }
+      ]
+    })
+    const after = cloneSnapshot(before)
+    after.participants[1]!.active = true
+
+    const result = diffHostSnapshotDomainEffects(before, after)
+    expect(result.kind).toBe('effects')
+    if (result.kind !== 'effects') return
+    expect(result.effects).toHaveLength(1)
+    expect(result.effects[0]).toMatchObject({
+      family: 'participant',
+      kind: 'upsert',
+      entityId: 'pt1:8:thread-b:11:shared-seat',
+      payload: { threadId: 'thread-b', id: 'shared-seat', active: true }
+    })
   })
 
   it('tombstones optional routing when it disappears and upserts when it appears', () => {

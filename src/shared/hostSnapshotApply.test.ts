@@ -94,9 +94,10 @@ const COLLECTION_CASES: Array<{
   },
   {
     family: 'participant',
-    entityId: 'p1',
+    entityId: 'pt1:4:th-1:2:p1',
     payload: {
       id: 'p1',
+      threadId: 'th-1',
       providerId: 'cursor',
       role: 'CursorWork3',
       order: 1,
@@ -309,6 +310,60 @@ describe('applyHostSnapshotDeltas', () => {
       expect(result.snapshot).toBe(cache)
     }
     expect(JSON.stringify(cache)).toBe(original)
+  })
+
+  it('applies same roster id independently in different threads', () => {
+    const cache = baseCache(0)
+    const firstId = 'pt1:8:thread-a:11:shared-seat'
+    const secondId = 'pt1:8:thread-b:11:shared-seat'
+    const result = applyHostSnapshotDeltas(cache, [
+      envelope({
+        cursor: 1,
+        previousCursor: 0,
+        kind: 'upsert',
+        family: 'participant',
+        entityId: firstId,
+        payload: {
+          id: 'shared-seat',
+          threadId: 'thread-a',
+          providerId: 'codex',
+          role: 'Worker A',
+          order: 1,
+          enabled: true,
+          active: false
+        }
+      }),
+      envelope({
+        cursor: 2,
+        previousCursor: 1,
+        kind: 'upsert',
+        family: 'participant',
+        entityId: secondId,
+        payload: {
+          id: 'shared-seat',
+          threadId: 'thread-b',
+          providerId: 'codex',
+          role: 'Worker B',
+          order: 1,
+          enabled: true,
+          active: true
+        }
+      }),
+      envelope({
+        cursor: 3,
+        previousCursor: 2,
+        kind: 'tombstone',
+        family: 'participant',
+        entityId: firstId,
+        tombstone: true
+      })
+    ])
+
+    expect(result.outcome).toBe('applied')
+    if (result.outcome !== 'applied') return
+    expect(result.snapshot.participants).toEqual([
+      expect.objectContaining({ threadId: 'thread-b', id: 'shared-seat', active: true })
+    ])
   })
 
   it('requires full resnapshot on generation mismatch, reset, gap, and projection mismatch', () => {
@@ -563,9 +618,10 @@ describe('applyHostSnapshotDeltas', () => {
         previousCursor: 0,
         kind: 'upsert',
         family: 'participant',
-        entityId: 'worker',
+        entityId: 'pt1:8:thread-1:6:worker',
         payload: {
           id: 'worker',
+          threadId: 'thread-1',
           providerId: 'cursor',
           role: 'CursorWork3',
           order: 3,
