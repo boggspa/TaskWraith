@@ -9,7 +9,9 @@
  * to Kimi contains content matching these themes, the API
  * returns a 400 with `type: 'content_filter'` and the
  * participant's run ends in failure rather than producing a
- * response.
+ * response. The same opt-in sentence redaction also supports the DeepSeek
+ * and Z.ai upstreams when they are selected through Pi; the Pi target list is
+ * explicit so every other Pi upstream keeps its original prompt untouched.
  *
  * In an ensemble panel where the user is having a casual
  * conversation, this is annoying — Codex/Claude/Gemini happily
@@ -146,6 +148,26 @@ export const KIMI_DEFAULT_TRIGGER_KEYWORDS: ReadonlyArray<string> = [
   'China summit'
 ]
 
+/** Providers that reuse this compatibility pass need recipient-specific
+ * placeholders and diagnostics, while the Kimi default remains backwards
+ * compatible for existing retry paths. */
+export type CompatibilityFilterRecipient = 'Kimi' | 'DeepSeek' | 'Z.ai'
+
+const PI_COMPATIBILITY_FILTER_RECIPIENTS: Readonly<Record<string, CompatibilityFilterRecipient>> = {
+  deepseek: 'DeepSeek',
+  zai: 'Z.ai'
+}
+
+/**
+ * Return the compatibility-filter recipient for a Pi upstream, or null when
+ * that upstream must retain its unfiltered prompt.
+ */
+export function resolvePiCompatibilityFilterRecipient(
+  upstream: string
+): CompatibilityFilterRecipient | null {
+  return PI_COMPATIBILITY_FILTER_RECIPIENTS[upstream] ?? null
+}
+
 export interface KimiSanitiserResult {
   /** The sanitised text — matched sentences replaced with the
    * placeholder. */
@@ -243,10 +265,24 @@ export function parseCustomKeywords(raw: string | undefined): string[] {
     .filter((line) => line.length > 0 && !line.startsWith('#'))
 }
 
+export interface CompatibilitySanitiserOptions {
+  defaultKeywords?: ReadonlyArray<string>
+  customKeywords?: ReadonlyArray<string>
+  /** Kimi is the legacy/default caller; Pi recipients receive an accurate
+   * placeholder rather than a reference to Moonshot. */
+  recipient?: CompatibilityFilterRecipient
+}
+
+function placeholderForCompatibilityRecipient(recipient: CompatibilityFilterRecipient): string {
+  if (recipient === 'Kimi') return PLACEHOLDER
+  return `[sentence redacted: TaskWraith ${recipient} compatibility filter detected content ${recipient} may reject]`
+}
+
 /**
- * Sanitise a prompt for a Kimi participant. Returns the modified
- * text plus a list of matches the caller can use to surface a
- * transcript diagnostic.
+ * Sanitise a prompt for a compatibility-filter participant. Returns the
+ * modified text plus a list of matches the caller can use to surface a
+ * transcript diagnostic. Kimi remains the default recipient for the existing
+ * Kimi-specific call sites.
  *
  * Algorithm:
  *   1. Split text into sentences via punctuation boundary.
@@ -264,14 +300,13 @@ export function parseCustomKeywords(raw: string | undefined): string[] {
  * length, so this runs in negligible time even on multi-MB
  * prompts.
  */
-export function sanitiseForKimi(
+export function sanitiseForCompatibility(
   text: string,
-  options: {
-    defaultKeywords?: ReadonlyArray<string>
-    customKeywords?: ReadonlyArray<string>
-  } = {}
+  options: CompatibilitySanitiserOptions = {}
 ): KimiSanitiserResult {
   if (!text) return { text, redacted: false, matches: [] }
+  const recipient = options.recipient ?? 'Kimi'
+  const placeholder = placeholderForCompatibilityRecipient(recipient)
   const triggers = [
     ...(options.defaultKeywords ?? KIMI_DEFAULT_TRIGGER_KEYWORDS),
     ...(options.customKeywords ?? [])
@@ -300,7 +335,7 @@ export function sanitiseForKimi(
     if (matchedTrigger) {
       const excerpt = sentence.length > 120 ? `${sentence.slice(0, 117).trim()}…` : sentence.trim()
       matches.push({ trigger: matchedTrigger, sentenceExcerpt: excerpt })
-      out.push(PLACEHOLDER)
+      out.push(placeholder)
     } else {
       out.push(sentence)
     }
@@ -310,6 +345,14 @@ export function sanitiseForKimi(
     redacted: matches.length > 0,
     matches
   }
+}
+
+/** Legacy Kimi entry point retained for the classifier/retry path. */
+export function sanitiseForKimi(
+  text: string,
+  options: Omit<CompatibilitySanitiserOptions, 'recipient'> = {}
+): KimiSanitiserResult {
+  return sanitiseForCompatibility(text, { ...options, recipient: 'Kimi' })
 }
 
 function defaultKimiContentClassifier(input: KimiClassifierInput): KimiClassifierResult {
@@ -404,12 +447,15 @@ export function classifyAndRedactForKimi(
  * when sanitisation fires so the user sees both that
  * sanitisation happened AND what specifically got hidden.
  */
-export function formatKimiSanitiserDiagnostic(result: KimiSanitiserResult): string {
+export function formatCompatibilitySanitiserDiagnostic(
+  recipient: CompatibilityFilterRecipient,
+  result: KimiSanitiserResult
+): string {
   if (!result.redacted || result.matches.length === 0) return ''
   const lines: string[] = [
-    `Kimi compatibility filter redacted ${result.matches.length} sentence${
+    `${recipient} compatibility filter redacted ${result.matches.length} sentence${
       result.matches.length === 1 ? '' : 's'
-    } from Kimi's view of this round:`
+    } from ${recipient}'s view of this round:`
   ]
   for (const m of result.matches.slice(0, 8)) {
     lines.push(`  · Trigger "${m.trigger}" — "${m.sentenceExcerpt}"`)
@@ -419,6 +465,11 @@ export function formatKimiSanitiserDiagnostic(result: KimiSanitiserResult): stri
   }
   lines.push('Other participants (Codex / Claude / Gemini) saw the full unfiltered prompt.')
   return lines.join('\n')
+}
+
+/** Legacy Kimi diagnostic formatter retained for Kimi's retry path. */
+export function formatKimiSanitiserDiagnostic(result: KimiSanitiserResult): string {
+  return formatCompatibilitySanitiserDiagnostic('Kimi', result)
 }
 
 export function formatKimiRetryDiagnostic(

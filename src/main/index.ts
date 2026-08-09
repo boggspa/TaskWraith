@@ -1809,9 +1809,12 @@ import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // Kimi process sees the prompt). Module + tests live in
 // `src/main/lib/kimiSanitiser.ts`.
 import {
+  formatCompatibilitySanitiserDiagnostic,
   formatKimiSanitiserDiagnostic,
   isKimiContentFilterRejection,
   parseCustomKeywords,
+  resolvePiCompatibilityFilterRecipient,
+  sanitiseForCompatibility,
   sanitiseForKimi
 } from './lib/kimiSanitiser'
 import {
@@ -21563,6 +21566,36 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       true
     )
     return
+  }
+
+  // Reuse the opt-in Kimi compatibility pass for the Pi upstreams that need
+  // it. The resolver is deliberately allowlisted: Qwen, MiniMax, Mistral,
+  // Groq, and Cerebras keep their unmodified ensemble prompts.
+  const compatibilityRecipient = resolvePiCompatibilityFilterRecipient(split.upstream)
+  if (payload.ensembleRun && compatibilityRecipient) {
+    const settings = AppStore.getSettings()
+    if (settings.kimiSanitiserEnabled && typeof payload.prompt === 'string') {
+      const result = sanitiseForCompatibility(payload.prompt, {
+        customKeywords: parseCustomKeywords(settings.kimiSanitiserCustomKeywords),
+        recipient: compatibilityRecipient
+      })
+      if (result.redacted) {
+        payload.prompt = result.text
+        sendAgentCompatLine(
+          event.sender,
+          'pi',
+          {
+            type: 'provider_diagnostic',
+            provider: 'pi',
+            message: formatCompatibilitySanitiserDiagnostic(compatibilityRecipient, result),
+            source: 'pi-compatibility-filter',
+            matchCount: result.matches.length,
+            triggers: result.matches.map((match) => match.trigger)
+          },
+          route
+        )
+      }
+    }
   }
 
   const cerebrasMaxCompletionTokens =

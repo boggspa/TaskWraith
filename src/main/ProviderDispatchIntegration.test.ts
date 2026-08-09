@@ -146,6 +146,21 @@ describe('provider dispatch integration', () => {
     )
   })
 
+  it('applies compatibility redaction to explicitly supported Pi upstreams before launch', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain('resolvePiCompatibilityFilterRecipient(split.upstream)')
+    expect(pi).toContain('sanitiseForCompatibility(payload.prompt, {')
+    expect(pi).toContain('recipient: compatibilityRecipient')
+    expect(pi).toContain("source: 'pi-compatibility-filter'")
+    expect(pi.indexOf('const compatibilityRecipient')).toBeGreaterThan(
+      pi.indexOf('const verdict = piModelPolicyVerdict(')
+    )
+    expect(pi.indexOf('const compatibilityRecipient')).toBeLessThan(
+      pi.indexOf('await runCliProviderProcess(')
+    )
+  })
+
   it('binds Pi managed tools to a per-run server-side allowlist before launch', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 

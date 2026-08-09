@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   KIMI_DEFAULT_TRIGGER_KEYWORDS,
   classifyAndRedactForKimi,
+  formatCompatibilitySanitiserDiagnostic,
   formatKimiRetryDiagnostic,
   formatKimiRetryFailureDiagnostic,
   formatKimiSanitiserDiagnostic,
   isKimiContentFilterRejection,
   parseCustomKeywords,
+  resolvePiCompatibilityFilterRecipient,
+  sanitiseForCompatibility,
   sanitiseForKimi
 } from './kimiSanitiser'
 
@@ -63,6 +66,27 @@ describe('kimiSanitiser', () => {
     })
     expect(withCustom.redacted).toBe(true)
     expect(withCustom.matches[0].trigger).toBe('South China Sea')
+  })
+
+  it('limits Pi compatibility filtering to DeepSeek and Z.ai upstreams', () => {
+    expect(resolvePiCompatibilityFilterRecipient('deepseek')).toBe('DeepSeek')
+    expect(resolvePiCompatibilityFilterRecipient('zai')).toBe('Z.ai')
+    expect(resolvePiCompatibilityFilterRecipient('mistral')).toBeNull()
+    expect(resolvePiCompatibilityFilterRecipient('cerebras')).toBeNull()
+  })
+
+  it('uses an accurate recipient placeholder and diagnostic for Pi upstreams', () => {
+    const result = sanitiseForCompatibility('Tiananmen was mentioned. Other work continues.', {
+      recipient: 'DeepSeek'
+    })
+
+    expect(result.text).toContain(
+      '[sentence redacted: TaskWraith DeepSeek compatibility filter detected content DeepSeek may reject]'
+    )
+    const diagnostic = formatCompatibilitySanitiserDiagnostic('DeepSeek', result)
+    expect(diagnostic).toContain('DeepSeek compatibility filter redacted 1 sentence')
+    expect(diagnostic).toContain("from DeepSeek's view")
+    expect(diagnostic).not.toContain('Moonshot')
   })
 
   it('trims and ignores blank custom keyword lines', () => {
