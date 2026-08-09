@@ -40,14 +40,20 @@ cleanup()
 const timer = setInterval(cleanup, 75)
 timer.unref()
 
-const binaryName = process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder'
-const localBinary = path.join(repoRoot, 'node_modules', '.bin', binaryName)
-const binary = fs.existsSync(localBinary) ? localBinary : binaryName
-const child = spawn(binary, args, {
-  cwd: repoRoot,
-  env: process.env,
-  stdio: 'inherit'
-})
+// Invoke the JS entrypoint directly so the macOS DMG build can preload the
+// narrow window/background fix without leaking NODE_OPTIONS into packager
+// subprocesses. The preload is inert unless dmg-builder writes DMG settings.
+const electronBuilderCli = require.resolve('electron-builder/out/cli/cli')
+const dmgWindowPreload = path.join(repoRoot, 'scripts', 'patch-electron-builder-dmg-window.cjs')
+const child = spawn(
+  process.execPath,
+  ['--require', dmgWindowPreload, electronBuilderCli, ...args],
+  {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: 'inherit'
+  }
+)
 
 function stopCleanup() {
   clearInterval(timer)
