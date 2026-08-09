@@ -3621,6 +3621,14 @@
   line-height: 1.3;
 }
 
+.host-mission-control-receipt {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .host-mission-control-chevron {
   color: var(--text-secondary);
   font-size: 19px;

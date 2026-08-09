@@ -2,6 +2,7 @@ import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import type {
   HostProjectedMission,
   HostProjectedParticipant,
+  HostProjectedQuestion,
   HostProjectedRound,
   HostProjectedRun
 } from '../lib/host/hostSnapshotProjection'
@@ -19,6 +20,7 @@ export interface HostMissionControlModel {
   readonly missions: readonly HostProjectedMission[]
   readonly rounds: readonly HostProjectedRound[]
   readonly runs: readonly HostProjectedRun[]
+  readonly questionReceipts: readonly HostProjectedQuestion[]
   readonly participantGroups: readonly HostMissionControlParticipantGroup[]
   readonly activeMissionCount: number
   readonly participantCount: number
@@ -48,6 +50,7 @@ export function projectHostMissionControl(state: HostProjectionState): HostMissi
       missions: [],
       rounds: [],
       runs: [],
+      questionReceipts: [],
       participantGroups: [],
       activeMissionCount: 0,
       participantCount: 0
@@ -88,6 +91,16 @@ export function projectHostMissionControl(state: HostProjectionState): HostMissi
         left.title.localeCompare(right.title) || left.threadId.localeCompare(right.threadId)
     )
 
+  const questionReceipts = projection.questions
+    .filter((question) => question.status !== 'open' && Boolean(question.receiptId))
+    .sort((left, right) => {
+      const leftAt = left.answeredAt ?? left.askedAt
+      const rightAt = right.answeredAt ?? right.askedAt
+      if (leftAt !== rightAt) return rightAt - leftAt
+      return left.questionId.localeCompare(right.questionId)
+    })
+    .slice(0, 10)
+
   return {
     phase: describePhase(state),
     generation: projection.generation,
@@ -95,6 +108,7 @@ export function projectHostMissionControl(state: HostProjectionState): HostMissi
     missions,
     rounds,
     runs: projection.runs,
+    questionReceipts,
     participantGroups,
     activeMissionCount: missions.filter((mission) => mission.status === 'active').length,
     participantCount: projection.participants.length
@@ -229,6 +243,36 @@ export function HostMissionControl({ state }: { readonly state: HostProjectionSt
                       </article>
                     )
                   })}
+                </div>
+              </section>
+            ) : null}
+
+            {model.questionReceipts.length > 0 ? (
+              <section
+                className="host-mission-control-section"
+                aria-labelledby="host-question-receipts-title"
+              >
+                <h3 id="host-question-receipts-title">Recent question receipts</h3>
+                <div className="host-mission-control-timeline">
+                  {model.questionReceipts.map((question) => (
+                    <article
+                      className="host-mission-control-row"
+                      key={question.questionId}
+                      aria-label={`${question.promptPreview}, ${question.status}, receipt ${question.receiptId}`}
+                    >
+                      <span
+                        className={`host-mission-control-dot is-${statusClass(question.status)}`}
+                        aria-hidden
+                      />
+                      <span className="host-mission-control-row-copy">
+                        <strong>{question.promptPreview}</strong>
+                        <span>{question.status}</span>
+                        <code className="host-mission-control-receipt">
+                          Receipt {question.receiptId}
+                        </code>
+                      </span>
+                    </article>
+                  ))}
                 </div>
               </section>
             ) : null}

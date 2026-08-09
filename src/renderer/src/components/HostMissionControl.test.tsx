@@ -171,6 +171,35 @@ describe('projectHostMissionControl', () => {
     expect(projectHostMissionControl({ status: 'loading' }).phase).toBe('Checking')
     expect(projectHostMissionControl({ status: 'idle' }).phase).toBe('Not checked')
   })
+
+  it('keeps the newest ten resolved question receipts and excludes open questions', () => {
+    const source = missionFixture()
+    source.questions = [
+      {
+        questionId: 'question-open',
+        threadId: 'thread-a',
+        status: 'open',
+        promptPreview: 'Still waiting?',
+        askedAt: 1,
+        receiptId: 'receipt-should-not-render'
+      },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        questionId: `question-${index}`,
+        threadId: 'thread-a',
+        status: index % 2 === 0 ? ('answered' as const) : ('dismissed' as const),
+        promptPreview: `Question ${index}?`,
+        askedAt: index,
+        answeredAt: index,
+        receiptId: `receipt-${index}`
+      }))
+    ]
+
+    const model = projectHostMissionControl(stateFromSnapshot(source))
+    expect(model.questionReceipts).toHaveLength(10)
+    expect(model.questionReceipts.map((question) => question.questionId)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `question-${11 - index}`)
+    )
+  })
 })
 
 describe('HostMissionControl', () => {
@@ -217,6 +246,29 @@ describe('HostMissionControl', () => {
     expect(markup).toContain('blocked')
     expect(markup).toContain('cancelled · 0 seats')
     expect(markup).toContain('codex: completed')
+  })
+
+  it('shows the exact resolved-question receipt without exposing an answer body', () => {
+    const source = missionFixture()
+    source.questions = [
+      {
+        questionId: 'question-receipt',
+        threadId: 'thread-a',
+        status: 'answered',
+        promptPreview: 'Which route?',
+        askedAt: 100,
+        answeredAt: 200,
+        receiptId: '11111111-1111-4111-8111-111111111111',
+        answer: 'PRIVATE ANSWER BODY'
+      } as never
+    ]
+
+    const markup = renderToStaticMarkup(<HostMissionControl state={stateFromSnapshot(source)} />)
+
+    expect(markup).toContain('Recent question receipts')
+    expect(markup).toContain('Which route?')
+    expect(markup).toContain('Receipt 11111111-1111-4111-8111-111111111111')
+    expect(markup).not.toContain('PRIVATE ANSWER BODY')
   })
 
   it('renders an honest unavailable state without fabricating an empty mission world', () => {
