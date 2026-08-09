@@ -266,8 +266,9 @@ export class CanvasService implements CanvasController {
   private contextHistoryBlocked(ctx: CanvasCallContext): boolean {
     return Boolean(
       this.purging ||
-      (ctx.chatId && (this.chatHistoryClearHolds.get(ctx.chatId) ?? 0) > 0) ||
-      (ctx.workspacePath && (this.workspaceHistoryClearHolds.get(ctx.workspacePath) ?? 0) > 0)
+        (ctx.chatId && (this.chatHistoryClearHolds.get(ctx.chatId) ?? 0) > 0) ||
+        (ctx.workspacePath &&
+          (this.workspaceHistoryClearHolds.get(ctx.workspacePath) ?? 0) > 0)
     )
   }
 
@@ -289,8 +290,8 @@ export class CanvasService implements CanvasController {
   ): boolean {
     return Boolean(
       (ctx.chatId && (this.chatHistoryRevisions.get(ctx.chatId) ?? 0) !== captured.chat) ||
-      (ctx.workspacePath &&
-        (this.workspaceHistoryRevisions.get(ctx.workspacePath) ?? 0) !== captured.workspace)
+        (ctx.workspacePath &&
+          (this.workspaceHistoryRevisions.get(ctx.workspacePath) ?? 0) !== captured.workspace)
     )
   }
 
@@ -300,7 +301,7 @@ export class CanvasService implements CanvasController {
   ): boolean {
     return Boolean(
       (record.chatId && authority.chatIds.has(record.chatId)) ||
-      (record.workspacePath && authority.workspacePaths.has(record.workspacePath))
+        (record.workspacePath && authority.workspacePaths.has(record.workspacePath))
     )
   }
 
@@ -588,10 +589,7 @@ export class CanvasService implements CanvasController {
       const verdict = validateCanvasHtml(input.html ?? '')
       if (!verdict.ok) throw new Error(verdict.reason || 'Invalid canvas html.')
       // Stable, secret-free synthetic id for the audit record (never the markup).
-      recordUrl = `html://${createHash('sha256')
-        .update(input.html ?? '')
-        .digest('hex')
-        .slice(0, 8)}`
+      recordUrl = `html://${createHash('sha256').update(input.html ?? '').digest('hex').slice(0, 8)}`
       eventHost = undefined
     } else if (driverKind === 'image') {
       // Existing content-addressed image attachment. The hash is the only input;
@@ -600,7 +598,11 @@ export class CanvasService implements CanvasController {
       const sha256 = (input.mediaSha256 || '').trim()
       const verdict = validateCanvasImageRef(sha256, (input.mediaMimeType || '').trim())
       if (!verdict.ok) throw new Error(verdict.reason || 'Invalid image attachment.')
-      if (typeof ctx.chatId !== 'string' || !ctx.chatId || ctx.chatId.trim() !== ctx.chatId) {
+      if (
+        typeof ctx.chatId !== 'string' ||
+        !ctx.chatId ||
+        ctx.chatId.trim() !== ctx.chatId
+      ) {
         throw new Error('The image driver requires an active canonical chat authority.')
       }
       imageAppChatId = ctx.chatId
@@ -661,11 +663,13 @@ export class CanvasService implements CanvasController {
       driver = this.deps.createDriver(driverKind, canvasId, {
         embedded,
         appChatId: imageAppChatId ?? windowAppChatId ?? deviceAppChatId,
-        ...(windowAppRunId || deviceAppRunId ? { appRunId: windowAppRunId ?? deviceAppRunId } : {}),
+        ...(windowAppRunId || deviceAppRunId
+          ? { appRunId: windowAppRunId ?? deviceAppRunId }
+          : {}),
         ...(deviceOwnerParticipantId ? { ownerParticipantId: deviceOwnerParticipantId } : {}),
         ...(windowTarget ? { windowTarget } : {}),
         initialSketchDocument: sketchScope
-          ? (this.deps.store.getSketchDocument(sketchScope) ?? undefined)
+          ? this.deps.store.getSketchDocument(sketchScope) ?? undefined
           : undefined,
         onSketchDocumentChange: sketchScope
           ? (document) => {
@@ -1162,7 +1166,9 @@ export class CanvasService implements CanvasController {
     update: CanvasSketchUpdateInput,
     ctx: CanvasCallContext
   ): Promise<CanvasSketchDocument> {
-    return this.serializeInteraction(canvasId, () => this.sketchUpdateLocked(canvasId, update, ctx))
+    return this.serializeInteraction(canvasId, () =>
+      this.sketchUpdateLocked(canvasId, update, ctx)
+    )
   }
 
   /**
@@ -1342,12 +1348,8 @@ export class CanvasService implements CanvasController {
   private async clearBrowserProfileInner(
     clearProfileData: () => Promise<void>
   ): Promise<CanvasBrowserProfileClearResult> {
-    const live = [...this.sessions.entries()].filter(
-      ([, session]) => session.record.driver === 'web'
-    )
-    const pending = [...this.pendingOpens.entries()].filter(
-      ([, open]) => open.record.driver === 'web'
-    )
+    const live = [...this.sessions.entries()].filter(([, session]) => session.record.driver === 'web')
+    const pending = [...this.pendingOpens.entries()].filter(([, open]) => open.record.driver === 'web')
     const closing = [...this.closingSessions.entries()].filter(
       ([, entry]) => entry.session.record.driver === 'web'
     )
@@ -1499,7 +1501,9 @@ export class CanvasService implements CanvasController {
     return operation
   }
 
-  private async beginAuthorityHistoryClearInner(input: CanvasHistoryAuthority): Promise<void> {
+  private async beginAuthorityHistoryClearInner(
+    input: CanvasHistoryAuthority
+  ): Promise<void> {
     const authority = this.normalizedAuthority(input)
     const participantPurges = (this.deps.historyParticipants ?? []).map((participant) =>
       participant.beginAuthorityHistoryClear(authority)
@@ -1552,21 +1556,23 @@ export class CanvasService implements CanvasController {
         this.canvasGenerations.delete(canvasId)
       }
     }
-    const closeOutcomes = await Promise.allSettled([
-      ...retired.map(([canvasId, session]) =>
-        this.closeRetiredSession(canvasId, session, {
-          chatId: session.record.chatId,
-          workspacePath: session.record.workspacePath,
-          runId: session.record.runId
-        })
-      ),
-      ...retiredPending.map(([canvasId, open]) =>
-        this.settleAndClosePendingOpen(canvasId, open, 'during scoped history clear')
-      ),
-      ...retiredClosing.map(([, entry]) => entry.closePromise),
-      ...retiredFailed.map(([canvasId, entry]) => this.retryFailedClose(canvasId, entry)),
-      ...participantPurges
-    ])
+    const closeOutcomes = await Promise.allSettled(
+      [
+        ...retired.map(([canvasId, session]) =>
+          this.closeRetiredSession(canvasId, session, {
+            chatId: session.record.chatId,
+            workspacePath: session.record.workspacePath,
+            runId: session.record.runId
+          })
+        ),
+        ...retiredPending.map(([canvasId, open]) =>
+          this.settleAndClosePendingOpen(canvasId, open, 'during scoped history clear')
+        ),
+        ...retiredClosing.map(([, entry]) => entry.closePromise),
+        ...retiredFailed.map(([canvasId, entry]) => this.retryFailedClose(canvasId, entry)),
+        ...participantPurges
+      ]
+    )
     const closeFailures = closeOutcomes.filter(
       (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
     )
@@ -1584,7 +1590,11 @@ export class CanvasService implements CanvasController {
     await this.enqueueHistoryStoreMutation(() => {
       // A global clear that began before or during this scoped transaction owns
       // the broader durable erase. Never recreate scoped JSON files afterwards.
-      if (startedDuringGlobalClear || generationAtStart !== this.generation || this.purging) {
+      if (
+        startedDuringGlobalClear ||
+        generationAtStart !== this.generation ||
+        this.purging
+      ) {
         return
       }
       this.deps.store.purgeAuthoritiesStrict(authority)
