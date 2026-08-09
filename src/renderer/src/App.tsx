@@ -3674,14 +3674,14 @@ function App(): React.JSX.Element {
       options: { assignMultiviewPane?: boolean } = {}
     ) => {
       if (nextChatId && multiview.isMultiview && options.assignMultiviewPane !== false) {
-        multiview.assignToNextPane(nextChatId)
+        multiview.assignToFocusedPane(nextChatId)
       }
       if (currentChatIdRef.current !== nextChatId) {
         prepareMainTranscriptChatSwitch(nextChatId)
       }
       currentChatIdRef.current = nextChatId
     },
-    [multiview.assignToNextPane, multiview.isMultiview, prepareMainTranscriptChatSwitch]
+    [multiview.assignToFocusedPane, multiview.isMultiview, prepareMainTranscriptChatSwitch]
   )
   const sideTranscriptScrollRef = useRef<HTMLDivElement>(null)
   const sideTranscriptContentRef = useRef<HTMLDivElement>(null)

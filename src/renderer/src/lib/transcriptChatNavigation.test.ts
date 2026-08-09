@@ -19,8 +19,8 @@ describe('transcript chat navigation integration', () => {
       source.indexOf('const sideTranscriptScrollRef')
     )
     expect(navigationHelper).toContain('options.assignMultiviewPane !== false')
-    expect(navigationHelper).toContain('multiview.assignToNextPane(nextChatId)')
-    expect(navigationHelper.indexOf('multiview.assignToNextPane(nextChatId)')).toBeLessThan(
+    expect(navigationHelper).toContain('multiview.assignToFocusedPane(nextChatId)')
+    expect(navigationHelper.indexOf('multiview.assignToFocusedPane(nextChatId)')).toBeLessThan(
       navigationHelper.indexOf('currentChatIdRef.current = nextChatId')
     )
     const paneFocus = source.slice(

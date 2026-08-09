@@ -470,12 +470,11 @@ export function applyClosePane(state: MultiviewCoreState, index: number): Multiv
 }
 
 /**
- * Assign a chat to the most natural pane and focus it: the focused pane if it
- * is empty, else the first empty cell, else the focused pane (overwrite).
- * Returns the chosen pane index. In single layout this always overwrites pane
- * 0 — callers that want a fresh pane must widen the layout first.
+ * Assign a chat to the explicitly focused pane. If the chat is already visible,
+ * focus its existing pane instead of duplicating it. Returns the chosen pane
+ * index. In single layout this always targets pane 0.
  */
-export function applyAssignToNextPane(
+export function applyAssignToFocusedPane(
   state: MultiviewCoreState,
   chatId: string
 ): { state: MultiviewCoreState; index: number } {
@@ -487,14 +486,7 @@ export function applyAssignToNextPane(
       index: existing
     }
   }
-  let target: number
-  if (state.panes[state.focusedPaneIndex]?.chatId == null) {
-    target = state.focusedPaneIndex
-  } else {
-    const firstEmpty = state.panes.findIndex((pane) => pane.chatId == null)
-    target = firstEmpty >= 0 ? firstEmpty : state.focusedPaneIndex
-  }
-  target = Math.max(0, Math.min(target, count - 1))
+  const target = Math.max(0, Math.min(state.focusedPaneIndex, count - 1))
   const panes = withChatAt(state.panes, target, chatId)
   return { state: { ...state, panes, focusedPaneIndex: target }, index: target }
 }
@@ -561,7 +553,7 @@ export function applyOpenMediaInNewPane(
   let target = next.panes.findIndex((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
   if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
   if (target < 0) target = next.focusedPaneIndex
-  // Focus is deliberately NOT moved (unlike assignToNextPane) — keep typing in place.
+  // Focus is deliberately NOT moved (unlike assignToFocusedPane) — keep typing in place.
   return applySetPaneMedia(next, target, mediaRef)
 }
 
@@ -835,8 +827,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   setFocusedPane: (index: number) => void
   focusPane: (index: number, outgoingFocusedChatId?: string | null) => void
   closePane: (index: number) => void
-  /** Place + focus a chat. */
-  assignToNextPane: (chatId: string) => void
+  /** Place a chat in the focused pane, or focus its existing pane. */
+  assignToFocusedPane: (chatId: string) => void
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
   openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
   /** Detach an A/V player into a non-focused pane (grows if needed); keeps focus. */
@@ -905,8 +897,8 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))
   }, [])
   const closePane = useCallback((index: number) => setState((s) => applyClosePane(s, index)), [])
-  const assignToNextPane = useCallback((chatId: string) => {
-    setState((s) => applyAssignToNextPane(s, chatId).state)
+  const assignToFocusedPane = useCallback((chatId: string) => {
+    setState((s) => applyAssignToFocusedPane(s, chatId).state)
   }, [])
   const openInNewPane = useCallback(
     (chatId: string, outgoingFocusedChatId: string | null = null) => {
@@ -970,7 +962,7 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     setFocusedPane,
     focusPane,
     closePane,
-    assignToNextPane,
+    assignToFocusedPane,
     openInNewPane,
     openMediaInNewPane,
     resizeTrack,

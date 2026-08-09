@@ -5,7 +5,7 @@ import type {
   MultiviewPaneRecord
 } from '../../../shared/multiviewLayouts'
 import {
-  applyAssignToNextPane,
+  applyAssignToFocusedPane,
   applyClosePane,
   applyFocusPane,
   applyOpenInNewPane,
@@ -527,9 +527,9 @@ describe('applyClosePane', () => {
   })
 })
 
-describe('applyAssignToNextPane', () => {
+describe('applyAssignToFocusedPane', () => {
   it('focuses a chat already visible in another pane without duplicating it', () => {
-    const result = applyAssignToNextPane(
+    const result = applyAssignToFocusedPane(
       state({ layout: 'vertical-2', panes: panesOf(['test-3', 'test-2']), focusedPaneIndex: 1 }),
       'test-3'
     )
@@ -539,7 +539,7 @@ describe('applyAssignToNextPane', () => {
   })
 
   it('fills the focused pane when it is empty (id preserved)', () => {
-    const result = applyAssignToNextPane(
+    const result = applyAssignToFocusedPane(
       state({ layout: 'vertical-2', panes: panesOf(['a', null]), focusedPaneIndex: 1 }),
       'b'
     )
@@ -549,17 +549,18 @@ describe('applyAssignToNextPane', () => {
     expect(result.state.panes[1].id).toBe('t1')
   })
 
-  it('falls to the first empty cell when the focused pane is occupied', () => {
-    const result = applyAssignToNextPane(
+  it('replaces the focused pane even when another cell is empty', () => {
+    const result = applyAssignToFocusedPane(
       state({ layout: 'quad', panes: panesOf(['a', null, null, null]), focusedPaneIndex: 0 }),
       'b'
     )
-    expect(result.index).toBe(1)
-    expect(chatIds(result.state)).toEqual(['a', 'b', null, null])
+    expect(result.index).toBe(0)
+    expect(chatIds(result.state)).toEqual(['b', null, null, null])
+    expect(result.state.panes[0].id).toBe('t0')
   })
 
   it('overwrites the focused pane when every cell is occupied', () => {
-    const result = applyAssignToNextPane(
+    const result = applyAssignToFocusedPane(
       state({ layout: 'vertical-2', panes: panesOf(['a', 'b']), focusedPaneIndex: 0 }),
       'z'
     )
@@ -568,7 +569,7 @@ describe('applyAssignToNextPane', () => {
   })
 
   it('overwrites pane 0 in single layout (callers widen the layout first)', () => {
-    const result = applyAssignToNextPane(state({ panes: panesOf(['a']) }), 'z')
+    const result = applyAssignToFocusedPane(state({ panes: panesOf(['a']) }), 'z')
     expect(result.index).toBe(0)
     expect(chatIds(result.state)).toEqual(['z'])
   })
@@ -578,7 +579,7 @@ describe('applyAssignToNextPane', () => {
     const queuedUpdates: Array<(value: MultiviewCoreState) => MultiviewCoreState> = [
       (value) => applySetLayout(value, 'vertical-2'),
       (value) => applyFocusPane(value, 1, 'a'),
-      (value) => applyAssignToNextPane(value, 'b').state
+      (value) => applyAssignToFocusedPane(value, 'b').state
     ]
     const next = queuedUpdates.reduce((value, update) => update(value), initial)
 
@@ -589,7 +590,7 @@ describe('applyAssignToNextPane', () => {
     const source = readFileSync(new URL('./useMultiviewState.ts', import.meta.url), 'utf8')
     const hook = source.slice(source.indexOf('export function useMultiviewState'))
     expect(hook).toContain('setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))')
-    expect(hook).toContain('setState((s) => applyAssignToNextPane(s, chatId).state)')
+    expect(hook).toContain('setState((s) => applyAssignToFocusedPane(s, chatId).state)')
     expect(hook).not.toContain('stateRef.current')
     expect(hook).not.toContain('setState(result.state)')
   })
