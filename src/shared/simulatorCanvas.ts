@@ -102,14 +102,14 @@ export interface SimulatorHostActionResult {
 export const SIMULATOR_VIEW_CONTROL_REQUIRED = 'View & Control required' as const
 
 export const SIMULATOR_PREVIEW_ONLY_BANNER =
-  'Preview only — install idb to drive the Simulator.' as const
+  'Preview only — enable Simulator control to use this device.' as const
 
 /**
  * Recorded under a control lease but not actuated — typically idb missing, or no
  * session frame/udid yet for coordinate mapping.
  */
 export const SIMULATOR_GESTURE_ACTUATION_DEFERRED =
-  'Gestures recorded but not actuated — install idb (and claim Simulator control) to drive' as const
+  'Simulator control is not ready yet.' as const
 
 export type SimulatorControllerKind = 'human' | 'run'
 

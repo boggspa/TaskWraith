@@ -27,6 +27,7 @@ import {
   type SimulatorTapGesture,
   type SimulatorTypeGesture
 } from '../../shared/simulatorCanvas'
+import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 
 export interface SimulatorCanvasIpcDeps {
   getHostControl: () => Pick<
@@ -46,6 +47,8 @@ export interface SimulatorCanvasIpcDeps {
     SimulatorInteractionBridge,
     'interactionStatus' | 'tap' | 'type' | 'scroll'
   >
+  /** User-owned global switch for Simulator Canvas mutations. */
+  isSimulatorControlEnabled?: () => boolean
   /**
    * idb surface — status merges availability; inspect/button/rotate call through
    * the argv-array client (never shell).
@@ -140,6 +143,9 @@ function ensureHumanLease(
 ):
   | { ok: true; control: { chatId: string; controllerTokenId: string } }
   | { ok: false; error: string } {
+  if (deps.isSimulatorControlEnabled?.() === false) {
+    return { ok: false, error: SIMULATOR_CONTROL_DISABLED_MESSAGE }
+  }
   const claimed = deps.getControllerLease().claimHuman(chatId)
   if (!claimed.ok) {
     return { ok: false, error: claimed.error }
@@ -166,6 +172,9 @@ export function registerSimulatorCanvasHandlers(
 
   ipcMain.handle('simulator-canvas:claim-control', async (_event, chatId: unknown) => {
     const id = requiredString(chatId, 'chatId')
+    if (deps.isSimulatorControlEnabled?.() === false) {
+      return { ok: false, error: SIMULATOR_CONTROL_DISABLED_MESSAGE, code: 'disabled' }
+    }
     const claimed = deps.getControllerLease().claimHuman(id)
     if (!claimed.ok) {
       return { ok: false, error: claimed.error, code: claimed.code }

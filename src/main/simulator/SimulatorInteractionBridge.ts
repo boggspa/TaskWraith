@@ -18,6 +18,7 @@ import {
   type SimulatorTapGesture,
   type SimulatorTypeGesture
 } from '../../shared/simulatorCanvas'
+import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 import type { IdbClient } from './IdbClient'
 import {
   clamp01,
@@ -54,6 +55,8 @@ export interface SimulatorInteractionBridgeDeps {
   idb?: SimulatorIdbSurface
   /** Session/frame target for normalizing bezel coords → device points. */
   getActuationTarget?: (chatId: string) => SimulatorActuationTarget | null
+  /** User-owned global switch for Simulator Canvas input. */
+  isSimulatorControlEnabled?: () => boolean
   now?: () => number
 }
 
@@ -121,6 +124,7 @@ export class SimulatorInteractionBridge {
   private readonly hasControllerLease: ((chatId: string) => boolean) | null
   private readonly idb: SimulatorIdbSurface | null
   private readonly getActuationTarget: ((chatId: string) => SimulatorActuationTarget | null) | null
+  private readonly isSimulatorControlEnabled: () => boolean
   private readonly now: () => number
   private readonly recorded: SimulatorRecordedGesture[] = []
 
@@ -134,6 +138,7 @@ export class SimulatorInteractionBridge {
     this.hasControllerLease = deps.hasControllerLease ?? null
     this.idb = deps.idb ?? null
     this.getActuationTarget = deps.getActuationTarget ?? null
+    this.isSimulatorControlEnabled = deps.isSimulatorControlEnabled ?? (() => true)
     this.now = deps.now ?? (() => Date.now())
   }
 
@@ -155,6 +160,17 @@ export class SimulatorInteractionBridge {
     const idbAvailable = this.idbAvailable()
     const canControl = probe.canControl || leaseHeld
     const actuationReady = Boolean(leaseHeld && idbAvailable)
+
+    if (!this.isSimulatorControlEnabled()) {
+      return {
+        canControl: false,
+        actuationReady: false,
+        reason: SIMULATOR_CONTROL_DISABLED_MESSAGE,
+        hasObservation: probe.hasObservation,
+        idbAvailable,
+        controllerLeaseHeld: false
+      }
+    }
 
     if (!canControl) {
       return {
@@ -194,7 +210,7 @@ export class SimulatorInteractionBridge {
     const chatId = requireChatId(input.chatId)
     const status = this.interactionStatus(chatId)
     if (!status.canControl) {
-      return { ok: false, error: SIMULATOR_VIEW_CONTROL_REQUIRED }
+      return { ok: false, error: status.reason || SIMULATOR_VIEW_CONTROL_REQUIRED }
     }
     const gesture: SimulatorTapGesture = {
       chatId,
@@ -221,7 +237,7 @@ export class SimulatorInteractionBridge {
     const chatId = requireChatId(input.chatId)
     const status = this.interactionStatus(chatId)
     if (!status.canControl) {
-      return { ok: false, error: SIMULATOR_VIEW_CONTROL_REQUIRED }
+      return { ok: false, error: status.reason || SIMULATOR_VIEW_CONTROL_REQUIRED }
     }
     if (typeof input.text !== 'string') {
       throw new Error('Simulator Canvas text is invalid.')
@@ -245,7 +261,7 @@ export class SimulatorInteractionBridge {
     const chatId = requireChatId(input.chatId)
     const status = this.interactionStatus(chatId)
     if (!status.canControl) {
-      return { ok: false, error: SIMULATOR_VIEW_CONTROL_REQUIRED }
+      return { ok: false, error: status.reason || SIMULATOR_VIEW_CONTROL_REQUIRED }
     }
     const gesture: SimulatorScrollGesture = {
       chatId,

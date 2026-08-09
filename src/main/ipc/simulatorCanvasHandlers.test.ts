@@ -1,11 +1,61 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { SIMULATOR_VIEW_CONTROL_REQUIRED } from '../../shared/simulatorCanvas'
+import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 import { SIMULATOR_HUMAN_CONTROLLER_RUN_ID } from '../simulator/SimulatorControllerLease'
 import { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import { registerSimulatorCanvasHandlers } from './simulatorCanvasHandlers'
 
 describe('registerSimulatorCanvasHandlers', () => {
+  it('keeps preview read-only while Simulator control is disabled', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, handler)
+      })
+    } as unknown as IpcMain
+    const claimHuman = vi.fn()
+    const openSimulatorApp = vi.fn()
+    const screenshot = vi.fn(async () => ({ ok: true }))
+    registerSimulatorCanvasHandlers(ipcMain, {
+      getHostControl: () =>
+        ({
+          status: vi.fn(async () => ({ installed: true, platform: 'darwin' })),
+          openSimulatorApp,
+          listDevices: vi.fn(),
+          boot: vi.fn(),
+          install: vi.fn(),
+          launch: vi.fn(),
+          terminate: vi.fn(),
+          screenshot
+        }) as never,
+      getControllerLease: () => ({ claimHuman, peek: vi.fn(), release: vi.fn() }),
+      getInteraction: () =>
+        ({ interactionStatus: vi.fn(), tap: vi.fn(), type: vi.fn(), scroll: vi.fn() }) as never,
+      isSimulatorControlEnabled: () => false
+    })
+
+    const event = {} as IpcMainInvokeEvent
+    await expect(handlers.get('simulator-canvas:claim-control')?.(event, 'chat-1')).resolves.toEqual({
+      ok: false,
+      error: SIMULATOR_CONTROL_DISABLED_MESSAGE,
+      code: 'disabled'
+    })
+    await expect(handlers.get('simulator-canvas:open-app')?.(event, 'chat-1')).rejects.toThrow(
+      SIMULATOR_CONTROL_DISABLED_MESSAGE
+    )
+    await expect(
+      handlers.get('simulator-canvas:screenshot')?.(
+        event,
+        'chat-1',
+        'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
+      )
+    ).resolves.toEqual({ ok: true })
+    expect(claimHuman).not.toHaveBeenCalled()
+    expect(openSimulatorApp).not.toHaveBeenCalled()
+    expect(screenshot).toHaveBeenCalled()
+  })
+
   it('registers host + interaction channels and auto-claims human control on mutate', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {

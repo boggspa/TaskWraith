@@ -4,6 +4,7 @@ import {
   SIMULATOR_PREVIEW_ONLY_BANNER,
   SIMULATOR_VIEW_CONTROL_REQUIRED
 } from '../../shared/simulatorCanvas'
+import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 import { SimulatorInteractionBridge } from './SimulatorInteractionBridge'
 import type { IdbClient } from './IdbClient'
 
@@ -20,6 +21,29 @@ function mockIdb(
 }
 
 describe('SimulatorInteractionBridge', () => {
+  it('makes user input read-only while Simulator control is disabled', async () => {
+    const idb = mockIdb()
+    const bridge = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb,
+      isSimulatorControlEnabled: () => false
+    })
+
+    expect(bridge.interactionStatus('chat-1')).toMatchObject({
+      canControl: false,
+      actuationReady: false,
+      reason: SIMULATOR_CONTROL_DISABLED_MESSAGE,
+      controllerLeaseHeld: false
+    })
+    await expect(bridge.tap({ chatId: 'chat-1', x: 0.5, y: 0.5 })).resolves.toEqual({
+      ok: false,
+      error: SIMULATOR_CONTROL_DISABLED_MESSAGE
+    })
+    expect(idb.tap).not.toHaveBeenCalled()
+    expect(bridge.recordedGestures()).toEqual([])
+  })
+
   it('reports preview-only when there is no Screen Watch attachment', () => {
     const bridge = new SimulatorInteractionBridge({
       getControlStatus: () => ({ canControl: false, hasObservation: false })

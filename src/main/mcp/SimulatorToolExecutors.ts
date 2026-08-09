@@ -14,6 +14,7 @@ import {
   isSimulatorHardwareButton,
   isSimulatorRotateDirection
 } from '../../shared/simulatorCanvas'
+import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 import {
   clamp01,
   mapNormalizedScroll,
@@ -80,6 +81,8 @@ export interface SimulatorToolExecutorDeps {
   getActuationTarget?: (chatId: string) => SimulatorActuationTarget | null
   /** Chat-scoped session store — persist last absolute orientation on rotate. */
   sessionStore?: Pick<SimulatorSessionStore, 'upsert'>
+  /** User-owned global switch for simulator mutations. */
+  isSimulatorControlEnabled?: () => boolean
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -221,7 +224,14 @@ function resolveAgentPointExtents(
 export function createSimulatorToolExecutors(
   deps: SimulatorToolExecutorDeps
 ): SimulatorToolExecutors {
-  const { hostControl, controllerLease, idb, getActuationTarget, sessionStore } = deps
+  const {
+    hostControl,
+    controllerLease,
+    idb,
+    getActuationTarget,
+    sessionStore,
+    isSimulatorControlEnabled
+  } = deps
   return {
     async executeSimulatorTool(toolName, rawArgs, context, _parentProvider) {
       const args = asRecord(rawArgs)
@@ -233,6 +243,9 @@ export function createSimulatorToolExecutors(
 
         let control: { chatId: string; controllerTokenId: string } | undefined
         if (SIMULATOR_MUTATING_TOOLS.has(toolName)) {
+          if (isSimulatorControlEnabled?.() === false) {
+            return fail(toolName, SIMULATOR_CONTROL_DISABLED_MESSAGE)
+          }
           const gated = requireRunController(toolName, context, controllerLease)
           if (!gated.ok) return gated.result
           control = gated.control

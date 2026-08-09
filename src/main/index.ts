@@ -1275,8 +1275,10 @@ import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
 import { MeshSceneStore } from './mesh/MeshSceneStore'
 import { registerMeshSceneHandlers } from './ipc/meshSceneHandlers'
 import { registerSimulatorCanvasHandlers } from './ipc/simulatorCanvasHandlers'
+import { registerSimulatorControlSetupHandlers } from './ipc/simulatorControlSetupHandlers'
 import { IdbClient } from './simulator/IdbClient'
 import { SimulatorControllerLease } from './simulator/SimulatorControllerLease'
+import { SimulatorControlSetupService } from './simulator/SimulatorControlSetupService'
 import { SimulatorHostControl } from './simulator/SimulatorHostControl'
 import { SimulatorHostService } from './simulator/SimulatorHostService'
 import { SimulatorInteractionBridge } from './simulator/SimulatorInteractionBridge'
@@ -4129,7 +4131,12 @@ const meshToolExecutors = createMeshToolExecutors(meshSceneService)
 const simulatorHostService = new SimulatorHostService()
 const simulatorSessionStore = new SimulatorSessionStore()
 const simulatorControllerLease = new SimulatorControllerLease()
-const simulatorIdbClient = new IdbClient()
+const simulatorControlSetup = new SimulatorControlSetupService({
+  getUserDataPath: () => app.getPath('userData')
+})
+const simulatorIdbClient = new IdbClient({
+  resolveBinary: (name) => simulatorControlSetup.resolveBinary(name)
+})
 const simulatorHostControl = new SimulatorHostControl({
   host: simulatorHostService,
   controllerLease: simulatorControllerLease,
@@ -4167,7 +4174,8 @@ const simulatorToolExecutors = createSimulatorToolExecutors({
   controllerLease: simulatorControllerLease,
   idb: simulatorIdbClient,
   getActuationTarget: simulatorActuationTargetForChat,
-  sessionStore: simulatorSessionStore
+  sessionStore: simulatorSessionStore,
+  isSimulatorControlEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false
 })
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
   getControlStatus: (chatId) => {
@@ -4181,7 +4189,8 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
   },
   hasControllerLease: (chatId) => Boolean(simulatorControllerLease.peek(chatId)),
   idb: simulatorIdbClient,
-  getActuationTarget: simulatorActuationTargetForChat
+  getActuationTarget: simulatorActuationTargetForChat,
+  isSimulatorControlEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false
 })
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
@@ -6043,8 +6052,14 @@ registerSimulatorCanvasHandlers(ipcMain, {
   getSessionStore: () => simulatorSessionStore,
   getInteraction: () => simulatorInteractionBridge,
   getIdb: () => simulatorIdbClient,
+  isSimulatorControlEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false,
   getRequestingWindow: (event) => BrowserWindow.fromWebContents(event.sender),
   showOpenDialog: (window, options) => dialog.showOpenDialog(window, options)
+})
+
+registerSimulatorControlSetupHandlers(ipcMain, {
+  getSetup: () => simulatorControlSetup,
+  isEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false
 })
 
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.

@@ -9,6 +9,7 @@ import type { IdbClient } from '../simulator/IdbClient'
 import { SimulatorControllerLease } from '../simulator/SimulatorControllerLease'
 import { SimulatorSessionStore } from '../simulator/SimulatorSessionStore'
 import type { SimulatorCapabilityStatus } from '../../shared/simulatorCanvas'
+import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import { MCP_AUTO_ALLOWED_TOOLS } from './McpAutoAllowedTools'
 
@@ -98,6 +99,27 @@ function fakeHost(
 }
 
 describe('SimulatorToolExecutors', () => {
+  it('stops agent mutations when the user turns Simulator control off, while keeping preview read-only', async () => {
+    const hostControl = fakeHost()
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl,
+      controllerLease: new SimulatorControllerLease(),
+      idb: fakeIdb(),
+      isSimulatorControlEnabled: () => false
+    })
+
+    const mutation = await executeSimulatorTool('simulator_boot', { udid }, runCtx, 'codex')
+    expect(mutation.isError).toBe(true)
+    expect(mutation.structuredContent).toMatchObject({
+      error: SIMULATOR_CONTROL_DISABLED_MESSAGE
+    })
+    expect(hostControl.boot).not.toHaveBeenCalled()
+
+    const preview = await executeSimulatorTool('simulator_screenshot', { udid }, runCtx, 'codex')
+    expect(preview.isError).toBeFalsy()
+    expect(hostControl.screenshot).toHaveBeenCalledWith(udid, { chatId: 'chat-1' })
+  })
+
   it('recognises the catalog simulator tool names', () => {
     for (const name of SIMULATOR_MCP_TOOL_NAMES) {
       expect(isSimulatorMcpToolName(name)).toBe(true)
