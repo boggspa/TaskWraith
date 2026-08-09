@@ -689,6 +689,10 @@ import {
 import { shouldRevealStartupRoute } from './lib/startupRoutePresentation'
 import { findReusablePristineDraft } from './lib/unstartedDraftFilter'
 import {
+  findReusableWorkspaceNewChatDraft,
+  type WorkspaceNewChatOrigin
+} from './lib/workspaceNewChatDraftPolicy'
+import {
   WELCOME_FIT_FULL,
   resolveWelcomeFullFitHeight,
   resolveWelcomeFitLevel,
@@ -7400,6 +7404,7 @@ function App(): React.JSX.Element {
         launchChat = await handleNewChat(
           coldLaunchTarget.workspace.id,
           coldLaunchTarget.workspace.path,
+          'startup',
           allChats
         )
         // The initial render's `workspaces` closure predates hydration. Keep
@@ -9975,24 +9980,19 @@ function App(): React.JSX.Element {
   const handleNewChat = async (
     wsId: string,
     wsPath: string,
+    origin: WorkspaceNewChatOrigin = 'user',
     availableChats: readonly ChatRecord[] = chats
   ): Promise<ChatRecord> => {
     setActiveWorkspaceBoardId(null)
-    // Reuse ≤1 pristine draft per workspace instead of minting a fresh record
-    // on every "New Chat" — the twin of the workspace-open reuse, applied on
-    // the create path (the reaper stays DELETE-ONLY). isReusableWelcomeChat
-    // mirrors shouldRenderWelcome so we land on the welcome screen, and the
-    // runtime gates skip a draft that is busy or has a live run.
-    const reusableDraft = availableChats.find(
-      (chat) =>
-        chat.chatKind !== 'ensemble' &&
-        chat.scope === 'workspace' &&
-        chat.workspaceId === wsId &&
-        !chat.archived &&
-        isTopLevelWorkspaceChat(chat) &&
-        isReusableWelcomeChat(chat) &&
-        !runningChatIds.has(chat.appChatId) &&
-        !isChatBusy(chat.appChatId)
+    // Cold startup may reuse one pristine draft so launches do not mint litter.
+    // An explicit New Chat always creates: that create event advances the
+    // delete-only reaper's rolling quota. Runtime gates keep a busy draft out
+    // of the startup reuse path.
+    const reusableDraft = findReusableWorkspaceNewChatDraft(
+      availableChats,
+      wsId,
+      origin,
+      { isExcluded: (id) => runningChatIds.has(id) || isChatBusy(id) }
     )
     const newChat = reusableDraft ?? (await window.api.createChat(wsId, wsPath))
     const provider = getChatProvider(newChat)
