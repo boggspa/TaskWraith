@@ -72,6 +72,7 @@ function harness(options: HarnessOptions = {}): {
   }))
 
   const webContents = {
+    id: 1,
     executeJavaScript: vi.fn(),
     executeJavaScriptInIsolatedWorld: executeCanvasScript,
     capturePage,

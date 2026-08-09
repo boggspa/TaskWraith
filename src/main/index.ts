@@ -1236,6 +1236,7 @@ import { resolveAppshotsTargetOwnership } from './AppshotsTargetOwnership'
 import { CanvasService, type CanvasHistoryAuthority } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
+import { CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasImageDriver } from './canvas/CanvasImageDriver'
@@ -4116,9 +4117,13 @@ const desktopToolExecutors = createDesktopToolExecutors({
 // the live session registry + drivers; the canvas_* MCP tools route through
 // canvasToolExecutors (see executeGeminiMcpTool). Persistence + audit events live
 // in a self-contained CanvasStore (own atomic JSON) and broadcast to the renderer
-// as 'canvas-event'. The web driver opens one sandboxed BrowserWindow per session.
+// as 'canvas-event'. Web surfaces share a dedicated persistent Browser profile;
+// per-surface policy/network routing remains isolated inside CanvasBrowserProfile.
 // Renderer-pane embed: hosts a canvas as a WebContentsView floated over the pane
 // (lazily reads mainWindow, which is assigned later, so the closure is safe here).
+const canvasBrowserProfile = new CanvasBrowserProfile({
+  resolveSession: (partition) => session.fromPartition(partition)
+})
 const canvasEmbedController = new CanvasEmbedController({
   getParentWindow: () =>
     mainWindow && !mainWindow.isDestroyed() ? asEmbedParent(mainWindow) : null,
@@ -4307,6 +4312,7 @@ const canvasService = new CanvasService({
     }
     if (kind === 'web') {
       return new CanvasWebDriver(sessionId, {
+        browserProfile: canvasBrowserProfile,
         ...(opts?.embedded ? { createSurface: canvasEmbedController.surfaceFor(sessionId) } : {}),
         onNavState: opts?.onNavState,
         onNavigationCommitted: opts?.onNavigationCommitted

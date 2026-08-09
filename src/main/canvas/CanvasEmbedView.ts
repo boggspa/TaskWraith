@@ -6,8 +6,8 @@
 import { WebContentsView, type BrowserWindow } from 'electron'
 import type { EmbeddedViewHandle, EmbedParentWindow } from './CanvasEmbedController'
 
-/** A sandboxed WebContentsView on the canvas's isolated partition (mirrors the
- * standalone BrowserWindow surface's webPreferences). */
+/** A sandboxed WebContentsView on TaskWraith's dedicated Canvas profile
+ * partition (mirrors the standalone BrowserWindow webPreferences). */
 export function createElectronEmbedView(partition: string): EmbeddedViewHandle {
   const view = new WebContentsView({
     webPreferences: {

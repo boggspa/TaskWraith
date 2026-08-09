@@ -433,9 +433,9 @@ describe('canvas actuation preconditions', () => {
   })
 
   describe('credential fields', () => {
-    // Canvas partitions are ephemeral, so the user re-authenticates INSIDE the
-    // agent-drivable surface, and frames leave the machine when a hosted provider
-    // is driving. The agent must not be the thing that handles secrets.
+    // The user authenticates INSIDE the agent-drivable surface, and frames leave
+    // the machine when a hosted provider is driving. The dedicated profile may
+    // retain the site session; the agent must never handle credential values.
     const cases: Array<[string, Record<string, string>]> = [
       ['type=password', { type: 'password' }],
       ['revealed password (autocomplete)', { type: 'text', autocomplete: 'current-password' }],

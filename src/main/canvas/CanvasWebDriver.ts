@@ -10,14 +10,15 @@
  *     (fixed scripts in a page-inaccessible registry; arbitrary eval remains the
  *     separate, signed-elevated canvas_eval verb)
  *   - screenshot         → `webContents.capturePage().toPNG()`
- *   - network            → per-partition `session.webRequest` ring buffer
+ *   - network            → profile-routed `session.webRequest` ring buffer
  *   - console            → `webContents.on('console-message')` ring buffer
  *   - resize             → the surface's `setContentSize`
  *
  * The surface is injected (`deps.createSurface`) so WHERE the page lives is not the
- * driver's concern. Each canvas gets its own in-memory session partition so its
- * network buffer and cookies are isolated; the driver blocks popups, hardens the
- * session, and enforces the origin allowlist on every request (server-side SSRF).
+ * driver's concern. Production canvases share TaskWraith's app-wide persistent
+ * Browser profile, while a session router keeps each canvas's network buffer,
+ * SSRF policy, and eval egress gate independent. The profile never touches the
+ * user's normal browser profile or provider credentials.
  */
 import type { WebContents } from 'electron'
 import { createHash } from 'crypto'
@@ -60,6 +61,10 @@ import {
   isCanvasDnsBlocked,
   type CanvasResolveHost
 } from './CanvasDnsGuard'
+import {
+  CanvasBrowserProfile,
+  type CanvasBrowserProfileController
+} from './CanvasBrowserProfile'
 
 const NETWORK_BUFFER = 200
 const CONSOLE_BUFFER = 200
@@ -99,9 +104,10 @@ const DEFAULT_INSPECT_STYLES = [
  * authors. Masked fields are covered too: harmless, and it also hides the value
  * LENGTH, which is a real if minor signal.
  *
- * This matters because canvas partitions are ephemeral, so the user re-enters
- * credentials INSIDE the agent-drivable surface, and frames leave the machine
- * whenever a hosted provider is driving.
+ * This matters because the user enters credentials INSIDE the agent-drivable
+ * surface, and frames leave the machine whenever a hosted provider is driving.
+ * The persistent profile retains the resulting site session, never the values
+ * through Canvas tools.
  */
 /**
  * Input types that mean a human is actively working in the surface. `mouseMove`
@@ -531,10 +537,10 @@ export function actScript(action: CanvasActionInput): string {
         return refuse('not_fillable', 'Target is not a fillable field.', true);
       }
       const itype = (el.getAttribute('type') || '').toLowerCase();
-      // Never type a credential. The user re-authenticates inside this very
-      // surface (partitions are ephemeral) and the frames go to whichever
-      // provider is driving, so the agent must not be the thing that handles
-      // secrets — refuse rather than redact, and let the human type it.
+      // Never type a credential. The user authenticates inside this very
+      // surface and the frames go to whichever provider is driving; the
+      // dedicated profile may retain the site session, but the agent must not
+      // handle its secrets — refuse rather than redact, and let the human type.
       const autofill = (el.getAttribute('autocomplete') || '').toLowerCase();
       if (itype === 'password' || autofill.indexOf('password') >= 0 ||
           autofill === 'one-time-code' || el.hasAttribute('data-tw-secret')) {
@@ -633,6 +639,8 @@ export interface CanvasWebDriverDeps {
   onNavState?: (state: CanvasNavState) => void
   /** Fired once per committed main-frame / in-page navigation (url settled). */
   onNavigationCommitted?: (state: CanvasNavState) => void
+  /** Shared in production; injectable so driver tests stay session-local. */
+  browserProfile?: CanvasBrowserProfileController
 }
 
 type SnapshotScriptResult = Omit<CanvasElementTree, 'capturedAt' | 'inputEpoch'> & {
@@ -676,10 +684,15 @@ export class CanvasWebDriver implements CanvasDriver {
   private userActiveUntil = 0
   private readonly onNavState?: (state: CanvasNavState) => void
   private readonly onNavigationCommitted?: (state: CanvasNavState) => void
+  private readonly browserProfile: CanvasBrowserProfileController
+  private releaseProfileRegistration: (() => void) | null = null
 
   constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
-    // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
-    this.partition = `canvas-${sessionId}`
+    // Directly constructed drivers keep a one-canvas in-memory profile. The app
+    // injects one shared persistent profile for first-class cookie/sign-in reuse.
+    this.browserProfile =
+      deps.browserProfile ?? new CanvasBrowserProfile({ partition: `canvas-${sessionId}` })
+    this.partition = this.browserProfile.partition
     this.createSurface = deps.createSurface ?? createBrowserWindowSurface
     this.resolveHost = deps.resolveHost
     this.onNavState = deps.onNavState
@@ -769,7 +782,7 @@ export class CanvasWebDriver implements CanvasDriver {
     wc.on('will-navigate', (event, url) => {
       if (!validateCanvasUrl(url || '', this.allowlist).ok) event.preventDefault()
     })
-    this.hardenSession(wc)
+    this.hardenWebContents(wc)
     // The origin allowlist is enforced per-request in attachNetwork via
     // webRequest.onBeforeRequest (covers the main frame, subframes, subresources
     // and websockets — the navigation events only see the main frame).
@@ -787,6 +800,7 @@ export class CanvasWebDriver implements CanvasDriver {
     this.attachNavigationWatch(wc)
     surface.onClosed(() => {
       if (this.surface === surface) this.surface = null
+      this.releaseBrowserProfile()
     })
 
     await this.loadUrl(wc, verdict.normalizedUrl)
@@ -833,31 +847,21 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   /**
-   * Close the egress channels that webRequest.onBeforeRequest (and thus the eval
-   * egress-cut) cannot see, on this canvas's isolated partition session:
+   * Close the egress channel that webRequest.onBeforeRequest (and thus the eval
+   * egress-cut) cannot see on this webContents:
    *  - WebRTC ICE/STUN/TURN/data-channel is UDP and bypasses webRequest entirely,
    *    so a script could open an RTCPeerConnection to exfiltrate. Force non-proxied
    *    UDP off and deny the media permission. (TURN-over-TCP remains a documented
    *    residual — see the canvas_eval security notes.)
-   *  - A preview never needs device/geo/notification/clipboard permissions; deny
-   *    them all so neither the page nor an eval'd script can open those sinks.
-   *  - Downloads flow outside webRequest once the download manager takes over;
-   *    refuse them so eval can't stage a remote <a download> egress/side effect.
+   * Session-wide permission and download denial lives in CanvasBrowserProfile,
+   * where it is installed exactly once for the shared persistent partition.
    */
-  private hardenSession(wc: WebContents): void {
+  private hardenWebContents(wc: WebContents): void {
     try {
       wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
     } catch {
       // Older Electron / unavailable — best effort.
     }
-    const ses = wc.session
-    ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
-    try {
-      ses.setPermissionCheckHandler(() => false)
-    } catch {
-      // Best effort — older Electron.
-    }
-    ses.on('will-download', (event) => event.preventDefault())
   }
 
   /**
@@ -1058,21 +1062,6 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   private attachNetwork(wc: WebContents): void {
-    const wr = wc.session.webRequest
-    // SSRF enforcement for EVERY request (any frame / subresource / websocket):
-    // cancel requests to link-local/metadata, or to a private host not in the
-    // allowlist. This is the real guard the navigation events cannot provide.
-    wr.onBeforeRequest((details, callback) => {
-      // Egress-cut during eval takes precedence over the per-host SSRF policy:
-      // while a script is running, NOTHING leaves the page.
-      if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url, this.allowlist)) {
-        callback({ cancel: true })
-        return
-      }
-      this.dnsBlocked(details.url)
-        .then((cancel) => callback({ cancel }))
-        .catch(() => callback({ cancel: true }))
-    })
     const push = (entry: CanvasNetworkEntry): void => {
       this.networkById.set(entry.id, entry)
       this.networkBuffer.push(entry)
@@ -1081,31 +1070,48 @@ export class CanvasWebDriver implements CanvasDriver {
         if (dropped) this.networkById.delete(dropped.id)
       }
     }
-    wr.onSendHeaders((details) => {
-      push({
-        id: details.id,
-        url: details.url,
-        method: details.method,
-        resourceType: details.resourceType,
-        startedAt: new Date().toISOString()
-      })
-    })
-    wr.onCompleted((details) => {
-      const entry = this.networkById.get(details.id)
-      if (entry) {
-        entry.status = details.statusCode
-        entry.ok = details.statusCode < 400
-        entry.completedAt = new Date().toISOString()
+    this.releaseBrowserProfile()
+    this.releaseProfileRegistration = this.browserProfile.register(wc, {
+      shouldBlock: (details) => {
+        // Egress-cut during eval takes precedence over per-host SSRF policy:
+        // while a script is running, NOTHING leaves this canvas.
+        if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url, this.allowlist)) {
+          return true
+        }
+        return this.dnsBlocked(details.url).catch(() => true)
+      },
+      onSendHeaders: (details) => {
+        push({
+          id: details.id,
+          url: details.url,
+          method: details.method,
+          resourceType: details.resourceType,
+          startedAt: new Date().toISOString()
+        })
+      },
+      onCompleted: (details) => {
+        const entry = this.networkById.get(details.id)
+        if (entry) {
+          entry.status = details.statusCode
+          entry.ok = details.statusCode < 400
+          entry.completedAt = new Date().toISOString()
+        }
+      },
+      onErrorOccurred: (details) => {
+        const entry = this.networkById.get(details.id)
+        if (entry) {
+          entry.errorText = details.error
+          entry.ok = false
+          entry.completedAt = new Date().toISOString()
+        }
       }
     })
-    wr.onErrorOccurred((details) => {
-      const entry = this.networkById.get(details.id)
-      if (entry) {
-        entry.errorText = details.error
-        entry.ok = false
-        entry.completedAt = new Date().toISOString()
-      }
-    })
+  }
+
+  private releaseBrowserProfile(): void {
+    const release = this.releaseProfileRegistration
+    this.releaseProfileRegistration = null
+    release?.()
   }
 
   private dnsBlocked(url: string): Promise<boolean> {
@@ -1384,16 +1390,8 @@ export class CanvasWebDriver implements CanvasDriver {
     const surface = this.surface
     this.surface = null
     this.mainInputEpochByTrustedEpoch.clear()
+    this.releaseBrowserProfile()
     if (!surface || surface.isDestroyed()) return
-    try {
-      const wr = surface.webContents.session.webRequest
-      wr.onBeforeRequest(null)
-      wr.onSendHeaders(null)
-      wr.onCompleted(null)
-      wr.onErrorOccurred(null)
-    } catch {
-      // Session may already be torn down.
-    }
     surface.destroy()
   }
 }
