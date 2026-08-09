@@ -20,17 +20,18 @@ describe('sidebar section header pill surfaces', () => {
   it('wears the SAME material as the Model Usage pane, not a solid lozenge', () => {
     const css = readRepoFile(cssPath)
     const pane = readRepoFile('src/renderer/src/components/ModelUsageCard.css')
+    const theme = readRepoFile('src/renderer/src/styles/theme.css')
 
     // The two pieces of chrome floating on the sidebar background must agree.
-    // Read the pane's own fills rather than restating them, so a change there
-    // fails here instead of silently drifting apart.
-    expect(pane).toContain('background-color: rgba(22, 22, 22, 0.65);')
-    expect(pane).toContain('background-color: rgba(255, 255, 255, 0.65);')
-    expect(css).toContain('--sidebar-section-header-pill-bg: rgba(22, 22, 22, 0.65)')
-    expect(css).toContain('--sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.65)')
+    // Both consume one semantic alias, whose canonical dark/light values live
+    // in theme.css, so neither component can silently restate a different fill.
+    expect(pane).toContain('background-color: var(--tw-sidebar-neutral-material-bg)')
     expect(css).toContain(
-      ":is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])"
+      '--sidebar-section-header-pill-bg: var(--tw-sidebar-neutral-material-bg)'
     )
+    expect(theme).toContain('--tw-neutral-material-bg-dark: rgba(22, 22, 22, 0.65)')
+    expect(theme).toContain('--tw-neutral-material-bg-light: rgba(255, 255, 255, 0.65)')
+    expect(theme).toContain('[data-theme="citrus"]')
     // No solid 90% fill survives in either family.
     expect(css).not.toContain('rgba(0, 0, 0, 0.9)')
     expect(css).not.toContain('rgba(255, 255, 255, 0.9)')
@@ -43,10 +44,12 @@ describe('sidebar section header pill surfaces', () => {
     // pill — so the translucent form is gated on transparency being allowed,
     // exactly as the pane's own glass rules are.
     expect(css).toContain("[data-reduce-transparency='false']")
-    expect(css).toContain('backdrop-filter: blur(22px) saturate(0%) brightness(0.96)')
+    expect(css).toContain('backdrop-filter: var(--tw-neutral-material-backdrop)')
     expect(css).toContain("[data-reduce-transparency='true']")
-    expect(css).toContain('--sidebar-section-header-pill-bg-solid: rgb(22, 22, 22)')
-    expect(css).toContain('--sidebar-section-header-pill-bg-solid: rgb(255, 255, 255)')
+    expect(css).toContain(
+      '--sidebar-section-header-pill-bg-solid: var(--tw-sidebar-neutral-material-solid)'
+    )
+    expect(css).toContain('backdrop-filter: var(--tw-neutral-material-backdrop-soft)')
     expect(css).toContain('@supports not ((backdrop-filter: blur(1px))')
   })
 

@@ -6,6 +6,7 @@ const css = readFileSync(
   join(process.cwd(), 'src/renderer/src/components/ModelUsageCard.css'),
   'utf8'
 )
+const themeCss = readFileSync(join(process.cwd(), 'src/renderer/src/styles/theme.css'), 'utf8')
 
 const rule = (selector: string): string => {
   const start = css.indexOf(selector)
@@ -21,9 +22,13 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     const body = rule('.app-sidebar .model-usage-liquid-card {')
 
     expect(card).toContain('border-radius: 0;')
-    expect(card).toContain('background-color: rgba(22, 22, 22, 0.65);')
+    expect(themeCss).toContain('--tw-neutral-material-bg-dark: rgba(22, 22, 22, 0.65);')
+    expect(themeCss).toContain(
+      '--tw-neutral-material-bg-light: rgba(255, 255, 255, 0.65);'
+    )
+    expect(card).toContain('background-color: var(--tw-sidebar-neutral-material-bg);')
     expect(card).toContain('background-image: none;')
-    expect(card).toContain('backdrop-filter: blur(22px) saturate(0%) brightness(0.96);')
+    expect(card).toContain('backdrop-filter: var(--tw-neutral-material-backdrop);')
     // No accent glow anywhere on the pane (owner call 2026-08-05).
     expect(css).not.toContain('--model-usage-rim-glow')
     expect(body).toContain('background: transparent;')
@@ -50,7 +55,8 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
 
     // The neutral glass sheen survives, squared — it is the material, not a rim.
     expect(sheen).toContain('border-radius: 0;')
-    expect(sheen).toContain('linear-gradient(')
+    expect(sheen).toContain('background: var(--tw-neutral-material-sheen);')
+    expect(themeCss).toContain('--tw-neutral-material-sheen: linear-gradient(')
     expect(sheen).not.toContain('radial-gradient(')
     expect(sheen).not.toContain('rgba(150, 171, 201')
     expect(sheen).not.toMatch(/purple|magenta/i)
@@ -63,25 +69,35 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
 
     expect(css).toContain('.app-sidebar .model-usage-summary--sidebar.is-collapsed {')
     expect(glassCard).toContain('border-color: transparent;')
-    expect(glassCard).toContain('background-color: rgba(22, 22, 22, 0.65);')
+    expect(glassCard).toContain('background-color: var(--tw-sidebar-neutral-material-bg);')
     expect(glassCard).toContain('background-image: none;')
-    expect(glassCard).toContain('inset 0 -1px 0 rgba(0, 0, 0, 0.5)')
+    expect(glassCard).toContain('box-shadow: var(--tw-sidebar-neutral-material-shadow);')
+    expect(glassCard).toContain(
+      'backdrop-filter: var(--tw-neutral-material-backdrop-soft);'
+    )
     expect(glassCard).not.toContain('inset 0 1px 0')
   })
 
-  it('uses opaque black for Reduce Transparency and pure white for light themes', () => {
+  it('uses the canonical opaque fallback and light-family material aliases', () => {
     const reduced = rule("[data-appearance='solid']")
     const light = rule(
       ":is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])[data-appearance]"
     )
 
     expect(reduced).toContain("[data-reduce-transparency='true']")
-    expect(reduced).toContain('background-color: rgb(22, 22, 22);')
+    expect(reduced).toContain(
+      'background-color: var(--tw-sidebar-neutral-material-solid);'
+    )
     expect(reduced).toContain('background-image: none;')
     expect(reduced).toContain('backdrop-filter: none;')
     expect(light).toContain('.model-usage-summary--sidebar')
-    expect(light).toContain('background-color: rgba(255, 255, 255, 0.65);')
     expect(light).toContain('background-image: none;')
+    expect(themeCss).toContain(
+      '--tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);'
+    )
+    expect(themeCss).toContain(
+      '--tw-sidebar-neutral-material-solid: var(--tw-neutral-material-solid-light);'
+    )
   })
 
   it('uses fading provider dividers and compact luminous quota meters', () => {
@@ -151,7 +167,11 @@ describe('Model Usage pane light-family coverage', () => {
     // that now share this material always had citrus in their list, which is
     // how the gap surfaced.
     expect(css).toContain("[data-theme='citrus']")
-    const lightBlock = css.slice(css.indexOf("[data-theme='light']"))
-    expect(lightBlock).toContain('background-color: rgba(255, 255, 255, 0.65);')
+    const lightBlock = themeCss.slice(
+      themeCss.indexOf(':is([data-theme="light"], [data-theme="citrus"]')
+    )
+    expect(lightBlock).toContain(
+      '--tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);'
+    )
   })
 })

@@ -156,26 +156,45 @@
   --composer-glass-highlight: rgba(145, 174, 255, 0.14);
   --composer-glass-vignette: rgba(0, 6, 24, 0.20);
 
-  /* Refractive "liquid glass" picker-popover tokens (dark base).
-   * Consumed by the .composer-combined-picker-popover refraction
-   * layer in shard 08. Mirror the --composer-glass-* structure:
-   *   --tw-glass-sheen      : the baked specular WASH that gets
-   *                           warped by #tw-glass-refract (faint neutral
-   *                           sheen on dark so it reads as bent light,
-   *                           not a blue cast or white blowout).
-   *   --tw-glass-rim-light  : the top-edge specular highlight colour
-   *                           for the always-on CSS-fake rim (survives
-   *                           every fallback; no SVG involved).
-   *   --tw-popover-glass-bg : the shared 80%-opaque material bed for
-   *                           every picker / popover (black in dark mode,
-   *                           white in light mode).
-   *   --tw-glass-solid      : the opaque bed used by the
-   *                           reduce-transparency / no-backdrop-filter
-   *                           degrade so the popover stays legible. */
+  /* Canonical neutral material. The Model Usage pane is the visual source of
+   * truth; sidebar section pills and popovers consume these same primitives so
+   * their fill, desaturated blur, shadow, sheen, and solid fallback cannot
+   * drift independently. Geometry and borders remain component-owned. */
+  --tw-neutral-material-bg-dark: rgba(22, 22, 22, 0.65);
+  --tw-neutral-material-bg-light: rgba(255, 255, 255, 0.65);
+  --tw-neutral-material-solid-dark: rgb(22, 22, 22);
+  --tw-neutral-material-solid-light: rgb(255, 255, 255);
+  --tw-neutral-material-backdrop: blur(22px) saturate(0%) brightness(0.96);
+  --tw-neutral-material-backdrop-soft: blur(16px) saturate(0%) brightness(0.96);
+  --tw-neutral-material-shadow-dark:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    0 12px 28px -18px rgba(0, 0, 0, 0.72),
+    0 1px 2px rgba(0, 0, 0, 0.42);
+  --tw-neutral-material-shadow-light:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 12px 28px -19px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.12);
+  --tw-neutral-material-sheen: linear-gradient(
+    118deg,
+    rgba(255, 255, 255, 0.025),
+    transparent 27% 76%,
+    rgba(255, 255, 255, 0.012)
+  );
+
+  /* Semantic consumers select the dark recipe by default. Light-family and
+   * system-light overrides below swap the aliases without duplicating values. */
+  --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-dark);
+  --tw-sidebar-neutral-material-solid: var(--tw-neutral-material-solid-dark);
+  --tw-sidebar-neutral-material-shadow: var(--tw-neutral-material-shadow-dark);
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
+  --tw-glass-solid: var(--tw-neutral-material-solid-dark);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-dark);
+  --tw-popover-material-backdrop: var(--tw-neutral-material-backdrop);
+
+  /* Refractive picker-popover accents retained for the optional advanced-FX
+   * warp. The neutral material above remains the unwarped base. */
   --tw-glass-sheen: rgba(196, 200, 208, 0.14);
   --tw-glass-rim-light: rgba(255, 255, 255, 0.58);
-  --tw-popover-glass-bg: rgba(0, 0, 0, 0.8);
-  --tw-glass-solid: #000;
 
   /* Text */
   --text-primary: rgba(255, 255, 255, 0.92);
@@ -364,6 +383,10 @@
   --scrollbar-thumb-hover: rgba(255,255,255,0.22);
 }
 
+:root:is([data-appearance="soft_glass"], [data-appearance="native_glass"]) {
+  --tw-popover-material-backdrop: var(--tw-neutral-material-backdrop-soft);
+}
+
 /* Light-family sidebars keep the fixed chrome on their OWN (light) sidebar
  * colour — light mode uses the current sidebar colour (#eef2f7), mist/sage their
  * own tints. Dark themes inherit the #1D1D1C default from :root; alabaster (dark
@@ -373,8 +396,12 @@
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"]) {
   --sidebar-chrome-color: var(--sidebar-bg-solid);
   --sidebar-chrome-rim: rgba(18, 21, 27, 0.08);
-  --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
-  --tw-glass-solid: #fff;
+  --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
+  --tw-sidebar-neutral-material-solid: var(--tw-neutral-material-solid-light);
+  --tw-sidebar-neutral-material-shadow: var(--tw-neutral-material-shadow-light);
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
 }
 
 /* Theme palettes ported from the Swift shared theme choices */
@@ -425,7 +452,7 @@
    * near-white solid bed for the degrade fallbacks. */
   --tw-glass-sheen: rgba(255, 255, 255, 0.55);
   --tw-glass-rim-light: rgba(255, 255, 255, 0.85);
-  --tw-glass-solid: #fff;
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.62);
   --text-tertiary: rgba(18, 21, 27, 0.45);
@@ -470,8 +497,12 @@
 
 @media (prefers-color-scheme: light) {
   [data-theme="system"] {
-    --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
-    --tw-glass-solid: #fff;
+    --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
+    --tw-sidebar-neutral-material-solid: var(--tw-neutral-material-solid-light);
+    --tw-sidebar-neutral-material-shadow: var(--tw-neutral-material-shadow-light);
+    --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+    --tw-glass-solid: var(--tw-neutral-material-solid-light);
+    --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
   }
 }
 
@@ -1017,8 +1048,9 @@
   --composer-glass-border: rgba(18, 21, 27, 0.18);
   --composer-glass-highlight: rgba(0, 0, 0, 0.04);
   --composer-glass-vignette: rgba(140, 145, 160, 0.10);
-  --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
-  --tw-glass-solid: #fff;
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.62);
   --text-tertiary: rgba(18, 21, 27, 0.45);
