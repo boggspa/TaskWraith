@@ -41,11 +41,94 @@ import {
 } from '../acp/AcpTurnClient'
 import type { AcpPermissionRequest, AcpPermissionDecision } from '../grok/GrokAcpProtocol'
 import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
+import {
+  MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
+  MISTRAL_SCOPED_MCP_SERVER_NAME
+} from '../index.constants'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
 /** The client name Mistral sees in request metadata. Must be non-empty. */
 const MISTRAL_CLIENT_NAME = 'taskwraith'
+
+const MISTRAL_VIBE_MCP_ALIASES = [
+  MISTRAL_SCOPED_MCP_SERVER_NAME,
+  MISTRAL_BROKER_MCP_TOOL_NAMESPACE
+] as const
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function canonicalVibeTaskWraithToolName(machineName: unknown): string | null {
+  if (typeof machineName !== 'string' || machineName !== machineName.trim()) return null
+  for (const alias of MISTRAL_VIBE_MCP_ALIASES) {
+    // Vibe publishes MCP tools to the model as `<server alias>_<remote tool>`.
+    // TaskWraith's strict resolver uses the canonical MCP spelling with two
+    // underscores, so translate only the exact alias configured on this seat.
+    const prefix = `${alias}_`
+    if (!machineName.startsWith(prefix)) continue
+    const toolName = machineName.slice(prefix.length)
+    if (!toolName || toolName.startsWith('_')) return null
+    return `${alias}__${toolName}`
+  }
+  return null
+}
+
+/**
+ * Normalize Vibe's structured MCP identity into the spelling consumed by the
+ * existing strict TaskWraith resolver.
+ *
+ * This deliberately ignores ACP `title`/`toolName`: those are human labels.
+ * Vibe 2.23.x puts the model's exact published tool name in the correlated
+ * tool-call `_meta.tool_name` field and marks generic MCP effects as
+ * `_meta.effect_kind='tool'` + `kind='other'`. Native write/bash calls carry
+ * different kinds and metadata, so they remain on the normal permission path.
+ * The returned descriptor is local permission evidence only; it does not
+ * rewrite the provider invocation or bypass the broker's signed mutation gate.
+ */
+export function normalizeMistralVibePermissionRequest(
+  request: AcpPermissionRequest
+): AcpPermissionRequest {
+  const rawToolCall = record(request.rawToolCall)
+  const rawInput = record(rawToolCall?.rawInput)
+  const metadata = record(rawToolCall?._meta)
+  if (!rawToolCall || !rawInput || !metadata) return request
+  if (rawToolCall.kind !== 'other' || metadata.effect_kind !== 'tool') return request
+  if (request.toolKind && request.toolKind !== 'other') return request
+
+  const canonicalName = canonicalVibeTaskWraithToolName(metadata.tool_name)
+  if (!canonicalName) return request
+
+  const snakeToolInput = record(rawInput.tool_input)
+  const camelToolInput = record(rawInput.toolInput)
+  if (snakeToolInput && camelToolInput) return request
+  const nestedToolInput = snakeToolInput || camelToolInput
+  const identityCandidates = [
+    rawToolCall.tool_name,
+    rawToolCall.toolName,
+    rawToolCall.name,
+    rawInput.tool_name,
+    rawInput.toolName,
+    nestedToolInput?.tool_name,
+    nestedToolInput?.toolName
+  ]
+  for (const identity of identityCandidates) {
+    if (identity === undefined) continue
+    if (identity !== canonicalName) return request
+  }
+
+  if (rawInput.tool_name === canonicalName) return request
+  return {
+    ...request,
+    rawToolCall: {
+      ...rawToolCall,
+      rawInput: { ...rawInput, tool_name: canonicalName }
+    }
+  }
+}
 
 /**
  * Build the `initialize` params for a Vibe session.
@@ -199,7 +282,9 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
     sessionConfigOptions: options.sessionConfigOptions,
     onEvent: options.onEvent,
     onProcess: options.onProcess,
-    onPermissionRequest: options.onPermissionRequest,
+    onPermissionRequest: options.onPermissionRequest
+      ? (request) => options.onPermissionRequest!(normalizeMistralVibePermissionRequest(request))
+      : undefined,
     // Vibe can terminate opaquely after a native permission denial or an ACP
     // tool failure. Preserve the decision, then give the same session one
     // bounded chance to finish/report rather than failing the participant.
