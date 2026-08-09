@@ -9142,16 +9142,12 @@
 .composer-ollama-permission-runtime-popover .composer-combined-picker-ollama-runtime {
   min-width: 230px;
 }
-.composer-combined-picker-column-note,
 .composer-combined-picker-section-label {
   color: color-mix(in srgb, var(--text-tertiary) 92%, transparent);
   font-size: 10px;
   line-height: 1.2;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-}
-.composer-combined-picker-column-note {
-  margin: -2px 8px 8px;
 }
 .composer-combined-picker-section-label {
   margin: 8px 8px 4px;
@@ -9185,26 +9181,6 @@
   font-size: calc(var(--font-size-xs) + 1px);
   color: var(--text-primary);
   isolation: isolate;
-}
-
-/* Permission pickers use the same popover shell as model pickers, but each
- * grant row needs room for a checkbox and its two-line state. Give the grants
- * column the extra width instead of truncating the service names that govern
- * what an agent may do. */
-.composer-combined-picker-popover.has-tool-grants {
-  width: min(448px, calc(100vw - 16px));
-  min-width: min(448px, calc(100vw - 16px));
-  max-width: min(448px, calc(100vw - 16px));
-}
-
-.composer-combined-picker-popover.has-tool-grants .composer-combined-picker-permissions {
-  flex: 0 1 176px;
-  min-width: 0;
-}
-
-.composer-combined-picker-popover.has-tool-grants .composer-combined-picker-grants {
-  flex: 1 1 248px;
-  min-width: 0;
 }
 
 .composer-combined-picker-popover.is-ollama-model-picker {
@@ -10465,46 +10441,6 @@
 
 .composer-combined-picker-apply-all:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-/* Tool-Grant rows: multi-select with a leading checkbox glyph + a
- * smaller sub-label describing the global policy state for each
- * service. Shape mirrors the model/reasoning row but with denser
- * content stacked vertically. */
-.composer-combined-picker-row-grant {
-  align-items: flex-start;
-  padding: 6px 10px;
-}
-
-.composer-combined-picker-column-note {
-  padding: 0 10px 6px;
-  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.composer-combined-picker-row-grant:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
-.composer-combined-picker-row-grant-checkbox {
-  font-size: 13px;
-  line-height: 1;
-  margin-top: 2px;
-  color: color-mix(in srgb, var(--text-primary) 64%, transparent);
-  flex-shrink: 0;
-}
-
-.composer-combined-picker-row-grant.is-selected .composer-combined-picker-row-grant-checkbox {
-  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
-}
-
-.composer-combined-picker-row-grant-body {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
 }
 
 .composer-combined-picker-row-sub {

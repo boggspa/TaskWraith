@@ -80,15 +80,16 @@ describe('popover visual grammar inventory', () => {
     }
   })
 
-  it('preserves separate label and description hooks in both permission columns', () => {
+  it('preserves separate label and description hooks in permission rows', () => {
     const picker = readRendererFile('components/CombinedPermissionsPicker.tsx')
+    const pickerCss = readAssetCss('08-theme-picker-overrides.css')
 
     expect(picker).toMatch(
       /className="composer-combined-picker-row-body"[\s\S]*?className="composer-combined-picker-row-label"[\s\S]*?className="composer-combined-picker-row-sub"/
     )
-    expect(picker).toMatch(
-      /className="composer-combined-picker-row-grant-body"[\s\S]*?className="composer-combined-picker-row-label"[\s\S]*?className="composer-combined-picker-row-sub"/
-    )
+    expect(pickerCss).not.toContain('.composer-combined-picker-popover.has-tool-grants')
+    expect(pickerCss).not.toContain('.composer-combined-picker-row-grant')
+    expect(pickerCss).not.toContain('.composer-combined-picker-column-note')
   })
 })
 
