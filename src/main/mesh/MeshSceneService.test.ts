@@ -119,7 +119,9 @@ describe('MeshSceneService', () => {
       runId: 'run-a',
       participantId: 'seat-a'
     })
-    expect(service.inspectTopology(scene.id, { nodeId }, context('chat-b')).topology.revision).toBe(1)
+    expect(service.inspectTopology(scene.id, { nodeId }, context('chat-b')).topology.revision).toBe(
+      1
+    )
     expect(service.list(context('chat-b'))).toEqual([
       expect.objectContaining({ sceneId: scene.id, editableCount: 1 })
     ])
@@ -146,9 +148,7 @@ describe('MeshSceneService', () => {
         edit: {
           expectedRevision: 1,
           clientMutationId: 'seat-b-fresh',
-          operations: [
-            { operation: 'move_vertices', vertices: [{ vertexId, delta: { y: 0.2 } }] }
-          ]
+          operations: [{ operation: 'move_vertices', vertices: [{ vertexId, delta: { y: 0.2 } }] }]
         }
       },
       { ...context('chat-b'), participantId: 'seat-b' }
@@ -180,9 +180,9 @@ describe('MeshSceneService', () => {
     }
     const globalScene = service.create({ title: 'Global scene' }, globalContext)
     expect(service.inspect(globalScene.id, globalContext).id).toBe(globalScene.id)
-    expect(() =>
-      service.inspect(globalScene.id, { ...globalContext, chatId: 'global-b' })
-    ).toThrow('does not belong to this chat')
+    expect(() => service.inspect(globalScene.id, { ...globalContext, chatId: 'global-b' })).toThrow(
+      'does not belong to this chat'
+    )
   })
 
   it('converts an imported OBJ without overwriting or losing its source asset', () => {
