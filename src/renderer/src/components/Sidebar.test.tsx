@@ -822,6 +822,22 @@ describe('sidebar row memo comparators', () => {
       )
     }
   })
+
+  it('keeps memoized chat rows wired to the latest navigation closure', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/Sidebar.tsx'),
+      'utf8'
+    )
+    const selection = source.slice(
+      source.indexOf('const latestOnSelectChatRef ='),
+      source.indexOf('const selectedTerminalOutcome =')
+    )
+    expect(selection).toContain('useLayoutEffect(() => {')
+    expect(selection).toContain('latestOnSelectChatRef.current = onSelectChat')
+    expect(selection).toContain('latestOnSelectChatRef.current(chat)')
+    expect(selection).not.toContain('onSelectChat(chat)')
+    expect(selection).toContain('[acknowledgeChatTerminalOutcome]')
+  })
 })
 
 describe('Sidebar chat row markup', () => {

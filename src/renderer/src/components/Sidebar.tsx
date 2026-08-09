@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useEffect,
+  useLayoutEffect,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent,
@@ -3888,12 +3889,20 @@ export function Sidebar({
     },
     [acknowledgeTerminalOutcomeProjection]
   )
+  // Chat rows intentionally ignore function identity in their memo comparator:
+  // otherwise a busy transcript would reconcile every sidebar row each frame.
+  // Route those long-lived rows through one stable trampoline so they still see
+  // the current App navigation closure after Multiview is enabled or focus moves.
+  const latestOnSelectChatRef = useRef(onSelectChat)
+  useLayoutEffect(() => {
+    latestOnSelectChatRef.current = onSelectChat
+  }, [onSelectChat])
   const selectAndAcknowledgeChat = useCallback(
     (chat: ChatRecord): void => {
       acknowledgeChatTerminalOutcome(chat)
-      onSelectChat(chat)
+      latestOnSelectChatRef.current(chat)
     },
-    [acknowledgeChatTerminalOutcome, onSelectChat]
+    [acknowledgeChatTerminalOutcome]
   )
   const selectedTerminalOutcome = useMemo(
     () => (selectedChat ? projectSidebarTerminalOutcome(selectedChat) : null),
