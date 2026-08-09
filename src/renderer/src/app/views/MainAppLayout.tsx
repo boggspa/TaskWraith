@@ -1051,6 +1051,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         watchPrStatusMessage: undefined,
         pendingAgentApproval:
           pendingAgentApprovalByChatId?.[sideChat.appChatId] || null,
+        pendingApprovalQueueByChatId: pendingApprovalQueueByChatId?.[sideChat.appChatId]
+          ? {
+              [sideChat.appChatId]: pendingApprovalQueueByChatId[sideChat.appChatId]
+            }
+          : {},
         queuedMessagesAboveRowEntries: sideQueuedMessagesAboveRowEntries,
         queuedRunQueueCount: runQueueJobs.filter(
           (job: any) => job.chatId === sideChat.appChatId && job.status === 'queued'

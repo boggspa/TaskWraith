@@ -1,3 +1,5 @@
+import { ChatSurfaceComposerRuntime } from './chatSurfaceComposerRuntime'
+
 export type SideChatComposerKeyEvent = {
   key: string
   shiftKey: boolean
@@ -15,78 +17,7 @@ const DETACHED_SIDE_CHAT_GOAL_BUTTON_REF = { current: null }
 const DETACHED_SIDE_CHAT_GOAL_POPOVER_REF = { current: null }
 const DETACHED_SIDE_CHAT_MULTIVIEW = { layout: 'single' }
 
-type AnyFunction = (...args: never[]) => unknown
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') return false
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === Object.prototype || prototype === null
-}
-
-function reuseEquivalentValue(previous: unknown, next: unknown): unknown {
-  if (Object.is(previous, next)) return previous
-  if (Array.isArray(previous) && Array.isArray(next)) {
-    return previous.length === next.length &&
-      previous.every((entry, index) => Object.is(entry, next[index]))
-      ? previous
-      : next
-  }
-  if (isPlainObject(previous) && isPlainObject(next)) {
-    const previousKeys = Object.keys(previous)
-    const nextKeys = Object.keys(next)
-    return previousKeys.length === nextKeys.length &&
-      previousKeys.every(
-        (key) =>
-          Object.prototype.hasOwnProperty.call(next, key) && Object.is(previous[key], next[key])
-      )
-      ? previous
-      : next
-  }
-  return next
-}
-
-/**
- * A side composer remains mounted beside a much noisier parent App tree. Keep
- * function props as stable dispatchers to their latest chat-scoped handlers,
- * and reuse shallow-equivalent arrays/records, so React.memo(Composer) only
- * wakes when this side chat's actual presentation changes.
- */
-export class SideChatComposerRuntime<T extends object> {
-  private previous: T | null = null
-  private readonly latestFunctions = new Map<string, AnyFunction>()
-  private readonly stableFunctions = new Map<string, AnyFunction>()
-
-  stabilize(next: T): T {
-    const nextRecord = next as Record<string, unknown>
-    const previousRecord = this.previous as Record<string, unknown> | null
-    const keys = Object.keys(nextRecord)
-    let changed = !previousRecord || Object.keys(previousRecord).length !== keys.length
-    const stabilized: Record<string, unknown> = {}
-
-    for (const key of keys) {
-      const nextValue = nextRecord[key]
-      let stableValue: unknown
-      if (typeof nextValue === 'function') {
-        this.latestFunctions.set(key, nextValue as AnyFunction)
-        let stableFunction = this.stableFunctions.get(key)
-        if (!stableFunction) {
-          stableFunction = ((...args: never[]) =>
-            this.latestFunctions.get(key)?.(...args)) as AnyFunction
-          this.stableFunctions.set(key, stableFunction)
-        }
-        stableValue = stableFunction
-      } else {
-        stableValue = reuseEquivalentValue(previousRecord?.[key], nextValue)
-      }
-      stabilized[key] = stableValue
-      if (!Object.is(previousRecord?.[key], stableValue)) changed = true
-    }
-
-    if (!changed && this.previous) return this.previous
-    this.previous = stabilized as T
-    return this.previous
-  }
-}
+export { ChatSurfaceComposerRuntime as SideChatComposerRuntime }
 
 export function shouldSubmitSideChatComposerKey(event: SideChatComposerKeyEvent): boolean {
   return event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing
@@ -155,6 +86,7 @@ export function buildSideChatComposerProps<T extends Record<string, unknown>>(
     isPreparingDiffReview: false,
     multiview: DETACHED_SIDE_CHAT_MULTIVIEW,
     pendingAgentApproval: null,
+    pendingApprovalQueueByChatId: {},
     pendingPlanImport: null,
     planImportExecutionEstimate: null,
     planImportGroundingBusy: false,

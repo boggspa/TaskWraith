@@ -859,14 +859,17 @@ import {
 import { estimateLiveOutputTokensFromChars } from './components/LiveThreadTokenTally'
 import {
   cachedPaneContextTelemetry,
-  cachedPaneLiveOutputTokens,
   cachedPaneMediaRefs,
   cachedPanePinnedCount,
-  cachedPaneRunCompleteNotice,
-  cachedPaneTokenTally
+  cachedPaneRunCompleteNotice
 } from './lib/multiviewPaneDerivations'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
 import { type ComposerProps } from './components/Composer'
+import {
+  buildDetachedChatSurfaceBase,
+  ChatSurfaceComposerRuntime,
+  ChatSurfaceComposerRuntimeRegistry
+} from './lib/chatSurfaceComposerRuntime'
 import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
 import {
   executionAppendSubmissionKey,
@@ -3864,6 +3867,13 @@ function App(): React.JSX.Element {
   // button. Panes take this throwaway; only the focused composer binds the real
   // goalButtonRef (mirrors sideChatComposer's DETACHED_SIDE_CHAT_GOAL_BUTTON_REF).
   const paneGoalButtonDiscardRef = useRef<HTMLButtonElement | null>(null)
+  const paneGoalPopoverDiscardRef = useRef<HTMLDivElement | null>(null)
+  const paneComposerRuntimeRegistryRef = useRef(
+    new ChatSurfaceComposerRuntimeRegistry<ComposerProps>()
+  )
+  const detachedComposerSurfaceBaseRuntimeRef = useRef(
+    new ChatSurfaceComposerRuntime<Record<string, unknown>>()
+  )
   const welcomeDashboardRegionRef = useRef<HTMLDivElement>(null)
   const [welcomeFitState, setWelcomeFitState] = useState<{
     chatId: string | null
@@ -28261,19 +28271,6 @@ function App(): React.JSX.Element {
     }
     const viewerProvider = getChatProvider(viewerChat)
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
-    const viewerSelectedParticipantId = resolveMultiviewEnsembleParticipantSelection(
-      viewerChat,
-      selectedParticipantIdByChatId[viewerChatId],
-      userOverrodeSelectionRoundKeys
-    )
-    const viewerEnsembleProjection = buildMultiviewEnsembleComposerProjection(
-      viewerChat,
-      Array.isArray(agentStatusByProvider.ollama?.models)
-        ? agentStatusByProvider.ollama.models
-        : [],
-      viewerSelectedParticipantId,
-      pendingEnsembleSeatSelections[viewerChatId]
-    )
     const viewerOwnsFocusedTrust =
       viewerPaneIndex === multiview.focusedPaneIndex &&
       currentChatIdRef.current === viewerChatId
@@ -28334,102 +28331,11 @@ function App(): React.JSX.Element {
               : viewerHasHandoffDraft
                 ? 'handoff'
                 : 'idle'
-    const viewerSelection = getChatComposerSelection(viewerChat, viewerProvider)
-    // The pane model picker's option list (incl. the synthetic "Custom…" entry)
-    // is now built inside the shared <Composer> from `currentProviderModelOptions`
-    // (overridden per-pane in paneComposerCtx), mirroring the focused composer.
-    const viewerSelectedModel = viewerSelection.selectedModelType
-    const viewerCodexModelOption =
-      viewerProvider === 'codex'
-        ? codexModels.find((model) => model.id === viewerSelectedModel)
-        : undefined
-    const viewerClaudeModelOption =
-      viewerProvider === 'claude'
-        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
-            (model) => model.id === viewerSelectedModel
-          )
-        : undefined
-    const viewerCodexReasoning =
-      viewerSelection.codexReasoningEffort ||
-      viewerCodexModelOption?.defaultReasoningEffort ||
-      'medium'
-    const viewerClaudeReasoning =
-      viewerSelection.claudeReasoningEffort ||
-      resolveClaudeDefaultReasoningEffort(viewerClaudeModelOption)
-    const viewerKimiThinking = true
-    const viewerKimiReasoning = viewerSelection.kimiReasoningEffort || 'on'
-    const viewerGrokReasoning =
-      viewerSelection.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
-    const viewerCursorReasoning =
-      viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
-    const viewerCursorFastMode = Boolean(viewerSelection.cursorFastMode)
-    // RAW per-pane reasoning option lists ({ reasoningEffort }[]) for the shared
-    // <Composer>. The composer does its OWN mapping to picker shape from
-    // codex/claudeReasoningOptions, so it must receive the RAW shape — passing
-    // picker-shaped { value, label } here crashed it (it read
-    // option.reasoningEffort.charAt(0) on undefined). Kimi builds its own list
-    // internally, so no raw list is needed for it.
-    const viewerCodexReasoningOptionsRaw = viewerCodexModelOption?.supportedReasoningEfforts?.length
-      ? viewerCodexModelOption.supportedReasoningEfforts
-      : [
-          { reasoningEffort: 'low' },
-          { reasoningEffort: 'medium' },
-          { reasoningEffort: 'high' },
-          { reasoningEffort: 'xhigh' }
-        ]
-    const viewerClaudeReasoningOptionsRaw = resolveClaudeReasoningEfforts(viewerClaudeModelOption)
-    // Fast-mode capability/state, the permission option list, and the
-    // enabled-grant set are all derived inside the shared <Composer> (from the
-    // per-pane provider/model/selection fields in paneComposerCtx), mirroring
-    // the focused composer — so they no longer need pane-local copies here.
-    const viewerProviderLocked = Boolean(
-      viewerIsRunning ||
-        (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
-    )
-    const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
-    const viewerRunStartedAt = viewerIsRunning
-      ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
-      : null
-    const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(
-      viewerChat.runs,
-      viewerRunStartedAt
-    )
     const viewerShouldShowWelcomeUsageDashboard =
       viewerIsWelcomeChat &&
       usageInitialized &&
       welcomeUsageDashboardData.lifetimeHasActivity &&
       !isMultiviewSplit
-    const viewerWorkspaceActivityPath =
-      viewerIsWelcomeChat && !viewerIsGlobalChat && welcomeWorkspaceHeatmapEnabled
-        ? viewerWorkspace?.path || viewerChat.workspacePath || ''
-        : ''
-    const viewerShouldShowWelcomeStandaloneHeatmaps =
-      !isMultiviewSplit &&
-      (Boolean(viewerWorkspaceActivityPath) || viewerShouldShowWelcomeUsageDashboard)
-    const viewerWelcomeHeatmapSlots = buildWelcomeHeatmapSlots({
-      workspaceActivityPath: viewerWorkspaceActivityPath,
-      showUsageDashboard: viewerShouldShowWelcomeUsageDashboard,
-      taskwraithActivityEnabled: welcomeTaskWraithHeatmapEnabled,
-      externalActivityEnabled: welcomeExternalHeatmapEnabled,
-      refreshKey: welcomeHeatmapRefreshKey,
-      usageRecords
-    })
-    const viewerTokenTally = cachedPaneTokenTally(viewerChat, { providerRates })
-    const viewerLiveOutputTokens = cachedPaneLiveOutputTokens(viewerChat, {
-      isRunning: viewerIsRunning,
-      runId: viewerRun?.runId ?? null
-    })
-    const viewerContextModelId =
-      viewerRun?.actualModel || viewerRun?.requestedModel || viewerSelectedModel
-    const viewerContextTelemetry = cachedPaneContextTelemetry(viewerChat, {
-      provider: viewerProvider,
-      modelId: viewerContextModelId,
-      focusedParticipantId: viewerEnsembleProjection.selectedParticipant?.id,
-      liveOutputTokens: viewerLiveOutputTokens,
-      isRunning: viewerIsRunning,
-      resolveOllamaContextLength: resolveLiveOllamaContextLength
-    })
-    const viewerDualTelemetry = Boolean(viewerChat.chatKind === 'ensemble')
     const viewerAttachedWindow = attachedWindow?.chatId === viewerChatId ? attachedWindow : null
     const viewerResumeAppWatchSnapshot =
       resumeAppWatchSnapshot?.chatId === viewerChatId ? resumeAppWatchSnapshot : null
@@ -28440,10 +28346,6 @@ function App(): React.JSX.Element {
       : viewerResumeAppWatchSnapshot
         ? `Resume watching ${viewerResumeAppWatchSnapshot.windowMeta.applicationName || 'window'}${viewerResumeAppWatchSnapshot.windowMeta.title ? ` — ${viewerResumeAppWatchSnapshot.windowMeta.title}` : ''} · click to re-pick`
         : screenWatchUnavailableReason || 'Screen Watch — click to pick a window for the AI to see'
-    const viewerGoalStatus = viewerChat.activeGoal?.status || 'empty'
-    const viewerGoalTitle = viewerChat.activeGoal
-      ? `${viewerChat.activeGoal.status}: ${viewerChat.activeGoal.objective}`
-      : 'Set active goal'
     const viewerMediaRefs = cachedPaneMediaRefs(viewerChat, {
       attachments: imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
     })
@@ -28756,532 +28658,21 @@ function App(): React.JSX.Element {
         onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'inspector')
       }
     ]
-    // ── Per-pane Composer context ──────────────────────────────────────────
-    // Every Multiview pane renders the SAME <Composer> component as the focused
-    // main pane. The focused pane reuses `composerCtx` (below) verbatim via
-    // `renderFocusedCell`. Non-focused panes render <ChatViewPane>, which hosts
-    // <Composer {...paneComposerCtx} />. We build `paneComposerCtx` by spreading
-    // the app-global `composerCtx` template (settings/appearance/workspaces/
-    // providerRates/static handlers/etc. are chat-independent and reused
-    // verbatim) and overriding (a) the PER-CHAT display fields with this pane's
-    // `viewer*` derivations and (b) the ACTION handlers with pane-scoped adapters
-    // that delegate to the `handleMultiviewPane*` variants (scoped to this pane's
-    // chat). Typed `ComposerProps` so tsc enforces completeness.
-    //
-    // NOTE: `composerCtx` is declared just after this function but is only READ
-    // when this closure is invoked during render (after `composerCtx` is
-    // assigned), so the reference is safe.
-    const paneViewerSelection = viewerSelection
-    const viewerProviderLabel = getProviderLabel(viewerProvider)
-    const paneComposerImageAttachments = (
-      imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
-    ).filter((attachment) => isImageAttachmentPath(attachment.path))
-    const paneComposerFileAttachments = (
-      imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
-    ).filter((attachment) => !isImageAttachmentPath(attachment.path))
-    const paneIsEnsembleChat = viewerChat.chatKind === 'ensemble'
-    const paneComposerPlaceholder = paneIsEnsembleChat
-      ? 'Ask the ensemble. @ to direct a participant.'
-      : viewerProvider === 'codex'
-        ? 'Ask Codex anything. @ to mention files'
-        : viewerProvider === 'claude'
-          ? 'Describe a task or ask a question'
-          : viewerProvider === 'gemini'
-            ? 'Ask Gemini'
-            : viewerProvider === 'kimi'
-              ? 'Type "/" to quickly access skills'
-              : `Enter prompt for ${viewerProviderLabel}…`
-    const paneComposerAriaLabel = paneIsEnsembleChat
-      ? 'Prompt for Ensemble'
-      : `Prompt for ${viewerProviderLabel}`
-    const paneWelcomeCopy = buildWelcomeCopy({
-      workspaceName: viewerWorkspaceName,
-      providerLabel: viewerProviderLabel,
-      permissionModeLabel: 'Accept Edits',
-      isGlobalChat: viewerIsGlobalChat,
-      nowHour: new Date().getHours(),
-      userName: settings?.userName,
-      hasDiff: false,
-      diffCount: 0,
-      scheduledTaskCount: 0
-    })
-    const paneThreadTokenTallyHasValue =
-      viewerTokenTally.totalTokens > 0 || viewerLiveOutputTokens > 0
-    const paneIsWorkflowComposeChat =
-      workflowDraft != null && workflowDraft.chatId === viewerChatId
-    const paneWorkflowForChat =
-      workflowDefinitions.find((wf) => wf.template.chatId === viewerChatId) ?? null
-    const paneIsWorkflowChatWelcome = paneIsWorkflowComposeChat || paneWorkflowForChat != null
-    const paneExternalPathGrants = externalPathGrantsForChat(viewerChat)
-    const paneExternalWorkspaceState = deriveExternalWorkspaceStateFromGrants(
-      paneExternalPathGrants,
-      {
-        repoMetadataByPath: externalPathRepoMetadataByPath,
-        gitSnapshotsByPath: projectExternalWorkspaceOwnerCache(
-          paneExternalPathGrants,
-          externalGitSnapshotsByOwner
-        ),
-        prByPath: projectExternalWorkspaceOwnerCache(
-          paneExternalPathGrants,
-          externalPrByOwner
-        )
-      }
-    )
-    const paneExternalPathGrantPrompt =
-      externalPathGrantPromptByChatId[viewerChatId] || null
-    const paneExternalPathGrantPromptBusy =
-      (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
-    const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
-    // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget, …, pickerId) with no
-    // chat context (it operates on `currentComposerChatId` in the focused case).
-    // For a pane we delegate to the pane runner scoped to this pane's chat,
-    // including the directed participant selected by an @mention/modifier send.
-    const paneHandleRun = (
-      _overrideModel?: string,
-      _existingPrompt?: string,
-      dmTargetParticipantId?: string,
-      _approvalModeOverride?: string,
-      _workflowModeOverride?: ChatWorkflowMode,
-      exactPickerParticipantId?: string
-    ): void =>
-      handleRunMultiviewPane(
-        viewerPaneIndex,
-        viewerChatId,
-        dmTargetParticipantId,
-        exactPickerParticipantId
-      )
-    const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
-    const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
-      handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
-    const paneRememberComposerSelection = (patch: Record<string, unknown>): void =>
-      rememberMultiviewPaneComposerSelection(viewerChatId, patch)
-    const focusPaneForGoalControl = (): void =>
-      handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
-    // Model/reasoning/fast/permission setters: <Composer>'s internal wrappers
-    // call the chat-level setState setters (which drive the FOCUSED composer's
-    // UI) AND `rememberCurrentChatComposerSelection`. For a pane, the focused
-    // setState would steer the wrong chat, so we no-op the setState half and
-    // route persistence through `rememberMultiviewPaneComposerSelection`. The
-    // pane's CombinedModelPicker reads its selected values from the per-chat
-    // display fields below (selectedModelType/codexReasoningEffort/etc.), so the
-    // UI still reflects the persisted selection on the next render.
-    const paneNoopSetter = (): void => {}
-    const paneSlashParticipant = viewerEnsembleProjection.selectedParticipant
-    const paneSlashProvider = paneSlashParticipant?.provider ?? viewerProvider
-    const paneSelectParticipant = (participantId: string): void =>
-      selectEnsembleParticipantForChat(viewerChatId, participantId)
-    const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
-      if (!paneSlashParticipant) return
-      patchEnsembleParticipantForChat(viewerChatId, paneSlashParticipant.id, patch)
-    }
-    const panePatchParticipantById = (
-      participantId: string,
-      patch: Partial<EnsembleParticipant>
-    ): void => {
-      patchEnsembleParticipantForChat(viewerChatId, participantId, patch)
-    }
-    const paneQueuedMessagesAboveRowEntries =
-      buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
-    const paneExecutionStackView = executionStackViewForChat(viewerChatId)
-    const paneIsChatBusyForSteer =
-      viewerIsRunning || viewerEnsembleProjection.isRoundRunning
-    const paneIsSteerBusyForCurrentChat = isSteerInFlight({
-      state: steerState,
-      chatId: viewerChatId
-    })
-    const paneSteerIndicatorMessage = getSteerIndicatorMessage({
-      state: steerState,
-      chatId: viewerChatId,
-      providerLabel: getProviderLabel(viewerProvider),
-      turnLabel: paneIsEnsembleChat ? 'ensemble round' : undefined
-    })
-    const paneHumanCollaborationShare =
-      activeHumanCollaborationShareByChatId.get(viewerChatId) || null
-    const paneComposerCtx: ComposerProps = {
-      // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
-      // handlers) instead of the focused `composerCtx`. The base is referentially
-      // stable across App renders that didn't change its inputs, so — combined
-      // with the per-pane overrides below being built inside a memoised array —
-      // this pane's composer ctx keeps a stable identity when only ANOTHER pane
-      // (or a background chat) changed, letting `chatViewPanePropsEqual`'s
-      // `composerProps ===` check bail and skip re-rendering this pane's Composer.
-      ...composerStableBase,
-      // Focused-only churny fields NOT in the stable base: panes get stable
-      // placeholders (consistent with the focused-only placeholders further
-      // below — pendingAgentApproval/queued/palette/etc.). These are above-bar
-      // schedule/runtime controls that operate on FOCUSED state; rendering the
-      // focused chat's into a resting pane was an acknowledged harmless-placeholder
-      // leak. Empty/null keeps the base stable.
-      runtimeProfileControl: null,
-      scheduleControls: null,
-      // The base's compact-now handler targets the FOCUSED chat; a pane's
-      // popover must never compact a different chat. Hidden in panes for now.
-      onCompactContext: undefined,
-      onCompactParticipant: undefined,
-      compactableParticipantIds: undefined,
-      speakingParticipantId: undefined,
-      // ── per-chat identity / display ──
-      prompt: composerDraftsByChatId[viewerChatId] || '',
-      // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
-      // global). The inherited `composerCtx.shouldShowGhostCompanion` is the
-      // FOCUSED pane's flag, so override it with THIS pane's.
-      shouldShowGhostCompanion: paneGhostEnabled(viewerPaneIndex),
-      currentChat: viewerChat,
-      currentComposerChatId: viewerChatId,
-      hasProjectReferenceContext: Boolean(
-        getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
-      ),
-      currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
-      resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
-      humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
-      humanCollaborationShare: paneHumanCollaborationShare,
-      humanCollaborationInviteHealth:
-        humanCollaborationInviteHealthByChatId[viewerChatId] || null,
-      humanCollaborationInviteBusy: pendingHumanCollaborationInviteChatIds.has(viewerChatId),
-      humanCollaborationInviteLive: connectedCollaborationChatIds.has(viewerChatId),
-      onCopyHumanCollaborationInvite: paneHumanCollaborationShare
-        ? (options?: { allowLanOnly?: boolean; allowLoopback?: boolean }) =>
-            createFreshHumanCollaborationInvite(paneHumanCollaborationShare.chatId, {
-              mode: paneHumanCollaborationShare.mode,
-              chat: viewerChat,
-              allowLanOnly: options?.allowLanOnly,
-              allowLoopback: options?.allowLoopback
-            })
-        : undefined,
-      onCopyHumanCollaborationInviteText: copyHumanCollaborationInvitePayload,
-      onStopHumanCollaborationSharing: paneHumanCollaborationShare
-        ? () => stopHumanCollaborationSharingForChat(viewerChatId)
-        : undefined,
-      onOpenHumanCollaborationRemoteSetup: openHumanCollaborationRemoteSetup,
-      onRefreshHumanCollaborationInviteHealth: () =>
-        readHumanCollaborationInviteHealth(viewerChatId),
-      currentProvider: viewerProvider,
-      currentProviderLabel: viewerProviderLabel,
-      currentProviderModelOptions: getProviderModelOptions(viewerProvider),
-      selectedParticipant: paneSlashParticipant,
-      effectiveSelectedParticipantId: paneSlashParticipant?.id || null,
-      handleSelectParticipant: paneSelectParticipant,
-      updateSelectedParticipant: paneUpdateSelectedParticipant,
-      patchEnsembleParticipantById: panePatchParticipantById,
-      currentComposerMentionParticipants: viewerEnsembleProjection.participants,
-      ensembleEnabledParticipantsForCurrent: viewerEnsembleProjection.enabledParticipants,
-      ensembleBlendStyle: viewerEnsembleProjection.providerBlendStyle as CSSProperties,
-      currentEnsembleOrchestrationMode: viewerEnsembleProjection.currentOrchestrationMode,
-      activeEnsembleOrchestrationMode: viewerEnsembleProjection.activeOrchestrationMode,
-      currentEnsembleFanoutPolicy: viewerEnsembleProjection.currentFanoutPolicy,
-      activeEnsembleFanoutPolicy: viewerEnsembleProjection.activeFanoutPolicy,
-      currentEnsembleConcurrentMode: viewerEnsembleProjection.currentConcurrentMode,
-      activeEnsembleConcurrentMode: viewerEnsembleProjection.activeConcurrentMode,
-      currentEnsembleContinuationHops: viewerEnsembleProjection.continuationHops,
-      currentEnsembleMaxContinuationHops: viewerEnsembleProjection.maxContinuationHops,
-      isCurrentEnsembleRoundRunning: viewerEnsembleProjection.isRoundRunning,
-      currentEnsembleRoundStatus: viewerEnsembleProjection.roundStatus,
-      currentEnsembleActiveGoalStatus: viewerEnsembleProjection.activeGoalStatus,
-      ensembleOllamaContextWarning: viewerEnsembleProjection.ollamaContextWarning,
-      applyEnsembleRosterPreset: (preset: EnsembleRosterPreset) =>
-        applyEnsembleRosterPresetToChat(viewerChatId, preset),
-      setActiveEnsembleRosterPresetId: (presetId: string | null) =>
-        setActiveEnsembleRosterPresetIdForChat(viewerChatId, presetId),
-      applyEnsemblePermissionsToAllParticipants: () => {
-        if (!paneSlashParticipant) return
-        applyEnsemblePermissionsToAllParticipantsForChat(
-          viewerChatId,
-          paneSlashParticipant.id
-        )
-      },
-      updateCurrentEnsembleOrchestrationMode: (mode: EnsembleOrchestrationMode) =>
-        updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
-      updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
-        updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
-      updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolationPolicy) =>
-        updateEnsembleFanoutIsolationForChat(viewerChatId, isolation),
-      updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
-        updateEnsembleFanoutPolicyForChat(viewerChatId, enabled ? 'read_only' : 'off'),
-      updateCurrentEnsembleContextChars: (nextChars: number) =>
-        updateEnsembleContextCharsForChat(viewerChatId, nextChars),
-      updateCurrentEnsembleMaxContinuationHops: (nextMax: number) =>
-        updateEnsembleMaxContinuationHopsForChat(viewerChatId, nextMax),
-      queuedMessagesAboveRowEntries: paneQueuedMessagesAboveRowEntries,
-      executionStackProjection: paneExecutionStackView.projection,
-      executionHistory: paneExecutionStackView.history,
-      onOpenExecutionMap: (runId: string, stepId?: string) => {
-        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
-        handleOpenExecutionMap(runId, stepId)
-      },
-      onAddToExecutionStack: paneIsChatBusyForSteer
-        ? (runId: string) => {
-            preferredExecutionByChatIdRef.current[viewerChatId] = runId
-            handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
-            setOpenExecutionMap(null)
-          }
-        : undefined,
-      onSaveExecutionGraph: handleSaveExecutionGraph,
-      onCancelExecutionStackStep: handleCancelExecutionStackStep,
-      handleEditQueuedMessage: (entryId: string) =>
-        handleEditQueuedMessage(entryId, viewerChat),
-      handleDeleteQueuedMessage: (entryId: string) =>
-        handleDeleteQueuedMessage(entryId, viewerChat),
-      handleSteerToQueuedMessage: (entryId: string) =>
-        handleSteerToQueuedMessage(entryId, viewerChat),
-      isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
-      isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
-      steerIndicatorMessage: paneSteerIndicatorMessage,
-      composerSlashCommands: buildPaneComposerSlashCommands(
-        viewerPaneIndex,
-        viewerChat,
-        viewerProvider,
-        viewerWorkspace,
-        paneSlashParticipant
-      ),
-      handlePaletteCommand: (item: CommandPaletteItem) =>
-        handlePanePaletteCommand(viewerPaneIndex, viewerChat, paneSlashProvider, viewerWorkspace, item),
-      openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
-        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
-        setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
-        window.alert('Side-chat commands open from the focused pane. This pane is now focused; run the command again.')
-        return false
-      },
-      currentWorkspace: viewerWorkspace,
-      currentWorkspacePath: viewerWorkspace?.path || viewerChat.workspacePath || undefined,
-      pendingWorkspaceRebind: readPendingWorkspaceRebind(viewerChat),
-      externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
-      externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,
-      externalPathRepoMetadata: paneExternalWorkspaceState.externalPathRepoMetadata,
-      externalGitSnapshots: paneExternalWorkspaceState.externalGitSnapshots,
-      externalPrByPath: paneExternalWorkspaceState.externalPrByPath,
-      // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
-      // above-row "N files changed +A −B" reflects the pane's workspace, not the
-      // focused one (workspaceDiffStats otherwise comes from composerStableBase =
-      // the FOCUSED value, the cross-pane leak). Zeros until the snapshot lands.
-      workspaceDiffStats: ((): { filesChanged: number; additions: number; deletions: number } => {
-        const snap = multiviewGitSnapshotStore.getSnapshot(viewerGitPresentationPath)
-        return snap
-          ? {
-              filesChanged: snap.counts?.changed ?? 0,
-              additions: snap.lineStats?.additions ?? 0,
-              deletions: snap.lineStats?.deletions ?? 0
-            }
-          : { filesChanged: 0, additions: 0, deletions: 0 }
-      })(),
-      isCurrentGlobalChat: viewerIsGlobalChat,
-      isCurrentChatRunning: viewerIsRunning,
-      isCurrentChatLinkedChild: Boolean(viewerChat.parentChatId),
-      isCurrentEnsembleChat: paneIsEnsembleChat,
-      isWelcomeChat: viewerIsWelcomeChat,
-      isCurrentChatProviderLocked: viewerProviderLocked,
-      isCurrentComposerLocked: viewerComposerLocked,
-      composerPlaceholder: paneComposerPlaceholder,
-      composerAriaLabel: paneComposerAriaLabel,
-      welcomeCopy: paneWelcomeCopy,
-      // welcome surfaces (display) — pane-scoped so a pane never inherits the
-      // focused chat's workflow/heatmap welcome state.
-      isWorkflowComposeChat: paneIsWorkflowComposeChat,
-      isWorkflowChatWelcome: paneIsWorkflowChatWelcome,
-      workflowForCurrentChat: paneWorkflowForChat,
-      welcomeHeatmapSlots: viewerWelcomeHeatmapSlots,
-      shouldShowWelcomeStandaloneHeatmaps: viewerShouldShowWelcomeStandaloneHeatmaps,
-      // model + reasoning + fast-mode selection (display)
-      selectedModelType: viewerSelectedModel,
-      selectedComposerModelType: viewerSelectedModel,
-      selectedRuntimeProfileId:
-        paneSlashParticipant?.runtimeProfileId ||
-        getRuntimeProfileIdForChat(viewerChat, viewerProvider) ||
-        null,
-      customModel: paneViewerSelection.customModel || '',
-      codexReasoningEffort: viewerCodexReasoning,
-      codexReasoningOptions: viewerCodexReasoningOptionsRaw,
-      claudeReasoningOptions: viewerClaudeReasoningOptionsRaw,
-      claudeReasoningEffort: viewerClaudeReasoning,
-      kimiFastMode: Boolean(viewerSelection.kimiFastMode),
-      kimiReasoningEffort: viewerKimiReasoning,
-      kimiThinkingEnabled: viewerKimiThinking,
-      grokReasoningEffort: viewerGrokReasoning,
-      cursorReasoningEffort: viewerCursorReasoning,
-      cursorFastMode: viewerCursorFastMode,
-      codexServiceTier: paneViewerSelection.codexServiceTier || '',
-      claudeFastMode: Boolean(paneViewerSelection.claudeFastMode),
-      // permission (display). NOTE: <Composer> derives `enabledGrantIds`
-      // internally from `agenticWorkspaceGrants` + `currentProvider` +
-      // `currentWorkspace(Path)` (all overridden above), so the pane's grant set
-      // is already pane-correct — there is no `enabledGrantIds` prop to set.
-      approvalMode: paneViewerSelection.approvalMode,
-      // Trust is focused-renderer state. A resting pane must neither display nor
-      // mutate the focused chat's session/persistent trust. Its first trust
-      // interaction focuses the pane; the now-focused composer owns any change.
-      sessionTrust: viewerOwnsFocusedTrust ? sessionTrust : false,
-      setSessionTrust: viewerOwnsFocusedTrust
-        ? setSessionTrust
-        : () => focusPaneForGoalControl(),
-      trustResult: viewerOwnsFocusedTrust ? trustResult : null,
-      geminiWorkspaceTrustReady: viewerOwnsFocusedTrust
-        ? geminiWorkspaceTrustReady
-        : viewerIsGlobalChat,
-      trustSelectValue: viewerOwnsFocusedTrust
-        ? trustSelectValue
-        : viewerIsGlobalChat
-          ? 'trusted'
-          : 'untrusted',
-      handleTrustWorkspaceClick: viewerOwnsFocusedTrust
-        ? handleTrustWorkspaceClick
-        : focusPaneForGoalControl,
-      handleBridgeCommand: viewerOwnsFocusedTrust
-        ? handleBridgeCommand
-        : async () => focusPaneForGoalControl(),
-      markPersistentSessionRestartNeeded: viewerOwnsFocusedTrust
-        ? markPersistentSessionRestartNeeded
-        : focusPaneForGoalControl,
-      // attachments (display)
-      imageAttachments: imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
-      composerImageAttachments: paneComposerImageAttachments,
-      composerFileAttachments: paneComposerFileAttachments,
-      // goal (display)
-      currentActiveGoal: viewerChat.activeGoal || null,
-      currentGoalStatus: viewerGoalStatus,
-      currentGoalButtonTitle: viewerGoalTitle,
-      goalControlDisabledReason: 'Focus this pane to manage its goal.',
-      // telemetry (display)
-      composerTokenTally: viewerTokenTally,
-      threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
-      contextModelId: viewerContextModelId,
-      contextUsedPercent: viewerContextTelemetry.usedPercent,
-      contextLabel: viewerContextTelemetry.label,
-      contextMeter: viewerContextTelemetry.meter,
-      liveRunOutputTokens: viewerLiveOutputTokens,
-      activeRunId:
-        deriveActiveEnsembleWorkingPresentation(viewerChat)?.runId ?? viewerRun?.runId ?? null,
-      composerRunTimecodeStartedAt: viewerRunStartedAt,
-      cumulativeRunBaseMs: viewerCumulativeRunBaseMs,
-      dualComposerTelemetry: viewerDualTelemetry,
-      // ── pane-scoped action handlers ──
-      handleRun: paneHandleRun,
-      handleCancel: paneHandleCancel,
-      handleProviderChange: paneHandleProviderChange,
-      handleReviewCurrentDiff: async () => {
-        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
-        await handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)
-      },
-      handleToggleWelcomeEnsemble: (enabled: boolean) =>
-        handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning),
-      handleCollapseEnsembleToSolo: (
-        survivingParticipant: EnsembleParticipant,
-        chatWithSeatRemoved: ChatRecord | null
-      ) =>
-        handleCollapseEnsembleToSoloForChat(
-          viewerChat,
-          survivingParticipant,
-          viewerIsRunning,
-          chatWithSeatRemoved
-        ),
-      handleAttachWindow: () => handleAttachWindow(viewerChatId),
-      handleDetachWindow: () => handleDetachWindow(viewerChatId),
-      handleClearDiscordContext: () => clearDiscordContextForChat(viewerChatId),
-      openDiscordContextPicker: () =>
-        openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId),
-      rememberCurrentChatComposerSelection: paneRememberComposerSelection,
-      openGoalPopover: focusPaneForGoalControl,
-      setGoalPopoverOpen: focusPaneForGoalControl,
-      setGoalFromObjective: focusPaneForGoalControl,
-      updateCurrentGoalStatus: focusPaneForGoalControl,
-      markCurrentGoalBlocked: focusPaneForGoalControl,
-      clearCurrentGoal: focusPaneForGoalControl,
-      handlePickImages: () => handleMultiviewPanePickAttachments(viewerPaneIndex, viewerChatId),
-      handleRemoveImageAttachment: (id: string) =>
-        handleMultiviewPaneRemoveAttachment(viewerPaneIndex, viewerChatId, id),
-      handleCopyCurrentTranscript: () =>
-        handleMultiviewPaneCopyTranscript(viewerPaneIndex, viewerChatId),
-      handleSetAgenticWorkspaceGrant: (
-        service: AgenticServiceId,
-        enabled: boolean,
-        _provider?: ProviderId
-      ) => handleMultiviewPaneToggleGrant(viewerPaneIndex, viewerChatId, service, enabled),
-      handleSelectExistingWorkspace: (workspace: WorkspaceRecord) =>
-        handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
-      handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
-      handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
-      handleAddWorkspaceFolder: (access: ExternalPathGrant['access']) =>
-        handleMultiviewPaneAddWorkspaceFolder(viewerChatId, access),
-      handleAddKnownWorkspaceAsSecondary: (
-        workspacePath: string,
-        access: ExternalPathGrant['access']
-      ) =>
-        handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
-      handleRemoveExternalPathGrant: (grantId: string) =>
-        handleMultiviewPaneRemoveExternalPathGrant(viewerChatId, grantId),
-      handleRemoveExternalPathGrantsByPath: (path: string) =>
-        handleMultiviewPaneRemoveExternalPathGrantsByPath(viewerChatId, path),
-      handleReorderExternalPathGrants: (orderedPaths: string[]) =>
-        handleMultiviewPaneReorderExternalPathGrants(viewerChatId, orderedPaths),
-      clearExternalPathGrantPrompt: () => clearExternalPathGrantPrompt(viewerChatId),
-      persistExternalPathGrantPrompt: () => persistExternalPathGrantPromptForChat(viewerChatId),
-      // setState setters (focused-only) → no-op for panes; persistence routed
-      // through rememberCurrentChatComposerSelection (overridden above). Each
-      // matching display field above keeps the picker's selection accurate.
-      setSelectedModelType: paneNoopSetter,
-      setLastNonCustomModelType: paneNoopSetter,
-      setCustomModel: (value: string) =>
-        paneRememberComposerSelection({ customModel: value }),
-      setCodexReasoningEffort: paneNoopSetter,
-      setClaudeReasoningEffort: paneNoopSetter,
-      setKimiFastMode: paneNoopSetter,
-      setKimiReasoningEffort: paneNoopSetter,
-      setKimiThinkingEnabled: paneNoopSetter,
-      setGrokReasoningEffort: paneNoopSetter,
-      setCursorReasoningEffort: paneNoopSetter,
-      setCursorFastMode: paneNoopSetter,
-      setCodexServiceTier: paneNoopSetter,
-      setClaudeFastMode: paneNoopSetter,
-      setApprovalMode: paneNoopSetter,
-      // ── focused-only singleton refs / state: avoid clobbering the focused
-      //    composer or stacking portals. ──
-      composerAreaRef: paneComposerAreaDiscardRef,
-      goalButtonRef: paneGoalButtonDiscardRef,
-      // TODO(per-pane): goal popover is portal'd off the focused `goalPopoverOpen`
-      // state; force it closed and disable the pane goal control so a resting pane
-      // never appears to accept a goal action that only focused the pane.
-      goalPopoverOpen: false,
-      // External slash-menu requests target the focused composer; pane-local
-      // plus-menu clicks open each pane's slash menu directly.
-      openSlashCommandsRequestId: 0,
-      // ── focused-only state that would otherwise LEAK into resting panes.
-      // Pending approvals and plan import remain hidden;
-      // git/worktree + secondary-workspace fields are derived per pane below.
-      pendingAgentApproval: null,
-      permissionRequestPaths: [],
-      permissionRequestTitle: '',
-      permissionRequestSource: undefined,
-      permissionRequestMessage: '',
-      // Per-pane git snapshot: the branch/sync/merge chips + Review/Push action now
-      // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
-      // for panes). Branch label still falls back to currentWorkspace.branch if absent.
-      primaryGitSnapshot: multiviewGitSnapshotStore.getSnapshot(viewerGitPresentationPath),
-      setPrimaryGitSnapshot: (snapshot: GitRepositorySnapshot | null) =>
-        handleMultiviewPanePrimaryGitSnapshot(viewerChatId, snapshot),
-      composerWorktreeSelection: viewerWorktreeSelection,
-      onComposerWorktreeChange: (
-        selection: ComposerWorktreeSelection | null,
-        snapshot: GitRepositorySnapshot | null
-      ) => handleMultiviewPaneComposerWorktreeChange(viewerChatId, selection, snapshot),
-      diffActionMenuOpen: paneDiffActionMenuOpen,
-      setDiffActionMenuOpen: (next: boolean | ((open: boolean) => boolean)) =>
-        setDiffActionMenuOpenForChat(viewerChatId, next),
-      // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
-      primaryPr: null,
-      primaryCi: null,
-      pendingPlanImport: null,
-      externalPathGrantPrompt: paneExternalPathGrantPrompt,
-      externalPathGrantPromptBusy: paneExternalPathGrantPromptBusy,
-      // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
-      lastNonCustomModelType: viewerSelectedModel,
-      // Screen Watch state is supplied only for the matching chat-scoped status.
-      attachedWindow: attachedWindow?.chatId === viewerChatId ? attachedWindow : null,
-      isAttachingWindow: attachingWindowChatId === viewerChatId
-      // TODO(per-pane): Gemini memory remains focused-only. Trust, Ensemble
-      // roster/config, queue, and steer controls above are explicitly pane-owned.
-      // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
-      // keyed by chatId, so the same chat shown in two panes shares one draft.
-    }
+    // Focused and resting panes mount the same Composer. Resting contexts are
+    // prebuilt once below and retained by stable pane id. Only the narrow window
+    // where chatByIdRef has advanced ahead of its React flush rebuilds here.
     const paneComposerKey = `${viewerPaneIndex}:${viewerChatId}`
     const memoizedPaneComposerCtx = paneComposerCtxByKey[paneComposerKey]
+    const resolveRestingPaneComposerCtx = (): ComposerProps | undefined => {
+      if (memoizedPaneComposerCtx?.currentChat === viewerChat) return memoizedPaneComposerCtx
+      const fresh = buildPaneComposerCtx(viewerChatId, viewerPaneIndex)
+      return fresh
+        ? paneComposerRuntimeRegistryRef.current.stabilize(
+            viewerPaneId || `pane-${viewerPaneIndex}`,
+            fresh
+          )
+        : undefined
+    }
     // Focused and resting chats keep the same mounted Composer component. The
     // focused runtime receives the exact legacy composer projection (full goal,
     // approval, trust, and slash-command controls); resting runtimes receive
@@ -29290,11 +28681,7 @@ function App(): React.JSX.Element {
     // `currentChat` comes from chatByIdRef. If that chat object advanced since
     // the memo was built, fall back to the freshly-built pane ctx.
     const effectivePaneComposerCtx =
-      viewerOwnsFocusedTrust
-        ? composerCtx
-        : memoizedPaneComposerCtx?.currentChat === viewerChat
-          ? memoizedPaneComposerCtx
-          : paneComposerCtx
+      viewerOwnsFocusedTrust ? composerCtx : resolveRestingPaneComposerCtx()
 
     return (
       <ChatViewPane
@@ -29803,6 +29190,13 @@ function App(): React.JSX.Element {
     ]
   )
 
+  // The legacy focused composer still projects through composerStableBase.
+  // Simultaneously mounted surfaces start from a focus-free base whose identity
+  // survives focused-thread ticks; their builders add only surface-owned state.
+  const detachedComposerSurfaceBase = detachedComposerSurfaceBaseRuntimeRef.current.stabilize(
+    buildDetachedChatSurfaceBase(composerStableBase as Record<string, unknown>)
+  ) as typeof composerStableBase
+
   // ── Slice H: memoized per-pane composer ctx ───────────────────────────────
   // The pane composer ctx is the heavy prop driving each pane’s <Composer>.
   // Built inline in `renderMultiviewPaneCell` it was a fresh object every App
@@ -30127,7 +29521,17 @@ function App(): React.JSX.Element {
         // this pane's composer ctx keeps a stable identity when only ANOTHER pane
         // (or a background chat) changed, letting `chatViewPanePropsEqual`'s
         // `composerProps ===` check bail and skip re-rendering this pane's Composer.
-        ...composerStableBase,
+        ...detachedComposerSurfaceBase,
+        // A resting pane receives only the Multiview field Composer consumes.
+        // Focus/index changes in the host grid must not invalidate its composer.
+        multiview: { layout: multiview.layout },
+        currentChatIdRef: { current: viewerChatId },
+        currentProviderCapabilityWarning: null,
+        composerAboveBarStackAuraClass: '',
+        composerAgentAuraClass: '',
+        pendingApprovalQueueByChatId: pendingApprovalQueueByChatId[viewerChatId]
+          ? { [viewerChatId]: pendingApprovalQueueByChatId[viewerChatId] }
+          : {},
         // Focused-only churny fields NOT in the stable base: panes get stable
         // placeholders (consistent with the focused-only placeholders further
         // below — pendingAgentApproval/queued/palette/etc.). These are above-bar
@@ -30251,6 +29655,9 @@ function App(): React.JSX.Element {
         isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
         isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
         steerIndicatorMessage: paneSteerIndicatorMessage,
+        queuedRunQueueCount: runQueueJobs.filter(
+          (job) => job.chatId === viewerChatId && job.status === 'queued'
+        ).length,
         composerSlashCommands: buildPaneComposerSlashCommands(
           viewerPaneIndex,
           viewerChat,
@@ -30309,6 +29716,19 @@ function App(): React.JSX.Element {
         isWorkflowComposeChat: paneIsWorkflowComposeChat,
         isWorkflowChatWelcome: paneIsWorkflowChatWelcome,
         workflowForCurrentChat: paneWorkflowForChat,
+        workflowDraft: paneIsWorkflowComposeChat ? workflowDraft : null,
+        workflowIntervalMinutes:
+          paneWorkflowForChat?.trigger.kind === 'interval'
+            ? Math.round((paneWorkflowForChat.trigger.intervalMs || 60_000) / 60_000)
+            : null,
+        setWorkflowDraft: (next: any) => {
+          setWorkflowDraft((current) => {
+            if (!current || current.chatId !== viewerChatId) return current
+            const updated = typeof next === 'function' ? next(current) : next
+            return !updated || updated.chatId === viewerChatId ? updated : current
+          })
+        },
+        visibleScheduledTasks: [],
         welcomeHeatmapSlots: viewerWelcomeHeatmapSlots,
         shouldShowWelcomeStandaloneHeatmaps: viewerShouldShowWelcomeStandaloneHeatmaps,
         // model + reasoning + fast-mode selection (display)
@@ -30354,11 +29774,19 @@ function App(): React.JSX.Element {
         // goal (display)
         currentActiveGoal: viewerChat.activeGoal || null,
         currentGoalStatus: viewerGoalStatus,
+        currentGoalModeLabel: viewerChat.activeGoal
+          ? activeGoalModeLabel(viewerChat.activeGoal.mode)
+          : 'Guided by TaskWraith',
         currentGoalButtonTitle: viewerGoalTitle,
         goalControlDisabledReason: 'Focus this pane to manage its goal.',
+        goalDraft: viewerChat.activeGoal?.objective || '',
+        goalEditing: false,
+        goalPopoverPosition: null,
+        goalPopoverRef: paneGoalPopoverDiscardRef,
         // telemetry (display)
         composerTokenTally: viewerTokenTally,
         threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
+        threadTokenTallyTooltip: 'Pane thread token usage',
         contextModelId: viewerContextModelId,
         contextUsedPercent: paneContextTelemetry.usedPercent,
         contextLabel: paneContextTelemetry.label,
@@ -30453,6 +29881,17 @@ function App(): React.JSX.Element {
         setCodexServiceTier: paneNoopSetter,
         setClaudeFastMode: paneNoopSetter,
         setApprovalMode: paneNoopSetter,
+        setGoalDraft: paneNoopSetter,
+        setGoalEditing: paneNoopSetter,
+        setIntentNote: paneNoopSetter,
+        setRawLogs: paneNoopSetter,
+        setChats: paneNoopSetter,
+        setCurrentChat: (next: any) => {
+          updateChatById(viewerChatId, (source) => {
+            const updated = typeof next === 'function' ? next(source) : next
+            return updated?.appChatId === viewerChatId ? updated : source
+          })
+        },
         // ── focused-only singleton refs / state: avoid clobbering the focused
         //    composer or stacking portals. ──
         composerAreaRef: paneComposerAreaDiscardRef,
@@ -30461,6 +29900,12 @@ function App(): React.JSX.Element {
         // state; force it closed and disable the pane goal control so a resting pane
         // never appears to accept a goal action that only focused the pane.
         goalPopoverOpen: false,
+        intentNote: '',
+        isPreparingDiffReview: false,
+        persistentSessionNeedsRestart: false,
+        sessionRestartReason: '',
+        geminiTrustWriteBusy: false,
+        geminiTrustWriteError: null,
         // External slash-menu requests target the focused composer; pane-local
         // plus-menu clicks open each pane's slash menu directly.
         openSlashCommandsRequestId: 0,
@@ -30490,6 +29935,9 @@ function App(): React.JSX.Element {
         primaryPr: null,
         primaryCi: null,
         pendingPlanImport: null,
+        planImportExecutionEstimate: null,
+        planImportGroundingBusy: false,
+        planImportGroundingDisabledReason: undefined,
         externalPathGrantPrompt: paneExternalPathGrantPrompt,
         externalPathGrantPromptBusy: paneExternalPathGrantPromptBusy,
         // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
@@ -30517,7 +29965,7 @@ function App(): React.JSX.Element {
       attachedWindow,
       codexModels,
       composerDraftsByChatId,
-      composerStableBase,
+      detachedComposerSurfaceBase,
       buildPaneComposerSlashCommands,
       discordContextSelectionByChatId,
       executionStackViewForChat,
@@ -30554,6 +30002,7 @@ function App(): React.JSX.Element {
       attachingWindowChatId,
       isMultiviewSplit,
       openHumanCollaborationRemoteSetup,
+      pendingApprovalQueueByChatId,
       pendingHumanCollaborationInviteChatIds,
       persistExternalPathGrantPromptForChat,
       providerRates,
@@ -30581,6 +30030,8 @@ function App(): React.JSX.Element {
       workflowDefinitions,
       workflowDraft,
       multiviewGitSnapshotStore,
+      multiview.layout,
+      updateChatById
     ]
   )
   const paneComposerCtxByKey = useMemo(() => {
@@ -30588,10 +30039,24 @@ function App(): React.JSX.Element {
     multiview.paneChatIds.forEach((paneChatId, paneIndex) => {
       if (!paneChatId || paneIndex === multiview.focusedPaneIndex) return
       const ctx = buildPaneComposerCtx(paneChatId, paneIndex)
-      if (ctx) map[`${paneIndex}:${paneChatId}`] = ctx
+      if (!ctx) return
+      const surfaceId = multiview.panes[paneIndex]?.id || `pane-${paneIndex}`
+      map[`${paneIndex}:${paneChatId}`] = paneComposerRuntimeRegistryRef.current.stabilize(
+        surfaceId,
+        ctx
+      )
     })
+    paneComposerRuntimeRegistryRef.current.retain(
+      [...multiview.panes, ...multiview.parkedPanes].map((pane) => pane.id)
+    )
     return map
-  }, [multiview.paneChatIds, multiview.focusedPaneIndex, buildPaneComposerCtx])
+  }, [
+    multiview.paneChatIds,
+    multiview.focusedPaneIndex,
+    multiview.panes,
+    multiview.parkedPanes,
+    buildPaneComposerCtx
+  ])
 
   const composerCtx: ComposerProps = {
     // Slice H: shared stable base (handlers + chat-independent props).
@@ -30870,7 +30335,7 @@ function App(): React.JSX.Element {
     collaboratingChatIds,
     composerDraftChatIds,
     composerCtx,
-    composerSurfaceBase: composerStableBase,
+    composerSurfaceBase: detachedComposerSurfaceBase,
     configuredProviderSnapshot,
     executionMapProjection: openExecutionMap ? openExecutionMapProjection : null,
     executionMapSelectedStepId: openExecutionMap?.selectedStepId,
