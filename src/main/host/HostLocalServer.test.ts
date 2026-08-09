@@ -256,6 +256,7 @@ function makePendingReceipt(commandId: string, idempotencyKey: string): HostComm
 function connectClient(socketPath: string): Promise<{
   writeLine: (line: string) => void
   readFrame: () => Promise<HostLocalTransportHostFrame>
+  pause: () => void
   close: () => void
 }> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -292,6 +293,7 @@ function connectClient(socketPath: string): Promise<{
             }
             resolver = res
           }),
+        pause: () => socket.pause(),
         close: () => socket.destroy()
       })
     })
@@ -974,6 +976,78 @@ describe('HostLocalServer', () => {
       expect(unsubscribe).toHaveBeenCalledTimes(1)
       deltaClient.close()
       snapshotOnlyClient.close()
+    })
+
+    it('disconnects only a non-draining client while a healthy peer keeps receiving deltas', async () => {
+      const deltaListeners: Array<(delta: HostDeltaEnvelope) => void> = []
+      const subscribeDeltas = vi.fn((listener: (delta: HostDeltaEnvelope) => void) => {
+        deltaListeners.push(listener)
+        return vi.fn()
+      })
+      server = new HostLocalServer({
+        userDataPath,
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        maxClients: 4,
+        subscribeDeltas,
+        now: () => 1754300000000
+      })
+      await server.start()
+
+      const token = readFileSync(server.tokenPath, 'utf8').trim()
+      const slowClient = await connectClient(server.socketPath)
+      slowClient.writeLine(
+        JSON.stringify(makeClientHello(token, ['bootstrap', 'snapshot', 'deltas', 'health']))
+      )
+      expect((await slowClient.readFrame()).type).toBe('welcome')
+      slowClient.pause()
+
+      const healthyClient = await connectClient(server.socketPath)
+      healthyClient.writeLine(
+        JSON.stringify(makeClientHello(token, ['bootstrap', 'snapshot', 'deltas', 'health']))
+      )
+      expect((await healthyClient.readFrame()).type).toBe('welcome')
+
+      const publish = deltaListeners[0]
+      if (!publish) throw new Error('delta subscription was not installed')
+      const largeBoundedTitle = 'x'.repeat(200_000)
+      for (let cursor = 1; cursor <= 128 && server.clientCount() === 2; cursor += 1) {
+        publish({
+          protocolVersion: HOST_PROTOCOL_VERSION,
+          projectionVersion: HOST_PROJECTION_VERSION,
+          generation: 1,
+          cursor,
+          previousCursor: cursor - 1,
+          kind: 'upsert',
+          family: 'thread',
+          entityId: 'thread-live',
+          payload: { id: 'thread-live', title: largeBoundedTitle },
+          at: '2026-08-09T20:00:00.000Z'
+        })
+
+        const event = await healthyClient.readFrame()
+        expect(event.type).toBe('event')
+        if (event.type === 'event' && event.event === 'deltas') {
+          expect(event.payload.result.toCursor).toBe(cursor)
+        }
+      }
+
+      await vi.waitFor(() => expect(server.clientCount()).toBe(1), { timeout: 5_000 })
+
+      healthyClient.writeLine(
+        JSON.stringify(makeRequest('health.get' as never, 'health-after-slow-client'))
+      )
+      const response = await healthyClient.readFrame()
+      expect(response.type).toBe('response')
+      if (response.type === 'response') {
+        expect(response.id).toBe('health-after-slow-client')
+        expect(response.ok).toBe(true)
+      }
+
+      slowClient.close()
+      healthyClient.close()
     })
   })
 
