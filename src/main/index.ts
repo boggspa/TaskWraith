@@ -470,6 +470,7 @@ import {
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
 import { RemoteBridgeRuntime } from './remote/RemoteBridgeRuntime'
+import { PairedHostProjectionGateway } from './remote/PairedHostProjectionGateway'
 import {
   assertRemoteProviderGrant,
   isRemoteProviderDispatchable
@@ -46940,6 +46941,11 @@ if (isGeminiMcpBridgeProcess) {
         undefined,
         isConditionallyDispatchableRemoteProvider
       )
+      const hostProjectionGateway = new PairedHostProjectionGateway({
+        userDataPath: app.getPath('userData'),
+        clientVersion: app.getVersion(),
+        log: (line) => console.log(`[paired-host] ${line}`)
+      })
       const runtime = new RemoteBridgeRuntime({
         relayUrl,
         advertiseRelayUrl,
@@ -46965,6 +46971,7 @@ if (isGeminiMcpBridgeProcess) {
         remoteProjectionSnapshotThrottleMs: () =>
           remoteProjectionSnapshotThrottleMsForStreaming(hasActiveStreamingTaskWraithRun()),
         routeAction: (method, params) => transportActionRouter.route(method, params),
+        hostProjectionGateway,
         runEventFilter: (event) => remoteBridgeRunEventFilter.shouldForward(event),
         subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
         onPairingPrompt: (prompt) => {
