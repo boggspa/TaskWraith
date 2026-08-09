@@ -117,6 +117,21 @@ describe('RendererIpcPolicy', () => {
     }
   })
 
+  it.each([
+    'channels:append',
+    'channels:audit',
+    'channels:close',
+    'channels:create',
+    'channels:issue-invite',
+    'channels:list',
+    'channels:read',
+    'channels:revoke-member'
+  ])('lets scoped Channel handler %s reach its domain authority check', (channel) => {
+    expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(false)
+  })
+
   it('classifies the complete registered IPC catalogue exactly once', () => {
     const registeredChannels = Object.keys(IPC_ARGUMENT_SCHEMAS).sort()
     const unclassified = registeredChannels.filter(

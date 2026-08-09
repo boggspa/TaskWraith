@@ -26,6 +26,16 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'cancel-gemini',
   'capture-snapshot',
   'changelog-snapshot',
+  // Main may operate every Channel; chat renderers are narrowed again by the
+  // persisted chat ownership resolved inside registerChannelHandlers.
+  'channels:append',
+  'channels:audit',
+  'channels:close',
+  'channels:create',
+  'channels:issue-invite',
+  'channels:list',
+  'channels:read',
+  'channels:revoke-member',
   'check-trust',
   'clear-chats',
   'clear-blackboard-entries',
