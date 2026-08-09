@@ -86,6 +86,16 @@ export interface ChannelProductionStatus {
   openRoomCount: number
 }
 
+export type ChannelProductionHistoryDeletionScope =
+  | { kind: 'chat' | 'workspace' | 'truncate'; chatIds: readonly string[] }
+  | { kind: 'global' }
+
+export interface ChannelProductionHistoryDeletionResult {
+  kind: ChannelProductionHistoryDeletionScope['kind']
+  purgedChannelIds: string[]
+  preservedChannelIds: string[]
+}
+
 export interface ChannelProductionService {
   start(): ChannelProductionStatus
   stop(): Promise<void>
@@ -114,6 +124,9 @@ export interface ChannelProductionService {
   }): Promise<ChannelAppendResult>
   revokeMember(args: { channelId: string; memberId: string }): Promise<ChannelProductionMemberView>
   closeChannel(channelId: string): Promise<ChannelProductionChannelView>
+  purgeForHistoryDeletionScope(
+    scope: ChannelProductionHistoryDeletionScope
+  ): Promise<ChannelProductionHistoryDeletionResult>
 }
 
 interface RunningState {
@@ -478,20 +491,77 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     this.closingChannelIds.add(channelId)
     return this.track(
       this.enqueueChannel(channelId, async () => {
-        try {
-          const roomIds = state.runtime
-            .listRoomBindings()
-            .filter((binding) => binding.channelId === channelId)
-            .map((binding) => binding.roomId)
-          const closed = state.store.closeChannel({ channelId, now: this.now() })
-          for (const roomId of roomIds) state.transport.close(roomId)
-          this.notifyChange({ channelId, reason: 'channel' })
-          return this.channelView(closed, state)
-        } finally {
-          this.closingChannelIds.delete(channelId)
-        }
+        await state.runtime.quiesceChannel(channelId)
+        const closed = state.store.closeChannel({ channelId, now: this.now() })
+        this.closingChannelIds.delete(channelId)
+        this.notifyChange({ channelId, reason: 'channel' })
+        return this.channelView(closed, state)
       })
     )
+  }
+
+  purgeForHistoryDeletionScope(
+    scope: ChannelProductionHistoryDeletionScope
+  ): Promise<ChannelProductionHistoryDeletionResult> {
+    const state = this.requireRunning()
+    const channels = state.store.listChannels()
+    let targets: Channel[]
+    if (scope.kind === 'global') {
+      targets = channels
+    } else {
+      if (
+        !Array.isArray(scope.chatIds) ||
+        scope.chatIds.some((chatId) => typeof chatId !== 'string' || !chatId.trim())
+      ) {
+        throw new ChannelError('protocol_unsupported', 'History deletion chat ids are invalid')
+      }
+      const chatIds = new Set(scope.chatIds)
+      targets = channels.filter((channel) => chatIds.has(channel.chatId))
+    }
+    const channelIds = targets.map((channel) => channel.channelId)
+    if (scope.kind === 'truncate') {
+      return Promise.resolve({
+        kind: scope.kind,
+        purgedChannelIds: [],
+        preservedChannelIds: channelIds
+      })
+    }
+    if (channelIds.length === 0 && scope.kind !== 'global') {
+      return Promise.resolve({
+        kind: scope.kind,
+        purgedChannelIds: [],
+        preservedChannelIds: []
+      })
+    }
+
+    for (const channelId of channelIds) this.closingChannelIds.add(channelId)
+    const quiesced = Promise.all(
+      channelIds.map((channelId) =>
+        this.enqueueChannel(channelId, () => state.runtime.quiesceChannel(channelId))
+      )
+    )
+    const operation = quiesced.then(() => {
+      if (scope.kind === 'global') {
+        state.log.purgeAll()
+        state.audit.purgeAll()
+        state.store.purgeAllChannels()
+      } else {
+        state.log.purgeChannels(channelIds)
+        state.audit.purgeChannels(channelIds)
+        state.store.purgeChannels(channelIds)
+      }
+      for (const channelId of channelIds) {
+        state.recoveryBlockedChannelIds.delete(channelId)
+        this.closingChannelIds.delete(channelId)
+        this.notifyChange({ channelId, reason: 'channel' })
+      }
+      return {
+        kind: scope.kind,
+        purgedChannelIds: channelIds,
+        preservedChannelIds: []
+      }
+    })
+    return this.track(operation)
   }
 
   private async stopInternal(): Promise<void> {

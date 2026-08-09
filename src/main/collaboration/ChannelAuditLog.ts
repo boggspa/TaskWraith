@@ -1,6 +1,17 @@
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync
+} from 'fs'
+import { basename, dirname, join } from 'path'
 import { redactSecrets } from '../../shared/secretRedaction'
 
 export type ChannelAuditEventKind =
@@ -89,6 +100,40 @@ export class ChannelAuditLog implements ChannelAuditLike {
       .map((event) => ({ ...event }))
   }
 
+  purgeChannels(channelIds: readonly string[]): number {
+    const targets = new Set(channelIds)
+    const previous = this.events
+    const next = previous.filter(
+      (event) => event.channelId === undefined || !targets.has(event.channelId)
+    )
+    const removed = previous.length - next.length
+    this.removeStaleTemporaryFiles()
+    if (removed === 0) return 0
+    this.events = next
+    try {
+      this.persist()
+    } catch (error) {
+      this.events = previous
+      throw error
+    }
+    return removed
+  }
+
+  purgeAll(): number {
+    const previous = this.events
+    const durableFileExists = Boolean(this.storagePath && existsSync(this.storagePath))
+    this.removeStaleTemporaryFiles()
+    if (previous.length === 0 && !durableFileExists) return 0
+    this.events = []
+    try {
+      this.persist()
+    } catch (error) {
+      this.events = previous
+      throw error
+    }
+    return previous.length
+  }
+
   private load(): ChannelAuditEvent[] {
     if (!this.storagePath || !existsSync(this.storagePath)) return []
     try {
@@ -118,6 +163,43 @@ export class ChannelAuditLog implements ChannelAuditLike {
       encoding: 'utf8',
       mode: 0o600
     })
+    const descriptor = openSync(temporary, 'r')
+    try {
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
     renameSync(temporary, this.storagePath)
+    this.syncStorageDirectory()
+  }
+
+  private removeStaleTemporaryFiles(): void {
+    if (!this.storagePath) return
+    const directory = dirname(this.storagePath)
+    if (!existsSync(directory)) return
+    const prefix = `${basename(this.storagePath)}.`
+    let deleted = false
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.tmp')) {
+        continue
+      }
+      unlinkSync(join(directory, entry.name))
+      deleted = true
+    }
+    if (deleted) this.syncStorageDirectory()
+  }
+
+  private syncStorageDirectory(): void {
+    if (!this.storagePath) return
+    try {
+      const directoryDescriptor = openSync(dirname(this.storagePath), 'r')
+      try {
+        fsyncSync(directoryDescriptor)
+      } finally {
+        closeSync(directoryDescriptor)
+      }
+    } catch {
+      // Some platforms do not allow directory fsync. The file itself is synced.
+    }
   }
 }

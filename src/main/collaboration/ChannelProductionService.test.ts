@@ -378,6 +378,131 @@ describe('ChannelProductionService', () => {
     })
   })
 
+  it('preserves Channels on truncation and purges selected or global history durably', async () => {
+    const userDataPath = temporaryUserData()
+    const identity = generateIdentityKeyPair()
+    const fixture = createService({ userDataPath, identity })
+    fixture.service.start()
+    const first = fixture.service.createChannel({
+      chatId: 'chat-a',
+      title: 'Room A',
+      ownerDisplayName: 'Host A'
+    })
+    const second = fixture.service.createChannel({
+      chatId: 'chat-b',
+      title: 'Room B',
+      ownerDisplayName: 'Host B'
+    })
+    fixture.service.issueInvite({ channelId: first.channelId })
+    fixture.service.issueInvite({ channelId: second.channelId })
+    await fixture.service.appendHost({
+      channelId: first.channelId,
+      clientMessageId: 'a-1',
+      content: 'first survives truncation'
+    })
+    await fixture.service.appendHost({
+      channelId: second.channelId,
+      clientMessageId: 'b-1',
+      content: 'second survives selective purge'
+    })
+
+    await expect(
+      fixture.service.purgeForHistoryDeletionScope({
+        kind: 'truncate',
+        chatIds: ['chat-a']
+      })
+    ).resolves.toEqual({
+      kind: 'truncate',
+      purgedChannelIds: [],
+      preservedChannelIds: [first.channelId]
+    })
+    expect(
+      fixture.service.readChannel({ channelId: first.channelId, resumeAfter: 0 })
+    ).toMatchObject({
+      highWaterSequence: 1,
+      records: [{ content: 'first survives truncation' }]
+    })
+    expect(fixture.sockets.sockets[0]?.closed).toBe(false)
+
+    await expect(
+      fixture.service.purgeForHistoryDeletionScope({ kind: 'chat', chatIds: ['chat-a'] })
+    ).resolves.toEqual({
+      kind: 'chat',
+      purgedChannelIds: [first.channelId],
+      preservedChannelIds: []
+    })
+    const paths = channelProductionDataPaths(userDataPath)
+    expect(fixture.sockets.sockets[0]?.closed).toBe(true)
+    expect(fixture.sockets.sockets[1]?.closed).toBe(false)
+    expect(existsSync(join(paths.logs, `${first.channelId}.jsonl`))).toBe(false)
+    expect(existsSync(join(paths.logs, `${second.channelId}.jsonl`))).toBe(true)
+    expect(fixture.service.listAudit({ channelId: first.channelId })).toEqual([])
+    expect(fixture.service.listAudit({ channelId: second.channelId }).length).toBeGreaterThan(0)
+    expect(fixture.service.listChannels().map((channel) => channel.channelId)).toEqual([
+      second.channelId
+    ])
+    expectCode(
+      () => fixture.service.readChannel({ channelId: first.channelId, resumeAfter: 0 }),
+      'not_member'
+    )
+    const selectiveMetadata = JSON.parse(readFileSync(paths.metadata, 'utf8')) as {
+      channels: Array<{ channelId: string }>
+      members: Array<{ channelId: string }>
+      invites: Array<{ channelId: string }>
+    }
+    expect(selectiveMetadata.channels.map((channel) => channel.channelId)).toEqual([
+      second.channelId
+    ])
+    expect(selectiveMetadata.members.every((member) => member.channelId === second.channelId)).toBe(
+      true
+    )
+    expect(selectiveMetadata.invites.every((invite) => invite.channelId === second.channelId)).toBe(
+      true
+    )
+    await expect(
+      fixture.service.appendHost({
+        channelId: second.channelId,
+        clientMessageId: 'b-2',
+        content: 'healthy Channel continues'
+      })
+    ).resolves.toMatchObject({ record: { sequence: 2 } })
+
+    const orphanPath = join(paths.logs, 'orphan.jsonl')
+    writeFileSync(orphanPath, 'orphaned durable bytes\n', 'utf8')
+    await expect(fixture.service.purgeForHistoryDeletionScope({ kind: 'global' })).resolves.toEqual(
+      {
+        kind: 'global',
+        purgedChannelIds: [second.channelId],
+        preservedChannelIds: []
+      }
+    )
+    expect(fixture.sockets.sockets[1]?.closed).toBe(true)
+    expect(fixture.service.listChannels()).toEqual([])
+    expect(fixture.service.listAudit()).toEqual([])
+    expect(existsSync(join(paths.logs, `${second.channelId}.jsonl`))).toBe(false)
+    expect(existsSync(orphanPath)).toBe(false)
+
+    writeFileSync(orphanPath, 'retry orphan\n', 'utf8')
+    await expect(fixture.service.purgeForHistoryDeletionScope({ kind: 'global' })).resolves.toEqual(
+      {
+        kind: 'global',
+        purgedChannelIds: [],
+        preservedChannelIds: []
+      }
+    )
+    expect(existsSync(orphanPath)).toBe(false)
+    await fixture.service.stop()
+
+    const restarted = createService({ userDataPath, identity })
+    expect(restarted.service.start()).toMatchObject({
+      state: 'running',
+      channelCount: 0,
+      recoveryBlockedChannelCount: 0,
+      openRoomCount: 0
+    })
+    expect(restarted.service.listAudit()).toEqual([])
+  })
+
   it('isolates corrupt history and restores healthy Channels only', async () => {
     const userDataPath = temporaryUserData()
     const identity = generateIdentityKeyPair()
@@ -471,5 +596,25 @@ describe('ChannelProductionService', () => {
         content: 'still healthy'
       })
     ).resolves.toMatchObject({ record: { sequence: 2 } })
+
+    await expect(
+      restarted.service.purgeForHistoryDeletionScope({
+        kind: 'workspace',
+        chatIds: ['chat-blocked']
+      })
+    ).resolves.toEqual({
+      kind: 'workspace',
+      purgedChannelIds: [blocked.channelId],
+      preservedChannelIds: []
+    })
+    expect(restarted.service.status()).toMatchObject({
+      channelCount: 1,
+      recoveryBlockedChannelCount: 0,
+      openRoomCount: 1
+    })
+    expect(existsSync(blockedLogPath)).toBe(false)
+    expect(restarted.service.listChannels().map((channel) => channel.channelId)).toEqual([
+      healthy.channelId
+    ])
   })
 })

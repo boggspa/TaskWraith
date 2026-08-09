@@ -125,4 +125,67 @@ describe('ChannelRuntime durability boundary', () => {
     expect(log.highWaterSequence(created.channel.channelId)).toBe(0)
     runtime.dispose()
   })
+
+  it('fences new work immediately, drains the durable queue, then closes every room', async () => {
+    const root = directory()
+    const store = new ChannelStore(join(root, 'channels.json'))
+    const log = new ChannelMessageLog(join(root, 'logs'), store)
+    let now = 1_000
+    let releaseDurableCommit!: () => void
+    let durableCommitReached!: () => void
+    const durableCommit = new Promise<void>((resolve) => {
+      durableCommitReached = resolve
+    })
+    const durableCommitGate = new Promise<void>((resolve) => {
+      releaseDurableCommit = resolve
+    })
+    const runtime = new ChannelRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      log,
+      now: () => now,
+      afterDurableCommit: async () => {
+        durableCommitReached()
+        await durableCommitGate
+      }
+    })
+    const transport = new RecordingTransport()
+    runtime.attachTransport(transport)
+    const created = runtime.createChannel({
+      chatId: 'chat-quiesce',
+      title: 'Quiesce proof',
+      ownerDisplayName: 'Host'
+    })
+    const invite = runtime.createInvite({
+      channelId: created.channel.channelId,
+      now,
+      ttlMs: 1_000
+    })
+    const accepted = runtime.appendHost(created.channel.channelId, {
+      clientMessageId: 'before-quiesce',
+      content: 'durable before erasure'
+    })
+    await durableCommit
+    now = 3_000
+
+    const quiescing = runtime.quiesceChannel(created.channel.channelId)
+    expect(runtime.listRoomBindings()).toEqual([])
+    expect(() => runtime.createInvite({ channelId: created.channel.channelId })).toThrowError(
+      expect.objectContaining({ code: 'channel_closed' })
+    )
+    expect(() =>
+      runtime.appendHost(created.channel.channelId, {
+        clientMessageId: 'after-quiesce',
+        content: 'must fail'
+      })
+    ).toThrowError(expect.objectContaining({ code: 'channel_closed' }))
+    expect(transport.closed).toEqual([])
+
+    releaseDurableCommit()
+    await expect(accepted).resolves.toMatchObject({ record: { sequence: 1 } })
+    await expect(quiescing).resolves.toBeUndefined()
+    expect(transport.closed).toEqual([invite.invite.roomId])
+    expect(log.highWaterSequence(created.channel.channelId)).toBe(1)
+    runtime.dispose()
+  })
 })

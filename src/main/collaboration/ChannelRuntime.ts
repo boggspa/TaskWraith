@@ -158,6 +158,7 @@ export class ChannelRuntime {
   private readonly pending = new Map<string, PendingHandshake>()
   private readonly sessions = new Map<string, RuntimeSession>()
   private readonly channelQueues = new Map<string, Promise<void>>()
+  private readonly quiescingChannels = new Set<string>()
   private readonly handshakeRates = new Map<string, number[]>()
   private readonly appendRates = new Map<string, number[]>()
   private disposed = false
@@ -208,6 +209,7 @@ export class ChannelRuntime {
     invite: ChannelInvite
     inviteToken: string
   } {
+    this.assertChannelAccepting(args.channelId)
     const issued = this.opts.store.createInvite(args)
     this.audit({
       kind: 'invite.created',
@@ -219,11 +221,16 @@ export class ChannelRuntime {
   }
 
   listRoomBindings(now = this.now()): ChannelRoomBinding[] {
+    return this.collectRoomBindings(now, false)
+  }
+
+  private collectRoomBindings(now: number, includeQuiescing: boolean): ChannelRoomBinding[] {
     const bindings = new Map<string, ChannelRoomBinding>()
     for (const channel of this.opts.store.listChannels()) {
       if (channel.status !== 'active') continue
+      if (!includeQuiescing && this.quiescingChannels.has(channel.channelId)) continue
       for (const member of this.opts.store.listMembers(channel.channelId)) {
-        if (member.status === 'active' && member.roomId) {
+        if (member.roomId && (includeQuiescing || member.status === 'active')) {
           bindings.set(member.roomId, {
             channelId: channel.channelId,
             roomId: member.roomId,
@@ -233,8 +240,7 @@ export class ChannelRuntime {
       }
       for (const invite of this.opts.store.listInvites(channel.channelId)) {
         if (
-          invite.revokedAt === undefined &&
-          invite.expiresAt > now &&
+          (includeQuiescing || (invite.revokedAt === undefined && invite.expiresAt > now)) &&
           !bindings.has(invite.roomId)
         ) {
           bindings.set(invite.roomId, {
@@ -337,7 +343,9 @@ export class ChannelRuntime {
       'channelId' | 'principalMemberId' | 'identityPublicKey' | 'roomId'
     >
   ): Promise<ChannelAppendResult> {
+    this.assertChannelAccepting(channelId)
     return this.enqueueChannel(channelId, async () => {
+      this.assertChannelAccepting(channelId)
       const channel = this.opts.store.getChannel(channelId)
       if (!channel) throw new ChannelError('not_member', 'Channel was not found')
       const result = this.opts.log.appendWithResult({
@@ -360,7 +368,9 @@ export class ChannelRuntime {
     memberId: string
     now?: number
   }): Promise<ChannelMember> {
+    this.assertChannelAccepting(args.channelId)
     return this.enqueueChannel(args.channelId, async () => {
+      this.assertChannelAccepting(args.channelId)
       const member = this.opts.store.revokeMember(args)
       const channel = this.opts.store.getChannel(args.channelId)
       for (const [sessionId, session] of this.sessions) {
@@ -384,10 +394,33 @@ export class ChannelRuntime {
     })
   }
 
+  /**
+   * Permanently fence one Channel in this runtime, drain its ordered append
+   * queue, and close every invite/member room. The durable owner may erase or
+   * close metadata only after this resolves.
+   */
+  quiesceChannel(channelId: string): Promise<void> {
+    if (!this.opts.store.getChannel(channelId)) return Promise.resolve()
+    this.quiescingChannels.add(channelId)
+    return this.enqueueChannel(channelId, () => {
+      const roomIds = this.collectRoomBindings(this.now(), true)
+        .filter((binding) => binding.channelId === channelId)
+        .map((binding) => binding.roomId)
+      for (const [handshakeId, pending] of this.pending) {
+        if (pending.channelId === channelId) this.pending.delete(handshakeId)
+      }
+      for (const [sessionId, session] of this.sessions) {
+        if (session.channelId === channelId) this.sessions.delete(sessionId)
+      }
+      for (const roomId of roomIds) this.transport?.close(roomId)
+    })
+  }
+
   dispose(): void {
     this.disposed = true
     this.pending.clear()
     this.sessions.clear()
+    this.quiescingChannels.clear()
     this.transport = null
   }
 
@@ -399,6 +432,7 @@ export class ChannelRuntime {
     if (input.roomId !== roomId) {
       throw new ChannelError('identity_mismatch', 'Admission room does not match transport')
     }
+    this.assertChannelAccepting(input.channelId)
     const now = this.now()
     this.cleanExpiredPending(now)
     this.checkHandshakeCapacity(input.channelId)
@@ -444,6 +478,7 @@ export class ChannelRuntime {
     if (input.roomId !== roomId) {
       throw new ChannelError('identity_mismatch', 'Reconnect room does not match transport')
     }
+    this.assertChannelAccepting(input.channelId)
     const now = this.now()
     this.cleanExpiredPending(now)
     this.checkHandshakeCapacity(input.channelId)
@@ -585,6 +620,7 @@ export class ChannelRuntime {
     if (!pending || pending.roomId !== roomId) {
       throw new ChannelError('not_member', 'Pending handshake was not found for this room')
     }
+    this.assertChannelAccepting(pending.channelId)
     this.pending.delete(input.handshakeId)
     const now = this.now()
     const signatureValid = verifyEd25519(
@@ -932,6 +968,7 @@ export class ChannelRuntime {
   }
 
   private revalidateSession(session: RuntimeSession): ChannelMember {
+    this.assertChannelAccepting(session.channelId)
     if (!this.sessions.has(session.sessionId)) {
       throw new ChannelError('not_member', 'Channel session is not active')
     }
@@ -952,6 +989,12 @@ export class ChannelRuntime {
     ).length
     if (perChannel >= MAX_PENDING_PER_CHANNEL) {
       throw new ChannelError('quota_exceeded', 'Too many pending handshakes for this Channel')
+    }
+  }
+
+  private assertChannelAccepting(channelId: string): void {
+    if (this.quiescingChannels.has(channelId)) {
+      throw new ChannelError('channel_closed', 'Channel is quiescing')
     }
   }
 

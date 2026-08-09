@@ -4,12 +4,14 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync
 } from 'fs'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
-import { dirname } from 'path'
+import { basename, dirname, join } from 'path'
 
 export const CHANNEL_SCHEMA_VERSION = 2
 export const MAX_CHANNEL_MEMBERS = 8
@@ -540,6 +542,44 @@ export class ChannelStore {
   }
 
   /**
+   * Explicit whole-Channel erasure. The caller must delete the corresponding
+   * append log and audit rows first; metadata is intentionally the final
+   * durable ownership record removed so a crash can retry from channel ids.
+   */
+  purgeChannels(channelIds: readonly string[]): string[] {
+    this.assertHealthy()
+    const requested = new Set(channelIds.map((channelId) => nonBlank(channelId, 'channel id')))
+    const purgedChannelIds = this.snapshot.channels
+      .filter((channel) => requested.has(channel.channelId))
+      .map((channel) => channel.channelId)
+    if (requested.size > 0) this.removeStaleTemporaryFiles()
+    if (purgedChannelIds.length === 0) return []
+
+    const purged = new Set(purgedChannelIds)
+    const previous = this.snapshot
+    this.snapshot = {
+      schemaVersion: CHANNEL_SCHEMA_VERSION,
+      channels: previous.channels.filter((channel) => !purged.has(channel.channelId)),
+      members: previous.members.filter((member) => !purged.has(member.channelId)),
+      invites: previous.invites.filter((invite) => !purged.has(invite.channelId))
+    }
+    try {
+      this.persist()
+    } catch (error) {
+      this.snapshot = previous
+      throw error
+    }
+    for (const channelId of purged) this.channelRecoveryBlocked.delete(channelId)
+    return purgedChannelIds
+  }
+
+  purgeAllChannels(): string[] {
+    this.assertHealthy()
+    this.removeStaleTemporaryFiles()
+    return this.purgeChannels(this.snapshot.channels.map((channel) => channel.channelId))
+  }
+
+  /**
    * Resolves a principal supplied out-of-band by main. Inbound append bodies
    * never nominate their own author or room.
    */
@@ -782,6 +822,27 @@ export class ChannelStore {
       closeSync(descriptor)
     }
     renameSync(temporary, this.storagePath)
+    this.syncStorageDirectory()
+  }
+
+  private removeStaleTemporaryFiles(): void {
+    if (!this.storagePath) return
+    const directory = dirname(this.storagePath)
+    if (!existsSync(directory)) return
+    const prefix = `${basename(this.storagePath)}.`
+    let deleted = false
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.tmp')) {
+        continue
+      }
+      unlinkSync(join(directory, entry.name))
+      deleted = true
+    }
+    if (deleted) this.syncStorageDirectory()
+  }
+
+  private syncStorageDirectory(): void {
+    if (!this.storagePath) return
     try {
       const directoryDescriptor = openSync(dirname(this.storagePath), 'r')
       try {

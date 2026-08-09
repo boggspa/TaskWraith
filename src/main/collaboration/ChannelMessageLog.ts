@@ -5,9 +5,11 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync
 } from 'fs'
 import { createHash, randomUUID } from 'crypto'
@@ -308,6 +310,47 @@ export class ChannelMessageLog {
     return this.load(channelId).messages.length
   }
 
+  /** Idempotent explicit erasure; callers remove Channel metadata last. */
+  purgeChannels(channelIds: readonly string[]): void {
+    const filenames = new Set<string>()
+    for (const channelId of new Set(channelIds)) {
+      this.pathFor(channelId)
+      filenames.add(`${channelId}.jsonl`)
+      this.cache.delete(channelId)
+      this.recoveryBlocked.delete(channelId)
+    }
+    let deleted = false
+    if (existsSync(this.storageDirectory)) {
+      for (const entry of readdirSync(this.storageDirectory, { withFileTypes: true })) {
+        if (!entry.isFile()) continue
+        const matches = [...filenames].some(
+          (filename) =>
+            entry.name === filename ||
+            (entry.name.startsWith(`${filename}.`) && entry.name.endsWith('.tmp'))
+        )
+        if (!matches) continue
+        unlinkSync(join(this.storageDirectory, entry.name))
+        deleted = true
+      }
+    }
+    if (deleted) this.syncStorageDirectory()
+  }
+
+  /** Global erasure removes every file in the dedicated Channel log directory. */
+  purgeAll(): void {
+    let deleted = false
+    if (existsSync(this.storageDirectory)) {
+      for (const entry of readdirSync(this.storageDirectory, { withFileTypes: true })) {
+        if (!entry.isFile()) continue
+        unlinkSync(join(this.storageDirectory, entry.name))
+        deleted = true
+      }
+    }
+    this.cache.clear()
+    this.recoveryBlocked.clear()
+    if (deleted) this.syncStorageDirectory()
+  }
+
   private load(channelId: string): LoadedChannelLog {
     if (this.recoveryBlocked.has(channelId)) {
       throw new ChannelError('recovery_blocked', 'Channel log recovery is blocked')
@@ -420,5 +463,18 @@ export class ChannelMessageLog {
       throw new ChannelError('protocol_unsupported', 'Channel id is invalid')
     }
     return join(this.storageDirectory, `${channelId}.jsonl`)
+  }
+
+  private syncStorageDirectory(): void {
+    try {
+      const descriptor = openSync(this.storageDirectory, 'r')
+      try {
+        fsyncSync(descriptor)
+      } finally {
+        closeSync(descriptor)
+      }
+    } catch {
+      // Some platforms do not allow directory fsync. The unlinks still hold.
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -397,6 +397,48 @@ describe('ChannelStore', () => {
     expect(created.channel.chatId).toBe('fresh-chat')
     expect(empty.getDisplayEnvelope(created.channel.channelId).title).toBe('Fresh room')
   })
+
+  it('purges selected Channel metadata last while preserving unrelated durable ownership', () => {
+    const directory = temporaryDirectory()
+    const storePath = join(directory, 'channels.json')
+    const store = new ChannelStore(storePath)
+    const first = store.createChannel({
+      chatId: 'chat-a',
+      owner: { displayName: 'Host A', identityPublicKey: 'ed25519:a' },
+      title: 'Room A',
+      now: 1_000
+    })
+    const second = store.createChannel({
+      chatId: 'chat-b',
+      owner: { displayName: 'Host B', identityPublicKey: 'ed25519:b' },
+      title: 'Room B',
+      now: 2_000
+    })
+    store.createInvite({ channelId: first.channel.channelId, now: 3_000 })
+    store.createInvite({ channelId: second.channel.channelId, now: 3_000 })
+    const staleMetadata = `${storePath}.stale.tmp`
+    writeFileSync(staleMetadata, 'stale metadata', 'utf8')
+
+    expect(store.purgeChannels([first.channel.channelId])).toEqual([first.channel.channelId])
+    expect(existsSync(staleMetadata)).toBe(false)
+    expect(store.getChannel(first.channel.channelId)).toBeNull()
+    expect(store.listMembers(first.channel.channelId)).toEqual([])
+    expect(store.listInvites(first.channel.channelId)).toEqual([])
+    expect(store.getChannel(second.channel.channelId)?.chatId).toBe('chat-b')
+    expect(store.listMembers(second.channel.channelId)).toHaveLength(1)
+    expect(store.listInvites(second.channel.channelId)).toHaveLength(1)
+
+    const restarted = new ChannelStore(storePath)
+    expect(restarted.listChannels().map((channel) => channel.channelId)).toEqual([
+      second.channel.channelId
+    ])
+    expect(restarted.purgeChannels([first.channel.channelId])).toEqual([])
+    expect(restarted.purgeAllChannels()).toEqual([second.channel.channelId])
+    expect(new ChannelStore(storePath).listChannels()).toEqual([])
+    writeFileSync(staleMetadata, 'stale empty metadata', 'utf8')
+    expect(restarted.purgeAllChannels()).toEqual([])
+    expect(existsSync(staleMetadata)).toBe(false)
+  })
 })
 
 describe('ChannelMessageLog', () => {
@@ -576,5 +618,49 @@ describe('ChannelMessageLog', () => {
       'human_only'
     )
     expect(log.highWaterSequence(channel.channelId)).toBe(0)
+  })
+
+  it('purges selected logs idempotently and removes orphan logs only on global erasure', () => {
+    const { directory, store, channel, owner, log } = channelFixture()
+    const second = store.createChannel({
+      chatId: 'chat-b',
+      owner: { displayName: 'Host B', identityPublicKey: 'ed25519:b' },
+      title: 'Room B'
+    })
+    log.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'one-a',
+      content: 'first'
+    })
+    log.append({
+      channelId: second.channel.channelId,
+      principalMemberId: second.owner.memberId,
+      identityPublicKey: 'ed25519:b',
+      clientMessageId: 'one-b',
+      content: 'second'
+    })
+    const logs = join(directory, 'logs')
+    const firstPath = join(logs, `${channel.channelId}.jsonl`)
+    const secondPath = join(logs, `${second.channel.channelId}.jsonl`)
+    const orphanPath = join(logs, 'orphan.jsonl')
+    const staleFirstPath = `${firstPath}.stale.tmp`
+    writeFileSync(orphanPath, 'orphaned durable bytes\n', 'utf8')
+    writeFileSync(staleFirstPath, 'stale first history\n', 'utf8')
+
+    log.purgeChannels([channel.channelId, channel.channelId])
+    expect(existsSync(firstPath)).toBe(false)
+    expect(existsSync(staleFirstPath)).toBe(false)
+    expect(existsSync(secondPath)).toBe(true)
+    expect(existsSync(orphanPath)).toBe(true)
+    expectCode(() => log.highWaterSequence(channel.channelId), 'recovery_blocked')
+    expect(log.highWaterSequence(second.channel.channelId)).toBe(1)
+
+    log.purgeChannels([channel.channelId])
+    log.purgeAll()
+    expect(existsSync(secondPath)).toBe(false)
+    expect(existsSync(orphanPath)).toBe(false)
+    log.purgeAll()
   })
 })
