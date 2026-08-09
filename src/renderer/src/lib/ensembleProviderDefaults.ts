@@ -618,6 +618,33 @@ function normalizeReasoningEffortToken(value?: string | null): string {
   return normalized
 }
 
+/** K3 has a selectable Low/High/Max effort; K2.7 Coding's thinking is fixed On. */
+export function isKimiK3Model(model?: string | null): boolean {
+  return String(model || '').trim().toLowerCase() === 'kimi-k3'
+}
+
+/**
+ * The picker uses K2.7's fixed thinking state as an `on` stop, but K3 must
+ * retain its independent effort. Collapsing K3 to `on` makes the shared ladder
+ * land on Low even when the persisted selection is High or Max.
+ */
+export function resolveKimiReasoningPickerSelection(
+  model: string | null | undefined,
+  reasoningEffort?: string | null
+): string {
+  if (!isKimiK3Model(model)) return 'on'
+  return normalizeReasoningEffortToken(reasoningEffort) || 'max'
+}
+
+/** Persist a K3 ladder selection without treating it as K2.7's legacy flag. */
+export function buildKimiReasoningPickerPatch(
+  model: string | null | undefined,
+  reasoningEffort: string
+): Pick<Partial<EnsembleParticipant>, 'reasoningEffort' | 'thinkingEnabled'> {
+  if (isKimiK3Model(model)) return { reasoningEffort, thinkingEnabled: true }
+  return { thinkingEnabled: true }
+}
+
 function fallbackModelSelectionMetadata(
   provider: ProviderId,
   model: string

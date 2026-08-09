@@ -262,4 +262,28 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('data-fast-mode-active="true"')
     expect(html).toContain('K2.7 Coding')
   })
+
+  it('passes K3 Max to the reasoning ladder instead of its legacy thinking flag', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'kimi',
+            model: 'kimi-k3',
+            reasoningEffort: 'max',
+            thinkingEnabled: true
+          })
+        }
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-selected-reasoning="max"')
+    expect(html).toContain('K3')
+    expect(html).toContain('>Max<')
+    expect(html).not.toContain('data-selected-reasoning="on"')
+  })
 })

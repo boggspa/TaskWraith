@@ -4,6 +4,7 @@ import { PI_STATIC_MODELS } from '../../../main/pi/PiModels'
 import { activePiModelRows } from '../../../shared/piModelLifecycle'
 import {
   buildCodexModelChangeParticipantPatch,
+  buildKimiReasoningPickerPatch,
   buildProviderModelChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName,
@@ -11,6 +12,7 @@ import {
   getEnsembleReasoningOptions,
   normalizeProviderModelSelection,
   resolveEnsembleParticipantSettings,
+  resolveKimiReasoningPickerSelection,
   resolveReasoningEffortForSeatChange
 } from './ensembleProviderDefaults'
 
@@ -96,6 +98,25 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     expect(getDefaultEnsembleParticipantConfig('ollama')).toEqual({
       model: 'qwen3.5:9b',
       permissionPresetId: 'default'
+    })
+  })
+})
+
+describe('Kimi reasoning picker selection', () => {
+  it('keeps K3 effort separate from K2.7 Coding\'s fixed thinking state', () => {
+    expect(resolveKimiReasoningPickerSelection('kimi-k3', 'max')).toBe('max')
+    expect(resolveKimiReasoningPickerSelection('kimi-k3', 'high')).toBe('high')
+    expect(resolveKimiReasoningPickerSelection('kimi-k3', undefined)).toBe('max')
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'max')).toBe('on')
+  })
+
+  it('persists K3 ladder choices as reasoning effort rather than the legacy thinking flag', () => {
+    expect(buildKimiReasoningPickerPatch('kimi-k3', 'high')).toEqual({
+      reasoningEffort: 'high',
+      thinkingEnabled: true
+    })
+    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code', 'on')).toEqual({
+      thinkingEnabled: true
     })
   })
 })

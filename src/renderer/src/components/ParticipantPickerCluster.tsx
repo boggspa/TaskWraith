@@ -9,8 +9,10 @@ import type {
 import {
   buildProviderModelChangeParticipantPatch,
   buildSameProviderModelChangeParticipantPatch,
+  buildKimiReasoningPickerPatch,
   getEnsembleModelDefaults,
   getEnsembleReasoningOptions,
+  resolveKimiReasoningPickerSelection,
   resolveEnsembleParticipantSettings
 } from '../lib/ensembleProviderDefaults'
 import {
@@ -159,14 +161,12 @@ export function ParticipantPickerCluster({
 
   const selectedReasoning =
     participant.provider === 'kimi'
-      ? resolved.thinkingEnabled
-        ? 'on'
-        : 'off'
+      ? resolveKimiReasoningPickerSelection(selectedModelId, resolved.reasoningEffort)
       : resolved.reasoningEffort
   const reasoningOptions = getEnsembleReasoningOptions(participant.provider, selectedModelId)
   const onSelectReasoning = (value: string): void => {
     if (participant.provider === 'kimi') {
-      onPatch({ thinkingEnabled: value !== 'off' })
+      onPatch(buildKimiReasoningPickerPatch(selectedModelId, value))
     } else {
       onPatch({ reasoningEffort: value })
     }
