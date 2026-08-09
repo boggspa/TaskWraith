@@ -327,6 +327,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'mesh_scene_present':
     case 'mesh_scene_close':
     case 'mesh_scene_delete':
+    case 'mesh_topology_convert':
+    case 'mesh_topology_inspect':
+    case 'mesh_topology_edit':
       return 'mesh'
     // Appearance, not a canvas surface — these change the user's own theme
     // tokens. 'window-context' is the closest existing family (it is about the

@@ -156,6 +156,7 @@ describe('registerMeshSceneHandlers', () => {
         nodeCount: 1,
         importCount: 1,
         primitiveCount: 0,
+        editableCount: 0,
         backgroundColor: '#171a21',
         updatedAt: '2026-07-27T12:00:00.000Z'
       }
@@ -231,6 +232,7 @@ describe('registerMeshSceneHandlers', () => {
         nodeCount: 2,
         importCount: 2,
         primitiveCount: 0,
+        editableCount: 0,
         backgroundColor: '#171a21',
         updatedAt: '2026-07-27T12:00:00.000Z'
       }

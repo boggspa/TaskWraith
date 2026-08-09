@@ -357,6 +357,8 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'mesh_scene_import',
         'mesh_scene_present',
         'mesh_scene_set_material',
+        'mesh_topology_convert',
+        'mesh_topology_edit',
         'move_path',
         // Draft creation mutates the mailbox, so read_only seats deny it.
         // The four Outlook READ tools classify as web_read instead.
