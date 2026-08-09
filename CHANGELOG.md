@@ -21,6 +21,10 @@ to answer.
 - **Host Arc capture and export.** The production Host path now exposes authenticated transport, durable command/receipt routing, and `.twmission` capture/export with redacted, fail-closed bundles.
 - **Swift protocol parity.** TaskWraithKit gains the Host protocol's full family of frames and bounded decoders, keeping the companion aligned with the desktop Host contract.
 - **Lifecycle and projection honesty.** Host supervision preserves prototype authority methods, reports offline/connecting health accurately, and keeps malformed or unavailable Host data out of projections.
+- **Mission Control everywhere.** Desktop, the terminal, and paired iOS now consume coherent Host generations/cursors for live missions, rounds, participants, outcomes, and reconnect state instead of independently reconstructing them.
+- **One question receipt across clients.** Answers and dismissals carry the exact durable Host command ID through the paired bridge, registry transition, ordered delta, Desktop Mission Control, terminal JSON, and iOS projection without exposing answer bodies.
+- **Terminal flight recorder.** `tw` gains an 80×24-friendly live mission view, filters, stable JSON projection, and deterministic `.twmission` export/replay with integrity and corruption checks.
+- **Production Host hardening.** Real-socket mutation tests cover authority, Bridge execution, receipts, snapshots, and deltas; slow-client isolation, turn-scoped chat-list coalescing, and port-backed capability offers keep the service responsive and honest.
 
 ### Skills, Hooks, and harness posture
 
