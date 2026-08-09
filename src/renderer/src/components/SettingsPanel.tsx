@@ -106,6 +106,7 @@ import { SegmentedControl } from './SegmentedControl'
 import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
 import { ImageGenerationSettingsCard } from './ImageGenerationSettingsCard'
+import { SimulatorControlSettingsCard } from './SimulatorControlSettingsCard'
 import { LocalServersSettingsPanel } from './LocalServersSettingsPanel'
 import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { AgentPoolContainer } from './AgentPoolContainer'
@@ -6404,6 +6405,13 @@ export function SettingsPanel({
                   Starts new Gemini CLI runs and persistent sessions with --checkpointing. Restart
                   an active persistent session to apply changes.
                 </p>
+              </div>
+
+              <div className="settings-group span-all">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  Simulator
+                </h4>
+                <SimulatorControlSettingsCard />
               </div>
 
               <div className="settings-group">

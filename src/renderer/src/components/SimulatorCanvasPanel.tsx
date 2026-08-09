@@ -22,19 +22,17 @@ import {
   type SimulatorTapGesture,
   type SimulatorTypeGesture
 } from '../../../shared/simulatorCanvas'
-import {
-  SIMULATOR_TOOL_DOCS_URL,
-  simulatorTool,
-  simulatorToolInstallCommands
-} from '../../../shared/simulatorToolCatalog'
+import type {
+  SimulatorControlSetupResult,
+  SimulatorControlSetupStatus
+} from '../../../shared/simulatorControlSetup'
 import {
   buildScrollGesture,
   buildTapGesture,
   buildTypeGesture,
   canSendSimulatorGestures,
   mapPointerToBezelNorm,
-  previewOnlyBannerText,
-  simulatorControllerBadgeText
+  previewOnlyBannerText
 } from '../lib/simulatorCanvasGestures'
 import {
   actuateAfterSoftClaim,
@@ -97,8 +95,14 @@ type SimulatorCanvasBridge = {
   ) => Promise<{ ok: boolean; error?: string }>
 }
 
+type SimulatorControlBridge = {
+  status: () => Promise<SimulatorControlSetupStatus>
+  setup: () => Promise<SimulatorControlSetupResult>
+}
+
 const SCREENSHOT_POLL_MS = 1500
 const INTERACTION_POLL_MS = 2000
+const CONTROL_STATUS_POLL_MS = 5000
 const BRIDGE_MISSING_HINT = 'Restart TaskWraith to load the Simulator Canvas bridge.'
 
 type BusyKind =
@@ -109,11 +113,17 @@ type BusyKind =
   | 'launch'
   | 'terminate'
   | 'hardware'
+  | 'setup'
   | null
 
 function getSimulatorCanvasBridge(): SimulatorCanvasBridge | undefined {
   const api = (window as unknown as { api?: { simulatorCanvas?: SimulatorCanvasBridge } }).api
   return api?.simulatorCanvas
+}
+
+function getSimulatorControlBridge(): SimulatorControlBridge | undefined {
+  const api = (window as unknown as { api?: { simulatorControl?: SimulatorControlBridge } }).api
+  return api?.simulatorControl
 }
 
 function isScreenshotFrame(value: unknown): value is SimulatorScreenshotFrame {
@@ -157,50 +167,28 @@ function deviceOptions(status: SimulatorCapabilityStatus | null): SimulatorDevic
   return Array.from(byUdid.values())
 }
 
-function IdbInstallHint({ platform }: { platform: string }) {
-  const entry = simulatorTool('idb')
-  const companion = simulatorToolInstallCommands('idb', platform)[0]
-  if (!entry) return null
-  return (
-    <div className="simulator-canvas-empty" role="status">
-      <p>
-        Xcode Simulator is available for preview. Install idb to drive tap, type, and swipe from
-        this dock.
-      </p>
-      {companion ? (
-        <p>
-          <code>{companion.command}</code>
-        </p>
-      ) : null}
-      <p>
-        <code>pip3 install fb-idb</code>
-      </p>
-      <a
-        className="simulator-canvas-docs-link"
-        href={entry.docsUrl || SIMULATOR_TOOL_DOCS_URL}
-        target="_blank"
-        rel="noreferrer"
-      >
-        idb install docs
-      </a>
-    </div>
-  )
-}
-
 export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   const bridge = getSimulatorCanvasBridge()
   const [status, setStatus] = useState<SimulatorCapabilityStatus | null>(null)
+  const [controlStatus, setControlStatus] = useState<SimulatorControlSetupStatus | null>(null)
+  const [controlIssue, setControlIssue] = useState<string | null>(null)
   const [selectedUdid, setSelectedUdid] = useState<string>('')
   const [frame, setFrame] = useState<SimulatorScreenshotFrame | null>(null)
   const [issue, setIssue] = useState<string | null>(null)
   const [busy, setBusy] = useState<BusyKind>(null)
   const [interaction, setInteraction] = useState<SimulatorInteractionStatus | null>(null)
-  const [typeBuffer, setTypeBuffer] = useState('')
   const [appPath, setAppPath] = useState('')
   const [bundleId, setBundleId] = useState('')
   const [orientation, setOrientation] = useState<SimulatorRotateDirection>('PORTRAIT')
   const [nowMs, setNowMs] = useState(() => Date.now())
   const screenRef = useRef<HTMLDivElement | null>(null)
+  const textQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const dragRef = useRef<{
+    pointerId: number
+    point: { x: number; y: number }
+    clientX: number
+    clientY: number
+  } | null>(null)
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
   const nextOrientation = nextSimulatorRotateDirection(orientation)
@@ -243,6 +231,26 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     }
   }, [chatId])
 
+  const refreshControlStatus = useCallback(
+    async (): Promise<SimulatorControlSetupStatus | null> => {
+      const api = getSimulatorControlBridge()
+      if (!api?.status) {
+        setControlStatus(null)
+        return null
+      }
+      try {
+        const next = await api.status()
+        if (chatIdRef.current !== chatId) return null
+        setControlStatus(next)
+        return next
+      } catch {
+        if (chatIdRef.current === chatId) setControlStatus(null)
+        return null
+      }
+    },
+    [chatId]
+  )
+
   const adoptServerOrientation = useCallback((payload: unknown): void => {
     const next = orientationFromSessionPayload(payload)
     if (next) setOrientation(next)
@@ -281,12 +289,28 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   }, [refreshStatus])
 
   useEffect(() => {
+    void refreshControlStatus()
+    const timer = window.setInterval(() => {
+      void refreshControlStatus()
+    }, CONTROL_STATUS_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [refreshControlStatus])
+
+  useEffect(() => {
     const api = getSimulatorCanvasBridge()
-    // Human dock is authoritative for this surface — claim controller on open so
-    // idb actuationReady can arm without waiting for the first mutate. Await the
-    // claim (and surface ok:false) before the first interaction refresh.
-    // Release the human token on unmount / chat switch / hide (CanvasDock
-    // unmounts this panel when showSimulator becomes false).
+    const hasControlBridge = Boolean(getSimulatorControlBridge())
+    const canClaim =
+      !hasControlBridge || Boolean(controlStatus?.enabled && controlStatus.ready)
+    // Do not claim a human controller until the user has enabled and prepared
+    // Simulator control. Screen preview remains available without it.
+    if (!canClaim) {
+      return
+    }
+
+    // Human dock is authoritative for this surface — claim controller on open
+    // so direct interaction is ready without a preliminary action. Release the
+    // human token on unmount / chat switch / hide (CanvasDock unmounts this
+    // panel when showSimulator becomes false).
     let cancelled = false
     const claimThenRefresh = async (): Promise<void> => {
       if (api?.claimControl) {
@@ -314,15 +338,25 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         void api.releaseControl(chatId)
       }
     }
-  }, [chatId, refreshInteraction, refreshSessionOrientation])
+  }, [
+    chatId,
+    controlStatus?.enabled,
+    controlStatus?.ready,
+    refreshInteraction,
+    refreshSessionOrientation
+  ])
 
   useEffect(() => {
+    const hasControlBridge = Boolean(getSimulatorControlBridge())
+    if (hasControlBridge && !(controlStatus?.enabled && controlStatus.ready)) {
+      return
+    }
     void refreshInteraction()
     const timer = window.setInterval(() => {
       void refreshInteraction()
     }, INTERACTION_POLL_MS)
     return () => window.clearInterval(timer)
-  }, [refreshInteraction])
+  }, [controlStatus?.enabled, controlStatus?.ready, refreshInteraction])
 
   const selectedDevice = useMemo(() => {
     return deviceOptions(status).find((device) => device.udid === selectedUdid) ?? null
@@ -335,12 +369,19 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   )
 
   const formFactor = resolveSimulatorFormFactor(selectedDevice?.name)
-  const gesturesEnabled = canSendSimulatorGestures(interaction)
+  const hasControlBridge = Boolean(getSimulatorControlBridge())
+  const controlReady =
+    !hasControlBridge || Boolean(controlStatus?.enabled && controlStatus.ready)
+  const showControlSetup = hasControlBridge && controlStatus !== null && !controlReady
+  const gesturesEnabled = controlReady && canSendSimulatorGestures(interaction)
   const hardwareControlsEnabled =
     selectedBooted && Boolean(interaction?.actuationReady) && gesturesEnabled
-  const banner = previewOnlyBannerText(interaction)
-  const controllerBadge = simulatorControllerBadgeText(interaction)
-  const canMutateHost = Boolean(selectedUdid) && busy === null
+  const banner = controlReady ? previewOnlyBannerText(interaction) : ''
+  const agentControllerNotice =
+    !showControlSetup && interaction?.controllerKind === 'run'
+      ? 'An agent is using this simulator.'
+      : null
+  const canMutateHost = Boolean(selectedUdid) && busy === null && controlReady
   const frameStale = isSimulatorFrameStale(frame, nowMs)
 
   useEffect(() => {
@@ -388,6 +429,55 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
       if (timer !== null) window.clearTimeout(timer)
     }
   }, [chatId, selectedBooted, selectedUdid])
+
+  const setupSimulatorControl = async (): Promise<void> => {
+    const api = getSimulatorControlBridge()
+    if (!api?.setup) {
+      setIssue(BRIDGE_MISSING_HINT)
+      return
+    }
+    setBusy('setup')
+    setIssue(null)
+    setControlIssue(null)
+    try {
+      const result = await api.setup()
+      if (chatIdRef.current !== chatId) return
+      setControlStatus(result)
+      if (!result.ok) {
+        setControlIssue(result.error || 'Simulator control could not finish setup.')
+        return
+      }
+      await Promise.all([refreshStatus(), refreshControlStatus()])
+    } catch (error) {
+      if (chatIdRef.current === chatId) {
+        setControlIssue(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      if (chatIdRef.current === chatId) setBusy(null)
+    }
+  }
+
+  const enableSimulatorControl = async (): Promise<void> => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (!api?.updateSettings) {
+      setIssue(BRIDGE_MISSING_HINT)
+      return
+    }
+    setBusy('setup')
+    setIssue(null)
+    setControlIssue(null)
+    try {
+      await api.updateSettings({ simulatorControlEnabled: true })
+      if (chatIdRef.current !== chatId) return
+      await Promise.all([refreshStatus(), refreshControlStatus()])
+    } catch (error) {
+      if (chatIdRef.current === chatId) {
+        setControlIssue(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      if (chatIdRef.current === chatId) setBusy(null)
+    }
+  }
 
   const openSimulatorApp = async (): Promise<void> => {
     const api = getSimulatorCanvasBridge()
@@ -634,21 +724,58 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   }
 
   const handleBezelPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
-    if (!gesturesEnabled) return
-    const api = getSimulatorCanvasBridge()
-    if (!api?.tap) return
+    if (!gesturesEnabled || event.button !== 0) return
     const point = pointFromEvent(event)
     if (!point) return
     event.preventDefault()
+    dragRef.current = {
+      pointerId: event.pointerId,
+      point,
+      clientX: event.clientX,
+      clientY: event.clientY
+    }
+    event.currentTarget.focus()
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handleBezelPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (dragRef.current?.pointerId === event.pointerId) event.preventDefault()
+  }
+
+  const handleBezelPointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null
+  }
+
+  const handleBezelPointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (!gesturesEnabled || !drag || drag.pointerId !== event.pointerId) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.tap || !api.scroll) return
+    const endPoint = pointFromEvent(event)
+    if (!endPoint) return
+    event.preventDefault()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    const movementX = event.clientX - drag.clientX
+    const movementY = event.clientY - drag.clientY
+    const isSwipe = Math.hypot(movementX, movementY) >= 8
+    const tapGesture = buildTapGesture(chatId, endPoint)
+    const scrollGesture = buildScrollGesture(
+      chatId,
+      drag.point,
+      drag.clientX - event.clientX,
+      drag.clientY - event.clientY
+    )
     void (async () => {
       const gated = await actuateAfterSoftClaim(ensureHumanLease, () =>
-        api.tap!(buildTapGesture(chatId, point))
+        isSwipe ? api.scroll!(scrollGesture) : api.tap!(tapGesture)
       )
       if (chatIdRef.current !== chatId || !gated.ok) return
       const result = gated.value
-      // Never treat recorded-but-deferred as success — surface the host error.
       if (result && result.ok === false) {
-        setIssue(result.error || 'Tap was refused.')
+        setIssue(result.error || (isSwipe ? 'Swipe was refused.' : 'Tap was refused.'))
       }
     })().catch((error: unknown) => {
       if (chatIdRef.current === chatId) {
@@ -682,13 +809,12 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     })
   }
 
-  const submitTypeBuffer = (): void => {
+  const sendText = (text: string): void => {
     if (!gesturesEnabled) return
     const api = getSimulatorCanvasBridge()
     if (!api?.type) return
-    const text = typeBuffer
     if (!text) return
-    void (async () => {
+    const send = async (): Promise<void> => {
       const gated = await actuateAfterSoftClaim(ensureHumanLease, () =>
         api.type!(buildTypeGesture(chatId, text))
       )
@@ -696,17 +822,36 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
       const result = gated.value
       if (result && result.ok === false) {
         setIssue(result.error || 'Type was refused.')
-        return
       }
-      // Clear the buffer only when the host actually actuated the type.
-      if (result?.ok === true) {
-        setTypeBuffer('')
-      }
-    })().catch((error: unknown) => {
+    }
+    // Text events arrive one character at a time. Preserve their order so a
+    // fast keyboard input cannot race multiple local companion commands.
+    textQueueRef.current = textQueueRef.current.then(send, send).catch((error: unknown) => {
       if (chatIdRef.current === chatId) {
         setIssue(error instanceof Error ? error.message : String(error))
       }
     })
+  }
+
+  const handleBezelKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (!gesturesEnabled || event.metaKey || event.ctrlKey || event.altKey) return
+    const text =
+      event.key === 'Enter'
+        ? '\n'
+        : Array.from(event.key).length === 1 && event.key !== 'Dead'
+          ? event.key
+          : ''
+    if (!text) return
+    event.preventDefault()
+    sendText(text)
+  }
+
+  const handleBezelPaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    if (!gesturesEnabled) return
+    const text = event.clipboardData.getData('text')
+    if (!text) return
+    event.preventDefault()
+    sendText(text)
   }
 
   const pressHardwareButton = (button: SimulatorHardwareButton): void => {
@@ -820,7 +965,6 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   }
 
   const options = deviceOptions(status)
-  const showIdbInstallHint = Boolean(status?.installed && status.idbAvailable === false)
   const frameSrc = frame ? `data:image/png;base64,${frame.pngBase64}` : null
   const hasPickApp = Boolean(bridge.pickApp)
   const hasInstall = Boolean(bridge.install)
@@ -831,20 +975,9 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     <section className="simulator-canvas-panel" aria-label="Simulator Canvas">
       <div className="simulator-canvas-toolbar">
         <div>
-          <div className="simulator-canvas-title">Simulator Canvas</div>
-          <div className="simulator-canvas-subtitle">
-            Preview an iOS Simulator in this chat.
-          </div>
+          <div className="simulator-canvas-title">iOS Simulator</div>
         </div>
         <div className="simulator-canvas-actions">
-          <PillButton
-            size="compact"
-            onClick={() => void openSimulatorApp()}
-            disabled={busy !== null}
-            loading={busy === 'open'}
-          >
-            {busy === 'open' ? 'Opening…' : 'Open Simulator App'}
-          </PillButton>
           <label className="simulator-canvas-device">
             <span className="simulator-canvas-device-label">Device</span>
             <select
@@ -868,30 +1001,17 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
           <PillButton
             size="compact"
             onClick={() => void bootSelected()}
-            disabled={busy !== null || !selectedUdid || selectedBooted}
+            disabled={!canMutateHost || selectedBooted}
             loading={busy === 'boot'}
           >
             {busy === 'boot' ? 'Booting…' : 'Boot'}
           </PillButton>
-          <PillButton
-            size="compact"
-            onClick={() => void refreshStatus()}
-            disabled={busy !== null}
-            loading={busy === 'refresh'}
-          >
-            Refresh
-          </PillButton>
         </div>
       </div>
 
-      {controllerBadge ? (
-        <div
-          className={`simulator-canvas-controller-chip${
-            interaction?.controllerKind === 'run' ? ' is-agent' : ' is-human'
-          }`}
-          role="status"
-        >
-          {controllerBadge}
+      {agentControllerNotice ? (
+        <div className="simulator-canvas-banner is-agent" role="status">
+          {agentControllerNotice}
         </div>
       ) : null}
 
@@ -901,89 +1021,108 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         </div>
       ) : null}
 
-      {showIdbInstallHint ? <IdbInstallHint platform={status?.platform || 'darwin'} /> : null}
-
-      {(hasInstall || hasLaunch || hasTerminate) && (
-        <div className="simulator-canvas-qa" aria-label="Simulator app controls">
-          {hasInstall ? (
+      {controlReady && (hasInstall || hasLaunch || hasTerminate) && (
+        <details className="simulator-canvas-advanced">
+          <summary>App testing</summary>
+          <div className="simulator-canvas-qa" aria-label="Simulator app controls">
             <div className="simulator-canvas-qa-row">
-              {hasPickApp ? (
-                <PillButton
-                  size="compact"
-                  onClick={() => void pickAndInstallApp()}
-                  disabled={!canMutateHost}
-                  loading={busy === 'install'}
-                >
-                  {busy === 'install' ? 'Installing…' : 'Install .app'}
-                </PillButton>
-              ) : null}
-              <input
-                className="simulator-canvas-qa-input"
-                type="text"
-                value={appPath}
-                onChange={(event) => setAppPath(event.target.value)}
-                placeholder="/absolute/path/App.app"
-                aria-label="Absolute .app path"
+              <PillButton
+                size="compact"
+                onClick={() => void openSimulatorApp()}
                 disabled={busy !== null}
-              />
-              {!hasPickApp ? (
-                <PillButton
-                  size="compact"
-                  onClick={() => void installFromPathField()}
-                  disabled={!canMutateHost || !appPath.trim()}
-                  loading={busy === 'install'}
-                >
-                  {busy === 'install' ? 'Installing…' : 'Install'}
-                </PillButton>
-              ) : (
-                <PillButton
-                  size="compact"
-                  variant="ghost"
-                  onClick={() => void installFromPathField()}
-                  disabled={!canMutateHost || !appPath.trim()}
-                  loading={busy === 'install'}
-                >
-                  Install path
-                </PillButton>
-              )}
+                loading={busy === 'open'}
+              >
+                {busy === 'open' ? 'Opening…' : 'Open Simulator App'}
+              </PillButton>
+              <PillButton
+                size="compact"
+                onClick={() => void refreshStatus()}
+                disabled={busy !== null}
+                loading={busy === 'refresh'}
+              >
+                Refresh
+              </PillButton>
             </div>
-          ) : null}
+            {hasInstall ? (
+              <div className="simulator-canvas-qa-row">
+                {hasPickApp ? (
+                  <PillButton
+                    size="compact"
+                    onClick={() => void pickAndInstallApp()}
+                    disabled={!canMutateHost}
+                    loading={busy === 'install'}
+                  >
+                    {busy === 'install' ? 'Installing…' : 'Install .app'}
+                  </PillButton>
+                ) : null}
+                <input
+                  className="simulator-canvas-qa-input"
+                  type="text"
+                  value={appPath}
+                  onChange={(event) => setAppPath(event.target.value)}
+                  placeholder="/absolute/path/App.app"
+                  aria-label="Absolute .app path"
+                  disabled={busy !== null}
+                />
+                {!hasPickApp ? (
+                  <PillButton
+                    size="compact"
+                    onClick={() => void installFromPathField()}
+                    disabled={!canMutateHost || !appPath.trim()}
+                    loading={busy === 'install'}
+                  >
+                    {busy === 'install' ? 'Installing…' : 'Install'}
+                  </PillButton>
+                ) : (
+                  <PillButton
+                    size="compact"
+                    variant="ghost"
+                    onClick={() => void installFromPathField()}
+                    disabled={!canMutateHost || !appPath.trim()}
+                    loading={busy === 'install'}
+                  >
+                    Install path
+                  </PillButton>
+                )}
+              </div>
+            ) : null}
 
-          {(hasLaunch || hasTerminate) && (
-            <div className="simulator-canvas-qa-row">
-              <input
-                className="simulator-canvas-qa-input"
-                type="text"
-                value={bundleId}
-                onChange={(event) => setBundleId(event.target.value)}
-                placeholder="com.example.App"
-                aria-label="Bundle identifier"
-                disabled={busy !== null}
-              />
-              {hasLaunch ? (
-                <PillButton
-                  size="compact"
-                  onClick={() => void launchBundle()}
-                  disabled={!canMutateHost || !bundleId.trim()}
-                  loading={busy === 'launch'}
-                >
-                  {busy === 'launch' ? 'Launching…' : 'Launch'}
-                </PillButton>
-              ) : null}
-              {hasTerminate ? (
-                <PillButton
-                  size="compact"
-                  variant="danger"
-                  onClick={() => void terminateBundle()}
-                  disabled={!canMutateHost || !bundleId.trim()}
-                  loading={busy === 'terminate'}
-                >
-                  {busy === 'terminate' ? 'Stopping…' : 'Terminate'}
-                </PillButton>
-              ) : null}
-            </div>
-          )}
-        </div>
+            {(hasLaunch || hasTerminate) && (
+              <div className="simulator-canvas-qa-row">
+                <input
+                  className="simulator-canvas-qa-input"
+                  type="text"
+                  value={bundleId}
+                  onChange={(event) => setBundleId(event.target.value)}
+                  placeholder="com.example.App"
+                  aria-label="Bundle identifier"
+                  disabled={busy !== null}
+                />
+                {hasLaunch ? (
+                  <PillButton
+                    size="compact"
+                    onClick={() => void launchBundle()}
+                    disabled={!canMutateHost || !bundleId.trim()}
+                    loading={busy === 'launch'}
+                  >
+                    {busy === 'launch' ? 'Launching…' : 'Launch'}
+                  </PillButton>
+                ) : null}
+                {hasTerminate ? (
+                  <PillButton
+                    size="compact"
+                    variant="danger"
+                    onClick={() => void terminateBundle()}
+                    disabled={!canMutateHost || !bundleId.trim()}
+                    loading={busy === 'terminate'}
+                  >
+                    {busy === 'terminate' ? 'Stopping…' : 'Terminate'}
+                  </PillButton>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </details>
       )}
 
       <div className="simulator-canvas-stage">
@@ -996,8 +1135,14 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
           <div
             ref={screenRef}
             className="simulator-canvas-bezel-screen"
+            tabIndex={gesturesEnabled ? 0 : -1}
             onPointerDown={handleBezelPointerDown}
+            onPointerMove={handleBezelPointerMove}
+            onPointerUp={handleBezelPointerUp}
+            onPointerCancel={handleBezelPointerCancel}
             onWheel={handleBezelWheel}
+            onKeyDown={handleBezelKeyDown}
+            onPaste={handleBezelPaste}
           >
             {frameSrc ? (
               <img
@@ -1018,32 +1163,51 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
                 Stale
               </div>
             ) : null}
+            {showControlSetup && controlStatus ? (
+              <div className="simulator-canvas-setup-overlay" role="status" aria-live="polite">
+                <div className="simulator-canvas-setup-card">
+                  <strong>
+                    {controlStatus.state === 'disabled'
+                      ? 'Simulator control is off'
+                      : controlStatus.state === 'unsupported'
+                        ? 'Simulator control is unavailable'
+                        : 'Use this Simulator?'}
+                  </strong>
+                  <p>{controlStatus.message}</p>
+                  {controlIssue ? (
+                    <p className="simulator-canvas-setup-error" role="alert">
+                      {controlIssue}
+                    </p>
+                  ) : null}
+                  {controlStatus.state === 'setup_required' ? (
+                    <PillButton
+                      size="compact"
+                      variant="primary"
+                      disabled={busy !== null}
+                      loading={busy === 'setup'}
+                      onClick={() => void setupSimulatorControl()}
+                    >
+                      {busy === 'setup' ? 'Setting up…' : 'Set up'}
+                    </PillButton>
+                  ) : null}
+                  {controlStatus.state === 'disabled' ? (
+                    <PillButton
+                      size="compact"
+                      variant="primary"
+                      disabled={busy !== null}
+                      loading={busy === 'setup'}
+                      onClick={() => void enableSimulatorControl()}
+                    >
+                      {busy === 'setup' ? 'Turning on…' : 'Enable'}
+                    </PillButton>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
           <div className="simulator-canvas-bezel-home" aria-hidden="true" />
         </div>
       </div>
-
-      {gesturesEnabled ? (
-        <div className="simulator-canvas-typebar">
-          <input
-            className="simulator-canvas-type-input"
-            type="text"
-            value={typeBuffer}
-            onChange={(event) => setTypeBuffer(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                submitTypeBuffer()
-              }
-            }}
-            placeholder="Type into Simulator…"
-            aria-label="Type into Simulator"
-          />
-          <PillButton size="compact" onClick={submitTypeBuffer} disabled={!typeBuffer}>
-            Send
-          </PillButton>
-        </div>
-      ) : null}
 
       <div className="simulator-canvas-hardware" aria-label="Simulator hardware controls">
         <PillButton
@@ -1071,12 +1235,6 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
         >
           Rotate → {nextOrientation}
         </PillButton>
-      </div>
-
-      <div className="simulator-canvas-footer" role="note">
-        Home / Lock use <code>idb ui button</code>. Rotate cycles absolute orientations via{' '}
-        <code>idb ui rotate {nextOrientation}</code> (now {orientation}). Agents can call{' '}
-        <code>simulator_inspect</code> for a truncated AX tree.
       </div>
 
       {issue && (

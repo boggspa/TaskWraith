@@ -309,6 +309,79 @@
 
 .simulator-canvas-bezel.is-interactive .simulator-canvas-bezel-screen {
   cursor: crosshair;
+  touch-action: none;
+}
+
+.simulator-canvas-bezel-screen:focus-visible {
+  outline: 2px solid var(--accent, #6aa8ff);
+  outline-offset: -2px;
+}
+
+.simulator-canvas-setup-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(8, 10, 14, 0.56);
+  backdrop-filter: blur(3px);
+}
+
+.simulator-canvas-setup-card {
+  width: min(100%, 260px);
+  padding: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 13px;
+  background: rgba(30, 33, 41, 0.94);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.simulator-canvas-setup-card strong {
+  display: block;
+  font:
+    650 14px/1.25 system-ui,
+    sans-serif;
+}
+
+.simulator-canvas-setup-card p {
+  margin: 7px 0 12px;
+  color: rgba(235, 238, 245, 0.72);
+  font:
+    11px/1.4 system-ui,
+    sans-serif;
+}
+
+.simulator-canvas-setup-card .simulator-canvas-setup-error {
+  margin-top: -4px;
+  color: var(--status-failed, #e5484d);
+}
+
+.simulator-canvas-advanced {
+  margin: 0 12px 10px;
+}
+
+.simulator-canvas-advanced summary {
+  width: fit-content;
+  cursor: pointer;
+  color: rgba(235, 238, 245, 0.68);
+  font:
+    600 10px/1.4 system-ui,
+    sans-serif;
+}
+
+.simulator-canvas-advanced[open] summary {
+  margin-bottom: 8px;
+}
+
+.simulator-canvas-advanced .simulator-canvas-qa {
+  margin: 0;
+}
+
+.simulator-canvas-banner.is-agent {
+  border-color: rgba(106, 168, 255, 0.38);
+  background: rgba(106, 168, 255, 0.12);
 }
 
 .simulator-canvas-typebar {
