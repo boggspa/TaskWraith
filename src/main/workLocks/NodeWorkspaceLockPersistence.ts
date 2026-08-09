@@ -23,6 +23,10 @@ export interface NodeWorkspaceLockPersistenceStat {
   readonly ino: number | bigint
   readonly mode: number | bigint
   readonly size: number | bigint
+  readonly mtimeMs?: number | bigint
+  readonly mtimeNs?: number | bigint
+  readonly ctimeMs?: number | bigint
+  readonly ctimeNs?: number | bigint
   isDirectory(): boolean
   isFile(): boolean
   isSymbolicLink(): boolean
@@ -96,6 +100,8 @@ export interface WorkspaceLockEventSnapshot {
   /** Exact UTF-8 WAL bytes, returned as a string after JSONL validation. */
   raw: string
   byteLength: number
+  /** Cheap identity for deciding whether the append-only WAL needs replaying. */
+  revision: string
 }
 
 export type WorkspaceLockFenceMutationResult =
@@ -156,9 +162,30 @@ export class NodeWorkspaceLockPersistence {
     this.ensureAuthorityDirectory()
     const path = this.eventsPath()
     const snapshot = this.readOptionalRegularFile(path, true)
-    if (!snapshot) return { raw: '', byteLength: 0 }
+    if (!snapshot) return { raw: '', byteLength: 0, revision: 'absent' }
     validateJsonLines(snapshot.raw, path)
-    return { raw: snapshot.raw, byteLength: snapshot.bytes.byteLength }
+    return {
+      raw: snapshot.raw,
+      byteLength: snapshot.bytes.byteLength,
+      revision: eventRevision(snapshot.stat, path)
+    }
+  }
+
+  /**
+   * Returns only no-follow filesystem metadata. Runtime subscribers can poll
+   * this without rereading and decoding the complete append-only history.
+   */
+  readEventsRevision(): string {
+    this.ensureAuthorityDirectory()
+    const path = this.eventsPath()
+    try {
+      const stat = this.fs.lstatSync(path)
+      assertRegularFile(stat, path)
+      return eventRevision(stat, path)
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) return 'absent'
+      throw error
+    }
   }
 
   /**
@@ -870,6 +897,14 @@ function numericSize(size: number | bigint, path: string): number {
     throw new Error(`Workspace-lock authority artefact has an unsafe size: ${path}`)
   }
   return result
+}
+
+function eventRevision(stat: NodeWorkspaceLockPersistenceStat, path: string): string {
+  const timestamp = stat.mtimeNs ?? stat.mtimeMs ?? 'unknown-mtime'
+  const metadataTimestamp = stat.ctimeNs ?? stat.ctimeMs ?? 'unknown-ctime'
+  return [stat.dev, stat.ino, numericSize(stat.size, path), timestamp, metadataTimestamp]
+    .map(String)
+    .join(':')
 }
 
 function writeFully(fs: NodeWorkspaceLockPersistenceFs, fd: number, data: Buffer): void {

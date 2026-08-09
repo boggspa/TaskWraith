@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   resolveCanonicalWorkspaceLockPath,
@@ -98,6 +98,31 @@ function runtimeMarkerContents(root: string): string[] {
 }
 
 describe('WorkspaceLockAuthority', () => {
+  it('reuses decoded WAL state until the durable journal revision changes', async () => {
+    const h = harness()
+    const readEvents = vi.spyOn(h.persistence, 'readEvents')
+    const authority = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: h.dependencies
+    })
+    const readsAfterOpen = readEvents.mock.calls.length
+
+    authority.snapshot()
+    authority.snapshot()
+    expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen)
+
+    const eventsPath = path.join(
+      h.userData,
+      WORKSPACE_LOCK_AUTHORITY_DIRECTORY,
+      WORKSPACE_LOCK_EVENTS_FILENAME
+    )
+    const future = new Date(Date.now() + 60_000)
+    fs.utimesSync(eventsPath, future, future)
+    authority.snapshot()
+    expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen + 1)
+    authority.dispose()
+  })
+
   it('acquires deterministic batches atomically and permits the exact owner to continue', async () => {
     const h = harness()
     const authority = await WorkspaceLockAuthority.open({

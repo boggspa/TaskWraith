@@ -252,6 +252,7 @@ export class WorkspaceLockRuntime {
   private readonly subscribers = new Set<ProjectionSubscriber>()
   private readonly stopAuthorityListener: () => void
   private lastSnapshot: WorkLockProjectionSnapshot
+  private projectionPollTimer: ReturnType<typeof setInterval> | null = null
   private unhealthyReason: string | null = null
   private readonly pendingReconciliations = new Map<string, string>()
 
@@ -924,8 +925,7 @@ export class WorkspaceLockRuntime {
   }
 
   snapshot(): WorkLockProjectionSnapshot {
-    this.lastSnapshot = projectAuthoritySnapshot(this.authority.snapshot())
-    return this.lastSnapshot
+    return projectAuthoritySnapshot(this.authority.snapshot())
   }
 
   list(_query: WorkLockProjectionQuery = {}): WorkLockProjectionSnapshot {
@@ -936,35 +936,28 @@ export class WorkspaceLockRuntime {
     _query: WorkLockProjectionQuery,
     onUpdate: ProjectionSubscriber
   ): WorkspaceLockRuntimeSubscription {
+    const snapshot = this.snapshot()
+    if (!projectionSnapshotsEqual(this.lastSnapshot, snapshot)) {
+      const reason = inferProjectionChangeReason(this.lastSnapshot, snapshot)
+      this.lastSnapshot = snapshot
+      this.emit(reason, snapshot)
+    }
     this.subscribers.add(onUpdate)
-    let lastPolledSnapshot = this.snapshot()
-    const poll = setInterval(() => {
-      try {
-        const current = this.snapshot()
-        if (projectionSnapshotsEqual(lastPolledSnapshot, current)) return
-        const reason = inferProjectionChangeReason(lastPolledSnapshot, current)
-        lastPolledSnapshot = current
-        try {
-          onUpdate({ reason, snapshot: current })
-        } catch {
-          // A renderer subscriber cannot break cross-process convergence.
-        }
-      } catch {
-        // A transient read error must not tear down the subscription. The next
-        // tick retries the durable snapshot.
-      }
-    }, 1_000)
-    poll.unref?.()
+    this.ensureProjectionPoll()
+    let subscribed = true
     return {
-      snapshot: lastPolledSnapshot,
+      snapshot,
       unsubscribe: () => {
-        clearInterval(poll)
+        if (!subscribed) return
+        subscribed = false
         this.subscribers.delete(onUpdate)
+        if (!this.subscribers.size) this.stopProjectionPoll()
       }
     }
   }
 
   dispose(): void {
+    this.stopProjectionPoll()
     this.stopAuthorityListener()
     this.subscribers.clear()
     this.pendingReconciliations.clear()
@@ -1100,6 +1093,29 @@ export class WorkspaceLockRuntime {
         // Subscribers are projections, never participants in lock commits.
       }
     }
+  }
+
+  private ensureProjectionPoll(): void {
+    if (this.projectionPollTimer) return
+    this.projectionPollTimer = setInterval(() => {
+      try {
+        const current = this.snapshot()
+        if (projectionSnapshotsEqual(this.lastSnapshot, current)) return
+        const reason = inferProjectionChangeReason(this.lastSnapshot, current)
+        this.lastSnapshot = current
+        this.emit(reason, current)
+      } catch {
+        // A transient metadata/read error must not tear down every renderer
+        // subscription. The one shared poll retries on the next tick.
+      }
+    }, 1_000)
+    this.projectionPollTimer.unref?.()
+  }
+
+  private stopProjectionPoll(): void {
+    if (!this.projectionPollTimer) return
+    clearInterval(this.projectionPollTimer)
+    this.projectionPollTimer = null
   }
 }
 

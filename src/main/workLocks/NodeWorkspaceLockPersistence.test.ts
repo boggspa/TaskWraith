@@ -70,12 +70,16 @@ function fence(fenceId: string, generation = 1): WorkspaceLockAuthorityFence {
 describe('NodeWorkspaceLockPersistence', () => {
   it('appends fsynced JSONL frames behind an exact byte fence', () => {
     const { root, store } = createStore()
-    expect(store.readEvents()).toEqual({ raw: '', byteLength: 0 })
+    const empty = store.readEvents()
+    expect(empty).toMatchObject({ raw: '', byteLength: 0, revision: 'absent' })
 
     const first = '{"kind":"acquire","id":"a"}\n'
     const firstLength = store.appendEvent(first, 0)
     expect(firstLength).toBe(Buffer.byteLength(first))
-    expect(store.readEvents()).toEqual({ raw: first, byteLength: firstLength })
+    const firstSnapshot = store.readEvents()
+    expect(firstSnapshot).toMatchObject({ raw: first, byteLength: firstLength })
+    expect(store.readEventsRevision()).toBe(firstSnapshot.revision)
+    expect(firstSnapshot.revision).not.toBe(empty.revision)
 
     expect(() => store.appendEvent('{"kind":"release","id":"a"}\n', 0)).toThrow(
       /byte fence changed/i
@@ -83,6 +87,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     const second = '{"kind":"release","id":"a"}\n'
     const totalLength = store.appendEvent(second, firstLength)
     expect(totalLength).toBe(Buffer.byteLength(`${first}${second}`))
+    expect(store.readEventsRevision()).not.toBe(firstSnapshot.revision)
     expect(
       readFileSync(
         join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY, WORKSPACE_LOCK_EVENTS_FILENAME),
@@ -152,19 +157,19 @@ describe('NodeWorkspaceLockPersistence', () => {
     const raw = '{"valid":true}\n{"torn"'
     writeFileSync(join(authority, WORKSPACE_LOCK_EVENTS_FILENAME), raw)
 
-    expect(store.readEvents()).toEqual({ raw, byteLength: Buffer.byteLength(raw) })
+    expect(store.readEvents()).toMatchObject({ raw, byteLength: Buffer.byteLength(raw) })
     expect(() => store.appendEvent('{"later":true}\n', Buffer.byteLength(raw))).toThrow(
       /torn tail/i
     )
     const completePrefix = '{"valid":true}\n'
     const repairedLength = store.repairTornEventTail(Buffer.byteLength(raw), completePrefix)
     expect(repairedLength).toBe(Buffer.byteLength(completePrefix))
-    expect(store.readEvents()).toEqual({ raw: completePrefix, byteLength: repairedLength })
+    expect(store.readEvents()).toMatchObject({ raw: completePrefix, byteLength: repairedLength })
     expect(() => store.repairTornEventTail(Buffer.byteLength(raw), completePrefix)).toThrow(
       /byte fence changed/i
     )
     const appendedLength = store.appendEvent('{"later":true}\n', repairedLength)
-    expect(store.readEvents()).toEqual({
+    expect(store.readEvents()).toMatchObject({
       raw: `${completePrefix}{"later":true}\n`,
       byteLength: appendedLength
     })

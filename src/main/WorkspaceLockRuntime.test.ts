@@ -191,6 +191,49 @@ describe('WorkspaceLockRuntime', () => {
     expect(root).not.toBe(devUserData)
   })
 
+  it('shares one durable projection poll across every renderer subscriber', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = harness()
+      const firstUpdate = vi.fn()
+      const secondUpdate = vi.fn()
+      const first = h.runtime.subscribe({}, firstUpdate)
+      const second = h.runtime.subscribe({}, secondUpdate)
+      const callsAfterSubscribe = h.authority.snapshot.mock.calls.length
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(h.authority.snapshot).toHaveBeenCalledTimes(callsAfterSubscribe + 1)
+      expect(firstUpdate).not.toHaveBeenCalled()
+      expect(secondUpdate).not.toHaveBeenCalled()
+
+      h.authority.snapshot.mockReturnValue({
+        ...emptySnapshot(),
+        sequence: 2,
+        leases: [projectedLease('new-lock', 'held', '2026-07-29T00:00:00.000Z')]
+      })
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(firstUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'acquired' })
+      )
+      expect(secondUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'acquired' })
+      )
+
+      first.unsubscribe()
+      const callsWithOneSubscriber = h.authority.snapshot.mock.calls.length
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(h.authority.snapshot).toHaveBeenCalledTimes(callsWithOneSubscriber + 1)
+
+      second.unsubscribe()
+      const callsAfterUnsubscribe = h.authority.snapshot.mock.calls.length
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(h.authority.snapshot).toHaveBeenCalledTimes(callsAfterUnsubscribe)
+      h.runtime.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('derives and atomically acquires catalog workspace claims for every run', async () => {
     const { runtime, authority } = harness()
 

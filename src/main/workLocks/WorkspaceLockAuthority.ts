@@ -56,7 +56,8 @@ export interface WorkspaceLockAuthorityOptions {
     | 'releaseInstanceFence'
     | 'writeDerivedMarker'
     | 'removeDerivedMarker'
-  >
+  > &
+    Partial<Pick<NodeWorkspaceLockPersistence, 'readEventsRevision'>>
   dependencies: WorkspaceLockAuthorityDependencies
   /** Renewable derived-marker lifetime. Durable leases themselves do not expire. */
   markerLifetimeMs?: number
@@ -132,6 +133,7 @@ export class WorkspaceLockAuthority {
   private generation = 0
   private bootFence: WorkspaceLockAuthorityFence | null = null
   private state: WorkspaceLockWalState = decodeWorkspaceLockWal('')
+  private walRevision: string | null = null
   private markerRenewalTimer: ReturnType<typeof setTimeout> | null = null
 
   private constructor(options: WorkspaceLockAuthorityOptions) {
@@ -896,7 +898,7 @@ export class WorkspaceLockAuthority {
           kind: 'release',
           payload: { leaseIds: [lease.leaseId] }
         })
-        this.persistence.appendEvent(appended.line, byteLength)
+        this.appendWalEvent(appended.line, byteLength)
         return {
           value: {
             ok: true,
@@ -977,7 +979,7 @@ export class WorkspaceLockAuthority {
             acquiredTransitionId
           }
         })
-        this.persistence.appendEvent(appended.line, byteLength)
+        this.appendWalEvent(appended.line, byteLength)
         return {
           value: {
             ok: true,
@@ -1054,7 +1056,7 @@ export class WorkspaceLockAuthority {
           kind: 'recover',
           payload: { decisions }
         })
-        this.persistence.appendEvent(appended.line, byteLength)
+        this.appendWalEvent(appended.line, byteLength)
         return {
           value: { transitionId, decisions },
           previous: state,
@@ -1151,7 +1153,7 @@ export class WorkspaceLockAuthority {
             forceApprovalReceiptId: approvalReceiptId
           }
         })
-        this.persistence.appendEvent(appended.line, byteLength)
+        this.appendWalEvent(appended.line, byteLength)
         return {
           value: {
             ok: true,
@@ -1273,7 +1275,7 @@ export class WorkspaceLockAuthority {
             ...(retained.length ? { retainedLeaseIds: retained.map((lease) => lease.leaseId) } : {})
           }
         })
-        this.persistence.appendEvent(appended.line, byteLength)
+        this.appendWalEvent(appended.line, byteLength)
         return {
           value: {
             ok: true,
@@ -1342,7 +1344,7 @@ export class WorkspaceLockAuthority {
           kind: 'recover',
           payload: { decisions }
         })
-        this.persistence.appendEvent(appended.line, byteLength)
+        this.appendWalEvent(appended.line, byteLength)
         return {
           value: { transitionId, decisions },
           previous: state,
@@ -1355,7 +1357,10 @@ export class WorkspaceLockAuthority {
   }
 
   snapshot(): WorkspaceLockSnapshot {
-    this.state = this.readWal(false).state
+    const revision = this.persistence.readEventsRevision?.()
+    if (!revision || revision !== this.walRevision) {
+      this.state = this.readWal(false).state
+    }
     return this.snapshotFromState()
   }
 
@@ -1412,7 +1417,7 @@ export class WorkspaceLockAuthority {
           kind: 'boot',
           payload: { fence }
         })
-        this.persistence.appendEvent(appended.line, current.byteLength)
+        this.appendWalEvent(appended.line, current.byteLength)
         this.state = appended.nextState
         // Marker projection deliberately follows stale-claim recovery in
         // open(). Projecting here can fail against a replaced worktree root
@@ -1493,14 +1498,35 @@ export class WorkspaceLockAuthority {
       const lastNewline = snapshot.raw.lastIndexOf('\n')
       const prefix = lastNewline < 0 ? '' : snapshot.raw.slice(0, lastNewline + 1)
       const state = decodeWorkspaceLockWal(prefix)
-      if (!repairTail) return { state, byteLength: snapshot.byteLength }
+      if (!repairTail) {
+        this.walRevision = snapshot.revision
+        return { state, byteLength: snapshot.byteLength }
+      }
       const repairedLength = this.persistence.repairTornEventTail(snapshot.byteLength, prefix)
       snapshot = this.persistence.readEvents()
       if (snapshot.byteLength !== repairedLength || snapshot.raw !== prefix) {
         throw new Error('Workspace-lock WAL changed during torn-tail repair.')
       }
     }
+    this.walRevision = snapshot.revision
     return { state: decodeWorkspaceLockWal(snapshot.raw), byteLength: snapshot.byteLength }
+  }
+
+  private appendWalEvent(serializedLineWithNewline: string, expectedByteLength: number): number {
+    try {
+      const byteLength = this.persistence.appendEvent(
+        serializedLineWithNewline,
+        expectedByteLength
+      )
+      this.walRevision = this.persistence.readEventsRevision?.() ?? null
+      return byteLength
+    } catch (error) {
+      // An append can fail after the bytes became durable. Force the next
+      // snapshot/retry to reconcile against the journal instead of trusting
+      // a cursor whose exact outcome is unknown.
+      this.walRevision = null
+      throw error
+    }
   }
 
   private canonicalize(request: WorkspaceLockClaimRequest): CanonicalizedRequest {
@@ -1647,7 +1673,7 @@ export class WorkspaceLockAuthority {
       kind: 'cleanup',
       payload: { markers: retiring }
     })
-    this.persistence.appendEvent(appended.line, current.byteLength)
+    this.appendWalEvent(appended.line, current.byteLength)
     this.state = appended.nextState
   }
 
@@ -1679,7 +1705,7 @@ export class WorkspaceLockAuthority {
       }
     })
     try {
-      this.persistence.appendEvent(appended.line, prepared.byteLength)
+      this.appendWalEvent(appended.line, prepared.byteLength)
     } catch (appendError) {
       let observed: ReturnType<WorkspaceLockAuthority['readWal']>
       try {
@@ -1756,7 +1782,7 @@ export class WorkspaceLockAuthority {
       kind: 'prepare',
       payload: { markers }
     })
-    const preparedByteLength = this.persistence.appendEvent(prepared.line, byteLength)
+    const preparedByteLength = this.appendWalEvent(prepared.line, byteLength)
     this.state = prepared.nextState
 
     try {
