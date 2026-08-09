@@ -125,13 +125,17 @@ export class CanvasEmbedController {
     const view = this.deps.createView(opts.partition)
     const entry: EmbeddedEntry = {
       view,
-      visible: true,
+      // A model-requested dock presentation can be created before React has
+      // mounted the dock and reported its bounds. Start hidden + parked so the
+      // WebContentsView never flashes over unrelated consent or transcript UI.
+      visible: false,
       bounds: { x: 0, y: 0, width: opts.width, height: opts.height },
       destroyed: false
     }
     this.entries.set(canvasId, entry)
     parent.addChildView(view)
-    this.safeSetBounds(entry, this.scaled(entry.bounds))
+    this.safeSetVisible(entry, false)
+    this.safeSetBounds(entry, OFFSCREEN)
     return {
       webContents: view.webContents as unknown as CanvasHostSurface['webContents'],
       getTitle: () => view.webContents.getTitle(),

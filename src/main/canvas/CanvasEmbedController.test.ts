@@ -58,11 +58,14 @@ function make() {
 }
 
 describe('CanvasEmbedController', () => {
-  it('surfaceFor attaches a view and sets the initial size', () => {
+  it('surfaceFor attaches a view hidden off-screen until its pane reports bounds', () => {
     const { parent, created, controller } = make()
     const surface = controller.surfaceFor('c1')({ partition: 'canvas-c1', width: 800, height: 600 })
     expect(parent.children).toHaveLength(1)
     expect(controller.has('c1')).toBe(true)
+    expect(created[0].visible).toBe(false)
+    expect(created[0].bounds.x).toBeLessThan(-1000)
+    controller.setVisible('c1', true)
     expect(created[0].bounds).toEqual({ x: 0, y: 0, width: 800, height: 600 })
     expect(surface.getTitle()).toBe('Fake')
     expect(surface.isDestroyed()).toBe(false)
@@ -71,6 +74,7 @@ describe('CanvasEmbedController', () => {
   it('setBounds positions the view (rounded/clamped) while visible', () => {
     const { created, controller } = make()
     controller.surfaceFor('c1')({ partition: 'p', width: 800, height: 600 })
+    controller.setVisible('c1', true)
     controller.setBounds('c1', { x: 10.6, y: 20.4, width: 300.9, height: -5 })
     expect(created[0].bounds).toEqual({ x: 11, y: 20, width: 301, height: 0 })
   })
@@ -79,6 +83,7 @@ describe('CanvasEmbedController', () => {
     const { parent, created, controller } = make()
     parent.zoom = 2
     controller.surfaceFor('c1')({ partition: 'p', width: 800, height: 600 })
+    controller.setVisible('c1', true)
     controller.setBounds('c1', { x: 10, y: 20, width: 100, height: 50 })
     // The view is positioned in DIP = CSS-px * zoom.
     expect(created[0].bounds).toEqual({ x: 20, y: 40, width: 200, height: 100 })
@@ -119,6 +124,7 @@ describe('CanvasEmbedController', () => {
   it('setContentSize updates the tracked size', () => {
     const { created, controller } = make()
     const surface = controller.surfaceFor('c1')({ partition: 'p', width: 800, height: 600 })
+    controller.setVisible('c1', true)
     surface.setContentSize(375, 812)
     expect(created[0].bounds).toMatchObject({ width: 375, height: 812 })
   })

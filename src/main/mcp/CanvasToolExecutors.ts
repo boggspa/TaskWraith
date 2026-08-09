@@ -419,6 +419,17 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
       switch (toolName) {
         case 'canvas_open': {
           const requestedDriver = asOptString(args.driver)
+          const requestedPresentation = asOptString(args.presentation)
+          if (
+            requestedPresentation &&
+            requestedPresentation !== 'window' &&
+            requestedPresentation !== 'dock'
+          ) {
+            return fail(
+              toolName,
+              `Unsupported canvas presentation: ${requestedPresentation}. Use "window" or "dock".`
+            )
+          }
           if (requestedDriver === 'window') {
             return fail(
               toolName,
@@ -431,6 +442,9 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           const driver = requestedDriver === 'device' ? 'device' : 'web'
           const viewport = resolveViewport({ width: args.width, height: args.height })
           if (driver === 'device') {
+            if (requestedPresentation === 'dock') {
+              return fail(toolName, 'Dock presentation is available only for the web driver.')
+            }
             // iOS simulator: launch + screenshot an app by bundle id (no url).
             const bundleId = asOptString(args.bundleId)
             if (!bundleId) {
@@ -463,7 +477,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               driver: 'web',
               url,
               viewport,
-              originAllowlist: asStringArray(args.originAllowlist)
+              originAllowlist: asStringArray(args.originAllowlist),
+              ...(requestedPresentation === 'dock' ? { embed: true } : {})
             },
             ctx
           )
@@ -473,7 +488,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             canvasId: opened.canvasId,
             url: redactUrlQuery(opened.url),
             title: opened.title,
-            viewport: opened.viewport
+            viewport: opened.viewport,
+            presentation: requestedPresentation === 'dock' ? 'dock' : 'window'
           })
         }
         case 'canvas_render_html': {

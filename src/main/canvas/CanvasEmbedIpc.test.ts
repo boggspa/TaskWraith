@@ -35,7 +35,33 @@ function fakeDeps() {
     },
     list: (ctx: unknown) => {
       calls.push(['list', [ctx]])
-      return [{ canvasId: 'c1' }]
+      return [
+        {
+          canvasId: 'c1',
+          driver: 'web',
+          url: 'http://localhost:3000/',
+          title: 'T',
+          status: 'active',
+          viewport: { width: 800, height: 600 },
+          createdAt: 't0',
+          updatedAt: 't0',
+          presentation: 'dock'
+        }
+      ]
+    },
+    status: (_id: string, ctx: unknown) => {
+      calls.push(['status', [ctx]])
+      return {
+        canvasId: 'c1',
+        driver: 'web',
+        url: 'http://localhost:3000/',
+        title: 'T',
+        status: 'active',
+        viewport: { width: 800, height: 600 },
+        createdAt: 't0',
+        updatedAt: 't0',
+        presentation: 'dock'
+      }
     },
     navigate: async (id: string, input: unknown, ctx: unknown, opts: unknown) => {
       calls.push(['navigate', [id, input, ctx, opts]])
@@ -49,6 +75,7 @@ function fakeDeps() {
     }
   } as unknown as Parameters<typeof registerCanvasEmbedIpc>[1]['controller']
   const embed = {
+    has: (id: string) => id === 'c1',
     setBounds: (id: string, rect: unknown) => calls.push(['setBounds', [id, rect]]),
     setVisible: (id: string, visible: boolean) => calls.push(['setVisible', [id, visible]]),
     detach: (id: string) => calls.push(['detach', [id]])
@@ -69,6 +96,7 @@ describe('registerCanvasEmbedIpc', () => {
       'canvas:open-embedded',
       'canvas:open-sketch-window',
       'canvas:open-sketch-embedded',
+      'canvas:adopt-embedded',
       'canvas:set-bounds',
       'canvas:set-visible',
       'canvas:close',
@@ -196,13 +224,49 @@ describe('registerCanvasEmbedIpc', () => {
     const deps = fakeDeps()
     registerCanvasEmbedIpc(ipc.ipcMain, deps)
 
-    expect(await ipc.invoke('canvas:list-chat', 'chat-a')).toEqual([{ canvasId: 'c1' }])
+    expect(await ipc.invoke('canvas:list-chat', 'chat-a')).toEqual([
+      expect.objectContaining({ canvasId: 'c1', presentation: 'dock' })
+    ])
     expect(deps.calls).toContainEqual([
       'list',
       [{ chatId: 'chat-a', workspacePath: '/workspace/a' }]
     ])
     expect(() => ipc.invoke('canvas:list-chat', '')).toThrow(/canonical chat/)
     expect(() => ipc.invoke('canvas:list-chat', 42)).toThrow(/canonical chat/)
+  })
+
+  it('adopts an agent-opened dock canvas under exact renderer and chat authority', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    const adopted = await ipc.invoke('canvas:adopt-embedded', {
+      chatId: 'chat-a',
+      canvasId: 'c1'
+    })
+
+    expect(adopted).toMatchObject({ ok: true, canvasId: 'c1', presentation: 'dock' })
+    await ipc.invoke('canvas:set-bounds', 'c1', { x: 1, y: 2, width: 3, height: 4 })
+    expect(deps.calls).toContainEqual([
+      'setBounds',
+      ['c1', { x: 1, y: 2, width: 3, height: 4 }]
+    ])
+    expect(await ipc.invoke('canvas:list')).toEqual([
+      expect.objectContaining({ canvasId: 'c1', presentation: 'dock' })
+    ])
+  })
+
+  it('refuses to adopt a canvas without a live embedded surface', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    ;(deps.embed as { has: (id: string) => boolean }).has = () => false
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    expect(ipc.invoke('canvas:adopt-embedded', { chatId: 'chat-a', canvasId: 'c1' })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/embedded/i)
+    })
+    expect(await ipc.invoke('canvas:list')).toEqual([])
   })
 
   it('closes a chat canvas only when the controller accepts the close', async () => {
@@ -259,7 +323,9 @@ describe('registerCanvasEmbedIpc', () => {
     })
     await ipc.invoke('canvas:set-bounds', 'c1', { x: 1, y: 2, width: 3, height: 4 })
     await ipc.invoke('canvas:set-visible', 'c1', false)
-    expect(await ipc.invoke('canvas:list')).toEqual([{ canvasId: 'c1' }])
+    expect(await ipc.invoke('canvas:list')).toEqual([
+      expect.objectContaining({ canvasId: 'c1', presentation: 'dock' })
+    ])
     await ipc.invoke('canvas:close', 'c1')
 
     expect(deps.calls).toContainEqual([

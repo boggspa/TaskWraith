@@ -35,6 +35,7 @@ export interface CanvasEmbedIpcAuthority {
 
 type OpenArgs = { url?: string; originAllowlist?: string[]; chatId?: string } | undefined
 type OpenSketchArgs = { chatId?: string } | undefined
+type AdoptEmbeddedArgs = { chatId?: string; canvasId?: string } | undefined
 type OpenCanvasResult =
   | {
       ok: true
@@ -171,6 +172,36 @@ export function registerCanvasEmbedIpc(
   ipcMain.handle('canvas:open-sketch-embedded', (event, args: OpenSketchArgs) =>
     openSketchCanvas(event, args, true)
   )
+
+  // Agent-opened dock canvases already have a hidden WebContentsView, but are
+  // not yet renderer-owned. Adoption binds that exact live surface to the
+  // sender + canonical chat so the ordinary bounds/visibility/close handlers
+  // can host it without changing canvasId or weakening renderer authority.
+  ipcMain.handle('canvas:adopt-embedded', (event, args: AdoptEmbeddedArgs) => {
+    try {
+      const chatId = requiredChatId(args?.chatId)
+      const canvasId = typeof args?.canvasId === 'string' ? args.canvasId.trim() : ''
+      if (!canvasId) throw new Error('Canvas adoption requires a canvas id.')
+      const context = deps.resolveContext(event, chatId)
+      const existing = owned.get(canvasId)
+      if (existing) {
+        if (existing.senderId !== senderId(event) || !sameAuthority(existing.context, context)) {
+          throw new Error('Canvas is already owned by a different renderer or chat.')
+        }
+      }
+      if (!deps.embed.has(canvasId)) {
+        throw new Error('Canvas does not have a live embedded surface to adopt.')
+      }
+      const summary = deps.controller.status(canvasId, context)
+      if (!summary || summary.presentation !== 'dock') {
+        throw new Error('Canvas is not an active dock presentation for this chat.')
+      }
+      owned.set(canvasId, { context, senderId: senderId(event) })
+      return { ok: true, ...summary }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
 
   ipcMain.handle('canvas:set-bounds', (event, canvasId: unknown, rect: unknown) => {
     if (typeof canvasId === 'string') {

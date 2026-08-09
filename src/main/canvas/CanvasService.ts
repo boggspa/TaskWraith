@@ -105,6 +105,7 @@ interface LiveSession {
   interactions: number
   evals: number
   generation: number
+  presentation?: 'dock'
 }
 
 interface PendingOpen {
@@ -639,9 +640,9 @@ export class CanvasService implements CanvasController {
       throw error
     }
 
-    // Embed is renderer-initiated (the multiview pane / right-dock canvas panel);
-    // the agent's executor never sets it. Only the drivers with a live, hostable
-    // surface can embed — web and sketch; html/image/device/window have no surface.
+    // Only drivers with a live, hostable surface can embed — web and sketch;
+    // html/image/device/window have no surface. Renderer opens set this directly;
+    // an agent may set it only through the explicit dock-presentation tool option.
     const embedded = (driverKind === 'web' || driverKind === 'sketch') && input.embed === true
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     let driver: CanvasDriver
@@ -752,11 +753,19 @@ export class CanvasService implements CanvasController {
       // session in list/status/require.
       this.deps.store.upsertSession(record)
       this.pendingOpens.delete(canvasId)
-      this.sessions.set(canvasId, { driver, record, interactions: 0, evals: 0, generation })
+      this.sessions.set(canvasId, {
+        driver,
+        record,
+        interactions: 0,
+        evals: 0,
+        generation,
+        ...(embedded ? { presentation: 'dock' as const } : {})
+      })
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
         host: eventHost,
-        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url)
+        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url),
+        ...(embedded ? { presentation: 'dock' } : {})
       })
       return {
         canvasId,
@@ -799,7 +808,8 @@ export class CanvasService implements CanvasController {
             record: baseRecord,
             interactions: 0,
             evals: 0,
-            generation
+            generation,
+            ...(embedded ? { presentation: 'dock' as const } : {})
           },
           ctx
         })
@@ -822,6 +832,7 @@ export class CanvasService implements CanvasController {
   /** Summary of a LIVE session, enriched with browser-chrome state when available. */
   private liveSummary(session: LiveSession): CanvasSessionSummary {
     const summary = toSummary(session.record)
+    if (session.presentation) summary.presentation = session.presentation
     if (session.record.driver === 'web') {
       try {
         const nav = session.driver.navState?.()

@@ -55,8 +55,9 @@ export interface CanvasOpenInput {
   bundleId?: string
   /**
    * Renderer-pane embed (web driver only): host the preview as a WebContentsView
-   * inside the app window instead of a standalone BrowserWindow. Set ONLY by the
-   * renderer's canvas-pane IPC — never by the agent's canvas_open executor.
+   * inside the app window instead of a standalone BrowserWindow. Set by the
+   * renderer's canvas-pane IPC, or by the agent executor only after the caller
+   * explicitly requests the governed `presentation: "dock"` tool contract.
    */
   embed?: boolean
   // --- html driver (agent-authored layout/SVG; canvas_render_html) ---
@@ -471,6 +472,8 @@ export interface CanvasSessionSummary {
   viewport: CanvasViewport
   createdAt: string
   updatedAt: string
+  /** Live host placement. Present only when the surface belongs in the Canvas dock. */
+  presentation?: 'dock'
   /** Live browser-chrome state; present only for open web-driver sessions. */
   isLoading?: boolean
   canGoBack?: boolean

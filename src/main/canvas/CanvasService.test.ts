@@ -304,8 +304,14 @@ describe('CanvasService', () => {
   })
 
   it('embeds only the surface-hosting drivers (web + sketch), never surface-less ones', async () => {
-    await service.open({ url: 'http://localhost:3000', embed: true }, { chatId: 'chat-a' })
+    const web = await service.open(
+      { url: 'http://localhost:3000', embed: true },
+      { chatId: 'chat-a' }
+    )
     expect(lastDriverOpts?.embedded).toBe(true)
+    expect(service.status(web.canvasId, { chatId: 'chat-a' })?.presentation).toBe('dock')
+    expect(events.find((event) => event.canvasId === web.canvasId && event.kind === 'session.opened'))
+      .toMatchObject({ detail: { presentation: 'dock' } })
 
     await service.open({ driver: 'sketch', embed: true }, { chatId: 'chat-a' })
     expect(lastDriverOpts?.embedded).toBe(true)

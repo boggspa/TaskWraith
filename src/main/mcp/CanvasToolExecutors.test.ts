@@ -163,6 +163,64 @@ describe('executeCanvasTool', () => {
     expect(result.structuredContent?.canvasId).toBe('c1')
   })
 
+  it('canvas_open can request a first-class dock presentation without changing its canvasId', async () => {
+    const opens: unknown[] = []
+    const controller = fakeController({
+      open: async (input) => {
+        opens.push(input)
+        return {
+          canvasId: 'dock-canvas',
+          url: input.url || '',
+          title: 'Presented app',
+          viewport: { width: 1280, height: 800 }
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+
+    const result = await executeCanvasTool(
+      'canvas_open',
+      { url: 'http://localhost:3000', presentation: 'dock' },
+      ctx,
+      'claude'
+    )
+
+    expect(result.isError).toBeFalsy()
+    expect(opens).toEqual([
+      expect.objectContaining({
+        driver: 'web',
+        url: 'http://localhost:3000',
+        embed: true
+      })
+    ])
+    expect(result.structuredContent).toMatchObject({
+      canvasId: 'dock-canvas',
+      presentation: 'dock'
+    })
+  })
+
+  it('canvas_open rejects dock presentation for a surface-less device canvas', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: '', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+
+    const result = await executeCanvasTool(
+      'canvas_open',
+      { driver: 'device', bundleId: 'com.example.App', presentation: 'dock' },
+      ctx,
+      'claude'
+    )
+
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error)).toMatch(/dock presentation.*web/i)
+    expect(opened).toBe(false)
+  })
+
   it('canvas_open requires a url', async () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
     const result = await executeCanvasTool('canvas_open', {}, ctx, 'claude')
