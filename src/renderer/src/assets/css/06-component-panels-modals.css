@@ -80,7 +80,7 @@
 }
 
 .activity-progress-note {
-  --activity-progress-note-thinking-accent: var(--tool-call-icon-accent, var(--accent));
+  --activity-progress-note-thinking-accent: var(--accent);
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 8px;

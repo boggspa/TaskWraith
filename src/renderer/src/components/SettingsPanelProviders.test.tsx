@@ -33,7 +33,6 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     themeAppearance: 'dark',
     themeCornerStyle: 'rounded',
     themeAccentStyle: 'blue',
-    toolIconAccent: 'system',
     diffStatColors: { additions: '#2DB777', deletions: '#EC3D35' },
     appIconVariant: 'regular',
     userBubbleColor: 'system',
@@ -165,6 +164,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('#2DB777')
     expect(html).toContain('#EC3D35')
     expect(html).toContain('HSL')
+    expect(html).not.toContain('Tool-icon color')
   })
 
   it('binds the custom transcript-font input to the PERSISTED value (not appearance state)', () => {

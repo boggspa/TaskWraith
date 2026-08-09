@@ -1469,23 +1469,6 @@
   --tool-running: var(--accent);
 }
 
-/* Tool-icon accent overrides. `system` doesn't appear here — the
- * default fallback in `.activity-category-icon` is `var(--accent)`,
- * so leaving the var unset is exactly the "match accent" behaviour.
- * Named overrides pin only the tool-call icons; the rest of the UI
- * keeps the user's theme accent. */
-[data-tool-icon-accent="blue"]     { --tool-call-icon-accent: #5a8cff; }
-[data-tool-icon-accent="purple"]   { --tool-call-icon-accent: #bf7cff; }
-[data-tool-icon-accent="pink"]     { --tool-call-icon-accent: #ff5fa2; }
-[data-tool-icon-accent="orange"]   { --tool-call-icon-accent: #ff9b54; }
-[data-tool-icon-accent="green"]    { --tool-call-icon-accent: #4cc38a; }
-[data-tool-icon-accent="red"]    { --tool-call-icon-accent: #e65b62; }
-[data-tool-icon-accent="yellow"]   { --tool-call-icon-accent: #f2c94c; }
-[data-tool-icon-accent="graphite"] { --tool-call-icon-accent: #9da6b8; }
-[data-tool-icon-accent="amber"]  { --tool-call-icon-accent: #f2a64c; }
-[data-tool-icon-accent="cyan"]   { --tool-call-icon-accent: #4cb8d0; }
-[data-tool-icon-accent="violet"] { --tool-call-icon-accent: #bf7cff; }
-
 /* User chat-bubble colour overrides. `system` doesn't appear here —
  * the default fallback in `.message-bubble.user` is `--app-bg-elevated`
  * + `--text-muted` for the "You" label, so leaving the var unset is

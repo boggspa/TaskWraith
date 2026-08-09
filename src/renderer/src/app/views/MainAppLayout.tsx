@@ -1406,7 +1406,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   composerStyle: appearance.composerStyle,
                   themeAccentStyle: appearance.themeAccentStyle,
                   themeAppearance: appearance.themeAppearance,
-                  toolIconAccent: appearance.toolIconAccent,
                   sidebarOpacity: appearance.sidebarOpacity,
                   mainPaneOpacity: appearance.mainPaneOpacity
                 }}
@@ -1522,7 +1521,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               themeAppearance={appearance.themeAppearance}
               themeCornerStyle={appearance.themeCornerStyle}
               themeAccentStyle={appearance.themeAccentStyle}
-              toolIconAccent={appearance.toolIconAccent}
               diffStatColors={appearance.diffStatColors}
               appIconVariant={appearance.appIconVariant}
               userBubbleColor={appearance.userBubbleColor}
@@ -1973,7 +1971,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 composerStyle: appearance.composerStyle,
                 themeAccentStyle: appearance.themeAccentStyle,
                 themeAppearance: appearance.themeAppearance,
-                toolIconAccent: appearance.toolIconAccent,
                 sidebarOpacity: appearance.sidebarOpacity,
                 mainPaneOpacity: appearance.mainPaneOpacity
               }}

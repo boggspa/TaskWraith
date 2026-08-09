@@ -392,6 +392,33 @@ function activitySpeakerMessage(message: ChatMessage, chat: ChatRecord | null): 
   }
 }
 
+function activityStackSpeakerPresentation({
+  message,
+  chat,
+  run,
+  fallbackProvider,
+  fallbackProviderLabel
+}: {
+  message: ChatMessage
+  chat: ChatRecord | null
+  run?: ChatRun | null
+  fallbackProvider: ProviderId
+  fallbackProviderLabel: string
+}) {
+  const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
+  const activityProvider = providerIdFromUnknown(firstActivityWithMetadata?.metadata?.provider)
+  const labelProvider = providerIdFromUnknown(run?.provider) || activityProvider || fallbackProvider
+  return formatAssistantMessageLabel(
+    activitySpeakerMessage(message, chat),
+    labelProvider ? getProviderLabel(labelProvider) : fallbackProviderLabel,
+    labelProvider,
+    {
+      isEnsembleChat: chat?.chatKind === 'ensemble',
+      soloModelId: run?.actualModel || run?.requestedModel || null
+    }
+  )
+}
+
 function ActivityStackSpeakerHeader({
   message,
   chat,
@@ -405,24 +432,19 @@ function ActivityStackSpeakerHeader({
   fallbackProvider: ProviderId
   fallbackProviderLabel: string
 }): ReactElement {
-  const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
-  const activityProvider = providerIdFromUnknown(firstActivityWithMetadata?.metadata?.provider)
-  const labelProvider = providerIdFromUnknown(run?.provider) || activityProvider || fallbackProvider
   const {
     label,
     provider,
     providerClass,
     modelBadge,
     pooledAgentIdentity
-  } = formatAssistantMessageLabel(
-    activitySpeakerMessage(message, chat),
-    labelProvider ? getProviderLabel(labelProvider) : fallbackProviderLabel,
-    labelProvider,
-    {
-      isEnsembleChat: chat?.chatKind === 'ensemble',
-      soloModelId: run?.actualModel || run?.requestedModel || null
-    }
-  )
+  } = activityStackSpeakerPresentation({
+    message,
+    chat,
+    run,
+    fallbackProvider,
+    fallbackProviderLabel
+  })
   const providerHook = providerClass || provider
 
   return (
@@ -4454,6 +4476,15 @@ export const TranscriptPanel = memo(
               stringFromUnknown(msg.metadata?.guestModel) ||
               stringFromUnknown(msg.metadata?.providerModel) ||
               assistantRunModel
+            const activityStackProviderHueClass = isToolActivityStack
+              ? activityStackSpeakerPresentation({
+                  message: msg,
+                  chat: currentChat,
+                  run: boundaryRun || assistantRun,
+                  fallbackProvider: currentProvider,
+                  fallbackProviderLabel: currentProviderLabel
+                }).providerClass || undefined
+              : undefined
             const activityStackHeader = isToolActivityStack ? (
               <ActivityStackSpeakerHeader
                 message={msg}
@@ -4753,6 +4784,7 @@ export const TranscriptPanel = memo(
                     header={activityStackHeader}
                     activities={msg.toolActivities || []}
                     showDiffStats
+                    providerHueClass={activityStackProviderHueClass}
                     expanded={collapsedStackExpanded}
                     onToggle={(expanded) =>
                       setCollapsedStackExpanded(liveViewportStackKey, expanded)
@@ -4763,6 +4795,7 @@ export const TranscriptPanel = memo(
                       header={null}
                       workspacePath={currentWorkspacePath}
                       provider={getChatProvider(currentChat)}
+                      providerHueClass={activityStackProviderHueClass}
                       chatId={currentChat?.appChatId}
                       runId={msg.runId || boundaryRun?.runId}
                       chat={currentChat || undefined}
@@ -4789,6 +4822,7 @@ export const TranscriptPanel = memo(
                     header={activityStackHeader}
                     workspacePath={currentWorkspacePath}
                     provider={getChatProvider(currentChat)}
+                    providerHueClass={activityStackProviderHueClass}
                     chatId={currentChat?.appChatId}
                     runId={msg.runId || boundaryRun?.runId}
                     chat={currentChat || undefined}

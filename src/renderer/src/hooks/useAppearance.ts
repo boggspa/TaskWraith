@@ -8,7 +8,6 @@ import type {
   ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
-  ToolIconAccent,
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
@@ -48,7 +47,6 @@ export interface AppearanceState {
   themeAppearance: ThemeAppearance
   themeCornerStyle: ThemeCornerStyle
   themeAccentStyle: ThemeAccentStyle
-  toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
   diffStatColors: DiffStatColors
   agentThemeTokens: AgentThemeTokenOverrides
@@ -148,7 +146,6 @@ function getInitialState(): AppearanceState {
     themeAppearance: 'system',
     themeCornerStyle: 'rounded',
     themeAccentStyle: 'system',
-    toolIconAccent: 'system',
     userBubbleColor: 'system',
     diffStatColors: DEFAULT_DIFF_STAT_COLORS,
     agentThemeTokens: {},
@@ -237,7 +234,6 @@ export function useAppearance() {
           themeAppearance,
           themeCornerStyle: settings.themeCornerStyle || 'rounded',
           themeAccentStyle: settings.themeAccentStyle || 'system',
-          toolIconAccent: settings.toolIconAccent || 'system',
           appIconVariant: settings.appIconVariant || DEFAULT_APP_ICON_VARIANT,
           userBubbleColor: settings.userBubbleColor || 'system',
           diffStatColors: normalizeDiffStatColors(settings.diffStatColors),
@@ -323,7 +319,6 @@ export function useAppearance() {
     root.setAttribute('data-theme', next.themeAppearance)
     root.setAttribute('data-corners', next.themeCornerStyle)
     root.setAttribute('data-accent', next.themeAccentStyle)
-    root.setAttribute('data-tool-icon-accent', next.toolIconAccent)
     root.setAttribute('data-user-bubble-color', next.userBubbleColor)
     root.style.setProperty('--diff-stat-add-color', next.diffStatColors.additions)
     root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
@@ -488,7 +483,6 @@ export function useAppearance() {
             themeAppearance: next.themeAppearance,
             themeCornerStyle: next.themeCornerStyle,
             themeAccentStyle: next.themeAccentStyle,
-            toolIconAccent: next.toolIconAccent,
             userBubbleColor: next.userBubbleColor,
             diffStatColors: next.diffStatColors,
             appIconVariant: next.appIconVariant,

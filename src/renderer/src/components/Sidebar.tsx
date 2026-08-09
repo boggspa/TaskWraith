@@ -36,7 +36,6 @@ import type {
   ComposerStyle,
   ThemeAccentStyle,
   ThemeAppearance,
-  ToolIconAccent,
   ApprovalLedgerRecord
 } from '../../../main/store/types'
 import type { TaskWraithPluginActivatedWorkflowTemplate } from '../../../shared/plugins/PluginTypes'
@@ -256,7 +255,6 @@ interface SidebarProps {
     composerStyle: ComposerStyle
     themeAccentStyle: ThemeAccentStyle
     themeAppearance: ThemeAppearance
-    toolIconAccent: ToolIconAccent
     sidebarOpacity: number
     mainPaneOpacity: number
   }
@@ -264,7 +262,6 @@ interface SidebarProps {
     composerStyle?: ComposerStyle
     themeAccentStyle?: ThemeAccentStyle
     themeAppearance?: ThemeAppearance
-    toolIconAccent?: ToolIconAccent
     sidebarOpacity?: number
     mainPaneOpacity?: number
     sidebarOpacityOverride?: boolean
@@ -569,7 +566,7 @@ const SIDEBAR_SECTION_PREVIEW_LIMIT = 5
  *  the Workspaces / Chats sections already surface. */
 const SIDEBAR_RECENTS_MAX = 20
 
-export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' | 'system' | 'tool'
+export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' | 'system'
 
 const SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER = 8
 const SIDEBAR_SETTINGS_MENU_MAX_WIDTH = 260
@@ -648,21 +645,6 @@ const SIDEBAR_SYSTEM_THEME_OPTIONS: Array<{ value: ThemeAppearance; label: strin
   { value: 'candy', label: 'Candy' },
   { value: 'mist', label: 'Mist' },
   { value: 'sage', label: 'Sage' }
-]
-
-const SIDEBAR_TOOL_ICON_OPTIONS: Array<{ value: ToolIconAccent; label: string }> = [
-  { value: 'system', label: 'Match accent' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'green', label: 'Green' },
-  { value: 'red', label: 'Red' },
-  { value: 'yellow', label: 'Yellow' },
-  { value: 'graphite', label: 'Graphite' },
-  { value: 'amber', label: 'Amber' },
-  { value: 'cyan', label: 'Cyan' },
-  { value: 'violet', label: 'Violet' }
 ]
 
 function FolderSymbolIcon() {
@@ -991,14 +973,6 @@ export function SidebarSettingsMenu({
           <span className="sidebar-settings-menu-item-label">System Theme</span>
           <MenuChevronIcon />
         </button>
-        <button
-          type="button"
-          className="sidebar-settings-menu-item"
-          onClick={() => setPane('tool')}
-        >
-          <span className="sidebar-settings-menu-item-label">Tool Call Theme</span>
-          <MenuChevronIcon />
-        </button>
         <div className="sidebar-settings-menu-divider" aria-hidden />
         <div className="sidebar-settings-menu-section-label" aria-hidden>
           Pane opacity
@@ -1067,26 +1041,6 @@ export function SidebarSettingsMenu({
         {SIDEBAR_SYSTEM_THEME_OPTIONS.map((option) =>
           renderChoice(option.label, quickSettings?.themeAppearance === option.value, () =>
             selectAppearance({ themeAppearance: option.value })
-          )
-        )}
-      </div>
-    )
-  }
-
-  if (pane === 'tool') {
-    return (
-      <div
-        className={menuClassName}
-        style={style}
-        role="menu"
-        aria-label="Tool call theme shortcuts"
-        onKeyDown={moveMenuFocus}
-      >
-        {renderBackButton('Tool Call Theme', 'themes')}
-        <div className="sidebar-settings-menu-divider" aria-hidden />
-        {SIDEBAR_TOOL_ICON_OPTIONS.map((option) =>
-          renderChoice(option.label, quickSettings?.toolIconAccent === option.value, () =>
-            selectAppearance({ toolIconAccent: option.value })
           )
         )}
       </div>

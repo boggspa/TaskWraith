@@ -12,7 +12,6 @@ export type SettingsPanelUpdate = {
   themeAppearance?: AppSettings['themeAppearance']
   themeCornerStyle?: AppSettings['themeCornerStyle']
   themeAccentStyle?: AppSettings['themeAccentStyle']
-  toolIconAccent?: AppSettings['toolIconAccent']
   userBubbleColor?: AppSettings['userBubbleColor']
   diffStatColors?: AppSettings['diffStatColors']
   appIconVariant?: AppSettings['appIconVariant']

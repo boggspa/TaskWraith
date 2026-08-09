@@ -364,6 +364,67 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('--message-working-accent:var(--provider-deepseek-color, var(--accent))')
   })
 
+  it('scopes a settled solo tool stack to its Pi upstream brand hue', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          liveActivityViewport: true,
+          currentProviderLabel: 'Pi',
+          currentProvider: 'pi',
+          currentChat: {
+            appChatId: 'pi-deepseek-chat',
+            chatKind: 'single',
+            provider: 'pi',
+            title: 'DeepSeek tool run',
+            createdAt: 0,
+            updatedAt: 0,
+            archived: false,
+            messages: [],
+            runs: [
+              {
+                runId: 'run-pi-deepseek',
+                provider: 'pi',
+                requestedModel: 'deepseek/deepseek-v4-flash',
+                startedAt: '2026-08-09T20:00:00.000Z'
+              }
+            ]
+          } as ChatRecord,
+          messages: [
+            {
+              id: 'tool-pi-deepseek',
+              role: 'tool',
+              content: '',
+              timestamp: '2026-08-09T20:00:01.000Z',
+              runId: 'run-pi-deepseek',
+              toolActivities: [
+                {
+                  id: 'edit-pi-deepseek',
+                  toolName: 'edit',
+                  displayName: 'Edited providerAccent.ts',
+                  category: 'write',
+                  status: 'success',
+                  metadata: { provider: 'pi' }
+                } as ToolActivity
+              ]
+            } as ChatMessage,
+            {
+              id: 'assistant-after-tools',
+              role: 'assistant',
+              content: 'Finished.',
+              timestamp: '2026-08-09T20:00:02.000Z',
+              runId: 'run-pi-deepseek'
+            } as ChatMessage
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('message-meta provider-deepseek')
+    expect(html).toContain('--accent:var(--provider-deepseek-color, var(--accent))')
+    expect(html).not.toContain('--accent:var(--provider-pi-color, var(--accent))')
+  })
+
   it('prepends participant-style headers to live tool-call viewports', () => {
     const participant = ensembleParticipant({
       id: 'codex-reviewer',

@@ -310,6 +310,19 @@ describe('Sidebar settings quick menu', () => {
     expect(html.indexOf('ChatGPT shell')).toBeLessThan(html.indexOf('Claude shell'))
   })
 
+  it('does not offer a user-defined tool-call theme', () => {
+    const html = renderToStaticMarkup(
+      <SidebarSettingsMenu
+        pane="themes"
+        setPane={() => undefined}
+        onOpenSettings={() => undefined}
+        onClose={() => undefined}
+      />
+    )
+
+    expect(html).not.toContain('Tool Call Theme')
+  })
+
   it('keeps the portaled menu above its footer trigger and within the viewport', () => {
     expect(
       resolveSidebarSettingsMenuPortalPosition({ left: 0, top: 900 }, { width: 1280, height: 980 })

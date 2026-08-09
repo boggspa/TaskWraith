@@ -12345,16 +12345,12 @@ button.diff-file-row {
 
 .activity-category-icon {
   flex-shrink: 0;
-  /* Phase K-followup — tool-call icons follow the system accent
-   * colour. Per-row category coloring (was: write=accent, shell=
-   * warning amber, etc.) is gone — having shell tools render orange
-   * regardless of theme made the transcript feel disconnected from
-   * the user's accent choice. A separate `--tool-call-icon-accent`
-   * token is exposed (defaults to `--accent`) so a future settings
-   * pane can override the icon color independently from the rest
-   * of the UI's accent. Error status still red — that signal is too
-   * important to soften. */
-  color: var(--tool-call-icon-accent, var(--accent));
+  /* Tool-call icons follow their activity scope's accent. ActivityStack and
+   * collapsed transcript rows pin that scope to the resolved provider/model
+   * brand, exactly like fan-out cards; legacy unscoped surfaces inherit the
+   * app accent. Error status stays red — that signal is too important to
+   * soften. */
+  color: var(--accent);
   opacity: 0.85;
 }
 .activity-row[data-status="error"] .activity-category-icon {
@@ -12491,16 +12487,15 @@ button.diff-file-row {
  * Color mapping mirrors `.activity-category-pip` — same accent /
  * warning / info language so the user's existing color training
  * carries over after the icon swap. */
-/* Phase K-followup — inline-row icons follow the same
- * `--tool-call-icon-accent` token as the card-form icons. The
- * category-specific colors (shell→warning amber, search→info blue,
+/* Inline-row icons follow the same scoped provider accent as the card-form
+ * icons. The category-specific colors (shell→warning amber, search→info blue,
  * write→accent) are gone; the icon's family identity already
  * communicates the category through its glyph, so coloring on top
  * of that was redundant decoration. Error rows still red via the
  * row-level data-status rule below. */
 .activity-inline-icon {
   flex-shrink: 0;
-  color: var(--tool-call-icon-accent, var(--accent));
+  color: var(--accent);
   opacity: 0.85;
 }
 .activity-row[data-status="error"] .activity-inline-icon {
@@ -12513,7 +12508,7 @@ button.diff-file-row {
   align-items: center;
   gap: 4px;
   min-height: 1.35em;
-  color: var(--tool-call-icon-accent, var(--accent));
+  color: var(--accent);
   vertical-align: -0.2em;
 }
 
@@ -12571,7 +12566,7 @@ button.diff-file-row {
 .activity-compact-group-icon {
   flex-shrink: 0;
   opacity: 0.85;
-  color: var(--tool-call-icon-accent, var(--accent));
+  color: var(--accent);
 }
 .activity-compact-group-icon-overflow {
   font-size: 9px;
@@ -12616,7 +12611,7 @@ button.diff-file-row {
 .collapsed-activity-stack-icon {
   flex-shrink: 0;
   opacity: 0.85;
-  color: var(--tool-call-icon-accent, var(--accent));
+  color: var(--accent);
 }
 /* System notices stay at the small caption size — they're noise being
  * tidied away, not messages the eye should land on. */

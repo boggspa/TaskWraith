@@ -28,7 +28,6 @@ import type {
   ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
-  ToolIconAccent,
   UserBubbleColor,
   VisualEffectStyle,
   WorkspaceRecord,
@@ -263,7 +262,6 @@ interface SettingsPanelProps {
   themeAppearance: ThemeAppearance
   themeCornerStyle: ThemeCornerStyle
   themeAccentStyle: ThemeAccentStyle
-  toolIconAccent: ToolIconAccent
   diffStatColors: DiffStatColors
   userBubbleColor: UserBubbleColor
   appIconVariant: AppIconVariant
@@ -420,7 +418,6 @@ interface SettingsPanelProps {
     themeAppearance?: ThemeAppearance
     themeCornerStyle?: ThemeCornerStyle
     themeAccentStyle?: ThemeAccentStyle
-    toolIconAccent?: ToolIconAccent
     diffStatColors?: DiffStatColors
     userBubbleColor?: UserBubbleColor
     appIconVariant?: AppIconVariant
@@ -591,32 +588,11 @@ const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
   { value: 'red', label: 'Red' },
   { value: 'yellow', label: 'Yellow' }
 ]
-/**
- * Tool-icon accent. `system` (default) keeps the icons on the
- * theme accent. Named overrides pin the icons to a dedicated
- * colour while leaving the rest of the UI on the user's accent
- * choice — useful for tester debug or for users who want the
- * tool-call ledger to read as a distinct surface.
- */
 const APP_ICON_THUMBS: Record<AppIconVariant, string> = {
   regular: appIconRegularThumb,
   monoline: appIconMonolineThumb,
   glass: appIconGlassThumb
 }
-const TOOL_ICON_ACCENT_OPTIONS: Array<{ value: ToolIconAccent; label: string }> = [
-  { value: 'system', label: 'Match accent' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'green', label: 'Green' },
-  { value: 'red', label: 'Red' },
-  { value: 'yellow', label: 'Yellow' },
-  { value: 'graphite', label: 'Graphite' },
-  { value: 'amber', label: 'Amber' },
-  { value: 'cyan', label: 'Cyan' },
-  { value: 'violet', label: 'Violet' }
-]
 /**
  * User chat-bubble colour palette. `system` (default) keeps the
  * existing neutral elevated-surface look so users who don't care
@@ -3925,7 +3901,6 @@ export function SettingsPanel({
   themeAppearance,
   themeCornerStyle,
   themeAccentStyle,
-  toolIconAccent,
   diffStatColors,
   appIconVariant,
   userBubbleColor,
@@ -5777,24 +5752,6 @@ export function SettingsPanel({
                   Drives the +N / -N counters in composer rows, transcript file summaries, and
                   tool-call rows.
                 </p>
-              </div>
-
-              <div className="settings-group">
-                <label className="settings-label">Tool-icon color</label>
-                <div className="settings-option-grid">
-                  {TOOL_ICON_ACCENT_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      className={`settings-radio-option ${toolIconAccent === option.value ? 'active' : ''}`}
-                      onClick={() => onChange({ toolIconAccent: option.value })}
-                    >
-                      <span
-                        className={`settings-radio-dot tool-icon-accent-dot tool-icon-accent-${option.value}`}
-                      />
-                      <span>{option.label}</span>
-                    </button>
-                  ))}
-                </div>
               </div>
 
               <div className="settings-group">

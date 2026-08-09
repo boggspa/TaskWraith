@@ -3370,7 +3370,7 @@
  * uses the neutral gradient (same look as `theme-system`) to read
  * as "stay on the default neutral bubble"; the named values mirror
  * the accent palette so users get a consistent vocabulary across
- * Accent / Tool-icon / Chat bubble pickers. Hooked via the
+ * Accent / Chat bubble pickers. Hooked via the
  * `.user-bubble-color-dot` class set in `SettingsPanel.tsx`. */
 .user-bubble-color-system   { --dot-color: linear-gradient(135deg, #dfe5ee, #363b45); }
 .user-bubble-color-blue     { --dot-color: #5a8cff; }
@@ -3381,23 +3381,6 @@
 .user-bubble-color-red      { --dot-color: #e65b62; }
 .user-bubble-color-yellow   { --dot-color: #f2c94c; }
 .user-bubble-color-graphite { --dot-color: #9da6b8; }
-
-/* Tool-icon accent swatches in the Settings radio. The "system"
- * swatch mirrors the user's chosen accent so the preview reads
- * "this option = match your accent"; the named overrides preview
- * the exact override colour the option would apply. */
-.tool-icon-accent-system { --dot-color: var(--accent); }
-.tool-icon-accent-blue     { --dot-color: #5a8cff; }
-.tool-icon-accent-purple   { --dot-color: #bf7cff; }
-.tool-icon-accent-pink     { --dot-color: #ff5fa2; }
-.tool-icon-accent-orange   { --dot-color: #ff9b54; }
-.tool-icon-accent-green    { --dot-color: #4cc38a; }
-.tool-icon-accent-red    { --dot-color: #e65b62; }
-.tool-icon-accent-yellow   { --dot-color: #f2c94c; }
-.tool-icon-accent-graphite { --dot-color: #9da6b8; }
-.tool-icon-accent-amber  { --dot-color: #f2a64c; }
-.tool-icon-accent-cyan   { --dot-color: #4cb8d0; }
-.tool-icon-accent-violet { --dot-color: #bf7cff; }
 
 .settings-hint {
   font-size: var(--font-size-xs);

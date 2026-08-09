@@ -7614,10 +7614,6 @@ function App(): React.JSX.Element {
       settingsPatch.themeAccentStyle = next.themeAccentStyle
       appearance.update({ themeAccentStyle: next.themeAccentStyle })
     }
-    if (next.toolIconAccent !== undefined) {
-      settingsPatch.toolIconAccent = next.toolIconAccent
-      appearance.update({ toolIconAccent: next.toolIconAccent })
-    }
     if (next.userBubbleColor !== undefined) {
       settingsPatch.userBubbleColor = next.userBubbleColor
       appearance.update({ userBubbleColor: next.userBubbleColor })
