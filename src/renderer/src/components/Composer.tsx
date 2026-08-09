@@ -7,7 +7,6 @@ import {
   computeGoalRuntimeTiming
 } from '../../../main/GoalState'
 import type {
-  AgenticServiceId,
   AgenticWorkspaceGrant,
   ChatWorkflowMode,
   EnsembleFanoutIsolationPolicy,
@@ -124,8 +123,6 @@ import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
-import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
-import { isEnsembleParticipantSeatRuntimeLocked } from '../lib/ensembleParticipantSeatLock'
 import {
   buildCodexModelChangeParticipantPatch,
   buildProviderModelChangeParticipantPatch,
@@ -190,7 +187,6 @@ import { resolveComposerGitActionBasePath } from '../lib/composerFocusedWorkspac
 import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { pathComparisonKey } from '../lib/pathDisplay'
-import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import {
   MIN_WORKSPACE_TERMINAL_HEIGHT,
   MAX_WORKSPACE_TERMINAL_HEIGHT,
@@ -584,8 +580,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     activeEnsembleOrchestrationMode,
     addImageAttachmentsToChat,
     agentModelsByProvider,
-    agenticServices,
-    agenticWorkspaceGrants,
     appearance,
     applyEnsemblePermissionsToAllParticipants,
     applyEnsembleRosterPreset,
@@ -721,7 +715,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleSelectMultiviewLayout,
     handleSelectParticipant,
     handleSelectWorkspace,
-    handleSetAgenticWorkspaceGrant,
     handleSteerToQueuedMessage,
     handleToggleWelcomeEnsemble,
     handleTrustWorkspaceClick,
@@ -4431,11 +4424,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       */}
 
                         {(() => {
-                          // CombinedPermissionsPicker — replaces the
-                          // native <select> permission picker AND
-                          // absorbs the old "Tool Grants" pill from the
-                          // above-bar. Single chip, two-column popover
-                          // (Permissions | Tool Grants).
+                          // CombinedPermissionsPicker replaces the native
+                          // <select> with the shared permission-mode chip.
                           //
                           // Slice F v2 (1.0.3) — when ensemble + a
                           // participant chip is selected, the picker
@@ -4445,9 +4435,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // capability-only; solo chat edits split Plan
                           // workflow from Read-only recon while both map to
                           // the provider's existing read-only capability.
-                          // Slice A3 — in Ensemble Mode, Tool Grants are
-                          // participant-scoped overrides. Solo chats keep
-                          // using provider+workspace grants.
                           const ensembleBinding =
                             isCurrentEnsembleChat && selectedParticipant
                               ? selectedParticipant
@@ -4525,50 +4512,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               return option
                             })
-                          const normalizedWorkspacePath = composerGitActionBasePath
-                            ? pathComparisonKey(composerGitActionBasePath)
-                            : ''
-                          const enabledGrantIds = ensembleBinding
-                            ? getParticipantToolGrantIds(ensembleBinding)
-                            : new Set(
-                                agenticWorkspaceGrants
-                                  .filter((grant) => {
-                                    if (!grant || !grant.workspacePath) return false
-                                    // Workspace mutation grants are now scoped
-                                    // to 'agents' (all providers). Legacy
-                                    // per-provider grants still match only
-                                    // their own provider.
-                                    if (
-                                      grant.provider !== 'agents' &&
-                                      grant.provider !== effectiveProvider
-                                    )
-                                      return false
-                                    // Match PermissionService's resolved path storage, not just
-                                    // a trailing-slash strip — otherwise grants appear un-toggled
-                                    // after a successful upsert.
-                                    return (
-                                      pathComparisonKey(grant.workspacePath) ===
-                                      normalizedWorkspacePath
-                                    )
-                                  })
-                                  .map((grant) => grant.service)
-                              )
-                          // Hide Tool Grants without a scoped workspace. Every live
-                          // provider (Cursor included, via its TaskWraith MCP broker)
-                          // routes tool calls through the central approval gate where
-                          // workspace grants apply, so there is no per-provider gate.
-                          const grantServicesForPicker =
-                            (composerGitActionBasePath || currentWorkspace) && !isCurrentGlobalChat
-                              ? WORKSPACE_POLICY_SERVICES
-                              : []
-                          const grantTimingNote =
-                            ensembleBinding &&
-                            isEnsembleParticipantSeatRuntimeLocked(
-                              currentChat?.ensemble?.activeRound,
-                              ensembleBinding.id
-                            )
-                              ? 'This participant is running. Changes apply when its current execution finishes.'
-                              : undefined
                           const handlePermissionSelection = (nextPermissionMode: string): void => {
                             const nextPermissionPreset = selectionToPreset(nextPermissionMode)
                             if (nextPermissionPreset === 'full_access') {
@@ -4653,18 +4596,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               apply: applyMainSelection
                             })
                           }
-                          const handleToggleGrantForPicker = (
-                            service: AgenticServiceId,
-                            enabled: boolean
-                          ): boolean | Promise<boolean> => {
-                            if (ensembleBinding) {
-                              updateSelectedParticipant(
-                                buildParticipantToolGrantPatch(ensembleBinding, service, enabled)
-                              )
-                              return true
-                            }
-                            return handleSetAgenticWorkspaceGrant(service, enabled, effectiveProvider)
-                          }
                           const applyAllParticipants =
                             ensembleBinding &&
                             effectiveSelectedPermission !== 'full_access' &&
@@ -4700,10 +4631,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               permissionPresetId: 'workspace_write'
                             })
                           }
-                          // Permission mode + tool grants stay editable while a solo run is
-                          // live. Users must be able to override per-provider workspace grants
-                          // without cancelling a blocked turn. Model/provider/prompt locks still
-                          // use isCurrentComposerLocked elsewhere.
+                          // Permission mode stays editable while a solo run is live.
+                          // Model/provider/prompt locks still use
+                          // isCurrentComposerLocked elsewhere.
                           const pickerDisabled =
                             Boolean(
                               providerRunUnavailableReason(
@@ -4722,12 +4652,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               permissionOptions={permissionPickerOptions}
                               selectedPermission={effectiveSelectedPermission}
                               onSelectPermission={handlePermissionSelection}
-                              grantServices={grantServicesForPicker}
-                              enabledGrantIds={enabledGrantIds}
-                              agenticServices={agenticServices}
-                              onToggleGrant={handleToggleGrantForPicker}
-                              grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
-                              grantTimingNote={grantTimingNote}
                               onApplyToAllParticipants={applyAllParticipants}
                               onStartTrustedSession={() => {
                                 if (trustedSessionMutationDisabledReason) return

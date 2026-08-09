@@ -12,7 +12,6 @@ import { ComposerThreadTimecodeBar } from './ComposerTimecodes'
 import { FONT_STACKS, resolveComposerFontFamily } from '../lib/typefaceOptions'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import type {
-  AgenticServiceId,
   ComposerStyle,
   ExternalPathGrant,
   ProviderId,
@@ -30,7 +29,6 @@ import {
 } from './CombinedPermissionsPicker'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import type { ContextMeterModel } from '../lib/contextMeter'
-import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import { ComposerWorkspaceSwitcher } from './ComposerWorkspaceSwitcher'
 import { CopyTranscriptButton, type CopyTranscriptResult } from './CopyTranscriptButton'
 
@@ -214,7 +212,6 @@ function previewPermissionValueForStyle(style: ComposerStyle): string {
 }
 
 const NOOP = (): void => {}
-const EMPTY_GRANT_IDS = new Set<AgenticServiceId>()
 const PREVIEW_PLUS_SECTIONS: ComposerPlusPickerSection[] = [
   {
     id: 'preview-add',
@@ -513,10 +510,6 @@ export function ComposerShellPreview({
                         permissionOptions={previewPermissionOptions}
                         selectedPermission={previewPermissionValue}
                         onSelectPermission={NOOP}
-                        grantServices={[]}
-                        enabledGrantIds={EMPTY_GRANT_IDS}
-                        agenticServices={DEFAULT_AGENTIC_SERVICES}
-                        onToggleGrant={NOOP}
                       />
                     </div>
                     <div className="composer-inline-actions">

@@ -12,18 +12,16 @@ function sourceRegion(source: string, startMarker: string, endMarker: string): s
   return source.slice(start, end)
 }
 
-describe('Composer permission / tool-grant admission while running', () => {
-  it('does not disable the permission + tool-grant picker solely because the solo composer is locked', () => {
-    const marker =
-      'const handleToggleGrantForPicker = ('
-    const start = composerSource.indexOf(marker)
-    expect(start).toBeGreaterThanOrEqual(0)
-    const end = composerSource.indexOf('onToggleGrant={handleToggleGrantForPicker}', start)
-    expect(end).toBeGreaterThan(start)
-    const region = composerSource.slice(start, end)
+describe('Composer permission-picker admission while running', () => {
+  it('does not disable the permission picker solely because the solo composer is locked', () => {
+    const region = sourceRegion(
+      composerSource,
+      'const pickerDisabled =',
+      '<CombinedPermissionsPicker'
+    )
 
     // The picker may still disable for unavailable providers / Gemini trust,
-    // but a live solo run must not freeze tool-grant overrides.
+    // but a live solo run must not freeze permission changes.
     expect(region).toContain('const pickerDisabled =')
     expect(region).not.toMatch(/const pickerDisabled =\s*[\s\S]*isCurrentComposerLocked/)
     expect(region).toContain('providerRunUnavailableReason(')
@@ -31,15 +29,18 @@ describe('Composer permission / tool-grant admission while running', () => {
     expect(region).toContain('configuredProviderSnapshot.providerIds')
   })
 
+  it('does not wire the retired Tool Grants column into the composer picker', () => {
+    expect(composerSource).not.toContain('handleToggleGrantForPicker')
+    expect(composerSource).not.toContain('grantServices={')
+    expect(composerSource).not.toContain('enabledGrantIds={')
+    expect(composerSource).not.toContain('onToggleGrant={')
+  })
+
   it('does not insert the obsolete next-round seat-change notice', () => {
     expect(composerSource).not.toContain(
       'Provider/model changes during this round will apply to the next round.'
     )
     expect(composerSource).not.toContain('updateSelectedParticipantWithNotice')
-    expect(composerSource).toContain('isEnsembleParticipantSeatRuntimeLocked(')
-    expect(composerSource).toContain(
-      'Changes apply when its current execution finishes.'
-    )
   })
 
   it('wires the participant editor through live seat and roster boundaries', () => {

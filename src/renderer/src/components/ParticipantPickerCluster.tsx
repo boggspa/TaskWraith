@@ -16,15 +16,10 @@ import {
   resolveEnsembleParticipantSettings
 } from '../lib/ensembleProviderDefaults'
 import {
-  buildParticipantToolGrantPatch,
-  getParticipantToolGrantIds
-} from '../lib/ensembleParticipantToolGrants'
-import {
   READ_ONLY_RECON_LABEL,
   TRUSTED_SESSION_LABEL,
   WORKSPACE_WRITE_LABEL
 } from '../lib/planModeLabels'
-import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import {
   CombinedModelPicker,
   type CombinedModelPickerModelOption,
@@ -120,7 +115,6 @@ export function ParticipantPickerCluster({
   participant,
   configuredProviderSnapshot = { ready: false, providerIds: [] },
   composerStyle,
-  agenticServices,
   grokAvailable,
   cursorAvailable,
   showApplyToAll = false,
@@ -129,11 +123,6 @@ export function ParticipantPickerCluster({
 }: ParticipantPickerClusterProps): JSX.Element {
   const resolved = resolveEnsembleParticipantSettings(participant)
   const defaults = getEnsembleModelDefaults(participant.provider)
-  // Callers always supply agenticServices; the empty-object fallback only guards
-  // a hypothetical caller that doesn't (the grants column reads it for
-  // sub-labels). Avoids a runtime crash without coupling a literal default to
-  // the churning AgenticServicesSettings shape.
-  const services = agenticServices ?? ({} as AgenticServicesSettings)
   const modelOptions: CombinedModelPickerModelOption[] =
     participant.provider === 'antigravity'
       ? (configuredProviderSnapshot.modelsByProvider?.antigravity || []).map((model) => ({
@@ -229,8 +218,6 @@ export function ParticipantPickerCluster({
       : []),
     ...(resolved.permissionPresetId === 'custom' ? [{ value: 'custom', label: 'Custom' }] : [])
   ]
-  const enabledGrantIds = getParticipantToolGrantIds(participant)
-
   return (
     <>
       <CombinedModelPicker
@@ -269,13 +256,6 @@ export function ParticipantPickerCluster({
             ? undefined
             : onPatch({ permissionPresetId: value as PermissionPresetId })
         }
-        grantServices={WORKSPACE_POLICY_SERVICES}
-        enabledGrantIds={enabledGrantIds}
-        agenticServices={services}
-        onToggleGrant={(service, enabled) =>
-          onPatch(buildParticipantToolGrantPatch(participant, service, enabled))
-        }
-        grantScopeLabel="participant"
         onApplyToAllParticipants={
           showApplyToAll && onApplyPermissionsToAll
             ? () => onApplyPermissionsToAll(participant)
