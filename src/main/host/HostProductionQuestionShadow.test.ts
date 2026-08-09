@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createHostProductionQuestionShadow,
   mapPendingQuestionShadowsToHostQuestions,
+  mapQuestionShadowsToHostQuestions,
   type HostPendingQuestionShadowEntry
 } from './HostProductionQuestionShadow'
 
@@ -109,6 +110,61 @@ describe('mapPendingQuestionShadowsToHostQuestions', () => {
   })
 })
 
+describe('mapQuestionShadowsToHostQuestions', () => {
+  it('projects answered receipt correlation without an answer body', () => {
+    const rows = mapQuestionShadowsToHostQuestions([
+      entry({
+        status: 'answered',
+        resolvedAt: '2024-11-14T22:14:20.000Z',
+        receiptId: 'host-command-1'
+      })
+    ])
+
+    expect(rows).toEqual([
+      {
+        questionId: 'q-1700000000000-abc123',
+        threadId: 'chat-1',
+        status: 'answered',
+        promptPreview: 'Which approach should we take?',
+        askedAt: Date.parse('2024-11-14T22:13:20.000Z'),
+        answeredAt: Date.parse('2024-11-14T22:14:20.000Z'),
+        receiptId: 'host-command-1'
+      }
+    ])
+    expect(rows[0]).not.toHaveProperty('answer')
+    expect(rows[0]).not.toHaveProperty('cancellationReason')
+  })
+
+  it.each([
+    ['rejected', 'dismissed'],
+    ['cancelled', 'dismissed'],
+    ['expired', 'expired']
+  ] as const)('maps registry %s to Host %s', (status, expected) => {
+    const rows = mapQuestionShadowsToHostQuestions([
+      entry({ status, resolvedAt: '2024-11-14T22:14:20.000Z' })
+    ])
+    expect(rows[0]).toMatchObject({ status: expected })
+  })
+
+  it('skips resolved rows without a valid resolution timestamp', () => {
+    expect(
+      mapQuestionShadowsToHostQuestions([
+        entry({ status: 'answered' }),
+        entry({ questionId: 'q-2', status: 'rejected', resolvedAt: 'not-a-date' })
+      ])
+    ).toEqual([])
+  })
+
+  it('omits malformed receipt ids rather than truncating correlation identity', () => {
+    for (const receiptId of [' padded ', 'x'.repeat(513), 'line\nbreak']) {
+      const rows = mapQuestionShadowsToHostQuestions([
+        entry({ status: 'answered', resolvedAt: '2024-11-14T22:14:20.000Z', receiptId })
+      ])
+      expect(rows[0]).not.toHaveProperty('receiptId')
+    }
+  })
+})
+
 describe('createHostProductionQuestionShadow', () => {
   it('requires a listPending function', () => {
     expect(() => createHostProductionQuestionShadow({} as never)).toThrow(
@@ -116,12 +172,41 @@ describe('createHostProductionQuestionShadow', () => {
     )
   })
 
+  it('validates an optional listResolved donor', () => {
+    expect(() =>
+      createHostProductionQuestionShadow({ listPending: () => [], listResolved: true as never })
+    ).toThrow('HostProductionQuestionShadow listResolved must be a function when provided')
+  })
+
   it('reads live on every listQuestions call (no caching of a moving set)', () => {
     const listPending = vi.fn(() => [entry()])
-    const port = createHostProductionQuestionShadow({ listPending })
+    const listResolved = vi.fn(() => [] as HostPendingQuestionShadowEntry[])
+    const port = createHostProductionQuestionShadow({ listPending, listResolved })
     expect(port.listQuestions()).toHaveLength(1)
     expect(port.listQuestions()).toHaveLength(1)
     expect(listPending).toHaveBeenCalledTimes(2)
+    expect(listResolved).toHaveBeenCalledTimes(2)
+  })
+
+  it('merges recent resolved rows and lets a resolution win the live-read handoff', () => {
+    const port = createHostProductionQuestionShadow({
+      listPending: () => [entry()],
+      listResolved: () => [
+        entry({
+          status: 'answered',
+          resolvedAt: '2024-11-14T22:14:20.000Z',
+          receiptId: 'host-command-1'
+        })
+      ]
+    })
+
+    expect(port.listQuestions()).toEqual([
+      expect.objectContaining({
+        questionId: 'q-1700000000000-abc123',
+        status: 'answered',
+        receiptId: 'host-command-1'
+      })
+    ])
   })
 
   it('lets a source throw propagate — fail closed, never a false empty', () => {
@@ -131,5 +216,15 @@ describe('createHostProductionQuestionShadow', () => {
       }
     })
     expect(() => port.listQuestions()).toThrow('registry unavailable')
+  })
+
+  it('lets a resolved source throw propagate — fail closed, never a false empty', () => {
+    const port = createHostProductionQuestionShadow({
+      listPending: () => [],
+      listResolved: () => {
+        throw new Error('resolved registry unavailable')
+      }
+    })
+    expect(() => port.listQuestions()).toThrow('resolved registry unavailable')
   })
 })

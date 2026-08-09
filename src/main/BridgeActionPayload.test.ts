@@ -120,12 +120,14 @@ describe('decodeBridgeActionPayload', () => {
         threadId: 't-1',
         runId: 'run-1',
         promptId: 'q-99',
+        receiptId: 'host-receipt-99',
         answer: 'yes, proceed with src/main'
       })
       const { payload } = decodeBridgeActionPayload(wire)
       expect(payload.kind).toBe('questionReply')
       if (payload.kind === 'questionReply') {
         expect(payload.runId).toBe('run-1')
+        expect(payload.receiptId).toBe('host-receipt-99')
         expect(payload.answer).toBe('yes, proceed with src/main')
       }
     })
@@ -137,11 +139,15 @@ describe('decodeBridgeActionPayload', () => {
         threadId: 't-1',
         runId: 'run-1',
         promptId: 'q-1',
+        receiptId: 'host-receipt-1',
         message: 'cancel this'
       })
       const { payload } = decodeBridgeActionPayload(wire)
       expect(payload.kind).toBe('questionReject')
-      if (payload.kind === 'questionReject') expect(payload.runId).toBe('run-1')
+      if (payload.kind === 'questionReject') {
+        expect(payload.runId).toBe('run-1')
+        expect(payload.receiptId).toBe('host-receipt-1')
+      }
     })
 
     it('decodes a proposedPlanDecision (mutating, workspace-gated)', () => {
@@ -273,6 +279,25 @@ describe('decodeBridgeActionPayload', () => {
         )
         expect(payload.kind).toBe('unknown')
         if (payload.kind === 'unknown') expect(payload.rawKind).toBe(kind)
+      }
+    })
+
+    it('rejects malformed Host receipt correlations without truncating them', () => {
+      for (const receiptId of ['', ' padded ', 'x'.repeat(513), 'line\nbreak']) {
+        for (const kind of ['questionReply', 'questionReject'] as const) {
+          const { payload } = decodeBridgeActionPayload(
+            encode({
+              kind,
+              workspaceId: 'ws-1',
+              threadId: 't-1',
+              promptId: 'q-99',
+              receiptId,
+              ...(kind === 'questionReply' ? { answer: 'yes' } : {})
+            })
+          )
+          expect(payload.kind).toBe('unknown')
+          if (payload.kind === 'unknown') expect(payload.rawKind).toBe(kind)
+        }
       }
     })
 

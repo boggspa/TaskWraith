@@ -28,6 +28,8 @@ export interface RemoteQuestionRecord {
   status: RemoteQuestionStatus
   resolvedAt?: string
   cancellationReason?: string
+  /** Exact Host command receipt correlation. Never contains the answer body. */
+  receiptId?: string
 }
 
 export interface RegisterRemoteQuestionInput {
@@ -65,6 +67,8 @@ export type RemoteQuestionRegistryEvent =
 export interface RemoteQuestionRegistryOptions {
   now?: () => number
   defaultTtlMs?: number
+  /** Bounded recent resolved metadata retained for cross-client projection. */
+  resolvedHistoryLimit?: number
   setTimer?: (callback: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
   idFactory?: () => string
@@ -94,6 +98,10 @@ export const REMOTE_QUESTION_MAX_CONTEXT_CHARS = 240
 export const REMOTE_QUESTION_MAX_OPTION_CHARS = 96
 export const REMOTE_QUESTION_MAX_OPTIONS = 4
 export const REMOTE_QUESTION_MAX_ANSWER_CHARS = 8000
+export const REMOTE_QUESTION_MAX_RECEIPT_ID_CHARS = 512
+
+const DEFAULT_RESOLVED_HISTORY_LIMIT = 100
+const UNSAFE_RECEIPT_ID_CONTROL_RE = /[\u0000-\u001f\u007f]/
 
 export class RemoteQuestionRegistry {
   private readonly now: () => number
@@ -101,7 +109,9 @@ export class RemoteQuestionRegistry {
   private readonly setTimer: (callback: () => void, ms: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
   private readonly idFactory: () => string
+  private readonly resolvedHistoryLimit: number
   private readonly pending = new Map<string, PendingRemoteQuestion>()
+  private readonly resolvedHistory: RemoteQuestionRecord[] = []
   private readonly listeners = new Set<(event: RemoteQuestionRegistryEvent) => void>()
 
   constructor(options: RemoteQuestionRegistryOptions = {}) {
@@ -112,6 +122,7 @@ export class RemoteQuestionRegistry {
       options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
     this.idFactory =
       options.idFactory ?? (() => `q-${this.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    this.resolvedHistoryLimit = normalizeHistoryLimit(options.resolvedHistoryLimit)
   }
 
   register(input: RegisterRemoteQuestionInput): RemoteQuestionRecord {
@@ -162,11 +173,12 @@ export class RemoteQuestionRegistry {
     questionId: string,
     answer: string,
     isCustom = false,
-    origin: RemoteQuestionAnswerOrigin = 'desktop'
+    origin: RemoteQuestionAnswerOrigin = 'desktop',
+    receiptId?: string
   ): RemoteQuestionResolveResult {
     const pending = this.pending.get(questionId)
     if (!pending) return { ok: false, reason: 'not-found' }
-    const record = this.resolvePending(questionId, 'answered')
+    const record = this.resolvePending(questionId, 'answered', undefined, receiptId)
     if (!record) return { ok: false, reason: 'not-found' }
     const sanitizedAnswer = sanitizeInput(answer, REMOTE_QUESTION_MAX_ANSWER_CHARS)
     pending.resolve({
@@ -188,31 +200,37 @@ export class RemoteQuestionRegistry {
     scope: RemoteQuestionResolutionScope,
     answer: string,
     isCustom = false,
-    origin: RemoteQuestionAnswerOrigin = 'desktop'
+    origin: RemoteQuestionAnswerOrigin = 'desktop',
+    receiptId?: string
   ): RemoteQuestionResolveResult {
     const pending = this.pending.get(questionId)
     if (!pending) return { ok: false, reason: 'not-found' }
     if (!recordMatchesScope(pending.record, scope)) {
       return { ok: false, reason: 'scope-mismatch', record: { ...pending.record } }
     }
-    return this.answer(questionId, answer, isCustom, origin)
+    return this.answer(questionId, answer, isCustom, origin, receiptId)
   }
 
-  reject(questionId: string, reason = 'user-dismissed'): RemoteQuestionResolveResult {
-    return this.cancelLike(questionId, 'rejected', reason)
+  reject(
+    questionId: string,
+    reason = 'user-dismissed',
+    receiptId?: string
+  ): RemoteQuestionResolveResult {
+    return this.cancelLike(questionId, 'rejected', reason, receiptId)
   }
 
   rejectScoped(
     questionId: string,
     scope: RemoteQuestionResolutionScope,
-    reason = 'user-dismissed'
+    reason = 'user-dismissed',
+    receiptId?: string
   ): RemoteQuestionResolveResult {
     const pending = this.pending.get(questionId)
     if (!pending) return { ok: false, reason: 'not-found' }
     if (!recordMatchesScope(pending.record, scope)) {
       return { ok: false, reason: 'scope-mismatch', record: { ...pending.record } }
     }
-    return this.reject(questionId, reason)
+    return this.reject(questionId, reason, receiptId)
   }
 
   cancel(questionId: string, reason = 'cancelled'): RemoteQuestionResolveResult {
@@ -283,6 +301,24 @@ export class RemoteQuestionRegistry {
       .map((record) => ({ ...record }))
   }
 
+  /**
+   * Returns oldest-to-newest bounded resolved metadata. Answer text is never
+   * retained here; receiptId is only an exact correlation key when supplied.
+   */
+  listResolved(
+    filter: { threadId?: string; runId?: string; workspaceId?: string } = {}
+  ): RemoteQuestionRecord[] {
+    this.sweepStale()
+    return this.resolvedHistory
+      .filter((record) => {
+        if (filter.threadId && record.threadId !== filter.threadId) return false
+        if (filter.runId && record.runId !== filter.runId) return false
+        if (filter.workspaceId && record.workspaceId !== filter.workspaceId) return false
+        return true
+      })
+      .map((record) => ({ ...record }))
+  }
+
   listProjectionCards(
     filter: { threadId?: string; runId?: string; workspaceId?: string } = {}
   ): MobileQuestionCard[] {
@@ -308,11 +344,12 @@ export class RemoteQuestionRegistry {
   private cancelLike(
     questionId: string,
     status: 'rejected' | 'expired' | 'cancelled',
-    reason: string
+    reason: string,
+    receiptId?: string
   ): RemoteQuestionResolveResult {
     const pending = this.pending.get(questionId)
     if (!pending) return { ok: false, reason: 'not-found' }
-    const record = this.resolvePending(questionId, status, reason)
+    const record = this.resolvePending(questionId, status, reason, receiptId)
     if (!record) return { ok: false, reason: 'not-found' }
     pending.resolve({
       answer: '',
@@ -327,7 +364,8 @@ export class RemoteQuestionRegistry {
   private resolvePending(
     questionId: string,
     status: Exclude<RemoteQuestionStatus, 'pending'>,
-    reason?: string
+    reason?: string,
+    receiptId?: string
   ): RemoteQuestionRecord | null {
     const pending = this.pending.get(questionId)
     if (!pending) return null
@@ -339,8 +377,22 @@ export class RemoteQuestionRegistry {
       resolvedAt: new Date(this.now()).toISOString()
     }
     if (reason) record.cancellationReason = reason
+    const safeReceiptId = normalizeReceiptId(receiptId)
+    if (safeReceiptId) record.receiptId = safeReceiptId
     pending.record = record
+    this.retainResolved(record)
     return { ...record }
+  }
+
+  private retainResolved(record: RemoteQuestionRecord): void {
+    if (this.resolvedHistoryLimit === 0) return
+    const priorIndex = this.resolvedHistory.findIndex(
+      (candidate) => candidate.questionId === record.questionId
+    )
+    if (priorIndex >= 0) this.resolvedHistory.splice(priorIndex, 1)
+    this.resolvedHistory.push({ ...record })
+    const overflow = this.resolvedHistory.length - this.resolvedHistoryLimit
+    if (overflow > 0) this.resolvedHistory.splice(0, overflow)
   }
 
   private emit(event: RemoteQuestionRegistryEvent): void {
@@ -404,4 +456,18 @@ function recordMatchesScope(
 
 function normalizeTtl(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+function normalizeHistoryLimit(value: unknown): number {
+  if (value === undefined) return DEFAULT_RESOLVED_HISTORY_LIMIT
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : DEFAULT_RESOLVED_HISTORY_LIMIT
+}
+
+function normalizeReceiptId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  if (value.length === 0 || value.length > REMOTE_QUESTION_MAX_RECEIPT_ID_CHARS) return undefined
+  if (value.trim() !== value || UNSAFE_RECEIPT_ID_CONTROL_RE.test(value)) return undefined
+  return value
 }

@@ -70,6 +70,97 @@ describe('RemoteQuestionRegistry', () => {
     expect(registry.answer('q1', 'Again')).toEqual({ ok: false, reason: 'not-found' })
   })
 
+  it('retains bounded answer-body-free receipt metadata for answered and rejected questions', () => {
+    const registry = new RemoteQuestionRegistry({
+      now: () => Date.UTC(2026, 4, 30, 12, 0, 0),
+      setTimer: () => 'timer',
+      clearTimer: vi.fn()
+    })
+    registry.register({
+      questionId: 'q-answer',
+      question: 'Proceed?',
+      workspaceId: 'ws-1',
+      threadId: 'chat-1',
+      runId: 'run-1',
+      resolve: vi.fn()
+    })
+    registry.register({
+      questionId: 'q-reject',
+      question: 'Skip?',
+      workspaceId: 'ws-1',
+      threadId: 'chat-2',
+      resolve: vi.fn()
+    })
+
+    expect(
+      registry.answerScoped(
+        'q-answer',
+        { workspaceId: 'ws-1', threadId: 'chat-1', runId: 'run-1' },
+        'A secret free-text answer',
+        true,
+        'remote',
+        'receipt-answer-1'
+      )
+    ).toMatchObject({ ok: true })
+    expect(
+      registry.rejectScoped(
+        'q-reject',
+        { workspaceId: 'ws-1', threadId: 'chat-2' },
+        'user-dismissed',
+        'receipt-reject-1'
+      )
+    ).toMatchObject({ ok: true })
+
+    expect(registry.listResolved()).toEqual([
+      expect.objectContaining({
+        questionId: 'q-answer',
+        status: 'answered',
+        receiptId: 'receipt-answer-1'
+      }),
+      expect.objectContaining({
+        questionId: 'q-reject',
+        status: 'rejected',
+        receiptId: 'receipt-reject-1'
+      })
+    ])
+    for (const record of registry.listResolved()) {
+      expect(record).not.toHaveProperty('answer')
+      expect(record).not.toHaveProperty('isCustom')
+    }
+  })
+
+  it('caps resolved history and applies the same ownership filters as pending rows', () => {
+    const registry = new RemoteQuestionRegistry({
+      resolvedHistoryLimit: 2,
+      setTimer: () => 'timer',
+      clearTimer: vi.fn()
+    })
+    for (const [questionId, threadId] of [
+      ['q1', 'chat-1'],
+      ['q2', 'chat-2'],
+      ['q3', 'chat-1']
+    ] as const) {
+      registry.register({ questionId, question: `${questionId}?`, threadId, resolve: vi.fn() })
+      registry.answer(questionId, 'yes')
+    }
+
+    expect(registry.listResolved().map((record) => record.questionId)).toEqual(['q2', 'q3'])
+    expect(
+      registry.listResolved({ threadId: 'chat-1' }).map((record) => record.questionId)
+    ).toEqual(['q3'])
+  })
+
+  it('omits malformed receipt ids instead of truncating an identity', () => {
+    const registry = new RemoteQuestionRegistry({
+      setTimer: () => 'timer',
+      clearTimer: vi.fn()
+    })
+    registry.register({ questionId: 'q1', question: 'One?', resolve: vi.fn() })
+    registry.answer('q1', 'yes', false, 'remote', ` ${'x'.repeat(512)}`)
+
+    expect(registry.listResolved()[0]).not.toHaveProperty('receiptId')
+  })
+
   it('preserves the source for host-originated questions without changing the UI shape', () => {
     const registry = new RemoteQuestionRegistry({
       setTimer: () => 'timer',

@@ -1030,7 +1030,10 @@ describe('HostLocalServer', () => {
         const event = await healthyClient.readFrame()
         expect(event.type).toBe('event')
         if (event.type === 'event' && event.event === 'deltas') {
-          expect(event.payload.result.toCursor).toBe(cursor)
+          expect(event.payload.result.kind).toBe('deltas')
+          if (event.payload.result.kind === 'deltas') {
+            expect(event.payload.result.toCursor).toBe(cursor)
+          }
         }
       }
 

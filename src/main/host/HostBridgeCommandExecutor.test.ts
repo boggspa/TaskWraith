@@ -494,6 +494,7 @@ describe('question.answer', () => {
     expect(bridge.calls[0]?.action).toMatchObject({
       kind: 'questionReply',
       promptId: 'question-1',
+      receiptId: FIXED_COMMAND_ID,
       answer: 'yes',
       isCustom: true,
       runId: 'run-q'
@@ -513,6 +514,7 @@ describe('question.answer', () => {
     expect(bridge.calls[0]?.action).toMatchObject({
       kind: 'questionReject',
       promptId: 'question-1',
+      receiptId: FIXED_COMMAND_ID,
       message: 'skip'
     })
   })

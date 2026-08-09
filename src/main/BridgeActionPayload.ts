@@ -83,6 +83,7 @@ export interface BridgeActionMetadata {
 
 const BRIDGE_QUESTION_ANSWER_MAX_CHARS = 8000
 const BRIDGE_QUESTION_REJECT_MESSAGE_MAX_CHARS = 1000
+const BRIDGE_QUESTION_RECEIPT_ID_MAX_CHARS = 512
 const BRIDGE_THREAD_ROW_ID_MAX_CHARS = 4096
 /** Matches MAX_THREAD_MESSAGE_CHARS so the phone cannot post a body the desktop
  *  would only truncate anyway — a rejection is clearer than a silent clamp. */
@@ -108,6 +109,8 @@ export interface BridgeQuestionReplyAction extends BridgeActionMetadata {
   threadId: string
   runId?: string
   promptId: string
+  /** Exact Host command receipt correlation. Absent on legacy client actions. */
+  receiptId?: string
   answer: string
   /** True when the user typed a free-text answer; false when they tapped one
    * of the offered option chips. Absent on older phones — treated as true
@@ -121,6 +124,8 @@ export interface BridgeQuestionRejectAction extends BridgeActionMetadata {
   threadId: string
   runId?: string
   promptId: string
+  /** Exact Host command receipt correlation. Absent on legacy client actions. */
+  receiptId?: string
   /** Optional rejection reason surfaced back into the chat as a system note. */
   message?: string
 }
@@ -1790,6 +1795,7 @@ function isQuestionReply(v: Record<string, unknown>): boolean {
     (v.runId === undefined || (typeof v.runId === 'string' && v.runId.trim().length > 0)) &&
     typeof v.promptId === 'string' &&
     v.promptId.trim().length > 0 &&
+    isOptionalQuestionReceiptId(v.receiptId) &&
     typeof v.answer === 'string' &&
     v.answer.length <= BRIDGE_QUESTION_ANSWER_MAX_CHARS &&
     (v.isCustom === undefined || typeof v.isCustom === 'boolean')
@@ -1806,9 +1812,21 @@ function isQuestionReject(v: Record<string, unknown>): boolean {
     (v.runId === undefined || (typeof v.runId === 'string' && v.runId.trim().length > 0)) &&
     typeof v.promptId === 'string' &&
     v.promptId.trim().length > 0 &&
+    isOptionalQuestionReceiptId(v.receiptId) &&
     (v.message === undefined ||
       (typeof v.message === 'string' &&
         v.message.length <= BRIDGE_QUESTION_REJECT_MESSAGE_MAX_CHARS))
+  )
+}
+
+function isOptionalQuestionReceiptId(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= BRIDGE_QUESTION_RECEIPT_ID_MAX_CHARS &&
+      value.trim() === value &&
+      !/[\u0000-\u001f\u007f]/.test(value))
   )
 }
 

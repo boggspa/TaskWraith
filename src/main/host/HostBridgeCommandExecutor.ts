@@ -554,6 +554,7 @@ export class HostBridgeCommandExecutor {
         workspaceId: resolved.value.workspaceId,
         threadId: resolved.value.threadId,
         promptId: aliasCheck.value,
+        receiptId: command.commandId,
         ...(resolved.value.runId ? { runId: resolved.value.runId } : {}),
         ...(typeof command.arguments.message === 'string'
           ? { message: command.arguments.message }
@@ -572,6 +573,7 @@ export class HostBridgeCommandExecutor {
       workspaceId: resolved.value.workspaceId,
       threadId: resolved.value.threadId,
       promptId: aliasCheck.value,
+      receiptId: command.commandId,
       answer: command.arguments.answer,
       ...(resolved.value.runId ? { runId: resolved.value.runId } : {}),
       ...(typeof command.arguments.isCustom === 'boolean'
