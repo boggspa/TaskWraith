@@ -209,6 +209,25 @@ function rendererChatSettings(
   return {
     ...rendererAppearanceSettings(settings),
     ...(settings.activeProvider ? { activeProvider: settings.activeProvider } : {}),
+    // Chat renderers use these non-secret values to preserve AntiGravity's
+    // conditional offer gate; credentials remain behind their dedicated IPC.
+    ...(settings.antigravityEnabled !== undefined
+      ? { antigravityEnabled: settings.antigravityEnabled }
+      : {}),
+    ...(settings.antigravityOptInAcceptedAt !== undefined
+      ? { antigravityOptInAcceptedAt: settings.antigravityOptInAcceptedAt }
+      : {}),
+    ...(settings.antigravityGeminiApiDisclosureAcceptedAt !== undefined
+      ? {
+          antigravityGeminiApiDisclosureAcceptedAt:
+            settings.antigravityGeminiApiDisclosureAcceptedAt
+        }
+      : {}),
+    ...(settings.antigravityGeminiApiMonthlySpendCapUsd !== undefined
+      ? {
+          antigravityGeminiApiMonthlySpendCapUsd: settings.antigravityGeminiApiMonthlySpendCapUsd
+        }
+      : {}),
     ...(providerRunPauses ? { providerRunPauses } : {}),
     ...(settings.ollamaDefaultModel ? { ollamaDefaultModel: settings.ollamaDefaultModel } : {}),
     ensembleModeEnabled: settings.ensembleModeEnabled,

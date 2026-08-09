@@ -244,6 +244,10 @@ describe('registerSettingsHandlers', () => {
     const settings = {
       appearanceMode: 'solid',
       composerStyle: 'default',
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000,
+      antigravityGeminiApiDisclosureAcceptedAt: 1_700_000_000_100,
+      antigravityGeminiApiMonthlySpendCapUsd: 25,
       agenticServices: { shellCommands: 'ask' },
       agenticWorkspaceGrants: [
         {
@@ -316,6 +320,12 @@ describe('registerSettingsHandlers', () => {
 
     const result = handlerFor('get-settings')({} as any) as AppSettings
 
+    expect(result).toMatchObject({
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000,
+      antigravityGeminiApiDisclosureAcceptedAt: 1_700_000_000_100,
+      antigravityGeminiApiMonthlySpendCapUsd: 25
+    })
     expect(result.agenticWorkspaceGrants).toEqual([
       expect.objectContaining({ id: 'grant-test-1', workspacePath: '/work/Test 1' })
     ])
