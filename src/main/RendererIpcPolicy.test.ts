@@ -132,6 +132,23 @@ describe('RendererIpcPolicy', () => {
     expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(false)
   })
 
+  it.each([
+    'channels:member:list',
+    'channels:member:snapshot',
+    'channels:member:begin-join',
+    'channels:member:confirm-join',
+    'channels:member:reconnect',
+    'channels:member:append',
+    'channels:member:resume',
+    'channels:member:disconnect',
+    'channels:member:reset-local-history',
+    'channels:member:forget'
+  ])('keeps joined Channel member operation %s main-renderer-only', (channel) => {
+    expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+  })
+
   it('classifies the complete registered IPC catalogue exactly once', () => {
     const registeredChannels = Object.keys(IPC_ARGUMENT_SCHEMAS).sort()
     const unclassified = registeredChannels.filter(

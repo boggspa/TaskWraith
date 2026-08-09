@@ -303,6 +303,19 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // the primary app surface. Read-only projection continuity is safe above.
   'host-projection:command-submit',
   'host-projection:receipt-lookup',
+  // A joined Channel is one process-global external membership. Only the
+  // primary app surface may consume its invite, select it, or mutate its
+  // replica; popouts receive no independent member authority.
+  'channels:member:list',
+  'channels:member:snapshot',
+  'channels:member:begin-join',
+  'channels:member:confirm-join',
+  'channels:member:reconnect',
+  'channels:member:append',
+  'channels:member:resume',
+  'channels:member:disconnect',
+  'channels:member:reset-local-history',
+  'channels:member:forget',
   // The Gemini API key is main-renderer-only; workspace popouts and utility
   // renderers must never be able to submit or clear credential material.
   'antigravity-gemini-api:get-secret-status',

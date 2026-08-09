@@ -129,6 +129,32 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('shape-gates the closed Channels member contract and rejects trailing data', () => {
+    for (const channel of [
+      'channels:member:list',
+      'channels:member:snapshot',
+      'channels:member:confirm-join',
+      'channels:member:resume',
+      'channels:member:disconnect'
+    ]) {
+      expect(() => validateIpcArgs(channel, [])).not.toThrow()
+      expect(() => validateIpcArgs(channel, [{}])).toThrow(/too many arguments/)
+    }
+
+    for (const channel of [
+      'channels:member:begin-join',
+      'channels:member:reconnect',
+      'channels:member:append',
+      'channels:member:reset-local-history',
+      'channels:member:forget'
+    ]) {
+      expect(() => validateIpcArgs(channel, [{}])).not.toThrow()
+      expect(() => validateIpcArgs(channel, [])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, ['invalid'])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, [{}, 'trailing'])).toThrow(/too many arguments/)
+    }
+  })
+
   it('registers Canvas handlers only after the validation wrapper is installed', () => {
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     expect(main.indexOf('installIpcValidation(ipcMain')).toBeGreaterThanOrEqual(0)
