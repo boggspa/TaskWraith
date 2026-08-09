@@ -44,11 +44,14 @@ import {
   type HostCommandName
 } from '../../shared/hostProtocol'
 
+import type { BridgeQuestionReplyAction } from '../BridgeActionPayload'
+import { RemoteQuestionRegistry } from '../RemoteQuestionRegistry'
 import { HostProjectionClient } from './HostProjectionClient'
 import {
   createHostProductionBootstrap,
   type HostProductionBootstrapOptions
 } from './HostProductionBootstrap'
+import { createHostProductionQuestionShadow } from './HostProductionQuestionShadow'
 import type { HostSupervisor } from './HostSupervisor'
 
 const HOST_ID = 'boot-proof-host-0001'
@@ -137,6 +140,28 @@ function mutationClient(): HostProjectionClient {
   })
 }
 
+function questionMutationClient(): HostProjectionClient {
+  return new HostProjectionClient({
+    client: {
+      clientId: MUTATION_CLIENT_ID,
+      clientClass: 'desktop',
+      clientVersion: HOST_VERSION
+    },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'commands',
+      'receipts',
+      'health',
+      'questions'
+    ],
+    userDataPath,
+    connectTimeoutMs: 5_000,
+    requestTimeoutMs: 5_000
+  })
+}
+
 function mutationCommand(input: {
   commandId: string
   idempotencyKey: string
@@ -198,6 +223,105 @@ function productionMutationOptions(): {
             : null,
         getApproval: () => null,
         getQuestion: () => null
+      }
+    }
+  }
+}
+
+function productionQuestionMutationOptions(): {
+  options: HostProductionBootstrapOptions
+  executeQuestionReply: ReturnType<typeof vi.fn>
+  resolveQuestion: ReturnType<typeof vi.fn>
+} {
+  const registry = new RemoteQuestionRegistry({
+    now: () => Date.parse('2026-08-09T00:00:00.000Z'),
+    setTimer: () => 'question-timer',
+    clearTimer: vi.fn()
+  })
+  const resolveQuestion = vi.fn()
+  registry.register({
+    questionId: 'question-receipt',
+    question: 'Proceed with the Host receipt proof?',
+    workspaceId: 'workspace-1',
+    threadId: 'thread-question',
+    runId: 'run-question',
+    resolve: resolveQuestion
+  })
+
+  const executeQuestionReply = vi.fn(async (action: BridgeQuestionReplyAction) => {
+    const result = registry.answerScoped(
+      action.promptId,
+      {
+        workspaceId: action.workspaceId,
+        threadId: action.threadId,
+        runId: action.runId
+      },
+      action.answer,
+      action.isCustom ?? true,
+      'remote',
+      action.receiptId
+    )
+    return {
+      executed: result.ok,
+      message: result.ok ? 'answered through production Host' : 'question resolution failed'
+    }
+  })
+
+  const questions = createHostProductionQuestionShadow({
+    listPending: () =>
+      registry.listPending().map((record) => ({
+        questionId: record.questionId,
+        question: record.question,
+        threadId: record.threadId,
+        createdAt: record.createdAt
+      })),
+    listResolved: () =>
+      registry.listResolved().map((record) => ({
+        questionId: record.questionId,
+        question: record.question,
+        threadId: record.threadId,
+        createdAt: record.createdAt,
+        status: record.status,
+        resolvedAt: record.resolvedAt,
+        receiptId: record.receiptId
+      }))
+  })
+
+  return {
+    executeQuestionReply,
+    resolveQuestion,
+    options: {
+      ...productionOptions(),
+      chatList: {
+        getChatList: () => [
+          {
+            appChatId: 'thread-question',
+            scope: 'workspace',
+            workspaceId: 'workspace-1',
+            provider: 'codex',
+            title: 'Question receipt proof',
+            archived: false,
+            updatedAt: Date.parse('2026-08-09T00:00:00.000Z'),
+            messageCount: 0
+          }
+        ]
+      },
+      questions,
+      bridge: { ...externalBridge(), executeQuestionReply },
+      contextSources: {
+        getChat: (threadId) =>
+          threadId === 'thread-question'
+            ? {
+                appChatId: 'thread-question',
+                scope: 'workspace',
+                workspaceId: 'workspace-1',
+                provider: 'codex',
+                archived: false,
+                runs: []
+              }
+            : null,
+        getApproval: () => null,
+        getQuestion: (questionId) => registry.get(questionId)
       }
     }
   }
@@ -393,6 +517,101 @@ describe('Wave 4.4 serve — a real client completes a real authenticated round 
     expect(after.snapshot.approvals.map((approval) => approval.approvalId)).not.toContain(
       challenge.approvalId
     )
+  }, 20_000)
+
+  it('publishes the exact question command receipt through snapshot and ordered delta', async () => {
+    const mutation = productionQuestionMutationOptions()
+    supervisor = createHostProductionBootstrap(mutation.options)
+    await supervisor.start()
+
+    client = questionMutationClient()
+    const welcome = await client.connect()
+    expect(welcome.capabilities).toEqual(
+      expect.arrayContaining(['snapshot', 'deltas', 'commands', 'receipts', 'questions'])
+    )
+
+    const before = await client.getSnapshot()
+    expect(before.snapshot.questions).toContainEqual(
+      expect.objectContaining({
+        questionId: 'question-receipt',
+        threadId: 'thread-question',
+        status: 'open'
+      })
+    )
+
+    const commandId = '55555555-5555-4555-8555-555555555555'
+    const receipt = await client.submitCommand(
+      mutationCommand({
+        commandId,
+        idempotencyKey: 'desktop:wave-44-mutation-proof:66666666-6666-4666-8666-666666666666',
+        name: 'question.answer',
+        target: { questionId: 'question-receipt' },
+        arguments: { decision: 'answer', answer: 'Yes', isCustom: false }
+      })
+    )
+    expect(receipt).toMatchObject({
+      commandId,
+      status: 'succeeded',
+      resultSummary: 'answered through production Host'
+    })
+
+    expect(mutation.executeQuestionReply).toHaveBeenCalledTimes(1)
+    expect(mutation.executeQuestionReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'questionReply',
+        workspaceId: 'workspace-1',
+        threadId: 'thread-question',
+        runId: 'run-question',
+        promptId: 'question-receipt',
+        receiptId: commandId,
+        answer: 'Yes',
+        isCustom: false
+      })
+    )
+    expect(mutation.resolveQuestion).toHaveBeenCalledWith({
+      answer: 'Yes',
+      is_custom: false
+    })
+
+    await expect(client.lookupReceipt({ commandId })).resolves.toMatchObject({
+      commandId,
+      status: 'succeeded'
+    })
+
+    const after = await client.getSnapshot()
+    const resolvedQuestion = after.snapshot.questions.find(
+      (question) => question.questionId === 'question-receipt'
+    )
+    expect(resolvedQuestion).toMatchObject({
+      questionId: 'question-receipt',
+      threadId: 'thread-question',
+      status: 'answered',
+      receiptId: commandId
+    })
+    expect(resolvedQuestion).not.toHaveProperty('answer')
+
+    const deltas = await client.getDeltasSince({
+      generation: before.snapshot.generation,
+      cursor: before.snapshot.cursor
+    })
+    expect(deltas.result.kind).toBe('deltas')
+    if (deltas.result.kind !== 'deltas') {
+      throw new Error('production Host required a resnapshot for one coherent question mutation')
+    }
+    const questionDelta = deltas.result.deltas.find(
+      (delta) => delta.family === 'question' && delta.entityId === 'question-receipt'
+    )
+    expect(questionDelta).toMatchObject({
+      kind: 'upsert',
+      family: 'question',
+      entityId: 'question-receipt',
+      payload: {
+        questionId: 'question-receipt',
+        threadId: 'thread-question',
+        status: 'answered',
+        receiptId: commandId
+      }
+    })
   }, 20_000)
 })
 
