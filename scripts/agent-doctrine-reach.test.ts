@@ -64,6 +64,13 @@ describe('agent doctrine reaches Claude sessions', () => {
     expect(text).toMatch(/never invent one/i)
   })
 
+  it('keeps the external stable-PID claim lane distinct from TaskWraith seats', () => {
+    const text = claudeMdText()
+    expect(text).toMatch(/external\/interactive agent/i)
+    expect(text).toMatch(/stable,[\s\S]*session-host PID/i)
+    expect(text).toMatch(/ancestor of `git`/i)
+  })
+
   it('warns that an owner id has to be re-read at every renewal', () => {
     // The id is scoped per run, so it rotates every turn. Renewing exactly as
     // the lease rule says — re-stamp `started` and `expires` — carries a stale

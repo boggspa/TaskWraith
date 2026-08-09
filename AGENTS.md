@@ -194,6 +194,13 @@ forever. The pid half is the same liveness model the credential authority uses
 
 #### When a pid will not hold your claim — TaskWraith seats
 
+This exception applies to **TaskWraith seats only**. An external or interactive
+agent does not need `TASKWRAITH_LOCK_OWNER_ID`: when it has a stable,
+long-lived session-host PID, use that normal `pid:` field. The hook recognises
+the claim when that PID is an ancestor of `git`; do not add an invented
+`lockOwnerId:` just because the environment variable is absent. Without a
+stable ancestor PID, coordinate instead.
+
 **Use `lockOwnerId:` instead of `pid:`** — the *exact* value of
 `TASKWRAITH_LOCK_OWNER_ID`, which main stamps into your seat's environment at
 launch. Read it; never invent one. It is an opaque id, so a human-readable
@@ -240,9 +247,11 @@ the key deliberately, and so does `run_task`. Commit from a shell where the
 `printenv` above prints your id, or the hook cannot tell your claim from a
 peer's.
 
-If no owner id was stamped for your seat, `TASKWRAITH_LOCK_OWNER_ID` is absent
-rather than empty. You then have neither identity — say so and coordinate in
-the open rather than raising a marker that claims nothing.
+If no owner id was stamped for a TaskWraith seat,
+`TASKWRAITH_LOCK_OWNER_ID` is absent rather than empty. That seat then has
+neither safe identity — say so and coordinate in the open rather than raising a
+marker that claims nothing. This is not the external-agent case: an external
+agent with a stable session-host PID uses `pid:`, not `lockOwnerId:`.
 
 Ownership is exact string equality against the env var, so an absent or empty
 `TASKWRAITH_LOCK_OWNER_ID` never matches anything. Either field alone is enough;

@@ -158,12 +158,14 @@ is_own_marker_claim() {
 }
 
 # Manual ownership accepts EITHER identity, because not every agent can produce
-# both. A sandboxed TaskWraith provider seat cannot inspect its own pid, so pid
-# ancestry is unreachable for it — but it does carry a per-seat opaque id in its
-# environment (TASKWRAITH_LOCK_OWNER_ID, scoped to runId+laneId+participantId),
-# which the derived lane already trusts. Accepting it here lets a seat raise a
-# narrow, intent-length claim of its own; derived markers cannot serve that, as
-# they live only as long as the write lease that projects them.
+# both. An external or interactive agent normally has no owner id and uses its
+# stable session-host PID. A sandboxed TaskWraith provider seat cannot safely
+# use that lane — its shell and provider-host PIDs are transient — but it does
+# carry a per-seat opaque id in its environment (TASKWRAITH_LOCK_OWNER_ID,
+# scoped to runId+laneId+participantId), which the derived lane already trusts.
+# Accepting it here lets a seat raise a narrow, intent-length claim of its own;
+# derived markers cannot serve that, as they live only as long as the write
+# lease that projects them.
 #
 # An absent or empty env var must NEVER match, or every process outside
 # TaskWraith would inherit every seat's bypass at once.
@@ -686,6 +688,13 @@ shopt -u nullglob
 if [ "$own_live_claim" -eq 0 ]; then
   printf '  note: no live claim of yours covers this commit. Raise a marker before\n'
   printf '        your next edit to a clean file (AGENTS.md: Before you write).\n'
+  if [ -z "${TASKWRAITH_LOCK_OWNER_ID:-}" ]; then
+    printf '        No usable TASKWRAITH_LOCK_OWNER_ID is present. That does not\n'
+    printf '        prevent an external/interactive agent from claiming work: use its\n'
+    printf '        stable agent/session host PID in `pid:`; this hook accepts it when\n'
+    printf '        it is an ancestor of git. Do not invent lockOwnerId or use a\n'
+    printf '        one-shot command PID; without a stable ancestor PID, coordinate.\n'
+  fi
   warn=1
 fi
 

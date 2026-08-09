@@ -239,7 +239,12 @@ expect_block 'manual foreign exact-path claims still block' "$repo"
 repo="$(new_repo manual-own)"
 stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$$" src/manual.ts
-expect_allow 'manual ancestor-owned claims still pass' "$repo"
+expect_allow 'PID-only external ancestor-owned claims pass without a lock-owner id' "$repo"
+if [[ "$hook_output" == *'no live claim of yours'* ]]; then
+  printf 'FAIL: PID-only external claim was not recognised as its owner\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
 
 repo="$(new_repo manual-body)"
 stage_file "$repo" src/manual.ts
@@ -585,6 +590,14 @@ stage_file "$repo" src/manual.ts
 expect_allow 'a markerless commit is nagged, never blocked' "$repo"
 if [[ "$hook_output" != *'no live claim of yours'* ]]; then
   printf 'FAIL: markerless commit produced no marker nag\n%s\n' "$hook_output" >&2
+  exit 1
+fi
+assertions=$((assertions + 1))
+if [[ "$hook_output" != *'No usable TASKWRAITH_LOCK_OWNER_ID is present'* ]] ||
+  [[ "$hook_output" != *'stable agent/session host PID'* ]] ||
+  [[ "$hook_output" != *'ancestor of git'* ]]; then
+  printf 'FAIL: markerless external agent was not given PID-claim guidance\n%s\n' \
+    "$hook_output" >&2
   exit 1
 fi
 assertions=$((assertions + 1))
