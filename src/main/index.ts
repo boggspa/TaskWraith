@@ -48663,6 +48663,18 @@ if (isGeminiMcpBridgeProcess) {
         },
         chatList: AppStore,
         bridge: createBridgeActionExecutor(),
+        // Governed Host mutations re-read canonical context immediately before
+        // Bridge dispatch. Keep these as lazy, wiring-only source callbacks:
+        // approvalService is assigned later in startup, while AppStore and the
+        // question registry are process-owned live authorities.
+        contextSources: {
+          getChat: (threadId) => AppStore.getChat(threadId),
+          getApproval: (approvalId) =>
+            approvalService
+              ?.listProjectionCards()
+              .find((card) => card.toolCallId === approvalId) ?? null,
+          getQuestion: (questionId) => remoteQuestionRegistry.get(questionId)
+        },
         // Step 5b-wire. THE ARROW IS LOAD-BEARING — DO NOT "SIMPLIFY" IT AWAY.
         // `getConfiguredProviderSnapshot` is a `const` arrow declared ~3,900
         // lines BELOW this call, inside this same whenReady block. Passing the

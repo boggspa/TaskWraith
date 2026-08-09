@@ -149,6 +149,36 @@ describe('agent approval preview', () => {
     expect(markup.indexOf('&quot;first&quot;')).toBeLessThan(markup.indexOf('&quot;second&quot;'))
   })
 
+  it('renders exact transient Mesh Canvas arguments for Ask and Plan review', () => {
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        kind: 'tool',
+        toolName: 'mcp__taskwraith__mesh_topology_edit',
+        params: {
+          sceneId: 'scene-a',
+          nodeId: 'node-a',
+          expectedRevision: 1,
+          clientMutationId: 'mutation\u202Ehidden',
+          operations: [
+            {
+              operation: 'sculpt',
+              mode: 'inflate',
+              center: { x: 0, y: 0, z: 0 },
+              radius: 2,
+              strength: 0.02
+            }
+          ]
+        }
+      })!
+    )
+
+    expect(markup).toContain('Exact Mesh Canvas arguments (control-visible)')
+    expect(markup).toContain('&quot;expectedRevision&quot;: 1')
+    expect(markup).toContain('&quot;operation&quot;: &quot;sculpt&quot;')
+    expect(markup).toContain('RIGHT-TO-LEFT OVERRIDE U+202E')
+    expect(markup).not.toContain('\u202E')
+  })
+
   it('makes controls, bidi, zero-width text, and review-grammar literals safe in retry JSON', () => {
     const exactArguments = {
       'unsafe\u202Ekey': {

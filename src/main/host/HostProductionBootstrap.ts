@@ -50,11 +50,7 @@ import type {
   AppStoreHostAuthorityHealthProvider
 } from './AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from './HostAuthority'
-import {
-  HostBridgeCommandExecutor,
-  type HostBridgeActionPort,
-  type HostBridgeContextResolvers
-} from './HostBridgeCommandExecutor'
+import { HostBridgeCommandExecutor, type HostBridgeActionPort } from './HostBridgeCommandExecutor'
 import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
 import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelopeResolver'
@@ -69,6 +65,10 @@ import {
 import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
 import { createHostProductionAuthorityEvaluator } from './HostProductionAuthorityEvaluator'
+import {
+  createHostProductionContextResolvers,
+  type HostProductionContextResolverDeps
+} from './HostProductionContextResolvers'
 import {
   createHostProductionSuppliers,
   type HostProductionApprovalListPort,
@@ -148,38 +148,6 @@ const HOST_PRODUCTION_CAPABILITY_OFFER: readonly HostCapability[] = [
   'recovery'
 ]
 
-/**
- * Fail-closed Host context resolvers.
- *
- * MEASURED GAP: the repository contains no production implementation of
- * HostBridgeContextResolvers — HostBridgeCommandExecutor declares the
- * interface and nothing satisfies it. Requiring the root to author six
- * resolver methods would put substantial domain logic in the composition
- * root, which R1 forbids, so the bootstrap installs this honest refusal and
- * accepts a real implementation through `options.resolvers` when one exists.
- *
- * This does not weaken any wall. Every governed mutation is already
- * `deferred` by the production evaluator, so it must clear an approval
- * before execution is attempted; this refusal then fails the execution
- * closed with a named reason instead of fabricating a success.
- */
-const UNWIRED_CONTEXT_RESOLUTION = 'host-context-resolution-not-wired'
-
-function createUnwiredContextResolvers(): HostBridgeContextResolvers {
-  const refuse = (): { ok: false; error: string } => ({
-    ok: false,
-    error: UNWIRED_CONTEXT_RESOLUTION
-  })
-  return {
-    resolveComposerSend: refuse,
-    resolveRunCancel: refuse,
-    resolveApprovalDecide: refuse,
-    resolveQuestionAnswer: refuse,
-    resolveEnsembleSeatToggle: refuse,
-    resolveThreadSelect: refuse
-  } as unknown as HostBridgeContextResolvers
-}
-
 /* ------------------------------------------------------------------ */
 /*  Options                                                          */
 /* ------------------------------------------------------------------ */
@@ -240,10 +208,11 @@ export interface HostProductionBootstrapOptions {
    */
   readonly bridge: HostBridgeActionPort
   /**
-   * Host-owned context resolvers. Optional: none exists in the tree yet, so
-   * omitting it installs the fail-closed refusal above.
+   * Live main-owned context sources for governed mutations. The bootstrap
+   * constructs the Host resolver so the composition root supplies only its
+   * canonical store/service callbacks, never Host domain logic.
    */
-  readonly resolvers?: HostBridgeContextResolvers
+  readonly contextSources: HostProductionContextResolverDeps
   /** Extra durable-state flush performed after the Host's own flush. */
   readonly onShutdown?: () => void | Promise<void>
   /** Optional diagnostic logger. */
@@ -331,6 +300,18 @@ export function createHostProductionBootstrap(
   if (!options.bridge || typeof options.bridge !== 'object') {
     throw new Error('HostProductionBootstrap requires an injected bridge')
   }
+  if (!options.contextSources || typeof options.contextSources !== 'object') {
+    throw new Error('HostProductionBootstrap requires injected contextSources')
+  }
+  if (typeof options.contextSources.getChat !== 'function') {
+    throw new Error('HostProductionBootstrap requires contextSources.getChat')
+  }
+  if (typeof options.contextSources.getApproval !== 'function') {
+    throw new Error('HostProductionBootstrap requires contextSources.getApproval')
+  }
+  if (typeof options.contextSources.getQuestion !== 'function') {
+    throw new Error('HostProductionBootstrap requires contextSources.getQuestion')
+  }
   if (options.providers !== undefined && typeof options.providers.getProviders !== 'function') {
     throw new Error('HostProductionBootstrap requires providers.getProviders to be a function')
   }
@@ -399,10 +380,11 @@ export function createHostProductionBootstrap(
     ...(options.artifacts ? { artifacts: options.artifacts } : {})
   })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
+  const contextResolvers = createHostProductionContextResolvers(options.contextSources)
 
   const bridgeExecutor = new HostBridgeCommandExecutor({
     bridge: options.bridge,
-    resolvers: options.resolvers ?? createUnwiredContextResolvers(),
+    resolvers: contextResolvers,
     ...(options.nowMs ? { nowMs: options.nowMs } : {})
   })
   const commandExecutor: AppStoreHostAuthorityExecutor = (command, context) =>

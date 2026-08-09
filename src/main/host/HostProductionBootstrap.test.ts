@@ -20,6 +20,7 @@ import {
   resetHostProductionBootstrapForTests
 } from './HostProductionBootstrap'
 import type { HostProductionBootstrapOptions } from './HostProductionBootstrap'
+import type { HostProductionContextResolverDeps } from './HostProductionContextResolvers'
 import type {
   HostProductionChatListPort,
   HostProductionProviderListPort
@@ -44,6 +45,14 @@ function uniquePath(): string {
 
 function mockChatList(): HostProductionChatListPort {
   return { getChatList: vi.fn().mockReturnValue([]) }
+}
+
+function mockContextSources(): HostProductionContextResolverDeps {
+  return {
+    getChat: vi.fn().mockReturnValue(null),
+    getApproval: vi.fn().mockReturnValue(null),
+    getQuestion: vi.fn().mockReturnValue(null)
+  }
 }
 
 function mockBridge(): HostProductionBootstrapOptions['bridge'] {
@@ -102,6 +111,7 @@ function validOptions(
   return {
     userDataPath: uniquePath(),
     chatList: mockChatList(),
+    contextSources: mockContextSources(),
     bridge: mockBridge(),
     host: MOCK_HOST,
     // Fakes keep construction pure: no real server, no real journal.
@@ -268,6 +278,45 @@ describe('HostProductionBootstrap options validation', () => {
     expect(result).toBeDefined()
   })
 
+  it('requires live context sources for governed Host mutations', () => {
+    expect(() =>
+      createHostProductionBootstrap(validOptions({ contextSources: undefined as never }))
+    ).toThrow('HostProductionBootstrap requires injected contextSources')
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({
+          contextSources: {
+            getChat: undefined as never,
+            getApproval: () => null,
+            getQuestion: () => null
+          }
+        })
+      )
+    ).toThrow('HostProductionBootstrap requires contextSources.getChat')
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({
+          contextSources: {
+            getChat: () => null,
+            getApproval: undefined as never,
+            getQuestion: () => null
+          }
+        })
+      )
+    ).toThrow('HostProductionBootstrap requires contextSources.getApproval')
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({
+          contextSources: {
+            getChat: () => null,
+            getApproval: () => null,
+            getQuestion: undefined as never
+          }
+        })
+      )
+    ).toThrow('HostProductionBootstrap requires contextSources.getQuestion')
+  })
+
   it('threads an injected questions port through to the snapshot donor', async () => {
     const { compositionInput } = captureSupervisorInput({
       questions: {
@@ -328,6 +377,58 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
       'artifacts',
       'recovery'
     ])
+  })
+
+  it('builds live production context resolvers instead of an unwired refusal', async () => {
+    const executeComposerPrompt = vi.fn(async () => ({ executed: true, message: 'sent' }))
+    const { compositionInput } = captureSupervisorInput({
+      bridge: { ...mockBridge(), executeComposerPrompt },
+      contextSources: {
+        getChat: (threadId) =>
+          threadId === 'thread-1'
+            ? {
+                appChatId: 'thread-1',
+                scope: 'workspace',
+                workspaceId: 'workspace-1',
+                provider: 'codex',
+                archived: false,
+                runs: []
+              }
+            : null,
+        getApproval: () => null,
+        getQuestion: () => null
+      }
+    })
+
+    const actor = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'desktop' as const }
+    const result = await compositionInput.commandExecutor(
+      {
+        type: 'host.command',
+        protocolVersion: 2,
+        commandId: '11111111-1111-4111-8111-111111111111',
+        idempotencyKey: 'desktop:client-1:22222222-2222-4222-8222-222222222222',
+        actor,
+        name: 'composer.send',
+        target: { threadId: 'thread-1' },
+        arguments: { text: 'hello from Host' },
+        issuedAt: '2026-08-09T00:00:00.000Z'
+      },
+      {
+        actor,
+        client: { clientId: 'client-1', clientClass: 'desktop', clientVersion: 'test' }
+      }
+    )
+
+    expect(result).toMatchObject({ status: 'succeeded', resultSummary: 'sent' })
+    expect(executeComposerPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'composerPrompt',
+        workspaceId: 'workspace-1',
+        threadId: 'thread-1',
+        provider: 'codex',
+        text: 'hello from Host'
+      })
+    )
   })
 
   it('withholds capabilities the donor cannot honestly populate', () => {

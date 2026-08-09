@@ -73,6 +73,15 @@ function externalBridge(): HostProductionBootstrapOptions['bridge'] {
   } as unknown as HostProductionBootstrapOptions['bridge']
 }
 
+/** Live-source boundary for governed mutations; this read-only boot proof has none. */
+function externalContextSources(): HostProductionBootstrapOptions['contextSources'] {
+  return {
+    getChat: vi.fn().mockReturnValue(null),
+    getApproval: vi.fn().mockReturnValue(null),
+    getQuestion: vi.fn().mockReturnValue(null)
+  }
+}
+
 /**
  * NOTE THE ABSENCES. `createComposition` and `createServer` are deliberately
  * NOT provided, so the production defaults run. Adding either one back turns
@@ -83,6 +92,7 @@ function productionOptions(): HostProductionBootstrapOptions {
     userDataPath,
     chatList: externalChatList(),
     bridge: externalBridge(),
+    contextSources: externalContextSources(),
     host: { hostId: HOST_ID, hostVersion: HOST_VERSION }
   }
 }

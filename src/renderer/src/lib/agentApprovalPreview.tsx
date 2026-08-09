@@ -46,6 +46,12 @@ export const isCanvasEvalApprovalToolName = (value: unknown): boolean => {
   return normalized === 'canvas_eval' || /(?:^|_)canvas_eval$/.test(normalized)
 }
 
+export const isMeshCanvasApprovalToolName = (value: unknown): boolean => {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim().toLowerCase().replace(/-/g, '_').split('__').at(-1) ?? ''
+  return normalized.startsWith('mesh_scene_') || normalized.startsWith('mesh_topology_')
+}
+
 const namedInvisibleCodePoints = new Map<number, string>([
   [0x00a0, 'NBSP'],
   [0x00ad, 'SOFT HYPHEN'],
@@ -255,6 +261,11 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
     permissionRetry && Object.prototype.hasOwnProperty.call(permissionRetry, 'exactArguments')
       ? formatToolPermissionRetryExactArgumentsForReview(permissionRetry.exactArguments)
       : ''
+  const meshExactArgumentsReview =
+    isMeshCanvasApprovalToolName(toolName) &&
+    Object.prototype.hasOwnProperty.call(preview, 'params')
+      ? formatToolPermissionRetryExactArgumentsForReview(preview.params)
+      : ''
   const permissionRetryTargetToolName =
     typeof permissionRetry?.targetToolName === 'string'
       ? formatApprovalFieldForReview(permissionRetry.targetToolName)
@@ -330,6 +341,7 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
     toolName ||
     canvasEvalScript ||
     permissionRetryExactArgumentsReview ||
+    meshExactArgumentsReview ||
     launchContextPreview ||
     taskPreview ||
     patchPreview ||
@@ -345,6 +357,16 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
         <div className="agent-approval-preview-row">
           <span>Tool</span>
           <code>{toolName}</code>
+        </div>
+      )}
+      {meshExactArgumentsReview && (
+        <div className="agent-approval-preview-block canvas-eval-exact-review mesh-exact-review">
+          <span>Exact Mesh Canvas arguments (control-visible)</span>
+          <pre dir="ltr">{meshExactArgumentsReview}</pre>
+          <small>
+            JSON line breaks and indentation show structure. Angle-bracket tokens identify exact
+            invisible or control characters in argument keys and values.
+          </small>
         </div>
       )}
       {cwd && (
