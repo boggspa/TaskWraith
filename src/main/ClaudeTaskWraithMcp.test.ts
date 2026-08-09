@@ -12,10 +12,12 @@ import {
   CORE_MCP_ADVERTISE_TOOLS,
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
   GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V13_MCP_ADVERTISE_TOOLS
+  GATEWAY_V13_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS
 } from './mcp/McpToolProfiles'
 import {
   GEMINI_MCP_MESH_DIRECT_ARG,
+  GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG
@@ -24,7 +26,8 @@ import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 
 // Phase I3 (Claude initiator): the Claude SDK + CLI fallback gain the
@@ -174,6 +177,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith?.type).toBe('stdio')
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).toContain(GEMINI_MCP_MESH_DIRECT_ARG)
+    expect(taskWraith.args).not.toContain(GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG)
     expect(taskWraith.args).toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
     expect(taskWraith.args).not.toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
@@ -186,6 +190,27 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(allowed).toContain('mcp__TaskWraith__mesh_scene_present')
     expect(allowed).toContain('canvas_sketch_update')
     expect(allowed).toContain('ensemble_roster_edit')
+  })
+
+  it('adds topology direct only to the fresh v15 Mesh participant profile', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      profileId: TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    })
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.args).toContain(GEMINI_MCP_MESH_DIRECT_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
+
+    const allowed = buildClaudeTaskWraithAllowedToolNames(
+      TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    )
+    expect(allowed).toHaveLength(GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS.length * 2)
+    expect(allowed).toContain('mesh_topology_edit')
+    expect(allowed).toContain('mcp__TaskWraith__mesh_topology_edit')
   })
 
   it('keeps Sketch behind discovery for a pinned v7 gateway receipt', () => {

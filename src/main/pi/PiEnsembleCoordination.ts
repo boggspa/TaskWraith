@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { chmodSync, lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
+import { MESH_MCP_TOOL_NAMES, type MeshMcpToolName } from '../../shared/taskWraithMcpCatalog'
 
 /**
  * The intentionally small coordination surface Pi receives in Ensemble mode.
@@ -37,6 +38,9 @@ export const PI_MANAGED_SHELL_TOOL_NAMES = Object.freeze([
   'request_tool_permission'
 ] as const)
 
+/** Chat-local Mesh scene/topology tools admitted through the normal main gate. */
+export const PI_MESH_TOOL_NAMES = Object.freeze([...MESH_MCP_TOOL_NAMES])
+
 export type PiEnsembleCoordinationToolName = (typeof PI_ENSEMBLE_COORDINATION_TOOL_NAMES)[number]
 export type PiExactFileToolName = (typeof PI_EXACT_FILE_TOOL_NAMES)[number]
 export type PiManagedShellToolName = (typeof PI_MANAGED_SHELL_TOOL_NAMES)[number]
@@ -44,6 +48,7 @@ export type PiTaskWraithToolName =
   | PiEnsembleCoordinationToolName
   | PiExactFileToolName
   | PiManagedShellToolName
+  | MeshMcpToolName
 
 /**
  * The broker enforces this independently of Pi's extension registration.
@@ -68,7 +73,8 @@ export function isPiTaskWraithToolName(value: unknown): value is PiTaskWraithToo
     isPiEnsembleCoordinationToolName(value) ||
     (typeof value === 'string' &&
       ((PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(value) ||
-        (PI_MANAGED_SHELL_TOOL_NAMES as readonly string[]).includes(value)))
+        (PI_MANAGED_SHELL_TOOL_NAMES as readonly string[]).includes(value) ||
+        (PI_MESH_TOOL_NAMES as readonly string[]).includes(value)))
   )
 }
 
@@ -170,6 +176,9 @@ export function piTaskWraithToolsReadyPromptAppendix(
   const coordinationTools = receipt.toolNames.filter((name) =>
     (PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).includes(name)
   )
+  const meshTools = receipt.toolNames.filter((name) =>
+    (PI_MESH_TOOL_NAMES as readonly string[]).includes(name)
+  )
   return [
     'TaskWraith managed-tools receipt (verified for this run):',
     `- Transport: explicit app-owned Pi extension over the run-bound local broker (receipt ${receipt.sourceSha256.slice(0, 12)}).`,
@@ -191,6 +200,11 @@ export function piTaskWraithToolsReadyPromptAppendix(
           '- Ensemble coordination remains policy-gated and uses the same run-bound server-side allowlist.'
         ]
       : []),
+    ...(meshTools.length
+      ? [
+          '- Mesh Canvas tools edit chat-owned scenes through the same meshCanvas permission gate. Inspect the latest topology revision before each edit and retry stale revisions only after re-inspection.'
+        ]
+      : []),
     '- If a call is rejected, report the tool result and continue; do not probe another transport.'
   ].join('\n')
 }
@@ -209,6 +223,7 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
   exactFileToolsExpected: boolean
   shellToolsExpected: boolean
   coordinationExpected: boolean
+  meshToolsExpected?: boolean
   reason?: string
 }): string {
   return [
@@ -226,6 +241,11 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
     ...(input.coordinationExpected
       ? [
           '- Do not call, search for, or retry `ensemble_*`, `blackboard_*`, or `scout_brief` tools. Use one unambiguous `@Role` or `@Model` mention instead.'
+        ]
+      : []),
+    ...(input.meshToolsExpected
+      ? [
+          '- Mesh Canvas tools were expected but their managed transport did not prove ready. Continue without claiming scene changes and tell the user that Mesh authoring is unavailable for this turn.'
         ]
       : []),
     ...(input.reason ? [`- Availability reason: ${input.reason}`] : [])
@@ -347,7 +367,19 @@ function descriptionFor(name) {
     replace: 'Replace exact text in one workspace file through TaskWraith mutation locking. Required: path, old_string, and new_string.',
     apply_patch: 'Apply one complete unified diff through an atomic TaskWraith multi-file transaction. Required: patch.',
     run_shell_command: 'Run a command TaskWraith can prove read-only. Required: command. Opaque or mutating process effects require request_tool_permission for one audited host execution.',
-    request_tool_permission: 'Ask the user for one audited retry of a denied TaskWraith tool. Include the tool name, exact arguments, failure, and optional rationale.'
+    request_tool_permission: 'Ask the user for one audited retry of a denied TaskWraith tool. Include the tool name, exact arguments, failure, and optional rationale.',
+    mesh_scene_create: 'Create a chat-owned Mesh Canvas scene. Optional: title.',
+    mesh_scene_list: 'List chat-owned Mesh Canvas scenes.',
+    mesh_scene_inspect: 'Inspect one scene. Required: sceneId.',
+    mesh_scene_import: 'Import a workspace-local GLB, glTF, or OBJ. Required: sceneId and sourcePath.',
+    mesh_scene_apply: 'Apply one declarative scene/node operation. Required: sceneId and operation; pass operation-specific fields.',
+    mesh_scene_set_material: 'Set one node PBR material. Required: sceneId, nodeId, and material.',
+    mesh_scene_present: 'Present one Mesh Canvas scene. Required: sceneId.',
+    mesh_scene_close: 'Close one presented Mesh Canvas scene. Required: sceneId.',
+    mesh_scene_delete: 'Delete one chat-owned Mesh Canvas scene. Required: sceneId.',
+    mesh_topology_convert: 'Convert a primitive or imported node to editable topology. Required: sceneId and nodeId.',
+    mesh_topology_inspect: 'Inspect paged vertices, edges, faces, UV loops, bones, or summary. Required: sceneId and nodeId.',
+    mesh_topology_edit: 'Atomically edit topology, UVs, sculpt strokes, or rigging. Required: sceneId, nodeId, expectedRevision, clientMutationId, and operations.'
   }
   return descriptions[name] || 'Use this TaskWraith Ensemble coordination tool.'
 }
@@ -436,6 +468,39 @@ function parametersFor(name) {
         arguments: Type.Any(),
         failure: Type.String(),
         rationale: optionalText()
+      })
+    case 'mesh_scene_create':
+      return object({ title: optionalText() })
+    case 'mesh_scene_list':
+      return object({})
+    case 'mesh_scene_inspect':
+    case 'mesh_scene_present':
+    case 'mesh_scene_close':
+    case 'mesh_scene_delete':
+      return object({ sceneId: Type.String() })
+    case 'mesh_scene_import':
+      return object({ sceneId: Type.String(), sourcePath: Type.String() })
+    case 'mesh_scene_apply':
+      return object({ sceneId: Type.String(), operation: Type.String() })
+    case 'mesh_scene_set_material':
+      return object({ sceneId: Type.String(), nodeId: Type.String(), material: Type.Any() })
+    case 'mesh_topology_convert':
+      return object({ sceneId: Type.String(), nodeId: Type.String() })
+    case 'mesh_topology_inspect':
+      return object({
+        sceneId: Type.String(),
+        nodeId: Type.String(),
+        section: optionalText(),
+        offset: Type.Optional(Type.Number()),
+        limit: Type.Optional(Type.Number())
+      })
+    case 'mesh_topology_edit':
+      return object({
+        sceneId: Type.String(),
+        nodeId: Type.String(),
+        expectedRevision: Type.Number(),
+        clientMutationId: Type.String(),
+        operations: Type.Array(Type.Any())
       })
     default:
       return object({})

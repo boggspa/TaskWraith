@@ -6,6 +6,7 @@ import {
 } from '../../shared/providerActionTaxonomy'
 import { MCP_APP_STATE_MUTATION_TOOLS } from './McpAutoAllowedTools'
 import { OUTLOOK_MCP_TOOL_NAMES } from './OutlookToolExecutors'
+import { MESH_MCP_TOOL_NAMES } from '../TaskWraithMcpTools'
 
 const OUTLOOK_ALWAYS_PROMPT_TOOLS = new Set<string>(OUTLOOK_MCP_TOOL_NAMES)
 
@@ -72,17 +73,20 @@ export function isMutatingTaskWraithMcpTool(toolName: string, toolArgs?: unknown
  * tool would silence them. `theme_tokens_get` is a pure read and stays off this
  * list.
  *
- * Global-scope chats prompt for everything, which is why scope is a parameter
- * rather than a caller-side `||`.
+ * Global-scope chats prompt for everything except chat-local Mesh Canvas state.
+ * Mesh workspace imports independently require a workspace and remain denied
+ * when none exists.
  */
 export function mcpToolAlwaysPrompts(
   toolName: string,
   scope?: string,
   toolArgs?: unknown
 ): boolean {
-  if (scope === 'global') return true
   const contract = resolveToolDispatchContractStrict(toolName, toolArgs)
   const effectiveToolName = contract.ok ? contract.effectiveToolName : toolName
+  if (scope === 'global') {
+    return !(MESH_MCP_TOOL_NAMES as readonly string[]).includes(effectiveToolName)
+  }
   return (
     effectiveToolName === 'image_generate' ||
     effectiveToolName === 'canvas_eval' ||

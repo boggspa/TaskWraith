@@ -510,6 +510,18 @@ describe('ComposerService', () => {
     expect(payload.scope).toBe('global')
     expect(payload.workspace).toBeUndefined()
     expect(payload.approvalMode).toBe('default')
+    expect(payload.effectivePermissions).toMatchObject({
+      presetId: 'default',
+      agenticServices: {
+        meshCanvas: 'allow',
+        fileChanges: 'ask',
+        subThreadDelegation: 'ask',
+        simulatorCanvas: 'ask'
+      }
+    })
+    // Composer resolves the persisted-session receipt before permissions; the
+    // normalized main launch reselects v15-mesh from this signed posture.
+    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
   })
 
   it('builds Kimi prompts with conversation context even when resuming a provider session', async () => {

@@ -264,7 +264,6 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'subThreadDelegation',
   'canvasInteraction',
   'sketchCanvas',
-  'meshCanvas',
   'simulatorCanvas',
   'crossThreadRead',
   'threadMessage',

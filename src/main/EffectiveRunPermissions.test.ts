@@ -946,7 +946,9 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
     expect(resolved.agenticServices.canvasInteraction).toBe('ask')
     expect(resolved.agenticServices.sketchCanvas).toBe('ask')
-    expect(resolved.agenticServices.meshCanvas).toBe('ask')
+    // Mesh Canvas follows the user's explicit five-tier ladder even for a
+    // preview-risk model; the global service deny still remains authoritative.
+    expect(resolved.agenticServices.meshCanvas).toBe('allow')
     expect(resolved.agenticServices.mediaEditing).toBe('ask')
   })
 

@@ -39,6 +39,7 @@ describe('MeshToolExecutors', () => {
   const context = (chatId = 'chat-a') => ({
     appChatId: chatId,
     appRunId: 'run-a',
+    ensembleRun: { participantId: 'seat-a' },
     workspacePath: workspace
   })
 
@@ -97,6 +98,73 @@ describe('MeshToolExecutors', () => {
       ok: true,
       scenes: []
     })
+  })
+
+  it('converts, pages, and CAS-edits first-class topology without returning the whole document', async () => {
+    const created = await execute('mesh_scene_create', { title: 'Topology study' })
+    const sceneId = (created.structuredContent as { scene: { id: string } }).scene.id
+    const applied = await execute('mesh_scene_apply', {
+      sceneId,
+      operation: 'add_primitive',
+      primitive: 'box'
+    })
+    const nodeId = (applied.structuredContent as { scene: { nodes: Array<{ id: string }> } }).scene
+      .nodes[0].id
+    const converted = await execute('mesh_topology_convert', { sceneId, nodeId })
+    expect(converted.structuredContent).toMatchObject({
+      ok: true,
+      sceneId,
+      nodeId,
+      topology: { revision: 0, vertexCount: 8, faceCount: 6 }
+    })
+
+    const inspected = await execute('mesh_topology_inspect', {
+      sceneId,
+      nodeId,
+      section: 'faces',
+      limit: 1
+    })
+    expect(inspected.structuredContent).toMatchObject({
+      ok: true,
+      section: 'faces',
+      total: 6,
+      items: [{ loops: expect.any(Array) }],
+      nextOffset: 1
+    })
+
+    const vertices = await execute('mesh_topology_inspect', {
+      sceneId,
+      nodeId,
+      section: 'vertices',
+      limit: 1
+    })
+    const vertexId = (vertices.structuredContent as { items: Array<{ id: string }> }).items[0].id
+    const edited = await execute('mesh_topology_edit', {
+      sceneId,
+      nodeId,
+      expectedRevision: 0,
+      clientMutationId: 'seat-a-edit',
+      operations: [
+        { operation: 'move_vertices', vertices: [{ vertexId, delta: { x: 0.1 } }] },
+        { operation: 'unwrap_uv', projection: 'box' }
+      ]
+    })
+    expect(edited.structuredContent).toMatchObject({
+      ok: true,
+      topology: { revision: 1, vertexCount: 8, uvLoopCount: 24 },
+      duplicate: false
+    })
+    expect((edited.structuredContent as Record<string, unknown>).document).toBeUndefined()
+
+    const stale = await execute('mesh_topology_edit', {
+      sceneId,
+      nodeId,
+      expectedRevision: 0,
+      clientMutationId: 'seat-b-stale',
+      operations: [{ operation: 'move_vertices', vertices: [{ vertexId, delta: { y: 0.1 } }] }]
+    })
+    expect(stale.isError).toBe(true)
+    expect(stale.text).toContain('current revision is 1')
   })
 
   it('imports workspace-local Wavefront bundles and keeps source paths out of results', async () => {

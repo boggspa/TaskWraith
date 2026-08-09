@@ -11,6 +11,7 @@ import type { WebContents } from 'electron'
 import {
   isPortableEnsembleControlToolName,
   MESH_SCENE_MCP_TOOL_NAMES,
+  MESH_TOPOLOGY_MCP_TOOL_NAMES,
   normalizePortableEnsembleControlArguments,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
@@ -28,6 +29,7 @@ import {
 import {
   compactGatewayV8MeshToolDefinitionsForTransport,
   compactGatewayV13ToolDefinitionsForTransport,
+  compactGatewayV15MeshToolDefinitionsForTransport,
   GATEWAY_V8_ADDED_TOOL_NAMES,
   GATEWAY_V13_ADDED_TOOL_NAMES,
   isCoreMcpAdvertisedTool,
@@ -132,6 +134,9 @@ export const GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG = '--portable-ensemble-con
 // never dispatch authority: main checks the active participant/run posture on
 // every Mesh Canvas call.
 export const GEMINI_MCP_MESH_DIRECT_ARG = '--mesh-direct'
+// Gateway-v15 Mesh topology direct-discovery flag. Kept separate from the
+// original Mesh flag so v7-v14 profile receipts remain byte-for-byte frozen.
+export const GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG = '--mesh-topology-direct'
 // Sketch Canvas direct-discovery profile flag. v8 sessions carry it for their
 // whole lifetime; older pinned gateway receipts omit it and keep Sketch behind
 // capability discovery.
@@ -176,6 +181,9 @@ export function applyMcpBridgeProfileArgvToEnv(
     env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL = '1'
   }
   if (argv.includes(GEMINI_MCP_MESH_DIRECT_ARG)) env.TASKWRAITH_MCP_MESH_DIRECT = '1'
+  if (argv.includes(GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG)) {
+    env.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT = '1'
+  }
   if (argv.includes(GEMINI_MCP_SKETCH_DIRECT_ARG)) env.TASKWRAITH_MCP_SKETCH_DIRECT = '1'
   if (argv.includes(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)) {
     env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT = '1'
@@ -956,6 +964,7 @@ function isGatewayMcpAdvertisedForSeat(
   name: string,
   portableEnsembleControl = false,
   meshDirect = false,
+  meshTopologyDirect = false,
   sketchDirect = false,
   orchestrationDirect = false
 ): boolean {
@@ -964,6 +973,7 @@ function isGatewayMcpAdvertisedForSeat(
       (!portableEnsembleControl || name !== 'ensemble_bossman_control')) ||
     (portableEnsembleControl && name === 'ensemble_control') ||
     (meshDirect && (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
+    (meshTopologyDirect && (MESH_TOPOLOGY_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
     (sketchDirect && (GATEWAY_V8_ADDED_TOOL_NAMES as readonly string[]).includes(name)) ||
     (orchestrationDirect && (GATEWAY_V13_ADDED_TOOL_NAMES as readonly string[]).includes(name))
   )
@@ -1198,6 +1208,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
+  GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
@@ -1713,6 +1724,9 @@ export function handleMcpJsonRpcMessage(
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
     const meshDirect =
       (deps.env?.TASKWRAITH_MCP_MESH_DIRECT ?? process.env.TASKWRAITH_MCP_MESH_DIRECT) === '1'
+    const meshTopologyDirect =
+      (deps.env?.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT ??
+        process.env.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT) === '1'
     const sketchDirect =
       (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
         process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
@@ -1745,6 +1759,7 @@ export function handleMcpJsonRpcMessage(
                   tool.name,
                   portableEnsembleControl,
                   meshDirect,
+                  meshTopologyDirect,
                   sketchDirect,
                   orchestrationDirect
                 ))
@@ -1761,9 +1776,13 @@ export function handleMcpJsonRpcMessage(
       gatewaySubsetOnly && orchestrationDirect
         ? compactGatewayV13ToolDefinitionsForTransport(meshCompacted)
         : meshCompacted
+    const profileCompactedTools =
+      gatewaySubsetOnly && meshTopologyDirect
+        ? compactGatewayV15MeshToolDefinitionsForTransport(transportDirectTools)
+        : transportDirectTools
     const baseTools = gatewaySubsetOnly
-      ? [...transportDirectTools, ...gatewayToolDefinitions()]
-      : transportDirectTools
+      ? [...profileCompactedTools, ...gatewayToolDefinitions()]
+      : profileCompactedTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
     return
@@ -1823,6 +1842,9 @@ export function handleMcpJsonRpcMessage(
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
     const meshDirect =
       (deps.env?.TASKWRAITH_MCP_MESH_DIRECT ?? process.env.TASKWRAITH_MCP_MESH_DIRECT) === '1'
+    const meshTopologyDirect =
+      (deps.env?.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT ??
+        process.env.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT) === '1'
     const sketchDirect =
       (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
         process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
@@ -1930,6 +1952,7 @@ export function handleMcpJsonRpcMessage(
         advertisedToolName,
         portableEnsembleControl,
         meshDirect,
+        meshTopologyDirect,
         sketchDirect,
         orchestrationDirect
       ) &&
@@ -2047,6 +2070,7 @@ function profileEnvironmentForBridgeRoute(
       ? '1'
       : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: profile.meshDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: profile.meshTopologyDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: profile.sketchDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: profile.orchestrationDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
@@ -2409,6 +2433,7 @@ export class McpBridgeRuntime {
     gatewaySubset = false,
     portableEnsembleControl = false,
     meshDirect = false,
+    meshTopologyDirect = false,
     sketchDirect = false,
     orchestrationDirect = false,
     auditSubset = false
@@ -2463,6 +2488,7 @@ export class McpBridgeRuntime {
       // old receipted gateway sessions retain their original tool list.
       ...(portableEnsembleControl ? [GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG] : []),
       ...(meshDirect ? [GEMINI_MCP_MESH_DIRECT_ARG] : []),
+      ...(meshTopologyDirect ? [GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG] : []),
       ...(sketchDirect ? [GEMINI_MCP_SKETCH_DIRECT_ARG] : []),
       ...(orchestrationDirect ? [GEMINI_MCP_ORCHESTRATION_DIRECT_ARG] : []),
       ...(auditSubset ? [GEMINI_MCP_AUDIT_SUBSET_ARG] : []),

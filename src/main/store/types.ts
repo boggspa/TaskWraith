@@ -867,6 +867,9 @@ export type TaskWraithMcpProfileId =
   // changing either v13 direct birth catalogue.
   | 'taskwraith-gateway-v14'
   | 'taskwraith-gateway-v14-mesh'
+  // v15 adds revisioned Mesh topology conversion/inspection/editing.
+  | 'taskwraith-gateway-v15'
+  | 'taskwraith-gateway-v15-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

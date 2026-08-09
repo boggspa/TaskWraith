@@ -1,6 +1,6 @@
 import {
   MEDIA_EDITING_TOOLS,
-  MESH_SCENE_MCP_TOOL_NAMES,
+  MESH_MCP_TOOL_NAMES,
   SIMULATOR_MUTATING_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
@@ -259,7 +259,7 @@ export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNa
       tool === 'delegate_to_subthread' ||
       tool === 'delegate_wave' ||
       tool === 'cancel_subthread' ||
-      (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
+      (MESH_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool)
   )
 )
@@ -315,7 +315,7 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
       tool === 'canvas_click' ||
       tool === 'canvas_fill' ||
       tool === 'canvas_sketch_update' ||
-      (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
+      (MESH_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       MEDIA_EDITING_TOOLS.has(tool)
   )

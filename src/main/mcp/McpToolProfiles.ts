@@ -3,6 +3,7 @@ import type { ProviderId } from '../store/types'
 import type { TaskWraithMcpProfileId } from '../store/types'
 import {
   MESH_SCENE_MCP_TOOL_NAMES,
+  MESH_TOPOLOGY_MCP_TOOL_NAMES,
   SIMULATOR_MCP_TOOL_NAMES,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
@@ -629,6 +630,35 @@ export const GATEWAY_V14_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v15 adds revisioned Mesh topology tools. Normal seats discover them
+ * through capability_search; mesh-posture births receive the same three tools
+ * directly. Frozen v7-v14 arrays continue to contain only the original scene
+ * family.
+ */
+export const GATEWAY_V15_ADDED_TOOL_NAMES = Object.freeze([
+  ...MESH_TOPOLOGY_MCP_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V15_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V14_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V15_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V15_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V15_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V14_MESH_MCP_DIRECT_TOOLS,
+  ...GATEWAY_V15_ADDED_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V15_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -653,6 +683,10 @@ const GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   mesh_scene_present: 'Present a scene in the Mesh Canvas dock. Gated.',
   mesh_scene_close: 'Close its presentation without deleting the scene. Gated.',
   mesh_scene_delete: 'Delete a chat-owned scene and unreferenced assets. Gated.',
+  mesh_topology_convert: 'Convert a primitive/import to revisioned editable topology. Gated.',
+  mesh_topology_inspect: 'Page vertices, edges, faces, UV loops, or bones. Read-only call; gated.',
+  mesh_topology_edit:
+    'CAS edit batch: expectedRevision + clientMutationId + operations. Supports topology, UV, sculpt, and rig ops. Gated.',
   canvas_sketch_open: "Open/restore this chat's Sketch Canvas. Read-only-safe; returns canvasId.",
   canvas_sketch_get: 'Read Sketch elements and updatedAt. Read-only.',
   canvas_sketch_update:
@@ -676,6 +710,13 @@ const GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   // Budget companion: long DIRECT fan-out prose + schema descriptions would
   // leave the four promotions structurally unable to fit under 40k.
   ensemble_fanout: 'Fan-out Ensemble lanes (concurrent; capped). Then await / lane_result.'
+} satisfies Partial<Record<TaskWraithMcpToolName, string>>)
+
+// v15-mesh adds three typed topology tools. Compact one pre-existing large
+// schema only on that new receipt so the transport returns below 40k without
+// changing any frozen v13/v14 wire catalogue.
+const GATEWAY_V15_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
+  ensemble_roster_edit: 'Edit Ensemble roster participants/settings. Gated.'
 } satisfies Partial<Record<TaskWraithMcpToolName, string>>)
 
 function stripSchemaDescriptionFields(value: unknown, inPropertyNameBag = false): unknown {
@@ -735,6 +776,16 @@ export function compactGatewayV13ToolDefinitionsForTransport<
   return compactToolDefinitionsForTransport(
     definitions,
     GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS as Readonly<Record<string, string | undefined>>
+  )
+}
+
+/** v15-mesh-only compaction; older receipt transports remain untouched. */
+export function compactGatewayV15MeshToolDefinitionsForTransport<
+  T extends GatewayV8MeshTransportToolDefinition
+>(definitions: readonly T[]): T[] {
+  return compactToolDefinitionsForTransport(
+    definitions,
+    GATEWAY_V15_MESH_COMPACT_TOOL_DESCRIPTIONS as Readonly<Record<string, string | undefined>>
   )
 }
 
@@ -929,6 +980,16 @@ export const GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V14_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+export const GATEWAY_V15_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V14_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V15_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V15_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V15_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -941,6 +1002,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v15-mesh') return GATEWAY_V15_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v15') return GATEWAY_V15_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v14-mesh') return GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v14') return GATEWAY_V14_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v13-mesh') return GATEWAY_V13_MESH_MCP_HIDDEN_TOOL_NAMES
@@ -970,6 +1033,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v15-mesh') return GATEWAY_V15_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v15') return GATEWAY_V15_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v14-mesh') return GATEWAY_V14_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v14') return GATEWAY_V14_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v13-mesh') return GATEWAY_V13_MESH_MCP_DIRECT_TOOLS
@@ -1058,7 +1123,9 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v14 adds skill_list / skill_read through discovery without growing either
   // direct catalogue.
   'taskwraith-gateway-v14': GATEWAY_V14_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v14-mesh': GATEWAY_V14_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v14-mesh': GATEWAY_V14_MESH_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v15': GATEWAY_V15_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v15-mesh': GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */

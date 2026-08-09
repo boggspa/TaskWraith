@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
+  PI_MESH_TOOL_NAMES,
   PI_MANAGED_SHELL_TOOL_NAMES
 } from '../pi/PiEnsembleCoordination'
 import {
@@ -23,6 +24,7 @@ import {
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_LOG_EPOCH_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
+  GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
   McpBridgeRuntime,
@@ -1133,6 +1135,46 @@ describe('MCP bridge stream writes', () => {
     ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('authentication failed') })
   })
 
+  it('binds Pi Mesh tools to their exact run credential and canonical broker gate', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool
+    } as never)
+    const piCredential = runtime.issuePiTaskWraithCredential(
+      { appRunId: 'pi-run-mesh', appChatId: 'chat-mesh' },
+      PI_MESH_TOOL_NAMES
+    )
+
+    await expect(
+      runtime.handleGeminiMcpBrokerRequest({
+        token: piCredential,
+        tool: 'mesh_topology_inspect',
+        arguments: { sceneId: 'scene-a', nodeId: 'node-a' },
+        appRunId: 'pi-run-mesh',
+        appChatId: 'chat-mesh'
+      })
+    ).resolves.toMatchObject({ ok: true })
+    expect(executeGeminiMcpTool).toHaveBeenCalledWith(
+      'mesh_topology_inspect',
+      { sceneId: 'scene-a', nodeId: 'node-a' },
+      { appRunId: 'pi-run-mesh', appChatId: 'chat-mesh' },
+      'pi',
+      { fixedToolAllowlist: [...PI_MESH_TOOL_NAMES] }
+    )
+
+    await expect(
+      runtime.handleGeminiMcpBrokerRequest({
+        token: piCredential,
+        tool: 'write_file',
+        arguments: { path: 'src/a.ts', content: 'nope' },
+        appRunId: 'pi-run-mesh',
+        appChatId: 'chat-mesh'
+      })
+    ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('does not permit') })
+    expect(executeGeminiMcpTool).toHaveBeenCalledOnce()
+  })
+
   it('binds Pi managed shell and permission requests to their exact run credential', async () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
@@ -1490,10 +1532,11 @@ describe('MCP bridge stream writes', () => {
     ])
   })
 
-  it('adds Mesh Canvas only for the participant-run mesh-direct gateway variant', () => {
+  it('keeps frozen Mesh scene direct and adds topology only with the v15 receipt flag', () => {
     const tools = [
       { name: 'read_file' },
       { name: 'mesh_scene_present' },
+      { name: 'mesh_topology_edit' },
       { name: 'video_encode_clip' }
     ]
     const list = (env: Record<string, string>) => {
@@ -1516,8 +1559,59 @@ describe('MCP bridge stream writes', () => {
       ).result.tools.map((tool) => tool.name)
     }
     expect(list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })).not.toContain('mesh_scene_present')
-    expect(list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1', TASKWRAITH_MCP_MESH_DIRECT: '1' })).toContain(
-      'mesh_scene_present'
+    const v14 = list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1', TASKWRAITH_MCP_MESH_DIRECT: '1' })
+    expect(v14).toContain('mesh_scene_present')
+    expect(v14).not.toContain('mesh_topology_edit')
+    const v15 = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_MESH_DIRECT: '1',
+      TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '1'
+    })
+    expect(v15).toEqual(expect.arrayContaining(['mesh_scene_present', 'mesh_topology_edit']))
+  })
+
+  it('forwards direct topology calls only with the v15 Mesh receipt flag', async () => {
+    const call = async (env: Record<string, string>) => {
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'edited' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          env,
+          stdout: { write: vi.fn(() => true) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 241,
+          method: 'tools/call',
+          params: { name: 'mesh_topology_edit', arguments: { sceneId: 'scene-a' } }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return brokerRequest
+    }
+
+    const v14 = await call({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_MESH_DIRECT: '1'
+    })
+    expect(v14).not.toHaveBeenCalled()
+    const v15 = await call({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_MESH_DIRECT: '1',
+      TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '1'
+    })
+    expect(v15).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({
+        tool: 'mesh_topology_edit',
+        arguments: { sceneId: 'scene-a' }
+      })
     )
   })
 
@@ -2231,6 +2325,32 @@ describe('MCP bridge stream writes', () => {
     expect(env.TASKWRAITH_MCP_MESH_DIRECT).toBe('1')
   })
 
+  it('carries the v15 topology-direct receipt independently from frozen Mesh profiles', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+    const args = runtime.taskwraithMcpBridgeArgs(
+      SOCKET_PATH,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    )
+    expect(args).toContain(GEMINI_MCP_MESH_DIRECT_ARG)
+    expect(args).toContain(GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG)
+    expect(args.at(-1)).toBe(GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG)
+
+    const env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(args, env)
+    expect(env.TASKWRAITH_MCP_MESH_DIRECT).toBe('1')
+    expect(env.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT).toBe('1')
+  })
+
   it('carries the sketch-direct v8 receipt atomically beside the gateway profile', () => {
     const runtime = new McpBridgeRuntime({
       getGeminiMcpSocketPath: () => SOCKET_PATH,
@@ -2243,6 +2363,7 @@ describe('MCP bridge stream writes', () => {
       false,
       false,
       true,
+      false,
       false,
       false,
       true
@@ -2271,6 +2392,7 @@ describe('MCP bridge stream writes', () => {
       false,
       false,
       false,
+      false,
       true
     )
     expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
@@ -2290,6 +2412,7 @@ describe('MCP bridge stream writes', () => {
       TASKWRAITH_MCP_GATEWAY_SUBSET: '0',
       TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '0',
       TASKWRAITH_MCP_MESH_DIRECT: '0',
+      TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '0',
       TASKWRAITH_MCP_SKETCH_DIRECT: '0',
       TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '0',
       TASKWRAITH_MCP_AUDIT: '0'

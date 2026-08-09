@@ -106,6 +106,7 @@ describe('createKimiMcpDispatch', () => {
       TASKWRAITH_MCP_GATEWAY_SUBSET: '0',
       TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1',
       TASKWRAITH_MCP_MESH_DIRECT: '1',
+      TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '1',
       TASKWRAITH_MCP_SKETCH_DIRECT: '1',
       TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '1',
       TASKWRAITH_MCP_AUDIT: '1',
@@ -248,6 +249,60 @@ describe('createKimiMcpDispatch', () => {
       expect(v8).toContain(tool)
       expect(v9).toContain(tool)
     }
+  })
+
+  it('keeps topology hidden from v14-mesh and direct only for v15-mesh', async () => {
+    const brokerV14 = vi.fn(async () => ({ ok: true, text: '{"ok":true}' }))
+    const brokerV15 = vi.fn(async () => ({ ok: true, text: '{"ok":true}' }))
+    const makeDispatch = (
+      profile: 'taskwraith-gateway-v14-mesh' | 'taskwraith-gateway-v15-mesh',
+      dispatchBrokerRequest: typeof brokerV14
+    ) =>
+      createKimiMcpDispatch({
+        route: { appRunId: `kimi-${profile}`, appChatId: 'chat-mesh' },
+        taskWraithMcpProfileId: profile,
+        appVersion: '1.8.4',
+        brokerToken: 'broker-token',
+        instanceEpoch: INSTANCE_EPOCH,
+        getMcpToolDefinitions: () => [
+          { name: 'mesh_scene_present' },
+          { name: 'mesh_topology_edit' }
+        ],
+        dispatchBrokerRequest
+      })
+    const v14 = makeDispatch('taskwraith-gateway-v14-mesh', brokerV14)
+    const v15 = makeDispatch('taskwraith-gateway-v15-mesh', brokerV15)
+
+    const names = async (dispatch: ReturnType<typeof makeDispatch>, id: number) => {
+      const response = await dispatch({ jsonrpc: '2.0', id, method: 'tools/list' })
+      return (
+        (response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []
+      ).map((tool) => tool.name)
+    }
+    expect(await names(v14, 101)).toContain('mesh_scene_present')
+    expect(await names(v14, 102)).not.toContain('mesh_topology_edit')
+    expect(await names(v15, 103)).toEqual(
+      expect.arrayContaining(['mesh_scene_present', 'mesh_topology_edit'])
+    )
+
+    await expect(
+      v14({
+        jsonrpc: '2.0',
+        id: 104,
+        method: 'tools/call',
+        params: { name: 'mesh_topology_edit', arguments: {} }
+      })
+    ).resolves.toMatchObject({ error: { code: -32601 } })
+    await expect(
+      v15({
+        jsonrpc: '2.0',
+        id: 105,
+        method: 'tools/call',
+        params: { name: 'mesh_topology_edit', arguments: {} }
+      })
+    ).resolves.toMatchObject({ result: { isError: false } })
+    expect(brokerV14).not.toHaveBeenCalled()
+    expect(brokerV15).toHaveBeenCalledOnce()
   })
 
   it('returns null for notifications without touching the broker', async () => {

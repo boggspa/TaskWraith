@@ -8,14 +8,71 @@ import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
 import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
+import { MESH_MCP_TOOL_NAMES } from '../../shared/taskWraithMcpCatalog'
 
 const KIMI_NATIVE_DENY_NAMES = new Set(KIMI_ACP_DENY_TOOLS.map((name) => name.toLowerCase()))
+const KIMI_BROKER_DEFERRED_MESH_TOOLS: ReadonlySet<string> = new Set(MESH_MCP_TOOL_NAMES)
+
+function resolveKimiTaskWraithMcpTool(request: {
+  toolName?: string
+  rawToolCall?: unknown
+}): string | null {
+  const raw = request.rawToolCall as
+    | { rawInput?: { tool_name?: unknown; name?: unknown } }
+    | undefined
+  const rawInput = raw?.rawInput
+  const resolveCandidate = (
+    candidate: string
+  ): { tool: string | null; invalidNamespace: boolean } => {
+    const namespaced = candidate.match(/^mcp__([A-Za-z0-9_-]+?)__(.+)$/)
+    if (namespaced && namespaced[1].toLowerCase() !== 'taskwraith') {
+      return { tool: null, invalidNamespace: true }
+    }
+    const unqualified = unqualifyKimiMcpToolName(candidate)
+    if (!unqualified) return { tool: null, invalidNamespace: false }
+    const resolution = resolveToolDispatchContractStrict(unqualified, rawInput)
+    return {
+      tool: resolution.ok ? resolution.toolName : null,
+      invalidNamespace: false
+    }
+  }
+
+  const rawToolName = typeof rawInput?.tool_name === 'string' ? rawInput.tool_name.trim() : ''
+  const requestToolName = typeof request.toolName === 'string' ? request.toolName.trim() : ''
+
+  // rawInput.tool_name is the closest ACP field to a machine identity. If it
+  // is present it must resolve exactly; an unknown value cannot be ignored in
+  // favour of a model-controlled display title or `name` argument.
+  if (rawToolName) {
+    const rawResolution = resolveCandidate(rawToolName)
+    if (!rawResolution.tool || rawResolution.invalidNamespace) return null
+    if (requestToolName) {
+      const titleResolution = resolveCandidate(requestToolName)
+      if (titleResolution.invalidNamespace) return null
+      if (titleResolution.tool && titleResolution.tool !== rawResolution.tool) return null
+    }
+    return rawResolution.tool
+  }
+
+  // A non-empty ACP title is the primary identity on builds that omit
+  // rawInput.tool_name. It must resolve on its own; never let an unknown native
+  // title fall through to a Mesh-shaped `name` argument.
+  if (requestToolName) return resolveCandidate(requestToolName).tool
+
+  // Some ACP builds expose only rawInput.name. It is an identity strictly when
+  // both primary fields are absent; otherwise `name` remains an ordinary tool
+  // argument (including capability_invoke's target).
+  const fallback = typeof rawInput?.name === 'string' ? rawInput.name.trim() : ''
+  if (!fallback) return null
+  return resolveCandidate(fallback).tool
+}
 
 /**
  * Strip the `mcp__<server>__` namespace Kimi puts on MCP tools (the standard
  * MCP convention; our server is "taskwraith", with a capitalized alias). The
- * isolated home guarantees the ONLY MCP server is TaskWraith, so any mcp__
- * prefix is ours. An already-unqualified name passes through unchanged.
+ * isolated home guarantees the only configured MCP server is TaskWraith. The
+ * resolver still requires that exact namespace; an unqualified name passes
+ * through unchanged for ACP builds that omit the prefix.
  */
 export function unqualifyKimiMcpToolName(value: unknown): string | null {
   if (typeof value !== 'string' || !value) return null
@@ -54,13 +111,6 @@ export function isKimiSafeMcpTool(request: {
       }
     | undefined
   const rawInput = raw?.rawInput
-  const toolKind =
-    (typeof request.toolKind === 'string' && request.toolKind) ||
-    (typeof raw?.kind === 'string' && raw.kind) ||
-    ''
-  if (['edit', 'delete', 'move', 'execute'].includes(toolKind.trim().toLowerCase())) {
-    return false
-  }
   if (
     rawInput &&
     [
@@ -83,34 +133,68 @@ export function isKimiSafeMcpTool(request: {
   // no rawInput candidate at all. Dropping it, and requiring a literal
   // `mcp__taskwraith__` prefix, is exactly the mis-classification the header comment
   // above records the ensemble soak catching: capability_search denied on a
-  // read-only seat. `unqualifyKimiMcpToolName` accepts any `mcp__<server>__`
-  // namespace (the isolated home guarantees the only server is ours) and passes an
-  // already-unqualified bare name through unchanged.
-  const rawCandidates = [request.toolName, rawInput?.tool_name, rawInput?.name].filter(
-    (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
-  )
-  if (rawCandidates.length === 0) return false
-  const resolvedTools: string[] = []
-  for (const candidate of rawCandidates) {
-    const namespaced = candidate.match(/^mcp__([A-Za-z0-9_-]+?)__(.+)$/)
-    // A candidate that explicitly names ANOTHER MCP server is a spoof, not noise:
-    // refuse the whole request rather than letting a sibling identity carry it.
-    // (The isolated Kimi home means only TaskWraith is attached, so a foreign
-    // namespace can only be an attempt to launder one tool as another.)
-    if (namespaced && !/^taskwraith([-_]|$)/i.test(namespaced[1])) return false
-    const unqualified = unqualifyKimiMcpToolName(candidate)
-    if (!unqualified) continue
-    const resolution = resolveToolDispatchContractStrict(unqualified, rawInput)
-    // An UNRESOLVABLE identity is skipped rather than poisoning the request: an ACP
-    // title that is prose ("Search the workspace") must not veto a rawInput that
-    // names a real tool. Contradiction between two RESOLVED identities is still
-    // fatal below — that is the spoof this check exists to stop.
-    if (resolution.ok) resolvedTools.push(resolution.toolName)
+  // read-only seat. The shared resolver accepts the exact TaskWraith namespace
+  // and already-unqualified bare names while rejecting foreign identities.
+  const tool = resolveKimiTaskWraithMcpTool(request)
+  if (!tool) return false
+  // Capability gateways are transport wrappers: capability_invoke re-enters
+  // the canonical target dispatcher and its real host gate. Some ACP builds
+  // label the wrapper execute/edit because its annotations are conservative;
+  // the absence of native command/edit payload fields above remains required.
+  if (isCapabilityGatewayToolName(tool)) return true
+  const toolKind =
+    (typeof request.toolKind === 'string' && request.toolKind) ||
+    (typeof raw?.kind === 'string' && raw.kind) ||
+    ''
+  if (['edit', 'delete', 'move', 'execute'].includes(toolKind.trim().toLowerCase())) {
+    return false
   }
-  if (resolvedTools.length === 0) return false
-  if (new Set(resolvedTools).size !== 1) return false
-  const tool = resolvedTools[0]
-  return Boolean(isReadOnlyAdvertisedTool(tool) || isCapabilityGatewayToolName(tool))
+  if (KIMI_BROKER_DEFERRED_MESH_TOOLS.has(tool)) return false
+  return isReadOnlyAdvertisedTool(tool)
+}
+
+/**
+ * Kimi's outer ACP policy treats Ask/Plan seats as non-write-capable. Exact
+ * Mesh identities must nevertheless cross that transport wall so the signed
+ * main-process meshCanvas broker can prompt. This is admission only: it does
+ * not add the tool to TaskWraith's auto-allow set or bypass the central gate.
+ */
+export function kimiBrokerDeferredMeshMcpToolName(request: KimiToolPolicyRequest): string | null {
+  const raw = request.rawToolCall as
+    | {
+        rawInput?: {
+          command?: unknown
+          cmd?: unknown
+          content?: unknown
+          patch?: unknown
+          diff?: unknown
+          changes?: unknown
+          old_string?: unknown
+          new_string?: unknown
+        }
+      }
+    | undefined
+  if (
+    raw?.rawInput &&
+    [
+      raw.rawInput.command,
+      raw.rawInput.cmd,
+      raw.rawInput.content,
+      raw.rawInput.patch,
+      raw.rawInput.diff,
+      raw.rawInput.changes,
+      raw.rawInput.old_string,
+      raw.rawInput.new_string
+    ].some((value) => value !== undefined)
+  ) {
+    return null
+  }
+  const tool = resolveKimiTaskWraithMcpTool(request)
+  return tool && KIMI_BROKER_DEFERRED_MESH_TOOLS.has(tool) ? tool : null
+}
+
+export function isKimiBrokerDeferredMeshMcpTool(request: KimiToolPolicyRequest): boolean {
+  return Boolean(kimiBrokerDeferredMeshMcpToolName(request))
 }
 
 export type KimiToolDecision = 'allow' | 'gate' | 'deny'
@@ -126,6 +210,8 @@ export interface KimiToolPolicyOptions {
   writeCapable: boolean
   /** True for a read-only / safe TaskWraith MCP tool (or capability gateway). */
   isSafeMcpTool: (request: KimiToolPolicyRequest) => boolean
+  /** Exact mutator admitted only so TaskWraith's inner signed service gate can decide. */
+  isBrokerDeferredMcpTool?: (request: KimiToolPolicyRequest) => boolean
   /** @deprecated Native shell is denied in production; retained for callers compiled against v1. */
   isReadOnlyShell: (request: KimiToolPolicyRequest) => boolean
 }
@@ -135,7 +221,11 @@ export function isKimiDeniedNativeTool(request: KimiToolPolicyRequest): boolean 
   const raw = request.rawToolCall as
     | { rawInput?: { tool_name?: unknown; name?: unknown } }
     | undefined
-  return [request.toolName, raw?.rawInput?.tool_name, raw?.rawInput?.name].some(
+  const primaryCandidates = [request.toolName, raw?.rawInput?.tool_name].filter(
+    (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
+  )
+  const candidates = primaryCandidates.length > 0 ? primaryCandidates : [raw?.rawInput?.name]
+  return candidates.some(
     (candidate) =>
       typeof candidate === 'string' &&
       !candidate.startsWith('mcp__') &&
@@ -159,5 +249,6 @@ export function classifyKimiToolPermission(
 ): KimiToolDecision {
   if (isKimiDeniedNativeTool(request)) return 'deny'
   if (options.isSafeMcpTool(request)) return 'allow'
+  if (options.isBrokerDeferredMcpTool?.(request)) return 'gate'
   return options.writeCapable ? 'gate' : 'deny'
 }

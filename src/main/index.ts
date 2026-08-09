@@ -134,7 +134,15 @@ import {
   appendAgentQuestionReply
 } from '../shared/agentQuestionTranscript'
 import { admitKimiRuntime, type AdmittedKimiRuntime } from './kimi/KimiRuntimeAdmission'
-import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
+import {
+  classifyKimiToolPermission,
+  kimiBrokerDeferredMeshMcpToolName,
+  isKimiSafeMcpTool
+} from './kimi/KimiToolPolicy'
+import {
+  KimiMeshApprovalRelay,
+  kimiMeshArgumentsFromAcpToolCall
+} from './kimi/KimiMeshApprovalRelay'
 import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from './kimi/KimiAcpUsage'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
 import type {
@@ -1412,6 +1420,7 @@ import {
   isGatewayTaskWraithMcpProfile,
   isGatewayV13DirectTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
+  isMeshTopologyDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile,
   isTaskWraithMcpAuthorizedEphemeralReroute,
@@ -1544,6 +1553,7 @@ import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
   PI_MANAGED_SHELL_TOOL_NAMES,
+  PI_MESH_TOOL_NAMES,
   PI_TASKWRAITH_TOOLS_READY_MARKER,
   piTaskWraithToolsReadyPromptAppendix,
   piTaskWraithToolsUnavailablePromptAppendix,
@@ -3096,6 +3106,7 @@ interface TaskWraithMcpBridgeArgOptions {
   gatewaySubset?: boolean
   portableEnsembleControl?: boolean
   meshDirect?: boolean
+  meshTopologyDirect?: boolean
   sketchDirect?: boolean
   orchestrationDirect?: boolean
   auditSubset?: boolean
@@ -3113,6 +3124,7 @@ function taskwraithMcpBridgeArgs(
     options.gatewaySubset === true,
     options.portableEnsembleControl === true,
     options.meshDirect === true,
+    options.meshTopologyDirect === true,
     options.sketchDirect === true,
     options.orchestrationDirect === true,
     options.auditSubset === true
@@ -4136,6 +4148,7 @@ const meshSceneService = new MeshSceneService({
   }
 })
 const meshToolExecutors = createMeshToolExecutors(meshSceneService)
+const kimiMeshApprovalRelay = new KimiMeshApprovalRelay()
 const simulatorHostService = new SimulatorHostService()
 const simulatorSessionStore = new SimulatorSessionStore()
 const simulatorControllerLease = new SimulatorControllerLease()
@@ -21234,6 +21247,9 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
             payload.taskWraithMcpProfileId
           ),
           meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
           sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
           orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
             payload.taskWraithMcpProfileId
@@ -21706,10 +21722,15 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   const exactFileToolsExpected = writeCapable
   const shellToolsExpected = shellCapable
   const coordinationExpected = ephemeralSession && piCoordinationAllowed
+  const piMeshPolicy =
+    payload.effectivePermissions?.agenticServices?.meshCanvas ??
+    AppStore.getSettings().agenticServices?.meshCanvas
+  const meshToolsExpected = piMeshPolicy !== 'deny'
   const piTaskWraithToolNames: PiTaskWraithToolName[] = [
     ...(exactFileToolsExpected ? PI_EXACT_FILE_TOOL_NAMES : []),
     ...(shellToolsExpected ? PI_MANAGED_SHELL_TOOL_NAMES : []),
-    ...(coordinationExpected ? PI_ENSEMBLE_COORDINATION_TOOL_NAMES : [])
+    ...(coordinationExpected ? PI_ENSEMBLE_COORDINATION_TOOL_NAMES : []),
+    ...(meshToolsExpected ? PI_MESH_TOOL_NAMES : [])
   ]
   if (piTaskWraithToolNames.length > 0) {
     try {
@@ -21789,13 +21810,14 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       exactFileToolsExpected,
       shellToolsExpected,
       coordinationExpected,
+      meshToolsExpected,
       reason:
         taskWraithToolsPreparationFailure ||
         'extension readiness was not verified before this turn began'
     }
   )}`
   if (
-    (exactFileToolsExpected || shellToolsExpected || ephemeralSession) &&
+    (exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected) &&
     !preparedTaskWraithTools
   ) {
     appendDurableRunEventForRoute(
@@ -21811,6 +21833,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
         exactFileToolsExpected,
         shellToolsExpected,
         coordinationExpected,
+        meshToolsExpected,
         fallback: 'continue-and-request-visible-user-action'
       }
     )
@@ -21819,7 +21842,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
     fallback: false,
     resolvedEnv,
-    ...((exactFileToolsExpected || shellToolsExpected || ephemeralSession) &&
+    ...((exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected) &&
     !preparedTaskWraithTools
       ? {
           warning: `Pi managed tools are unavailable for this turn. ${
@@ -21863,13 +21886,16 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   severity: 'info',
                   title: 'Pi managed tools verified',
                   message:
-                    exactFileToolsExpected || shellToolsExpected
+                    exactFileToolsExpected || shellToolsExpected || meshToolsExpected
                       ? `TaskWraith attached the run-bound Pi tool surface. ${[
                           exactFileToolsExpected
                             ? 'Exact file edits are transaction-locked'
                             : undefined,
                           shellToolsExpected
                             ? 'managed shell and permission requests are approval-audited'
+                            : undefined,
+                          meshToolsExpected
+                            ? 'Mesh scene and topology tools use the normal meshCanvas gate'
                             : undefined
                         ]
                           .filter(Boolean)
@@ -21902,6 +21928,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   exactFileToolsExpected,
                   shellToolsExpected,
                   coordinationExpected,
+                  meshToolsExpected,
                   fallback: 'continue-and-request-visible-user-action'
                 }
               )
@@ -21923,7 +21950,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       : {
           initialLines: [
             piPromptCommand(
-              exactFileToolsExpected || shellToolsExpected || ephemeralSession
+              exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected
                 ? managedToolsFallbackPrompt
                 : payload.prompt
             )
@@ -22232,6 +22259,9 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
@@ -23103,6 +23133,9 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
@@ -23952,14 +23985,34 @@ async function runKimiAcpProvider(
     // any mutating gateway request still crosses the signed host ledger.
     const kimiWriteCapable = payload.approvalMode !== 'plan'
     const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
+      const brokerDeferredMeshTool = kimiBrokerDeferredMeshMcpToolName(request)
+      const brokerDeferredMesh = Boolean(brokerDeferredMeshTool)
+      const brokerDeferredMeshArguments = brokerDeferredMeshTool
+        ? kimiMeshArgumentsFromAcpToolCall(brokerDeferredMeshTool, request.rawToolCall)
+        : null
       const decision = classifyKimiToolPermission(request, {
         writeCapable: kimiWriteCapable,
         isSafeMcpTool: isKimiSafeMcpTool,
+        isBrokerDeferredMcpTool: () => brokerDeferredMesh,
         isReadOnlyShell: grokReadOnlyShellRequestAllowed
       })
       if (decision === 'allow') return 'allow'
       if (decision === 'deny') return 'deny'
-      const service = grokToolKindToService(request.toolKind)
+      // The ACP fields are model-controlled, so this is never an outer
+      // auto-allow. Exact Mesh identities are admitted only through the signed
+      // meshCanvas gate; hostile native command/edit payload shapes fail the
+      // deferred classifier and retain their ordinary service classification.
+      const service = brokerDeferredMesh
+        ? ('meshCanvas' as AgenticServiceId)
+        : grokToolKindToService(request.toolKind)
+      const meshPreview =
+        brokerDeferredMeshTool && brokerDeferredMeshArguments
+          ? {
+              kind: 'tool',
+              toolName: brokerDeferredMeshTool,
+              params: brokerDeferredMeshArguments
+            }
+          : null
       const allowed = await requestAgenticServiceApproval(
         event.sender,
         'kimi',
@@ -23967,17 +24020,31 @@ async function runKimiAcpProvider(
         payload.scope === 'global' ? undefined : payload.workspace,
         {
           method: `kimi/${request.toolKind || 'tool'}`,
-          title: `Kimi wants to run: ${request.toolName}`,
-          body: `Kimi requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
-          preview: buildAcpToolApprovalPreview({
-            toolName: request.toolName,
-            rawToolCall: request.rawToolCall,
-            service,
-            cwd: payload.scope === 'global' ? undefined : payload.workspace
-          }),
+          title: brokerDeferredMeshTool
+            ? 'Approve Kimi Mesh Canvas action'
+            : `Kimi wants to run: ${request.toolName}`,
+          body: brokerDeferredMeshTool
+            ? brokerDeferredMeshTool
+            : `Kimi requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+          preview:
+            meshPreview ||
+            buildAcpToolApprovalPreview({
+              toolName: request.toolName,
+              rawToolCall: request.rawToolCall,
+              service,
+              cwd: payload.scope === 'global' ? undefined : payload.workspace
+            }),
           runId: route.appRunId
         }
       )
+      if (allowed && brokerDeferredMeshTool && brokerDeferredMeshArguments) {
+        kimiMeshApprovalRelay.issue({
+          appRunId: route.appRunId,
+          appChatId: route.appChatId,
+          toolName: brokerDeferredMeshTool,
+          arguments: brokerDeferredMeshArguments
+        })
+      }
       return allowed ? 'allow' : 'deny'
     }
 
@@ -24720,6 +24787,7 @@ function resolveCodexClientStartupConfiguration(
             gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
             portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
             meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
+            meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(mcpProfileId),
             sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId),
             orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(mcpProfileId)
           }),
@@ -29713,9 +29781,13 @@ async function settleCodexNativeApprovalRequest(
       nativePreflight.kind === 'none' ? undefined : nativePreflight.effectivePermissions?.presetId,
       gateService
     )
+    const planInstrumentRequestOnly = isPlanInstrumentGrantHold(
+      nativePreflight.kind === 'none' ? undefined : nativePreflight.effectivePermissions?.presetId,
+      gateService
+    )
     const actions: AgentApprovalAction[] = externalPathDetection
       ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
-      : gateService === 'canvasEval' || postureApprovalOnly
+      : gateService === 'canvasEval' || postureApprovalOnly || planInstrumentRequestOnly
         ? ['accept', 'decline', 'cancel']
         : nativePreflight.kind === 'ask'
           ? approvalActionsForPolicy(
@@ -29758,6 +29830,13 @@ async function settleCodexNativeApprovalRequest(
         ? {
             requestOnly: true,
             requestOnlyReason: 'run-posture-approval-only'
+          }
+        : {}),
+      ...(planInstrumentRequestOnly
+        ? {
+            requestOnly: true,
+            requestOnlyReason:
+              'This approval is per-call only; session/workspace grants are disabled for this request.'
           }
         : {}),
       ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
@@ -32435,6 +32514,9 @@ async function runGeminiProvider(
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
           payload.taskWraithMcpProfileId
@@ -35832,6 +35914,15 @@ async function executeGeminiMcpTool(
     toolName,
     args
   )
+  const kimiRelayedMeshApproval =
+    parentProvider === 'kimi' &&
+    isMeshMcpToolName(toolName) &&
+    kimiMeshApprovalRelay.consume({
+      appRunId: context.appRunId,
+      appChatId: context.appChatId,
+      toolName,
+      arguments: args
+    })
   if (exactOneOffPermissionRetry) {
     const retryNetworkBlockedTool = networkAccessBlockedToolName(
       toolName,
@@ -35879,6 +35970,7 @@ async function executeGeminiMcpTool(
     isThreadMessageMcpToolName(toolName) ||
     explicitUserRequestedRosterImport.allowed ||
     exactOneOffPermissionRetry ||
+    kimiRelayedMeshApproval ||
     isMcpAutoAllowedForRun(toolName, context.effectivePermissions, args, {
       appRunId: context.appRunId,
       appChatId: context.appChatId
@@ -35914,6 +36006,27 @@ async function executeGeminiMcpTool(
         runSource: explicitUserRequestedRosterImport.runSource,
         rationale:
           'The active user-started turn explicitly requested Ensemble creation; live roster edits remain approval-gated.'
+      }
+    )
+  }
+  if (kimiRelayedMeshApproval) {
+    auditService.recordAutomaticApprovalDecision(
+      parentProvider,
+      { appRunId: context.appRunId, appChatId: context.appChatId },
+      gateService,
+      context.scope === 'global' ? undefined : workspacePath,
+      {
+        method: `${parentProvider}-mcp/${toolName}`,
+        title: approvalPreview.title,
+        body: approvalPreview.body,
+        preview: approvalPreview.preview
+      },
+      'autoAllow',
+      'policy',
+      'request',
+      {
+        rationale:
+          'Consumed the exact one-use Kimi ACP Mesh approval receipt for this authenticated HTTP MCP call.'
       }
     )
   }

@@ -2,8 +2,8 @@
 import * as path from 'path'
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
 import {
-  MESH_SCENE_MCP_TOOL_NAMES,
-  type MeshSceneMcpToolName
+  MESH_MCP_TOOL_NAMES,
+  type MeshMcpToolName as SharedMeshMcpToolName
 } from '../../shared/taskWraithMcpCatalog'
 import {
   isMeshPrimitiveKind,
@@ -15,6 +15,12 @@ import {
   type MeshSceneObjectDataValue,
   type MeshSceneRecord
 } from '../../shared/meshScene'
+import {
+  MESH_TOPOLOGY_MAX_EDIT_OPERATIONS,
+  meshTopologySummary,
+  type MeshTopologyDocument,
+  type MeshTopologyMutation
+} from '../../shared/meshTopology'
 import type {
   MeshSceneCallContext,
   MeshSceneCameraInput,
@@ -24,9 +30,9 @@ import type {
 } from '../mesh/MeshSceneService'
 
 /** Main-side alias retained for MCP dispatch callers. The shared catalogue owns membership. */
-export const MESH_MCP_TOOL_NAMES = MESH_SCENE_MCP_TOOL_NAMES
+export { MESH_MCP_TOOL_NAMES }
 
-export type MeshMcpToolName = MeshSceneMcpToolName
+export type MeshMcpToolName = SharedMeshMcpToolName
 
 const MESH_TOOL_NAME_SET: ReadonlySet<string> = new Set(MESH_MCP_TOOL_NAMES)
 
@@ -37,6 +43,7 @@ export function isMeshMcpToolName(value: string): value is MeshMcpToolName {
 export interface MeshToolContext extends MeshSceneCallContext {
   appChatId?: string
   appRunId?: string
+  ensembleRun?: { participantId?: string }
 }
 
 export interface MeshToolExecutors {
@@ -175,7 +182,80 @@ function meshContext(input: MeshToolContext, parentProvider: string): MeshSceneC
     provider: parentProvider,
     chatId: input.appChatId ?? input.chatId,
     runId: input.appRunId ?? input.runId,
-    workspacePath: input.workspacePath
+    workspacePath: input.workspacePath,
+    participantId: input.ensembleRun?.participantId ?? input.participantId
+  }
+}
+
+const TOPOLOGY_OPERATIONS: ReadonlySet<string> = new Set([
+  'move_vertices',
+  'create_vertices',
+  'delete_vertices',
+  'merge_vertices',
+  'create_faces',
+  'delete_faces',
+  'extrude_faces',
+  'inset_faces',
+  'subdivide_faces',
+  'split_edge',
+  'collapse_edge',
+  'mark_edges',
+  'set_face_uvs',
+  'unwrap_uv',
+  'sculpt',
+  'upsert_bones',
+  'remove_bones',
+  'set_vertex_weights',
+  'pose_bones',
+  'replace_geometry'
+])
+
+function topologyOperations(value: unknown): MeshTopologyMutation[] {
+  if (!Array.isArray(value) || !value.length || value.length > MESH_TOPOLOGY_MAX_EDIT_OPERATIONS) {
+    throw new Error(`operations must contain 1-${MESH_TOPOLOGY_MAX_EDIT_OPERATIONS} edits.`)
+  }
+  const serialized = JSON.stringify(value)
+  if (Buffer.byteLength(serialized, 'utf8') > 64 * 1024) {
+    throw new Error('Mesh topology edit payload exceeds the 64 KiB retry-safe limit.')
+  }
+  for (const entry of value) {
+    const operation = asRecord(entry).operation
+    if (typeof operation !== 'string' || !TOPOLOGY_OPERATIONS.has(operation)) {
+      throw new Error('Mesh topology edit contains an unsupported operation.')
+    }
+  }
+  return JSON.parse(serialized) as MeshTopologyMutation[]
+}
+
+function topologyPage(
+  document: MeshTopologyDocument,
+  section: string,
+  offset: number,
+  limit: number
+): Record<string, unknown> {
+  const source =
+    section === 'vertices'
+      ? document.vertices
+      : section === 'edges'
+        ? document.edges
+        : section === 'faces'
+          ? document.faces
+          : section === 'uvs'
+            ? document.faces.map((face) => ({
+                faceId: face.id,
+                loops: face.loops.map((loop) => ({ vertexId: loop.vertexId, uv: loop.uv ?? null }))
+              }))
+            : section === 'bones'
+              ? document.bones
+              : document.recentMutations
+  const items = source.slice(offset, offset + limit)
+  return {
+    section,
+    offset,
+    limit,
+    total: source.length,
+    items,
+    ...(offset + items.length < source.length ? { nextOffset: offset + items.length } : {})
   }
 }
 
@@ -335,6 +415,95 @@ export function createMeshToolExecutors(controller: MeshSceneService): MeshToolE
         if (!id) return fail(toolName, 'sceneId is required.')
         if (toolName === 'mesh_scene_inspect') {
           return result({ ok: true, scene: sceneForMcp(controller.inspect(id, context)) })
+        }
+        if (toolName === 'mesh_topology_convert') {
+          const nodeId = stringValue(args.nodeId, 128)
+          if (!nodeId) return fail(toolName, 'nodeId is required.')
+          const converted = controller.makeEditable(id, { nodeId }, context)
+          return result({
+            ok: true,
+            sceneId: converted.scene.id,
+            sceneRevision: converted.scene.revision,
+            nodeId,
+            topology: meshTopologySummary(converted.topology)
+          })
+        }
+        if (toolName === 'mesh_topology_inspect') {
+          const nodeId = stringValue(args.nodeId, 128)
+          if (!nodeId) return fail(toolName, 'nodeId is required.')
+          const inspected = controller.inspectTopology(id, { nodeId }, context)
+          const section = stringValue(args.section, 32) ?? 'summary'
+          if (section === 'summary') {
+            return result({
+              ok: true,
+              sceneId: id,
+              sceneRevision: inspected.sceneRevision,
+              nodeId,
+              topology: meshTopologySummary(inspected.topology)
+            })
+          }
+          if (
+            !['vertices', 'edges', 'faces', 'uvs', 'bones', 'recent_mutations'].includes(section)
+          ) {
+            return fail(toolName, 'Unsupported topology inspection section.')
+          }
+          const rawOffset = numberValue(args.offset) ?? 0
+          const rawLimit = numberValue(args.limit) ?? 100
+          if (!Number.isInteger(rawOffset) || rawOffset < 0 || !Number.isInteger(rawLimit)) {
+            return fail(toolName, 'offset and limit must be non-negative integers.')
+          }
+          return result({
+            ok: true,
+            sceneId: id,
+            sceneRevision: inspected.sceneRevision,
+            nodeId,
+            topologyId: inspected.topology.id,
+            topologyRevision: inspected.topology.revision,
+            ...topologyPage(
+              inspected.topology,
+              section,
+              rawOffset,
+              Math.max(1, Math.min(500, rawLimit))
+            )
+          })
+        }
+        if (toolName === 'mesh_topology_edit') {
+          const nodeId = stringValue(args.nodeId, 128)
+          const expectedRevision = numberValue(args.expectedRevision)
+          const clientMutationId = stringValue(args.clientMutationId, 128)
+          if (
+            !nodeId ||
+            !Number.isInteger(expectedRevision) ||
+            expectedRevision! < 0 ||
+            !clientMutationId
+          ) {
+            return fail(
+              toolName,
+              'nodeId, non-negative integer expectedRevision, and clientMutationId are required.'
+            )
+          }
+          const edited = controller.editTopology(
+            id,
+            {
+              nodeId,
+              edit: {
+                expectedRevision: expectedRevision!,
+                clientMutationId,
+                operations: topologyOperations(args.operations)
+              }
+            },
+            context
+          )
+          return result({
+            ok: true,
+            sceneId: edited.scene.id,
+            sceneRevision: edited.scene.revision,
+            nodeId,
+            topology: edited.edit.summary,
+            createdIds: edited.edit.createdIds,
+            deletedIds: edited.edit.deletedIds,
+            duplicate: edited.edit.duplicate
+          })
         }
         if (toolName === 'mesh_scene_import') {
           const scene = controller.importModel(

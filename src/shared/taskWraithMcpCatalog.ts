@@ -19,6 +19,18 @@ export const MESH_SCENE_MCP_TOOL_NAMES = [
   'mesh_scene_delete'
 ] as const
 
+/** Editable topology additions; kept separate so frozen v7-v14 profiles retain the original nine. */
+export const MESH_TOPOLOGY_MCP_TOOL_NAMES = [
+  'mesh_topology_convert',
+  'mesh_topology_inspect',
+  'mesh_topology_edit'
+] as const
+
+export const MESH_MCP_TOOL_NAMES = [
+  ...MESH_SCENE_MCP_TOOL_NAMES,
+  ...MESH_TOPOLOGY_MCP_TOOL_NAMES
+] as const
+
 /** Simulator Canvas MCP surface — status/inspect are auto-allowed; the rest gate on simulatorCanvas. */
 export const SIMULATOR_MCP_TOOL_NAMES = [
   'simulator_status',
@@ -297,7 +309,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   // presentation. Normal gateway seats discover this specialist surface with
   // capability_search; a fresh mesh-authorised participant can receive it
   // directly. Catalog visibility is never itself a grant.
-  ...MESH_SCENE_MCP_TOOL_NAMES,
+  ...MESH_MCP_TOOL_NAMES,
   // Simulator Canvas — TaskWraith-owned Simulator.app / simctl / idb host.
   // Status + inspect are auto-allowed observation; open/boot/install/launch/
   // screenshot/terminate/button/rotate/tap/type/scroll gate on the dedicated
@@ -429,6 +441,8 @@ export const TASKWRAITH_MCP_TOOLS = [
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
 
 export type MeshSceneMcpToolName = (typeof MESH_SCENE_MCP_TOOL_NAMES)[number]
+export type MeshTopologyMcpToolName = (typeof MESH_TOPOLOGY_MCP_TOOL_NAMES)[number]
+export type MeshMcpToolName = (typeof MESH_MCP_TOOL_NAMES)[number]
 export type SimulatorMcpToolName = (typeof SIMULATOR_MCP_TOOL_NAMES)[number]
 export type SimulatorMutatingMcpToolName = (typeof SIMULATOR_MUTATING_MCP_TOOL_NAMES)[number]
 

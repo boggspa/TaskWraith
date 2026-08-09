@@ -139,5 +139,9 @@ describe('mcpToolAlwaysPrompts', () => {
     expect(mcpToolAlwaysPrompts('theme_tokens_get')).toBe(false)
     // Global chats have no workspace to have granted anything, so they prompt.
     expect(mcpToolAlwaysPrompts('read_file', 'global')).toBe(true)
+    // Mesh primitives/topology are chat-local; imported paths still fail their
+    // separate workspace-source gate in a global chat.
+    expect(mcpToolAlwaysPrompts('mesh_scene_create', 'global')).toBe(false)
+    expect(mcpToolAlwaysPrompts('mesh_topology_edit', 'global')).toBe(false)
   })
 })

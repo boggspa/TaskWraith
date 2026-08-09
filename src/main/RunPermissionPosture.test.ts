@@ -72,7 +72,7 @@ function fullAccessPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
       sketchCanvas: 'allow',
-      meshCanvas: 'ask',
+      meshCanvas: 'allow',
       simulatorCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
@@ -100,7 +100,7 @@ function defaultPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       sketchCanvas: 'allow',
-      meshCanvas: 'ask',
+      meshCanvas: 'allow',
       simulatorCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
@@ -172,7 +172,7 @@ describe('canonical posture + sign/verify', () => {
         subThreadDelegation: 'allow',
         canvasInteraction: 'ask',
         sketchCanvas: 'allow',
-        meshCanvas: 'ask',
+        meshCanvas: 'allow',
         simulatorCanvas: 'ask',
         crossThreadRead: 'ask',
         threadMessage: 'ask',
@@ -429,6 +429,23 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
     expect(result.signature).toBeUndefined()
     expect(d.reDeriveReadOnly).not.toHaveBeenCalled()
     expect(d.reDeriveDefault).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes a signed global default posture through without discarding its Mesh policy', () => {
+    const perms = defaultPerms()
+    const signature = signRunPermissionPosture(SECRET, 'default', perms)
+    const d = deps()
+    const result = clampUntrustedRunPosture(
+      { scope: 'global', approvalMode: 'default', effectivePermissions: perms, signature },
+      d
+    )
+    expect(result).toEqual({
+      approvalMode: 'default',
+      effectivePermissions: perms,
+      signature,
+      downgraded: false
+    })
+    expect(d.reDeriveDefault).not.toHaveBeenCalled()
   })
 
   it('synthesizes read-only permissions for a signed plan posture missing the object', () => {

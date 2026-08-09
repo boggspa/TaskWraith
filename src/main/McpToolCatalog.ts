@@ -4616,6 +4616,108 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'mesh_topology_convert',
+      description:
+        'Convert one existing primitive or imported Mesh Canvas node into editable topology. The source primitive/import provenance is retained and imported workspace files are never overwritten. Returns stable topology ids, revision 0, and counts. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sceneId: { type: 'string' },
+          nodeId: { type: 'string' }
+        },
+        required: ['sceneId', 'nodeId']
+      }
+    },
+    {
+      name: 'mesh_topology_inspect',
+      description:
+        'Inspect a revisioned editable topology in bounded pages. Sections: summary, vertices, edges, faces, uvs, bones, recent_mutations. Face results retain ordered loops and per-loop UVs, so seams are visible. Gated via Mesh Canvas; returns no source filesystem paths.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sceneId: { type: 'string' },
+          nodeId: { type: 'string' },
+          section: {
+            type: 'string',
+            enum: ['summary', 'vertices', 'edges', 'faces', 'uvs', 'bones', 'recent_mutations']
+          },
+          offset: { type: 'integer', minimum: 0 },
+          limit: { type: 'integer', minimum: 1, maximum: 500 }
+        },
+        required: ['sceneId', 'nodeId']
+      }
+    },
+    {
+      name: 'mesh_topology_edit',
+      description:
+        'Atomically edit an editable node with optimistic concurrency. Always pass the latest expectedRevision and a stable clientMutationId; stale ensemble writers get a revision conflict and must re-inspect. Up to 64 operations: move/create/delete/merge vertices, create/delete/extrude/inset/subdivide faces, split/collapse/mark edges, set/project per-loop UVs, sculpt draw/inflate/smooth/flatten/pinch/grab, upsert/remove/pose bones, set vertex weights, or replace_geometry. Returns counts/revision and created/deleted ids, never the full topology. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sceneId: { type: 'string' },
+          nodeId: { type: 'string' },
+          expectedRevision: { type: 'integer', minimum: 0 },
+          clientMutationId: { type: 'string', minLength: 3, maxLength: 128 },
+          operations: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 64,
+            items: {
+              type: 'object',
+              properties: {
+                operation: {
+                  type: 'string',
+                  enum: [
+                    'move_vertices',
+                    'create_vertices',
+                    'delete_vertices',
+                    'merge_vertices',
+                    'create_faces',
+                    'delete_faces',
+                    'extrude_faces',
+                    'inset_faces',
+                    'subdivide_faces',
+                    'split_edge',
+                    'collapse_edge',
+                    'mark_edges',
+                    'set_face_uvs',
+                    'unwrap_uv',
+                    'sculpt',
+                    'upsert_bones',
+                    'remove_bones',
+                    'set_vertex_weights',
+                    'pose_bones',
+                    'replace_geometry'
+                  ]
+                }
+              },
+              required: ['operation'],
+              additionalProperties: true
+            }
+          }
+        },
+        required: ['sceneId', 'nodeId', 'expectedRevision', 'clientMutationId', 'operations']
+      }
+    },
+    {
       name: 'simulator_status',
       description:
         'Probe Simulator Canvas capability on this Mac: whether Simulator.app / simctl are available, Xcode paths, and booted/available devices. Read-only; auto-allowed.',

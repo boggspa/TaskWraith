@@ -4081,7 +4081,7 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(compact.length).toBeLessThan(full.length)
     expect(compact).not.toContain('maxResults')
   })
-  it('exposes the exact fresh gateway-v14 canonical surface plus virtual helpers', () => {
+  it('exposes the exact fresh gateway-v15 canonical surface plus virtual helpers', () => {
     const defs = ollamaNativeToolDefinitions('read_only')
     const names = defs.map((def) => def.function.name)
     const direct = ollamaAdvertisedToolNames()

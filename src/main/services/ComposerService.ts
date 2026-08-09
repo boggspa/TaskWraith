@@ -725,15 +725,32 @@ export class ComposerService {
                 settings,
                 presetId: 'default'
               })
-            : scope === 'global'
-              ? undefined
-              : resolveEffectiveRunPermissions({
-                  provider,
-                  workspacePath: effectiveInput.workspace || chat.workspacePath,
-                  model: requestedModel,
-                  settings,
-                  presetId: interactivePermissionPresetId || 'default'
-                })
+            : resolveEffectiveRunPermissions({
+                provider,
+                workspacePath:
+                  scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+                model: requestedModel,
+                settings,
+                presetId:
+                  scope === 'global' ? 'default' : interactivePermissionPresetId || 'default',
+                ...(scope === 'global'
+                  ? {
+                      overrides: {
+                        agenticServices: {
+                          // Global runs historically inherit settings rather
+                          // than Accept Edits' workspace-oriented presets.
+                          // Preserve that for every service except chat-local
+                          // Mesh authoring, which follows the explicit ladder.
+                          fileChanges: settings.agenticServices?.fileChanges ?? 'ask',
+                          subThreadDelegation:
+                            settings.agenticServices?.subThreadDelegation ?? 'ask',
+                          simulatorCanvas: settings.agenticServices?.simulatorCanvas ?? 'ask',
+                          meshCanvas: 'allow'
+                        }
+                      }
+                    }
+                  : {})
+              })
     // Fork 4B: demote elevated unattended simulatorCanvas:allow unless an
     // explicit workspace grant is present; plan-floor keeps ask.
     const effectiveRunPermissions =

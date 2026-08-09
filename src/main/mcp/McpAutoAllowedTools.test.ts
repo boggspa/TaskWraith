@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_EDITING_TOOLS, MESH_SCENE_MCP_TOOL_NAMES } from '../TaskWraithMcpTools'
+import { MEDIA_EDITING_TOOLS, MESH_MCP_TOOL_NAMES } from '../TaskWraithMcpTools'
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
@@ -217,7 +217,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'canvas_navigate',
         'delegate_to_subthread',
         'delegate_wave',
-        ...MESH_SCENE_MCP_TOOL_NAMES,
+        ...MESH_MCP_TOOL_NAMES,
         'simulator_boot',
         'simulator_button',
         'simulator_install',
@@ -390,7 +390,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
   })
 
   it('advertises every Mesh Canvas action to Ask as an approval-queued instrument', () => {
-    for (const tool of MESH_SCENE_MCP_TOOL_NAMES) {
+    for (const tool of MESH_MCP_TOOL_NAMES) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
       expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has(tool)).toBe(false)
     }

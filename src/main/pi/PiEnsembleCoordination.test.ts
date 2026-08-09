@@ -7,6 +7,7 @@ import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
   PI_MANAGED_SHELL_TOOL_NAMES,
+  PI_MESH_TOOL_NAMES,
   isPiEnsembleCoordinationToolName,
   isPiTaskWraithToolName,
   piEnsembleCoordinationReadyPromptAppendix,
@@ -65,12 +66,13 @@ describe('Pi managed Ensemble coordination extension', () => {
     )
   })
 
-  it('builds one fixed extension for exact file, managed shell and coordination tools', () => {
+  it('builds one fixed extension for file, shell, coordination, and Mesh tools', () => {
     const home = createCanonicalHome()
     const toolNames = [
       ...PI_EXACT_FILE_TOOL_NAMES,
       ...PI_MANAGED_SHELL_TOOL_NAMES,
-      ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES
+      ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+      ...PI_MESH_TOOL_NAMES
     ]
 
     const prepared = preparePiTaskWraithExtension({ isolatedHomeDir: home, toolNames })
@@ -80,18 +82,24 @@ describe('Pi managed Ensemble coordination extension', () => {
     for (const toolName of toolNames) expect(isPiTaskWraithToolName(toolName)).toBe(true)
     expect(isPiTaskWraithToolName('run_shell_command')).toBe(true)
     expect(isPiTaskWraithToolName('request_tool_permission')).toBe(true)
+    expect(isPiTaskWraithToolName('mesh_topology_edit')).toBe(true)
     expect(isPiTaskWraithToolName('git_commit')).toBe(false)
     expect(source).toContain("case 'write_file'")
     expect(source).toContain("case 'replace'")
     expect(source).toContain("case 'apply_patch'")
     expect(source).toContain("case 'run_shell_command'")
     expect(source).toContain("case 'request_tool_permission'")
+    expect(source).toContain("case 'mesh_scene_import'")
+    expect(source).toContain('sourcePath: Type.String()')
+    expect(source).toContain("case 'mesh_topology_edit'")
+    expect(source).toContain('expectedRevision: Type.Number()')
     const prompt = piTaskWraithToolsReadyPromptAppendix(prepared)
     expect(prompt).toContain('Native Pi bash/edit/write remain disabled')
     expect(prompt).toContain('acquire only their proposed file/hunk targets')
     expect(prompt).toContain('never treated as contained by caller-declared paths')
     expect(prompt).toContain('one-shot TaskWraith host execution')
     expect(prompt).toContain('finish the turn')
+    expect(prompt).toContain('same meshCanvas permission gate')
   })
 
   it('does not overwrite an unexpected pre-existing extension file', () => {
@@ -124,12 +132,14 @@ describe('Pi managed Ensemble coordination extension', () => {
       exactFileToolsExpected: true,
       shellToolsExpected: true,
       coordinationExpected: false,
+      meshToolsExpected: true,
       reason: 'extension readiness timed out'
     })
 
     expect(unavailable).toContain('Continue all work that remains possible')
     expect(unavailable).toContain('exact command and cwd')
     expect(unavailable).toContain('extension readiness timed out')
+    expect(unavailable).toContain('Mesh Canvas tools were expected')
     expect(unavailable).not.toContain('continuing read-only')
   })
 })

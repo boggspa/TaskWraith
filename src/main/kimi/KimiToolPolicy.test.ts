@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
   classifyKimiToolPermission,
+  isKimiBrokerDeferredMeshMcpTool,
   isKimiDeniedNativeTool,
   isKimiSafeMcpTool,
   unqualifyKimiMcpToolName,
   type KimiToolPolicyRequest
 } from './KimiToolPolicy'
+import { MESH_MCP_TOOL_NAMES } from '../../shared/taskWraithMcpCatalog'
 
 const never = () => false
 const opts = (over: Partial<Parameters<typeof classifyKimiToolPermission>[1]> = {}) => ({
@@ -42,6 +44,21 @@ describe('isKimiSafeMcpTool', () => {
         rawToolCall: { rawInput: { query: 'release gates' } }
       })
     ).toBe(true)
+    expect(
+      isKimiSafeMcpTool({
+        toolName: 'mcp__taskwraith__capability_invoke',
+        toolKind: 'execute',
+        rawToolCall: {
+          kind: 'execute',
+          rawInput: {
+            tool_name: 'mcp__taskwraith__capability_invoke',
+            name: 'mesh_topology_edit',
+            arguments: {},
+            command: 'touch /tmp/not-a-gateway-call'
+          }
+        }
+      })
+    ).toBe(false)
   })
   it('recognises a bare, already-unqualified identity', () => {
     expect(
@@ -89,19 +106,119 @@ describe('isKimiSafeMcpTool', () => {
     expect(isKimiSafeMcpTool(request('mcp__taskwraith__not_read_file'))).toBe(false)
     expect(isKimiSafeMcpTool(request('mcp__taskwraith__read_file_suffix'))).toBe(false)
   })
+  it('treats capability_invoke name as its target argument, not a rival outer identity', () => {
+    expect(
+      isKimiSafeMcpTool({
+        toolName: 'mcp__taskwraith__capability_invoke',
+        toolKind: 'execute',
+        rawToolCall: {
+          kind: 'execute',
+          rawInput: {
+            tool_name: 'mcp__taskwraith__capability_invoke',
+            name: 'mesh_topology_edit',
+            arguments: { sceneId: 'scene-a' }
+          }
+        }
+      })
+    ).toBe(true)
+  })
   it('admits Mesh Canvas calls to the central approval broker on Ask and Plan seats', () => {
-    const request: KimiToolPolicyRequest = {
-      toolName: 'mcp__taskwraith__mesh_scene_apply',
-      toolKind: 'other'
-    }
+    for (const toolName of MESH_MCP_TOOL_NAMES) {
+      const request: KimiToolPolicyRequest = {
+        toolName: `mcp__taskwraith__${toolName}`,
+        toolKind: 'edit'
+      }
 
-    expect(isKimiSafeMcpTool(request)).toBe(true)
+      expect(isKimiSafeMcpTool(request), toolName).toBe(false)
+      expect(isKimiBrokerDeferredMeshMcpTool(request), toolName).toBe(true)
+      expect(
+        classifyKimiToolPermission(
+          request,
+          opts({
+            writeCapable: false,
+            isSafeMcpTool: isKimiSafeMcpTool,
+            isBrokerDeferredMcpTool: isKimiBrokerDeferredMeshMcpTool
+          })
+        ),
+        toolName
+      ).toBe('gate')
+    }
+    expect(isKimiBrokerDeferredMeshMcpTool({ toolName: 'mcp__evil__mesh_topology_edit' })).toBe(
+      false
+    )
+    expect(
+      isKimiBrokerDeferredMeshMcpTool({ toolName: 'mcp__taskwraith-evil__mesh_topology_edit' })
+    ).toBe(false)
+    expect(isKimiBrokerDeferredMeshMcpTool({ toolName: 'mesh_topology_edit_suffix' })).toBe(false)
+    expect(
+      isKimiBrokerDeferredMeshMcpTool({
+        toolName: 'mcp__taskwraith__mesh_topology_edit',
+        rawToolCall: {
+          rawInput: { tool_name: 'mcp__taskwraith__mesh_scene_delete' }
+        }
+      })
+    ).toBe(false)
+    const hostile = {
+      toolName: 'mcp__taskwraith__mesh_topology_edit',
+      toolKind: 'execute',
+      rawToolCall: {
+        kind: 'execute',
+        rawInput: { command: 'touch /tmp/not-a-mesh-call' }
+      }
+    }
+    expect(isKimiBrokerDeferredMeshMcpTool(hostile)).toBe(false)
     expect(
       classifyKimiToolPermission(
-        request,
-        opts({ writeCapable: false, isSafeMcpTool: isKimiSafeMcpTool })
+        hostile,
+        opts({
+          writeCapable: false,
+          isSafeMcpTool: isKimiSafeMcpTool,
+          isBrokerDeferredMcpTool: isKimiBrokerDeferredMeshMcpTool
+        })
       )
-    ).toBe('allow')
+    ).toBe('deny')
+  })
+  it('never lets an unknown native identity fall through to a Mesh-shaped name argument', () => {
+    const futureNative = {
+      toolName: 'FutureExec',
+      toolKind: 'execute',
+      rawToolCall: { kind: 'execute', rawInput: { name: 'mesh_topology_edit' } }
+    }
+    const unresolvedRawIdentity = {
+      toolName: 'mcp__taskwraith__mesh_topology_edit',
+      toolKind: 'execute',
+      rawToolCall: {
+        kind: 'execute',
+        rawInput: { tool_name: 'future_unknown_tool', sceneId: 'scene-a' }
+      }
+    }
+    for (const request of [futureNative, unresolvedRawIdentity]) {
+      expect(isKimiBrokerDeferredMeshMcpTool(request)).toBe(false)
+      expect(
+        classifyKimiToolPermission(
+          request,
+          opts({
+            writeCapable: false,
+            isSafeMcpTool: isKimiSafeMcpTool,
+            isBrokerDeferredMcpTool: isKimiBrokerDeferredMeshMcpTool
+          })
+        )
+      ).toBe('deny')
+    }
+  })
+  it('treats name as an argument once a primary Mesh identity exists', () => {
+    expect(
+      isKimiBrokerDeferredMeshMcpTool({
+        toolName: 'mcp__taskwraith__mesh_topology_edit',
+        rawToolCall: { rawInput: { name: 'Bash', sceneId: 'scene-a' } }
+      })
+    ).toBe(true)
+    expect(
+      isKimiDeniedNativeTool({
+        toolName: 'mcp__taskwraith__mesh_topology_edit',
+        rawToolCall: { rawInput: { name: 'Bash', sceneId: 'scene-a' } }
+      })
+    ).toBe(false)
   })
   it('recognises the tool name from rawToolCall.rawInput too', () => {
     expect(
@@ -140,7 +257,7 @@ describe('isKimiSafeMcpTool', () => {
     }
   })
 
-  it('rejects a stable safe identity that contradicts kind, shape, or another identity', () => {
+  it('rejects a stable safe identity that contradicts kind or write shape', () => {
     expect(
       isKimiSafeMcpTool({
         toolKind: 'edit',
@@ -154,6 +271,9 @@ describe('isKimiSafeMcpTool', () => {
         }
       })
     ).toBe(false)
+  })
+
+  it('treats rawInput.name as an identity only when both primary fields are absent', () => {
     expect(
       isKimiSafeMcpTool({
         toolKind: 'read',
@@ -166,7 +286,10 @@ describe('isKimiSafeMcpTool', () => {
           }
         }
       })
-    ).toBe(false)
+    ).toBe(true)
+    expect(isKimiSafeMcpTool({ rawToolCall: { rawInput: { name: 'capability_search' } } })).toBe(
+      true
+    )
   })
 })
 

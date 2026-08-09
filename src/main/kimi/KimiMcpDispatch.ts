@@ -8,6 +8,7 @@ import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
 import {
   isGatewayV13DirectTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
+  isMeshTopologyDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
 } from '../mcp/McpSessionProfileFence'
@@ -45,6 +46,9 @@ function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJ
     options.taskWraithMcpProfileId
   )
   const meshDirect = isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
+  const meshTopologyDirect = isMeshTopologyDirectTaskWraithMcpProfile(
+    options.taskWraithMcpProfileId
+  )
   const sketchDirect = isSketchCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
   const orchestrationDirect = isGatewayV13DirectTaskWraithMcpProfile(
     options.taskWraithMcpProfileId
@@ -60,6 +64,7 @@ function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJ
     [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: '1',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: portableEnsembleControl ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: meshDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: meshTopologyDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: sketchDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: orchestrationDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: options.auditSubset ? '1' : '0',

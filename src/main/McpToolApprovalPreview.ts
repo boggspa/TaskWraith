@@ -3,7 +3,7 @@ import type { TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import type { AgenticServiceId, ProviderId } from './store/types'
 import { isReadOnlyShellCommand } from './grok/GrokReadOnlyShell'
 import { outlookRecipientList } from './mcp/OutlookToolExecutors'
-import { MESH_SCENE_MCP_TOOL_NAMES, SIMULATOR_MUTATING_MCP_TOOL_NAMES } from './TaskWraithMcpTools'
+import { MESH_MCP_TOOL_NAMES, SIMULATOR_MUTATING_MCP_TOOL_NAMES } from './TaskWraithMcpTools'
 
 export interface McpToolApprovalPreview {
   title: string
@@ -728,7 +728,7 @@ export function createMcpToolApprovalPreviewer(
       }
     }
 
-    if ((MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(toolName)) {
+    if ((MESH_MCP_TOOL_NAMES as readonly string[]).includes(toolName)) {
       return {
         title: `Approve ${providerName} Mesh Canvas action`,
         body: toolName,

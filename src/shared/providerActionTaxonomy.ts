@@ -1865,6 +1865,30 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'application-resource'
   ),
+  mesh_topology_convert: tool(
+    'workspace_write',
+    'meshCanvas',
+    'application.mutate',
+    'mesh-canvas',
+    'host-state',
+    'application-resource'
+  ),
+  mesh_topology_inspect: tool(
+    'orchestration',
+    'meshCanvas',
+    'application.read',
+    'mesh-canvas',
+    'none',
+    'none'
+  ),
+  mesh_topology_edit: tool(
+    'workspace_write',
+    'meshCanvas',
+    'application.mutate',
+    'mesh-canvas',
+    'host-state',
+    'application-resource'
+  ),
   // Simulator Canvas — status is a safe capability probe (auto-allowed). The
   // mutating verbs stay orchestration-class so Ask/Plan seats are not
   // read-only-floor denied before the simulatorCanvas modal; they still never

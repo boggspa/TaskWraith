@@ -747,6 +747,49 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     void pending
   })
 
+  it('(h3) Plan mesh edits remain per-call request-only despite an allow decision', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(isPlanInstrumentGrantHold).mockImplementation(
+      (presetId, service) => presetId === 'plan' && service === 'meshCanvas'
+    )
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: { effectivePermissions: { presetId: 'plan' } }
+          }
+        : undefined) as never)
+    vi.mocked(deps.permissionService.resolvePermission).mockReturnValue({
+      policy: 'allow',
+      workspaceGrantAllowed: true,
+      sessionGrantAllowed: true,
+      decision: 'allow'
+    })
+
+    const pending = createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'meshCanvas',
+      '/repo',
+      request({ preview: { kind: 'tool', toolName: 'mesh_topology_edit' } })
+    )
+    await Promise.resolve()
+
+    expect(order).not.toContain('audit:autoAllow:policy')
+    expect(order).toContain('registerGeminiTool')
+    const livePayload = vi.mocked(deps.safeSendToSender).mock.calls[0]?.[2] as any
+    expect(livePayload.actions).toEqual(['accept', 'decline', 'cancel'])
+    expect(livePayload.preview).toMatchObject({
+      requestOnly: true,
+      requestOnlyReason:
+        'This approval is per-call only; session/workspace grants are disabled for this request.'
+    })
+    void pending
+  })
+
   it('(i) keeps the exact canvas_eval script transient while durable sinks receive an approval-bound receipt', async () => {
     const order: string[] = []
     const deps = makeDeps(order)

@@ -471,7 +471,11 @@ export function clampUntrustedRunPosture(
       if (approvalMode === 'plan' && input.effectivePermissions?.readOnly !== true) {
         return forceReadOnly(input.scope, deps, 'missing-readonly-effective-permissions')
       }
-      if (input.scope === 'global' && input.effectivePermissions?.readOnly === false) {
+      if (
+        input.scope === 'global' &&
+        input.effectivePermissions?.readOnly === false &&
+        input.effectivePermissions.presetId !== 'default'
+      ) {
         return forceDefault(deps, 'global-effective-permissions-capped')
       }
       return {

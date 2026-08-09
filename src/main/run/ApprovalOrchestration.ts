@@ -775,6 +775,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     const requestOnly =
       service === 'canvasEval' ||
       postureApprovalOnly ||
+      isPlanInstrumentGrantHold(effectivePermissions?.presetId, service) ||
       (request.forcePrompt === true && !externalPathDetection)
     const actions: AgentApprovalAction[] = externalPathDetection
       ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']

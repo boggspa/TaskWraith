@@ -54,6 +54,7 @@ function buildLiveEnvironment(input: {
     profile: {
       safeSubset: true,
       gatewaySubset: true,
+      meshTopologyDirect: true,
       sketchDirect: true,
       orchestrationDirect: true
     }
@@ -102,9 +103,11 @@ describe('MCP bridge route-from-env authority', () => {
     })
     expect(parsedA.value.profile).toMatchObject({ safeSubset: true, gatewaySubset: true })
     expect(parsedA.value.profile.planSubset).toBe(false)
+    expect(parsedA.value.profile.meshTopologyDirect).toBe(true)
     expect(parsedA.value.profile.sketchDirect).toBe(true)
     expect(parsedA.value.profile.orchestrationDirect).toBe(true)
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]).toBe('1')
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]).toBe('1')
     expect(parsedA.value).toMatchObject({
       route: { appRunId: 'run-123', appChatId: 'chat-456' },
@@ -234,6 +237,8 @@ describe('MCP bridge route-from-env authority', () => {
     delete missingProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]
     const missingSketchProfile = { ...built.env }
     delete missingSketchProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]
+    const missingTopologyProfile = { ...built.env }
+    delete missingTopologyProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]
     const missingOrchestrationProfile = { ...built.env }
     delete missingOrchestrationProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]
     const malformedProfile = {
@@ -246,6 +251,10 @@ describe('MCP bridge route-from-env authority', () => {
       reason: 'invalid-profile-environment'
     })
     expect(parseMcpBridgeRouteFromEnv(missingSketchProfile)).toEqual({
+      ok: false,
+      reason: 'invalid-profile-environment'
+    })
+    expect(parseMcpBridgeRouteFromEnv(missingTopologyProfile)).toEqual({
       ok: false,
       reason: 'invalid-profile-environment'
     })
