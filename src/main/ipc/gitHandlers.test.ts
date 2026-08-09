@@ -457,7 +457,8 @@ describe('registerGitHandlers', () => {
       handlerFor('git:stage')({}, { repoPath: '/granted/repo', chatId: 'chat-1', all: true })
     ).resolves.toEqual({
       ok: false,
-      error: 'Git actions require registered workspaces or signed write grants.'
+      error: 'Git actions require a signed external write grant for this repository.',
+      errorCode: 'git_scope_external_write_grant_required'
     })
     expect(deps.gitService.stage).not.toHaveBeenCalled()
   })
@@ -857,7 +858,8 @@ describe('registerGitHandlers', () => {
       { repoPath: '/granted/repo', chatId: 'chat-1' }
     )).resolves.toEqual({
       ok: false,
-      error: 'Git actions require registered workspaces or signed write grants.'
+      error: 'Git actions require a signed external write grant for this repository.',
+      errorCode: 'git_scope_external_write_grant_required'
     })
   })
 
@@ -877,13 +879,17 @@ describe('registerGitHandlers', () => {
       handlerFor('git:snapshot')({}, { repoPath: '/granted/repo', chatId: 'chat-b' })
     ).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error:
+        'Git inspection for an external repository requires an originating chat with a signed path grant.',
+      errorCode: 'git_scope_external_chat_required'
     })
     await expect(
       handlerFor('git:snapshot')({}, { repoPath: '/granted/repo' })
     ).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error:
+        'Git inspection for an external repository requires an originating chat with a signed path grant.',
+      errorCode: 'git_scope_external_chat_required'
     })
   })
 
@@ -924,7 +930,9 @@ describe('registerGitHandlers', () => {
       handlerFor('github:ci-status')({}, { repoPath: '/not/granted' })
     ).resolves.toEqual({
       ok: false,
-      error: expect.any(String)
+      error:
+        'Git inspection for an external repository requires an originating chat with a signed path grant.',
+      errorCode: 'git_scope_external_chat_required'
     })
     expect(deps.gitService.ciStatus).not.toHaveBeenCalled()
   })
@@ -955,7 +963,8 @@ describe('registerGitHandlers', () => {
       { repoPath: '/granted/repo/subdir', chatId: 'chat-1' }
     )).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error: 'Git inspection must target the external repository root, not a nested path.',
+      errorCode: 'git_scope_external_root_required'
     })
     expect(deps.gitService.snapshot).toHaveBeenCalledTimes(1)
 
@@ -964,7 +973,8 @@ describe('registerGitHandlers', () => {
       { repoPath: '/granted/repo-evil', chatId: 'chat-1' }
     )).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error: 'Git inspection must target the external repository root, not a nested path.',
+      errorCode: 'git_scope_external_root_required'
     })
   })
 
@@ -984,7 +994,8 @@ describe('registerGitHandlers', () => {
       )
     ).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error: 'Git inspection must target the external repository root, not a nested path.',
+      errorCode: 'git_scope_external_root_required'
     })
     expect(deps.getChat).not.toHaveBeenCalled()
     expect(deps.gitService.snapshot).not.toHaveBeenCalled()
@@ -1007,7 +1018,9 @@ describe('registerGitHandlers', () => {
       )
     ).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error:
+        'Git inspection requires a self-contained .git directory at the external repository root.',
+      errorCode: 'git_scope_external_repository_not_self_contained'
     })
     expect(deps.externalGitRepositoryRootIsSelfContained).toHaveBeenCalledWith(
       '/granted/worktree'
@@ -1046,7 +1059,8 @@ describe('registerGitHandlers', () => {
       handlerFor('git:snapshot')({}, { repoPath: '/granted/repo', chatId: 'chat-1' })
     ).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error: 'Git inspection requires a signed external read grant for this repository.',
+      errorCode: 'git_scope_external_read_grant_required'
     })
     await expect(
       handlerFor('git:stage')(
@@ -1055,7 +1069,8 @@ describe('registerGitHandlers', () => {
       )
     ).resolves.toEqual({
       ok: false,
-      error: 'Git actions require registered workspaces or signed write grants.'
+      error: 'Git actions require a signed external write grant for this repository.',
+      errorCode: 'git_scope_external_write_grant_required'
     })
     expect(deps.gitService.snapshot).not.toHaveBeenCalled()
     expect(deps.gitService.stage).not.toHaveBeenCalled()
@@ -1082,7 +1097,8 @@ describe('registerGitHandlers', () => {
       )
     ).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error: 'Git inspection requires a signed external read grant for this repository.',
+      errorCode: 'git_scope_external_read_grant_required'
     })
     expect(deps.gitService.snapshot).not.toHaveBeenCalled()
   })
@@ -1095,28 +1111,57 @@ describe('registerGitHandlers', () => {
     deps.gitRepositoryRootForPath.mockReturnValue('/repo')
     registerGitHandlers(deps)
 
-    await expect(
-      handlerFor('git:snapshot')({}, { workspacePath: '/repo/packages/app' })
-    ).resolves.toEqual({
-      ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
-    })
+    for (const channel of ['git:snapshot', 'git:workspace-stats', 'git:work-provenance']) {
+      await expect(
+        handlerFor(channel)({}, { workspacePath: '/repo/packages/app' })
+      ).resolves.toEqual({
+        ok: false,
+        error:
+          'Git inspection will not widen this registered workspace to a different repository root.',
+        errorCode: 'git_scope_registered_root_mismatch'
+      })
+    }
     expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+    expect(deps.gitService.workspaceStats).not.toHaveBeenCalled()
+    expect(deps.workProvenanceService.query).not.toHaveBeenCalled()
   })
 
-  it('rejects a registered workspace when its actual Git top-level cannot be proven', async () => {
+  it('identifies a failed registered-root probe before running stats or provenance', async () => {
     const { deps } = createDeps()
     deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-signed' })
     deps.gitRepositoryRootForPath.mockReturnValue(null)
     registerGitHandlers(deps)
 
+    for (const channel of ['git:snapshot', 'git:workspace-stats', 'git:work-provenance']) {
+      await expect(
+        handlerFor(channel)({}, { workspacePath: '/signed/repository' })
+      ).resolves.toEqual({
+        ok: false,
+        error: 'Git repository root could not be resolved for this registered workspace.',
+        errorCode: 'git_scope_registered_root_unresolved'
+      })
+    }
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+    expect(deps.gitService.workspaceStats).not.toHaveBeenCalled()
+    expect(deps.workProvenanceService.query).not.toHaveBeenCalled()
+  })
+
+  it('identifies an unresolved external repository root before consulting grants', async () => {
+    const { deps } = createDeps()
+    deps.getChat.mockReturnValue(createChat())
+    deps.gitRepositoryRootForPath.mockReturnValue(null)
+    registerGitHandlers(deps)
+
     await expect(
-      handlerFor('git:snapshot')({}, { workspacePath: '/signed/repository' })
+      handlerFor('git:workspace-stats')({}, { repoPath: '/external/repository', chatId: 'chat-1' })
     ).resolves.toEqual({
       ok: false,
-      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+      error: 'Git repository root could not be resolved for this external path.',
+      errorCode: 'git_scope_external_root_unresolved'
     })
-    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+    expect(deps.getChat).not.toHaveBeenCalled()
+    expect(deps.executableExternalPathGrantsForChat).not.toHaveBeenCalled()
+    expect(deps.gitService.workspaceStats).not.toHaveBeenCalled()
   })
 
   it('denies every external worktree action without invoking worktree services', async () => {

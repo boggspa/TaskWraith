@@ -197,7 +197,20 @@ export interface GitPrReadiness {
   warnings: string[]
 }
 
-export type GitResult<T> = { ok: true; data: T } | { ok: false; error: string; stderr?: string }
+export type GitScopeErrorCode =
+  | 'git_scope_workspace_not_registered'
+  | 'git_scope_registered_root_unresolved'
+  | 'git_scope_registered_root_mismatch'
+  | 'git_scope_external_root_unresolved'
+  | 'git_scope_external_root_required'
+  | 'git_scope_external_repository_not_self_contained'
+  | 'git_scope_external_chat_required'
+  | 'git_scope_external_read_grant_required'
+  | 'git_scope_external_write_grant_required'
+
+export type GitResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; stderr?: string; errorCode?: GitScopeErrorCode }
 
 export interface GitBranchInfo {
   name: string

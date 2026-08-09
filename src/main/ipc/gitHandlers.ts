@@ -10,6 +10,7 @@ import type {
   GitPushInput,
   GitRemoveWorktreeInput,
   GitResult,
+  GitScopeErrorCode,
   GitPrReadiness,
   GitPrSummary,
   GitRepositorySnapshot,
@@ -149,12 +150,50 @@ function externalGrantCoversPath(
   })
 }
 
-function gitScopeError(scope: GitIpcScope): string {
-  if (scope === 'registered-workspace') return 'Git actions are limited to registered workspaces.'
-  if (scope === 'registered-or-granted-write') {
-    return 'Git actions require registered workspaces or signed write grants.'
+type GitScopeFailure = {
+  ok: false
+  error: string
+  errorCode: GitScopeErrorCode
+}
+
+function gitScopeFailure(scope: GitIpcScope, errorCode: GitScopeErrorCode): GitScopeFailure {
+  const operation = scope === 'registered-or-granted-read' ? 'Git inspection' : 'Git actions'
+  let error: string
+  switch (errorCode) {
+    case 'git_scope_registered_root_unresolved':
+      error = 'Git repository root could not be resolved for this registered workspace.'
+      break
+    case 'git_scope_registered_root_mismatch':
+      error = `${operation} will not widen this registered workspace to a different repository root.`
+      break
+    case 'git_scope_external_root_unresolved':
+      error = 'Git repository root could not be resolved for this external path.'
+      break
+    case 'git_scope_external_root_required':
+      error = `${operation} must target the external repository root, not a nested path.`
+      break
+    case 'git_scope_external_repository_not_self_contained':
+      error = `${operation} requires a self-contained .git directory at the external repository root.`
+      break
+    case 'git_scope_external_chat_required':
+      error = `${operation} for an external repository requires an originating chat with a signed path grant.`
+      break
+    case 'git_scope_external_read_grant_required':
+      error = 'Git inspection requires a signed external read grant for this repository.'
+      break
+    case 'git_scope_external_write_grant_required':
+      error = 'Git actions require a signed external write grant for this repository.'
+      break
+    case 'git_scope_workspace_not_registered':
+      error =
+        scope === 'registered-workspace'
+          ? 'Git actions are limited to registered workspaces.'
+          : scope === 'registered-or-granted-write'
+            ? 'Git actions require a registered workspace or signed external write grant.'
+            : 'Git inspection requires a registered workspace or signed external read grant.'
+      break
   }
-  return 'Git inspection is limited to registered workspaces or signed external path grants.'
+  return { ok: false, error, errorCode }
 }
 
 function gitPayloadPath(
@@ -162,9 +201,7 @@ function gitPayloadPath(
   event: IpcMainInvokeEvent,
   payload: GitIpcPayload | undefined,
   scope: GitIpcScope
-):
-  | GitAuthorizedPath
-  | { ok: false; error: string } {
+): GitAuthorizedPath | GitScopeFailure | { ok: false; error: string } {
   const raw =
     typeof payload?.repoPath === 'string' && payload.repoPath.trim()
       ? payload.repoPath
@@ -189,8 +226,11 @@ function gitPayloadPath(
     // The configured workspace is the filesystem authority boundary. Git's
     // default repo-root behavior must not widen a registered monorepo package
     // to sibling packages outside that workspace.
+    if (!repositoryRoot) {
+      return gitScopeFailure(scope, 'git_scope_registered_root_unresolved')
+    }
     if (repositoryRoot !== normalized) {
-      return { ok: false, error: gitScopeError(scope) }
+      return gitScopeFailure(scope, 'git_scope_registered_root_mismatch')
     }
     return {
       ok: true,
@@ -201,21 +241,26 @@ function gitPayloadPath(
     }
   }
   if (scope === 'registered-workspace') {
-    return { ok: false, error: gitScopeError(scope) }
+    return gitScopeFailure(scope, 'git_scope_workspace_not_registered')
   }
   // External Git operations are repository-wide: even a snapshot resolves to
   // repoRoot and exposes sibling status, while stage/commit/branch/worktree
   // actions mutate that root. A grant for only a nested subdirectory must not
   // silently widen to the containing repository.
-  if (!repositoryRoot || repositoryRoot !== normalized) {
-    return { ok: false, error: gitScopeError(scope) }
+  if (!repositoryRoot) {
+    return gitScopeFailure(scope, 'git_scope_external_root_unresolved')
+  }
+  if (repositoryRoot !== normalized) {
+    return gitScopeFailure(scope, 'git_scope_external_root_required')
   }
   if (!deps.externalGitRepositoryRootIsSelfContained(repositoryRoot)) {
-    return { ok: false, error: gitScopeError(scope) }
+    return gitScopeFailure(scope, 'git_scope_external_repository_not_self_contained')
   }
   const chat = chatId ? deps.getChat(chatId) : null
+  if (!chat) {
+    return gitScopeFailure(scope, 'git_scope_external_chat_required')
+  }
   if (
-    chat &&
     externalGrantCoversPath(
       deps,
       normalized,
@@ -231,10 +276,12 @@ function gitPayloadPath(
       chatId
     }
   }
-  return {
-    ok: false,
-    error: gitScopeError(scope)
-  }
+  return gitScopeFailure(
+    scope,
+    scope === 'registered-or-granted-write'
+      ? 'git_scope_external_write_grant_required'
+      : 'git_scope_external_read_grant_required'
+  )
 }
 
 function gitSnapshotSubscriptionStillAuthorized(
