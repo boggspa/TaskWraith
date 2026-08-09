@@ -212,6 +212,7 @@ describe('MultiviewPaneGrid', () => {
         renderFocusedCell={focusedHost}
         renderFocusedChatCell={focusedChat}
         showFocusedHostOverlay
+        hostProjectionChatId="a"
         renderViewerCell={viewer}
       />
     )
@@ -221,6 +222,27 @@ describe('MultiviewPaneGrid', () => {
     expect(out).toContain('multiview-pane-runtime is-suspended')
     expect(out).toContain('aria-hidden="true"')
     expect(out).toContain('id="focused-cell"')
+  })
+
+  it('never overlays singleton host content onto a differently-owned focused pane', () => {
+    const focusedHost = vi.fn(focused)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={makePanes(['a', 'b'])}
+        focusedPaneIndex={1}
+        renderFocusedCell={focusedHost}
+        renderFocusedChatCell={viewer}
+        showFocusedHostOverlay
+        hostProjectionChatId="a"
+        renderViewerCell={viewer}
+      />
+    )
+
+    expect(focusedHost).not.toHaveBeenCalled()
+    expect(out).not.toContain('multiview-pane-runtime is-suspended')
+    expect(out).not.toContain('id="focused-cell"')
+    expect(out).toContain('>b</div>')
   })
 
   it('tags each cell with its stable pane id (data-pane-id) in cell order', () => {

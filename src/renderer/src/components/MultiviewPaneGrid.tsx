@@ -53,6 +53,12 @@ export interface MultiviewPaneGridProps {
   renderFocusedChatCell?: (chatId: string, paneIndex: number) => ReactNode
   /** Show the legacy host above a still-mounted focused pane runtime. */
   showFocusedHostOverlay?: boolean
+  /**
+   * Chat currently owned by the legacy host projection. A host overlay may
+   * cover a pane only when this id matches that pane's own chat; focus alone
+   * must never move singleton content across pane boundaries.
+   */
+  hostProjectionChatId?: string | null
   /** A pane-scoped ChatViewPane (hosting the shared Composer) for a non-focused, populated cell. */
   renderViewerCell: (chatId: string, paneIndex: number) => ReactNode
   /** A pane hosting a live-embedded Canvas (web preview) — when the record has a canvasId. */
@@ -242,7 +248,8 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
     : spec.gridTemplateRows
 
   const renderChatRuntime = (chatId: string, paneIndex: number, focused: boolean): ReactNode => {
-    const showHost = focused && Boolean(props.showFocusedHostOverlay)
+    const showHost =
+      focused && Boolean(props.showFocusedHostOverlay) && props.hostProjectionChatId === chatId
     const renderPane =
       focused && props.renderFocusedChatCell ? props.renderFocusedChatCell : props.renderViewerCell
     return (

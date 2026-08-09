@@ -21,6 +21,7 @@ import {
 import {
   AgentAuraLayer,
   LivingWorkspaceLayer,
+  RunDataVizLayer,
   SkyWeatherVisual,
   type AgentAuraProviderKey,
   type AgentAuraStatus,
@@ -75,6 +76,14 @@ export interface ChatViewPaneProps extends Omit<
   auraProvider?: AgentAuraProviderKey
   auraStatus?: AgentAuraStatus
   auraIntensity?: AdvancedFxIntensity
+  // ── Per-pane run-data visualization ──────────────────────────────────────
+  // This used to force the complete legacy host transcript over whichever
+  // pane received focus. Keep the visual effect, but feed it this pane's own
+  // queue/raw-event/approval state so focus never swaps runtime ownership.
+  showRunDataViz?: boolean
+  runDataVizQueueCount?: number
+  runDataVizRawEventCount?: number
+  runDataVizApprovalWaiting?: boolean
   // ── Per-pane sky + living-workspace FX ────────────────────────────────────
   // Each pane paints its OWN sky/living-workspace INLINE (behind its content,
   // on top of its own slab) so the FX show at ANY opacity (incl. fully-opaque
@@ -235,6 +244,10 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.auraProvider === b.auraProvider &&
     a.auraStatus === b.auraStatus &&
     a.auraIntensity === b.auraIntensity &&
+    a.showRunDataViz === b.showRunDataViz &&
+    a.runDataVizQueueCount === b.runDataVizQueueCount &&
+    a.runDataVizRawEventCount === b.runDataVizRawEventCount &&
+    a.runDataVizApprovalWaiting === b.runDataVizApprovalWaiting &&
     // Per-pane sky + living-workspace — MUST be compared or a pane won't toggle
     // its own sky/ghost FX or re-paint when the weather/intensity changes.
     a.showSky === b.showSky &&
@@ -528,18 +541,24 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     >
       {/* Per-pane provider glow. First child so it sits behind pane content
        * (it's `position:absolute; inset:0; pointer-events:none`). The focused
-       * pane glows via App's inline FX layers; this gives resting panes the
-       * same aura keyed to THEIR chat. `.multiview-cell` is `overflow:hidden`
-       * so the outer glow is clipped at the cell edge — same as the focused
-       * pane's aura, so it's consistent.
-       * TODO(per-pane): run-data-viz — a per-pane <RunDataVizLayer> needs this
-       * pane's queue/raw-event counts, which aren't plumbed per-pane yet. */}
+       * and resting panes now share this same pane-owned path. The cell clips
+       * the outer glow, so no effect can bleed into a sibling pane. */}
       {props.showAura && props.auraProvider && props.auraStatus && props.auraIntensity && (
         <AgentAuraLayer
           provider={props.auraProvider}
           status={props.auraStatus}
           intensity={props.auraIntensity}
           hasHandoff={false}
+        />
+      )}
+      {props.showRunDataViz && props.auraStatus && props.auraIntensity && (
+        <RunDataVizLayer
+          provider={props.provider}
+          intensity={props.auraIntensity}
+          queueCount={props.runDataVizQueueCount ?? 0}
+          rawEventCount={props.runDataVizRawEventCount ?? 0}
+          approvalWaiting={props.runDataVizApprovalWaiting === true}
+          status={props.auraStatus}
         />
       )}
       {/* Per-pane ambient FX — INLINE behind this pane's content (the layers are

@@ -1301,16 +1301,15 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     ) : null
 
   // The pane-owned focused renderer is the normal split-mode path. A small set
-  // of legacy host-only overlays temporarily cover (but never unmount) that
-  // runtime until those overlays become pane slots. This preserves every
-  // capability while removing the singleton swap from ordinary use.
+  // of genuinely host-only, user-invoked overlays may temporarily cover that
+  // runtime. Always-on Run Data Viz is pane-local; including it here made the
+  // singleton host cover every focus target and collapse that pane to 0×0.
   const focusedHostOverlayRequired = Boolean(
     executionMapProjection ||
       workProjectHeader ||
       chatContextNotice ||
       showJumpToLatestPill ||
       previewChatMediaRef ||
-      showRunDataVizFx ||
       (currentProvider === 'gemini' && isOldVersion) ||
       visibleAuditRunNotice ||
       visibleAuditRun ||
@@ -1887,6 +1886,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 })
               }
               showFocusedHostOverlay={focusedHostOverlayRequired}
+              hostProjectionChatId={currentChatAppChatId}
               renderFocusedCell={() => {
                 if (executionMapProjection) {
                   return (
@@ -2169,8 +2169,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             * layout `focusedPaneIndex` is the only pane and there are no overrides,
             * so the focused effective flags collapse to the globals. Per-pane
             * living-workspace follows the (effective) sky toggle. The per-chat
-            * AgentAuraLayer + RunDataVizLayer stay focused-inline (the aura is also
-            * rendered per-pane by ChatViewPane — it's a per-CHAT provider signal). */}
+            * AgentAuraLayer + RunDataVizLayer stay inline in single-pane mode;
+            * split panes render both from ChatViewPane using pane-owned state. */}
           {focusedPaneLivingWorkspaceEnabled && (
             <LivingWorkspaceLayer weather={hostWeather} intensity={advancedFxIntensity} />
           )}

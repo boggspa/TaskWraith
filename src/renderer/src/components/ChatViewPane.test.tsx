@@ -494,6 +494,43 @@ describe('ChatViewPane per-pane agent aura', () => {
   })
 })
 
+describe('ChatViewPane per-pane run data visualization', () => {
+  const runDataProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps =>
+    makeProps({
+      chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+      composerProps: stubComposerProps(),
+      auraStatus: 'running',
+      auraIntensity: 'cinematic',
+      showRunDataViz: true,
+      runDataVizQueueCount: 2,
+      runDataVizRawEventCount: 7,
+      ...over
+    })
+
+  it('renders RunDataVizLayer from the pane-owned provider and run state', () => {
+    const html = renderToStaticMarkup(<ChatViewPane {...runDataProps()} />)
+
+    expect(html).toContain('run-data-viz-layer')
+    expect(html).toContain('fx-provider-codex')
+    expect(html).toContain('fx-status-running')
+  })
+
+  it('re-renders when pane-local visualization inputs change', () => {
+    expect(chatViewPanePropsEqual(runDataProps(), runDataProps({ runDataVizQueueCount: 3 }))).toBe(
+      false
+    )
+    expect(
+      chatViewPanePropsEqual(runDataProps(), runDataProps({ runDataVizRawEventCount: 8 }))
+    ).toBe(false)
+    expect(
+      chatViewPanePropsEqual(runDataProps(), runDataProps({ runDataVizApprovalWaiting: true }))
+    ).toBe(false)
+    expect(chatViewPanePropsEqual(runDataProps(), runDataProps({ showRunDataViz: false }))).toBe(
+      false
+    )
+  })
+})
+
 describe('ChatViewPane per-pane sky + living-workspace FX', () => {
   const fxProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps =>
     makeProps({

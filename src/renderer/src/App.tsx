@@ -28386,6 +28386,14 @@ function App(): React.JSX.Element {
     const viewerQueuedRunCount = runQueueJobs.filter(
       (job) => job.chatId === viewerChatId && job.status === 'queued'
     ).length
+    const viewerRawEventCount = rawLogsByChatIdRef.current.get(viewerChatId)?.length ?? 0
+    const viewerShowRunDataViz =
+      isAdvancedFxActive &&
+      appearance.advancedFx.dataViz &&
+      (viewerIsRunning ||
+        viewerQueuedRunCount > 0 ||
+        viewerRawEventCount > 0 ||
+        viewerPendingApproval)
     const viewerHasHandoffDraft = handoffCards.some(
       (card) => card.status === 'draft' && card.sourceChatId === viewerChatId
     )
@@ -28775,6 +28783,10 @@ function App(): React.JSX.Element {
         auraProvider={viewerAuraProviderKey}
         auraStatus={viewerRunFxStatus}
         auraIntensity={advancedFxIntensity}
+        showRunDataViz={viewerShowRunDataViz}
+        runDataVizQueueCount={viewerQueuedRunCount}
+        runDataVizRawEventCount={viewerRawEventCount}
+        runDataVizApprovalWaiting={viewerPendingApproval}
         showSky={paneSkyEnabled(viewerPaneIndex)}
         showLivingWorkspace={paneLivingWorkspaceEnabled(viewerPaneIndex)}
         weather={hostWeather}
