@@ -750,6 +750,30 @@ function renderMissionsOverlay(
           )
         }
       }
+      const recentQuestionReceipt = [...projection.questions]
+        .filter(
+          (question) =>
+            question.threadId === selected.threadId &&
+            question.status !== 'open' &&
+            Boolean(question.receiptId)
+        )
+        .sort(
+          (left, right) => (right.answeredAt ?? right.askedAt) - (left.answeredAt ?? left.askedAt)
+        )[0]
+      if (recentQuestionReceipt?.receiptId) {
+        lines.push(
+          overlayValue(
+            'receipt',
+            `${terminalLabel(recentQuestionReceipt.status)} · ${terminalLabel(
+              recentQuestionReceipt.receiptId
+            )}`,
+            width,
+            ansi,
+            glyphs,
+            TUI_TONE.good
+          )
+        )
+      }
       const participants = projection.participants
         .filter((participant) => participant.threadId === selected.threadId)
         .sort((left, right) => left.order - right.order)

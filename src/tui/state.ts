@@ -373,6 +373,17 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
     active: participant.active
   }))
   hostProjection.routing = hostProjection.rounds[0]?.routing
+  hostProjection.questions = [
+    {
+      questionId: 'demo-question',
+      threadId: thread.id,
+      status: 'answered',
+      promptPreview: 'Keep the compact mission layout?',
+      askedAt: startedAt,
+      answeredAt: now,
+      receiptId: '11111111-1111-4111-8111-111111111111'
+    }
+  ]
   return {
     connection: 'demo',
     hostVersion: '1.8.9',

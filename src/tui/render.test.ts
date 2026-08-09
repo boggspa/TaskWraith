@@ -62,6 +62,7 @@ describe('TaskWraith TUI renderer', () => {
     expect(active).toContain('Complete the TaskWraith TUI')
     expect(active).toContain('demo-round · running')
     expect(active).toContain('continuous · fan-out off · 0/32')
+    expect(active).toContain('answered · 11111111-1111-4111-8111-111111111111')
     expect(active).toContain('CLA · Lead · running')
     expect(active).not.toContain('Prove Host protocol foundations')
 

@@ -20,6 +20,10 @@ import {
   mapHostSnapshotToControlSnapshot,
   mapHostSnapshotToThreadDetail
 } from './hostProjectionMap'
+import {
+  buildTaskWraithTuiJsonProjection,
+  type TaskWraithTuiJsonProjectionSource
+} from './jsonProjection'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
@@ -136,28 +140,11 @@ function renderSnapshotState(state: TaskWraithTuiState, options: TaskWraithTuiCl
 
 function printJsonProjection(
   state: TaskWraithTuiState,
-  source: 'host' | 'demo' | 'twmission-replay',
+  source: TaskWraithTuiJsonProjectionSource,
   manifest?: TwMissionManifest
 ): void {
-  const snapshot = state.hostProjection
-  if (!snapshot) throw new Error('No coherent Host projection is available for JSON output.')
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        source,
-        ...(state.hostVersion ? { hostVersion: state.hostVersion } : {}),
-        generation: snapshot.generation,
-        cursor: snapshot.cursor,
-        freshness: snapshot.freshness,
-        ...(state.selectedThreadId ? { selectedThreadId: state.selectedThreadId } : {}),
-        ...(manifest ? { manifest } : {}),
-        snapshot
-      },
-      null,
-      2
-    )}\n`
-  )
+  const projection = buildTaskWraithTuiJsonProjection(state, source, manifest)
+  process.stdout.write(`${JSON.stringify(projection, null, 2)}\n`)
 }
 
 async function exportTwMission(options: TaskWraithTuiCliOptions): Promise<void> {
