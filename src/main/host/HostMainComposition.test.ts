@@ -701,6 +701,31 @@ describe('HostMainComposition', () => {
       expect(runtime.getPosition()).toEqual(composition.getPosition())
     })
 
+    it('exposes a narrow live-delta subscription without exposing the durable store', () => {
+      const runtimes: HostRuntimeBootstrap[] = []
+      composition = open({
+        pipeline: undefined,
+        pipelineFactory: (value) => {
+          runtimes.push(value)
+          return mockPipeline
+        }
+      })
+      const seen: string[] = []
+      const unsubscribe = composition.subscribeDeltas((event) => {
+        seen.push(event.record.envelope.entityId ?? event.record.envelope.family)
+      })
+
+      const runtime = runtimes[0]
+      if (!runtime) throw new Error('runtime was not captured')
+      runtime.deltaStore.append({ kind: 'upsert', family: 'thread', entityId: 'thread-live' })
+      expect(seen).toEqual(['thread-live'])
+
+      unsubscribe()
+      runtime.deltaStore.append({ kind: 'remove', family: 'thread', entityId: 'thread-live' })
+      expect(seen).toEqual(['thread-live'])
+      expect('deltaStore' in composition).toBe(false)
+    })
+
     it('rejects the both-supplied wiring mistake WITHOUT invoking the factory', () => {
       // K3Review asked for "factory not invoked when a direct pipeline is set".
       // That state is unreachable — XOR rejects both-supplied — so the only

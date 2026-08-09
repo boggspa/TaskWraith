@@ -170,6 +170,8 @@ export function createHostSupervisor(input: HostSupervisorInput): HostSupervisor
           }
         }
       ) as unknown as HostAuthority & { exportTwMission: typeof builtComposition.exportTwMission },
+      subscribeDeltas: (listener) =>
+        builtComposition.subscribeDeltas((event) => listener(event.record.envelope)),
       log: log ? (line: string) => log(`[host-supervisor] ${line}`) : undefined,
       now
     })

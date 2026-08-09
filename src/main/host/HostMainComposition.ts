@@ -59,6 +59,7 @@ import {
   HostRuntimeBootstrap,
   type HostRuntimeRecoverySummaryWithDeferred
 } from './HostRuntimeBootstrap'
+import type { HostDeltaAppendListener } from './HostDeltaStore'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 
 /**
@@ -170,6 +171,11 @@ export interface HostMainComposition {
   readonly session: HostSession
   /** Sole-journal position passthrough. */
   getPosition(): ReturnType<HostRuntimeBootstrap['getPosition']>
+  /**
+   * Narrow post-commit delta feed for supervised transports. Historical
+   * catch-up remains authority.deltas(); no durable store is exposed.
+   */
+  subscribeDeltas(listener: HostDeltaAppendListener): () => void
   /** Body-free recovery summary passthrough — counts and availability only. */
   getRecoverySummary(): HostRuntimeRecoverySummaryWithDeferred
   /**
@@ -398,6 +404,7 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     authority,
     session,
     getPosition: () => runtime.getPosition(),
+    subscribeDeltas: (listener) => runtime.deltaStore.subscribe(listener),
     getRecoverySummary: () => runtime.getRecoverySummary(),
     exportTwMission: async (context, options) => {
       const snap = await authority.snapshot(context)

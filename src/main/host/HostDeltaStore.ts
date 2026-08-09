@@ -170,6 +170,19 @@ export type HostDeltaAppendResult =
       position: HostCursorPosition
     }
 
+/**
+ * Post-commit notification emitted only after an append is durable in the
+ * journal. Consumers receive clones and cannot mutate the store's retained
+ * record. Listener failures are diagnostic-only: a slow/broken projection
+ * client must never turn a committed Host mutation into a failed mutation.
+ */
+export interface HostDeltaAppendEvent {
+  readonly record: HostDeltaStoredRecord
+  readonly position: HostCursorPosition
+}
+
+export type HostDeltaAppendListener = (event: HostDeltaAppendEvent) => void
+
 export type HostDeltaSinceResult =
   | {
       kind: 'deltas'
@@ -243,6 +256,7 @@ export class HostDeltaStore {
   private journalRecordCount = 0
   private recoveryState: HostDeltaRecoveryState = 'clean'
   private recoveryWarnings: string[] = []
+  private readonly appendListeners = new Set<HostDeltaAppendListener>()
 
   constructor(options: HostDeltaStoreOptions) {
     if (!options.dataDir || typeof options.dataDir !== 'string') {
@@ -332,6 +346,20 @@ export class HostDeltaStore {
   getByCursor(cursor: HostCursor): HostDeltaStoredRecord | null {
     const record = this.recordsByCursor.get(cursor)
     return record ? cloneRecord(record) : null
+  }
+
+  /**
+   * Observe newly committed deltas. Reopening/replaying durable state does not
+   * emit historical notifications; reconnecting clients use since() for that.
+   */
+  subscribe(listener: HostDeltaAppendListener): () => void {
+    if (typeof listener !== 'function') {
+      throw new Error('HostDeltaStore.subscribe requires a listener')
+    }
+    this.appendListeners.add(listener)
+    return () => {
+      this.appendListeners.delete(listener)
+    }
   }
 
   /**
@@ -431,11 +459,13 @@ export class HostDeltaStore {
     }
     this.appendJournalEvent({ op: 'append', record })
     this.maybeCompact()
-    return {
+    const result: Extract<HostDeltaAppendResult, { kind: 'appended' }> = {
       kind: 'appended',
       record: cloneRecord(record),
       position: this.getPosition()
     }
+    this.notifyAppend(result)
+    return result
   }
 
   /**
@@ -641,10 +671,25 @@ export class HostDeltaStore {
     this.lowestRetainedCursor = nextCursor
     this.appendJournalEvent({ op: 'append', record })
     this.maybeCompact()
-    return {
+    const result: Extract<HostDeltaAppendResult, { kind: 'appended' }> = {
       kind: 'appended',
       record: cloneRecord(record),
       position: this.getPosition()
+    }
+    this.notifyAppend(result)
+    return result
+  }
+
+  private notifyAppend(result: Extract<HostDeltaAppendResult, { kind: 'appended' }>): void {
+    for (const listener of this.appendListeners) {
+      try {
+        listener({
+          record: cloneRecord(result.record),
+          position: { ...result.position }
+        })
+      } catch (error) {
+        this.log(`[host-delta-store] append listener failed: ${String(error)}`)
+      }
     }
   }
 

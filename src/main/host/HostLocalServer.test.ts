@@ -27,8 +27,10 @@ import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
   type HostCommand,
+  type HostCapability,
   type HostCommandReceipt,
   type HostCursorPosition,
+  type HostDeltaEnvelope,
   type HostDeltasSinceResult,
   type HostHealthProjection,
   type HostSnapshot
@@ -50,7 +52,10 @@ function tmpUserDataPath(): string {
   return mkdtempSync(join(tmpdir(), 'host-local-server-test-'))
 }
 
-function makeClientHello(token: string): HostLocalTransportClientFrame {
+function makeClientHello(
+  token: string,
+  capabilities: readonly HostCapability[] = ['bootstrap', 'snapshot', 'health']
+): HostLocalTransportClientFrame {
   return {
     type: 'hello',
     transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
@@ -64,7 +69,7 @@ function makeClientHello(token: string): HostLocalTransportClientFrame {
         clientClass: 'test',
         clientVersion: '1.0.0'
       },
-      capabilities: ['bootstrap', 'snapshot', 'health']
+      capabilities: [...capabilities]
     }
   }
 }
@@ -89,39 +94,45 @@ function mockHostSession(
   const bind = vi.fn()
   // Each bind call mints a fresh binding with a unique sessionId so that
   // concurrent clients get distinct sessions per contract.
-  bind.mockImplementation(() => {
-    const sid = randomUUID()
-    const binding: HostSessionBinding = {
-      sessionId: sid,
-      actor: { actorId: 'test-client', clientId: 'test-client', clientClass: 'test' },
-      authenticatedClient: {
-        clientId: 'test-client',
-        clientClass: 'test',
-        clientVersion: '1.0.0'
-      },
-      welcome: {
-        type: 'host.welcome',
-        protocolVersion: HOST_PROTOCOL_VERSION,
-        controlProtocolCompat: 1,
-        projectionVersion: HOST_PROJECTION_VERSION,
-        hostId: 'test-host',
-        hostVersion: '0.0.0-test',
+  bind.mockImplementation(
+    (request: { clientCapabilityRequest?: readonly HostCapability[] } | undefined) => {
+      const sid = randomUUID()
+      const offered: readonly HostCapability[] = ['bootstrap', 'snapshot', 'deltas', 'health']
+      const capabilities = (request?.clientCapabilityRequest ?? []).filter((capability) =>
+        offered.includes(capability)
+      )
+      const binding: HostSessionBinding = {
         sessionId: sid,
-        generation: 0,
-        cursor: 1,
+        actor: { actorId: 'test-client', clientId: 'test-client', clientClass: 'test' },
         authenticatedClient: {
           clientId: 'test-client',
           clientClass: 'test',
           clientVersion: '1.0.0'
         },
-        capabilities: ['bootstrap', 'snapshot', 'health'],
-        freshness: 'live'
-      },
-      boundGeneration: 0,
-      boundCursor: 1
+        welcome: {
+          type: 'host.welcome',
+          protocolVersion: HOST_PROTOCOL_VERSION,
+          controlProtocolCompat: 1,
+          projectionVersion: HOST_PROJECTION_VERSION,
+          hostId: 'test-host',
+          hostVersion: '0.0.0-test',
+          sessionId: sid,
+          generation: 0,
+          cursor: 1,
+          authenticatedClient: {
+            clientId: 'test-client',
+            clientClass: 'test',
+            clientVersion: '1.0.0'
+          },
+          capabilities,
+          freshness: 'live'
+        },
+        boundGeneration: 0,
+        boundCursor: 1
+      }
+      return { ok: true, value: binding }
     }
-    return { ok: true, value: binding }
-  })
+  )
 
   return {
     bind,
@@ -871,6 +882,90 @@ describe('HostLocalServer', () => {
         }
       }
       client.close()
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Durable delta event fan-out
+  // -----------------------------------------------------------------------
+
+  describe('delta events', () => {
+    it('subscribes for its lifetime and broadcasts only to delta-capable clients', async () => {
+      const deltaListeners: Array<(delta: HostDeltaEnvelope) => void> = []
+      const unsubscribe = vi.fn()
+      const subscribeDeltas = vi.fn((listener: (delta: HostDeltaEnvelope) => void) => {
+        deltaListeners.push(listener)
+        return unsubscribe
+      })
+      server = new HostLocalServer({
+        userDataPath,
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        maxClients: 4,
+        subscribeDeltas,
+        now: () => 1754300000000
+      })
+      await server.start()
+      expect(subscribeDeltas).toHaveBeenCalledTimes(1)
+
+      const token = readFileSync(server.tokenPath, 'utf8').trim()
+      const deltaClient = await connectClient(server.socketPath)
+      deltaClient.writeLine(
+        JSON.stringify(makeClientHello(token, ['bootstrap', 'snapshot', 'deltas', 'health']))
+      )
+      const deltaWelcome = await deltaClient.readFrame()
+      expect(deltaWelcome.type).toBe('welcome')
+
+      const snapshotOnlyClient = await connectClient(server.socketPath)
+      snapshotOnlyClient.writeLine(
+        JSON.stringify(makeClientHello(token, ['bootstrap', 'snapshot', 'health']))
+      )
+      const snapshotWelcome = await snapshotOnlyClient.readFrame()
+      expect(snapshotWelcome.type).toBe('welcome')
+
+      const envelope: HostDeltaEnvelope = {
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        projectionVersion: HOST_PROJECTION_VERSION,
+        generation: 1,
+        cursor: 8,
+        previousCursor: 7,
+        kind: 'upsert',
+        family: 'thread',
+        entityId: 'thread-live',
+        payload: { id: 'thread-live', title: 'Live' },
+        at: '2026-08-09T20:00:00.000Z'
+      }
+      const publish = deltaListeners[0]
+      if (!publish) throw new Error('delta subscription was not installed')
+      publish(envelope)
+
+      const event = await deltaClient.readFrame()
+      expect(event.type).toBe('event')
+      if (event.type === 'event') {
+        expect(event.event).toBe('deltas')
+        if (event.event === 'deltas') {
+          expect(event.payload.result).toEqual({
+            kind: 'deltas',
+            generation: 1,
+            fromCursor: 7,
+            toCursor: 8,
+            deltas: [envelope]
+          })
+        }
+      }
+
+      snapshotOnlyClient.writeLine(
+        JSON.stringify(makeRequest('health.get' as never, 'health-after-delta'))
+      )
+      const response = await snapshotOnlyClient.readFrame()
+      expect(response.type).toBe('response')
+
+      await server.stop()
+      expect(unsubscribe).toHaveBeenCalledTimes(1)
+      deltaClient.close()
+      snapshotOnlyClient.close()
     })
   })
 

@@ -42,7 +42,12 @@ import {
   type HostLocalTransportReceiptLookupParams,
   type HostLocalTransportSuccessResult
 } from '../../shared/hostProtocolTransport'
-import type { HostCommand, HostCursorPosition } from '../../shared/hostProtocol'
+import {
+  HOST_PROTOCOL_VERSION,
+  type HostCommand,
+  type HostCursorPosition,
+  type HostDeltaEnvelope
+} from '../../shared/hostProtocol'
 import type { HostSession, HostSessionBindRequest, HostSessionBinding } from './HostSession'
 import {
   type HostAuthority,
@@ -88,6 +93,12 @@ export interface HostLocalServerOptions {
   log?: (line: string) => void
   /** Injectable clock for tests. */
   now?: () => number
+  /**
+   * Optional post-commit feed from the sole Host delta journal. The server
+   * owns subscription lifetime and exposes only protocol envelopes, never the
+   * store itself.
+   */
+  subscribeDeltas?: (listener: (delta: HostDeltaEnvelope) => void) => () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +205,8 @@ export class HostLocalServer {
   private readonly clients = new Set<ClientState>()
   private server: Server | null = null
   private started = false
+  private eventSequence = 0
+  private deltaUnsubscribe: (() => void) | null = null
 
   readonly socketPath: string
   readonly tokenPath: string
@@ -276,10 +289,17 @@ export class HostLocalServer {
       })
       await chmod(this.discoveryPath, 0o600).catch(() => {})
 
+      if (this.options.subscribeDeltas) {
+        this.deltaUnsubscribe = this.options.subscribeDeltas((delta) => {
+          this.broadcastDelta(delta)
+        })
+      }
+
       this.started = true
       this.options.log?.(`[host-local-server] listening at ${this.socketPath}`)
     } catch (error) {
       this.server = null
+      this.clearDeltaSubscription()
       for (const client of this.clients) {
         clearTimeout(client.handshakeTimer)
         client.socket.destroy()
@@ -318,6 +338,7 @@ export class HostLocalServer {
     // Register the listener close callback before closing active clients. This
     // ordering matters for Windows named pipes, where closing the last
     // connection can otherwise race the close callback and leave stop() pending.
+    this.clearDeltaSubscription()
     this.disconnectClients()
     await closePromise
     await Promise.all([
@@ -340,6 +361,7 @@ export class HostLocalServer {
    * the desired state and do not throw.
    */
   stopSync(): void {
+    this.clearDeltaSubscription()
     this.disconnectClients()
     const server = this.server
     this.server = null
@@ -380,12 +402,13 @@ export class HostLocalServer {
   // -----------------------------------------------------------------------
 
   private disconnectClients(): void {
+    const sequence = this.nextEventSequence()
     for (const client of this.clients) {
       const event: HostLocalTransportHostFrame = {
         type: 'event',
         transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
         event: 'host.closing',
-        sequence: 0
+        sequence
       }
       const wroteClosingEvent = socketWrite(client.socket, event)
       clearTimeout(client.handshakeTimer)
@@ -393,6 +416,53 @@ export class HostLocalServer {
       else client.socket.destroy()
     }
     this.clients.clear()
+  }
+
+  private clearDeltaSubscription(): void {
+    const unsubscribe = this.deltaUnsubscribe
+    this.deltaUnsubscribe = null
+    if (!unsubscribe) return
+    try {
+      unsubscribe()
+    } catch (error) {
+      this.options.log?.(`[host-local-server] delta unsubscribe failed: ${String(error)}`)
+    }
+  }
+
+  private nextEventSequence(): number {
+    this.eventSequence += 1
+    return this.eventSequence
+  }
+
+  /** Broadcast one already-durable envelope to delta-capable clients only. */
+  private broadcastDelta(delta: HostDeltaEnvelope): void {
+    const sequence = this.nextEventSequence()
+    const frame: HostLocalTransportHostFrame = {
+      type: 'event',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      event: 'deltas',
+      sequence,
+      payload: {
+        type: 'host.deltas',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        result: {
+          kind: 'deltas',
+          generation: delta.generation,
+          fromCursor: delta.previousCursor,
+          toCursor: delta.cursor,
+          deltas: [delta]
+        }
+      }
+    }
+
+    for (const client of this.clients) {
+      if (!client.authenticated || !client.binding?.welcome.capabilities.includes('deltas')) {
+        continue
+      }
+      if (!socketWrite(client.socket, frame)) {
+        client.socket.destroy()
+      }
+    }
   }
 
   private accept(socket: Socket): void {

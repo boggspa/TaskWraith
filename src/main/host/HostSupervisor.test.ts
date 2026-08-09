@@ -129,6 +129,7 @@ function mockComposition(): MockComposition & HostMainComposition {
     } as unknown as HostSession,
     hostDataDir: '/tmp/host-supervisor-test/host-runtime',
     getPosition: vi.fn().mockReturnValue({ generation: 0, cursor: '0:0' }),
+    subscribeDeltas: vi.fn().mockReturnValue(() => undefined),
     getRecoverySummary: vi.fn().mockReturnValue({
       pendingReceipts: 0,
       deadChallenges: 0,
@@ -262,6 +263,7 @@ describe('HostSupervisor', () => {
       expect(createComposition).toHaveBeenCalledWith(input.compositionInput)
       expect(createServer).toHaveBeenCalledOnce()
       const serverOptions = createServer.mock.calls[0][0]
+      expect(typeof serverOptions.subscribeDeltas).toBe('function')
       const auth = serverOptions.authority as Record<string, unknown>
       // P0 regression pin: all HostAuthority prototype methods MUST survive the facade.
       // Object spread loses prototype members; Proxy preserves them.

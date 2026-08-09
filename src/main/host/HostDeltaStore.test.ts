@@ -69,6 +69,36 @@ describe('HostDeltaStore', () => {
     expect(a2.record.envelope.tombstone).toBe(true)
   })
 
+  it('notifies append subscribers after durable commit with isolated clones', () => {
+    const store = openStore()
+    const seen: Array<{ entityId?: string; generation: number; cursor: number }> = []
+    const unsubscribeMutator = store.subscribe((event) => {
+      event.record.envelope.entityId = 'listener-mutated'
+      throw new Error('broken projection client')
+    })
+    const unsubscribeObserver = store.subscribe((event) => {
+      seen.push({
+        entityId: event.record.envelope.entityId,
+        generation: event.position.generation,
+        cursor: event.position.cursor
+      })
+    })
+
+    const first = store.append({ kind: 'upsert', family: 'thread', entityId: 'thread-1' })
+    expect(first.kind).toBe('appended')
+    expect(seen).toEqual([{ entityId: 'thread-1', generation: 1, cursor: 1 }])
+    expect(store.getByCursor(1)?.envelope.entityId).toBe('thread-1')
+
+    unsubscribeMutator()
+    const reset = store.resetGeneration('test reset')
+    expect(reset.kind).toBe('appended')
+    expect(seen.at(-1)).toEqual({ entityId: undefined, generation: 2, cursor: 1 })
+
+    unsubscribeObserver()
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'thread-2' })
+    expect(seen).toHaveLength(2)
+  })
+
   it('returns deltas since a client cursor and empty when caught up', () => {
     const store = openStore()
     store.append({ kind: 'upsert', family: 'run', entityId: 'r1' })
