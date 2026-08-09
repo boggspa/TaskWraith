@@ -207,10 +207,23 @@ describe('projectHostSnapshot · bounded content', () => {
     expect(Object.keys(thread)).not.toContain('transcript')
   })
 
-  it('reports family sizes as counts, never the rows themselves', () => {
+  it('keeps summary counts alongside the bounded mission-control rows', () => {
     const result = projectHostSnapshot(
       snapshot({
-        runs: [{}, {}] as never,
+        runs: [
+          {
+            runId: 'run-1',
+            threadId: 'thread-1',
+            providerId: 'codex',
+            providerOutcome: 'completed'
+          },
+          {
+            runId: 'run-2',
+            threadId: 'thread-1',
+            providerId: 'claude',
+            providerOutcome: 'running'
+          }
+        ],
         approvals: [{}] as never
       }),
       'live'
@@ -219,12 +232,157 @@ describe('projectHostSnapshot · bounded content', () => {
     expect(result.counts.runs).toBe(2)
     expect(result.counts.approvals).toBe(1)
     expect(result.counts.missions).toBe(0)
+    expect(result.runs.map((run) => run.runId)).toEqual(['run-1', 'run-2'])
   })
 
   it('carries generation and cursor for later delta resumption', () => {
     const result = projectHostSnapshot(snapshot(), 'live')
     expect(result.generation).toBe(3)
     expect(result.cursor).toBe(42)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Mission Control families                                          */
+/* ------------------------------------------------------------------ */
+
+describe('projectHostSnapshot · mission control', () => {
+  it('projects mission, round, routing, run, and every participant by allowlist', () => {
+    const projected = projectHostSnapshot(
+      snapshot({
+        runs: [
+          {
+            runId: 'run-1',
+            threadId: 'thread-1',
+            providerId: 'codex',
+            providerOutcome: 'completed',
+            modelId: 'gpt-5',
+            usage: { availability: 'available', tokens: 99 }
+          }
+        ] as never,
+        missions: [
+          {
+            missionId: 'mission-1',
+            threadId: 'thread-1',
+            title: 'Ship Host parity',
+            status: 'active',
+            updatedAt: 100,
+            activeRoundId: 'round-1',
+            privateNotes: 'must-never-cross'
+          }
+        ] as never,
+        rounds: [
+          {
+            roundId: 'round-1',
+            threadId: 'thread-1',
+            status: 'running',
+            routing: {
+              mode: 'continuous',
+              fanout: 'parallel',
+              continuationHops: 2,
+              maxContinuationHops: 8
+            },
+            waves: [
+              {
+                waveId: 'wave-1',
+                label: 'Review',
+                status: 'running',
+                participantIds: ['seat-1']
+              }
+            ],
+            participantIds: ['seat-1'],
+            providerRunIds: ['run-1']
+          }
+        ],
+        participants: [
+          {
+            id: 'seat-1',
+            threadId: 'thread-1',
+            providerId: 'codex',
+            role: 'Reviewer',
+            modelId: 'gpt-5',
+            stage: 'reviewer',
+            order: 0,
+            enabled: true,
+            status: 'working',
+            active: true,
+            prompt: 'must-never-cross'
+          }
+        ] as never,
+        routing: { mode: 'continuous', fanout: 'parallel', activeParticipantId: 'seat-1' }
+      }),
+      'live'
+    )
+
+    expect(projected.missions).toEqual([
+      {
+        missionId: 'mission-1',
+        threadId: 'thread-1',
+        title: 'Ship Host parity',
+        status: 'active',
+        updatedAt: 100,
+        activeRoundId: 'round-1'
+      }
+    ])
+    expect(projected.rounds[0]).toMatchObject({
+      roundId: 'round-1',
+      status: 'running',
+      participantIds: ['seat-1'],
+      providerRunIds: ['run-1'],
+      routing: { mode: 'continuous', fanout: 'parallel' }
+    })
+    expect(projected.runs[0]).toEqual({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      providerId: 'codex',
+      providerOutcome: 'completed',
+      modelId: 'gpt-5'
+    })
+    expect(projected.participants[0]).toMatchObject({
+      id: 'seat-1',
+      role: 'Reviewer',
+      enabled: true,
+      active: true
+    })
+    expect(projected.routing).toMatchObject({
+      mode: 'continuous',
+      fanout: 'parallel',
+      activeParticipantId: 'seat-1'
+    })
+    expect(projected.missions[0]).not.toHaveProperty('privateNotes')
+    expect(projected.participants[0]).not.toHaveProperty('prompt')
+    expect(projected.runs[0]).not.toHaveProperty('usage')
+  })
+
+  it('copies nested identity arrays so presentation cannot mutate the Host snapshot', () => {
+    const sourceParticipantIds = ['seat-1']
+    const sourceRunIds = ['run-1']
+    const sourceWaveParticipantIds = ['seat-1']
+    const projected = projectHostSnapshot(
+      snapshot({
+        rounds: [
+          {
+            roundId: 'round-1',
+            threadId: 'thread-1',
+            status: 'running',
+            waves: [
+              {
+                waveId: 'wave-1',
+                status: 'running',
+                participantIds: sourceWaveParticipantIds
+              }
+            ],
+            participantIds: sourceParticipantIds,
+            providerRunIds: sourceRunIds
+          }
+        ]
+      }),
+      'live'
+    )
+
+    expect(projected.rounds[0].participantIds).not.toBe(sourceParticipantIds)
+    expect(projected.rounds[0].providerRunIds).not.toBe(sourceRunIds)
+    expect(projected.rounds[0].waves[0].participantIds).not.toBe(sourceWaveParticipantIds)
   })
 })
 

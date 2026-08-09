@@ -1,10 +1,12 @@
 /**
  * Host Arc Wave 4.3d — the first view that actually reads Host.
  *
- * WHAT THIS IS. A single row in the sidebar's Devices popover reporting
- * whether this window can currently reach TaskWraith Host. Until this existed,
- * 4.3c mounted the provider but nothing consumed it: Desktop *could* project
- * Host state and never did. This is the call site that makes the mount real.
+ * WHAT THIS IS. The compact Desktop Host surface in the approvals popover. It
+ * reports connection/provider/approval status and owns the collapsible Mission
+ * Control projection over Host missions, rounds, runs, routing, and every seat.
+ * Until this existed, 4.3c mounted the provider but nothing consumed it:
+ * Desktop *could* project Host state and never did. This call site makes the
+ * mount real.
  *
  * IT ALSO EXERCISES THE MOUNT-TIME FETCH. `useHostProjection` refreshes on
  * mount by default, so opening this popover drives the whole chain for real —
@@ -12,10 +14,9 @@
  * 4.3a/4.3c tests could never cover that, because renderer tests here run
  * under `renderToStaticMarkup`, which does not run effects.
  *
- * WHY THIS ROW, IN THIS POPOVER. It reuses the Devices popover's existing row
- * markup exactly, so the slice needs ZERO new CSS — no stylesheet is in scope,
- * and inventing layout would be the opposite of "small". "Devices" is already
- * the connections surface, which is where a connection state belongs.
+ * WHY THIS POPOVER. Host reachability determines whether nearby approvals and
+ * questions are current, and the same scrollable surface can reveal mission
+ * detail without adding domain logic to Sidebar or App.
  *
  * THE DISTINCTION THIS ROW EXISTS TO PRESERVE. "We cannot reach Host" and
  * "this is what Host last told us" are DIFFERENT CLAIMS, and this is the only
@@ -23,12 +24,13 @@
  * lying by omission, so `unavailable` and `cached` get different words —
  * enforced by a test, not by convention.
  *
- * READ-ONLY. No commands, no mutations, and it retires no AppStore-backed
- * view. It reports connection state and nothing else.
+ * READ-ONLY. No commands or mutations are authored here. Every mission fact is
+ * a bounded Host projection; the component never reconstructs lifecycle state.
  */
 
 import { useHostProjection } from '../hooks/useHostProjection'
 import { useHostProjectionStore } from './HostProjectionProvider'
+import { HostMissionControl } from './HostMissionControl'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
 
@@ -200,7 +202,7 @@ export function describeHostAwaitingApprovals(
 }
 
 /**
- * Host connection row for the Devices popover.
+ * Compact Host status and Mission Control surface for the approvals popover.
  *
  * Reads the app-scope store through context. With no provider above it the
  * hook reports `idle`, which renders as "Not checked" rather than inventing a
@@ -220,7 +222,7 @@ export function HostStatusRow() {
         <span className="sidebar-footer-device-name">TaskWraith Host</span>
         <span className="sidebar-footer-device-status">{view.status}</span>
       </div>
-      {/* Wave 5a. Reuses the same row markup, so still ZERO new CSS. The LED
+      {/* Wave 5a. Reuses the same status-row markup. The LED
           stays unlit here: it means "this client reached Host", which is the
           row above's claim, not this one's. */}
       <div className="sidebar-footer-device-row">
@@ -228,7 +230,7 @@ export function HostStatusRow() {
         <span className="sidebar-footer-device-name">Host providers</span>
         <span className="sidebar-footer-device-status">{providers.label}</span>
       </div>
-      {/* Wave 5f. Same row markup again, so still ZERO new CSS. The value
+      {/* Wave 5f. Same status-row markup again. The value
           carries the word "awaiting" because that is the only subset Host
           holds — the decided history lives in AppStore and is not projected. */}
       <div className="sidebar-footer-device-row">
@@ -236,6 +238,7 @@ export function HostStatusRow() {
         <span className="sidebar-footer-device-name">Host approvals</span>
         <span className="sidebar-footer-device-status">{approvals.label}</span>
       </div>
+      <HostMissionControl state={state} />
     </>
   )
 }

@@ -36,10 +36,16 @@ import type {
   HostHealthProjection,
   HostSnapshot,
   HostApprovalProjection,
+  HostMissionProjection,
+  HostParticipantProjection,
   HostProviderModelProjection,
   HostQuestionProjection,
+  HostRoundProjection,
+  HostRoutingProjection,
+  HostRunProjection,
   HostThreadProjection,
   HostUsageObservation,
+  HostWaveProjection,
   HostWorkspaceProjection
 } from '../../../../shared/hostProtocol'
 
@@ -142,6 +148,72 @@ export interface HostProjectedWorkspace {
   readonly updatedAt: number
 }
 
+/** Provider execution outcome, kept distinct from round and mission outcome. */
+export interface HostProjectedRun {
+  readonly runId: string
+  readonly threadId: string
+  readonly providerId: string
+  readonly providerOutcome: HostRunProjection['providerOutcome']
+  readonly startedAt?: number
+  readonly endedAt?: number
+  readonly modelId?: string
+}
+
+/** Authoritative mission timeline row. */
+export interface HostProjectedMission {
+  readonly missionId: string
+  readonly threadId?: string
+  readonly title: string
+  readonly status: HostMissionProjection['status']
+  readonly updatedAt: number
+  readonly activeRoundId?: string
+}
+
+/** Compact routing facts shared by a round or the current Host projection. */
+export interface HostProjectedRouting {
+  readonly mode: string
+  readonly fanout: string
+  readonly activeParticipantId?: string
+  readonly continuationHops?: number
+  readonly maxContinuationHops?: number
+  readonly bossParticipantId?: string
+  readonly captainParticipantId?: string
+}
+
+export interface HostProjectedWave {
+  readonly waveId: string
+  readonly label?: string
+  readonly status: string
+  readonly participantIds: readonly string[]
+}
+
+/** Round timeline row; provider outcomes remain joined through providerRunIds. */
+export interface HostProjectedRound {
+  readonly roundId: string
+  readonly threadId: string
+  readonly status: HostRoundProjection['status']
+  readonly startedAt?: number
+  readonly endedAt?: number
+  readonly routing?: HostProjectedRouting
+  readonly waves: readonly HostProjectedWave[]
+  readonly participantIds: readonly string[]
+  readonly providerRunIds: readonly string[]
+}
+
+/** Every ensemble seat remains visible, including disabled and inactive seats. */
+export interface HostProjectedParticipant {
+  readonly id: string
+  readonly threadId: string
+  readonly providerId: string
+  readonly role: string
+  readonly modelId?: string
+  readonly stage?: HostParticipantProjection['stage']
+  readonly order: number
+  readonly enabled: boolean
+  readonly status?: string
+  readonly active: boolean
+}
+
 /**
  * Host health as Desktop should render it.
  *
@@ -176,7 +248,12 @@ export interface HostProjectedSnapshot {
   readonly health: HostProjectedHealth
   readonly workspaces: readonly HostProjectedWorkspace[]
   readonly threads: readonly HostProjectedThread[]
+  readonly runs: readonly HostProjectedRun[]
+  readonly missions: readonly HostProjectedMission[]
+  readonly rounds: readonly HostProjectedRound[]
+  readonly participants: readonly HostProjectedParticipant[]
   readonly providers: readonly HostProjectedProvider[]
+  readonly routing?: HostProjectedRouting
   /** Question rows Host already sends — allowlisted; never answer bodies. */
   readonly questions: readonly HostProjectedQuestion[]
   /** AWAITING approval cards only — never the decided/ledger history. */
@@ -318,6 +395,83 @@ function projectWorkspace(workspace: HostWorkspaceProjection): HostProjectedWork
   }
 }
 
+function projectRun(run: HostRunProjection): HostProjectedRun {
+  return {
+    runId: run.runId,
+    threadId: run.threadId,
+    providerId: run.providerId,
+    providerOutcome: run.providerOutcome,
+    ...(run.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
+    ...(run.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
+    ...(run.modelId ? { modelId: run.modelId } : {})
+  }
+}
+
+function projectMission(mission: HostMissionProjection): HostProjectedMission {
+  return {
+    missionId: mission.missionId,
+    ...(mission.threadId ? { threadId: mission.threadId } : {}),
+    title: mission.title,
+    status: mission.status,
+    updatedAt: mission.updatedAt,
+    ...(mission.activeRoundId ? { activeRoundId: mission.activeRoundId } : {})
+  }
+}
+
+function projectRouting(routing: HostRoutingProjection): HostProjectedRouting {
+  return {
+    mode: routing.mode,
+    fanout: routing.fanout,
+    ...(routing.activeParticipantId ? { activeParticipantId: routing.activeParticipantId } : {}),
+    ...(routing.continuationHops !== undefined
+      ? { continuationHops: routing.continuationHops }
+      : {}),
+    ...(routing.maxContinuationHops !== undefined
+      ? { maxContinuationHops: routing.maxContinuationHops }
+      : {}),
+    ...(routing.bossParticipantId ? { bossParticipantId: routing.bossParticipantId } : {}),
+    ...(routing.captainParticipantId ? { captainParticipantId: routing.captainParticipantId } : {})
+  }
+}
+
+function projectWave(wave: HostWaveProjection): HostProjectedWave {
+  return {
+    waveId: wave.waveId,
+    ...(wave.label ? { label: wave.label } : {}),
+    status: wave.status,
+    participantIds: [...wave.participantIds]
+  }
+}
+
+function projectRound(round: HostRoundProjection): HostProjectedRound {
+  return {
+    roundId: round.roundId,
+    threadId: round.threadId,
+    status: round.status,
+    ...(round.startedAt !== undefined ? { startedAt: round.startedAt } : {}),
+    ...(round.endedAt !== undefined ? { endedAt: round.endedAt } : {}),
+    ...(round.routing ? { routing: projectRouting(round.routing) } : {}),
+    waves: (round.waves ?? []).map(projectWave),
+    participantIds: [...round.participantIds],
+    providerRunIds: [...round.providerRunIds]
+  }
+}
+
+function projectParticipant(participant: HostParticipantProjection): HostProjectedParticipant {
+  return {
+    id: participant.id,
+    threadId: participant.threadId,
+    providerId: participant.providerId,
+    role: participant.role,
+    ...(participant.modelId ? { modelId: participant.modelId } : {}),
+    ...(participant.stage ? { stage: participant.stage } : {}),
+    order: participant.order,
+    enabled: participant.enabled,
+    ...(participant.status ? { status: participant.status } : {}),
+    active: participant.active
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Snapshot mapper                                                   */
 /* ------------------------------------------------------------------ */
@@ -349,7 +503,12 @@ export function projectHostSnapshot(
     health: projectHealth(snapshot.health),
     workspaces: snapshot.workspaces.map(projectWorkspace),
     threads: snapshot.threads.map(projectThread),
+    runs: snapshot.runs.map(projectRun),
+    missions: snapshot.missions.map(projectMission),
+    rounds: snapshot.rounds.map(projectRound),
+    participants: snapshot.participants.map(projectParticipant),
     providers: snapshot.providers.map(projectProvider),
+    ...(snapshot.routing ? { routing: projectRouting(snapshot.routing) } : {}),
     questions: snapshot.questions.map(projectQuestion),
     approvals: snapshot.approvals.map(projectApproval),
     usage: projectUsage(snapshot.usage),

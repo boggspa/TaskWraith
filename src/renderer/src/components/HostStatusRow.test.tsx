@@ -143,13 +143,35 @@ function renderRow(store?: HostProjectionStore): string {
 }
 
 describe('HostStatusRow · rendered output', () => {
-  it('reuses the existing Devices row markup so no new CSS is needed', () => {
+  it('keeps the established status-row markup for compact Host facts', () => {
     const markup = renderRow()
     expect(markup).toContain('sidebar-footer-device-row')
     expect(markup).toContain('sidebar-footer-led')
     expect(markup).toContain('sidebar-footer-device-name')
     expect(markup).toContain('sidebar-footer-device-status')
     expect(markup).toContain('TaskWraith Host')
+  })
+
+  it('keeps Desktop Mission Control on the same authoritative Host projection', async () => {
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () =>
+        snapshot({
+          missions: [
+            {
+              missionId: 'mission-1',
+              title: 'Desktop parity',
+              status: 'active',
+              updatedAt: 1
+            }
+          ]
+        })
+    })
+    await store.refresh()
+
+    const markup = renderRow(store)
+    expect(markup).toContain('Mission Control')
+    expect(markup).toContain('Desktop parity')
+    expect(markup).toContain('Generation 3 · Cursor 42')
   })
 
   it('shows Connected with a lit LED when Host answered', async () => {

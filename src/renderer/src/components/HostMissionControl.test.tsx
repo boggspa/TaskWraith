@@ -1,0 +1,229 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+
+import {
+  HOST_PROJECTION_VERSION,
+  HOST_PROTOCOL_VERSION,
+  type HostSnapshot
+} from '../../../shared/hostProtocol'
+import type { HostProjectionState } from '../lib/host/HostProjectionStore'
+import { projectHostSnapshot } from '../lib/host/hostSnapshotProjection'
+import { HostMissionControl, projectHostMissionControl } from './HostMissionControl'
+
+function snapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
+  return {
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
+    generatedAt: '2026-08-09T20:00:00.000Z',
+    generation: 4,
+    cursor: 12,
+    freshness: 'live',
+    health: {
+      hostStatus: 'ok',
+      connectionPhase: 'live',
+      supervised: true,
+      freshness: 'live'
+    },
+    workspaces: [],
+    threads: [],
+    runs: [],
+    missions: [],
+    rounds: [],
+    participants: [],
+    providers: [],
+    questions: [],
+    approvals: [],
+    schedules: [],
+    usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
+    artifacts: [],
+    warnings: [],
+    recovery: { reopenStatus: 'clean' },
+    ...overrides
+  }
+}
+
+function stateFromSnapshot(source: HostSnapshot): HostProjectionState {
+  return {
+    status: 'live',
+    projection: projectHostSnapshot(source, 'live'),
+    liveBaselineContinuity: true,
+    lastGeneration: source.generation,
+    lastCursor: source.cursor
+  }
+}
+
+function missionFixture(): HostSnapshot {
+  return snapshot({
+    threads: [
+      {
+        id: 'thread-z',
+        workspaceId: null,
+        title: 'Zeta thread',
+        chatKind: 'ensemble',
+        archived: false,
+        pinned: false,
+        updatedAt: 100,
+        messageCount: 1
+      },
+      {
+        id: 'thread-a',
+        workspaceId: null,
+        title: 'Alpha thread',
+        chatKind: 'ensemble',
+        archived: false,
+        pinned: false,
+        updatedAt: 200,
+        messageCount: 1
+      }
+    ],
+    missions: [
+      {
+        missionId: 'mission-old',
+        title: 'Old mission',
+        status: 'completed',
+        updatedAt: 100
+      },
+      {
+        missionId: 'mission-active',
+        title: 'Active mission',
+        status: 'active',
+        updatedAt: 50
+      },
+      {
+        missionId: 'mission-new',
+        title: 'New mission',
+        status: 'failed',
+        updatedAt: 300
+      }
+    ],
+    runs: [
+      {
+        runId: 'run-success',
+        threadId: 'thread-a',
+        providerId: 'codex',
+        providerOutcome: 'completed'
+      }
+    ],
+    rounds: [
+      {
+        roundId: 'round-complete',
+        threadId: 'thread-z',
+        status: 'completed',
+        endedAt: 500,
+        participantIds: [],
+        providerRunIds: []
+      },
+      {
+        roundId: 'round-running',
+        threadId: 'thread-a',
+        status: 'running',
+        startedAt: 100,
+        routing: { mode: 'continuous', fanout: 'parallel' },
+        participantIds: ['participant-15'],
+        providerRunIds: ['run-success']
+      }
+    ],
+    participants: Array.from({ length: 30 }, (_, index) => {
+      const firstGroup = index < 15
+      return {
+        id: `participant-${index}`,
+        threadId: firstGroup ? 'thread-z' : 'thread-a',
+        providerId: index % 2 === 0 ? 'codex' : 'claude',
+        role: `Seat ${index}`,
+        stage: index % 3 === 0 ? ('reviewer' as const) : ('worker' as const),
+        order: firstGroup ? index : index - 15,
+        enabled: index !== 29,
+        status: index === 0 ? 'working' : 'idle',
+        active: index === 0
+      }
+    })
+  })
+}
+
+describe('projectHostMissionControl', () => {
+  it('matches iOS ordering and keeps all 30 participants visible by thread', () => {
+    const model = projectHostMissionControl(stateFromSnapshot(missionFixture()))
+
+    expect(model.missions.map((mission) => mission.missionId)).toEqual([
+      'mission-active',
+      'mission-new',
+      'mission-old'
+    ])
+    expect(model.rounds.map((round) => round.roundId)).toEqual(['round-running', 'round-complete'])
+    expect(model.activeMissionCount).toBe(1)
+    expect(model.participantCount).toBe(30)
+    expect(model.participantGroups.map((group) => group.title)).toEqual([
+      'Alpha thread',
+      'Zeta thread'
+    ])
+    expect(model.participantGroups.every((group) => group.participants.length === 15)).toBe(true)
+    expect(
+      model.participantGroups[0]?.participants.map((participant) => participant.order)
+    ).toEqual(Array.from({ length: 15 }, (_, index) => index))
+  })
+
+  it('distinguishes offline cache, unavailable, and pre-fetch states', () => {
+    const projection = projectHostSnapshot(missionFixture(), 'cached')
+    expect(projectHostMissionControl({ status: 'unavailable', projection }).phase).toBe(
+      'Offline cache'
+    )
+    expect(projectHostMissionControl({ status: 'unavailable' }).phase).toBe('Unavailable')
+    expect(projectHostMissionControl({ status: 'loading' }).phase).toBe('Checking')
+    expect(projectHostMissionControl({ status: 'idle' }).phase).toBe('Not checked')
+  })
+})
+
+describe('HostMissionControl', () => {
+  it('renders generation/cursor, mission and round timelines, outcomes, and every seat', () => {
+    const markup = renderToStaticMarkup(
+      <HostMissionControl state={stateFromSnapshot(missionFixture())} />
+    )
+
+    expect(markup).toContain('Mission Control')
+    expect(markup).toContain('Generation 4 · Cursor 12')
+    expect(markup).toContain('Active mission')
+    expect(markup).toContain('Round timeline')
+    expect(markup).toContain('continuous · parallel')
+    expect(markup).toContain('codex: completed')
+    for (let index = 0; index < 30; index += 1) {
+      expect(markup).toContain(`Seat ${index}`)
+    }
+    expect(markup).toContain('Seat 29, claude, idle, disabled')
+  })
+
+  it('keeps provider, round, mission, and connection outcomes visibly distinct', () => {
+    const source = missionFixture()
+    source.missions = [
+      {
+        missionId: 'mission-distinct',
+        title: 'Outcome layers',
+        status: 'blocked',
+        updatedAt: 1
+      }
+    ]
+    source.rounds = [
+      {
+        roundId: 'round-distinct',
+        threadId: 'thread-a',
+        status: 'cancelled',
+        participantIds: [],
+        providerRunIds: ['run-success']
+      }
+    ]
+    const state = stateFromSnapshot(source)
+    const markup = renderToStaticMarkup(<HostMissionControl state={state} />)
+
+    expect(markup).toContain('Live')
+    expect(markup).toContain('blocked')
+    expect(markup).toContain('cancelled · 0 seats')
+    expect(markup).toContain('codex: completed')
+  })
+
+  it('renders an honest unavailable state without fabricating an empty mission world', () => {
+    const markup = renderToStaticMarkup(<HostMissionControl state={{ status: 'unavailable' }} />)
+
+    expect(markup).toContain('Unavailable')
+    expect(markup).toContain('No coherent Host projection is available.')
+    expect(markup).not.toContain('No Host missions yet.')
+  })
+})
