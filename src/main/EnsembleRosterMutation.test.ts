@@ -680,9 +680,9 @@ describe('evaluateRosterEdit', () => {
       )
     ).toMatchObject({ ok: false, error: 'read_only_posture' })
 
-    // Posture inversion (2026-08-04): `plan` is now the no-ask floor — strictly
-    // NARROWER than the round's read_only baseline — so assigning it mid-round
-    // unlocks nothing and is allowed. Only the write tiers (default+) reject.
+    // Plan remains narrower than the round's Ask baseline on specialist
+    // permissions, so assigning it mid-round unlocks nothing and is allowed.
+    // Only the write tiers (default+) reject.
     expect(
       evaluateRosterEdit(
         {

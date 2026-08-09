@@ -3612,7 +3612,7 @@ describe('permission-surface rule', () => {
     expect(prompt).not.toContain('DENIED this run')
   })
 
-  it('a plan-clamped approval mode forces the denial sentence even for write presets', () => {
+  it('a plan-clamped approval mode forces the modal-gated sentence even for write presets', () => {
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),
       config: ensemble,
@@ -3622,7 +3622,10 @@ describe('permission-surface rule', () => {
       chatContextTurns: 4,
       effectiveApprovalMode: 'plan'
     })
-    expect(prompt).toContain('file writes and shell commands are DENIED')
+    expect(prompt).toContain(
+      'file writes and shell commands run ONLY if the user approves your specific request'
+    )
+    expect(prompt).not.toContain('file writes and shell commands are DENIED')
   })
 })
 

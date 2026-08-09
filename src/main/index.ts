@@ -9405,9 +9405,9 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
             provider: parent.provider,
             workspacePath: parent.workspacePath,
             settings,
-            // Automatic mailbox continuations are unattended: use the plan
-            // no-ask floor, not read_only (Ask), so no modal fires with
-            // nobody at the keyboard (posture inversion 2026-08-04).
+            // Automatic mailbox continuations use safe Plan. Standard-service
+            // approval requests still fail closed through the normal timeout
+            // when nobody is attending.
             presetId: 'plan'
           })
         : undefined

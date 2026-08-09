@@ -49,11 +49,10 @@ describe('isNonEscalatingPreset', () => {
     expect(presetAuthorityRank('workspace_write')).toBeLessThan(presetAuthorityRank('full_access'))
     expect(presetAuthorityRank(undefined)).toBe(presetAuthorityRank('default'))
   })
-  it('plan is the floor — below read_only (Ask), which is below default (posture inversion)', () => {
+  it('Plan stays below Ask because Ask exposes additional specialist approvals', () => {
     expect(presetAuthorityRank('plan')).toBeLessThan(presetAuthorityRank('read_only'))
     expect(presetAuthorityRank('read_only')).toBeLessThan(presetAuthorityRank('default'))
-    // plan → read_only is an escalation (Ask adds the per-invocation approval
-    // surface) and must bail; read_only → plan is a de-escalation and is safe.
+    // Plan → Ask is an escalation; Ask → Plan is a de-escalation.
     expect(isNonEscalatingPreset('read_only', 'plan')).toBe(false)
     expect(isNonEscalatingPreset('plan', 'read_only')).toBe(true)
   })

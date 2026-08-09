@@ -17,23 +17,20 @@ import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../shared/retiredPro
 
 /**
  * Authority rank of each permission preset, for the non-escalation comparison.
- * Higher = more authority. An unknown / absent preset is treated as `default`
- * (the safe assumption — prompt-on-action, no standing write authority).
+ * Higher = more authority. An unknown / absent preset ranks as the ordinary
+ * `default` (Accept Edits) tier for non-escalation checks.
  *
- * `plan` sits STRICTLY between `read_only` and `default`: after the posture
- * split it permits approval-gated instruments (canvas actuation, media compute,
- * subthread delegation) that `read_only` denies, but — unlike `default` — it
- * still cannot edit files or run shell. Keeping `plan` above `read_only` here is
- * what makes `isNonEscalatingPreset` correctly BAIL a read_only → plan reroute
- * target (an escalation) while still allowing plan → read_only (de-escalation).
- * `reroutePresetId` never actually emits a `plan` target today, so this entry is
- * defense-in-depth against a future producer that does.
+ * `plan` remains below `read_only`: both modal-gate the standard tool ladder,
+ * while Ask additionally exposes specialist cross-thread and eval actions that
+ * Plan denies. This makes `isNonEscalatingPreset` correctly bail a Plan → Ask
+ * reroute target (an escalation) while allowing Ask → Plan (de-escalation).
+ * `reroutePresetId` never emits a `plan` target today, so this entry is
+ * defense-in-depth against a future producer.
  */
 const DEFAULT_PRESET_AUTHORITY_RANK = 2
 const PRESET_AUTHORITY_RANK: Readonly<Record<string, number>> = {
-  // Posture inversion (2026-08-04): plan is the strict no-ask floor; the Ask
-  // tier (read_only) sits above it because per-invocation approval is a real,
-  // human-gated authority path plan deliberately lacks.
+  // Ask sits above Plan because it modal-gates additional specialist services;
+  // both share the standard-service modal ladder.
   plan: 0,
   read_only: 1,
   custom: 2,

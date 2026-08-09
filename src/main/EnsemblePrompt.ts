@@ -826,12 +826,10 @@ function permissionSurfaceRule(
       participant.provider === 'grok'
         ? ' (exception: Grok seats may run the fixed read-only shell recon commands)'
         : ''
-    // Posture inversion (2026-08-04): read_only ("Ask") may request per-call
-    // approval for gated tools; plan is the no-ask floor and never prompts.
+    // Ask and Plan both route standard-service mutations through the attended
+    // per-invocation approval modal.
     const writePosture =
-      presetId === 'read_only'
-        ? 'file writes and shell commands run ONLY if the user approves your specific request — ask sparingly, and treat a denial as final'
-        : 'file writes and shell commands are DENIED this run'
+      'file writes and shell commands run ONLY if the user approves your specific request — ask sparingly, and treat a denial as final'
     return `- Your permission role is ${presetId || 'plan-clamped'}: ${writePosture}${grokRecon} — do not spend a turn discovering that. Recon first with tools actually listed by your runtime: TaskWraith-aware lanes may list workspace_search, find_files, git_status, and read_file; native-only lanes may instead list read, grep, find, and ls. Coordination tools are available only when they are listed for this exact run; do not assume ensemble_send, blackboard, or poll tools exist.`
   }
   if (presetId === 'workspace_write' || presetId === 'full_access') {
