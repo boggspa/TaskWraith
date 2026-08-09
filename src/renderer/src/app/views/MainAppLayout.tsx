@@ -104,6 +104,7 @@ import { CanvasPane } from '../../components/CanvasPane'
 import { Composer, type ComposerProps } from '../../components/Composer'
 import { ExecutionMapView } from '../../components/ExecutionMapView'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
+import { ChannelHostPanel } from '../../components/ChannelHostPanel'
 import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
 import { getProjectReferenceContextSelection } from '../../lib/projectReferenceContextSelection'
 import {
@@ -1277,6 +1278,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             <span className="human-collaboration-live-dot" aria-label="Shared" />
           )}
         </button>
+        <ChannelHostPanel chatId={currentChat.appChatId} chatTitle={currentChat.title || 'Chat'} />
         {currentChatHumanCollaborationShare && (
           <button
             type="button"
