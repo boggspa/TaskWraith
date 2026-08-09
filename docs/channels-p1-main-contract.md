@@ -1,19 +1,19 @@
-# Channels P1 — bounded main-side contract and proof plan
+# Channels P1 — bounded main-side contract and completed proof
 
-**Status:** design contract only, written for the 1.9.2 exit. No Channels code,
-schema, renderer surface, or agent path is implemented by this document.
+**Status:** implemented and process-proven on `master` on 2026-08-09. The user
+recorded that the [two-Mac test](human-collaboration-two-mac-test.md) passed on
+two real Macs across unrelated networks, satisfying P0. The P1 implementation
+and repeatable three-instance evidence are recorded in
+[`channels-p1-proof.md`](channels-p1-proof.md).
 
-**Gate:** P1 remains blocked until the existing People flow passes the
-[two-Mac test](human-collaboration-two-mac-test.md) between two real Macs on
-unrelated networks. The same-Mac instance/port preflight is not P0. A unit test,
-fake relay, or this design cannot substitute for the human E2EE, SAS, public
-relay traversal, reconnect, and revoke exercise.
+P1 remains a headless, source-ahead substrate rather than a shipped Channel
+product. It deliberately adds no renderer, IPC, preload, agent, tool, provider,
+or scheduled-action entry point. The existing People flow stays available
+beside Channels until P1–P4 are complete; P1 does not migrate or retire it.
 
-This document freezes the smallest P1 contract that can be implemented after
-P0. It is derived from the canonical private 1.9.x roadmap and the current
-People transport/store implementation. It satisfies the 1.9.2 requirement for
-a bounded main-side contract and a multi-instance test plan; it does not claim
-the 1.9.3 three-member proof has run.
+This document freezes the smallest human-only P1 contract and now records the
+boundary the implementation has met. It is derived from the canonical private
+1.9.x roadmap and the current People transport/store implementation.
 
 ## 1. Scope and phase boundary
 
@@ -71,8 +71,8 @@ store.
 
 ## 3. Conceptual records
 
-These records specify ownership and invariants, not an executable schema for
-this release.
+These records specify ownership and invariants. The executable schemas are
+owned by `ChannelStore` and `ChannelMessageLog`.
 
 ### 3.1 Channel
 
@@ -123,7 +123,7 @@ dispatch field exists in a P1 message.
 
 ## 4. Main-owned service boundary
 
-The future implementation has one main-side authority with four narrow roles.
+The P1 implementation has one main-side authority with four narrow roles.
 They may be separate classes, but callers must observe one contract.
 
 ### 4.1 Metadata owner
@@ -231,8 +231,8 @@ peer-to-peer fallback, alternate sequencer, or group key is introduced in P1.
 
 ## 5. Bounded wire behavior
 
-P1 needs a versioned, closed method set inside the pairwise encrypted envelope.
-Names are illustrative until implementation, but the semantics are fixed:
+P1 uses the versioned, closed `taskwraith-channel-wire-v1` method set inside the
+pairwise encrypted envelope. These names and semantics are implemented:
 
 | Method/event | Direction | Semantics |
 | --- | --- | --- |
@@ -339,8 +339,9 @@ unbounded peer-controlled text.
 
 ## 9. Three-instance proof plan
 
-P0 is a separate human prerequisite. Once its evidence is recorded, P1 is
-proven in three layers.
+P0 was satisfied by the user's two-Mac attestation. P1 is proven in the three
+layers below; the exact automated evidence is recorded in
+[`channels-p1-proof.md`](channels-p1-proof.md).
 
 ### 9.1 Deterministic unit and in-process integration tests
 
@@ -445,19 +446,22 @@ P1 proof passes only when:
 A single in-process test, two clients sharing one identity/profile, a same-Mac
 People projection test, or a manually edited log does not satisfy this proof.
 
-## 10. Release accounting
+## 10. Completion and release accounting
 
-For 1.9.2, this document can close only the roadmap's “bounded main-side
-contract and multi-instance test plan” line.
+- **P0: passed by user attestation on 2026-08-09.** The existing People flow
+  completed the two-real-Mac, unrelated-network exercise.
+- **P1 implementation: complete on `master`.** Durable authority landed in
+  `f2b88a2cf`; encrypted runtime/transport landed in `a188c8503`; the process
+  proof landed in `896bd8914`.
+- **P1 proof: passed twice from clean profiles.** Both real-relay missions
+  reached a durable high-water sequence of 149 and passed every criterion in
+  §9.4. See [`channels-p1-proof.md`](channels-p1-proof.md).
+- **Product status: still headless/source-ahead.** No production Channel UI,
+  IPC/preload surface, or Chat composition-root wiring is part of P1, and no
+  agent/provider route exists.
+- **People status: adjacent and available.** Conversion and retirement remain
+  P4 work after the human P2 experience is complete.
 
-The release evidence must continue to say:
-
-- **P0: human-only and outstanding** until the two real unrelated-network Macs
-  complete the tracked runbook;
-- **P1 implementation: blocked by P0**, so no Channel store, wire protocol,
-  fan-out, schema, UI, or agent route has landed; and
-- **P1 proof: planned, not run** until the post-P0 three-instance mission
-  produces the evidence in §9.4.
-
-That accounting is intentional. It makes 1.9.2 releasable without claiming a
-human gate passed or quietly beginning the architecture above it.
+Release or marketing evidence must distinguish the proven P1 substrate from a
+user-facing Channel product until P2 lands and its own acceptance evidence is
+recorded.
