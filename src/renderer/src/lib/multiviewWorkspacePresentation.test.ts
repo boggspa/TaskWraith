@@ -98,7 +98,9 @@ describe('Multiview focused workspace presentation', () => {
     expect(layoutSource).toContain('const focusedHostOverlayRequired = Boolean(')
     expect(layoutSource).toContain('topLeftChromeExtra: humanCollaborationControls')
     expect(layoutSource).toContain('showFocusedHostOverlay={focusedHostOverlayRequired}')
-    expect(source).toContain('viewerOwnsFocusedTrust\n        ? composerCtx')
+    expect(source).toContain(
+      'viewerOwnsFocusedTrust ? composerCtx : resolveRestingPaneComposerCtx()'
+    )
   })
 
   it('guards workspace trust refreshes against late ownership changes', () => {
@@ -119,53 +121,37 @@ describe('Multiview focused workspace presentation', () => {
     expect(paneRun).toContain('? sessionTrust')
     expect(paneRun).toContain(': false')
 
-    const paneComposer = slice(
-      'const paneComposerCtx: ComposerProps =',
-      'const memoizedPaneComposerCtx ='
-    )
-    expect(paneComposer).toContain(
-      'sessionTrust: viewerOwnsFocusedTrust ? sessionTrust : false'
-    )
-    expect(paneComposer).toContain('setSessionTrust: viewerOwnsFocusedTrust')
-    expect(paneComposer).toContain('trustResult: viewerOwnsFocusedTrust ? trustResult : null')
-    expect(paneComposer).toContain('handleTrustWorkspaceClick: viewerOwnsFocusedTrust')
-    expect(paneComposer).toContain('handleBridgeCommand: viewerOwnsFocusedTrust')
-    expect(paneComposer).toContain('markPersistentSessionRestartNeeded: viewerOwnsFocusedTrust')
-
-    const restingPaneComposer = slice(
-      'const buildPaneComposerCtx =',
-      'const paneComposerCtxByKey ='
-    )
-    expect(restingPaneComposer).toContain(
-      'handleBridgeCommand: async () => focusPaneForGoalControl()'
-    )
-    expect(restingPaneComposer).toContain(
-      'markPersistentSessionRestartNeeded: focusPaneForGoalControl'
-    )
+    const paneComposer = slice('const buildPaneComposerCtx =', 'const paneComposerCtxByKey =')
+    expect(paneComposer).toContain('sessionTrust: false')
+    expect(paneComposer).toContain('setSessionTrust: () => focusPaneForGoalControl()')
+    expect(paneComposer).toContain('trustResult: null')
+    expect(paneComposer).toContain('handleTrustWorkspaceClick: focusPaneForGoalControl')
+    expect(paneComposer).toContain('handleBridgeCommand: async () => focusPaneForGoalControl()')
+    expect(paneComposer).toContain('markPersistentSessionRestartNeeded: focusPaneForGoalControl')
+    expect(paneComposer).not.toContain('sessionTrust: viewerOwnsFocusedTrust')
   })
 
   it('binds resting-pane review, mode, capture, and Discord actions to the pane chat', () => {
-    const paneComposer = slice(
-      'const paneComposerCtx: ComposerProps =',
-      'const memoizedPaneComposerCtx ='
-    )
+    const paneComposer = slice('const buildPaneComposerCtx =', 'const paneComposerCtxByKey =')
     expect(paneComposer).toContain(
       'currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null'
     )
     expect(paneComposer).toContain('resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot')
     expect(paneComposer).toContain(
-      'await handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)'
+      'paneCtxHelpers.handleReviewDiffForChat(\n            viewerChat,\n            viewerProvider,\n            viewerWorkspace'
     )
     expect(paneComposer).toContain(
-      'handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning)'
-    )
-    expect(paneComposer).toContain('handleAttachWindow: () => handleAttachWindow(viewerChatId)')
-    expect(paneComposer).toContain('handleDetachWindow: () => handleDetachWindow(viewerChatId)')
-    expect(paneComposer).toContain(
-      'handleClearDiscordContext: () => clearDiscordContextForChat(viewerChatId)'
+      'paneCtxHelpers.handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning)'
     )
     expect(paneComposer).toContain(
-      'openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId)'
+      'handleAttachWindow: () => paneCtxHelpers.handleAttachWindow(viewerChatId)'
+    )
+    expect(paneComposer).toContain(
+      'handleDetachWindow: () => paneCtxHelpers.handleDetachWindow(viewerChatId)'
+    )
+    expect(paneComposer).toContain('paneCtxHelpers.clearDiscordContextForChat(viewerChatId)')
+    expect(paneComposer).toContain(
+      'paneCtxHelpers.openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId)'
     )
 
     const screenWatch = slice(

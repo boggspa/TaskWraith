@@ -39,15 +39,23 @@ function paneComposerContextKeys(source: string): string[][] {
 }
 
 describe('Multiview pane Composer context parity', () => {
-  it('keeps the live fallback and memoized builder on the same explicit prop surface', () => {
+  it('routes memoized and ref-ahead panes through one explicit prop surface', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
     const contexts = paneComposerContextKeys(source)
+    const renderStart = source.indexOf('const renderMultiviewPaneCell =')
+    const renderEnd = source.indexOf('// `buildPaneComposerCtx`', renderStart)
+    const render = source.slice(renderStart, renderEnd)
 
-    expect(contexts).toHaveLength(2)
-    for (const context of contexts) {
-      expect(context).toHaveLength(new Set(context).size)
-    }
-    expect([...new Set(contexts[0])].sort()).toEqual([...new Set(contexts[1])].sort())
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0]).toHaveLength(new Set(contexts[0]).size)
+    expect(render).toContain(
+      'const memoizedPaneComposerCtx = paneComposerCtxByKey[paneComposerKey]'
+    )
+    expect(render).toContain('const fresh = buildPaneComposerCtx(viewerChatId, viewerPaneIndex)')
+    expect(render).toContain('paneComposerRuntimeRegistryRef.current.stabilize(')
+    expect(render).toContain(
+      'viewerOwnsFocusedTrust ? composerCtx : resolveRestingPaneComposerCtx()'
+    )
   })
 
   it('derives linked-child state from each pane chat instead of forcing it on', () => {
@@ -56,16 +64,16 @@ describe('Multiview pane Composer context parity', () => {
     expect(source).not.toContain('isCurrentChatLinkedChild: true')
     expect(
       source.match(/isCurrentChatLinkedChild: Boolean\(viewerChat\.parentChatId\)/g)
-    ).toHaveLength(2)
+    ).toHaveLength(1)
   })
 
-  it('keeps the focused goal-popover anchor out of resting panes (discard ref in both builders)', () => {
+  it('keeps the focused goal-popover anchor out of the resting-pane builder', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
     // Every pane's <Composer> mounts the goal button; without this override the
     // last-mounted pane clobbers the shared goalButtonRef and the focused goal
     // popover portals over the wrong pane (position is measured off that ref).
-    expect(source.match(/goalButtonRef: paneGoalButtonDiscardRef/g)).toHaveLength(2)
+    expect(source.match(/goalButtonRef: paneGoalButtonDiscardRef/g)).toHaveLength(1)
   })
 
   it('overrides every mutable Ensemble surface with pane-owned bindings', () => {
@@ -188,8 +196,8 @@ describe('Multiview pane Composer context parity', () => {
     expect(buildRunRequest).toContain('resolveRunDiscordContextSelection({')
     expect(buildRunRequest).toContain('targetSelection: targetDiscordContextSelection')
     expect(source).toContain('selectedParticipantIdByChatId[currentChat.appChatId]')
-    expect(source.match(/resolveMultiviewEnsembleParticipantSelection\(/g)).toHaveLength(3)
-    expect(source.match(/paneSlashParticipant\?\.provider \?\? viewerProvider/g)).toHaveLength(2)
+    expect(source.match(/resolveMultiviewEnsembleParticipantSelection\(/g)).toHaveLength(2)
+    expect(source.match(/paneSlashParticipant\?\.provider \?\? viewerProvider/g)).toHaveLength(1)
     expect(paneSlash).toContain('selectedParticipant: EnsembleParticipant | null')
     expect(paneSlash).toContain('const slashParticipant = selectedParticipant')
     expect(paneSlash).toContain('paneSlashCommandHelpers.resolveSlashPaletteItems')
