@@ -106,6 +106,29 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('host-projection:receipt-lookup', [[]])).toThrow(/object/)
   })
 
+  it('shape-gates the closed Channels host contract and rejects trailing data', () => {
+    expect(() => validateIpcArgs('channels:list', [])).not.toThrow()
+    expect(() => validateIpcArgs('channels:list', [{}])).toThrow(/too many arguments/)
+    expect(() => validateIpcArgs('channels:audit', [])).not.toThrow()
+    expect(() => validateIpcArgs('channels:audit', [undefined])).not.toThrow()
+    expect(() => validateIpcArgs('channels:audit', [{ limit: 20 }])).not.toThrow()
+    expect(() => validateIpcArgs('channels:audit', ['channel-a'])).toThrow(/object/)
+
+    for (const channel of [
+      'channels:read',
+      'channels:create',
+      'channels:issue-invite',
+      'channels:append',
+      'channels:revoke-member',
+      'channels:close'
+    ]) {
+      expect(() => validateIpcArgs(channel, [{}])).not.toThrow()
+      expect(() => validateIpcArgs(channel, [])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, ['invalid'])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, [{}, 'trailing'])).toThrow(/too many arguments/)
+    }
+  })
+
   it('registers Canvas handlers only after the validation wrapper is installed', () => {
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     expect(main.indexOf('installIpcValidation(ipcMain')).toBeGreaterThanOrEqual(0)

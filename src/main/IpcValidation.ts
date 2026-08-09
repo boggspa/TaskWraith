@@ -207,6 +207,17 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'human-collaboration-collaborator:append-comment': ['object'],
   'human-collaboration-collaborator:load-older': ['object'],
   'human-collaboration-collaborator:leave': [],
+  // Channels P2 host surface. The extracted handler performs closed-key,
+  // bounded field validation and main-owned sender/chat authorization; this
+  // first gate rejects wrong top-level shapes before dispatch.
+  'channels:list': [],
+  'channels:read': ['object'],
+  'channels:audit': ['optionalObject'],
+  'channels:create': ['object'],
+  'channels:issue-invite': ['object'],
+  'channels:append': ['object'],
+  'channels:revoke-member': ['object'],
+  'channels:close': ['object'],
   'reap-abandoned-chats': ['optionalObject'],
   'clear-chats': ['optionalString'],
   'record-usage': ['object'],
@@ -1052,13 +1063,15 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
   if (!schema) {
     throw new Error(`No IPC schema registered for ${channel}.`)
   }
-  // Detach is a generation-bound revoke operation, and Browser-profile reset
-  // is an app-wide destructive human action, so trailing renderer data must not
-  // be silently ignored. Preserve legacy optional-tail behavior elsewhere.
+  // Detach is a generation-bound revoke operation, Browser-profile reset is an
+  // app-wide destructive human action, and Channels is a new closed contract,
+  // so trailing renderer data must not be silently ignored. Preserve legacy
+  // optional-tail behavior elsewhere.
   if (
     (channel === 'attach-window:detach' ||
       channel === 'attach-window:control-session' ||
-      channel === 'canvas:clear-browser-profile') &&
+      channel === 'canvas:clear-browser-profile' ||
+      channel.startsWith('channels:')) &&
     args.length > schema.length
   ) {
     throw new Error(`${channel} received too many arguments.`)
