@@ -883,7 +883,7 @@ import {
   removedCanvasIds,
   useMultiviewState
 } from './hooks/useMultiviewState'
-import { useMultiviewPaneHydration } from './hooks/useMultiviewPaneHydration'
+import { useChatSurfaceHydration } from './hooks/useChatSurfaceHydration'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
 import {
@@ -6149,7 +6149,7 @@ function App(): React.JSX.Element {
   // Visible panes own their thread residency. This deliberately does not read
   // currentChat/focus: every pane hydrates by its own chat id, concurrent reads
   // are deduplicated per id, and a failed pane cannot cancel its neighbours.
-  useMultiviewPaneHydration<ChatRecord>(
+  useChatSurfaceHydration<ChatRecord>(
     isMultiviewSplit ? multiview.paneChatIds : [],
     {
       resolveChat: (chatId) => chatByIdRef.current.get(chatId),
@@ -6159,6 +6159,38 @@ function App(): React.JSX.Element {
       unpinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.unpin(chatId, 'pane')
     }
   )
+
+  const hydratePresentedSideChat = useCallback(
+    async (chatId: string): Promise<ChatRecord | null> => {
+      const hydrated = await refreshSingleChat(chatId)
+      if (
+        !hydrated ||
+        hydrated.parentChatRelation !== 'sideChat' ||
+        hydrated.archived ||
+        isTerminatedSideChat(hydrated)
+      ) {
+        return hydrated
+      }
+      return (
+        updateChatById(chatId, (source) =>
+          isChatSummaryRecord(source) ? source : applySideChatLifecycle(source, 'active')
+        ) || hydrated
+      )
+    },
+    [refreshSingleChat, updateChatById]
+  )
+
+  // A linked side chat is a simultaneous chat surface, not a viewport onto the
+  // focused parent. Keep it resident for the whole presentation lifetime —
+  // including while another right-dock tab temporarily covers it — and hydrate
+  // its own id independently of currentChat/focus.
+  useChatSurfaceHydration<ChatRecord>(sideChatId ? [sideChatId] : [], {
+    resolveChat: (chatId) => chatByIdRef.current.get(chatId),
+    isHydrated: (chat) => !isChatSummaryRecord(chat),
+    hydrateChat: hydratePresentedSideChat,
+    pinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.pin(chatId, 'side'),
+    unpinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.unpin(chatId, 'side')
+  })
 
   const isValidModelForProvider = (
     provider: ProviderId,
@@ -16404,8 +16436,13 @@ function App(): React.JSX.Element {
   ) => {
     const parentChat = parentOverride || currentChat
     if (!parentChat?.appChatId || chat.parentChatId !== parentChat.appChatId) return
+    // A list row is a summary projection. Present it immediately, but let the
+    // side-surface residency coordinator hydrate before mutating/persisting its
+    // lifecycle; saveChat correctly refuses summary-only records.
     const nextChat =
-      chat.parentChatRelation === 'sideChat' ? applySideChatLifecycle(chat, 'active') : chat
+      chat.parentChatRelation === 'sideChat' && !isChatSummaryRecord(chat)
+        ? applySideChatLifecycle(chat, 'active')
+        : chat
     chatByIdRef.current.set(nextChat.appChatId, nextChat)
     if (nextChat !== chat) {
       setChats((prev) => {
@@ -22093,7 +22130,10 @@ function App(): React.JSX.Element {
   const isSideChatProviderLocked = Boolean(
     sideChat && (isSideChatRunning || Boolean(sidePendingProviderChange))
   )
-  const sideChatIsWelcome = Boolean(sideChat && (sideChat.messages?.length || 0) === 0)
+  const sideChatIsHydrating = Boolean(sideChat && isChatSummaryRecord(sideChat))
+  const sideChatIsWelcome = Boolean(
+    sideChat && !sideChatIsHydrating && (sideChat.messages?.length || 0) === 0
+  )
   const isSideEnsembleComposerLocked = Boolean(sideChat?.chatKind === 'ensemble')
   const isSideComposerLocked = Boolean(isSideChatRunning && sideChat?.chatKind !== 'ensemble')
   const sideComposerHasMention = Boolean(
@@ -31216,6 +31256,7 @@ function App(): React.JSX.Element {
     sideAutoFollowRef,
     sideCanRun,
     sideChat,
+    sideChatIsHydrating,
     sideChatIsWelcome,
     sideChatMenuOpen,
     sideChatMenuRef,

@@ -509,6 +509,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showWorkspaceSidebar,
   sideAutoFollowRef,
   sideChat,
+  sideChatIsHydrating,
   sideChatIsWelcome,
   sideChatSeedMessageId,
   sideChatTokenTally,
@@ -2495,6 +2496,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   <XSymbolIcon />
                 </button>
             </div>
+            {sideChatIsHydrating && (
+              <div className="side-chat-welcome" role="status" aria-label="Loading linked chat">
+                <h2 className="side-chat-welcome-line">Loading linked thread…</h2>
+              </div>
+            )}
             {sideChatIsWelcome && (
               <div className="side-chat-welcome" aria-label="Linked chat welcome">
                 <h2 className="side-chat-welcome-line">
@@ -2566,7 +2572,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               runningChatIds={runningChatIdsArray}
               onOpenSubThread={handleOpenCockpitThread}
             />
-            <TranscriptPanel
+            {!sideChatIsHydrating && <TranscriptPanel
               key={`side-${sideChat.appChatId}`}
               scrollRef={sideTranscriptScrollRef}
               contentRef={sideTranscriptContentRef}
@@ -2634,7 +2640,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               showRunCompleteSummary={settings?.showRunCompleteSummary}
               collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
               providerRates={providerRates}
-            />
+            />}
             {sideComposerCtx && <Composer {...sideComposerCtx} />}
               </aside>
                   </div>

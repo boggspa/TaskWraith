@@ -601,6 +601,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   sideAutoFollowRef: any
   sideCanRun: any
   sideChat: any
+  sideChatIsHydrating: boolean
   sideChatIsWelcome: any
   sideChatMenuOpen: any
   sideChatMenuRef: any

@@ -188,6 +188,27 @@ describe('sideChatComposer', () => {
     expect(layoutSource).toContain("approvalMode: sideComposerSelection?.approvalMode || 'default'")
   })
 
+  it('gives the linked surface its own hydration and residency lifecycle', () => {
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const layoutSource = readFileSync(
+      new URL('../app/views/MainAppLayout.tsx', import.meta.url),
+      'utf8'
+    )
+
+    expect(appSource).toContain(
+      'useChatSurfaceHydration<ChatRecord>(sideChatId ? [sideChatId] : [], {'
+    )
+    expect(appSource).toContain("byteLru.pin(chatId, 'side')")
+    expect(appSource).toContain("byteLru.unpin(chatId, 'side')")
+    expect(appSource).toContain('const hydratePresentedSideChat = useCallback(')
+    expect(appSource).toMatch(
+      /chat\.parentChatRelation === 'sideChat' && !isChatSummaryRecord\(chat\)/
+    )
+    expect(appSource).toContain('sideChat && !sideChatIsHydrating')
+    expect(layoutSource).toContain('aria-label="Loading linked chat"')
+    expect(layoutSource).toContain('{!sideChatIsHydrating && <TranscriptPanel')
+  })
+
   it('anchors the side-chat type menu to the pane instead of the narrow trigger pill', () => {
     const css = readFileSync(
       new URL('../assets/css/11-side-chat.css', import.meta.url),
