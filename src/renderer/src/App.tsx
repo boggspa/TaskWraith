@@ -677,6 +677,7 @@ import {
   shouldRenderWelcome,
   isReusableWelcomeChat
 } from './lib/welcomeState'
+import { shouldRevealStartupRoute } from './lib/startupRoutePresentation'
 import { findReusablePristineDraft } from './lib/unstartedDraftFilter'
 import {
   WELCOME_FIT_FULL,
@@ -2301,8 +2302,14 @@ function App(): React.JSX.Element {
   // Appearance & Settings
   const appearance = useAppearance()
   const [initialRouteReady, setInitialRouteReady] = useState(false)
+  const [initialRouteAllowEmptyShell, setInitialRouteAllowEmptyShell] = useState(false)
   const [bootMaskVisible, setBootMaskVisible] = useState(true)
-  const isBootReady = appearance.loaded && initialRouteReady
+  const isBootReady = shouldRevealStartupRoute({
+    appearanceLoaded: appearance.loaded,
+    initialRouteReady,
+    hasCommittedRoute: Boolean(currentChat),
+    allowEmptyRoute: initialRouteAllowEmptyShell
+  })
   const isBootMaskLeaving = isBootReady && bootMaskVisible
   const openInspectorTab = (tab: InspectorRightTab) => {
     setRightTab(tab)
@@ -6934,6 +6941,13 @@ function App(): React.JSX.Element {
 
   const loadInitialDataRef = useRef<(() => Promise<void>) | null>(null)
 
+  const markInitialRouteSettled = useCallback((allowEmptyRoute?: boolean) => {
+    setInitialRouteAllowEmptyShell(
+      allowEmptyRoute === undefined ? currentChatIdRef.current === null : allowEmptyRoute
+    )
+    setInitialRouteReady(true)
+  }, [])
+
   // Initialize
   useEffect(() => {
     if (!isBootReady) {
@@ -6953,10 +6967,10 @@ function App(): React.JSX.Element {
       // re-fetches workspaces. Surface the failure so we have a chance
       // to triage instead of presenting a blank app.
       console.error('[loadInitialData] unhandled rejection:', err)
-      setInitialRouteReady(true)
+      markInitialRouteSettled(true)
     })
     window.api.getGeminiVersion().then((v) => setGeminiVersion(v))
-  }, [])
+  }, [markInitialRouteSettled])
 
   useEffect(() => {
     const recordRendererCrash = (input: {
@@ -7228,7 +7242,7 @@ function App(): React.JSX.Element {
             targetChatId: popoutChat.appChatId
           })
         }
-        setInitialRouteReady(true)
+        markInitialRouteSettled(false)
         return
       }
       console.warn('[chat-popout] requested chat was not found:', chatPopoutChatIdRef.current)
@@ -7261,7 +7275,7 @@ function App(): React.JSX.Element {
         console.warn('[TaskWraith] Failed to create initial general chat on launch:', error)
       }
     }
-    setInitialRouteReady(true)
+    markInitialRouteSettled()
   }
   loadInitialDataRef.current = loadInitialData
   useEffect(() => {
