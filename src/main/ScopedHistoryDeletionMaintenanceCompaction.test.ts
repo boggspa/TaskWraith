@@ -77,6 +77,9 @@ describe('ScopedHistoryDeletionCoordinator maintenance compaction fencing', () =
       clearExecutionGraph: async () => {
         calls.push('graph-clear')
       },
+      beginChannelsClear: async () => {
+        calls.push('channels-clear')
+      },
       clearTranscriptMedia: async () => {
         calls.push('media-clear')
       }
@@ -121,6 +124,7 @@ describe('ScopedHistoryDeletionCoordinator maintenance compaction fencing', () =
       { id: 'maintenance-compaction:chat-batch', kind: 'maintenance-compaction' },
       { id: 'canvas:chat:chat-a', kind: 'canvas', chatId: 'chat-a' },
       { id: 'execution-graph:chat:chat-a', kind: 'execution-graph', chatId: 'chat-a' },
+      { id: 'channels:chat-batch', kind: 'channels' },
       { id: 'usage:chat-batch', kind: 'usage' },
       { id: 'project-reference:chat-run-batch', kind: 'project-reference' },
       { id: 'media:chat-batch', kind: 'media' }
@@ -153,6 +157,7 @@ describe('ScopedHistoryDeletionCoordinator maintenance compaction fencing', () =
       revokeChatAuthority: vi.fn(),
       terminateProviderRun: vi.fn(),
       clearExecutionGraph: vi.fn(),
+      beginChannelsClear: vi.fn(),
       clearTranscriptMedia: vi.fn()
     })
 

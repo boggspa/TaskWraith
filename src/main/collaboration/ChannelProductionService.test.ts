@@ -263,6 +263,12 @@ describe('ChannelProductionService', () => {
       'message',
       'channel'
     ])
+    expect(onChange.mock.calls.map(([event]) => event.chatId)).toEqual([
+      'chat-general',
+      'chat-general',
+      'chat-general',
+      'chat-general'
+    ])
   })
 
   it('waits for in-flight durable work and restores identity, history, audit, and rooms', async () => {
@@ -381,7 +387,8 @@ describe('ChannelProductionService', () => {
   it('preserves Channels on truncation and purges selected or global history durably', async () => {
     const userDataPath = temporaryUserData()
     const identity = generateIdentityKeyPair()
-    const fixture = createService({ userDataPath, identity })
+    const onChange = vi.fn()
+    const fixture = createService({ userDataPath, identity, onChange })
     fixture.service.start()
     const first = fixture.service.createChannel({
       chatId: 'chat-a',
@@ -405,6 +412,7 @@ describe('ChannelProductionService', () => {
       clientMessageId: 'b-1',
       content: 'second survives selective purge'
     })
+    onChange.mockClear()
 
     await expect(
       fixture.service.purgeForHistoryDeletionScope({
@@ -434,6 +442,11 @@ describe('ChannelProductionService', () => {
     const paths = channelProductionDataPaths(userDataPath)
     expect(fixture.sockets.sockets[0]?.closed).toBe(true)
     expect(fixture.sockets.sockets[1]?.closed).toBe(false)
+    expect(onChange).toHaveBeenCalledWith({
+      channelId: first.channelId,
+      chatId: 'chat-a',
+      reason: 'channel'
+    })
     expect(existsSync(join(paths.logs, `${first.channelId}.jsonl`))).toBe(false)
     expect(existsSync(join(paths.logs, `${second.channelId}.jsonl`))).toBe(true)
     expect(fixture.service.listAudit({ channelId: first.channelId })).toEqual([])
@@ -466,6 +479,7 @@ describe('ChannelProductionService', () => {
         content: 'healthy Channel continues'
       })
     ).resolves.toMatchObject({ record: { sequence: 2 } })
+    onChange.mockClear()
 
     const orphanPath = join(paths.logs, 'orphan.jsonl')
     writeFileSync(orphanPath, 'orphaned durable bytes\n', 'utf8')
@@ -477,6 +491,11 @@ describe('ChannelProductionService', () => {
       }
     )
     expect(fixture.sockets.sockets[1]?.closed).toBe(true)
+    expect(onChange).toHaveBeenCalledWith({
+      channelId: second.channelId,
+      chatId: 'chat-b',
+      reason: 'channel'
+    })
     expect(fixture.service.listChannels()).toEqual([])
     expect(fixture.service.listAudit()).toEqual([])
     expect(existsSync(join(paths.logs, `${second.channelId}.jsonl`))).toBe(false)

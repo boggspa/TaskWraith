@@ -92,6 +92,7 @@ function createDeps(
     revokeChatAuthority: vi.fn(),
     terminateProviderRun: vi.fn(async () => undefined),
     clearExecutionGraph: vi.fn(async () => undefined),
+    beginChannelsClear: vi.fn(async () => undefined),
     clearTranscriptMedia: vi.fn(async () => undefined),
     endBackgroundProcessDeletion: vi.fn(),
     ...overrides
@@ -128,6 +129,10 @@ const delayedSinkCases: Array<{
   {
     name: 'execution-graph deletion',
     overrides: (gate) => ({ clearExecutionGraph: vi.fn(() => gate.promise) })
+  },
+  {
+    name: 'Channels quiescence',
+    overrides: (gate) => ({ beginChannelsClear: vi.fn(() => gate.promise) })
   },
   {
     name: 'usage-history purge',
@@ -175,6 +180,9 @@ describe('ScopedHistoryDeletionCoordinator', () => {
         order.push('media-begin')
         return { id: 'media-hold' }
       }),
+      beginChannelsClear: vi.fn(async () => {
+        order.push('channels-begin')
+      }),
       endTranscriptMediaMutation: vi.fn(() => order.push('media-end')),
       beginCanvasClear: vi.fn(() => {
         order.push('canvas-begin')
@@ -203,6 +211,7 @@ describe('ScopedHistoryDeletionCoordinator', () => {
       'usage-begin',
       'project-reference-begin',
       'media-begin',
+      'channels-begin',
       'canvas-begin',
       'revoke',
       'provider'
@@ -225,7 +234,7 @@ describe('ScopedHistoryDeletionCoordinator', () => {
       'media-end',
       'canvas-end'
     ])
-    expect(deps.recordQuiesced).toHaveBeenCalledTimes(6)
+    expect(deps.recordQuiesced).toHaveBeenCalledTimes(7)
   })
 
   it('does not start graph or media deletion before provider termination is confirmed', async () => {
@@ -396,12 +405,36 @@ describe('ScopedHistoryDeletionCoordinator', () => {
     expect(deps.commitDelete).toHaveBeenCalledTimes(1)
   })
 
+  it('restarts a rejected Channels purge without reacquiring the retained outer holds', async () => {
+    let channelsAttempts = 0
+    const deps = createDeps({
+      beginChannelsClear: vi.fn(async () => {
+        channelsAttempts += 1
+        if (channelsAttempts === 1) throw new Error('Channel audit fsync failed')
+      })
+    })
+    const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+
+    await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(
+      'could not quiesce every external sink'
+    )
+    expect(deps.commitDelete).not.toHaveBeenCalled()
+    expect(deps.beginCanvasClear).toHaveBeenCalledTimes(1)
+
+    await coordinator.run('chat', 'chat-a')
+    expect(deps.beginChannelsClear).toHaveBeenCalledTimes(2)
+    expect(deps.beginCanvasClear).toHaveBeenCalledTimes(1)
+    expect(deps.endCanvasClear).toHaveBeenCalledTimes(1)
+    expect(deps.commitDelete).toHaveBeenCalledTimes(1)
+  })
+
   it('resumes the frozen cascade after restart and reacquires holds for receipted Canvas targets', async () => {
     const targets: HistoryDeletionQuiescenceTarget[] = [
       { id: 'canvas:chat:parent', kind: 'canvas', chatId: 'parent' },
       { id: 'canvas:chat:child', kind: 'canvas', chatId: 'child' },
       { id: 'execution-graph:chat:parent', kind: 'execution-graph', chatId: 'parent' },
       { id: 'execution-graph:chat:child', kind: 'execution-graph', chatId: 'child' },
+      { id: 'channels:chat-batch', kind: 'channels' },
       { id: 'usage:chat-batch', kind: 'usage' },
       { id: 'project-reference:chat-run-batch', kind: 'project-reference' },
       { id: 'media:chat-batch', kind: 'media' }
@@ -432,6 +465,7 @@ describe('ScopedHistoryDeletionCoordinator', () => {
     expect(deps.beginCanvasClear).toHaveBeenCalledWith('parent')
     expect(deps.beginCanvasClear).toHaveBeenCalledWith('child')
     expect(deps.beginUsageHistoryMutation).toHaveBeenCalledWith(pending)
+    expect(deps.beginChannelsClear).toHaveBeenCalledWith('chat', ['parent', 'child'])
     expect(deps.purgeUsageHistoryStrict).toHaveBeenCalledTimes(1)
     expect(deps.clearProjectReferenceArtifacts).toHaveBeenCalledWith({
       appChatIds: ['parent', 'child'],
@@ -461,6 +495,7 @@ describe('ScopedHistoryDeletionCoordinator', () => {
     await coordinator.run('chat', 'parent')
 
     expect(deps.clearTranscriptMedia).toHaveBeenCalledTimes(1)
+    expect(deps.beginChannelsClear).toHaveBeenCalledWith('chat', ['parent', 'child'])
     expect(deps.clearTranscriptMedia).toHaveBeenCalledWith(
       ['parent', 'child'],
       expect.objectContaining({ id: 'media-hold' })

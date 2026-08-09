@@ -48,6 +48,8 @@ export interface ChannelProductionServiceOptions {
 
 export interface ChannelProductionChangeEvent {
   channelId: string
+  /** Main-process routing authority. Never project this field to a renderer. */
+  chatId: string
   reason: 'channel' | 'membership' | 'message'
 }
 
@@ -280,7 +282,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const auditSink: ChannelAuditLike = {
       append: (event) => {
         audit.append(event)
-        this.notifyAuditChange(event)
+        this.notifyAuditChange(event, store)
       }
     }
     const runtime = new ChannelRuntime({
@@ -353,6 +355,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const openBefore = new Set(state.transport.listOpenRooms().map((room) => room.roomId))
     let opened = 0
     for (const binding of state.runtime.listRoomBindings()) {
+      if (this.closingChannelIds.has(binding.channelId)) continue
       if (state.recoveryBlockedChannelIds.has(binding.channelId)) continue
       try {
         state.transport.openRoom(binding.channelId, binding.roomId, hostRelayUrl)
@@ -494,7 +497,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         await state.runtime.quiesceChannel(channelId)
         const closed = state.store.closeChannel({ channelId, now: this.now() })
         this.closingChannelIds.delete(channelId)
-        this.notifyChange({ channelId, reason: 'channel' })
+        this.notifyChange({ channelId, chatId: closed.chatId, reason: 'channel' })
         return this.channelView(closed, state)
       })
     )
@@ -519,6 +522,9 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       targets = channels.filter((channel) => chatIds.has(channel.chatId))
     }
     const channelIds = targets.map((channel) => channel.channelId)
+    const chatIdByChannelId = new Map(
+      targets.map((channel) => [channel.channelId, channel.chatId] as const)
+    )
     if (scope.kind === 'truncate') {
       return Promise.resolve({
         kind: scope.kind,
@@ -551,9 +557,10 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         state.store.purgeChannels(channelIds)
       }
       for (const channelId of channelIds) {
+        const chatId = chatIdByChannelId.get(channelId)
         state.recoveryBlockedChannelIds.delete(channelId)
         this.closingChannelIds.delete(channelId)
-        this.notifyChange({ channelId, reason: 'channel' })
+        if (chatId) this.notifyChange({ channelId, chatId, reason: 'channel' })
       }
       return {
         kind: scope.kind,
@@ -664,10 +671,12 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     return result
   }
 
-  private notifyAuditChange(event: ChannelAuditInput): void {
+  private notifyAuditChange(event: ChannelAuditInput, store: ChannelStore): void {
     if (!event.channelId) return
+    const chatId = store.getChannel(event.channelId)?.chatId
+    if (!chatId) return
     if (event.kind === 'channel.created') {
-      this.notifyChange({ channelId: event.channelId, reason: 'channel' })
+      this.notifyChange({ channelId: event.channelId, chatId, reason: 'channel' })
       return
     }
     if (
@@ -675,11 +684,11 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       event.kind === 'admission.confirmed' ||
       event.kind === 'member.revoked'
     ) {
-      this.notifyChange({ channelId: event.channelId, reason: 'membership' })
+      this.notifyChange({ channelId: event.channelId, chatId, reason: 'membership' })
       return
     }
     if (event.kind === 'message.accepted') {
-      this.notifyChange({ channelId: event.channelId, reason: 'message' })
+      this.notifyChange({ channelId: event.channelId, chatId, reason: 'message' })
     }
   }
 

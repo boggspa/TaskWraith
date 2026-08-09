@@ -119,7 +119,8 @@ describe('AppStore strict history deletion transaction', () => {
           chatId: 'chat-a',
           workspaceId: 'workspace-a'
         },
-        { id: 'canvas:chat:chat-a', kind: 'canvas', chatId: 'chat-a' }
+        { id: 'canvas:chat:chat-a', kind: 'canvas', chatId: 'chat-a' },
+        { id: 'channels:chat-batch', kind: 'channels' }
       ]
     })
 
@@ -136,6 +137,11 @@ describe('AppStore strict history deletion transaction', () => {
     expect(fs.existsSync(chatPath('chat-a'))).toBe(true)
 
     AppStore.recordHistoryDeletionQuiesced(prepared.operationId, ['canvas:chat:chat-a'])
+    expect(() => AppStore.commitPreparedHistoryDeletion(prepared.operationId)).toThrow(
+      HistoryDeletionQuiescenceRequiredError
+    )
+
+    AppStore.recordHistoryDeletionQuiesced(prepared.operationId, ['channels:chat-batch'])
     AppStore.commitPreparedHistoryDeletion(prepared.operationId)
 
     expect(fs.existsSync(chatPath('chat-a'))).toBe(false)
@@ -154,7 +160,8 @@ describe('AppStore strict history deletion transaction', () => {
           runId: 'run-a',
           provider: 'codex',
           chatId: 'chat-a'
-        }
+        },
+        { id: 'channels:chat-batch', kind: 'channels' }
       ]
     })
 
@@ -169,6 +176,11 @@ describe('AppStore strict history deletion transaction', () => {
     expect(fs.existsSync(chatPath('chat-a'))).toBe(true)
 
     AppStore.recordHistoryDeletionQuiesced(prepared.operationId, ['provider-run:run-a'])
+    expect(() => AppStore.recoverPendingHistoryDeletion()).toThrow(
+      HistoryDeletionQuiescenceRequiredError
+    )
+
+    AppStore.recordHistoryDeletionQuiesced(prepared.operationId, ['channels:chat-batch'])
     AppStore.recoverPendingHistoryDeletion()
 
     expect(fs.existsSync(chatPath('chat-a'))).toBe(false)

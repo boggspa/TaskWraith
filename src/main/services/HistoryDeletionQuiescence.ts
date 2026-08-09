@@ -23,6 +23,8 @@ export interface HistoryDeletionQuiescenceHandlers {
   ) => MaybePromise<boolean>
   canvas: HistoryDeletionQuiescenceHandler
   executionGraph: HistoryDeletionQuiescenceHandler
+  /** Quiesces relay rooms and purges or preserves the adjacent Channel log. */
+  channels: HistoryDeletionQuiescenceHandler
   /** Purges the correlated durable UsageJournalStore inner transaction. */
   usage: HistoryDeletionQuiescenceHandler
   /** Revokes frozen Project-reference owners and deletes bytes at zero refs. */
@@ -38,10 +40,11 @@ const QUIESCENCE_KIND_ORDER: Readonly<Record<HistoryDeletionQuiescenceKind, numb
   'maintenance-compaction': 1,
   canvas: 2,
   'execution-graph': 3,
-  usage: 4,
-  'project-reference': 5,
-  media: 6,
-  bridge: 7
+  channels: 4,
+  usage: 5,
+  'project-reference': 6,
+  media: 7,
+  bridge: 8
 }
 
 function compareTargets(
@@ -66,6 +69,8 @@ function handlerForTarget(
       return handlers.canvas
     case 'execution-graph':
       return handlers.executionGraph
+    case 'channels':
+      return handlers.channels
     case 'usage':
       return handlers.usage
     case 'project-reference':
@@ -107,6 +112,7 @@ export function requireReacquiredHistoryDeletionHolds(
   kinds: readonly HistoryDeletionQuiescenceKind[] = [
     'maintenance-compaction',
     'canvas',
+    'channels',
     'usage',
     'project-reference',
     'media',

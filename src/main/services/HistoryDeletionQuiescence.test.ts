@@ -35,6 +35,7 @@ function handlers(
     },
     canvas: complete,
     executionGraph: complete,
+    channels: complete,
     usage: complete,
     projectReference: complete,
     media: complete,
@@ -50,6 +51,7 @@ describe('quiescePreparedHistoryDeletion', () => {
         { id: 'maintenance-compaction:global', kind: 'maintenance-compaction' },
         { id: 'provider-run:run-a', kind: 'provider-run', runId: 'run-a', provider: 'codex' },
         { id: 'canvas:global', kind: 'canvas' },
+        { id: 'channels:global', kind: 'channels' },
         { id: 'usage:global', kind: 'usage' },
         { id: 'project-reference:global', kind: 'project-reference' },
         { id: 'media:global', kind: 'media' },
@@ -59,6 +61,7 @@ describe('quiescePreparedHistoryDeletion', () => {
         'maintenance-compaction:global',
         'provider-run:run-a',
         'canvas:global',
+        'channels:global',
         'usage:global',
         'project-reference:global',
         'media:global',
@@ -86,6 +89,7 @@ describe('quiescePreparedHistoryDeletion', () => {
         { id: 'maintenance-compaction:global', kind: 'maintenance-compaction' },
         { id: 'provider-run:run-b', kind: 'provider-run', runId: 'run-b', provider: 'kimi' },
         { id: 'execution-graph:global', kind: 'execution-graph' },
+        { id: 'channels:global', kind: 'channels' },
         { id: 'usage:global', kind: 'usage' },
         { id: 'canvas:global', kind: 'canvas' },
         { id: 'provider-run:run-a', kind: 'provider-run', runId: 'run-a', provider: 'codex' }
@@ -99,13 +103,14 @@ describe('quiescePreparedHistoryDeletion', () => {
       'maintenance-compaction:global',
       'canvas:global',
       'execution-graph:global',
+      'channels:global',
       'usage:global',
       'project-reference:global',
       'media:global',
       'bridge:global'
     ])
     expect(calls).toEqual(recorded.flatMap((id) => [`handle:${id}`, `record:${id}`]))
-    expect(targetHandlers.record).toHaveBeenCalledTimes(9)
+    expect(targetHandlers.record).toHaveBeenCalledTimes(10)
     expect(targetHandlers.record).toHaveBeenNthCalledWith(1, 'delete-1', ['provider-run:run-a'])
   })
 

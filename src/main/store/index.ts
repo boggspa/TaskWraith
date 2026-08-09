@@ -857,6 +857,7 @@ export type HistoryDeletionQuiescenceKind =
   | 'provider-run'
   | 'canvas'
   | 'execution-graph'
+  | 'channels'
   | 'usage'
   | 'project-reference'
   | 'media'
@@ -2810,6 +2811,7 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
     'provider-run',
     'canvas',
     'execution-graph',
+    'channels',
     'usage',
     'project-reference',
     'media',

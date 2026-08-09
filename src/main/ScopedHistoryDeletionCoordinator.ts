@@ -88,6 +88,13 @@ export interface ScopedHistoryDeletionCoordinatorDeps {
   revokeChatAuthority: (chatId: string) => void
   terminateProviderRun: (run: ScopedHistoryProviderRun) => Promise<void>
   clearExecutionGraph: (chatId: string) => Promise<void>
+  /** Starts the exact Channel scope fence synchronously and resolves after its
+   * relay/log/metadata policy is durable. Truncate resolves after proving the
+   * adjacent Channel was preserved. */
+  beginChannelsClear: (
+    kind: ScopedHistoryDeletionKind,
+    chatIds: readonly string[]
+  ) => void | Promise<unknown>
   clearTranscriptMedia: (chatIds: readonly string[], hold: unknown) => Promise<void>
   /** Loud, non-throwing diagnostic after a deletion committed but a hold release failed. */
   reportPostCommitReleaseError?: (error: AggregateError) => void
@@ -103,6 +110,7 @@ interface RetainedOperation {
   canvasHoldCounts: Map<string, number>
   canvasAttempts: Map<string, CanvasAttempt>
   ensembleAttempts: Map<string, CanvasAttempt>
+  channelsAttempt?: CanvasAttempt
   transcriptMediaHold?: { value: unknown }
   projectReferenceHold?: { value: unknown }
   maintenanceCompactionHold?: { value: unknown }
@@ -204,6 +212,7 @@ function targetsFor(
     )
   }
   targets.push(
+    { id: 'channels:chat-batch', kind: 'channels' },
     { id: 'usage:chat-batch', kind: 'usage' },
     { id: 'project-reference:chat-run-batch', kind: 'project-reference' },
     { id: 'media:chat-batch', kind: 'media' }
@@ -350,6 +359,26 @@ export class ScopedHistoryDeletionCoordinator {
       } catch (error) {
         return Promise.reject(error)
       }
+    }
+    if (!retained.channelsAttempt || retained.channelsAttempt.status === 'rejected') {
+      let promise: Promise<void>
+      try {
+        promise = Promise.resolve(this.deps.beginChannelsClear(kind, preparation.chatIds)).then(
+          () => undefined
+        )
+      } catch (error) {
+        promise = Promise.reject(error)
+      }
+      const channelsAttempt: CanvasAttempt = { promise, status: 'pending' }
+      retained.channelsAttempt = channelsAttempt
+      void promise.then(
+        () => {
+          channelsAttempt.status = 'fulfilled'
+        },
+        () => {
+          channelsAttempt.status = 'rejected'
+        }
+      )
     }
     const canvasTargetsByChat = new Map(
       preparation.quiescenceTargets
@@ -585,6 +614,20 @@ export class ScopedHistoryDeletionCoordinator {
         receipt(target)
       }
 
+      const channelsTargets = preparation.quiescenceTargets
+        .filter((target) => target.kind === 'channels')
+        .sort((left, right) => left.id.localeCompare(right.id))
+      if (channelsTargets.length !== 1 || !retained.channelsAttempt) {
+        throw new Error('Scoped Channels history deletion target was not fenced exactly once.')
+      }
+      // A durable receipt cannot recreate the process-local Channel admission
+      // fence after restart. Always await the freshly started idempotent pass,
+      // then write a receipt only when one is absent.
+      for (const target of channelsTargets) {
+        await retained.channelsAttempt.promise
+        if (!completed.has(target.id)) receipt(target)
+      }
+
       const usageTargets = preparation.quiescenceTargets
         .filter((target) => target.kind === 'usage')
         .sort((left, right) => left.id.localeCompare(right.id))
@@ -751,6 +794,7 @@ export class ScopedHistoryDeletionCoordinator {
     retained.canvasHoldCounts.clear()
     retained.canvasAttempts.clear()
     retained.ensembleAttempts.clear()
+    retained.channelsAttempt = undefined
     retained.reconcilingAfterDeadline = false
     return releaseErrors
   }

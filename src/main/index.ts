@@ -594,6 +594,11 @@ import {
 } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
+import {
+  createChannelProductionBootstrap,
+  createChannelProductionRelayPort
+} from './collaboration/ChannelProductionBootstrap'
+import { CHANNEL_IPC_CHANGED_EVENT } from '../shared/collaboration/ChannelIpc'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
 import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
 import {
@@ -47616,6 +47621,70 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
 
+    let channelProductionBootstrap: ReturnType<typeof createChannelProductionBootstrap> | null =
+      null
+    try {
+      const channelIdentityStore = new HumanCollaborationIdentityStore(
+        join(app.getPath('userData'), 'human-collaboration-identity.json'),
+        safeStorage,
+        (line) => console.warn(line)
+      )
+      channelProductionBootstrap = createChannelProductionBootstrap({
+        userDataPath: app.getPath('userData'),
+        loadIdentity: () => channelIdentityStore.load(),
+        relay: createChannelProductionRelayPort({
+          getEmbeddedRelayPort: () => embeddedRelayHandle?.port,
+          getAdvertisedRelayUrls: () => iosRemoteRuntime?.describeHost().relayUrls ?? []
+        }),
+        ipc: ipcMain,
+        getChat: (chatId) => {
+          const chat = AppStore.getChat(chatId)
+          if (!chat) return null
+          return historyClearAdmissionGate.isAuthorityBlocked({
+            chatId: chat.appChatId,
+            chatWorkspaceId: chat.workspaceId
+          })
+            ? null
+            : chat
+        },
+        isMainSender: isMainRendererSender,
+        getOwnedChatId: (senderId) => {
+          const owner = workspacePopoutOwnerForSender(senderId)
+          return owner?.kind === 'chat' ? owner.chatId : undefined
+        },
+        publishToMain: (event) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return
+          mainWindow.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)
+        },
+        publishToChat: (chatId, event) => {
+          const win = workspacePopoutWindows.get(`chat:${chatId}`)
+          if (!win || win.isDestroyed()) return
+          win.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)
+        },
+        logger: (line) => console.warn(line)
+      })
+      channelProductionBootstrap.start()
+    } catch (error) {
+      const failedBootstrap = channelProductionBootstrap
+      channelProductionBootstrap = null
+      void failedBootstrap?.stop().catch(() => undefined)
+      console.error('[channels] production bootstrap failed', error)
+    }
+
+    const purgeChannelsForHistoryPreparation = (
+      preparation: HistoryDeletionPreparation
+    ): Promise<unknown> => {
+      const service = channelProductionBootstrap?.service
+      if (!service || service.status().state !== 'running') {
+        throw new Error('Channels history authority is unavailable; history deletion stopped.')
+      }
+      return service.purgeForHistoryDeletionScope(
+        preparation.kind === 'global'
+          ? { kind: 'global' }
+          : { kind: preparation.kind, chatIds: preparation.chatIds }
+      )
+    }
+
     type BroadHistoryStrictAttempt = {
       promise: Promise<unknown>
       status: 'pending' | 'fulfilled' | 'rejected'
@@ -47644,6 +47713,7 @@ if (isGeminiMcpBridgeProcess) {
       canvasAuthority: CanvasHistoryAuthority | null
       canvasPurge: BroadHistoryStrictAttempt
       canvasHoldCount: number
+      channelsPurge: BroadHistoryStrictAttempt
       bridgePurge: BroadHistoryStrictAttempt | null
       bridgeHoldCount: number
       transcriptMediaHold: TranscriptMediaHistoryMutationHold
@@ -47786,6 +47856,11 @@ if (isGeminiMcpBridgeProcess) {
           ...(workspaceId ? { workspaceId } : {})
         },
         {
+          id: historyDeletionTargetId('channels', scopeIdentity),
+          kind: 'channels',
+          ...(workspaceId ? { workspaceId } : {})
+        },
+        {
           id: historyDeletionTargetId('usage', scopeIdentity),
           kind: 'usage',
           ...(workspaceId ? { workspaceId } : {})
@@ -47846,6 +47921,7 @@ if (isGeminiMcpBridgeProcess) {
         )
       }
       targets.push(
+        { id: 'channels:chat-batch', kind: 'channels' },
         { id: 'usage:chat-batch', kind: 'usage' },
         { id: 'project-reference:chat-run-batch', kind: 'project-reference' },
         { id: 'media:chat-batch', kind: 'media' }
@@ -48072,6 +48148,12 @@ if (isGeminiMcpBridgeProcess) {
                 'workspace-history-cleared'
               )
             }
+            // This call raises each target Channel's admission fence before it
+            // returns its first promise. Keep it last: no later synchronous
+            // acquisition may fail after destructive Channel work has begun.
+            const channelsPurge = trackBroadHistoryStrictAttempt(
+              purgeChannelsForHistoryPreparation(preparation)
+            )
             return {
               codexAdmissionHold,
               maintenanceCompactionHold,
@@ -48080,6 +48162,7 @@ if (isGeminiMcpBridgeProcess) {
               canvasAuthority,
               canvasPurge,
               canvasHoldCount,
+              channelsPurge,
               bridgePurge,
               bridgeHoldCount,
               transcriptMediaHold,
@@ -48188,6 +48271,11 @@ if (isGeminiMcpBridgeProcess) {
           }
         },
         refreshHolds: (_preparation, holds) => {
+          if (holds.channelsPurge.status === 'rejected') {
+            holds.channelsPurge = trackBroadHistoryStrictAttempt(
+              purgeChannelsForHistoryPreparation(_preparation)
+            )
+          }
           if (holds.hostCommandPurge.status === 'rejected') {
             holds.hostCommandPurge = trackBroadHistoryStrictAttempt(
               hostCommandOperations.beginCancellation(
@@ -48233,6 +48321,12 @@ if (isGeminiMcpBridgeProcess) {
           // but their process-local holds do not survive restart. `acquireHolds`
           // recreates those fences, so always await (and idempotently re-receipt)
           // the corresponding targets before commit.
+          const channelsTargets = preparation.quiescenceTargets.filter(
+            (target) => target.kind === 'channels'
+          )
+          if (channelsTargets.length !== 1) {
+            throw new Error('Broad Channels history deletion target was not frozen exactly once.')
+          }
           const usageTargets = preparation.quiescenceTargets.filter(
             (target) => target.kind === 'usage'
           )
@@ -48274,6 +48368,9 @@ if (isGeminiMcpBridgeProcess) {
             },
             executionGraph: async (target) => {
               await clearExecutionGraphForHistoryPreparation(preparation, target)
+            },
+            channels: async () => {
+              await holds.channelsPurge.promise
             },
             usage: async () => {
               await usageHistoryDeletionTarget.purgeStrict(preparation, holds.usageHistoryHold)
@@ -48920,6 +49017,9 @@ if (isGeminiMcpBridgeProcess) {
       grokSeatSessionRegistry.disposeAll()
       remoteGitSnapshotFeedRef?.dispose()
       iosRemoteRuntime?.dispose()
+      void channelProductionBootstrap?.stop().catch((error) => {
+        console.error('[channels] production shutdown failed', error)
+      })
       humanCollaborationHostTransport?.dispose()
       disposeHumanCollaborationIpcHandlers?.()
       void embeddedRelayHandle?.close()
@@ -50169,6 +50269,11 @@ if (isGeminiMcpBridgeProcess) {
     const reopenCollaborationRooms = (): void => {
       const hostRelay = collaborationHostRelayUrl()
       if (!hostRelay) return
+      try {
+        channelProductionBootstrap?.refreshRelayRooms()
+      } catch (error) {
+        console.warn('[channels] relay room refresh failed', error)
+      }
       const now = Date.now()
       // Re-open the host's mac-seat for:
       //  (a) invites a NEW collaborator can still consume (unconsumed + not
@@ -51251,6 +51356,13 @@ if (isGeminiMcpBridgeProcess) {
         }
       },
       clearExecutionGraph: deleteExecutionGraphForChat,
+      beginChannelsClear: (kind, chatIds) => {
+        const service = channelProductionBootstrap?.service
+        if (!service || service.status().state !== 'running') {
+          throw new Error('Channels history authority is unavailable; chat deletion stopped.')
+        }
+        return service.purgeForHistoryDeletionScope({ kind, chatIds })
+      },
       clearTranscriptMedia: async (chatIds, hold) => {
         const scopedHold = hold as ScopedMediaHistoryHold
         await getTranscriptMediaAssetStore().revokeChatOwnershipStrict(chatIds)
