@@ -71,12 +71,16 @@ opaque id you made up matches nothing at the hook while still reading as a held
 lease to `work-guard`. Check it in the shell you will actually commit from
 (`printenv TASKWRAITH_LOCK_OWNER_ID`): the brokered `run_shell_command` and
 `run_task` rebuild their environment and strip it. If it is absent, you have
-neither identity: say so and coordinate in the open rather than raising a marker
-that claims nothing. Do not fall back to one thread-wide marker: it
-claims far more than you are editing and collides with work done outside
-TaskWraith in the same checkout. With no pid, `expires` is your claim's only
-decay signal, so keep the lease short and renew it. Either field alone is
-enough; supply both if you have both.
+neither safe identity **as a TaskWraith seat**: say so and coordinate in the
+open rather than raising a marker that claims nothing. This seat-only exception
+does not apply to an external/interactive agent: when it has a stable,
+long-lived session-host PID, put it in `pid:` and omit `lockOwnerId:`. The hook
+recognises that claim when the PID is an ancestor of `git`; without one,
+coordinate instead. Do not fall back to one thread-wide marker: it claims far
+more than you are editing and collides with work done outside TaskWraith in the
+same checkout. With no pid, `expires` is your claim's only decay signal, so
+keep the lease short and renew it. Either field alone is enough; supply both if
+you have both.
 
 Verify yours parses rather than eyeballing it:
 
