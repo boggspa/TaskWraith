@@ -1,4 +1,8 @@
-import type { HostCommandName } from '../shared/hostProtocol'
+import {
+  createEmptyHostSnapshot,
+  type HostCommandName,
+  type HostSnapshot
+} from '../shared/hostProtocol'
 import type {
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
@@ -15,7 +19,8 @@ export type TuiConnectionState =
   | 'offline'
   | 'incompatible-protocol'
   | 'demo'
-export type TuiOverlay = 'none' | 'context' | 'threads' | 'help' | 'tune'
+export type TuiOverlay = 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune'
+export type TuiMissionFilter = 'active' | 'history' | 'all'
 
 export interface TuiNotice {
   text: string
@@ -48,12 +53,18 @@ export interface TaskWraithTuiState {
   connection: TuiConnectionState
   hostVersion?: string
   snapshot?: TaskWraithControlSnapshot
+  /** Coherent Host projection cache used by mission/history presentation. */
+  hostProjection?: HostSnapshot
   thread?: TaskWraithControlThreadSnapshot
   selectedThreadId?: string
   input: string
   inputCursor: number
   overlay: TuiOverlay
   overlayIndex: number
+  /** Mission lens filter. Missing on older injected fixtures means active. */
+  missionFilter?: TuiMissionFilter
+  /** First participant row shown in the selected mission cast. */
+  missionParticipantOffset?: number
   scrollOffset: number
   animationFrame: number
   notice?: TuiNotice
@@ -282,16 +293,98 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
       ensemble
     }
   }
+  const hostProjection = createEmptyHostSnapshot({
+    generation: 1,
+    cursor: 7,
+    freshness: 'live',
+    generatedAt: new Date(now).toISOString()
+  })
+  hostProjection.workspaces = snapshot.workspaces.map((workspace) => ({ ...workspace }))
+  hostProjection.providers = [claude, codex, grok, kimi].map((provider) => ({
+    providerId: provider.runtimeProvider,
+    displayProvider: provider.displayProvider,
+    shortCode: provider.shortCode,
+    hueKey: provider.hueKey,
+    available: true
+  }))
+  hostProjection.threads = [
+    {
+      id: thread.id,
+      workspaceId: thread.workspaceId,
+      title: thread.title,
+      chatKind: thread.chatKind,
+      archived: thread.archived,
+      pinned: thread.pinned,
+      updatedAt: thread.updatedAt,
+      messageCount: thread.messageCount,
+      latestPreview: rows.at(-1)?.text,
+      providerId: 'claude',
+      missionOutcome: 'active',
+      activeRoundId: 'demo-round'
+    }
+  ]
+  hostProjection.missions = [
+    {
+      missionId: 'demo-mission',
+      threadId: thread.id,
+      title: 'Complete the TaskWraith TUI',
+      status: 'active',
+      goalId: 'demo-goal',
+      updatedAt: now,
+      activeRoundId: 'demo-round'
+    },
+    {
+      missionId: 'demo-history',
+      threadId: thread.id,
+      title: 'Prove Host protocol foundations',
+      status: 'completed',
+      updatedAt: now - 86_400_000
+    }
+  ]
+  hostProjection.rounds = [
+    {
+      roundId: 'demo-round',
+      threadId: thread.id,
+      status: 'running',
+      startedAt,
+      routing: {
+        mode: ensemble.mode,
+        fanout: ensemble.fanout,
+        activeParticipantId: 'lead',
+        continuationHops: ensemble.continuationHops,
+        maxContinuationHops: ensemble.maxContinuationHops,
+        bossParticipantId: 'lead'
+      },
+      participantIds: ensemble.participants.map((participant) => participant.id),
+      providerRunIds: []
+    }
+  ]
+  hostProjection.participants = ensemble.participants.map((participant) => ({
+    id: participant.id,
+    threadId: thread.id,
+    providerId: participant.provider,
+    role: participant.role,
+    ...(participant.model ? { modelId: participant.model } : {}),
+    stage: participant.stage,
+    order: participant.order,
+    enabled: participant.enabled,
+    status: participant.status,
+    active: participant.active
+  }))
+  hostProjection.routing = hostProjection.rounds[0]?.routing
   return {
     connection: 'demo',
     hostVersion: '1.8.9',
     snapshot,
+    hostProjection,
     thread: threadSnapshot,
     selectedThreadId: thread.id,
     input: '',
     inputCursor: 0,
     overlay: 'none',
     overlayIndex: 0,
+    missionFilter: 'active',
+    missionParticipantOffset: 0,
     scrollOffset: 0,
     animationFrame: 0,
     tuneEffortIndex: 0

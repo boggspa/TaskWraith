@@ -621,6 +621,178 @@ function renderThreadsOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
+function missionRunStatus(status: string): TuiRunStatus {
+  if (status === 'active') return 'working'
+  if (status === 'blocked') return 'needs-input'
+  if (status === 'completed') return 'done'
+  if (status === 'failed') return 'failed'
+  if (status === 'cancelled') return 'skipped'
+  return 'idle'
+}
+
+function renderMissionsOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const projection = state.hostProjection
+  const filter = state.missionFilter ?? 'active'
+  const filterLabel = filter === 'active' ? 'Active' : filter === 'history' ? 'History' : 'All'
+  const lines = [borderTitle(`Missions · ${filterLabel}`, width, ansi, glyphs)]
+  if (!projection) {
+    lines.push(
+      borderedLine(ansi.dim('No coherent Host projection is available.'), width, ansi, glyphs)
+    )
+  } else {
+    lines.push(
+      overlayValue(
+        'projection',
+        `${projection.freshness.toUpperCase()} · generation ${projection.generation} · cursor ${projection.cursor}`,
+        width,
+        ansi,
+        glyphs,
+        projection.freshness === 'live' ? TUI_TONE.good : TUI_TONE.warning
+      )
+    )
+    const missions = [...projection.missions]
+      .filter((mission) => {
+        const active = mission.status === 'active' || mission.status === 'blocked'
+        if (filter === 'active') return active
+        if (filter === 'history') return !active
+        return true
+      })
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+    if (!missions.length) {
+      lines.push(
+        borderedLine(
+          ansi.dim(filter === 'active' ? 'No active missions.' : 'No historical missions.'),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    } else {
+      const safeIndex = Math.max(0, Math.min(state.overlayIndex, missions.length - 1))
+      const listCapacity = Math.max(1, Math.min(5, Math.floor((height - 7) / 2)))
+      const windowStart = Math.max(0, safeIndex - Math.floor(listCapacity / 2))
+      for (
+        let index = windowStart;
+        index < Math.min(missions.length, windowStart + listCapacity);
+        index += 1
+      ) {
+        const mission = missions[index]
+        const selected = index === safeIndex
+        const marker = tuiStatusGlyph(missionRunStatus(mission.status), glyphs)
+        const title = truncateAnsi(terminalLabel(mission.title), Math.max(8, width - 31))
+        const row = `${selected ? glyphs.selection : ' '} ${marker} ${title} ${ansi.dim(
+          terminalLabel(mission.status)
+        )}`
+        lines.push(borderedLine(selected ? ansi.inverse(row) : row, width, ansi, glyphs))
+      }
+
+      const selected = missions[safeIndex]
+      const activeRound = selected.activeRoundId
+        ? projection.rounds.find((round) => round.roundId === selected.activeRoundId)
+        : [...projection.rounds]
+            .filter((round) => round.threadId === selected.threadId)
+            .sort((left, right) => (right.startedAt ?? 0) - (left.startedAt ?? 0))[0]
+      lines.push(
+        overlayValue(
+          'selected',
+          `${terminalLabel(selected.missionId)} · ${terminalLabel(selected.status)}`,
+          width,
+          ansi,
+          glyphs
+        )
+      )
+      if (activeRound) {
+        lines.push(
+          overlayValue(
+            'round',
+            `${terminalLabel(activeRound.roundId)} · ${terminalLabel(activeRound.status)}`,
+            width,
+            ansi,
+            glyphs
+          )
+        )
+        const routing = activeRound.routing ?? projection.routing
+        if (routing) {
+          lines.push(
+            overlayValue(
+              'routing',
+              `${terminalLabel(routing.mode)} · fan-out ${terminalLabel(routing.fanout)}${
+                routing.continuationHops !== undefined && routing.maxContinuationHops !== undefined
+                  ? ` · ${routing.continuationHops}/${routing.maxContinuationHops}`
+                  : ''
+              }`,
+              width,
+              ansi,
+              glyphs,
+              TUI_TONE.ensemble
+            )
+          )
+        }
+        const providerOutcomes = activeRound.providerRunIds
+          .map((runId) => projection.runs.find((run) => run.runId === runId))
+          .filter((run): run is (typeof projection.runs)[number] => Boolean(run))
+          .map((run) => `${run.providerId}:${run.providerOutcome}`)
+        if (providerOutcomes.length) {
+          lines.push(
+            overlayValue(
+              'providers',
+              providerOutcomes.join(` ${glyphs.separator} `),
+              width,
+              ansi,
+              glyphs
+            )
+          )
+        }
+      }
+      const participants = projection.participants
+        .filter((participant) => participant.threadId === selected.threadId)
+        .sort((left, right) => left.order - right.order)
+      const castCapacity = Math.max(0, height - 2 - lines.length)
+      const maxOffset = Math.max(0, participants.length - castCapacity)
+      const castOffset = Math.min(Math.max(0, state.missionParticipantOffset ?? 0), maxOffset)
+      const visibleParticipants = participants.slice(castOffset, castOffset + castCapacity)
+      visibleParticipants.forEach((participant, index) => {
+        const provider = projection.providers.find(
+          (candidate) => candidate.providerId === participant.providerId
+        )
+        const marker = participant.enabled
+          ? tuiStatusGlyph(participant.active ? 'working' : 'idle', glyphs)
+          : glyphs.seatDisabled
+        lines.push(
+          overlayValue(
+            index ? '' : 'cast',
+            `${marker} ${terminalLabel(provider?.shortCode ?? participant.providerId)} · ${terminalLabel(
+              participant.role
+            )} · ${terminalLabel(participant.status ?? 'idle')}${
+              participants.length > visibleParticipants.length
+                ? ` · ${castOffset + index + 1}/${participants.length}`
+                : ''
+            }`,
+            width,
+            ansi,
+            glyphs,
+            participant.active ? TUI_TONE.ensemble : undefined
+          )
+        )
+      })
+    }
+  }
+  const footer = borderedLine(
+    ansi.dim('↑↓ mission · PgUp/PgDn cast · ←→/Tab filter · Enter thread · Esc close'),
+    width,
+    ansi,
+    glyphs
+  )
+  const bottom = borderBottom(width, ansi, glyphs)
+  return [...lines.slice(0, Math.max(1, height - 2)), footer, bottom].slice(0, Math.max(1, height))
+}
+
 function renderHelpOverlay(
   width: number,
   height: number,
@@ -631,6 +803,7 @@ function renderHelpOverlay(
     borderTitle('Commands', width, ansi, glyphs),
     overlayValue('Ctrl+O', 'context lens', width, ansi, glyphs),
     overlayValue('Ctrl+K', 'thread picker', width, ansi, glyphs),
+    overlayValue('Ctrl+R', 'live and historical missions', width, ansi, glyphs),
     overlayValue('Ctrl+G', 'tune lens — model/reasoning or seats', width, ansi, glyphs),
     overlayValue('Ctrl+P', 'commands', width, ansi, glyphs),
     overlayValue('PgUp/PgDn', 'scroll transcript', width, ansi, glyphs),
@@ -638,6 +811,8 @@ function renderHelpOverlay(
     overlayValue('Ctrl+C', 'clear input, then quit', width, ansi, glyphs),
     overlayValue('/model', 'stage a model/reasoning switch (solo)', width, ansi, glyphs),
     overlayValue('/seats', 'enable or disable ensemble seats', width, ansi, glyphs),
+    overlayValue('/missions', 'open active mission control', width, ansi, glyphs),
+    overlayValue('/history', 'open completed mission history', width, ansi, glyphs),
     overlayValue('/cancel', 'request cancellation of the active run', width, ansi, glyphs),
     overlayValue('/quit', 'leave the sidecar; the host keeps running', width, ansi, glyphs),
     borderedLine(
@@ -789,6 +964,9 @@ function renderOverlay(
   }
   if (state.overlay === 'threads') {
     return renderThreadsOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'missions') {
+    return renderMissionsOverlay(state, width, height, ansi, glyphs)
   }
   if (state.overlay === 'tune') {
     return renderTuneOverlay(state, width, height, ansi, glyphs)

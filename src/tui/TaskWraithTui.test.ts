@@ -14,6 +14,10 @@ import {
   type HostBootstrapWelcome,
   type HostCommand,
   type HostCommandReceipt,
+  type HostDeltaEnvelope,
+  type HostDeltaFamily,
+  type HostDeltaKind,
+  type HostDeltasSinceResult,
   type HostSnapshot
 } from '../shared/hostProtocol'
 import {
@@ -105,6 +109,8 @@ class FakeHostV2 {
   private readonly receipts = new Map<string, HostCommandReceipt>()
   private readonly approvals = new Map<string, HostApprovalProjection>()
   private cursor = 9
+  private eventSequence = 0
+  snapshotRequests = 0
 
   constructor(userDataPath: string, handlers: FakeHostHandlers) {
     this.userDataPath = userDataPath
@@ -150,6 +156,57 @@ class FakeHostV2 {
     for (const socket of this.sockets) socket.destroy()
   }
 
+  pushDeltas(
+    changes: ReadonlyArray<{
+      family: HostDeltaFamily
+      kind?: HostDeltaKind
+      entityId?: string
+      payload?: unknown
+    }>
+  ): void {
+    const fromCursor = this.cursor
+    const deltas: HostDeltaEnvelope[] = changes.map((change) => {
+      const previousCursor = this.cursor
+      this.cursor += 1
+      return {
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        projectionVersion: HOST_PROJECTION_VERSION,
+        generation: 3,
+        previousCursor,
+        cursor: this.cursor,
+        kind: change.kind ?? 'upsert',
+        family: change.family,
+        ...(change.entityId ? { entityId: change.entityId } : {}),
+        ...(change.payload !== undefined ? { payload: change.payload } : {}),
+        at: new Date().toISOString()
+      }
+    })
+    this.pushDeltaResult({
+      kind: 'deltas',
+      generation: 3,
+      fromCursor,
+      toCursor: this.cursor,
+      deltas
+    })
+  }
+
+  pushDeltaResult(result: HostDeltasSinceResult): void {
+    this.eventSequence += 1
+    for (const socket of this.sockets) {
+      this.write(socket, {
+        type: 'event',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        sequence: this.eventSequence,
+        event: 'deltas',
+        payload: {
+          type: 'host.deltas',
+          protocolVersion: HOST_PROTOCOL_VERSION,
+          result
+        }
+      })
+    }
+  }
+
   private accept(socket: Socket): void {
     this.sockets.add(socket)
     socket.setEncoding('utf8')
@@ -190,7 +247,7 @@ class FakeHostV2 {
           clientClass: 'tui',
           clientVersion: '0.1.0-test'
         },
-        capabilities: ['bootstrap', 'snapshot', 'health', 'commands', 'receipts'],
+        capabilities: ['bootstrap', 'snapshot', 'deltas', 'health', 'commands', 'receipts'],
         freshness: 'live'
       }
       this.write(socket, {
@@ -204,6 +261,7 @@ class FakeHostV2 {
     const id = String(message.id)
     const kind = String(message.kind)
     if (kind === 'snapshot.get') {
+      this.snapshotRequests += 1
       const base = this.handlers.snapshot()
       const snapshot: HostSnapshot = {
         ...base,
@@ -431,13 +489,14 @@ async function setupHost(
   return { host, userDataPath }
 }
 
-function startTui(userDataPath: string) {
+function startTui(userDataPath: string, options: { projectionRefreshMs?: number } = {}) {
   const { input, output } = makeTty()
   const tui = new TaskWraithTui({
     clientVersion: '0.1.0-test',
     userDataPath,
     colorMode: 'none',
     animationEnabled: false,
+    ...options,
     input: input as unknown as ReadStream,
     output: output as unknown as WriteStream
   })
@@ -446,6 +505,141 @@ function startTui(userDataPath: string) {
 }
 
 describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
+  it('applies ordered Host deltas atomically and exposes active/history mission control', async () => {
+    const activeMission = {
+      missionId: 'mission-live',
+      threadId: 'thread-1',
+      title: 'Original mission title',
+      status: 'active' as const,
+      updatedAt: 10,
+      activeRoundId: 'round-live'
+    }
+    const historyMission = {
+      missionId: 'mission-history',
+      threadId: 'thread-1',
+      title: 'Historical proof',
+      status: 'completed' as const,
+      updatedAt: 5
+    }
+    const snapshot = makeHostSnapshot({
+      missions: [activeMission, historyMission],
+      rounds: [
+        {
+          roundId: 'round-live',
+          threadId: 'thread-1',
+          status: 'running',
+          routing: { mode: 'continuous', fanout: 'read_only' },
+          participantIds: ['lead'],
+          providerRunIds: []
+        }
+      ],
+      participants: [
+        {
+          id: 'lead',
+          threadId: 'thread-1',
+          providerId: 'claude',
+          role: 'Lead',
+          order: 1,
+          enabled: true,
+          status: 'running',
+          active: true
+        }
+      ]
+    })
+    const { host, userDataPath } = await setupHost(snapshot)
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial snapshot')
+    const snapshotsBeforeDelta = host.snapshotRequests
+
+    const updatedMission = {
+      ...activeMission,
+      title: 'Delta mission title',
+      status: 'blocked' as const,
+      updatedAt: 20
+    }
+    const updatedThread = {
+      ...snapshot.threads[0],
+      latestPreview: 'Delta-updated thread preview',
+      missionOutcome: 'blocked' as const,
+      activeRoundId: 'round-live',
+      updatedAt: 20
+    }
+    host.pushDeltas([
+      { family: 'mission', entityId: activeMission.missionId, payload: updatedMission },
+      { family: 'thread', entityId: 'thread-1', payload: updatedThread }
+    ])
+    feed(input, '\u0012')
+    await waitFor(() => output.lastFrame.includes('Delta mission title'), 'mission delta rendered')
+    expect(output.lastFrame).toContain('Missions · Active')
+    expect(output.lastFrame).toContain('round-live · running')
+    expect(output.lastFrame).toContain('continuous · fan-out read_only')
+    expect(output.lastFrame).toContain('CLD · Lead · running')
+    expect(host.snapshotRequests).toBe(snapshotsBeforeDelta)
+
+    feed(input, '\u001b[C')
+    await waitFor(() => output.lastFrame.includes('Missions · History'), 'history filter')
+    expect(output.lastFrame).toContain('Historical proof')
+    expect(output.lastFrame).not.toContain('Delta mission title')
+  })
+
+  it('falls back to one full snapshot when a pushed delta batch breaks the cursor fence', async () => {
+    let current = makeHostSnapshot()
+    const { host, userDataPath } = await setupHost(current)
+    const { tui, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial snapshot')
+    const before = host.snapshotRequests
+    current = makeHostSnapshot({
+      threads: [
+        {
+          ...current.threads[0],
+          title: 'Recovered thread',
+          latestPreview: 'Recovered by full snapshot',
+          updatedAt: 99
+        }
+      ]
+    })
+    host.handlers.snapshot = () => current
+    host.pushDeltaResult({
+      kind: 'deltas',
+      generation: 3,
+      fromCursor: 999,
+      toCursor: 999,
+      deltas: []
+    })
+
+    await waitFor(
+      () => output.lastFrame.includes('Recovered by full snapshot'),
+      'cursor mismatch resnapshot'
+    )
+    expect(host.snapshotRequests).toBe(before + 1)
+  })
+
+  it('periodically reconciles non-journalled Host shadows without losing the selected thread', async () => {
+    let current = makeHostSnapshot()
+    const { host, userDataPath } = await setupHost(current)
+    host.handlers.snapshot = () => current
+    const { tui, output } = startTui(userDataPath, { projectionRefreshMs: 25 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'initial snapshot')
+    current = makeHostSnapshot({
+      threads: [
+        {
+          ...current.threads[0],
+          latestPreview: 'Periodic projection reconciliation',
+          updatedAt: 100
+        }
+      ]
+    })
+    await waitFor(
+      () => output.lastFrame.includes('Periodic projection reconciliation'),
+      'periodic full snapshot',
+      2_000
+    )
+    expect(host.snapshotRequests).toBeGreaterThanOrEqual(3)
+  })
+
   it('connects, auto-selects via thread.select, and accepts composer.send when Host allows', async () => {
     const { host, userDataPath } = await setupHost()
     const { tui, input, output } = startTui(userDataPath)

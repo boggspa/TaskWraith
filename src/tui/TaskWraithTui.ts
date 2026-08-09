@@ -6,6 +6,7 @@ import {
   HostProjectionIncompatibleProtocolError
 } from '../main/host/HostProjectionClient'
 import {
+  type HostDeltasFrame,
   type HostActorIdentity,
   type HostApprovalDecideDecision,
   type HostCommand,
@@ -13,6 +14,7 @@ import {
   type HostCommandReceipt,
   type HostSnapshot
 } from '../shared/hostProtocol'
+import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
 import { defaultTaskWraithUserDataPath } from '../shared/taskWraithControlPaths.node'
 import type {
   TaskWraithControlModelOffer,
@@ -66,11 +68,14 @@ export interface TaskWraithTuiOptions {
   input?: ReadStream
   output?: WriteStream
   now?: () => number
+  /** Periodic full reconciliation for Host families not journalled yet. */
+  projectionRefreshMs?: number
 }
 
 const RECONNECT_DELAY_MS = 1_800
 const ANIMATION_INTERVAL_MS = 120
 const TRANSCRIPT_PAGE_ROWS = 8
+const HOST_FULL_REFRESH_MS = 5_000
 
 function emptyState(): TaskWraithTuiState {
   return {
@@ -79,6 +84,8 @@ function emptyState(): TaskWraithTuiState {
     inputCursor: 0,
     overlay: 'none',
     overlayIndex: 0,
+    missionFilter: 'active',
+    missionParticipantOffset: 0,
     scrollOffset: 0,
     animationFrame: 0,
     tuneEffortIndex: 0
@@ -144,6 +151,7 @@ export class TaskWraithTui {
   private stopped = false
   private terminalActive = false
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private projectionRefreshTimer: ReturnType<typeof setTimeout> | null = null
   private animationTimer: ReturnType<typeof setInterval> | null = null
   private demoReplyTimer: ReturnType<typeof setTimeout> | null = null
   private selectingThread = false
@@ -152,6 +160,8 @@ export class TaskWraithTui {
   private bracketedPaste = false
   private bracketedPasteBuffer = ''
   private lastError = ''
+  /** Serialises full snapshots and push deltas into one atomic apply lane. */
+  private projectionQueue: Promise<void> = Promise.resolve()
   /** Last live HostSnapshot — authority for local thread detail + approvals. */
   private hostSnapshot: HostSnapshot | null = null
   /** Whether a `welcome` has ever been received. Distinguishes a first-time
@@ -180,8 +190,8 @@ export class TaskWraithTui {
             clientVersion: options.clientVersion,
             displayName: 'TaskWraith TUI'
           },
-          // Wave 4.2b: same client gains commands + receipts (no parallel v1 socket).
-          capabilities: ['bootstrap', 'snapshot', 'health', 'commands', 'receipts'],
+          // One authenticated v2 socket owns snapshots, live deltas and commands.
+          capabilities: ['bootstrap', 'snapshot', 'deltas', 'health', 'commands', 'receipts'],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
   }
@@ -211,6 +221,7 @@ export class TaskWraithTui {
     }
     if (this.client) {
       this.bindClient()
+      this.scheduleProjectionRefresh()
       await this.connect().catch(() => {})
     }
   }
@@ -219,9 +230,11 @@ export class TaskWraithTui {
     if (this.stopped) return
     this.stopped = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    if (this.projectionRefreshTimer) clearTimeout(this.projectionRefreshTimer)
     if (this.animationTimer) clearInterval(this.animationTimer)
     if (this.demoReplyTimer) clearTimeout(this.demoReplyTimer)
     this.reconnectTimer = null
+    this.projectionRefreshTimer = null
     this.animationTimer = null
     this.demoReplyTimer = null
     this.client?.close()
@@ -283,13 +296,18 @@ export class TaskWraithTui {
       this.setNotice('Connected to TaskWraith Host', 'good', 1_500)
       this.render()
     })
-    // Wave 4.2a: no delta streaming / push snapshot events — one getSnapshot after connect.
+    this.client.on('deltas', (frame) => {
+      void this.enqueueProjectionUpdate(() => this.applyHostDeltas(frame)).catch((error) => {
+        this.surfaceProjectionSyncError(error)
+      })
+    })
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
       // The host was reachable before, so this is a drop-and-retry rather
       // than "the App was never found" — distinct terminal states.
       this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
       this.lastError = error?.message ?? 'TaskWraith Host disconnected.'
+      this.markHostProjectionStale()
       this.setNotice(
         this.everConnected
           ? 'TaskWraith Host disconnected · reconnecting'
@@ -303,9 +321,43 @@ export class TaskWraithTui {
 
   private applyHostSnapshot(snapshot: HostSnapshot): TaskWraithControlSnapshot {
     this.hostSnapshot = snapshot
+    this.state.hostProjection = snapshot
     const mapped = mapHostSnapshotToControlSnapshot(snapshot)
     this.state.snapshot = mapped
+    const selectedThreadId = this.state.selectedThreadId
+    if (selectedThreadId) {
+      const detail = mapHostSnapshotToThreadDetail(snapshot, selectedThreadId)
+      this.state.thread = detail?.thread
+    }
     return mapped
+  }
+
+  private async applyHostDeltas(frame: HostDeltasFrame): Promise<void> {
+    const base = this.hostSnapshot
+    const result = frame.result
+    if (
+      !base ||
+      result.kind === 'full_resnapshot_required' ||
+      result.generation !== base.generation ||
+      result.fromCursor !== base.cursor
+    ) {
+      await this.fetchAndApplyHostSnapshot()
+      this.render()
+      return
+    }
+
+    const applied = applyHostSnapshotDeltas(base, result.deltas)
+    if (
+      applied.outcome === 'rejected' ||
+      applied.outcome === 'require_resnapshot' ||
+      applied.cursor !== result.toCursor
+    ) {
+      await this.fetchAndApplyHostSnapshot()
+      this.render()
+      return
+    }
+    this.applyHostSnapshot(applied.snapshot)
+    this.render()
   }
 
   private async connect(): Promise<void> {
@@ -315,8 +367,9 @@ export class TaskWraithTui {
     try {
       const welcome = await this.client.connect()
       this.state.hostVersion = welcome.hostVersion
-      const frame = await this.client.getSnapshot()
-      const mapped = this.applyHostSnapshot(frame.snapshot)
+      await this.refreshHostSnapshot()
+      const mapped = this.state.snapshot
+      if (!mapped) throw new Error('TaskWraith Host snapshot was not available after connect.')
       this.state.connection = 'connected'
       this.everConnected = true
       const threadId = preferredThread(
@@ -363,6 +416,25 @@ export class TaskWraithTui {
       this.reconnectTimer = null
       void this.connect()
     }, RECONNECT_DELAY_MS)
+  }
+
+  private scheduleProjectionRefresh(): void {
+    if (this.stopped || !this.client || this.projectionRefreshTimer) return
+    const configured = this.options.projectionRefreshMs
+    const delay =
+      typeof configured === 'number' && Number.isFinite(configured) && configured > 0
+        ? Math.floor(configured)
+        : HOST_FULL_REFRESH_MS
+    this.projectionRefreshTimer = setTimeout(() => {
+      this.projectionRefreshTimer = null
+      const refresh = this.client?.connected
+        ? this.refreshHostSnapshot()
+            .then(() => this.render())
+            .catch((error) => this.surfaceProjectionSyncError(error))
+        : Promise.resolve()
+      void refresh.finally(() => this.scheduleProjectionRefresh())
+    }, delay)
+    this.projectionRefreshTimer.unref?.()
   }
 
   private async openThread(threadId: string): Promise<void> {
@@ -504,6 +576,10 @@ export class TaskWraithTui {
       this.toggleOverlay('threads')
       return
     }
+    if (key.ctrl && key.name === 'r') {
+      this.toggleMissionOverlay()
+      return
+    }
     if (key.ctrl && key.name === 'p') {
       this.toggleOverlay('help')
       return
@@ -519,6 +595,10 @@ export class TaskWraithTui {
     }
     if (this.state.overlay === 'threads') {
       this.handleThreadPickerKey(key)
+      return
+    }
+    if (this.state.overlay === 'missions') {
+      this.handleMissionKey(key)
       return
     }
     if (this.state.overlay === 'tune') {
@@ -633,6 +713,70 @@ export class TaskWraithTui {
       return
     } else {
       return
+    }
+    this.render()
+  }
+
+  private visibleMissions() {
+    const filter = this.state.missionFilter ?? 'active'
+    return [...(this.state.hostProjection?.missions ?? [])]
+      .filter((mission) => {
+        const active = mission.status === 'active' || mission.status === 'blocked'
+        if (filter === 'active') return active
+        if (filter === 'history') return !active
+        return true
+      })
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+  }
+
+  private toggleMissionOverlay(filter = this.state.missionFilter ?? 'active'): void {
+    if (this.state.overlay === 'missions' && filter === this.state.missionFilter) {
+      this.state.overlay = 'none'
+    } else {
+      this.state.overlay = 'missions'
+      this.state.missionFilter = filter
+      this.state.overlayIndex = 0
+      this.state.missionParticipantOffset = 0
+    }
+    this.render()
+  }
+
+  private handleMissionKey(key: Keypress): void {
+    const filters = ['active', 'history', 'all'] as const
+    if (key.name === 'left' || key.name === 'right' || key.name === 'tab') {
+      const current = Math.max(0, filters.indexOf(this.state.missionFilter ?? 'active'))
+      const delta = key.name === 'left' ? -1 : 1
+      this.state.missionFilter = filters[(current + delta + filters.length) % filters.length]
+      this.state.overlayIndex = 0
+      this.state.missionParticipantOffset = 0
+    } else {
+      const missions = this.visibleMissions()
+      if (key.name === 'up') {
+        this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+        this.state.missionParticipantOffset = 0
+      } else if (key.name === 'down') {
+        this.state.overlayIndex = Math.min(
+          Math.max(0, missions.length - 1),
+          this.state.overlayIndex + 1
+        )
+        this.state.missionParticipantOffset = 0
+      } else if (key.name === 'pageup') {
+        this.state.missionParticipantOffset = Math.max(
+          0,
+          (this.state.missionParticipantOffset ?? 0) - TRANSCRIPT_PAGE_ROWS
+        )
+      } else if (key.name === 'pagedown') {
+        this.state.missionParticipantOffset = Math.min(
+          Math.max(0, (this.state.hostProjection?.participants.length ?? 1) - 1),
+          (this.state.missionParticipantOffset ?? 0) + TRANSCRIPT_PAGE_ROWS
+        )
+      } else if (key.name === 'return' || key.name === 'enter') {
+        const mission = missions[this.state.overlayIndex]
+        if (mission?.threadId) void this.openThread(mission.threadId)
+        return
+      } else {
+        return
+      }
     }
     this.render()
   }
@@ -896,6 +1040,14 @@ export class TaskWraithTui {
       this.toggleOverlay('threads')
       return
     }
+    if (command === '/missions') {
+      this.toggleMissionOverlay('active')
+      return
+    }
+    if (command === '/history') {
+      this.toggleMissionOverlay('history')
+      return
+    }
     if (command === '/help') {
       this.toggleOverlay('help')
       return
@@ -978,8 +1130,42 @@ export class TaskWraithTui {
 
   private async refreshHostSnapshot(): Promise<void> {
     if (!this.client?.connected) return
+    await this.enqueueProjectionUpdate(() => this.fetchAndApplyHostSnapshot())
+  }
+
+  private async fetchAndApplyHostSnapshot(): Promise<void> {
+    if (!this.client?.connected) return
     const frame = await this.client.getSnapshot()
     this.applyHostSnapshot(frame.snapshot)
+  }
+
+  private enqueueProjectionUpdate(operation: () => Promise<void>): Promise<void> {
+    const run = this.projectionQueue.then(operation, operation)
+    this.projectionQueue = run.catch(() => undefined)
+    return run
+  }
+
+  private markHostProjectionStale(): void {
+    const snapshot = this.hostSnapshot
+    if (!snapshot) return
+    const stale: HostSnapshot = {
+      ...snapshot,
+      freshness: 'stale',
+      health: { ...snapshot.health, freshness: 'stale' }
+    }
+    this.hostSnapshot = stale
+    this.state.hostProjection = stale
+  }
+
+  private surfaceProjectionSyncError(error: unknown): void {
+    if (this.stopped) return
+    this.markHostProjectionStale()
+    this.setNotice(
+      `Host projection refresh failed · ${error instanceof Error ? error.message : String(error)}`,
+      'warning',
+      3_000
+    )
+    this.render()
   }
 
   /**

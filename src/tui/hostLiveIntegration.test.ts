@@ -61,6 +61,14 @@ function externalBridge(): HostProductionBootstrapOptions['bridge'] {
   } as unknown as HostProductionBootstrapOptions['bridge']
 }
 
+function externalContextSources(): HostProductionBootstrapOptions['contextSources'] {
+  return {
+    getChat: () => null,
+    getApproval: () => null,
+    getQuestion: () => null
+  }
+}
+
 /** NOTE THE ABSENCES. `createComposition` and `createServer` are deliberately
  *  NOT provided — the production defaults run. This is the exact discipline
  *  from Wave 4.4. */
@@ -69,6 +77,7 @@ function productionOptions(userDataPath: string): HostProductionBootstrapOptions
     userDataPath,
     chatList: externalChatList(),
     bridge: externalBridge(),
+    contextSources: externalContextSources(),
     host: { hostId: HOST_ID, hostVersion: HOST_VERSION }
   }
 }

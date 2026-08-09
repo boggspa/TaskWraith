@@ -6,7 +6,7 @@ import { createTaskWraithTuiDemoState } from './state'
 function renderedLines(
   width: number,
   height: number,
-  overlay: 'none' | 'context' | 'threads' | 'help' | 'tune' = 'none'
+  overlay: 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' = 'none'
 ): string[] {
   const now = Date.UTC(2026, 6, 27, 4, 55, 37)
   const state = createTaskWraithTuiDemoState(now)
@@ -50,6 +50,35 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('Claude · Lead · Opus 4.8 1M')
     expect(output).toContain('Kimi · Review · K3 · BG')
     expect(output).toContain('Esc close · Ctrl+O toggle')
+  })
+
+  it('renders live and historical Host missions with distinct round, routing, and seat state', () => {
+    const activeLines = renderedLines(80, 24, 'missions')
+    expect(activeLines).toHaveLength(24)
+    expect(activeLines.every((line) => visibleWidth(line) === 80)).toBe(true)
+    const active = activeLines.join('\n')
+    expect(active).toContain('Missions · Active')
+    expect(active).toContain('LIVE · generation 1 · cursor 7')
+    expect(active).toContain('Complete the TaskWraith TUI')
+    expect(active).toContain('demo-round · running')
+    expect(active).toContain('continuous · fan-out off · 0/32')
+    expect(active).toContain('CLA · Lead · running')
+    expect(active).not.toContain('Prove Host protocol foundations')
+
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
+    state.overlay = 'missions'
+    state.missionFilter = 'history'
+    const historical = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 120,
+        height: 30,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+    expect(historical).toContain('Missions · History')
+    expect(historical).toContain('Prove Host protocol foundations')
+    expect(historical).not.toContain('Complete the TaskWraith TUI')
   })
 
   it('renders the seat lens for ensembles and the model lens for solo threads', () => {
@@ -228,6 +257,7 @@ describe('TaskWraith TUI renderer', () => {
     state.thread.rows[0].speaker = 'You\u001b[2J'
     state.thread.rows[2].tools![0].name = 'Read\u009b2J'
     state.snapshot.workspaces[0].name = 'AGBench\u001b[?25h'
+    state.hostProjection!.missions[0].title = 'Mission\u001b[2J'
     state.notice = { text: 'Saved\u001b[H', tone: 'good' }
 
     const output = renderTaskWraithTui(state, {
@@ -244,5 +274,15 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).not.toContain('\u009b')
     expect(stripAnsi(output)).toContain('You[2J')
     expect(stripAnsi(output)).toContain('Read2J')
+    state.overlay = 'missions'
+    const missionOutput = renderTaskWraithTui(state, {
+      width: 80,
+      height: 24,
+      ansi: new Ansi('truecolor'),
+      now,
+      animationEnabled: false
+    })
+    expect(missionOutput).not.toContain('\u001b[2J')
+    expect(stripAnsi(missionOutput)).toContain('Mission[2J')
   })
 })
