@@ -1911,8 +1911,13 @@ function useTranscriptVirtualization(params: {
   }, [enabled, compactDensity, bumpMeasure])
 
   // Pre-paint: anchor correction (Phase 1) + slot measurement (Phase 2).
-  // No dependency array — runs after every commit; both phases are cheap
-  // and converge (only fire `bumpMeasure` when a height actually moved).
+  // This pass is deliberately invalidation-driven. Running it after every
+  // parent commit synchronously reads scrollHeight/offsetTop for every mounted
+  // row, forcing browser layout in every open pane even when only pane focus or
+  // unrelated chrome changed. ResizeObserver and width/density changes publish
+  // measureTick; scrolling publishes scrollTick; row topology and expansion
+  // have their own dependencies below. Those are the only events that can
+  // change the geometry this pass consumes.
   useLayoutEffect(() => {
     if (!enabled) return
     const scroller = scrollRef.current
@@ -2099,7 +2104,25 @@ function useTranscriptVirtualization(params: {
       )
     }
     if (decision.bump) bumpMeasure()
-  })
+  }, [
+    activeLiveRowKeys,
+    bumpMeasure,
+    clearDeferredAnchorCorrection,
+    compactDensity,
+    enabled,
+    expandedRowIds,
+    forcedRowIndex,
+    getUserScrollGestureLive,
+    hiddenRowKeys,
+    measureTick,
+    onProgrammaticScrollWrite,
+    rowsStructuralKey,
+    scheduleDeferredAnchorCorrection,
+    scrollRef,
+    scrollTick,
+    virtualWindow.endIndex,
+    virtualWindow.startIndex
+  ])
 
   const blockRef = useCallback((el: HTMLDivElement | null) => {
     if (!el) return
