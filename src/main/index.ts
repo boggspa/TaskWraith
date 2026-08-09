@@ -598,7 +598,9 @@ import {
   createChannelProductionBootstrap,
   createChannelProductionRelayPort
 } from './collaboration/ChannelProductionBootstrap'
+import { createChannelMemberProductionBootstrap } from './collaboration/ChannelMemberProductionBootstrap'
 import { CHANNEL_IPC_CHANGED_EVENT } from '../shared/collaboration/ChannelIpc'
+import { CHANNEL_MEMBER_IPC_CHANGED_EVENT } from '../shared/collaboration/ChannelMemberIpc'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
 import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
 import {
@@ -47674,6 +47676,31 @@ if (isGeminiMcpBridgeProcess) {
       console.error('[channels] production bootstrap failed', error)
     }
 
+    let channelMemberProductionBootstrap: ReturnType<
+      typeof createChannelMemberProductionBootstrap
+    > | null = null
+    try {
+      channelMemberProductionBootstrap = createChannelMemberProductionBootstrap({
+        userDataPath: app.getPath('userData'),
+        safeStorage,
+        ipc: ipcMain,
+        assertMainRendererSender,
+        publishToMain: (event) => {
+          if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+            return
+          }
+          mainWindow.webContents.send(CHANNEL_MEMBER_IPC_CHANGED_EVENT, event)
+        },
+        logger: (line) => console.warn(line)
+      })
+      channelMemberProductionBootstrap.start()
+    } catch (error) {
+      const failedBootstrap = channelMemberProductionBootstrap
+      channelMemberProductionBootstrap = null
+      void failedBootstrap?.stop().catch(() => undefined)
+      console.error('[channels] member production bootstrap failed', error)
+    }
+
     const purgeChannelsForHistoryPreparation = (
       preparation: HistoryDeletionPreparation
     ): Promise<unknown> => {
@@ -49033,6 +49060,9 @@ if (isGeminiMcpBridgeProcess) {
       iosRemoteRuntime?.dispose()
       void channelProductionBootstrap?.stop().catch((error) => {
         console.error('[channels] production shutdown failed', error)
+      })
+      void channelMemberProductionBootstrap?.stop().catch((error) => {
+        console.error('[channels] member production shutdown failed', error)
       })
       humanCollaborationHostTransport?.dispose()
       disposeHumanCollaborationIpcHandlers?.()

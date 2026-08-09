@@ -417,7 +417,7 @@ export function registerChannelMemberHandlers(
     boundary(async () => {
       authorize(event)
       const input = parseBeginJoinInput(value)
-      return deps.service.beginJoin({
+      const result = await deps.service.beginJoin({
         protocol: input.invite.protocol,
         version: input.invite.v,
         channelId: input.invite.channelId,
@@ -430,6 +430,13 @@ export function registerChannelMemberHandlers(
         expiresAt: input.invite.expiresAt,
         ...(input.invite.title ? { title: input.invite.title } : {})
       })
+      if (!/^\d{6}$/.test(result.confirmCode)) {
+        throw new ChannelMemberIpcBoundaryError(
+          'protocol_error',
+          'Channel SAS confirmation code is invalid.'
+        )
+      }
+      return { confirmCode: result.confirmCode }
     })
   )
 

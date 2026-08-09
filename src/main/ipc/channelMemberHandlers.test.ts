@@ -100,7 +100,10 @@ function fixture() {
         hostIdentityPubKeyB64: 'must-not-cross-ipc'
       }
     ]),
-    beginJoin: vi.fn(async () => ({ confirmCode: '123456' })),
+    beginJoin: vi.fn(async () => ({
+      confirmCode: '123456',
+      sessionId: 'must-not-cross-ipc'
+    })),
     confirmJoin: vi.fn(async () => current),
     reconnect: vi.fn(async () => current),
     append: vi.fn(async (input: { content: string; clientMessageId: string }) => ({
@@ -207,6 +210,7 @@ describe('registerChannelMemberHandlers', () => {
     )
 
     expect(result).toEqual({ ok: true, value: { confirmCode: '123456' } })
+    expect(JSON.stringify(result)).not.toContain('sessionId')
     expect(target.service.beginJoin).toHaveBeenCalledWith({
       protocol: CHANNEL_WIRE_PROTOCOL,
       version: 1,
@@ -220,6 +224,21 @@ describe('registerChannelMemberHandlers', () => {
       expiresAt: 20_000,
       title: 'General'
     })
+  })
+
+  it('fails closed when the production admission returns a malformed SAS code', async () => {
+    const target = fixture()
+    target.service.beginJoin.mockResolvedValueOnce({
+      confirmCode: '12345',
+      sessionId: 'must-not-cross-ipc'
+    })
+
+    const result = await target.invoke(CHANNEL_MEMBER_IPC_CHANNELS.beginJoin, [
+      { invite: invite(), displayName: 'Member B' }
+    ])
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'protocol_error' } })
+    expect(JSON.stringify(result)).not.toContain('sessionId')
   })
 
   it.each([
