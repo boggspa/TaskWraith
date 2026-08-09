@@ -14,6 +14,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
+import {
+  buildMeshTopologyBoneGeometry,
+  buildMeshTopologyEdgeGeometry,
+  buildMeshTopologySurfaceGeometry,
+  buildMeshTopologyVertexGeometry
+} from '../lib/meshTopologyRender'
 import type {
   MeshPbrMaterial,
   MeshSceneNode,
@@ -35,6 +41,7 @@ export function toMeshSceneSummary(value: unknown): MeshSceneSummary | null {
     nodeCount: typeof value.nodeCount === 'number' ? value.nodeCount : 0,
     importCount: typeof value.importCount === 'number' ? value.importCount : 0,
     primitiveCount: typeof value.primitiveCount === 'number' ? value.primitiveCount : 0,
+    editableCount: typeof value.editableCount === 'number' ? value.editableCount : 0,
     backgroundColor: typeof value.backgroundColor === 'string' ? value.backgroundColor : '#171a21',
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : '',
     ...(typeof value.presentedAt === 'string' ? { presentedAt: value.presentedAt } : {})
@@ -48,6 +55,7 @@ function isMeshSceneView(value: unknown): value is MeshSceneView {
     Array.isArray(value.nodes) &&
     isRecord(value.assetUrls) &&
     isRecord(value.modelUrls) &&
+    isRecord(value.topologies) &&
     isRecord(value.camera) &&
     isRecord(value.lighting)
   )
@@ -185,7 +193,15 @@ function vaultUrl(baseUrl: string, reference: string): string | null {
 
 function disposeObject(object: THREE.Object3D): void {
   object.traverse((candidate) => {
-    if (!(candidate instanceof THREE.Mesh)) return
+    if (
+      !(
+        candidate instanceof THREE.Mesh ||
+        candidate instanceof THREE.Line ||
+        candidate instanceof THREE.Points
+      )
+    ) {
+      return
+    }
     candidate.geometry.dispose()
     const materials = Array.isArray(candidate.material) ? candidate.material : [candidate.material]
     for (const material of materials) {
@@ -202,10 +218,25 @@ function disposeObject(object: THREE.Object3D): void {
 
 interface MeshSceneViewerProps {
   view: MeshSceneView
+  topologyDisplay: MeshTopologyDisplayOptions
   onIssue: (message: string | null) => void
 }
 
-export function MeshSceneViewer({ view, onIssue }: MeshSceneViewerProps) {
+export interface MeshTopologyDisplayOptions {
+  surface: boolean
+  wireframe: boolean
+  vertices: boolean
+  skeleton: boolean
+}
+
+const DEFAULT_TOPOLOGY_DISPLAY: MeshTopologyDisplayOptions = Object.freeze({
+  surface: true,
+  wireframe: false,
+  vertices: false,
+  skeleton: true
+})
+
+export function MeshSceneViewer({ view, topologyDisplay, onIssue }: MeshSceneViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -274,6 +305,68 @@ export function MeshSceneViewer({ view, onIssue }: MeshSceneViewerProps) {
         )
         applyTransform(mesh, node)
         scene.add(mesh)
+        continue
+      }
+      if (node.kind === 'editable') {
+        const topology = view.topologies[node.topologyId]
+        if (!topology || topology.revision !== node.topologyRevision) {
+          reportIssue(`The editable topology for “${node.name}” is unavailable or out of sync.`)
+          continue
+        }
+        const group = new THREE.Group()
+        group.userData.topologyRevision = topology.revision
+        if (topologyDisplay.surface) {
+          const surface = buildMeshTopologySurfaceGeometry(topology)
+          if ((surface.geometry.getIndex()?.count ?? 0) > 0) {
+            group.add(
+              new THREE.Mesh(
+                surface.geometry,
+                materialFor(node.material, textureLoader, view.assetUrls)
+              )
+            )
+          } else {
+            surface.geometry.dispose()
+          }
+        }
+        if (topologyDisplay.wireframe && topology.edges.length > 0) {
+          group.add(
+            new THREE.LineSegments(
+              buildMeshTopologyEdgeGeometry(topology),
+              new THREE.LineBasicMaterial({
+                color: '#63c7ff',
+                transparent: true,
+                opacity: 0.9
+              })
+            )
+          )
+        }
+        if (topologyDisplay.vertices && topology.vertices.length > 0) {
+          group.add(
+            new THREE.Points(
+              buildMeshTopologyVertexGeometry(topology),
+              new THREE.PointsMaterial({
+                color: '#f6fbff',
+                size: 0.055,
+                sizeAttenuation: true
+              })
+            )
+          )
+        }
+        if (topologyDisplay.skeleton && topology.bones.length > 0) {
+          group.add(
+            new THREE.LineSegments(
+              buildMeshTopologyBoneGeometry(topology),
+              new THREE.LineBasicMaterial({
+                color: '#ffb454',
+                transparent: true,
+                opacity: 0.95,
+                depthTest: false
+              })
+            )
+          )
+        }
+        applyTransform(group, node)
+        scene.add(group)
         continue
       }
       const entryUrl = view.modelUrls[node.id] ?? view.assetUrls[node.assetId]
@@ -356,7 +449,7 @@ export function MeshSceneViewer({ view, onIssue }: MeshSceneViewerProps) {
       renderer.dispose()
       renderer.domElement.remove()
     }
-  }, [onIssue, view])
+  }, [onIssue, topologyDisplay, view])
 
   return <div ref={hostRef} className="mesh-scene-viewer" aria-label={`${view.title} 3D viewer`} />
 }
@@ -372,6 +465,8 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
   const [issue, setIssue] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [sceneRevision, setSceneRevision] = useState(0)
+  const [topologyDisplay, setTopologyDisplay] =
+    useState<MeshTopologyDisplayOptions>(DEFAULT_TOPOLOGY_DISPLAY)
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
 
@@ -530,6 +625,20 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
     }
   }
 
+  const toggleTopologyDisplay = (key: keyof MeshTopologyDisplayOptions): void => {
+    setTopologyDisplay((current) => ({ ...current, [key]: !current[key] }))
+  }
+
+  const editableNodes = view?.nodes.filter((node) => node.kind === 'editable') ?? []
+  const editableVertexCount = editableNodes.reduce(
+    (total, node) => total + node.topologySummary.vertexCount,
+    0
+  )
+  const editableFaceCount = editableNodes.reduce(
+    (total, node) => total + node.topologySummary.faceCount,
+    0
+  )
+
   return (
     <section className="mesh-canvas-panel" aria-label="Mesh Canvas">
       <div className="mesh-canvas-toolbar">
@@ -594,10 +703,34 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
 
       {view ? (
         <div className="mesh-canvas-stage">
-          <MeshSceneViewer view={view} onIssue={setIssue} />
+          {editableNodes.length > 0 && (
+            <div className="mesh-canvas-topology-display" aria-label="Topology display">
+              {(
+                [
+                  ['surface', 'Surface'],
+                  ['wireframe', 'Edges'],
+                  ['vertices', 'Vertices'],
+                  ['skeleton', 'Rig']
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={topologyDisplay[key]}
+                  className={topologyDisplay[key] ? 'is-active' : ''}
+                  onClick={() => toggleTopologyDisplay(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          <MeshSceneViewer view={view} topologyDisplay={topologyDisplay} onIssue={setIssue} />
           <div className="mesh-canvas-caption">
-            {view.nodes.length} {view.nodes.length === 1 ? 'object' : 'objects'} · drag to orbit ·
-            scroll to zoom
+            {view.nodes.length} {view.nodes.length === 1 ? 'object' : 'objects'}
+            {editableNodes.length > 0 &&
+              ` · ${editableNodes.length} editable · ${editableVertexCount.toLocaleString()} vertices · ${editableFaceCount.toLocaleString()} faces`}{' '}
+            · drag to orbit · scroll to zoom
           </div>
         </div>
       ) : (

@@ -11,6 +11,7 @@ describe('toMeshSceneSummary', () => {
         nodeCount: 3,
         importCount: 1,
         primitiveCount: 2,
+        editableCount: 1,
         backgroundColor: '#102030',
         updatedAt: '2026-07-27T12:00:00.000Z',
         presentedAt: '2026-07-27T12:01:00.000Z',
@@ -22,6 +23,7 @@ describe('toMeshSceneSummary', () => {
       nodeCount: 3,
       importCount: 1,
       primitiveCount: 2,
+      editableCount: 1,
       backgroundColor: '#102030',
       updatedAt: '2026-07-27T12:00:00.000Z',
       presentedAt: '2026-07-27T12:01:00.000Z'
@@ -37,6 +39,7 @@ describe('toMeshSceneSummary', () => {
       nodeCount: 0,
       importCount: 0,
       primitiveCount: 0,
+      editableCount: 0,
       backgroundColor: '#171a21',
       updatedAt: ''
     })

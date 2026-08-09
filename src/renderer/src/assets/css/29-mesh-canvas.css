@@ -158,6 +158,33 @@
   padding: 0 10px 10px;
 }
 
+.mesh-canvas-topology-display {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 0 7px;
+}
+
+.mesh-canvas-topology-display button {
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  padding: 4px 7px;
+  font:
+    600 10px/1 system-ui,
+    sans-serif;
+  cursor: pointer;
+  opacity: 0.62;
+}
+
+.mesh-canvas-topology-display button:hover,
+.mesh-canvas-topology-display button.is-active {
+  background: color-mix(in srgb, #63c7ff 16%, transparent);
+  border-color: color-mix(in srgb, #63c7ff 50%, transparent);
+  opacity: 1;
+}
+
 .mesh-scene-viewer {
   position: relative;
   flex: 1 1 auto;
