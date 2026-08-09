@@ -12,6 +12,7 @@ import {
 } from 'fs'
 import { createHash, randomUUID } from 'crypto'
 import { dirname, join } from 'path'
+import { redactSecrets } from '../../shared/secretRedaction'
 import { ChannelError, type ChannelMessageKind, type ChannelStore } from './ChannelStore'
 
 export const CHANNEL_LOG_SCHEMA_VERSION = 1
@@ -46,6 +47,22 @@ interface LoadedChannelLog {
 export interface ChannelReplay {
   records: ChannelMessage[]
   highWaterSequence: number
+}
+
+export interface ChannelAppendInput {
+  channelId: string
+  principalMemberId: string
+  identityPublicKey: string
+  roomId?: string
+  clientMessageId: string
+  kind?: ChannelMessageKind
+  content: string
+  now?: number
+}
+
+export interface ChannelAppendResult {
+  record: ChannelMessage
+  deduplicated: boolean
 }
 
 function clone<T>(value: T): T {
@@ -85,6 +102,15 @@ function normalizeContent(value: unknown, redact: (content: string) => string): 
     throw new ChannelError('quota_exceeded', 'Message content exceeds the P1 limit')
   }
   return normalized
+}
+
+/** Mandatory default scrubber for every persisted P1 human-text record. */
+export function redactChannelContent(content: string): string {
+  return redactSecrets(String(content))
+    .replace(/(?:\/Users\/|\/home\/)[^/\s]+(?:\/[^\s]*)?/g, '[redacted-path]')
+    .replace(/\/private\/var\/[^\s]+/g, '[redacted-path]')
+    .replace(/\/tmp\/[^\s]+/g, '[redacted-path]')
+    .replace(/\b[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s]*)*/g, '[redacted-path]')
 }
 
 function validateStoredMessage(
@@ -164,19 +190,14 @@ export class ChannelMessageLog {
   constructor(
     private readonly storageDirectory: string,
     private readonly channels: ChannelStore,
-    private readonly redactContent: (content: string) => string = (content) => content
+    private readonly redactContent: (content: string) => string = redactChannelContent
   ) {}
 
-  append(args: {
-    channelId: string
-    principalMemberId: string
-    identityPublicKey: string
-    roomId?: string
-    clientMessageId: string
-    kind?: ChannelMessageKind
-    content: string
-    now?: number
-  }): ChannelMessage {
+  append(args: ChannelAppendInput): ChannelMessage {
+    return this.appendWithResult(args).record
+  }
+
+  appendWithResult(args: ChannelAppendInput): ChannelAppendResult {
     if (args.kind !== undefined && args.kind !== 'human.text') {
       throw new ChannelError('human_only', 'Only human.text messages are supported')
     }
@@ -197,7 +218,12 @@ export class ChannelMessageLog {
           'client message id was already committed with different content'
         )
       }
-      return clone(existing)
+      this.channels.reconcileMessageCount(
+        args.channelId,
+        loaded.messages.length,
+        existing.acceptedAt
+      )
+      return { record: clone(existing), deduplicated: true }
     }
 
     const message: ChannelMessage = {
@@ -224,8 +250,8 @@ export class ChannelMessageLog {
     // committed record, recovery still derives sequence and idempotency here.
     loaded.messages.push(message)
     loaded.idempotency.set(idempotencyKey(member.memberId, clientMessageId), message)
-    this.channels.recordCommittedMessage(args.channelId, message.acceptedAt)
-    return clone(message)
+    this.channels.recordCommittedMessage(args.channelId, message.sequence, message.acceptedAt)
+    return { record: clone(message), deduplicated: false }
   }
 
   replay(args: {
@@ -292,6 +318,12 @@ export class ChannelMessageLog {
 
     const path = this.pathFor(channelId)
     if (!existsSync(path)) {
+      const channel = this.channels.getChannel(channelId)
+      if (!channel) throw new ChannelError('not_member', 'Channel was not found')
+      if (channel.messageCount !== 0) {
+        this.recoveryBlocked.add(channelId)
+        throw new ChannelError('recovery_blocked', 'Channel log is missing durable history')
+      }
       const empty = { messages: [], idempotency: new Map<string, ChannelMessage>() }
       this.cache.set(channelId, empty)
       return empty
@@ -338,6 +370,17 @@ export class ChannelMessageLog {
     }
     const loaded = { messages, idempotency }
     this.cache.set(channelId, loaded)
+    try {
+      this.channels.reconcileMessageCount(
+        channelId,
+        messages.length,
+        messages.at(-1)?.acceptedAt ?? Date.now()
+      )
+    } catch (error) {
+      this.cache.delete(channelId)
+      this.recoveryBlocked.add(channelId)
+      throw error
+    }
     return loaded
   }
 

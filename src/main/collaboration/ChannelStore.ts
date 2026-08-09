@@ -1,9 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { randomUUID } from 'crypto'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync
+} from 'fs'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import { dirname } from 'path'
 
-export const CHANNEL_SCHEMA_VERSION = 1
+export const CHANNEL_SCHEMA_VERSION = 2
 export const MAX_CHANNEL_MEMBERS = 8
+export const DEFAULT_CHANNEL_INVITE_TTL_MS = 10 * 60 * 1000
 
 export type ChannelErrorCode =
   | 'protocol_unsupported'
@@ -30,7 +40,7 @@ export class ChannelError extends Error {
 }
 
 export type ChannelStatus = 'active' | 'closed'
-export type ChannelMemberStatus = 'active' | 'revoked'
+export type ChannelMemberStatus = 'pending' | 'active' | 'revoked'
 export type ChannelMemberKind = 'human'
 export type ChannelMessageKind = 'human.text'
 
@@ -77,10 +87,23 @@ export interface ChannelMember {
   revokedAt?: number
 }
 
+export interface ChannelInvite {
+  inviteId: string
+  channelId: string
+  roomId: string
+  tokenHash: string
+  createdAt: number
+  expiresAt: number
+  memberId?: string
+  consumedAt?: number
+  revokedAt?: number
+}
+
 export interface ChannelStoreSnapshot {
   schemaVersion: typeof CHANNEL_SCHEMA_VERSION
   channels: Channel[]
   members: ChannelMember[]
+  invites: ChannelInvite[]
 }
 
 export interface ResolvedChannelReference<T> {
@@ -103,8 +126,9 @@ function nowOr(args: { now?: number }): number {
 }
 
 function nonBlank(value: unknown, label: string, max = MAX_IDENTIFIER_LENGTH): string {
-  if (typeof value !== 'string')
+  if (typeof value !== 'string') {
     throw new ChannelError('protocol_unsupported', `${label} is required`)
+  }
   const normalized = value.trim()
   if (!normalized || normalized.length > max) {
     throw new ChannelError('protocol_unsupported', `${label} is invalid`)
@@ -132,7 +156,7 @@ function isChannelStatus(value: unknown): value is ChannelStatus {
 }
 
 function isMemberStatus(value: unknown): value is ChannelMemberStatus {
-  return value === 'active' || value === 'revoked'
+  return value === 'pending' || value === 'active' || value === 'revoked'
 }
 
 function validTimestamp(value: unknown): value is number {
@@ -142,13 +166,23 @@ function validTimestamp(value: unknown): value is number {
 function buildEnvelope(
   channel: Pick<Channel, 'display' | 'status' | 'messageCount'>,
   memberCount: number
-) {
+): ChannelDisplayEnvelope {
   return {
     title: channel.display.title,
     status: channel.status,
     memberCount,
     messageCount: channel.messageCount
-  } satisfies ChannelDisplayEnvelope
+  }
+}
+
+export function hashChannelInviteToken(token: string): string {
+  return createHash('sha256').update(String(token), 'utf8').digest('hex')
+}
+
+function tokenHashMatches(token: string, expectedHash: string): boolean {
+  const actual = Buffer.from(hashChannelInviteToken(token), 'hex')
+  const expected = Buffer.from(expectedHash, 'hex')
+  return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
 
 /**
@@ -159,7 +193,8 @@ export class ChannelStore {
   private snapshot: ChannelStoreSnapshot = {
     schemaVersion: CHANNEL_SCHEMA_VERSION,
     channels: [],
-    members: []
+    members: [],
+    invites: []
   }
   private recoveryBlocked = false
   /** Per-channel isolation when one channel's display envelope drifts on disk. */
@@ -216,6 +251,11 @@ export class ChannelStore {
     return { channel: clone(channel), owner: clone(owner) }
   }
 
+  listChannels(): Channel[] {
+    this.assertHealthy()
+    return this.snapshot.channels.map((channel) => clone(channel))
+  }
+
   getChannel(channelId: string): Channel | null {
     return clone(this.findChannel(channelId) ?? null)
   }
@@ -228,12 +268,188 @@ export class ChannelStore {
     )
   }
 
+  findMemberByIdentity(channelId: string, identityPublicKey: string): ChannelMember | null {
+    const identity = nonBlank(identityPublicKey, 'identity public key')
+    return clone(
+      this.snapshot.members.find(
+        (member) => member.channelId === channelId && member.identityPublicKey === identity
+      ) ?? null
+    )
+  }
+
   listMembers(channelId: string): ChannelMember[] {
     return this.snapshot.members
       .filter((member) => member.channelId === channelId)
       .map((member) => clone(member))
   }
 
+  createInvite(args: { channelId: string; now?: number; ttlMs?: number }): {
+    invite: ChannelInvite
+    inviteToken: string
+  } {
+    const channel = this.requireActiveChannel(args.channelId)
+    const now = nowOr(args)
+    this.expirePendingAdmissions(channel, now)
+    const ttlMs = args.ttlMs ?? DEFAULT_CHANNEL_INVITE_TTL_MS
+    if (!Number.isFinite(ttlMs) || ttlMs < 1_000 || ttlMs > 24 * 60 * 60 * 1000) {
+      throw new ChannelError('quota_exceeded', 'Invite lifetime is invalid')
+    }
+    const inviteToken = randomBytes(24).toString('base64url')
+    const invite: ChannelInvite = {
+      inviteId: randomUUID(),
+      channelId: channel.channelId,
+      roomId: randomUUID(),
+      tokenHash: hashChannelInviteToken(inviteToken),
+      createdAt: now,
+      expiresAt: now + ttlMs
+    }
+    this.snapshot.invites.push(invite)
+    this.persist()
+    return { invite: clone(invite), inviteToken }
+  }
+
+  getInvite(channelId: string, inviteId: string): ChannelInvite | null {
+    return clone(
+      this.snapshot.invites.find(
+        (invite) => invite.channelId === channelId && invite.inviteId === inviteId
+      ) ?? null
+    )
+  }
+
+  listInvites(channelId: string): ChannelInvite[] {
+    return this.snapshot.invites
+      .filter((invite) => invite.channelId === channelId)
+      .map((invite) => clone(invite))
+  }
+
+  beginMemberAdmission(args: {
+    channelId: string
+    inviteId: string
+    inviteToken: string
+    roomId: string
+    displayName: string
+    identityPublicKey: string
+    now?: number
+  }): { invite: ChannelInvite; member: ChannelMember } {
+    const channel = this.requireActiveChannel(args.channelId)
+    const now = nowOr(args)
+    this.expirePendingAdmissions(channel, now)
+    const invite = this.requireUsableInvite({
+      channelId: channel.channelId,
+      inviteId: args.inviteId,
+      inviteToken: args.inviteToken,
+      roomId: args.roomId,
+      now
+    })
+    const identityPublicKey = nonBlank(args.identityPublicKey, 'identity public key')
+    const existing = this.snapshot.members.find(
+      (member) =>
+        member.channelId === channel.channelId && member.identityPublicKey === identityPublicKey
+    )
+    if (existing) {
+      if (existing.status === 'revoked') {
+        throw new ChannelError('revoked', 'This pinned identity has been revoked')
+      }
+      if (
+        existing.status === 'pending' &&
+        existing.memberId === invite.memberId &&
+        existing.roomId === invite.roomId
+      ) {
+        return { invite: clone(invite), member: clone(existing) }
+      }
+      throw new ChannelError(
+        'identity_mismatch',
+        'This identity is already bound; use pinned reconnect'
+      )
+    }
+    if (invite.memberId) {
+      throw new ChannelError('revoked', 'Invite is already bound to another admission')
+    }
+    if (this.seatHoldingMembers(channel.channelId).length >= MAX_CHANNEL_MEMBERS) {
+      throw new ChannelError('quota_exceeded', 'Channel member limit reached')
+    }
+
+    const member: ChannelMember = {
+      memberId: randomUUID(),
+      channelId: channel.channelId,
+      kind: 'human',
+      displayName: nonBlank(args.displayName, 'display name', MAX_DISPLAY_NAME_LENGTH),
+      identityPublicKey,
+      status: 'pending',
+      roomId: invite.roomId,
+      joinedAt: now
+    }
+    invite.memberId = member.memberId
+    this.snapshot.members.push(member)
+    this.bumpMembership(channel, now)
+    this.persist()
+    return { invite: clone(invite), member: clone(member) }
+  }
+
+  confirmMemberAdmission(args: {
+    channelId: string
+    inviteId: string
+    memberId: string
+    now?: number
+  }): ChannelMember {
+    const channel = this.requireActiveChannel(args.channelId)
+    const invite = this.requireInvite(channel.channelId, args.inviteId)
+    const member = this.requireMember(channel.channelId, args.memberId)
+    if (invite.memberId !== member.memberId || !member.roomId || member.roomId !== invite.roomId) {
+      throw new ChannelError('identity_mismatch', 'Admission is not bound to this invite room')
+    }
+    if (member.status === 'revoked' || invite.revokedAt !== undefined) {
+      throw new ChannelError('revoked', 'Admission was revoked')
+    }
+    if (member.status === 'active' && invite.consumedAt !== undefined) return clone(member)
+    if (member.status !== 'pending' || invite.consumedAt !== undefined) {
+      throw new ChannelError('protocol_unsupported', 'Admission is not pending')
+    }
+    const now = nowOr(args)
+    if (invite.expiresAt <= now) {
+      this.failMemberAdmission({
+        channelId: channel.channelId,
+        inviteId: invite.inviteId,
+        memberId: member.memberId,
+        now
+      })
+      throw new ChannelError('revoked', 'Invite expired before confirmation')
+    }
+
+    member.status = 'active'
+    member.joinedAt = now
+    invite.consumedAt = now
+    this.bumpMembership(channel, now)
+    this.persist()
+    return clone(member)
+  }
+
+  failMemberAdmission(args: {
+    channelId: string
+    inviteId: string
+    memberId: string
+    now?: number
+  }): ChannelMember {
+    const channel = this.requireActiveChannel(args.channelId)
+    const invite = this.requireInvite(channel.channelId, args.inviteId)
+    const member = this.requireMember(channel.channelId, args.memberId)
+    if (invite.memberId !== member.memberId) {
+      throw new ChannelError('identity_mismatch', 'Admission is not bound to this invite')
+    }
+    if (member.status === 'revoked') return clone(member)
+    const now = nowOr(args)
+    member.status = 'revoked'
+    member.revokedAt = now
+    invite.revokedAt = now
+    this.bumpMembership(channel, now)
+    this.persist()
+    return clone(member)
+  }
+
+  /**
+   * Direct main-only helper retained for deterministic store/log tests. Remote
+   * sessions must use the pending invite + SAS transition above.
+   */
   admitMember(args: {
     channelId: string
     displayName: string
@@ -253,10 +469,15 @@ export class ChannelStore {
       }
       return clone(existing)
     }
-
-    const activeCount = this.activeMembers(channel.channelId).length
-    if (activeCount >= MAX_CHANNEL_MEMBERS) {
+    if (this.seatHoldingMembers(channel.channelId).length >= MAX_CHANNEL_MEMBERS) {
       throw new ChannelError('quota_exceeded', 'Channel member limit reached')
+    }
+    const roomId = nonBlank(args.roomId, 'room id')
+    if (
+      this.snapshot.members.some((member) => member.roomId === roomId) ||
+      this.snapshot.invites.some((invite) => invite.roomId === roomId)
+    ) {
+      throw new ChannelError('identity_mismatch', 'Relay room is already bound')
     }
 
     const admitted: ChannelMember = {
@@ -266,7 +487,7 @@ export class ChannelStore {
       displayName: nonBlank(args.displayName, 'display name', MAX_DISPLAY_NAME_LENGTH),
       identityPublicKey,
       status: 'active',
-      roomId: nonBlank(args.roomId, 'room id'),
+      roomId,
       joinedAt: nowOr(args)
     }
     this.snapshot.members.push(admitted)
@@ -288,6 +509,11 @@ export class ChannelStore {
 
     member.status = 'revoked'
     member.revokedAt = nowOr(args)
+    const invite = this.snapshot.invites.find(
+      (candidate) =>
+        candidate.channelId === channel.channelId && candidate.memberId === member.memberId
+    )
+    if (invite && invite.revokedAt === undefined) invite.revokedAt = member.revokedAt
     this.bumpMembership(channel, member.revokedAt)
     this.persist()
     return clone(member)
@@ -299,6 +525,15 @@ export class ChannelStore {
     if (channel.status === 'closed') return clone(channel)
     channel.status = 'closed'
     channel.updatedAt = nowOr(args)
+    for (const invite of this.snapshot.invites) {
+      if (
+        invite.channelId === channel.channelId &&
+        invite.consumedAt === undefined &&
+        invite.revokedAt === undefined
+      ) {
+        invite.revokedAt = channel.updatedAt
+      }
+    }
     channel.display = buildEnvelope(channel, this.activeMembers(channel.channelId).length)
     this.persist()
     return clone(channel)
@@ -316,9 +551,13 @@ export class ChannelStore {
   }): ChannelMember {
     const channel = this.requireActiveChannel(args.channelId)
     const member = this.requireMember(channel.channelId, args.memberId)
-    if (member.status !== 'active') throw new ChannelError('revoked', 'Member is revoked')
-    if (member.kind !== 'human')
+    if (member.status === 'revoked') throw new ChannelError('revoked', 'Member is revoked')
+    if (member.status !== 'active') {
+      throw new ChannelError('not_member', 'Member admission is not active')
+    }
+    if (member.kind !== 'human') {
       throw new ChannelError('human_only', 'Only human members are supported')
+    }
     if (member.identityPublicKey !== nonBlank(args.identityPublicKey, 'identity public key')) {
       throw new ChannelError('identity_mismatch', 'Pinned identity does not match this member')
     }
@@ -334,10 +573,37 @@ export class ChannelStore {
   }
 
   /** Called only after a complete durable log record has been committed. */
-  recordCommittedMessage(channelId: string, now = Date.now()): Channel {
+  recordCommittedMessage(channelId: string, sequence: number, now = Date.now()): Channel {
     const channel = this.requireActiveChannel(channelId)
-    channel.messageCount += 1
+    if (!Number.isInteger(sequence) || sequence < 1) {
+      throw new ChannelError('recovery_blocked', 'Committed sequence is invalid')
+    }
+    if (sequence <= channel.messageCount) return clone(channel)
+    if (sequence !== channel.messageCount + 1) {
+      throw new ChannelError('recovery_blocked', 'Channel metadata sequence has a gap')
+    }
+    channel.messageCount = sequence
     channel.updatedAt = now
+    channel.display = buildEnvelope(channel, this.activeMembers(channel.channelId).length)
+    this.persist()
+    return clone(channel)
+  }
+
+  /**
+   * The append log is authoritative. A valid log may be ahead when main died
+   * after fsync but before the metadata rewrite; metadata may never be ahead.
+   */
+  reconcileMessageCount(channelId: string, highWaterSequence: number, now = Date.now()): Channel {
+    const channel = this.requireChannel(channelId)
+    if (!Number.isInteger(highWaterSequence) || highWaterSequence < 0) {
+      throw new ChannelError('recovery_blocked', 'Recovered sequence is invalid')
+    }
+    if (channel.messageCount > highWaterSequence) {
+      throw new ChannelError('recovery_blocked', 'Channel metadata is ahead of durable history')
+    }
+    if (channel.messageCount === highWaterSequence) return clone(channel)
+    channel.messageCount = highWaterSequence
+    channel.updatedAt = Math.max(channel.updatedAt, now)
     channel.display = buildEnvelope(channel, this.activeMembers(channel.channelId).length)
     this.persist()
     return clone(channel)
@@ -367,10 +633,69 @@ export class ChannelStore {
     )
   }
 
-  private bumpMembership(channel: Channel, now: number) {
+  private seatHoldingMembers(channelId: string): ChannelMember[] {
+    return this.snapshot.members.filter(
+      (member) => member.channelId === channelId && member.status !== 'revoked'
+    )
+  }
+
+  private bumpMembership(channel: Channel, now: number): void {
     channel.membershipRevision += 1
     channel.updatedAt = now
     channel.display = buildEnvelope(channel, this.activeMembers(channel.channelId).length)
+  }
+
+  private expirePendingAdmissions(channel: Channel, now: number): void {
+    let changed = false
+    for (const invite of this.snapshot.invites) {
+      if (
+        invite.channelId !== channel.channelId ||
+        invite.expiresAt > now ||
+        invite.consumedAt !== undefined ||
+        invite.revokedAt !== undefined ||
+        !invite.memberId
+      ) {
+        continue
+      }
+      const member = this.snapshot.members.find(
+        (candidate) =>
+          candidate.channelId === channel.channelId && candidate.memberId === invite.memberId
+      )
+      if (member?.status === 'pending') {
+        member.status = 'revoked'
+        member.revokedAt = now
+        invite.revokedAt = now
+        changed = true
+      }
+    }
+    if (changed) {
+      this.bumpMembership(channel, now)
+      this.persist()
+    }
+  }
+
+  private requireUsableInvite(args: {
+    channelId: string
+    inviteId: string
+    inviteToken: string
+    roomId: string
+    now: number
+  }): ChannelInvite {
+    const invite = this.requireInvite(args.channelId, args.inviteId)
+    if (invite.roomId !== nonBlank(args.roomId, 'room id')) {
+      throw new ChannelError('identity_mismatch', 'Invite is not bound to this relay room')
+    }
+    if (
+      invite.revokedAt !== undefined ||
+      invite.consumedAt !== undefined ||
+      invite.expiresAt <= args.now
+    ) {
+      throw new ChannelError('revoked', 'Invite is expired, consumed, or revoked')
+    }
+    if (!tokenHashMatches(nonBlank(args.inviteToken, 'invite token'), invite.tokenHash)) {
+      throw new ChannelError('identity_mismatch', 'Invite proof is invalid')
+    }
+    return invite
   }
 
   private findChannel(channelId: string): Channel | undefined {
@@ -402,7 +727,16 @@ export class ChannelStore {
     return member
   }
 
-  private assertHealthy() {
+  private requireInvite(channelId: string, inviteId: string): ChannelInvite {
+    const id = nonBlank(inviteId, 'invite id')
+    const invite = this.snapshot.invites.find(
+      (candidate) => candidate.channelId === channelId && candidate.inviteId === id
+    )
+    if (!invite) throw new ChannelError('not_member', 'Invite was not found')
+    return invite
+  }
+
+  private assertHealthy(): void {
     if (this.recoveryBlocked) {
       throw new ChannelError('recovery_blocked', 'Channel metadata could not be recovered safely')
     }
@@ -410,7 +744,12 @@ export class ChannelStore {
 
   private load(): ChannelStoreSnapshot {
     if (!this.storagePath || !existsSync(this.storagePath)) {
-      return { schemaVersion: CHANNEL_SCHEMA_VERSION, channels: [], members: [] }
+      return {
+        schemaVersion: CHANNEL_SCHEMA_VERSION,
+        channels: [],
+        members: [],
+        invites: []
+      }
     }
     try {
       const parsed = JSON.parse(readFileSync(this.storagePath, 'utf8')) as unknown
@@ -422,16 +761,37 @@ export class ChannelStore {
       return result.snapshot
     } catch {
       this.recoveryBlocked = true
-      return { schemaVersion: CHANNEL_SCHEMA_VERSION, channels: [], members: [] }
+      return {
+        schemaVersion: CHANNEL_SCHEMA_VERSION,
+        channels: [],
+        members: [],
+        invites: []
+      }
     }
   }
 
-  private persist() {
+  private persist(): void {
     if (!this.storagePath) return
     mkdirSync(dirname(this.storagePath), { recursive: true })
     const temporary = `${this.storagePath}.${randomUUID()}.tmp`
-    writeFileSync(temporary, JSON.stringify(this.snapshot), 'utf8')
+    writeFileSync(temporary, JSON.stringify(this.snapshot), { encoding: 'utf8', mode: 0o600 })
+    const descriptor = openSync(temporary, 'r')
+    try {
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
     renameSync(temporary, this.storagePath)
+    try {
+      const directoryDescriptor = openSync(dirname(this.storagePath), 'r')
+      try {
+        fsyncSync(directoryDescriptor)
+      } finally {
+        closeSync(directoryDescriptor)
+      }
+    } catch {
+      // Some platforms do not allow directory fsync. The file itself is synced.
+    }
   }
 }
 
@@ -441,15 +801,17 @@ function normalizeSnapshot(
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
   if (
-    raw.schemaVersion !== CHANNEL_SCHEMA_VERSION ||
+    (raw.schemaVersion !== 1 && raw.schemaVersion !== CHANNEL_SCHEMA_VERSION) ||
     !Array.isArray(raw.channels) ||
-    !Array.isArray(raw.members)
+    !Array.isArray(raw.members) ||
+    (raw.schemaVersion === CHANNEL_SCHEMA_VERSION && !Array.isArray(raw.invites))
   ) {
     return null
   }
 
   const channels: Channel[] = []
   const channelIds = new Set<string>()
+  const chatIds = new Set<string>()
   const driftedChannelIds: string[] = []
   for (const candidate of raw.channels) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
@@ -458,9 +820,9 @@ function normalizeSnapshot(
       typeof channel.channelId !== 'string' ||
       !channel.channelId ||
       channelIds.has(channel.channelId) ||
-      driftedChannelIds.includes(channel.channelId) ||
       typeof channel.chatId !== 'string' ||
       !channel.chatId ||
+      chatIds.has(channel.chatId) ||
       typeof channel.ownerMemberId !== 'string' ||
       !channel.ownerMemberId ||
       !isChannelStatus(channel.status) ||
@@ -488,11 +850,11 @@ function normalizeSnapshot(
       display.messageCount === channel.messageCount &&
       (channel.reference === undefined || isReference(channel.reference))
     if (!envelopeValid) {
-      // Per-channel skip — never brick the whole snapshot for one channel's drift.
       driftedChannelIds.push(channel.channelId)
       continue
     }
     channelIds.add(channel.channelId)
+    chatIds.add(channel.chatId)
     channels.push({
       channelId: channel.channelId,
       chatId: channel.chatId,
@@ -515,13 +877,11 @@ function normalizeSnapshot(
   const driftedSet = new Set(driftedChannelIds)
   const members: ChannelMember[] = []
   const memberIds = new Set<string>()
+  const memberRoomIds = new Set<string>()
   for (const candidate of raw.members) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
     const member = candidate as Record<string, unknown>
-    // Members of a drifted channel are dropped with that channel; do not fail the snapshot.
-    if (typeof member.channelId === 'string' && driftedSet.has(member.channelId)) {
-      continue
-    }
+    if (typeof member.channelId === 'string' && driftedSet.has(member.channelId)) continue
     if (
       typeof member.memberId !== 'string' ||
       !member.memberId ||
@@ -541,7 +901,9 @@ function normalizeSnapshot(
     ) {
       return null
     }
+    if (member.roomId && memberRoomIds.has(member.roomId)) return null
     memberIds.add(member.memberId)
+    if (member.roomId) memberRoomIds.add(member.roomId)
     members.push({
       memberId: member.memberId,
       channelId: member.channelId,
@@ -555,20 +917,88 @@ function normalizeSnapshot(
     })
   }
 
-  for (const channel of channels) {
-    const owners = members.filter(
-      (member) =>
-        member.channelId === channel.channelId && member.memberId === channel.ownerMemberId
-    )
-    const activeCount = members.filter(
-      (member) => member.channelId === channel.channelId && member.status === 'active'
-    ).length
-    if (owners.length !== 1 || owners[0]?.kind !== 'human' || activeCount > MAX_CHANNEL_MEMBERS)
+  const invites: ChannelInvite[] = []
+  const inviteIds = new Set<string>()
+  const inviteRoomIds = new Set<string>()
+  const rawInvites = raw.schemaVersion === CHANNEL_SCHEMA_VERSION ? (raw.invites as unknown[]) : []
+  for (const candidate of rawInvites) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+    const invite = candidate as Record<string, unknown>
+    if (typeof invite.channelId === 'string' && driftedSet.has(invite.channelId)) continue
+    if (
+      typeof invite.inviteId !== 'string' ||
+      !invite.inviteId ||
+      inviteIds.has(invite.inviteId) ||
+      typeof invite.channelId !== 'string' ||
+      !channelIds.has(invite.channelId) ||
+      typeof invite.roomId !== 'string' ||
+      !invite.roomId ||
+      inviteRoomIds.has(invite.roomId) ||
+      typeof invite.tokenHash !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(invite.tokenHash) ||
+      !validTimestamp(invite.createdAt) ||
+      !validTimestamp(invite.expiresAt) ||
+      invite.expiresAt <= invite.createdAt ||
+      (invite.memberId !== undefined &&
+        (typeof invite.memberId !== 'string' || !memberIds.has(invite.memberId))) ||
+      (invite.consumedAt !== undefined && !validTimestamp(invite.consumedAt)) ||
+      (invite.revokedAt !== undefined && !validTimestamp(invite.revokedAt))
+    ) {
       return null
+    }
+    if (invite.consumedAt !== undefined && invite.memberId === undefined) return null
+    if (invite.memberId !== undefined) {
+      const member = members.find(
+        (entry) => entry.channelId === invite.channelId && entry.memberId === invite.memberId
+      )
+      if (!member || member.roomId !== invite.roomId) return null
+    } else if (memberRoomIds.has(invite.roomId)) {
+      return null
+    }
+    inviteIds.add(invite.inviteId)
+    inviteRoomIds.add(invite.roomId)
+    invites.push({
+      inviteId: invite.inviteId,
+      channelId: invite.channelId,
+      roomId: invite.roomId,
+      tokenHash: invite.tokenHash,
+      createdAt: invite.createdAt,
+      expiresAt: invite.expiresAt,
+      ...(invite.memberId ? { memberId: invite.memberId } : {}),
+      ...(invite.consumedAt !== undefined ? { consumedAt: invite.consumedAt } : {}),
+      ...(invite.revokedAt !== undefined ? { revokedAt: invite.revokedAt } : {})
+    })
+  }
+
+  for (const channel of channels) {
+    const channelMembers = members.filter((member) => member.channelId === channel.channelId)
+    const owners = channelMembers.filter((member) => member.memberId === channel.ownerMemberId)
+    const activeCount = channelMembers.filter((member) => member.status === 'active').length
+    const seatCount = channelMembers.filter((member) => member.status !== 'revoked').length
+    const owner = owners[0]
+    if (
+      owners.length !== 1 ||
+      !owner ||
+      owner.kind !== 'human' ||
+      owner.status !== 'active' ||
+      owner.roomId !== undefined ||
+      activeCount > MAX_CHANNEL_MEMBERS ||
+      seatCount > MAX_CHANNEL_MEMBERS ||
+      channel.display.memberCount !== activeCount ||
+      channelMembers.some((member) => member.memberId !== channel.ownerMemberId && !member.roomId)
+    ) {
+      driftedSet.add(channel.channelId)
+      driftedChannelIds.push(channel.channelId)
+    }
   }
 
   return {
-    snapshot: { schemaVersion: CHANNEL_SCHEMA_VERSION, channels, members },
-    driftedChannelIds
+    snapshot: {
+      schemaVersion: CHANNEL_SCHEMA_VERSION,
+      channels: channels.filter((channel) => !driftedSet.has(channel.channelId)),
+      members: members.filter((member) => !driftedSet.has(member.channelId)),
+      invites: invites.filter((invite) => !driftedSet.has(invite.channelId))
+    },
+    driftedChannelIds: [...new Set(driftedChannelIds)]
   }
 }

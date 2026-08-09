@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ChannelError,
   ChannelStore,
@@ -164,6 +164,136 @@ describe('ChannelStore', () => {
     )
   })
 
+  it('persists a single-use pending admission before activating the pinned member', () => {
+    const { store, storePath, channel } = channelFixture()
+    const issued = store.createInvite({
+      channelId: channel.channelId,
+      now: 2_000,
+      ttlMs: 60_000
+    })
+
+    expectCode(
+      () =>
+        store.beginMemberAdmission({
+          channelId: channel.channelId,
+          inviteId: issued.invite.inviteId,
+          inviteToken: 'wrong-token',
+          roomId: issued.invite.roomId,
+          displayName: 'Member B',
+          identityPublicKey: 'ed25519:b',
+          now: 3_000
+        }),
+      'identity_mismatch'
+    )
+
+    const pending = store.beginMemberAdmission({
+      channelId: channel.channelId,
+      inviteId: issued.invite.inviteId,
+      inviteToken: issued.inviteToken,
+      roomId: issued.invite.roomId,
+      displayName: 'Member B',
+      identityPublicKey: 'ed25519:b',
+      now: 3_000
+    })
+    expect(pending.member).toMatchObject({
+      status: 'pending',
+      roomId: issued.invite.roomId,
+      identityPublicKey: 'ed25519:b'
+    })
+    expect(store.getDisplayEnvelope(channel.channelId).memberCount).toBe(1)
+    expectCode(
+      () =>
+        store.validateMemberSession({
+          channelId: channel.channelId,
+          memberId: pending.member.memberId,
+          identityPublicKey: 'ed25519:b',
+          roomId: issued.invite.roomId
+        }),
+      'not_member'
+    )
+
+    const active = store.confirmMemberAdmission({
+      channelId: channel.channelId,
+      inviteId: issued.invite.inviteId,
+      memberId: pending.member.memberId,
+      now: 4_000
+    })
+    expect(active.status).toBe('active')
+    expect(store.getDisplayEnvelope(channel.channelId).memberCount).toBe(2)
+
+    const reloaded = new ChannelStore(storePath)
+    expect(reloaded.getInvite(channel.channelId, issued.invite.inviteId)).toMatchObject({
+      memberId: active.memberId,
+      consumedAt: 4_000
+    })
+    expectCode(
+      () =>
+        reloaded.beginMemberAdmission({
+          channelId: channel.channelId,
+          inviteId: issued.invite.inviteId,
+          inviteToken: issued.inviteToken,
+          roomId: issued.invite.roomId,
+          displayName: 'Imposter',
+          identityPublicKey: 'ed25519:imposter',
+          now: 5_000
+        }),
+      'revoked'
+    )
+  })
+
+  it('reserves seats transactionally for pending handshakes and releases expired ones', () => {
+    const { store, channel } = channelFixture()
+    for (let index = 0; index < MAX_CHANNEL_MEMBERS - 1; index += 1) {
+      const issued = store.createInvite({
+        channelId: channel.channelId,
+        now: 2_000,
+        ttlMs: index === 0 ? 1_000 : 60_000
+      })
+      store.beginMemberAdmission({
+        channelId: channel.channelId,
+        inviteId: issued.invite.inviteId,
+        inviteToken: issued.inviteToken,
+        roomId: issued.invite.roomId,
+        displayName: `Pending ${index}`,
+        identityPublicKey: `ed25519:pending-${index}`,
+        now: 2_100
+      })
+    }
+
+    const ninth = store.createInvite({
+      channelId: channel.channelId,
+      now: 2_200,
+      ttlMs: 60_000
+    })
+    expectCode(
+      () =>
+        store.beginMemberAdmission({
+          channelId: channel.channelId,
+          inviteId: ninth.invite.inviteId,
+          inviteToken: ninth.inviteToken,
+          roomId: ninth.invite.roomId,
+          displayName: 'Ninth',
+          identityPublicKey: 'ed25519:ninth',
+          now: 2_300
+        }),
+      'quota_exceeded'
+    )
+
+    const replacement = store.beginMemberAdmission({
+      channelId: channel.channelId,
+      inviteId: ninth.invite.inviteId,
+      inviteToken: ninth.inviteToken,
+      roomId: ninth.invite.roomId,
+      displayName: 'Replacement',
+      identityPublicKey: 'ed25519:replacement',
+      now: 3_100
+    })
+    expect(replacement.member.status).toBe('pending')
+    expect(
+      store.listMembers(channel.channelId).filter((member) => member.status !== 'revoked')
+    ).toHaveLength(MAX_CHANNEL_MEMBERS)
+  })
+
   it('keeps the display envelope when its TaskWraith reference is unavailable', () => {
     const { store, channel } = channelFixture()
     const unavailable = store.resolveReference(channel.channelId, () => undefined)
@@ -303,6 +433,85 @@ describe('ChannelMessageLog', () => {
         }),
       'idempotency_conflict'
     )
+  })
+
+  it('redacts secrets and local paths before hashing and durable persistence', () => {
+    const { directory, channel, owner, log } = channelFixture()
+    const committed = log.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'redacted',
+      content: 'token=super-secret-value lives at /Users/alice/private/plan.txt'
+    })
+    expect(committed.content).toBe('token=[redacted] lives at [redacted-path]')
+    const durable = readFileSync(join(directory, 'logs', `${channel.channelId}.jsonl`), 'utf8')
+    expect(durable).not.toContain('super-secret-value')
+    expect(durable).not.toContain('/Users/alice')
+  })
+
+  it('recovers a durable append after failure before metadata persistence and deduplicates retry', () => {
+    const { channel, owner, store, log } = channelFixture()
+    vi.spyOn(store, 'recordCommittedMessage').mockImplementationOnce(() => {
+      throw new Error('injected metadata failure')
+    })
+    const input = {
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'crash-window',
+      content: 'durable before metadata'
+    }
+
+    expect(() => log.append(input)).toThrow('injected metadata failure')
+    expect(log.highWaterSequence(channel.channelId)).toBe(1)
+    expect(store.getChannel(channel.channelId)?.messageCount).toBe(0)
+
+    const retried = log.appendWithResult(input)
+    expect(retried).toMatchObject({ deduplicated: true, record: { sequence: 1 } })
+    expect(store.getChannel(channel.channelId)?.messageCount).toBe(1)
+  })
+
+  it('reconciles metadata that lags a valid durable log after restart', () => {
+    const { directory, storePath, channel, owner, log } = channelFixture()
+    log.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'one',
+      content: 'one'
+    })
+    const raw = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      channels: Array<{
+        channelId: string
+        messageCount: number
+        display: { messageCount: number }
+      }>
+    }
+    const storedChannel = raw.channels.find((entry) => entry.channelId === channel.channelId)!
+    storedChannel.messageCount = 0
+    storedChannel.display.messageCount = 0
+    writeFileSync(storePath, JSON.stringify(raw), 'utf8')
+
+    const restartedStore = new ChannelStore(storePath)
+    const restartedLog = new ChannelMessageLog(join(directory, 'logs'), restartedStore)
+    expect(restartedLog.highWaterSequence(channel.channelId)).toBe(1)
+    expect(restartedStore.getChannel(channel.channelId)?.messageCount).toBe(1)
+  })
+
+  it('blocks recovery when metadata claims history but the durable log is missing', () => {
+    const { directory, storePath, channel, owner, log } = channelFixture()
+    log.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'one',
+      content: 'one'
+    })
+    rmSync(join(directory, 'logs', `${channel.channelId}.jsonl`))
+
+    const restartedLog = new ChannelMessageLog(join(directory, 'logs'), new ChannelStore(storePath))
+    expectCode(() => restartedLog.highWaterSequence(channel.channelId), 'recovery_blocked')
   })
 
   it('replays bounded, gapless records and rejects cursors ahead of durable history', () => {
