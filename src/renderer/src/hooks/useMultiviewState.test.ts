@@ -455,6 +455,34 @@ describe('applyFocusEmptyPane', () => {
     expect(ids(next)).toEqual(['t0', 't1'])
   })
 
+  it('does not duplicate a singleton chat already owned by a live or parked pane', () => {
+    const liveOwner = applyFocusEmptyPane(
+      state({
+        layout: 'two-top-one-bottom',
+        panes: panesOf(['a', null, null]),
+        focusedPaneIndex: 1
+      }),
+      2,
+      'a'
+    )
+    expect(chatIds(liveOwner)).toEqual(['a', null, null])
+    expect(liveOwner.focusedPaneIndex).toBe(2)
+
+    const parkedOwner = applyFocusEmptyPane(
+      state({
+        layout: 'vertical-2',
+        panes: panesOf([null, null]),
+        parkedPanes: [{ id: 'parked-a', chatId: 'a' }],
+        focusedPaneIndex: 0
+      }),
+      1,
+      'a'
+    )
+    expect(chatIds(parkedOwner)).toEqual([null, null])
+    expect(parkedOwner.parkedPanes).toEqual([{ id: 'parked-a', chatId: 'a' }])
+    expect(parkedOwner.focusedPaneIndex).toBe(1)
+  })
+
   it('cannot focus a populated target or seed the already-focused empty pane', () => {
     const populated = state({
       layout: 'vertical-2',

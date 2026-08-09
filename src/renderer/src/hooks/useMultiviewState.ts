@@ -440,8 +440,13 @@ export function applyFocusEmptyPane(
   const target = clampFocusedPaneIndex(index, state.layout)
   if (target === state.focusedPaneIndex || !isPaneEmpty(state.panes[target])) return state
   const outgoingPane = state.panes[state.focusedPaneIndex]
+  const outgoingChatAlreadyOwned = Boolean(
+    outgoingVisibleChatId &&
+      (state.panes.some((pane) => pane.chatId === outgoingVisibleChatId) ||
+        state.parkedPanes.some((pane) => pane.chatId === outgoingVisibleChatId))
+  )
   const seededState =
-    outgoingVisibleChatId && isPaneEmpty(outgoingPane)
+    outgoingVisibleChatId && !outgoingChatAlreadyOwned && isPaneEmpty(outgoingPane)
       ? applySetPaneChat(state, state.focusedPaneIndex, outgoingVisibleChatId)
       : state
   return applySetFocusedPane(seededState, target)
