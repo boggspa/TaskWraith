@@ -176,17 +176,21 @@ describe('CanvasDockPanel mesh/simulator surface races', () => {
 })
 
 describe('CanvasDockPanel (static render)', () => {
-  it('renders both launchers when the chat has no dock sessions', () => {
+  it('renders a calm browser-first empty state with compact surface controls', () => {
     const html = renderToStaticMarkup(<CanvasDockPanel chatId="chat-empty" />)
-    expect(html).toContain('Browser')
-    expect(html).toContain('Open a website, your dev server, or a running app in a sandboxed pane.')
-    expect(html).toContain('Sketch canvas')
-    expect(html).toContain('Open sketch canvas')
+    expect(html).toContain('New tab')
+    expect(html).toContain('Start browsing')
+    expect(html).toContain('Enter a URL to open a page')
     expect(html).toContain('aria-label="Browser URL"')
-    // No sessions → no pill strip, no embedded pane host, no + toggle.
+    expect(html).toContain('Sign-ins stay in TaskWraith')
+    expect(html).toContain('aria-label="Choose canvas surface"')
+    expect(html).toContain('aria-label="Browser profile and privacy"')
+    // Secondary surfaces stay behind the compact + menu until requested.
+    expect(html).not.toContain('Open sketch canvas')
+    expect(html).not.toContain('Open Simulator Canvas')
+    // No sessions → no pill strip or embedded pane host.
     expect(html).not.toContain('canvas-dock-tab ')
     expect(html).not.toContain('canvas-pane-host')
-    expect(html).not.toContain('canvas-dock-new')
   })
 
   it('renders the session pill, the embedded pane, and the pop-out affordance', () => {
@@ -201,9 +205,10 @@ describe('CanvasDockPanel (static render)', () => {
       expect(html).toContain('canvas-pane-host')
       expect(html).toContain('aria-label="Move canvas to a floating window"')
       expect(html).toContain('aria-label="Close canvas pane"')
-      expect(html).toContain('aria-label="Open a new canvas"')
+      expect(html).toContain('aria-label="Choose canvas surface"')
+      expect(html).toContain('aria-label="Browser profile and privacy"')
       // Sessions exist → the launcher is collapsed behind the + toggle.
-      expect(html).not.toContain('Open sketch canvas')
+      expect(html).not.toContain('Start browsing')
     } finally {
       canvasDockSessionStore.remove('chat-static', 'c-web')
       canvasDockSessionStore.remove('chat-static', 'c-sketch')
@@ -214,10 +219,22 @@ describe('CanvasDockPanel (static render)', () => {
     canvasDockSessionStore.add('chat-a', { canvasId: 'c1', kind: 'web' })
     try {
       const other = renderToStaticMarkup(<CanvasDockPanel chatId="chat-b" />)
-      expect(other).toContain('Open sketch canvas')
+      expect(other).toContain('Start browsing')
       expect(other).not.toContain('role="tablist"')
     } finally {
       canvasDockSessionStore.remove('chat-a', 'c1')
     }
+  })
+
+  it('keeps persistent-profile controls human-facing and explicit about credential handoff', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('api.clearBrowserProfile()')
+    expect(source).toContain('Cookies and sign-ins stay inside TaskWraith')
+    expect(source).toContain('cannot type passwords or verification codes')
+    expect(source).toContain('Close browser tabs across all tasks')
+    expect(source).toContain('Sketch, 3D, and Simulator canvases stay open')
   })
 })

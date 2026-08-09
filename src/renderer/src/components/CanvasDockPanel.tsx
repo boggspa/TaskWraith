@@ -252,12 +252,78 @@ function PopOutGlyph() {
   )
 }
 
+function GlobeGlyph({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <circle cx="10" cy="10" r="7.25" stroke="currentColor" strokeWidth="1.35" />
+      <path
+        d="M2.9 10h14.2M10 2.75c2 2.1 3.05 4.52 3.05 7.25S12 15.15 10 17.25C8 15.15 6.95 12.73 6.95 10S8 4.85 10 2.75Z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function SurfaceGlyph({ kind }: { kind: 'browser' | 'sketch' | 'mesh' | 'simulator' }) {
+  if (kind === 'browser') return <GlobeGlyph />
+  if (kind === 'sketch') {
+    return (
+      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path
+          d="m4 14.9.55-3.25L12.7 3.5a1.55 1.55 0 0 1 2.2 0l1.6 1.6a1.55 1.55 0 0 1 0 2.2l-8.15 8.15L5.1 16 4 14.9Z"
+          stroke="currentColor"
+          strokeWidth="1.35"
+          strokeLinejoin="round"
+        />
+        <path d="m11.6 4.6 3.8 3.8M4.6 11.8l3.6 3.6" stroke="currentColor" strokeWidth="1.2" />
+      </svg>
+    )
+  }
+  if (kind === 'mesh') {
+    return (
+      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path
+          d="m10 2.8 6.3 3.6v7.2L10 17.2l-6.3-3.6V6.4L10 2.8Zm0 7.2 6.1-3.5M10 10 3.9 6.5M10 10v7"
+          stroke="currentColor"
+          strokeWidth="1.25"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )
+  }
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="5" y="2.75" width="10" height="14.5" rx="2" stroke="currentColor" strokeWidth="1.35" />
+      <path d="M8.25 5h3.5M9.1 14.9h1.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function ShieldGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M10 2.6 16 5v4.4c0 3.7-2.2 6.4-6 8-3.8-1.6-6-4.3-6-8V5l6-2.4Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path d="m7.5 10 1.55 1.55L12.8 7.8" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export interface CanvasDockPanelProps {
   chatId: string
 }
 
 interface CanvasPresentationBridge {
   adoptEmbedded?: (args: { chatId: string; canvasId: string }) => Promise<unknown>
+  clearBrowserProfile?: () => Promise<
+    { ok: true; closedSurfaceCount: number } | { ok: false; error: string }
+  >
 }
 
 export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
@@ -277,6 +343,13 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   const [showLauncher, setShowLauncher] = useState(false)
   const [showMesh, setShowMesh] = useState(false)
   const [showSimulator, setShowSimulator] = useState(false)
+  const [openMenu, setOpenMenu] = useState<'surfaces' | 'profile' | null>(null)
+  const [confirmingProfileClear, setConfirmingProfileClear] = useState(false)
+  const [profileBusy, setProfileBusy] = useState(false)
+  const [profileNotice, setProfileNotice] = useState<{
+    kind: 'success' | 'error'
+    text: string
+  } | null>(null)
   // Async completions race chat switches; compare-and-drop stale ones.
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
@@ -287,31 +360,31 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     setShowSimulator(false)
     setShowMesh(true)
     setShowLauncher(false)
+    setOpenMenu(null)
   }, [])
 
   const openSimulatorSurface = useCallback((): void => {
     setShowMesh(false)
     setShowSimulator(true)
     setShowLauncher(false)
+    setOpenMenu(null)
   }, [])
 
-  const toggleMeshSurface = useCallback((): void => {
-    setShowMesh((current) => {
-      const next = !current
-      if (next) setShowSimulator(false)
-      return next
-    })
-    setShowLauncher(false)
-  }, [])
+  useEffect(() => {
+    setOpenMenu(null)
+    setConfirmingProfileClear(false)
+    setProfileBusy(false)
+    setProfileNotice(null)
+  }, [chatId])
 
-  const toggleSimulatorSurface = useCallback((): void => {
-    setShowSimulator((current) => {
-      const next = !current
-      if (next) setShowMesh(false)
-      return next
-    })
-    setShowLauncher(false)
-  }, [])
+  useEffect(() => {
+    if (!openMenu) return
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpenMenu(null)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [openMenu])
 
   const refresh = useCallback(async (): Promise<void> => {
     const api = window.api?.canvas
@@ -476,6 +549,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
         setShowMesh(false)
         setShowSimulator(false)
         setShowLauncher(false)
+        setOpenMenu(null)
       }
       if (timer !== null) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
@@ -511,6 +585,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   ): Promise<void> => {
     setError(null)
     setBusy(mode)
+    setOpenMenu(null)
     try {
       const result = await open()
       if (chatIdRef.current !== chatId) return
@@ -543,6 +618,50 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       return
     }
     void runOpen('sketch', () => api.openSketchEmbedded({ chatId }))
+  }
+
+  const clearBrowserProfile = async (): Promise<void> => {
+    const api = window.api?.canvas as (typeof window.api.canvas & CanvasPresentationBridge) | undefined
+    if (!api?.clearBrowserProfile) {
+      setProfileNotice({
+        kind: 'error',
+        text: 'Browser profile controls need the updated preload bridge. Restart TaskWraith and try again.'
+      })
+      return
+    }
+    setProfileBusy(true)
+    setProfileNotice(null)
+    try {
+      const result = await api.clearBrowserProfile()
+      if (chatIdRef.current !== chatId) return
+      if (!result.ok) {
+        setProfileNotice({ kind: 'error', text: friendlyCanvasError(result.error) })
+        return
+      }
+      setConfirmingProfileClear(false)
+      setShowMesh(false)
+      setShowSimulator(false)
+      setShowLauncher(true)
+      await refresh()
+      if (chatIdRef.current === chatId) {
+        setProfileNotice({
+          kind: 'success',
+          text:
+            result.closedSurfaceCount > 0
+              ? `Browsing data cleared and ${result.closedSurfaceCount} browser ${result.closedSurfaceCount === 1 ? 'tab was' : 'tabs were'} closed.`
+              : 'Browsing data cleared.'
+        })
+      }
+    } catch (err) {
+      if (chatIdRef.current === chatId) {
+        setProfileNotice({
+          kind: 'error',
+          text: friendlyCanvasError(err instanceof Error ? err.message : String(err))
+        })
+      }
+    } finally {
+      if (chatIdRef.current === chatId) setProfileBusy(false)
+    }
   }
 
   const closeSession = async (canvasId: string): Promise<void> => {
@@ -616,7 +735,14 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     ? 'Simulator Canvas'
     : showMesh
       ? 'Mesh Canvas'
-      : 'Canvas'
+      : 'New tab'
+
+  const showBrowserSurface = (newTab: boolean): void => {
+    setShowMesh(false)
+    setShowSimulator(false)
+    setShowLauncher(newTab || sessions.length === 0)
+    setOpenMenu(null)
+  }
 
   return (
     <div className="canvas-dock-panel" aria-label="Canvas panel">
@@ -652,84 +778,143 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
             })}
           </div>
         ) : (
-          <span className="canvas-dock-toolbar-title">{toolbarTitle}</span>
+          <span className="canvas-dock-toolbar-title">
+            {!showingSpecialSurface && <GlobeGlyph size={13} />}
+            <span>{toolbarTitle}</span>
+          </span>
         )}
-        <button
-          type="button"
-          className={`canvas-dock-mesh${showMesh ? ' is-active' : ''}`}
-          onClick={toggleMeshSurface}
-          aria-label="Show Mesh Canvas"
-          title="Show Mesh Canvas"
-        >
-          3D
-        </button>
-        <button
-          type="button"
-          className={`canvas-dock-sim${showSimulator ? ' is-active' : ''}`}
-          onClick={toggleSimulatorSurface}
-          aria-label="Show Simulator Canvas"
-          title="Show Simulator Canvas"
-        >
-          Sim
-        </button>
-        {!showingSpecialSurface && sessions.length > 0 && (
+        <div className="canvas-dock-toolbar-actions">
           <button
             type="button"
-            className={`canvas-dock-new${launcherVisible ? ' is-active' : ''}`}
-            onClick={() => setShowLauncher((value) => !value)}
-            aria-label="Open a new canvas"
-            title="Open a new canvas"
+            className={`canvas-dock-new${openMenu === 'surfaces' ? ' is-active' : ''}`}
+            onClick={() => {
+              setOpenMenu((current) => (current === 'surfaces' ? null : 'surfaces'))
+              setConfirmingProfileClear(false)
+            }}
+            aria-label="Choose canvas surface"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === 'surfaces'}
+            title="Choose canvas surface"
           >
-            +
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+            </svg>
           </button>
-        )}
+          <button
+            type="button"
+            className={`canvas-dock-more${openMenu === 'profile' ? ' is-active' : ''}`}
+            onClick={() => {
+              setOpenMenu((current) => (current === 'profile' ? null : 'profile'))
+              setConfirmingProfileClear(false)
+            }}
+            aria-label="Browser profile and privacy"
+            aria-haspopup="dialog"
+            aria-expanded={openMenu === 'profile'}
+            title="Browser profile and privacy"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <circle cx="3.25" cy="8" r="1" />
+              <circle cx="8" cy="8" r="1" />
+              <circle cx="12.75" cy="8" r="1" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      {showSimulator ? (
-        <SimulatorCanvasPanel chatId={chatId} />
-      ) : showMesh ? (
-        <MeshCanvasPanel chatId={chatId} />
-      ) : (
-        <>
-      {launcherVisible && (
-        <div className="canvas-dock-launcher">
-          <div className="canvas-dock-launcher-group">
-            <div className="canvas-dock-launcher-title">Browser</div>
-            <div className="canvas-dock-launcher-hint">
-              Open a website, your dev server, or a running app in a sandboxed pane.
-            </div>
-            <CanvasPaneLauncher onOpen={openWeb} />
+      {openMenu && (
+        <button
+          type="button"
+          className="canvas-dock-menu-scrim"
+          aria-label="Close Canvas menu"
+          onClick={() => setOpenMenu(null)}
+          tabIndex={-1}
+        />
+      )}
+
+      {openMenu === 'surfaces' && (
+        <div className="canvas-dock-popover canvas-dock-surface-menu" role="menu" aria-label="Canvas surfaces">
+          <div className="canvas-dock-popover-eyebrow">Canvas surfaces</div>
+          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={() => showBrowserSurface(false)}>
+            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="browser" /></span>
+            <span className="canvas-dock-menu-copy">
+              <strong>{sessions.length ? 'Browser tabs' : 'Browser'}</strong>
+              <small>{sessions.length ? 'Return to your open pages' : 'Start with a new tab'}</small>
+            </span>
+          </button>
+          {sessions.length > 0 && (
+            <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={() => showBrowserSurface(true)}>
+              <span className="canvas-dock-menu-icon canvas-dock-menu-plus" aria-hidden="true">+</span>
+              <span className="canvas-dock-menu-copy">
+                <strong>New browser tab</strong>
+                <small>Open another site or local app</small>
+              </span>
+            </button>
+          )}
+          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={openSketch} disabled={busy !== null}>
+            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="sketch" /></span>
+            <span className="canvas-dock-menu-copy">
+              <strong>Sketch canvas</strong>
+              <small>Shapes, arrows, freehand, and text</small>
+            </span>
+          </button>
+          <div className="canvas-dock-menu-divider" />
+          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={openMeshSurface}>
+            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="mesh" /></span>
+            <span className="canvas-dock-menu-copy">
+              <strong>Mesh Canvas</strong>
+              <small>Inspect and author 3D scenes</small>
+            </span>
+          </button>
+          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={openSimulatorSurface}>
+            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="simulator" /></span>
+            <span className="canvas-dock-menu-copy">
+              <strong>Simulator Canvas</strong>
+              <small>Preview and control an iOS app</small>
+            </span>
+          </button>
+        </div>
+      )}
+
+      {openMenu === 'profile' && (
+        <div className="canvas-dock-popover canvas-dock-profile-menu" role="dialog" aria-label="TaskWraith Browser profile">
+          <div className="canvas-dock-profile-heading">
+            <span className="canvas-dock-profile-icon"><ShieldGlyph /></span>
+            <span>
+              <strong>TaskWraith Browser</strong>
+              <small>Persistent profile on this device</small>
+            </span>
           </div>
-          <div className="canvas-dock-launcher-divider" />
-          <div className="canvas-dock-launcher-group">
-            <div className="canvas-dock-launcher-title">Sketch canvas</div>
-            <div className="canvas-dock-launcher-hint">
-              Quick shapes, freehand marks, arrows, and text.
+          <p>Cookies and sign-ins stay inside TaskWraith. They are never shared with Safari, Chrome, or provider credentials.</p>
+          <div className="canvas-dock-profile-safety">
+            Agents can use pages after you sign in, but cannot type passwords or verification codes.
+          </div>
+          {profileNotice && (
+            <div className={`canvas-dock-profile-notice is-${profileNotice.kind}`} role="status">
+              {profileNotice.text}
             </div>
+          )}
+          {confirmingProfileClear ? (
+            <div className="canvas-dock-profile-confirm">
+              <p>Close browser tabs across all tasks and clear cookies, sign-ins, site data, and cache? Sketch, 3D, and Simulator canvases stay open.</p>
+              <div className="canvas-dock-profile-actions">
+                <button type="button" onClick={() => setConfirmingProfileClear(false)} disabled={profileBusy}>Cancel</button>
+                <button type="button" className="is-danger" onClick={() => void clearBrowserProfile()} disabled={profileBusy}>
+                  {profileBusy ? 'Clearing…' : 'Clear data'}
+                </button>
+              </div>
+            </div>
+          ) : (
             <button
               type="button"
-              className="canvas-dock-launcher-sketch"
-              onClick={openSketch}
-              disabled={busy !== null}
+              className="canvas-dock-profile-clear"
+              onClick={() => {
+                setConfirmingProfileClear(true)
+                setProfileNotice(null)
+              }}
             >
-              Open sketch canvas
+              Clear browsing data…
             </button>
-          </div>
-          <div className="canvas-dock-launcher-divider" />
-          <div className="canvas-dock-launcher-group">
-            <div className="canvas-dock-launcher-title">Simulator Canvas</div>
-            <div className="canvas-dock-launcher-hint">
-              Preview an iOS Simulator in this chat.
-            </div>
-            <button
-              type="button"
-              className="canvas-dock-launcher-sketch"
-              onClick={openSimulatorSurface}
-            >
-              Open Simulator Canvas
-            </button>
-          </div>
-          {busy && <div className="canvas-dock-launcher-hint">Opening…</div>}
+          )}
         </div>
       )}
 
@@ -739,83 +924,114 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
         </div>
       )}
 
-      {active && !launcherVisible && (
-        <div className="canvas-dock-pane-host">
-          <CanvasPane
-            key={active.canvasId}
-            canvasId={active.canvasId}
-            title={canvasSummaryLabel({
-              title: activeSummary?.title,
-              url: activeSummary?.url,
-              driver: active.kind
-            })}
-            url={activeSummary?.url}
-            overlayGuard
-            chrome={
-              active.kind === 'web' && isNavigableCanvasUrl(activeSummary?.url) ? (
-                <CanvasBrowserChrome
-                  key={active.canvasId}
-                  chatId={chatId}
-                  canvasId={active.canvasId}
-                  initialState={{
-                    url: activeSummary?.url ?? '',
-                    title: activeSummary?.title ?? '',
-                    isLoading: activeSummary?.isLoading === true,
-                    canGoBack: activeSummary?.canGoBack === true,
-                    canGoForward: activeSummary?.canGoForward === true
-                  }}
-                  onNavigateError={(message) => setError(friendlyCanvasError(message))}
-                />
-              ) : undefined
-            }
-            actions={
-              <button
-                type="button"
-                className="canvas-dock-popout"
-                onClick={() => void popOutSession(active)}
-                aria-label="Move canvas to a floating window"
-                title="Move to a floating window"
-              >
-                <PopOutGlyph />
-              </button>
-            }
-            onClose={() => void closeSession(active.canvasId)}
-          />
-        </div>
-      )}
-
-      {agentCanvases.length > 0 && (
-        <div className="canvas-dock-agent-section">
-          <div className="canvas-dock-agent-title">Agent canvases</div>
-          <ul className="canvas-dock-agent-list">
-            {agentCanvases.map((summary) => (
-              <li key={summary.canvasId} className="canvas-dock-agent-row">
-                <span
-                  className={`canvas-dock-agent-status is-${summary.status || 'unknown'}`}
-                  aria-hidden="true"
-                />
-                <span className="canvas-dock-agent-label" title={summary.url}>
-                  {canvasSummaryLabel(summary)}
+      {showSimulator ? (
+        <SimulatorCanvasPanel chatId={chatId} />
+      ) : showMesh ? (
+        <MeshCanvasPanel chatId={chatId} />
+      ) : (
+        <>
+          {launcherVisible && (
+            <section
+              className="canvas-dock-browser-empty"
+              aria-labelledby="canvas-browser-empty-title"
+            >
+              <div className="canvas-dock-browser-empty-icon">
+                <GlobeGlyph size={25} />
+              </div>
+              <h2 id="canvas-browser-empty-title">Start browsing</h2>
+              <p>Enter a URL to open a page</p>
+              <div className="canvas-dock-browser-launcher">
+                <CanvasPaneLauncher onOpen={openWeb} />
+              </div>
+              <div className="canvas-dock-browser-privacy">
+                <ShieldGlyph />
+                <span>
+                  Sign-ins stay in TaskWraith. You handle passwords and verification codes.
                 </span>
-                <span className="canvas-dock-agent-driver">{driverBadge(summary.driver)}</span>
-                <button
-                  type="button"
-                  className="canvas-dock-agent-close"
-                  onClick={() => void closeAgentCanvas(summary.canvasId)}
-                  aria-label={`Close ${canvasSummaryLabel(summary)}`}
-                  title="Close this canvas"
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-          <div className="canvas-dock-agent-hint">
-            Opened by agents via canvas tools — web canvases live in floating windows; renders
-            are off-screen.
-          </div>
-        </div>
-      )}
+              </div>
+              {busy && <div className="canvas-dock-browser-opening">Opening…</div>}
+            </section>
+          )}
+
+          {active && !launcherVisible && (
+            <div className="canvas-dock-pane-host">
+              <CanvasPane
+                key={active.canvasId}
+                canvasId={active.canvasId}
+                title={canvasSummaryLabel({
+                  title: activeSummary?.title,
+                  url: activeSummary?.url,
+                  driver: active.kind
+                })}
+                url={activeSummary?.url}
+                overlayGuard
+                chrome={
+                  active.kind === 'web' && isNavigableCanvasUrl(activeSummary?.url) ? (
+                    <CanvasBrowserChrome
+                      key={active.canvasId}
+                      chatId={chatId}
+                      canvasId={active.canvasId}
+                      initialState={{
+                        url: activeSummary?.url ?? '',
+                        title: activeSummary?.title ?? '',
+                        isLoading: activeSummary?.isLoading === true,
+                        canGoBack: activeSummary?.canGoBack === true,
+                        canGoForward: activeSummary?.canGoForward === true
+                      }}
+                      onNavigateError={(message) => setError(friendlyCanvasError(message))}
+                    />
+                  ) : undefined
+                }
+                actions={
+                  <button
+                    type="button"
+                    className="canvas-dock-popout"
+                    onClick={() => void popOutSession(active)}
+                    aria-label="Move canvas to a floating window"
+                    title="Move to a floating window"
+                  >
+                    <PopOutGlyph />
+                  </button>
+                }
+                onClose={() => void closeSession(active.canvasId)}
+              />
+            </div>
+          )}
+
+          {agentCanvases.length > 0 && (
+            <div className="canvas-dock-agent-section">
+              <div className="canvas-dock-agent-title">Agent canvases</div>
+              <ul className="canvas-dock-agent-list">
+                {agentCanvases.map((summary) => (
+                  <li key={summary.canvasId} className="canvas-dock-agent-row">
+                    <span
+                      className={`canvas-dock-agent-status is-${summary.status || 'unknown'}`}
+                      aria-hidden="true"
+                    />
+                    <span className="canvas-dock-agent-label" title={summary.url}>
+                      {canvasSummaryLabel(summary)}
+                    </span>
+                    <span className="canvas-dock-agent-driver">
+                      {driverBadge(summary.driver)}
+                    </span>
+                    <button
+                      type="button"
+                      className="canvas-dock-agent-close"
+                      onClick={() => void closeAgentCanvas(summary.canvasId)}
+                      aria-label={`Close ${canvasSummaryLabel(summary)}`}
+                      title="Close this canvas"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="canvas-dock-agent-hint">
+                Opened by agents via canvas tools — web canvases live in floating windows;
+                renders are off-screen.
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
