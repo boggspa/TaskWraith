@@ -83,6 +83,7 @@ describe('HostProjectionStore · live fetch', () => {
 
     expect(state.status).toBe('live')
     expect(state.projection?.freshness).toBe('live')
+    expect(state.liveBaselineContinuity).toBe(true)
     expect(state.projection?.threads).toHaveLength(1)
     expect(state.lastCursor).toBe(42)
     expect(state.lastGeneration).toBe(3)
@@ -101,6 +102,18 @@ describe('HostProjectionStore · live fetch', () => {
     const before = seen.length
     await store.refresh()
     expect(seen).toHaveLength(before)
+  })
+
+  it('does not establish live-baseline continuity from a Host-served cache', async () => {
+    const store = new HostProjectionStore(
+      transportOf(async () => snapshot({ freshness: 'cached' }))
+    )
+
+    const state = await store.refresh()
+
+    expect(state.status).toBe('live')
+    expect(state.projection?.freshness).toBe('cached')
+    expect(state.liveBaselineContinuity).toBe(false)
   })
 })
 
@@ -246,6 +259,7 @@ describe('HostProjectionStore · delta continuity', () => {
     expect(state.projection?.threads.map((thread) => thread.id)).toEqual(['t1', 't2'])
     // Delta-applied client caches are coherent but never promoted to live.
     expect(state.projection?.freshness).toBe('cached')
+    expect(state.liveBaselineContinuity).toBe(true)
   })
 
   it('falls back to a full snapshot on a retention/generation fence', async () => {

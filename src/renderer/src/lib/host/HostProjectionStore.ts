@@ -91,6 +91,14 @@ export interface HostProjectionState {
    * view cannot mistake it for current.
    */
   readonly projection?: HostProjectedSnapshot
+  /**
+   * True when the current projection descends from a freshness-live full Host
+   * snapshot through only validated, contiguous deltas. This provenance does
+   * not promote a delta-applied cache to live authority; it lets explicitly
+   * presentation-only consumers distinguish that coherent cache from an
+   * arbitrary or Host-served cached snapshot.
+   */
+  readonly liveBaselineContinuity?: boolean
   /** Why the last fetch failed. Present only in `unavailable`. */
   readonly unavailableReason?: string
   /** Cursor of the last successful snapshot; enables later delta resumption. */
@@ -172,6 +180,7 @@ export class HostProjectionStore {
   async catchUp(): Promise<HostProjectionState> {
     if (this.inFlight) return this.inFlight
     const base = this.sourceSnapshot
+    const liveBaselineContinuity = this.state.liveBaselineContinuity === true
     const fetchDeltas = this.transport.fetchDeltas
     if (!base || typeof fetchDeltas !== 'function') {
       return this.refresh()
@@ -208,6 +217,7 @@ export class HostProjectionStore {
           applied.snapshot,
           applied.snapshot.freshness === 'live' ? 'live' : 'cached'
         ),
+        liveBaselineContinuity,
         lastCursor: applied.cursor,
         lastGeneration: applied.generation
       })
@@ -255,11 +265,13 @@ export class HostProjectionStore {
 
   private async performFullRefresh(): Promise<void> {
     const snapshot = await this.transport.fetchSnapshot()
+    const projection = projectHostSnapshot(snapshot, 'live')
     this.sourceSnapshot = snapshot
     this.lastFullRefreshAt = this.syncNow()
     this.setState({
       status: 'live',
-      projection: projectHostSnapshot(snapshot, 'live'),
+      projection,
+      liveBaselineContinuity: projection.freshness === 'live',
       lastCursor: snapshot.cursor,
       lastGeneration: snapshot.generation
     })
@@ -294,7 +306,12 @@ export class HostProjectionStore {
     return {
       status: 'unavailable',
       unavailableReason: reason,
-      ...(previous ? { projection: { ...previous, freshness: 'cached' as const } } : {}),
+      ...(previous
+        ? {
+            projection: { ...previous, freshness: 'cached' as const },
+            liveBaselineContinuity: this.state.liveBaselineContinuity === true
+          }
+        : {}),
       ...(this.state.lastCursor !== undefined ? { lastCursor: this.state.lastCursor } : {}),
       ...(this.state.lastGeneration !== undefined
         ? { lastGeneration: this.state.lastGeneration }
