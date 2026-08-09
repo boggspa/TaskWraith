@@ -1881,11 +1881,9 @@
   background-image: none !important;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent) !important;
   color: var(--text-primary) !important;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34) !important;
-  backdrop-filter: blur(18px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
+  box-shadow: var(--tw-popover-material-shadow) !important;
+  backdrop-filter: var(--tw-popover-material-backdrop) !important;
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop) !important;
 }
 [data-composer-style="grok"] .composer-diff-action-menu button:hover:not(:disabled),
 [data-composer-style="grok"] .composer-diff-action-menu button:focus-visible:not(:disabled) {
@@ -1921,11 +1919,9 @@
   background-image: none !important;
   border: 1px solid var(--grok-border) !important;
   color: var(--grok-fg) !important;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--grok-fg) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34) !important;
-  backdrop-filter: blur(18px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
+  box-shadow: var(--tw-popover-material-shadow) !important;
+  backdrop-filter: var(--tw-popover-material-backdrop) !important;
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop) !important;
 }
 /* Selected/highlighted rows use an inverse-neutral wash, not the
  * accent tint. */
@@ -2842,11 +2838,9 @@
   background-image: none !important;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent) !important;
   color: var(--text-primary) !important;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34) !important;
-  backdrop-filter: blur(18px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
+  box-shadow: var(--tw-popover-material-shadow) !important;
+  backdrop-filter: var(--tw-popover-material-backdrop) !important;
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop) !important;
 }
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-diff-action-menu button:hover:not(:disabled),
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-diff-action-menu button:focus-visible:not(:disabled) {
@@ -2882,11 +2876,9 @@
   background-image: none !important;
   border: 1px solid var(--cursor-shell-border) !important;
   color: var(--cursor-shell-fg) !important;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--cursor-shell-fg) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34) !important;
-  backdrop-filter: blur(18px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
+  box-shadow: var(--tw-popover-material-shadow) !important;
+  backdrop-filter: var(--tw-popover-material-backdrop) !important;
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop) !important;
 }
 /* Selected/highlighted rows use an inverse-neutral wash, not the
  * accent tint. */

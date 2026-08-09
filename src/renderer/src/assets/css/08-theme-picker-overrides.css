@@ -312,9 +312,7 @@
   background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 10px;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
+  box-shadow: var(--tw-popover-material-shadow);
   min-width: 220px;
   max-width: 340px;
   padding: 4px;
@@ -323,18 +321,16 @@
   overflow-y: auto;
   /* Frost the transcript behind the popover so text stays legible — the one
      property this menu lacked vs the working .composer-combined-picker-popover. */
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   isolation: isolate;
 }
-/* Light themes use the same shared 80%-opaque white glass bed. */
+/* Light themes select the shared light neutral-material bed. */
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .agent-mention-menu {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--surface-text);
 }
 .agent-mention-menu-list {
@@ -412,27 +408,23 @@
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 10px;
   box-sizing: border-box;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
+  box-shadow: var(--tw-popover-material-shadow);
   padding: 4px;
   font-size: var(--font-size-xs);
   max-height: 360px;
   overflow-y: auto;
   /* Frost the transcript behind the popover so text stays legible — the one
      property this menu lacked vs the working .composer-combined-picker-popover. */
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   isolation: isolate;
 }
-/* Light themes use the same shared 80%-opaque white glass bed. */
+/* Light themes select the shared light neutral-material bed. */
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .composer-slash-menu {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--surface-text);
 }
 .composer-slash-menu-list {
@@ -594,8 +586,8 @@
   width: min(640px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
-  /* Approval dialogs intentionally use the same 80%-opaque material as
-     pickers and popovers. The backdrop still keeps the pending decision
+  /* Approval dialogs intentionally follow the picker popovers' shared fill.
+     The backdrop still keeps the pending decision
      distinct; this makes the interaction feel native to the surrounding
      chrome without reducing the detail or focus treatment of a modal. */
   background: var(--tw-popover-glass-bg);
@@ -9176,11 +9168,9 @@
   border-radius: var(--radius-md, 10px);
   background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--tw-popover-material-shadow);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   /* Portaled-popover band (10060), same as `.ensemble-above-overflow`. This
    * shell is body-portaled + `position: fixed` (CombinedModelPicker), so it
    * competes directly with the body-portaled transcript rails (10030/10031).
@@ -9257,47 +9247,32 @@
 /* Light-theme variant of the model/permission picker popover.
  * `--panel-elevated-bg` resolves dark in light themes through
  * the cascade for legacy reasons, so the popover read as a dark
- * sheet on a light backdrop. Switch to the shared 80%-opaque white
- * glass bed with a softer shadow and
- * a higher-mix backdrop blur — closer to the macOS
- * liquid-glass aesthetic real Codex / Claude use for menus. */
+ * sheet on a light backdrop. The shared neutral-material aliases select the
+ * light Model Usage recipe while this rule keeps the light surface tokens. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--surface-text);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-column + .composer-combined-picker-column {
   border-left-color: var(--surface-border);
 }
 
-/* ── Refractive "liquid glass" upgrade ───────────────────────────────
- * Promote the frosted popover to subtly REFRACTIVE glass. Three
- * stacked, mutually-independent layers, ordered cheap→degradable:
+/* ── Neutral material + optional refraction ──────────────────────────
+ * Every live popover keeps its own geometry but paints the same neutral
+ * material as the sidebar Model Usage pane. Optional advanced FX warps the
+ * sheen layer only; it never changes the fill, shadow, or content contrast.
  *
- *   1. ::after  — the always-on CSS-fake RIM. Pure layered box-shadow
- *                 (top specular highlight + hairline rim + outer drop).
- *                 No SVG, no blur, no filter — this is the base "glass"
- *                 read that survives EVERY fallback below.
- *   2. ::before — the synthetic SHEEN. A BAKED specular gradient
- *                 (radial top-glow + 135° diagonal sheen) sitting
- *                 BEHIND the content. The content keeps its own bed
- *                 (the popover background painted above), so the sheen
- *                 never reduces text contrast.
+ *   1. ::after  — the canonical, always-on Model Usage sheen.
+ *   2. ::before — the same sheen on its own layer when refraction is enabled.
  *   3. filter   — the displacement warp (#tw-glass-refract) applied to
  *                 the ::before SHEEN LAYER ONLY (never the content, never
  *                 as backdrop-filter — that would re-filter the live
  *                 backdrop per frame). Gated to cinematic/epic.
- *
- * The existing `backdrop-filter: blur(18px)` on the base rule STAYS as
- * the cheap static frost; we only add layers, never re-filter the
- * backdrop. Both pseudo-elements were free on the base popover rule. */
+ */
 
-/* (1) Always-on CSS-fake rim — no SVG, survives every fallback. The
- * popover already sets isolation:isolate + border-radius, so the
- * pseudo-element inherits the rounded clip via inset:0 + inherit. */
+/* (1) Always-on neutral sheen. */
 .composer-combined-picker-popover::after,
 .agent-mention-menu::after,
 .composer-slash-menu::after,
@@ -9309,9 +9284,12 @@
 .composer-goal-popover::after,
 .composer-plan-popover::after,
 .composer-ensemble-toggle-popover::after,
+.composer-human-invite-popover::after,
 .sidebar-settings-menu::after,
 .sidebar-footer-popover::after,
 .sidebar-new-menu::after,
+.sidebar-overflow-menu-popover::after,
+.workspace-lock-popover::after,
 .ensemble-above-overflow::after {
   content: "";
   position: absolute;
@@ -9319,15 +9297,12 @@
   border-radius: inherit;
   pointer-events: none;
   z-index: 1; /* above sheen, below content */
-  box-shadow:
-    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.5)),
-    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 14%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.18);
+  background: var(--tw-neutral-material-sheen);
 }
 
-/* (2) Synthetic sheen layer — baked specular gradient behind content.
+/* (2) Refractable copy of the neutral sheen behind content.
  * Emitted ONLY when refraction is enabled; absent attr ⇒ untouched
- * plain frosted popover. Perf: own cached layer, decoupled from the
+ * neutral-material popover. Perf: own cached layer, decoupled from the
  * backdrop repaint, NO animation of the filter or its inputs. */
 :root[data-advanced-fx-refraction="true"] .composer-combined-picker-popover::before,
 :root[data-advanced-fx-refraction="true"] .agent-mention-menu::before,
@@ -9340,9 +9315,12 @@
 :root[data-advanced-fx-refraction="true"] .composer-goal-popover::before,
 :root[data-advanced-fx-refraction="true"] .composer-plan-popover::before,
 :root[data-advanced-fx-refraction="true"] .composer-ensemble-toggle-popover::before,
+:root[data-advanced-fx-refraction="true"] .composer-human-invite-popover::before,
 :root[data-advanced-fx-refraction="true"] .sidebar-settings-menu::before,
 :root[data-advanced-fx-refraction="true"] .sidebar-footer-popover::before,
 :root[data-advanced-fx-refraction="true"] .sidebar-new-menu::before,
+:root[data-advanced-fx-refraction="true"] .sidebar-overflow-menu-popover::before,
+:root[data-advanced-fx-refraction="true"] .workspace-lock-popover::before,
 :root[data-advanced-fx-refraction="true"] .ensemble-above-overflow::before {
   content: "";
   position: absolute;
@@ -9350,25 +9328,39 @@
   border-radius: inherit;
   pointer-events: none;
   z-index: 0; /* behind the popover content / rim */
-  background:
-    radial-gradient(
-      120% 80% at 50% -8%,
-      var(--tw-glass-sheen, rgba(196, 200, 208, 0.09)),
-      transparent 62%
-    ),
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--tw-glass-sheen, #fff) 60%, transparent) 0%,
-      transparent 38%,
-      transparent 64%,
-      color-mix(in srgb, var(--tw-glass-sheen, #fff) 32%, transparent) 100%
-    );
+  background: var(--tw-neutral-material-sheen);
   /* Decouple as a cached own-layer texture so it doesn't ride the
    * backdrop repaints; transform: translateZ(0) forces the layer. */
   contain: layout paint;
   isolation: isolate;
   will-change: transform;
   transform: translateZ(0);
+}
+
+:root[data-advanced-fx-refraction="true"]:not([data-appearance="solid"]):not(
+    [data-reduce-transparency="true"]
+  )
+  :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
+    .ensemble-above-overflow
+  )::after {
+  opacity: 0;
 }
 
 /* (3) Displacement warp on the SHEEN layer only — gated to the two
@@ -9387,9 +9379,12 @@
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   )::before {
   filter: url(#tw-glass-refract);
@@ -9408,9 +9403,12 @@
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   )::before {
   filter: url(#tw-glass-refract);
@@ -9422,7 +9420,7 @@
  * low-alpha (see theme.css light block), but we slightly soften the
  * diagonal so the bright frosted surface never blows out. */
 :root[data-advanced-fx-refraction="true"]
-  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
   :is(
     .composer-combined-picker-popover,
     .agent-mention-menu,
@@ -9435,9 +9433,12 @@
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   )::before {
   mix-blend-mode: screen;
@@ -9445,11 +9446,10 @@
 }
 
 /* ── Degrade chain ───────────────────────────────────────────────────
- * (a) reduce-transparency → fully SOLID + kill the blur AND the sheen.
- *     The base popover blurs UNCONDITIONALLY today — this closes that
- *     real a11y gap regardless of the refraction attr. High specificity
- *     (:root + class) beats the base rule's `backdrop-filter`. */
-:root[data-reduce-transparency="true"]
+ * (a) solid appearance or reduce-transparency → opaque bed, no backdrop
+ *     sampling, and no refractive warp. The neutral ::after sheen survives,
+ *     matching the Model Usage material's own solid fallback. */
+:is(:root[data-appearance="solid"], :root[data-reduce-transparency="true"])
   :is(
     .composer-combined-picker-popover,
     .agent-mention-menu,
@@ -9462,16 +9462,19 @@
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   ) {
-  background: var(--tw-glass-solid);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: var(--tw-glass-solid) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
-:root[data-reduce-transparency="true"]
+:is(:root[data-appearance="solid"], :root[data-reduce-transparency="true"])
   :is(
     .composer-combined-picker-popover,
     .agent-mention-menu,
@@ -9484,16 +9487,19 @@
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   )::before {
   display: none;
   filter: none;
 }
-:root[data-reduce-transparency="true"]
-  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+:is(:root[data-appearance="solid"], :root[data-reduce-transparency="true"])
+  :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
   :is(
     .composer-combined-picker-popover,
     .agent-mention-menu,
@@ -9506,12 +9512,15 @@
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   ) {
-  background: var(--tw-glass-solid);
+  background: var(--tw-glass-solid) !important;
   color: var(--surface-text);
 }
 
@@ -9519,7 +9528,7 @@
  *     pattern at 03-composer-welcome-activity.css:3215. Also neutralise
  *     the sheen filter so a non-supporting engine never tries url(). */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root :is(
+  :root body :is(
     .composer-combined-picker-popover,
     .agent-mention-menu,
     .composer-slash-menu,
@@ -9531,34 +9540,41 @@
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   ) {
-    background: var(--tw-glass-solid);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    background: var(--tw-glass-solid) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
-  :root :is(
+  :root body :is(
     .composer-combined-picker-popover,
     .agent-mention-menu,
     .composer-slash-menu,
     .welcome-workspace-popover,
     .composer-workspace-popover,
     .continuous-hops-popover,
+    .composer-copy-transcript-popover,
     .composer-diff-action-menu,
     .composer-goal-popover,
     .composer-plan-popover,
     .composer-ensemble-toggle-popover,
+    .composer-human-invite-popover,
     .sidebar-settings-menu,
     .sidebar-footer-popover,
     .sidebar-new-menu,
+    .sidebar-overflow-menu-popover,
+    .workspace-lock-popover,
     .ensemble-above-overflow
   )::before {
     filter: none;
   }
-  :root :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  :root :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
     :is(
       .composer-combined-picker-popover,
       .agent-mention-menu,
@@ -9571,12 +9587,15 @@
       .composer-goal-popover,
       .composer-plan-popover,
       .composer-ensemble-toggle-popover,
+      .composer-human-invite-popover,
       .sidebar-settings-menu,
       .sidebar-footer-popover,
       .sidebar-new-menu,
+      .sidebar-overflow-menu-popover,
+      .workspace-lock-popover,
       .ensemble-above-overflow
     ) {
-    background: var(--tw-glass-solid);
+    background: var(--tw-glass-solid) !important;
     color: var(--surface-text);
   }
 }
@@ -9592,9 +9611,12 @@
 .composer-goal-popover > *,
 .composer-plan-popover > *,
 .composer-ensemble-toggle-popover > *,
+.composer-human-invite-popover > *,
 .sidebar-settings-menu > *,
 .sidebar-footer-popover > *,
 .sidebar-new-menu > *,
+.sidebar-overflow-menu-popover > *,
+.workspace-lock-popover > *,
 .ensemble-above-overflow > * {
   position: relative;
   z-index: 2;
@@ -9606,9 +9628,8 @@
   min-width: 140px;
   padding: 4px 0;
   /* Keep picker content explicitly ABOVE the refractive sheen (::before,
-   * z-index 0) and the CSS-fake rim (::after, z-index 1) so neither
-   * glass layer can ever sit over the text/rows. Legibility is the
-   * hard constraint of the liquid-glass upgrade. */
+   * z-index 0) and neutral sheen (::after, z-index 1) so neither layer can
+   * ever sit over the text/rows. Legibility is the hard constraint. */
   position: relative;
   z-index: 2;
 }
@@ -11080,15 +11101,14 @@
   --surface-1: var(--obsidian-composer-fill);
   --surface-2: var(--obsidian-composer-fill);
   --surface-border: var(--obsidian-composer-border);
-  --tw-popover-glass-bg: rgba(0, 0, 0, 0.8);
-  --tw-glass-solid: #000;
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
+  --tw-glass-solid: var(--tw-neutral-material-solid-dark);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-dark);
   background: var(--tw-popover-glass-bg);
   border-color: var(--obsidian-composer-border);
   color: rgba(255, 255, 255, 0.92);
   color-scheme: dark;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
+  box-shadow: var(--tw-popover-material-shadow);
 }
 .composer-combined-picker-popover.shell-alabaster,
 .composer-slash-menu.shell-alabaster,
@@ -11108,15 +11128,14 @@
   --surface-1: var(--alabaster-composer-fill);
   --surface-2: var(--alabaster-composer-fill);
   --surface-border: var(--alabaster-composer-border);
-  --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
-  --tw-glass-solid: #fff;
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
   background: var(--tw-popover-glass-bg);
   border-color: var(--alabaster-composer-border);
   color: rgba(18, 21, 27, 0.92);
   color-scheme: light;
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
 }
 
 /* ============================================================
@@ -11158,7 +11177,9 @@
     .composer-slash-menu,
     .agent-mention-menu,
     .composer-diff-action-menu,
-    .composer-goal-popover
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover
   ) {
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.64);
@@ -11189,7 +11210,9 @@
     .composer-slash-menu,
     .agent-mention-menu,
     .composer-diff-action-menu,
-    .composer-goal-popover
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover
   ) {
   --text-primary: rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.64);

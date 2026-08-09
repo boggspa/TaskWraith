@@ -495,17 +495,6 @@
   --cm-bracket-match: rgba(18, 21, 27, 0.12);
 }
 
-@media (prefers-color-scheme: light) {
-  [data-theme="system"] {
-    --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
-    --tw-sidebar-neutral-material-solid: var(--tw-neutral-material-solid-light);
-    --tw-sidebar-neutral-material-shadow: var(--tw-neutral-material-shadow-light);
-    --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
-    --tw-glass-solid: var(--tw-neutral-material-solid-light);
-    --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
-  }
-}
-
 [data-theme="midnight"] {
   --app-bg: #020308;
   --app-bg-elevated: #080b14;
@@ -960,6 +949,12 @@
   --panel-border: rgba(18, 21, 27, 0.10);
   --panel-bg: rgba(255, 255, 255, 0.42);
   --panel-elevated-bg: rgba(255, 255, 255, 0.58);
+  --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
+  --tw-sidebar-neutral-material-solid: var(--tw-neutral-material-solid-light);
+  --tw-sidebar-neutral-material-shadow: var(--tw-neutral-material-shadow-light);
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
   /* Drop the dark-mode rim-shine on the sidebar — it was a
    * white-tint-on-dark cue that no longer reads when the
    * surface itself is light. A subtle dark right-edge replaces
@@ -1188,6 +1183,14 @@
   --panel-border: rgba(255, 255, 255, 0.10);
   --panel-bg: rgba(20, 22, 28, 0.46);
   --panel-elevated-bg: rgba(28, 30, 38, 0.56);
+  --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-dark);
+  --tw-sidebar-neutral-material-solid: var(--tw-neutral-material-solid-dark);
+  --tw-sidebar-neutral-material-shadow: var(--tw-neutral-material-shadow-dark);
+  /* Sidebar-local popovers follow this inverse dark sidebar, while body-
+   * portaled composer popovers keep Alabaster's light material. */
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
+  --tw-glass-solid: var(--tw-neutral-material-solid-dark);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-dark);
   /* Inverse rim shadow: dark inset on the LEFT edge (interior
    * highlight), charcoal inset on the right (the visual cut
    * to the cream transcript). Mirrors obsidian's white-left +

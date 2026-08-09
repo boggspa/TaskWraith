@@ -799,8 +799,8 @@
 /* Welcome workspace popover (1.0.3) — opens below the "Browse…" chip.
  * Styling mirrors `.composer-combined-picker-popover` (the model /
  * permission menu language) so users see a consistent "this is a
- * picker" mental model. Its shared glass bed is black at 80% in dark
- * themes and white at 80% in light themes. */
+ * picker" mental model. Its shared neutral material matches the Model Usage
+ * pane while retaining this popover's own geometry. */
 .welcome-workspace-popover {
   /* 1.0.5-W1 — Portaled through document.body. Pre-1.0.5 this lived
    * as an absolutely-positioned child of the welcome picker and got
@@ -821,11 +821,9 @@
   border-radius: var(--radius-md, 10px);
   background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--tw-popover-material-shadow);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   z-index: 9999;
   color: var(--text-primary);
   font-size: calc(var(--font-size-xs) + 1px);
@@ -859,9 +857,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-workspace-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--surface-text);
 }
 
@@ -4885,17 +4881,12 @@
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 78%, #fff 12%);
   border-radius: 14px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-elevated) 92%, transparent),
-      color-mix(in srgb, var(--surface) 88%, transparent)
-    );
-  box-shadow:
-    0 18px 44px color-mix(in srgb, #000 42%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
+  background: var(--tw-popover-glass-bg);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--text-primary);
-  backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
+  isolation: isolate;
 }
 
 .composer-human-invite-popover-head,
@@ -5762,12 +5753,10 @@
   border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 88%, var(--text-primary) 12%);
   border-radius: 10px;
   background: var(--tw-popover-glass-bg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--text-primary);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   isolation: isolate;
 }
 
@@ -5930,11 +5919,9 @@
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
   background: var(--tw-popover-glass-bg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--tw-popover-material-shadow);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   color: var(--text-primary);
   font-family: inherit;
   font-size: calc(var(--font-size-xs) + 1px);
@@ -6117,9 +6104,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-goal-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--surface-text);
 }
 
@@ -6134,11 +6119,9 @@
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
   background: var(--tw-popover-glass-bg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--tw-popover-material-shadow);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   color: var(--text-primary);
   font-family: inherit;
   font-size: calc(var(--font-size-xs) + 1px);
@@ -6205,9 +6188,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-toggle-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--surface-text);
 }
 
@@ -6223,11 +6204,9 @@
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
   background: var(--tw-popover-glass-bg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--tw-popover-material-shadow);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   color: var(--text-primary);
   font-family: inherit;
   font-size: calc(var(--font-size-xs) + 1px);
@@ -6449,9 +6428,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-plan-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
-  box-shadow:
-    0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 44px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--tw-popover-material-shadow);
   color: var(--surface-text);
 }
 

@@ -3442,12 +3442,39 @@
   min-width: 168px;
   padding: 4px;
   border-radius: 10px;
-  background: color-mix(in srgb, #181818 96%, transparent);
-  border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  background: var(--tw-popover-glass-bg);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  box-shadow: var(--tw-popover-material-shadow);
+  backdrop-filter: var(--tw-popover-material-backdrop);
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop);
   display: flex;
   flex-direction: column;
   gap: 1px;
+  isolation: isolate;
+}
+
+/* This menu portals to <body>, so it cannot inherit Alabaster's inverse-dark
+ * sidebar tokens from .app-sidebar. Pin the same dark neutral material here. */
+[data-theme="alabaster"]
+  .sidebar-overflow-menu-popover:not(.media-action-menu-popover) {
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
+  --tw-glass-solid: var(--tw-neutral-material-solid-dark);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-dark);
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
+}
+
+/* Obsidian's sidebar is the inverse light surface. Keep its own overflow menu
+ * light, but leave the media-panel variant on Obsidian's dark main-pane recipe. */
+[data-theme="obsidian"]
+  .sidebar-overflow-menu-popover:not(.media-action-menu-popover) {
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
+  --text-primary: rgba(18, 21, 27, 0.92);
+  --panel-border: rgba(18, 21, 27, 0.1);
+  color-scheme: light;
 }
 
 .sidebar-overflow-menu-item-wrap {
@@ -3455,6 +3482,8 @@
 }
 
 .sidebar-overflow-menu-item {
+  position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -3463,7 +3492,7 @@
   background: transparent;
   border: 0;
   border-radius: 6px;
-  color: color-mix(in srgb, #ffffff 86%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 86%, transparent);
   font-size: var(--font-size-xs);
   font-family: inherit;
   text-align: left;
@@ -3472,11 +3501,11 @@
 }
 .sidebar-overflow-menu-item:hover:not(:disabled),
 .sidebar-overflow-menu-item.is-focused:not(:disabled) {
-  background: color-mix(in srgb, #ffffff 6%, transparent);
-  color: #ffffff;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
 }
 .sidebar-overflow-menu-item:disabled {
-  color: color-mix(in srgb, #ffffff 28%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 28%, transparent);
   cursor: default;
 }
 .sidebar-overflow-menu-item.is-danger {

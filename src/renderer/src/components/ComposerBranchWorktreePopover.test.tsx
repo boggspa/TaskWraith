@@ -59,7 +59,7 @@ describe('ComposerBranchWorktreePopover positioning', () => {
     expect(position.width).toBe(584)
   })
 
-  it('allows the inline composer width without defining a new popover background', () => {
+  it('allows the inline composer width without defining local material chrome', () => {
     const css = readFileSync(
       'src/renderer/src/components/ComposerBranchWorktreePopover.css',
       'utf8'
@@ -71,7 +71,9 @@ describe('ComposerBranchWorktreePopover positioning', () => {
 
     expect(popover).toContain('max-width: calc(100vw - 1rem)')
     expect(popover).toContain('box-sizing: border-box')
-    expect(popover).not.toMatch(/\n\s*background\s*:/)
+    expect(popover).not.toMatch(
+      /\n\s*(?:background|box-shadow|backdrop-filter|-webkit-backdrop-filter|border)\s*:/
+    )
   })
 })
 
@@ -84,6 +86,9 @@ describe('ComposerBranchWorktreePopover target chrome', () => {
 
     expect(source).toContain(
       'composer-branch-trigger composer-above-bar-secondary-branch ${toneClass}'
+    )
+    expect(source).toContain(
+      'composer-combined-picker-popover composer-branch-popover shell-${composerStyle}'
     )
   })
 
