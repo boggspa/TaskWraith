@@ -60,6 +60,12 @@ export interface CanvasOpenInput {
    * explicitly requests the governed `presentation: "dock"` tool contract.
    */
   embed?: boolean
+  /**
+   * INTERNAL ONLY. Distinguishes an explicit agent request to focus the Canvas
+   * dock from an ordinary renderer-owned embed (for example, a multiview pane).
+   * Requires `embed: true`; renderer IPC never forwards this field.
+   */
+  presentation?: 'dock'
   // --- html driver (agent-authored layout/SVG; canvas_render_html) ---
   /**
    * Self-contained HTML (or SVG markup) the agent wants rendered. REQUIRED for

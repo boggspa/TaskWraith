@@ -190,7 +190,8 @@ describe('executeCanvasTool', () => {
       expect.objectContaining({
         driver: 'web',
         url: 'http://localhost:3000',
-        embed: true
+        embed: true,
+        presentation: 'dock'
       })
     ])
     expect(result.structuredContent).toMatchObject({
@@ -568,7 +569,8 @@ describe('executeCanvasTool', () => {
     expect(seen).toMatchObject({
       driver: 'web',
       url: 'http://localhost:5173/',
-      embed: true
+      embed: true,
+      presentation: 'dock'
     })
     expect(result.structuredContent).toMatchObject({
       source: 'detectedUrl',

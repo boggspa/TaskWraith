@@ -478,7 +478,9 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               url,
               viewport,
               originAllowlist: asStringArray(args.originAllowlist),
-              ...(requestedPresentation === 'dock' ? { embed: true } : {})
+              ...(requestedPresentation === 'dock'
+                ? { embed: true, presentation: 'dock' as const }
+                : {})
             },
             ctx
           )
@@ -583,7 +585,9 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
                 driver: 'web',
                 url,
                 viewport,
-                ...(requestedPresentation === 'dock' ? { embed: true } : {})
+                ...(requestedPresentation === 'dock'
+                  ? { embed: true, presentation: 'dock' as const }
+                  : {})
               },
               ctx
             )

@@ -644,6 +644,7 @@ export class CanvasService implements CanvasController {
     // html/image/device/window have no surface. Renderer opens set this directly;
     // an agent may set it only through the explicit dock-presentation tool option.
     const embedded = (driverKind === 'web' || driverKind === 'sketch') && input.embed === true
+    const dockPresentation = embedded && input.presentation === 'dock'
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     let driver: CanvasDriver
     try {
@@ -759,13 +760,13 @@ export class CanvasService implements CanvasController {
         interactions: 0,
         evals: 0,
         generation,
-        ...(embedded ? { presentation: 'dock' as const } : {})
+        ...(dockPresentation ? { presentation: 'dock' as const } : {})
       })
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
         host: eventHost,
         url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url),
-        ...(embedded ? { presentation: 'dock' } : {})
+        ...(dockPresentation ? { presentation: 'dock' } : {})
       })
       return {
         canvasId,
@@ -809,7 +810,7 @@ export class CanvasService implements CanvasController {
             interactions: 0,
             evals: 0,
             generation,
-            ...(embedded ? { presentation: 'dock' as const } : {})
+            ...(dockPresentation ? { presentation: 'dock' as const } : {})
           },
           ctx
         })
