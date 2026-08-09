@@ -34,22 +34,21 @@ describe('App Drive tier availability', () => {
 
     for (const presetId of ['default', 'workspace_write', 'full_access'] as const) {
       const services = DEFAULT_PERMISSION_PRESETS[presetId].agenticServices ?? {}
-      // Never a hard deny at the tier. Accept Edits deliberately leaves
-      // shellCommands unset so it resolves from the user's own globals/grants
-      // (prompting), which is availability — not a feature gate.
+      // Standard tools are authorized directly from Accept Edits upward.
       expect(services.shellCommands ?? 'ask').not.toBe('deny')
       expect(services.canvasInteraction ?? 'ask').not.toBe('deny')
     }
 
-    // The two tiers that mean "I have authorized in-workspace work" auto-allow
+    // Every tier that means "I have authorized in-workspace work" auto-allows
     // the shell service the adoption tool is classified under.
+    expect(DEFAULT_PERMISSION_PRESETS.default.agenticServices?.shellCommands).toBe('allow')
     expect(DEFAULT_PERMISSION_PRESETS.workspace_write.agenticServices?.shellCommands).toBe('allow')
     expect(DEFAULT_PERMISSION_PRESETS.full_access.agenticServices?.shellCommands).toBe('allow')
   })
 
-  it('stays denied under Plan, and refused for a read-only seat', () => {
-    expect(DEFAULT_PERMISSION_PRESETS.plan.agenticServices?.shellCommands).toBe('deny')
-    expect(DEFAULT_PERMISSION_PRESETS.plan.agenticServices?.canvasInteraction).toBe('deny')
+  it('stays modal-gated under Plan and classified as a write action', () => {
+    expect(DEFAULT_PERMISSION_PRESETS.plan.agenticServices?.shellCommands).toBe('ask')
+    expect(DEFAULT_PERMISSION_PRESETS.plan.agenticServices?.canvasInteraction).toBe('ask')
 
     // A read-only seat is blocked by the class axis rather than the tier map:
     // adoption mutates run state and is classified accordingly.

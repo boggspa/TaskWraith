@@ -906,10 +906,10 @@ describe('PermissionService', () => {
       expect(decisionFor('full_access', 'crossThreadRead')).toBe('allow')
     })
 
-    it('publication follows the requested posture split', () => {
+    it('publication follows the standard permission ladder', () => {
       expect(decisionFor('read_only', 'externalPublish')).toBe('ask')
-      expect(decisionFor('plan', 'externalPublish')).toBe('deny')
-      expect(decisionFor('default', 'externalPublish')).toBe('ask')
+      expect(decisionFor('plan', 'externalPublish')).toBe('ask')
+      expect(decisionFor('default', 'externalPublish')).toBe('allow')
       expect(decisionFor('workspace_write', 'externalPublish')).toBe('allow')
       expect(decisionFor('full_access', 'externalPublish')).toBe('allow')
     })
