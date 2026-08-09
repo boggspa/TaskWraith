@@ -81,6 +81,156 @@ export function computeComposerBranchPopoverPosition(
   }
 }
 
+function BranchPopoverFactLine({
+  label,
+  secondary = false,
+  children
+}: {
+  label: string
+  secondary?: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <span className={`composer-branch-popover-fact-line${secondary ? ' is-secondary' : ''}`}>
+      <small>{label}</small>
+      <span className="composer-branch-popover-fact-values">{children}</span>
+    </span>
+  )
+}
+
+function BranchPopoverTreeValues({
+  snapshot,
+  unavailableLabel
+}: {
+  snapshot?: GitRepositorySnapshot | null
+  unavailableLabel: string
+}): React.JSX.Element {
+  if (!snapshot) return <i>{unavailableLabel}</i>
+  if (snapshot.clean) return <i className="is-clean">clean</i>
+  const additions = snapshot.lineStats?.additions ?? 0
+  const deletions = snapshot.lineStats?.deletions ?? 0
+  const untracked = snapshot.counts?.untracked ?? 0
+  const changed = Math.max(0, (snapshot.counts?.changed ?? 0) - untracked)
+  return (
+    <>
+      <em className="composer-diff-add">+{additions}</em>
+      <em className="composer-diff-del">−{deletions}</em>
+      <i>
+        {changed} changed · {untracked} new
+      </i>
+    </>
+  )
+}
+
+export function ComposerBranchPopoverBranchRow({
+  branch,
+  gitSnapshot,
+  disabled,
+  onSelect
+}: {
+  branch: GitBranchEntry
+  gitSnapshot?: GitRepositorySnapshot | null
+  disabled: boolean
+  onSelect: () => void
+}): React.JSX.Element {
+  const upstream = branch.isCurrent ? gitSnapshot?.upstream || branch.upstream : branch.upstream
+  const subtitle = branch.isCurrent
+    ? 'Configured checkout'
+    : branch.upstream
+      ? `Tracks ${branch.upstream}`
+      : 'Local branch · no upstream'
+  return (
+    <button
+      type="button"
+      className={`composer-branch-popover-item${branch.isCurrent ? ' is-current' : ''}`}
+      disabled={disabled}
+      aria-current={branch.isCurrent ? 'true' : undefined}
+      title={branch.name}
+      onClick={onSelect}
+    >
+      <span className="composer-branch-popover-target-kind" aria-hidden="true">
+        ⎇
+      </span>
+      <span className="composer-branch-popover-target-copy">
+        <strong>{branch.name}</strong>
+        <small>{subtitle}</small>
+      </span>
+      <span className="composer-branch-popover-facts">
+        <BranchPopoverFactLine label="checkout">
+          <i className={branch.isCurrent ? 'is-current' : 'is-action'}>
+            {branch.isCurrent ? 'current' : 'select'}
+          </i>
+        </BranchPopoverFactLine>
+        <BranchPopoverFactLine label="tree">
+          <BranchPopoverTreeValues
+            snapshot={branch.isCurrent ? gitSnapshot : null}
+            unavailableLabel="ref only"
+          />
+        </BranchPopoverFactLine>
+        <BranchPopoverFactLine label="upstream" secondary>
+          {branch.isCurrent && gitSnapshot && upstream ? (
+            <>
+              <em className="is-ahead">↑{gitSnapshot.ahead}</em>
+              <em className="is-behind">↓{gitSnapshot.behind}</em>
+              <i title={upstream}>{upstream}</i>
+            </>
+          ) : (
+            <i title={upstream}>{upstream || 'none'}</i>
+          )}
+        </BranchPopoverFactLine>
+      </span>
+    </button>
+  )
+}
+
+export function ComposerBranchPopoverWorktreeRow({
+  worktree,
+  gitSnapshot,
+  disabled,
+  onSelect
+}: {
+  worktree: GitWorktreeEntry
+  gitSnapshot?: GitRepositorySnapshot | null
+  disabled: boolean
+  onSelect: () => void
+}): React.JSX.Element {
+  const label = worktree.branch || 'detached HEAD'
+  return (
+    <button
+      type="button"
+      className={`composer-branch-popover-item${worktree.isCurrent ? ' is-current' : ''}`}
+      disabled={disabled}
+      aria-current={worktree.isCurrent ? 'true' : undefined}
+      title={worktree.path}
+      onClick={onSelect}
+    >
+      <span className="composer-branch-popover-target-kind" aria-hidden="true">
+        ⑂
+      </span>
+      <span className="composer-branch-popover-target-copy">
+        <strong>{label}</strong>
+        <small>{worktree.isCurrent ? 'Configured checkout' : worktree.path}</small>
+      </span>
+      <span className="composer-branch-popover-facts">
+        <BranchPopoverFactLine label="checkout">
+          <i className={worktree.isCurrent ? 'is-current' : 'is-action'}>
+            {worktree.isCurrent ? 'active' : 'select'}
+          </i>
+        </BranchPopoverFactLine>
+        <BranchPopoverFactLine label="tree">
+          <BranchPopoverTreeValues
+            snapshot={worktree.isCurrent ? gitSnapshot : null}
+            unavailableLabel="not measured"
+          />
+        </BranchPopoverFactLine>
+        <BranchPopoverFactLine label="head" secondary>
+          <i title={worktree.head}>{worktree.head?.slice(0, 9) || 'unknown'}</i>
+        </BranchPopoverFactLine>
+      </span>
+    </button>
+  )
+}
+
 export function ComposerBranchWorktreePopover({
   workspacePath,
   chatId,
@@ -285,7 +435,12 @@ export function ComposerBranchWorktreePopover({
             aria-label="Branch and worktree"
           >
             <div className="composer-branch-popover-header">
-              <span>Branch & worktree</span>
+              <strong>Branch & worktree</strong>
+              <small>
+                {loading
+                  ? 'Refreshing targets…'
+                  : `${branches.length} local branch${branches.length === 1 ? '' : 'es'} · ${worktrees.length} worktree${worktrees.length === 1 ? '' : 's'}`}
+              </small>
               <button
                 type="button"
                 className="composer-branch-popover-close"
@@ -298,34 +453,37 @@ export function ComposerBranchWorktreePopover({
             </div>
             <div className="composer-branch-popover-body">
               <div className="composer-branch-popover-section">
-                <div className="composer-branch-popover-section-title">Branches</div>
+                <div className="composer-branch-popover-section-title">
+                  <span>Branches</span>
+                  <small>Checkout target</small>
+                </div>
                 {loading ? (
                   <div className="composer-branch-popover-status">Loading branches…</div>
                 ) : branches.length === 0 ? (
                   <div className="composer-branch-popover-status">No local branches found.</div>
                 ) : (
                   branches.map((branch) => (
-                    <button
+                    <ComposerBranchPopoverBranchRow
                       key={branch.name}
-                      type="button"
-                      className={`composer-branch-popover-item${branch.isCurrent ? ' is-current' : ''}`}
                       disabled={working || branch.isCurrent || Boolean(branchDisabledReason)}
-                      onClick={() =>
+                      branch={branch}
+                      gitSnapshot={gitSnapshot}
+                      onSelect={() =>
                         void runAction(
                           () => checkoutGitBranch(workspacePath!, branch.name, chatId),
                           'branch-checkout'
                         )
                       }
-                    >
-                      <span>{branch.name}</span>
-                      {branch.isCurrent ? <span>current</span> : null}
-                    </button>
+                    />
                   ))
                 )}
               </div>
 
               <div className="composer-branch-popover-section">
-                <div className="composer-branch-popover-section-title">Create branch</div>
+                <div className="composer-branch-popover-section-title">
+                  <span>Create branch</span>
+                  <small>From current HEAD</small>
+                </div>
                 <div className="composer-branch-popover-create">
                   <input
                     className="composer-branch-popover-input"
@@ -358,24 +516,23 @@ export function ComposerBranchWorktreePopover({
 
               {worktrees.length > 0 || apiAvailable ? (
                 <div className="composer-branch-popover-section">
-                  <div className="composer-branch-popover-section-title">Worktrees</div>
+                  <div className="composer-branch-popover-section-title">
+                    <span>Worktrees</span>
+                    <small>Isolated checkouts</small>
+                  </div>
                   {worktrees.map((worktree) => (
-                    <button
+                    <ComposerBranchPopoverWorktreeRow
                       key={worktree.path}
-                      type="button"
-                      className={`composer-branch-popover-item${worktree.isCurrent ? ' is-current' : ''}`}
                       disabled={working || worktree.isCurrent || Boolean(worktreeDisabledReason)}
-                      title={worktree.path}
-                      onClick={() =>
+                      worktree={worktree}
+                      gitSnapshot={gitSnapshot}
+                      onSelect={() =>
                         void runAction(
                           () => selectGitWorktree(workspacePath!, worktree.path, chatId),
                           'worktree'
                         )
                       }
-                    >
-                      <span>{worktree.branch || worktree.path.split('/').pop()}</span>
-                      {worktree.isCurrent ? <span>active</span> : null}
-                    </button>
+                    />
                   ))}
                   <div className="composer-branch-popover-create">
                     <input
