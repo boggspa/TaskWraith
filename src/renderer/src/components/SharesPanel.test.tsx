@@ -95,6 +95,26 @@ describe('SharesPanelView', () => {
     expect(html).toContain('aria-label="Copy a fresh invite for Design review"')
   })
 
+  it('groups share actions separately from editable sharing controls', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare()]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        onCopyInvite={() => {}}
+        onChangeRules={() => {}}
+        onChangeHostReview={() => {}}
+        now={NOW}
+      />
+    )
+    const actionsStart = html.indexOf('shares-panel-card-actions')
+    expect(actionsStart).toBeGreaterThan(html.indexOf('shares-panel-host-review'))
+    expect(html.slice(actionsStart)).toContain('Copy invite')
+    expect(html.slice(actionsStart)).toContain('Stop sharing')
+  })
+
   it('marks a share as live when its chat has a connected collaborator session', () => {
     const html = renderToStaticMarkup(
       <SharesPanelView

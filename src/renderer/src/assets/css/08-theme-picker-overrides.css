@@ -940,15 +940,24 @@
   background: color-mix(in srgb, var(--panel-elevated-bg, var(--surface-1)) 60%, transparent);
 }
 .shares-panel-card-head {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
 }
 .shares-panel-card-title-wrap {
-  flex: 1;
   min-width: 0;
   display: flex;
-  align-items: baseline;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.shares-panel-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 .shares-panel-card-title {
@@ -969,6 +978,7 @@
    separate control: a preset is collaborator-displayable, host review is not. */
 .shares-panel-host-review {
   flex: 0 0 auto;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1151,6 +1161,15 @@
 }
 .shares-panel-audit-preview {
   font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .shares-panel-card-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .shares-panel-card-actions {
+    justify-content: flex-start;
+  }
 }
 .approval-grant-admin {
   display: flex;

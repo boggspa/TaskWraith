@@ -307,24 +307,26 @@ export function SharesPanelView({
                     </label>
                   )}
                 </div>
-                {onCopyInvite && (
+                <div className="shares-panel-card-actions">
+                  {onCopyInvite && (
+                    <button
+                      type="button"
+                      className="shares-panel-copy-invite"
+                      onClick={() => onCopyInvite(share)}
+                      aria-label={`Copy a fresh invite for ${title}`}
+                    >
+                      Copy invite
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className="shares-panel-copy-invite"
-                    onClick={() => onCopyInvite(share)}
-                    aria-label={`Copy a fresh invite for ${title}`}
+                    className="shares-panel-revoke"
+                    onClick={() => onRevoke(share.shareId)}
+                    aria-label={`Stop sharing ${title}`}
                   >
-                    Copy invite
+                    Stop sharing
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="shares-panel-revoke"
-                  onClick={() => onRevoke(share.shareId)}
-                  aria-label={`Stop sharing ${title}`}
-                >
-                  Stop sharing
-                </button>
+                </div>
               </div>
 
               <div className="shares-panel-card-body">
