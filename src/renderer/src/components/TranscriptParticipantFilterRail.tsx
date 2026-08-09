@@ -16,7 +16,6 @@ import {
 import { railClearBottomPx, useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
-import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 
 interface RailFrame {
@@ -179,15 +178,6 @@ function SystemFilterIcon(): ReactElement {
 
 function FilterItemIcon({ item }: { item: TranscriptParticipantFilterItem }): ReactElement {
   if (item.kind === 'system') return <SystemFilterIcon />
-  if (item.pooledAgent) {
-    return (
-      <PooledAgentIcon
-        identity={item.participant?.pooledAgentIdentity}
-        size={16}
-        className="transcript-participant-filter-pooled-icon"
-      />
-    )
-  }
   const accentProvider = resolveProviderHueClass(item.provider, item.participant?.model)
   return (
     <ProviderBrandLogo

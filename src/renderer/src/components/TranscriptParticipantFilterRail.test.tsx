@@ -89,9 +89,11 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).toContain('>2</span>')
     expect(html).not.toContain('#1')
     expect(html).not.toContain('#2')
-    expect(html).toContain('transcript-participant-filter-pooled-icon')
+    expect(html).toContain('data-provider-logo="codex"')
     expect(html).toContain('data-provider-logo="claude"')
     expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('transcript-participant-filter-pooled-icon')
+    expect(html).not.toContain('provider-glyph-codex')
     expect(html).not.toContain('provider-glyph-claude')
     expect(html).toContain('title="Boss"')
     expect(html).toContain('title="Captain"')
@@ -208,6 +210,39 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).toContain('data-provider-logo="ollama"')
     expect(html).toContain('<img class="provider-brand-logo-image')
     expect(html).not.toContain('provider-glyph-ollama')
+  })
+
+  it('uses the AntiGravity provider mark when a linked pooled Agent has a custom ghost icon', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptParticipantFilterRail
+        currentChat={ensembleChat([
+          participant({
+            id: 'pooled-antigravity',
+            provider: 'antigravity',
+            role: 'FlashScout',
+            order: 2,
+            pooledAgentId: 'pooled-agent-flash-scout',
+            pooledAgentIdentity: {
+              schemaVersion: 1,
+              agentId: 'pooled-agent-flash-scout',
+              nickname: 'Flash Scout',
+              iconKind: 'asset',
+              hue: 256,
+              assetKey: 'ghost:ghost-guy-mark-monoline'
+            }
+          })
+        ])}
+        activeFilterKeys={new Set()}
+        scrollRef={createRef<HTMLDivElement>()}
+        contentRef={createRef<HTMLDivElement>()}
+        onToggleFilter={() => {}}
+      />
+    )
+
+    expect(html).toContain('data-provider-logo="antigravity"')
+    expect(html).toContain('provider-logo-antigravity.png')
+    expect(html).not.toContain('ghost:ghost-guy-mark-monoline')
+    expect(html).not.toContain('transcript-participant-filter-pooled-icon')
   })
 
   it('spoofs every Pi participant filter accent from its upstream model', () => {
