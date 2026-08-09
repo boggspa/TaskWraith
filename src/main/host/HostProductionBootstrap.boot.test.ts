@@ -37,6 +37,12 @@ import {
   taskWraithHostDiscoveryPath,
   taskWraithHostTokenPath
 } from '../../shared/taskWraithHostPaths.node'
+import {
+  HOST_PROTOCOL_VERSION,
+  type HostActorIdentity,
+  type HostCommand,
+  type HostCommandName
+} from '../../shared/hostProtocol'
 
 import { HostProjectionClient } from './HostProjectionClient'
 import {
@@ -47,6 +53,12 @@ import type { HostSupervisor } from './HostSupervisor'
 
 const HOST_ID = 'boot-proof-host-0001'
 const HOST_VERSION = '0.0.0-boot-proof'
+const MUTATION_CLIENT_ID = 'wave-44-mutation-proof'
+const MUTATION_ACTOR: HostActorIdentity = {
+  actorId: MUTATION_CLIENT_ID,
+  clientId: MUTATION_CLIENT_ID,
+  clientClass: 'desktop'
+}
 
 let userDataPath: string
 let supervisor: HostSupervisor | null = null
@@ -109,6 +121,86 @@ function readOnlyClient(): HostProjectionClient {
     connectTimeoutMs: 5_000,
     requestTimeoutMs: 5_000
   })
+}
+
+function mutationClient(): HostProjectionClient {
+  return new HostProjectionClient({
+    client: {
+      clientId: MUTATION_CLIENT_ID,
+      clientClass: 'desktop',
+      clientVersion: HOST_VERSION
+    },
+    capabilities: ['bootstrap', 'snapshot', 'commands', 'receipts', 'health'],
+    userDataPath,
+    connectTimeoutMs: 5_000,
+    requestTimeoutMs: 5_000
+  })
+}
+
+function mutationCommand(input: {
+  commandId: string
+  idempotencyKey: string
+  name: HostCommandName
+  target: Record<string, string>
+  arguments?: Record<string, unknown>
+}): HostCommand {
+  return {
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: input.commandId,
+    idempotencyKey: input.idempotencyKey,
+    actor: MUTATION_ACTOR,
+    name: input.name,
+    target: input.target,
+    arguments: input.arguments ?? {},
+    issuedAt: '2026-08-09T00:00:00.000Z'
+  }
+}
+
+function productionMutationOptions(): {
+  options: HostProductionBootstrapOptions
+  executeSetWatchedThread: ReturnType<typeof vi.fn>
+} {
+  const executeSetWatchedThread = vi.fn(async () => ({
+    executed: true,
+    message: 'selected through production Host'
+  }))
+  return {
+    executeSetWatchedThread,
+    options: {
+      ...productionOptions(),
+      chatList: {
+        getChatList: () => [
+          {
+            appChatId: 'thread-mutation',
+            scope: 'workspace',
+            workspaceId: 'workspace-1',
+            provider: 'codex',
+            title: 'Mutation proof',
+            archived: false,
+            updatedAt: Date.parse('2026-08-09T00:00:00.000Z'),
+            messageCount: 0
+          }
+        ]
+      },
+      bridge: { ...externalBridge(), executeSetWatchedThread },
+      contextSources: {
+        getChat: (threadId) =>
+          threadId === 'thread-mutation'
+            ? {
+                appChatId: 'thread-mutation',
+                scope: 'workspace',
+                workspaceId: 'workspace-1',
+                provider: 'codex',
+                archived: false,
+                runs: []
+              }
+            : null,
+        getApproval: () => null,
+        getQuestion: () => null
+      }
+    }
+  }
 }
 
 beforeEach(() => {
@@ -237,6 +329,70 @@ describe('Wave 4.4 serve — a real client completes a real authenticated round 
     // come back holding command/receipt authority it never asked for.
     expect(welcome.capabilities).not.toContain('commands')
     expect(welcome.capabilities).not.toContain('receipts')
+  }, 20_000)
+
+  it('executes a governed mutation through challenge, allow, Bridge, and receipt', async () => {
+    const mutation = productionMutationOptions()
+    supervisor = createHostProductionBootstrap(mutation.options)
+    await supervisor.start()
+
+    client = mutationClient()
+    const welcome = await client.connect()
+    expect(welcome.capabilities).toEqual(
+      expect.arrayContaining(['snapshot', 'commands', 'receipts'])
+    )
+
+    const originalCommandId = '11111111-1111-4111-8111-111111111111'
+    const pending = await client.submitCommand(
+      mutationCommand({
+        commandId: originalCommandId,
+        idempotencyKey: 'desktop:wave-44-mutation-proof:22222222-2222-4222-8222-222222222222',
+        name: 'thread.select',
+        target: { threadId: 'thread-mutation' }
+      })
+    )
+    expect(pending).toMatchObject({ commandId: originalCommandId, status: 'pending' })
+    expect(mutation.executeSetWatchedThread).not.toHaveBeenCalled()
+
+    const awaiting = await client.getSnapshot()
+    const challenge = awaiting.snapshot.approvals.find(
+      (approval) => approval.commandId === originalCommandId
+    )
+    expect(challenge).toBeDefined()
+    if (!challenge) throw new Error('production Host did not publish its deferred challenge')
+
+    const terminal = await client.submitCommand(
+      mutationCommand({
+        commandId: '33333333-3333-4333-8333-333333333333',
+        idempotencyKey: 'desktop:wave-44-mutation-proof:44444444-4444-4444-8444-444444444444',
+        name: 'approval.decide',
+        target: { approvalId: challenge.approvalId },
+        arguments: { decision: 'accept' }
+      })
+    )
+
+    expect(terminal).toMatchObject({
+      commandId: originalCommandId,
+      status: 'succeeded',
+      resultSummary: 'selected through production Host'
+    })
+    expect(mutation.executeSetWatchedThread).toHaveBeenCalledTimes(1)
+    expect(mutation.executeSetWatchedThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'setWatchedThread',
+        appChatId: 'thread-mutation',
+        actionId: `host:command:${originalCommandId}`
+      })
+    )
+
+    await expect(client.lookupReceipt({ commandId: originalCommandId })).resolves.toMatchObject({
+      commandId: originalCommandId,
+      status: 'succeeded'
+    })
+    const after = await client.getSnapshot()
+    expect(after.snapshot.approvals.map((approval) => approval.approvalId)).not.toContain(
+      challenge.approvalId
+    )
   }, 20_000)
 })
 
