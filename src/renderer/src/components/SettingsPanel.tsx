@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { MascotGhost } from './AppChromeSymbols'
 import { ComposerShellPreview } from './ComposerShellPreview'
 import { SettingsDiffStatPreview } from './SettingsDiffStatPreview'
+import { ThemeAppearancePreviewStack } from './ThemeAppearancePreviewStack'
 import type {
   AgenticNetworkPolicy,
   AgenticServiceId,
@@ -553,31 +554,6 @@ const VISUAL_EFFECT_OPTIONS: Array<{ value: VisualEffectStyle; label: string }> 
   { value: 'liquid_glass', label: 'LiquidGlass' },
   { value: 'thin_material', label: 'ultraThinMaterial' },
   { value: 'classic', label: 'PoorMansGlassBackground' }
-]
-const THEME_OPTIONS: Array<{ value: ThemeAppearance; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'light', label: 'Light' },
-  { value: 'midnight', label: 'Midnight' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'red', label: 'Red' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'yellow', label: 'Yellow' },
-  { value: 'green', label: 'Green' },
-  { value: 'graphite', label: 'Graphite' },
-  { value: 'rainbow', label: 'Rainbow' },
-  { value: 'nebula', label: 'Nebula' },
-  { value: 'citrus', label: 'Citrus' },
-  { value: 'twilight', label: 'Twilight' },
-  { value: 'ocean', label: 'Ocean' },
-  { value: 'sunset', label: 'Sunset' },
-  { value: 'forest', label: 'Forest' },
-  { value: 'cyber', label: 'Cyber' },
-  { value: 'candy', label: 'Candy' },
-  { value: 'mist', label: 'Mist' },
-  { value: 'sage', label: 'Sage' }
 ]
 const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
   { value: 'system', label: 'System' },
@@ -5670,19 +5646,17 @@ export function SettingsPanel({
               </div>
 
               <div className="settings-group">
-                <label className="settings-label">System theme</label>
-                <div className="settings-option-grid">
-                  {THEME_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      className={`settings-radio-option settings-theme-option ${themeAppearance === option.value ? 'active' : ''}`}
-                      onClick={() => onChange({ themeAppearance: option.value })}
-                    >
-                      <span className={`settings-radio-dot theme-dot theme-${option.value}`} />
-                      <span>{option.label}</span>
-                    </button>
-                  ))}
-                </div>
+                <label className="settings-label">Theme</label>
+                <ThemeAppearancePreviewStack
+                  themeAppearance={themeAppearance}
+                  additionsColor={normalizedDiffStatColors.additions}
+                  deletionsColor={normalizedDiffStatColors.deletions}
+                  onThemeChange={(nextTheme) => onChange({ themeAppearance: nextTheme })}
+                />
+                <p className="settings-hint">
+                  Each card is a miniature workspace; the code sample borrows your addition and
+                  deletion colors.
+                </p>
               </div>
 
               <div className="settings-group">

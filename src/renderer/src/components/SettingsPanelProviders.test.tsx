@@ -153,7 +153,7 @@ function makeRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimePro
 }
 
 describe('SettingsPanel provider cards', () => {
-  it('renders adjustable diff stat colors on the Appearance tab', () => {
+  it('renders visual theme cards and adjustable diff colors on the Appearance tab', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance' })} />
     )
@@ -166,6 +166,13 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('HSL')
     expect(html).toContain('A perfectly normal “small cleanup”')
     expect(html).toContain('settings-diff-stat-preview-counts')
+    expect(html).toContain('aria-label="Theme previews"')
+    expect(html).toContain('data-theme-preview="system"')
+    expect(html).toContain('data-theme-preview="forest"')
+    expect(html).toContain('Theme-aware code diff')
+    expect(html).toContain('--theme-preview-diff-additions:#2DB777')
+    expect(html).toContain('--theme-preview-diff-deletions:#EC3D35')
+    expect(html).not.toContain('settings-theme-option')
     expect(html).not.toContain('Tool-icon color')
   })
 
