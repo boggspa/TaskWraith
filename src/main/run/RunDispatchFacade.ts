@@ -154,7 +154,9 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
       }
     }
     const routedPayload = applyReroutePlanToPayload(dispatchInput, resolution)
-    if (validatedClaimedReroute) {
+    const validatedClaimModelMatches =
+      validatedClaimedReroute && routedPayload.model === payloadWithoutClaim.model
+    if (validatedClaimedReroute && validatedClaimModelMatches) {
       // ComposerService already resolved and signed this posture for the target
       // provider before the renderer round-trip. Route reconstruction briefly
       // rewrites the payload to the source provider, so the generic reroute
@@ -164,6 +166,11 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
       routedPayload.effectivePermissions = payloadWithoutClaim.effectivePermissions
       routedPayload.effectivePermissionsSignature =
         payloadWithoutClaim.effectivePermissionsSignature
+    } else if (validatedClaimedReroute) {
+      // The signed object was derived before the current reroute plan changed
+      // the target model. Force the normalizer's attended safe posture instead
+      // of carrying a permission map derived for different model authority.
+      routedPayload.approvalMode = 'plan'
     }
     const routedScheduledTaskId = scheduledTaskIdFromPayload(routedPayload)
     if (scheduledOwner) {
@@ -258,6 +265,10 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
       dispatchResult.dispatched &&
       deps.getSettings().autoFailoverEnabled &&
       dispatchResult.appRunId &&
+      // RunCoordinator may generate an id only on its normalized copy. The raw
+      // pre-normalize payload then has no signature bound to that id, so it is
+      // neither safe to snapshot nor valid to throw after the adapter launched.
+      routedPayload.appRunId === dispatchResult.appRunId &&
       routedPayload.prompt?.trim() !== '/compact'
     ) {
       deps.failoverSnapshotByRun.set(

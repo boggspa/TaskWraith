@@ -440,6 +440,19 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     expect(order).not.toContain('failoverSnapshotByRun.set')
   })
 
+  it('does not snapshot or throw after an id-less raw payload launches with a generated run id', async () => {
+    const deps = makeDeps([])
+
+    const result = await createRunDispatchFacade(deps)(
+      payload({ appRunId: undefined }),
+      senderEvent
+    )
+
+    expect(result).toEqual({ dispatched: true, appRunId: 'run-1' })
+    expect(deps.captureFailoverSnapshot).not.toHaveBeenCalled()
+    expect(deps.failoverSnapshotByRun.set).not.toHaveBeenCalled()
+  })
+
   it('skips workflowBudgetRegistry.register when there is no budget (guard preserved)', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
@@ -636,7 +649,7 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     )
   })
 
-  it('preserves the exact target-bound signed posture for a validated composer reroute', async () => {
+  it('preserves a target-bound signed posture unless the current reroute plan changed its model', async () => {
     const deps = makeDeps([])
     const targetPermissions = { presetId: 'default' } as never
     vi.mocked(resolveProviderDispatch).mockImplementation((_settings, provider) =>
@@ -686,6 +699,72 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
         provider: 'claude',
         effectivePermissions: targetPermissions,
         effectivePermissionsSignature: 'main-target-signature'
+      }),
+      senderEvent,
+      expect.any(Object)
+    )
+
+    vi.mocked(applyReroutePlanToPayload).mockImplementation((p, resolution) =>
+      resolution.reroute
+        ? ({
+            ...p,
+            provider: resolution.provider,
+            providerReroute: resolution.reroute,
+            model: 'preview:anthropic:claude-fable-5',
+            effectivePermissions: undefined,
+            effectivePermissionsSignature: undefined
+          } as never)
+        : (p as never)
+    )
+    await createRunDispatchFacade(deps)(
+      payload({
+        provider: 'claude',
+        providerReroute: {
+          from: 'codex',
+          to: 'claude',
+          reason: 'provider-paused',
+          savedAsDefault: true
+        },
+        model: 'claude-sonnet-5',
+        approvalMode: 'default',
+        effectivePermissions: targetPermissions,
+        effectivePermissionsSignature: 'main-target-signature'
+      }),
+      senderEvent
+    )
+    expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        provider: 'claude',
+        approvalMode: 'plan',
+        effectivePermissions: undefined,
+        effectivePermissionsSignature: undefined
+      }),
+      senderEvent,
+      expect.any(Object)
+    )
+
+    await createRunDispatchFacade(deps)(
+      payload({
+        provider: 'claude',
+        providerReroute: {
+          from: 'codex',
+          to: 'claude',
+          reason: 'provider-paused',
+          savedAsDefault: true
+        },
+        model: 'preview:anthropic:claude-fable-5',
+        approvalMode: 'default',
+        effectivePermissions: targetPermissions,
+        effectivePermissionsSignature: 'main-preview-target-signature'
+      }),
+      senderEvent
+    )
+    expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        provider: 'claude',
+        model: 'preview:anthropic:claude-fable-5',
+        effectivePermissions: targetPermissions,
+        effectivePermissionsSignature: 'main-preview-target-signature'
       }),
       senderEvent,
       expect.any(Object)

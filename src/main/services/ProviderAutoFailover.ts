@@ -6,7 +6,10 @@ import type {
   ProviderId
 } from '../store/types'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
-import type { RunPermissionPostureContext } from '../RunPermissionPosture'
+import {
+  runPostureContextFromPayload,
+  type RunPermissionPostureContext
+} from '../RunPermissionPosture'
 import { selectFailoverTarget } from '../RerouteFailoverPosture'
 
 /**
@@ -24,6 +27,7 @@ import { selectFailoverTarget } from '../RerouteFailoverPosture'
 
 /** The captured request, snapshotted at dispatch time, that we re-run on failover. */
 export interface FailoverRunSnapshot {
+  sourceRunId: string
   provider: ProviderId
   scope: ChatScope
   workspace?: string
@@ -33,6 +37,10 @@ export interface FailoverRunSnapshot {
   approvalMode?: string
   workflowMode?: AgentRunPayload['workflowMode']
   effectivePermissions?: EffectiveRunPermissions
+  /** Exact source proof captured before normalization. It must verify against
+   * permissionPostureContext before any retry can be signed. */
+  effectivePermissionsSignature?: string
+  permissionPostureContext: RunPermissionPostureContext
   model?: string
   reasoningEffort?: string | null
   serviceTier?: string | null
@@ -74,6 +82,12 @@ export interface AutoFailoverDeps {
     effectivePermissions: EffectiveRunPermissions | undefined,
     context: RunPermissionPostureContext
   ) => string
+  verifyPosture: (
+    approvalMode: string | undefined,
+    effectivePermissions: EffectiveRunPermissions | undefined,
+    signature: string | undefined,
+    context: RunPermissionPostureContext
+  ) => boolean
   makeRunId: (provider: ProviderId) => string
   dispatch: (payload: AgentRunPayload) => Promise<unknown>
   notify: (notice: AutoFailoverNotice) => void
@@ -86,9 +100,91 @@ export interface AutoFailoverDeps {
 
 export interface AutoFailoverResult {
   ok: boolean
-  reason?: 'no-snapshot' | 'scheduled-run' | 'hop-cap' | 'no-target' | 'dispatch-failed'
+  reason?:
+    | 'no-snapshot'
+    | 'scheduled-run'
+    | 'hop-cap'
+    | 'invalid-source-posture'
+    | 'no-target'
+    | 'dispatch-failed'
   target?: ProviderId
   newRunId?: string
+}
+
+export function isVerifiedFailoverSnapshotSource(
+  snap: FailoverRunSnapshot,
+  input: { failedRunId: string; failedProvider: ProviderId; appChatId?: string },
+  verifyPosture: AutoFailoverDeps['verifyPosture']
+): boolean {
+  const sourceContext = snap.permissionPostureContext
+  const sourceIdentityMatches =
+    snap.provider === input.failedProvider &&
+    sourceContext.provider === snap.provider &&
+    sourceContext.scope === snap.scope &&
+    snap.sourceRunId === input.failedRunId &&
+    sourceContext.appRunId === snap.sourceRunId &&
+    (sourceContext.appChatId ?? null) === (snap.appChatId ?? null) &&
+    sourceContext.prompt === snap.prompt &&
+    sourceContext.workflowMode === (snap.workflowMode === 'plan' ? 'plan' : 'normal') &&
+    (sourceContext.runtimeProfileId ?? null) === (snap.runtimeProfileId ?? null) &&
+    (!input.appChatId || input.appChatId === snap.appChatId)
+  return (
+    sourceIdentityMatches &&
+    verifyPosture(
+      snap.approvalMode,
+      snap.effectivePermissions,
+      snap.effectivePermissionsSignature,
+      sourceContext
+    )
+  )
+}
+
+export function buildVerifiedSameProviderRetryPayload(
+  snap: FailoverRunSnapshot,
+  input: {
+    failedRunId: string
+    provider: ProviderId
+    appChatId: string
+    makeRunId: () => string
+  },
+  deps: Pick<AutoFailoverDeps, 'verifyPosture' | 'signPosture'>
+): AgentRunPayload | null {
+  if (
+    !isVerifiedFailoverSnapshotSource(
+      snap,
+      {
+        failedRunId: input.failedRunId,
+        failedProvider: input.provider,
+        appChatId: input.appChatId
+      },
+      deps.verifyPosture
+    )
+  ) {
+    return null
+  }
+  const payload: AgentRunPayload = {
+    provider: input.provider,
+    scope: snap.scope,
+    workspace: snap.workspace,
+    prompt: snap.prompt,
+    activeGoal: snap.activeGoal,
+    appRunId: input.makeRunId(),
+    appChatId: input.appChatId,
+    approvalMode: snap.approvalMode,
+    workflowMode: snap.workflowMode === 'plan' ? 'plan' : 'normal',
+    model: snap.model,
+    reasoningEffort: snap.reasoningEffort,
+    serviceTier: snap.serviceTier,
+    runtimeProfileId: snap.runtimeProfileId,
+    handoffSourceRunId: input.failedRunId,
+    ...(snap.effectivePermissions ? { effectivePermissions: snap.effectivePermissions } : {})
+  }
+  payload.effectivePermissionsSignature = deps.signPosture(
+    payload.approvalMode,
+    payload.effectivePermissions,
+    runPostureContextFromPayload(payload)
+  )
+  return payload
 }
 
 export async function runProviderAutoFailover(
@@ -108,9 +204,19 @@ export async function runProviderAutoFailover(
   const maxHops = deps.maxHops ?? 2
 
   const sourceHop = snap.failoverHopCount ?? 0
+  if (!Number.isSafeInteger(sourceHop) || sourceHop < 0) {
+    return { ok: false, reason: 'invalid-source-posture' }
+  }
   if (sourceHop >= maxHops) {
     deps.notify({ kind: 'exhausted', failedProvider: req.failedProvider, appChatId: req.appChatId, hops: sourceHop })
     return { ok: false, reason: 'hop-cap' }
+  }
+
+  if (!isVerifiedFailoverSnapshotSource(snap, req, deps.verifyPosture)) {
+    // The first run may already have been normalized safely, but this snapshot
+    // is the pre-normalize payload. Never launder its raw renderer fields into
+    // a fresh MAIN signature for the retry.
+    return { ok: false, reason: 'invalid-source-posture' }
   }
 
   const settings = deps.getSettings()

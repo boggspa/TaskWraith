@@ -661,6 +661,8 @@ import {
 import { gateBlocksActiveGoal } from './ReviewGateScope'
 import { applyVerifiedFailoverReroutePosture } from './RerouteFailoverPosture'
 import {
+  buildVerifiedSameProviderRetryPayload,
+  isVerifiedFailoverSnapshotSource,
   runProviderAutoFailover,
   type AutoFailoverNotice,
   type FailoverRunSnapshot
@@ -3635,7 +3637,9 @@ function applyFailoverReroutePosture(
 
 /** Snapshot a dispatched request so a future quota wall can re-run it faithfully. */
 function captureFailoverSnapshot(payload: AgentRunPayload): FailoverRunSnapshot {
+  const sourceRunId = requireNonEmptyString(payload.appRunId, 'Failover source run id')
   return {
+    sourceRunId,
     provider: payload.provider,
     scope: payload.scope,
     workspace: payload.workspace,
@@ -3645,6 +3649,8 @@ function captureFailoverSnapshot(payload: AgentRunPayload): FailoverRunSnapshot 
     approvalMode: payload.approvalMode,
     workflowMode: payload.workflowMode,
     effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
+    permissionPostureContext: runPostureContextFromPayload(payload),
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
     serviceTier: payload.serviceTier,
@@ -3711,6 +3717,8 @@ async function triggerProviderAutoFailover(
         availableProviders: () => selectableProviderIds(),
         isPaused: (candidate) => isProviderPaused(AppStore.getSettings(), candidate),
         signPosture: (mode, eff, ctx) => signRunPosture(mode, eff, ctx),
+        verifyPosture: (mode, eff, signature, ctx) =>
+          verifyRunPosture(mode, eff, signature, ctx),
         makeRunId: (candidate) => createFallbackRunId(candidate),
         dispatch: (payload) => dispatchRef(payload, { sender }),
         notify: (notice) => emitAutoFailoverNotice(notice)
@@ -21436,6 +21444,16 @@ function schedulePiCerebrasRateRetry(state: CliProviderStreamState): void {
   const snapshot = failoverSnapshotByRun.get(failedRunId)
   if (!snapshot) return
   if (
+    !isVerifiedFailoverSnapshotSource(
+      snapshot,
+      { failedRunId, failedProvider: 'pi', appChatId },
+      (mode, effective, signature, context) =>
+        verifyRunPosture(mode, effective, signature, context)
+    )
+  ) {
+    return
+  }
+  if (
     scheduledOccurrenceOwners.isAppRunIdLiveOwned(failedRunId) ||
     AppStore.getScheduledTasks().some((task) => task.runId === failedRunId)
   ) {
@@ -21476,39 +21494,21 @@ function firePiCerebrasRateRetry(args: {
   )
   if (superseded) return
   const snap = args.snap
-  const payload: AgentRunPayload = {
-    provider: 'pi',
-    scope: snap.scope,
-    workspace: snap.workspace,
-    prompt: snap.prompt,
-    activeGoal: snap.activeGoal,
-    appRunId: createFallbackRunId('pi'),
-    appChatId: args.appChatId,
-    approvalMode: snap.approvalMode,
-    workflowMode: snap.workflowMode === 'plan' ? 'plan' : 'normal',
-    model: snap.model,
-    reasoningEffort: snap.reasoningEffort,
-    serviceTier: snap.serviceTier,
-    runtimeProfileId: snap.runtimeProfileId,
-    handoffSourceRunId: args.failedRunId,
-    ...(snap.effectivePermissions ? { effectivePermissions: snap.effectivePermissions } : {})
-  }
-  // Same provider, same posture, new run id: an honest main-side re-sign of
-  // the identical permission map (no escalation surface — mirrors the
-  // ProviderAutoFailover baseline signing).
-  payload.effectivePermissionsSignature = signRunPosture(
-    payload.approvalMode,
-    payload.effectivePermissions,
+  const payload = buildVerifiedSameProviderRetryPayload(
+    snap,
     {
-      provider: payload.provider,
-      scope: payload.scope,
-      appRunId: payload.appRunId,
-      appChatId: payload.appChatId,
-      prompt: payload.prompt,
-      workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
-      runtimeProfileId: payload.runtimeProfileId
+      failedRunId: args.failedRunId,
+      provider: 'pi',
+      appChatId: args.appChatId,
+      makeRunId: () => createFallbackRunId('pi')
+    },
+    {
+      verifyPosture: (mode, effective, signature, context) =>
+        verifyRunPosture(mode, effective, signature, context),
+      signPosture: signRunPosture
     }
   )
+  if (!payload) return
   console.info(
     `[pi-cerebras-retry] re-dispatching ${args.failedRunId} as ${payload.appRunId} after the rate window`
   )
