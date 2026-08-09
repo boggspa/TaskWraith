@@ -50,11 +50,13 @@ import type {
 } from '../../../main/store/types'
 import type { EnsembleUserRosterMutation } from '../../../main/EnsembleUserRosterMutation'
 import {
+  buildKimiReasoningPickerPatch,
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName,
   getEnsembleModelDefaults,
   getEnsembleReasoningOptions,
-  normalizeProviderModelSelection
+  normalizeProviderModelSelection,
+  resolveKimiReasoningPickerSelection
 } from '../lib/ensembleProviderDefaults'
 import {
   ENSEMBLE_STAGE_ROLE_HINT,
@@ -1613,7 +1615,9 @@ function EnsembleAddParticipantButton({
     [availableProviderGroups, draft.model, draft.provider]
   )
   const selectedReasoning =
-    draft.provider === 'kimi' ? (draft.thinkingEnabled ? 'on' : 'off') : draft.reasoningEffort || ''
+    draft.provider === 'kimi'
+      ? resolveKimiReasoningPickerSelection(draft.model, draft.reasoningEffort)
+      : draft.reasoningEffort || ''
   const fastModeEnabled =
     draft.provider === 'codex' ? draft.serviceTier === 'fast' : Boolean(draft.fastModeEnabled)
 
@@ -1660,7 +1664,7 @@ function EnsembleAddParticipantButton({
   const handleReasoningSelection = useCallback((value: string) => {
     setDraft((current) =>
       current.provider === 'kimi'
-        ? { ...current, thinkingEnabled: value !== 'off' }
+        ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }
         : { ...current, reasoningEffort: value }
     )
   }, [])

@@ -547,6 +547,14 @@ describe('EnsembleParticipantsAboveRow', () => {
         reasoningEffort: 'on',
         serviceTier: 'standard'
       })
+      expect(createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3')).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k3',
+        reasoningEffort: 'max',
+        thinkingEnabled: true,
+        fastModeEnabled: false,
+        serviceTier: 'standard'
+      })
       expect(createEnsembleParticipantAddConfiguration('claude', 'claude-haiku-4-5')).toMatchObject(
         {
           model: 'claude-haiku-4-5',
