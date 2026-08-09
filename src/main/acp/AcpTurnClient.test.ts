@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runAcpTurn, type AcpChildProcess, type AcpTurnOptions } from './AcpTurnClient'
-import type { AcpRunEvent } from './AcpProtocol'
+import type { AcpPermissionRequest, AcpRunEvent } from './AcpProtocol'
 
 class FakeAcpChild implements AcpChildProcess {
   writes: string[] = []
@@ -526,6 +526,116 @@ describe('runAcpTurn — neutral core', () => {
     expect(child.sent().find((m) => m.id === 9)).toMatchObject({
       result: { outcome: { outcome: 'selected', optionId: 'r' } }
     })
+  })
+
+  it('correlates exact ToolCall input into the matching permission request once', async () => {
+    const child = new FakeAcpChild()
+    const requests: AcpPermissionRequest[] = []
+    baseOptions(child, {
+      onPermissionRequest: (request) => {
+        requests.push(request)
+        return 'allow'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'mesh-call-1',
+          title: 'mcp__taskwraith__mesh_topology_edit',
+          kind: 'execute',
+          rawInput: {
+            sceneId: 'scene-a',
+            expectedRevision: 2,
+            operations: [{ operation: 'sculpt', mode: 'inflate', strength: 0.02 }]
+          }
+        }
+      }
+    })
+    const permissionRequest = () => ({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: {
+          toolCallId: 'mesh-call-1',
+          title: 'mcp__taskwraith__mesh_topology_edit',
+          kind: 'execute'
+        },
+        options: [{ optionId: 'a', name: 'Allow', kind: 'allow_once' }]
+      }
+    })
+    child.emit(permissionRequest())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests[0]?.rawToolCall).toMatchObject({
+      toolCallId: 'mesh-call-1',
+      rawInput: {
+        sceneId: 'scene-a',
+        expectedRevision: 2,
+        operations: [{ operation: 'sculpt', mode: 'inflate', strength: 0.02 }]
+      }
+    })
+
+    child.emit({ ...permissionRequest(), id: 10 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(requests[1]?.rawToolCall).not.toHaveProperty('rawInput')
+  })
+
+  it('does not correlate ToolCall input across a tool-call id or session boundary', async () => {
+    const child = new FakeAcpChild()
+    const rawToolCalls: Array<Record<string, unknown> | null> = []
+    baseOptions(child, {
+      onPermissionRequest: (request) => {
+        rawToolCalls.push(request.rawToolCall)
+        return 'deny'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'mesh-call-1',
+          rawInput: { sceneId: 'scene-a' }
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-2',
+        toolCall: { toolCallId: 'mesh-call-1', title: 'mesh_topology_edit' },
+        options: [{ optionId: 'r', name: 'Reject', kind: 'reject_once' }]
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { toolCallId: 'mesh-call-2', title: 'mesh_topology_edit' },
+        options: [{ optionId: 'r', name: 'Reject', kind: 'reject_once' }]
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(rawToolCalls).toHaveLength(2)
+    expect(rawToolCalls[0]).not.toHaveProperty('rawInput')
+    expect(rawToolCalls[1]).not.toHaveProperty('rawInput')
   })
 
   it('skips denied-tool recovery when the hook is null (Kimi posture)', async () => {

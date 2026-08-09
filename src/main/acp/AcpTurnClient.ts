@@ -248,6 +248,22 @@ function nonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function acpToolCallId(value: Record<string, unknown>): string {
+  return (
+    nonEmptyString(value.toolCallId) || nonEmptyString(value.toolCallID) || nonEmptyString(value.id)
+  )
+}
+
+function acpToolCallKey(sessionId: unknown, toolCall: Record<string, unknown>): string {
+  const normalizedSessionId = nonEmptyString(sessionId)
+  const toolCallId = acpToolCallId(toolCall)
+  return normalizedSessionId && toolCallId ? `${normalizedSessionId}\u0000${toolCallId}` : ''
+}
+
 function toolOutputIndicatesFailure(value: string): boolean {
   return (
     /"ok"\s*:\s*false/i.test(value) ||
@@ -378,6 +394,46 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let lastFailedToolOutput: string | null = null
   let lastObservedToolName: string | null = null
   const toolNamesById = new Map<string, string>()
+  // ACP emits the full ToolCall notification before request_permission, but
+  // some agents (including Kimi Code) repeat only its id/title/kind in the
+  // permission request. Retain a small, session-bound, one-use copy so the
+  // human approval sees the exact input and downstream brokers can bind their
+  // receipt to those arguments. This is presentation/correlation data only;
+  // it never changes the permission decision.
+  const pendingToolCalls = new Map<string, Record<string, unknown>>()
+  const rememberToolCall = (message: Record<string, unknown>): void => {
+    if (message.method !== 'session/update') return
+    const params = isRecord(message.params) ? message.params : null
+    const update = params && isRecord(params.update) ? params.update : null
+    if (!update || update.sessionUpdate !== 'tool_call') return
+    if (!isRecord(update.rawInput) && !isRecord(update.input)) return
+    const key = acpToolCallKey(params?.sessionId, update)
+    if (!key) return
+    pendingToolCalls.set(key, { ...update })
+    if (pendingToolCalls.size > 64) {
+      const oldest = pendingToolCalls.keys().next().value
+      if (typeof oldest === 'string') pendingToolCalls.delete(oldest)
+    }
+  }
+  const enrichPermissionRequest = (request: AcpPermissionRequest): AcpPermissionRequest => {
+    const rawToolCall = request.rawToolCall
+    if (!rawToolCall) return request
+    const key = acpToolCallKey(request.sessionId, rawToolCall)
+    if (!key) return request
+    const remembered = pendingToolCalls.get(key)
+    if (!remembered) return request
+    pendingToolCalls.delete(key)
+    return {
+      ...request,
+      rawToolCall: {
+        ...remembered,
+        ...rawToolCall,
+        ...(!isRecord(rawToolCall.rawInput) && isRecord(remembered.input)
+          ? { rawInput: remembered.input }
+          : {})
+      }
+    }
+  }
   let cancelRequested = false
   // Text of the prompt currently in flight — the recovery prompt, not the
   // original, once recovery has taken over. A transient retry must re-send
@@ -690,10 +746,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     carry = parsed.carry
     for (const message of parsed.messages) {
       options.onRawFrame?.('in', message)
+      rememberToolCall(message)
       // Inbound agent→client request: answer tool-permission asks before all else.
       if (isAcpPermissionRequest(message)) {
         const request = parseAcpPermissionRequest(message)
-        if (request) answerPermissionRequest(request)
+        if (request) answerPermissionRequest(enrichPermissionRequest(request))
         continue
       }
       // A JSON-RPC ERROR response to a lifecycle request must FAIL the turn — the

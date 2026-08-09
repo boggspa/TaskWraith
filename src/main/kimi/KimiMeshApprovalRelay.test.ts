@@ -133,6 +133,11 @@ describe('KimiMeshApprovalRelay', () => {
         }
       })
     ).toEqual({ sceneId: 'scene-a' })
+    expect(
+      kimiMeshArgumentsFromAcpToolCall('mesh_scene_present', {
+        input: { sceneId: 'scene-from-acp-input' }
+      })
+    ).toEqual({ sceneId: 'scene-from-acp-input' })
     expect(kimiMeshArgumentsFromAcpToolCall('mesh_scene_present', null)).toBeNull()
   })
 })

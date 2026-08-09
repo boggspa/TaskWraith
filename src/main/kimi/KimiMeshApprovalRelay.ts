@@ -57,8 +57,13 @@ export function kimiMeshArgumentsFromAcpToolCall(
   toolName: string,
   rawToolCall: unknown
 ): JsonRecord | null {
-  if (!isRecord(rawToolCall) || !isRecord(rawToolCall.rawInput)) return null
-  const rawInput = rawToolCall.rawInput
+  if (!isRecord(rawToolCall)) return null
+  const rawInput = isRecord(rawToolCall.rawInput)
+    ? rawToolCall.rawInput
+    : isRecord(rawToolCall.input)
+      ? rawToolCall.input
+      : null
+  if (!rawInput) return null
   if (isRecord(rawInput.arguments)) {
     const normalized = canonicalJsonValue(rawInput.arguments)
     return isRecord(normalized) ? normalized : null
