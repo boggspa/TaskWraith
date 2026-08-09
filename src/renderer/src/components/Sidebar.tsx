@@ -78,6 +78,14 @@ import {
   type SidebarPrimarySurface
 } from '../lib/primarySurfaceToggle'
 import {
+  readColdLaunchNewChatContext,
+  readPersistedSidebarActiveTab,
+  rememberLastActiveWorkProjectId,
+  rememberLastActiveWorkspaceId,
+  rememberSidebarActiveTab,
+  type SidebarActiveTab
+} from '../lib/startupNewChatTarget'
+import {
   findSurvivableUnstartedDraftId,
   isHideableUnstartedDraft
 } from '../lib/unstartedDraftFilter'
@@ -476,12 +484,10 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
     : `${parentLabel} side branch to ${childLabel}`
 }
 
-const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 // The third tab presents as "Work" but its id stays 'projects': persisted tab
 // state, the panel/tab DOM ids, and the surface-toggle planner all key on the
 // id, so the label can change (or be A/B'd) without touching the route. The
 // noun inside the panel remains "Projects".
-type SidebarActiveTab = 'chat' | 'threads' | 'projects'
 const SIDEBAR_ACTIVE_TABS: readonly SidebarActiveTab[] = ['chat', 'threads', 'projects']
 
 function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'projects'> {
@@ -3243,19 +3249,18 @@ export function Sidebar({
   // and bumps `focusSearchRequestId` when it should focus this field.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [projectsSearchResultCount, setProjectsSearchResultCount] = useState(0)
+  const [initialSelectedWorkProjectId] = useState(
+    () => readColdLaunchNewChatContext().projectId
+  )
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarActiveTab>(() => {
-    try {
-      const storedTab = localStorage.getItem(SIDEBAR_ACTIVE_TAB_STORAGE_KEY)
-      if (storedTab === 'projects') return 'projects'
+    const storedTab = readPersistedSidebarActiveTab()
+    if (storedTab === 'projects') return 'projects'
 
-      const selectedChat =
-        chats.find((chat) => chat.appChatId === activeChatId) || currentChat || null
-      if (selectedChat) return getChatSidebarTab(selectedChat)
+    const selectedChat =
+      chats.find((chat) => chat.appChatId === activeChatId) || currentChat || null
+    if (selectedChat) return getChatSidebarTab(selectedChat)
 
-      return storedTab === 'chat' ? 'chat' : 'threads'
-    } catch {
-      return 'threads'
-    }
+    return storedTab === 'chat' ? 'chat' : 'threads'
   })
   const [sidebarSearchByTab, setSidebarSearchByTab] = useState<Record<SidebarActiveTab, string>>({
     chat: '',
@@ -3321,12 +3326,11 @@ export function Sidebar({
     }
   )
   useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_ACTIVE_TAB_STORAGE_KEY, activeSidebarTab)
-    } catch {
-      // Tab memory is best-effort renderer-local state.
-    }
+    rememberSidebarActiveTab(activeSidebarTab)
   }, [activeSidebarTab])
+  useEffect(() => {
+    if (currentWorkspace?.id) rememberLastActiveWorkspaceId(currentWorkspace.id)
+  }, [currentWorkspace?.id])
   // Unstarted iOS welcome-card drafts (0 messages/runs) are real chat records on
   // the Mac but must never surface as chats in the sidebar — the phone keeps one
   // only so its in-progress welcome screen resolves; the Mac never owns it.
@@ -3981,6 +3985,13 @@ export function Sidebar({
     onActiveSidebarTabChange?.(activeSidebarTab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSidebarTab])
+  const reportSelectedProject = useCallback(
+    (projectId: string | null): void => {
+      rememberLastActiveWorkProjectId(projectId)
+      onSelectedProjectChange?.(projectId)
+    },
+    [onSelectedProjectChange]
+  )
   // Single entry point for USER-initiated tab selection (segment click +
   // arrow-key roving). A genuine Chat/Code change is reported to the host so
   // it can re-scope a pristine welcome draft onto the selected surface. The
@@ -5235,11 +5246,12 @@ export function Sidebar({
                 isSearchActive={isSidebarSearchActive}
                 onSelectChat={selectAndAcknowledgeChat}
                 onStartProjectHome={onStartProjectHome}
-                onSelectedProjectChange={onSelectedProjectChange}
+                onSelectedProjectChange={reportSelectedProject}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
                 onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
                 workspaces={workspaces}
                 onSearchResultCountChange={setProjectsSearchResultCount}
+                initialSelectedProjectId={initialSelectedWorkProjectId}
               />
               {onOpenThreadGraph && projectGraphEntries && projectGraphEntries.length > 0 && (
                 <section className="sidebar-project-graphs-section" aria-label="Node graphs">

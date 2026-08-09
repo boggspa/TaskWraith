@@ -36,6 +36,7 @@ import {
   updateProjectReference,
   updateProjectWorkProfile,
   verifyProjectReference,
+  whenProjectsStoreReady,
   type Project,
   type ProjectReference,
   type ProjectWorkProfile
@@ -77,8 +78,8 @@ interface ProjectsSidebarViewProps {
   /** Start a Project Home for an unhomed project: the host creates/focuses a
    * pristine General draft and auto-claims it on its first committed send. */
   onStartProjectHome?: (projectId: string) => void
-  /** Passes the selected Project detail target to the host. This is ephemeral
-   * Work navigation state only; it is never persisted on a chat or Project. */
+  /** Passes the selected Project detail target to the host. The Sidebar may
+   * retain this view preference, but it is never stored on a chat or Project. */
   onSelectedProjectChange?: (projectId: string | null) => void
   /** Open the References dock panel for this project — the discoverable link
    * from the sidebar's compact library section to the full dock surface. */
@@ -255,8 +256,6 @@ export function ProjectsSidebarView({
   onSearchResultCountChange,
   initialSelectedProjectId = null
 }: ProjectsSidebarViewProps): JSX.Element {
-  const selectedProjectReporterRef = useRef(onSelectedProjectChange)
-  selectedProjectReporterRef.current = onSelectedProjectChange
   const [projects, setProjects] = useState<Project[]>(() => listProjects())
   const [workProfiles, setWorkProfiles] = useState<ProjectWorkProfile[]>(() =>
     listProjectWorkProfiles()
@@ -264,6 +263,7 @@ export function ProjectsSidebarView({
   const [projectReferences, setProjectReferences] = useState<ProjectReference[]>(() =>
     listProjectReferences()
   )
+  const [projectsStoreReady, setProjectsStoreReady] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     initialSelectedProjectId
   )
@@ -289,13 +289,23 @@ export function ProjectsSidebarView({
   })
 
   useEffect(() => {
+    let cancelled = false
     const refresh = (): void => {
       setProjects(listProjects())
       setWorkProfiles(listProjectWorkProfiles())
       setProjectReferences(listProjectReferences())
     }
     refresh()
-    return subscribeProjects(refresh)
+    const unsubscribe = subscribeProjects(refresh)
+    void whenProjectsStoreReady().then(() => {
+      if (cancelled) return
+      refresh()
+      setProjectsStoreReady(true)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [])
 
   useEffect(() => {
@@ -314,18 +324,17 @@ export function ProjectsSidebarView({
     onSelectedProjectChange?.(selectedProjectId)
   }, [onSelectedProjectChange, selectedProjectId])
 
-  useEffect(
-    () => () => {
-      selectedProjectReporterRef.current?.(null)
-    },
-    []
-  )
-
   useEffect(() => {
-    if (selectedProjectId && !projects.some((project) => project.id === selectedProjectId)) {
+    if (!projectsStoreReady) return
+    if (
+      selectedProjectId &&
+      !projects.some(
+        (project) => project.id === selectedProjectId && project.archived !== true
+      )
+    ) {
       setSelectedProjectId(null)
     }
-  }, [projects, selectedProjectId])
+  }, [projects, projectsStoreReady, selectedProjectId])
 
   const chatById = useMemo(() => {
     const map = new Map<string, ChatRecord>()

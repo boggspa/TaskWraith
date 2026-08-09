@@ -748,15 +748,18 @@ import {
 } from './lib/projectReferenceContextSelection'
 import { projectReferenceContextDisclosure } from '../../shared/projectReferenceContext'
 import {
+  addChatToProject,
   addProjectGraphEdge,
   addProjectReference,
   getProjectWorkProfile,
   listProjectGraphEdges,
   listProjectReferences,
+  listProjectWorkProfiles,
   listProjects,
   removeProjectGraphEdge,
   setProjectHomeChat,
-  subscribeProjects
+  subscribeProjects,
+  whenProjectsStoreReady
 } from './lib/projectsStore'
 import { buildProjectThreadGraphProjection } from './lib/projectThreadGraphProjection'
 import { summarizeReferenceAttention } from './lib/projectReferencePresentation'
@@ -770,6 +773,11 @@ import {
   planPrimarySurfaceConversion,
   type SidebarPrimarySurface
 } from './lib/primarySurfaceToggle'
+import {
+  readColdLaunchNewChatContext,
+  rememberLastActiveWorkProjectId,
+  resolveColdLaunchNewChatTarget
+} from './lib/startupNewChatTarget'
 import { buildWelcomeCopy } from './lib/welcomeCopy'
 import {
   buildLaunchPreviewTargets,
@@ -1432,6 +1440,7 @@ function App(): React.JSX.Element {
   // the `providerRates:get` IPC; empty until then (no estimate shown).
   const [providerRates, setProviderRates] = useState<RendererProviderRates>({})
   const [chatContextTurns, setChatContextTurns] = useState<number>(DEFAULT_CONTEXT_TURNS)
+  const [coldLaunchNewChatContext] = useState(() => readColdLaunchNewChatContext())
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceRecord | null>(null)
   const {
@@ -7247,32 +7256,70 @@ function App(): React.JSX.Element {
       }
       console.warn('[chat-popout] requested chat was not found:', chatPopoutChatIdRef.current)
     }
-    // Launch lands on a single General chat (Claude), never the last-used
-    // thread. Prefer reusing an existing EMPTY General chat — no messages means
-    // the welcome screen renders with nothing to hydrate, so there's no stale
-    // transcript AND no churn of a fresh record on every launch. Only mint a new
-    // one when none is reusable. Never land on a chat that already has messages:
-    // that was the 2026-07-02 regression (restoring the most-recent global chat
-    // booted into a stale, un-hydrated transcript). The app still does not
-    // remember which thread was open on close; workspaces + ensembles stay one
-    // click away in the sidebar and the + New picker.
-    // isReusableWelcomeChat mirrors shouldRenderWelcome's disqualifiers (no
-    // messages AND no runs AND not a sub-thread). A bare messageCount===0 test is
-    // NOT enough: a chat with runCount>0 but zero messages (an aborted/empty run)
-    // would be reused and then render a BLANK transcript, because the welcome hero
-    // is suppressed for any chat that has had a run.
-    const reusableEmptyGeneralChat = allChats
-      .filter(
-        (chat) => isGlobalChat(chat) && chat.chatKind !== 'ensemble' && isReusableWelcomeChat(chat)
-      )
-      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0]
-    if (reusableEmptyGeneralChat) {
-      await selectGlobalChat(reusableEmptyGeneralChat)
-    } else {
+    // Cold launch always presents a pristine "New Chat", but in the last
+    // primary context rather than unconditionally taking the General path:
+    // Chat → General; Code → the remembered workspace; Work → a member draft
+    // for the remembered live project, in its preferred workspace when set.
+    // We never restore a started transcript. Reuse is limited by the same
+    // welcome disqualifiers as the composer, avoiding both stale transcript
+    // flashes and one abandoned record per launch.
+    await whenProjectsStoreReady()
+    const coldLaunchTarget = resolveColdLaunchNewChatTarget({
+      context: coldLaunchNewChatContext,
+      workspaces: wsList,
+      projects: listProjects(),
+      projectProfiles: listProjectWorkProfiles()
+    })
+    if (
+      coldLaunchNewChatContext.activeTab === 'projects' &&
+      coldLaunchNewChatContext.projectId &&
+      !coldLaunchTarget.projectId
+    ) {
+      rememberLastActiveWorkProjectId(null)
+    }
+
+    let launchChat: ChatRecord | null = null
+    if (coldLaunchTarget.workspace) {
       try {
-        await handleNewSingleGlobalChat()
+        launchChat = await handleNewChat(
+          coldLaunchTarget.workspace.id,
+          coldLaunchTarget.workspace.path,
+          allChats
+        )
+        // The initial render's `workspaces` closure predates hydration. Keep
+        // the exact registered record (display name, pin state, timestamps)
+        // rather than the chat-derived fallback that handleNewChat can build.
+        setCurrentWorkspace(coldLaunchTarget.workspace)
+        currentWorkspaceIdRef.current = coldLaunchTarget.workspace.id
+        currentWorkspacePathRef.current = coldLaunchTarget.workspace.path
       } catch (error) {
-        console.warn('[TaskWraith] Failed to create initial general chat on launch:', error)
+        console.warn('[TaskWraith] Failed to create initial workspace chat on launch:', error)
+      }
+    } else {
+      const reusableEmptyGeneralChat = allChats
+        .filter(
+          (chat) =>
+            isGlobalChat(chat) && chat.chatKind !== 'ensemble' && isReusableWelcomeChat(chat)
+        )
+        .sort(
+          (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+        )[0]
+      if (reusableEmptyGeneralChat) {
+        launchChat = reusableEmptyGeneralChat
+        await selectGlobalChat(reusableEmptyGeneralChat)
+      } else {
+        try {
+          launchChat = await handleNewSingleGlobalChat()
+        } catch (error) {
+          console.warn('[TaskWraith] Failed to create initial general chat on launch:', error)
+        }
+      }
+    }
+    if (coldLaunchTarget.projectId && launchChat) {
+      try {
+        addChatToProject(coldLaunchTarget.projectId, launchChat.appChatId)
+      } catch (error) {
+        console.warn('[TaskWraith] Failed to attach initial chat to Work project:', error)
       }
     }
     markInitialRouteSettled()
@@ -9805,14 +9852,18 @@ function App(): React.JSX.Element {
       .catch(() => {})
   }
 
-  const handleNewChat = async (wsId: string, wsPath: string): Promise<ChatRecord> => {
+  const handleNewChat = async (
+    wsId: string,
+    wsPath: string,
+    availableChats: readonly ChatRecord[] = chats
+  ): Promise<ChatRecord> => {
     setActiveWorkspaceBoardId(null)
     // Reuse ≤1 pristine draft per workspace instead of minting a fresh record
     // on every "New Chat" — the twin of the workspace-open reuse, applied on
     // the create path (the reaper stays DELETE-ONLY). isReusableWelcomeChat
     // mirrors shouldRenderWelcome so we land on the welcome screen, and the
     // runtime gates skip a draft that is busy or has a live run.
-    const reusableDraft = chats.find(
+    const reusableDraft = availableChats.find(
       (chat) =>
         chat.chatKind !== 'ensemble' &&
         chat.scope === 'workspace' &&
