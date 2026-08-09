@@ -10,7 +10,7 @@
 //   * scattered tool-call glyphs (the 16 tool families) as faint "stars"
 //   * a ring of 7 agent identicons (the subagent swarm), each its own accent
 //   * the monoline ghost mark hero + "TaskWraith" wordmark + green tagline
-//   * the install row: app icon → green arrow → /Applications, on pedestals
+//   * the install row: app icon → green arrow → /Applications
 //
 // Two source families need two renderers, so the asset is assembled here:
 //   - Tool glyphs use stroke="currentColor" → inlined as vector (sips renders).
@@ -22,27 +22,31 @@
 //
 // This script is the editable source. Outputs (consumed by
 // electron-builder.yml `dmg.background`):
-//   build/background.png       660 x 420  (@1x)
-//   build/background@2x.png   1320 x 840  (@2x — dmg-builder auto-combines)
+//   build/background.png       960 x 720   (@1x; 660 x 420 artwork + bleed)
+//   build/background@2x.png   1920 x 1440  (@2x — dmg-builder auto-combines)
 //
-// The icon-drop coordinates baked into the artwork (pedestals + arrow) MUST
-// stay in sync with dmg.contents / dmg.window in electron-builder.yml.
+// The large dark canvas prevents Finder's white fallback from appearing when
+// the user resizes the window. The initial 660 x 544 frame is deliberately
+// smaller and is applied by scripts/patch-electron-builder-dmg-window.cjs.
 
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
+const layout = require('./dmg-layout-contract.cjs')
 
 const repoRoot = path.resolve(__dirname, '..')
 const outDir = path.join(repoRoot, 'build')
 const assetsDir = path.join(repoRoot, 'design-assets')
 
-// LAYOUT — shared contract with electron-builder.yml dmg.{window,contents}.
-const W = 660
-const H = 420
-const ICON_Y = 250 // vertical centre of both Finder icons
-const APP_X = 172 // centre of the app icon (left)
-const APPS_X = 488 // centre of the /Applications drop (right)
+// LAYOUT — mirrored by electron-builder.yml dmg.{window,contents}.
+const W = layout.background.width
+const H = layout.background.height
+const ART_W = layout.artwork.width
+const ART_H = layout.artwork.height
+const ICON_Y = layout.icons.y // vertical centre of both Finder icons
+const APP_X = layout.icons.appX // centre of the app icon (left)
+const APPS_X = layout.icons.applicationsX // centre of the /Applications drop (right)
 
 const ICY = '#9fc6de'
 const GRN = '#00ff88'
@@ -141,15 +145,12 @@ const dotGrid = () => {
   return dots.join('')
 }
 
-const pedestal = (cx) =>
-  `<rect x="${cx - 64}" y="${ICON_Y - 64}" width="128" height="128" rx="26" fill="#ffffff" opacity="0.022" stroke="${ICY}" stroke-opacity="0.10" stroke-width="1"/>`
-
 const fontStack = `'Helvetica Neue','Helvetica','Arial',sans-serif`
 
 const buildSvg = () => `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="TaskWraith installer">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="${H}" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="${ART_H}" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#0c111d"/>
       <stop offset="0.55" stop-color="#080b13"/>
       <stop offset="1" stop-color="#05070b"/>
@@ -167,11 +168,6 @@ const buildSvg = () => `<?xml version="1.0" encoding="UTF-8"?>
       <stop offset="0" stop-color="${GRN}" stop-opacity="0.32"/>
       <stop offset="1" stop-color="${GRN}" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="shelf" x1="${APP_X - 70}" y1="0" x2="${APPS_X + 70}" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="${ICY}" stop-opacity="0"/>
-      <stop offset="0.5" stop-color="${ICY}" stop-opacity="0.2"/>
-      <stop offset="1" stop-color="${ICY}" stop-opacity="0"/>
-    </linearGradient>
   </defs>
 
   <!-- base -->
@@ -183,7 +179,7 @@ const buildSvg = () => `<?xml version="1.0" encoding="UTF-8"?>
   <g>${TOOL_STARS.map(toolStar).join('\n    ')}</g>
   <g>${IDENTICONS.map(identiconImage).join('\n    ')}</g>
 
-  <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="14" fill="none" stroke="${ICY}" stroke-opacity="0.07" stroke-width="1"/>
+  <rect x="8" y="8" width="${ART_W - 16}" height="${ART_H - 16}" rx="14" fill="none" stroke="${ICY}" stroke-opacity="0.07" stroke-width="1"/>
 
   <!-- monoline ghost hero -->
   <ellipse cx="330" cy="64" rx="104" ry="92" fill="url(#hero-glow)"/>
@@ -200,12 +196,8 @@ const buildSvg = () => `<?xml version="1.0" encoding="UTF-8"?>
   <text x="330" y="158" text-anchor="middle" font-family="${fontStack}" font-size="40" font-weight="700" letter-spacing="0.5" fill="#eef6ff">TaskWraith</text>
   <text x="330" y="186" text-anchor="middle" font-family="${fontStack}" font-size="12.5" font-weight="600" letter-spacing="5" fill="${GRN}">OWN YOUR AGENT</text>
 
-  <!-- install row -->
-  ${pedestal(APP_X)}
-  ${pedestal(APPS_X)}
-  <line x1="${APP_X - 70}" y1="${ICON_Y + 62}" x2="${APPS_X + 70}" y2="${ICON_Y + 62}" stroke="url(#shelf)" stroke-width="1.5"/>
-
-  <!-- green install arrow (centred between the two icons) -->
+  <!-- Green install arrow. There are intentionally no icon-sized background
+       pedestals: Finder can independently resize and reflow its item layer. -->
   <ellipse cx="330" cy="${ICON_Y - 6}" rx="92" ry="24" fill="url(#arrow-glow)"/>
   <rect x="272" y="${ICON_Y - 10}" width="7" height="8" rx="1.5" fill="${GRN}" opacity="0.35"/>
   <rect x="284" y="${ICON_Y - 10}" width="7" height="8" rx="1.5" fill="${GRN}" opacity="0.6"/>
@@ -237,9 +229,7 @@ const main = () => {
   fs.writeFileSync(svgPath, buildSvg())
   renderPng(svgPath, path.join(outDir, 'background.png'), W, H)
   renderPng(svgPath, path.join(outDir, 'background@2x.png'), W * 2, H * 2)
-  console.log(
-    `Wrote build/background.png (${W}x${H}), build/background@2x.png (${W * 2}x${H * 2})`
-  )
+  console.log(`Wrote build/background.png (${W}x${H}), build/background@2x.png (${W * 2}x${H * 2})`)
 }
 
 main()
