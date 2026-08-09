@@ -1333,7 +1333,7 @@ Close a Canvas session and free its preview window. Gated.
 
 Create a chat-owned Mesh Canvas scene. The scene is declarative and local: use mesh_scene_apply for primitives/transforms, mesh_scene_import for GLB/glTF/OBJ workspace assets, then mesh_scene_present to show it to the user. Gated via the dedicated Mesh Canvas service.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: none
 - Optional args: title, backgroundColor
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_create","arguments":{"title":"text"}}}}`
@@ -1342,7 +1342,7 @@ Create a chat-owned Mesh Canvas scene. The scene is declarative and local: use m
 
 List Mesh Canvas scenes owned by the active chat. Returns summaries only; use mesh_scene_inspect for nodes, materials, and scene settings. Read-only.
 
-- Access: read-only (no approval needed)
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: none
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_list","arguments":{}}}}`
 
@@ -1350,7 +1350,7 @@ List Mesh Canvas scenes owned by the active chat. Returns summaries only; use me
 
 Return a chat-owned Mesh Canvas scene’s declarative nodes, transforms, material overrides, camera, presentation metadata, and typed dependency graph. It never returns filesystem paths or private asset URLs. Read-only.
 
-- Access: read-only (no approval needed)
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_inspect","arguments":{"sceneId":"text"}}}}`
 
@@ -1358,7 +1358,7 @@ Return a chat-owned Mesh Canvas scene’s declarative nodes, transforms, materia
 
 Import a GLB, glTF, or OBJ model from a path inside the active workspace into a Mesh Canvas scene. OBJ MTL files and declared texture dependencies, and glTF buffers/images, are copied into TaskWraith’s private asset vault; no source path is exposed to the viewer. Gated via Mesh Canvas.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId, sourcePath
 - Optional args: name, transform
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_import","arguments":{"sceneId":"text","sourcePath":"text"}}}}`
@@ -1367,7 +1367,7 @@ Import a GLB, glTF, or OBJ model from a path inside the active workspace into a 
 
 Apply one declarative Mesh Canvas mutation. `add_primitive` supports box, sphere, plane, cylinder, or torus. `update_node` changes a node’s name/transform/material/visibility. `remove_node` removes a node. `set_scene` changes title, #RGB/#RRGGBB background, studio/sunset/neutral lighting, or camera. `upsert_object_data` merges a typed object-fact map; `bind_node_property` makes one known node property react to an object-data fact or another node property (numeric fields may use scale + offset); `unbind_node_property` removes that edge. The main process resolves the acyclic graph after every mutation and the presented viewer refreshes from the resulting scene event. Rotation is Euler degrees; materials use PBR baseColor, metallic, roughness, opacity, emissive, and doubleSided. Gated via Mesh Canvas.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId, operation
 - Optional args: primitive, nodeId, name, visible, title, backgroundColor, transform, material, lighting, camera, sourceId, values, property, source, numericTransform
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_apply","arguments":{"sceneId":"text","operation":"text"}}}}`
@@ -1376,7 +1376,7 @@ Apply one declarative Mesh Canvas mutation. `add_primitive` supports box, sphere
 
 Set a PBR material override on a Mesh Canvas node. Supply material fields (baseColor, metallic, roughness, opacity, emissive, doubleSided); optionally give a workspace-relative `texturePath` for PNG/JPEG/WebP/GIF/BMP, which TaskWraith copies into the scene’s private vault. Imported models retain their original materials until overridden. Gated via Mesh Canvas.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId, nodeId, material
 - Optional args: texturePath
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_set_material","arguments":{"sceneId":"text","nodeId":"text","material":{}}}}}`
@@ -1385,7 +1385,7 @@ Set a PBR material override on a Mesh Canvas node. Supply material fields (baseC
 
 Mark a chat-owned Mesh Canvas scene as presented to the user. The renderer opens/selects it in the Mesh Canvas dock and displays its interactive 3D viewer. Gated via Mesh Canvas.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId
 - Optional args: title
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_present","arguments":{"sceneId":"text"}}}}`
@@ -1394,7 +1394,7 @@ Mark a chat-owned Mesh Canvas scene as presented to the user. The renderer opens
 
 Close the current user presentation for a Mesh Canvas scene without deleting the durable scene or its imported assets. It can be presented again later. Gated via Mesh Canvas.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_close","arguments":{"sceneId":"text"}}}}`
 
@@ -1402,7 +1402,7 @@ Close the current user presentation for a Mesh Canvas scene without deleting the
 
 Delete a chat-owned Mesh Canvas scene and remove any private imported assets no remaining scene references. This cannot affect another chat’s scenes. Gated via Mesh Canvas.
 
-- Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_delete","arguments":{"sceneId":"text"}}}}`
 
@@ -1410,7 +1410,7 @@ Delete a chat-owned Mesh Canvas scene and remove any private imported assets no 
 
 Convert one existing primitive or imported Mesh Canvas node into editable topology. The source primitive/import provenance is retained and imported workspace files are never overwritten. Returns stable topology ids, revision 0, and counts. Gated via Mesh Canvas.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId, nodeId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_topology_convert","arguments":{"sceneId":"text","nodeId":"text"}}}}`
 
@@ -1418,7 +1418,7 @@ Convert one existing primitive or imported Mesh Canvas node into editable topolo
 
 Inspect a revisioned editable topology in bounded pages. Sections: summary, vertices, edges, faces, uvs, bones, recent_mutations. Face results retain ordered loops and per-loop UVs, so seams are visible. Gated via Mesh Canvas; returns no source filesystem paths.
 
-- Access: read-only (no approval needed)
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId, nodeId
 - Optional args: section, offset, limit
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_topology_inspect","arguments":{"sceneId":"text","nodeId":"text"}}}}`
@@ -1427,7 +1427,7 @@ Inspect a revisioned editable topology in bounded pages. Sections: summary, vert
 
 Atomically edit an editable node with optimistic concurrency. Always pass the latest expectedRevision and a stable clientMutationId; stale ensemble writers get a revision conflict and must re-inspect. Up to 64 operations: move/create/delete/merge vertices, create/delete/extrude/inset/subdivide faces, split/collapse/mark edges, set/project per-loop UVs, sculpt draw/inflate/smooth/flatten/pinch/grab, upsert/remove/pose bones, set vertex weights, or replace_geometry. Returns counts/revision and created/deleted ids, never the full topology. Gated via Mesh Canvas.
 
-- Access: governed by your run permission role
+- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied
 - Required args: sceneId, nodeId, expectedRevision, clientMutationId, operations
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_topology_edit","arguments":{"sceneId":"text","nodeId":"text","expectedRevision":0,"clientMutationId":"text","operations":[]}}}}`
 

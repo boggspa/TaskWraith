@@ -81,6 +81,20 @@ describe('resources/Tools.md', () => {
     expect(section).not.toContain('denied under Plan, prompts under Ask')
   })
 
+  it.each([
+    'mesh_scene_create',
+    'mesh_scene_list',
+    'mesh_topology_inspect',
+    'mesh_topology_edit'
+  ])('documents the five-tier Mesh Canvas approval ladder for %s', (name) => {
+    const section = buildOllamaToolDocSection(name)
+    expect(section).toContain(
+      '- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied'
+    )
+    expect(section).not.toContain('denied under Plan')
+    expect(section).not.toContain('prompts under Accept Edits')
+  })
+
   it.each(['canvas_screenshot', 'canvas_eval'])(
     'keeps the focused %s resource section in sync with the catalog',
     (name) => {
