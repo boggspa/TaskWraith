@@ -481,7 +481,11 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // direct lands under the ceiling. v15-mesh uses a receipt-specific schema
     // compactor so topology remains direct without changing frozen v13/v14
     // transports or exceeding the provider catalogue ceiling.
-    expect(fullChars).toBe(143_235)
+    // Re-measured 2026-08-09 after canvas_open / canvas_open_launch published
+    // their explicit dock-presentation option: full +769. Both tools remain
+    // discovery-only for gateway profiles, so immutable v1, fresh v15, and the
+    // v15-mesh direct transport are byte-identical; the <40,000 assertions stay.
+    expect(fullChars).toBe(144_004)
     expect(gatewayChars).toBe(41_748)
     expect(freshGatewayChars).toBe(37_796)
     expect(freshMeshGatewayChars).toBe(39_617)
