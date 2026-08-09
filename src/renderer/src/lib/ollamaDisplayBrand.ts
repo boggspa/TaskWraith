@@ -62,6 +62,24 @@ export function resolveProviderHueClass(
 }
 
 /**
+ * Convert a resolved provider hue into the local accent expression used by
+ * transcript surfaces. Keeping this beside `resolveProviderHueClass` makes the
+ * branding override and its CSS token one pipeline: callers resolve
+ * `(provider, model)`, then scope `--accent` to the returned value.
+ *
+ * The value is intentionally validated rather than interpolating arbitrary
+ * metadata into a CSS custom-property name. Provider hue classes are lowercase
+ * slugs; an invalid or absent value means "inherit the surrounding accent".
+ */
+export function providerAccentVar(providerHueClass: string | undefined | null): string | null {
+  const hue = String(providerHueClass || '')
+    .trim()
+    .toLowerCase()
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(hue)) return null
+  return `var(--provider-${hue}-color, var(--accent))`
+}
+
+/**
  * Spoofed upstream brand label for a model whose provider id hides the brand
  * the user actually picked — "Alibaba" for an Ollama-hosted Qwen, "Mistral" for
  * a Pi run served by the Mistral API. Null for every other provider, and for

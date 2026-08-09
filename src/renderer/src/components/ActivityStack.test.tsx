@@ -80,6 +80,31 @@ function makeParticipant(overrides: Partial<EnsembleParticipant>): EnsembleParti
   }
 }
 
+describe('ActivityStack provider accent scope', () => {
+  it('uses the provider hue when no model branding override is supplied', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeEnsembleYieldActivity()]} provider="claude" />
+    )
+
+    expect(html).toContain('--accent:var(--provider-claude-color, var(--accent))')
+  })
+
+  it('lets the resolved provider/model brand override own the stack and its children', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeEnsembleYieldActivity()]}
+        provider="pi"
+        providerHueClass="deepseek"
+        liveActivityViewport
+      />
+    )
+
+    expect(html).toContain('--accent:var(--provider-deepseek-color, var(--accent))')
+    expect(html).toContain('activity-tool-call-viewport')
+    expect(html).not.toContain('--provider-pi-color')
+  })
+})
+
 describe('ActivityStack ensemble_yield rendering', () => {
   it('humanizes the Codex-style mcp_TaskWraith_ensemble_yield tool name', () => {
     const html = renderToStaticMarkup(

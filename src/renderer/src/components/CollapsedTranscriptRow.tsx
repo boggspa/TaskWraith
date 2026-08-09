@@ -1,4 +1,4 @@
-import { Fragment, useMemo, type ReactElement, type ReactNode } from 'react'
+import { Fragment, useMemo, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import type { ToolActivity } from '../../../main/store/types'
 import {
   collapsedStackDiffAriaLabel,
@@ -7,6 +7,7 @@ import {
   type CollapsedStackLabelPart
 } from '../lib/collapsedActivityStack'
 import { renderCollapsedStackLabelPart } from '../lib/activitySummaryLabel'
+import { providerAccentVar } from '../lib/ollamaDisplayBrand'
 import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
 
 /**
@@ -28,6 +29,7 @@ export function CollapsedTranscriptRow({
   diffStats,
   errored,
   compact,
+  providerHueClass,
   expanded,
   onToggle,
   ariaTargetLabel,
@@ -54,16 +56,20 @@ export function CollapsedTranscriptRow({
   /** Caption-sized summary line (system notices) instead of body text —
    * these rows are noise being tidied away, not messages. */
   compact?: boolean
+  /** Resolved provider/model branding hue for this collapsed row and body. */
+  providerHueClass?: string
   expanded: boolean
   onToggle: (expanded: boolean) => void
   ariaTargetLabel: string
   children?: ReactNode
 }): ReactElement {
+  const accent = providerAccentVar(providerHueClass)
   return (
     <div
       className={`collapsed-activity-stack ${expanded ? 'is-expanded' : 'is-collapsed'}${
         errored ? ' has-errors' : ''
       }${compact ? ' is-compact' : ''}`}
+      style={accent ? ({ '--accent': accent } as CSSProperties) : undefined}
     >
       {header}
       <button
@@ -175,6 +181,7 @@ export function CollapsedActivityStackRow({
   header,
   activities,
   showDiffStats,
+  providerHueClass,
   expanded,
   onToggle,
   children
@@ -185,6 +192,8 @@ export function CollapsedActivityStackRow({
    * line. Main-transcript stacks opt in; fan-out lane and sub-agent viewport
    * summaries stay bare — their rows already carry their own diff chrome. */
   showDiffStats?: boolean
+  /** Resolved provider/model branding hue for the summary and expanded stack. */
+  providerHueClass?: string
   expanded: boolean
   onToggle: (expanded: boolean) => void
   children?: ReactNode
@@ -198,6 +207,7 @@ export function CollapsedActivityStackRow({
       icons={<CollapsedStackIconStrip families={summary.families} />}
       diffStats={showDiffStats ? summary.diff : null}
       errored={summary.errorCount > 0}
+      providerHueClass={providerHueClass}
       expanded={expanded}
       onToggle={onToggle}
       ariaTargetLabel={`${summary.activityCount} activity ${

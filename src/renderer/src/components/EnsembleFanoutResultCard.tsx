@@ -9,7 +9,7 @@ import type {
 import { shortModelName } from '../lib/composerChipFormat'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { getProviderLabel } from '../lib/providerLabels'
-import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { providerAccentVar, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
 import { LiveActivityViewport } from './LiveActivityViewport'
@@ -191,9 +191,8 @@ export function EnsembleFanoutResultCard({
   // it, so the container is self-contained rather than inheriting whatever
   // provider the surrounding transcript happens to be tinted with.
   const hueClass = resolveProviderHueClass(provider, model) || 'unknown'
-  const cardAccentStyle = {
-    '--accent': `var(--provider-${hueClass}-color, var(--accent))`
-  } as CSSProperties
+  const cardAccent = providerAccentVar(hueClass)
+  const cardAccentStyle = cardAccent ? ({ '--accent': cardAccent } as CSSProperties) : undefined
   const modelBadge = provider && model ? shortModelName(provider, '', model) : model
   const laneId = textValue(metadata.ensembleLaneId)
   const chatId = textValue(chat?.appChatId)
@@ -287,6 +286,7 @@ export function EnsembleFanoutResultCard({
         activities={partActivities}
         workspacePath={workspacePath}
         provider={provider}
+        providerHueClass={hueClass}
         chatId={chat?.appChatId}
         runId={streamRunId || message.runId}
         chat={chat}
@@ -320,6 +320,7 @@ export function EnsembleFanoutResultCard({
       <CollapsedActivityStackRow
         header={null}
         activities={partActivities}
+        providerHueClass={hueClass}
         expanded={effectiveExpandedActivityIds.has(expansionId)}
         onToggle={(nextExpanded) => setActivityPartExpanded(partId, nextExpanded)}
       >

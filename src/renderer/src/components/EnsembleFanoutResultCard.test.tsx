@@ -84,6 +84,19 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('--accent:var(--provider-codex-color, var(--accent))')
   })
 
+  it('keeps nested tool stacks on the fan-out participant accent', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage({ content: '', toolActivities: [toolActivity()] })}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    expect(
+      html.match(/--accent:var\(--provider-codex-color, var\(--accent\)\)/g)?.length
+    ).toBeGreaterThanOrEqual(2)
+  })
+
   it('spoofs the upstream brand accent for Ollama-backed participants', () => {
     const html = renderToStaticMarkup(
       <EnsembleFanoutResultCard

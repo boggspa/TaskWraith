@@ -73,7 +73,7 @@ import {
 import { durationLabel } from './CompactToolTrace.lib'
 import { isGlobalChat } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
-import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { providerAccentVar, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { setRefStateIfChanged } from '../lib/setRefStateIfChanged'
 import {
   agentInvocationRouteLabel,
@@ -96,6 +96,12 @@ interface ActivityStackProps {
   header?: ReactNode
   workspacePath?: string
   provider?: ProviderId
+  /**
+   * Resolved provider/model branding hue for this activity run. Callers that
+   * know the model pass the output of `resolveProviderHueClass`; otherwise the
+   * stack falls back to the provider's base hue.
+   */
+  providerHueClass?: string
   chatId?: string
   runId?: string
   /** Chat record — when present, subagent threads pick up a stable visual
@@ -2910,6 +2916,7 @@ export function ActivityStack({
   header,
   workspacePath,
   provider,
+  providerHueClass,
   chatId,
   runId,
   chat,
@@ -2930,6 +2937,12 @@ export function ActivityStack({
   showDiffStats,
   thinkingTraceActions
 }: ActivityStackProps) {
+  const activityAccent = providerAccentVar(
+    providerHueClass || resolveProviderHueClass(provider)
+  )
+  const activityAccentStyle = activityAccent
+    ? ({ '--accent': activityAccent } as CSSProperties)
+    : undefined
   // 1.0.4-AS1 — drive the shimmer/pulse staleness check. The tick keeps
   // the parent re-rendering at a steady 15s cadence while any activity
   // could still be in flight; rows receive a boolean `isShimmerStale`
@@ -3269,7 +3282,7 @@ export function ActivityStack({
       if (!liveSegmentIds.has(cachedId)) segmentChildrenCacheRef.current.delete(cachedId)
     }
     return (
-      <div className="activity-timeline">
+      <div className="activity-timeline" style={activityAccentStyle}>
         {header}
         {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
         {timelineSegments.map((segment, index) => {
@@ -3387,7 +3400,7 @@ export function ActivityStack({
   }
 
   return (
-    <div className="activity-timeline">
+    <div className="activity-timeline" style={activityAccentStyle}>
       {header}
       {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
       {timelineNodes}

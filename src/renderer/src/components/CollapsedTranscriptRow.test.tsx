@@ -45,6 +45,23 @@ function visibleText(html: string): string {
 }
 
 describe('CollapsedActivityStackRow diff totals', () => {
+  it('scopes the summary and expanded children to the resolved provider brand hue', () => {
+    const html = renderToStaticMarkup(
+      <CollapsedActivityStackRow
+        header={null}
+        activities={ACTIVITIES}
+        providerHueClass="deepseek"
+        expanded
+        onToggle={() => {}}
+      >
+        <div className="expanded-provider-child" />
+      </CollapsedActivityStackRow>
+    )
+
+    expect(html).toContain('--accent:var(--provider-deepseek-color, var(--accent))')
+    expect(html).toContain('expanded-provider-child')
+  })
+
   it('paints the summed +N -N at the end of the one-liner', () => {
     const html = renderToStaticMarkup(
       <CollapsedActivityStackRow

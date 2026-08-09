@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   OLLAMA_DISPLAY_BRANDS,
+  providerAccentVar,
   resolveOllamaDisplayBrand,
   resolveProviderBrandLabel,
   resolveProviderHueClass
@@ -128,6 +129,20 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'some-unknown-local-model')).toBe('ollama')
     expect(resolveProviderHueClass('claude', 'claude-opus-4-8')).toBe('claude')
     expect(resolveProviderHueClass('codex')).toBe('codex')
+  })
+})
+
+describe('providerAccentVar', () => {
+  it('turns a resolved branding hue into the scoped provider accent token', () => {
+    expect(providerAccentVar('deepseek')).toBe('var(--provider-deepseek-color, var(--accent))')
+    expect(providerAccentVar('Deep-Reinforce')).toBe(
+      'var(--provider-deep-reinforce-color, var(--accent))'
+    )
+  })
+
+  it('refuses unsafe or absent hue classes so callers inherit their parent accent', () => {
+    expect(providerAccentVar(undefined)).toBeNull()
+    expect(providerAccentVar('deepseek); color: red')).toBeNull()
   })
 })
 
