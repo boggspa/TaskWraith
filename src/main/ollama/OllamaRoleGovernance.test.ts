@@ -31,9 +31,9 @@ import { RunManager } from '../RunManager'
 // This suite proves the security matrix at the REAL gate-decision seam
 // (resolveEffectiveRunPermissions -> effectiveAgenticSettings ->
 // PermissionService.resolvePermission), independent of the retired tier: an Ollama
-// write_file / run_shell_command is DENIED under read_only/plan, PROMPTS under
-// default (no standing grant) and honors an explicit grant / full_access, and web
-// reads are permitted under read_only/plan while a global kill switch still denies.
+// write_file / run_shell_command prompts under read_only/plan and auto-allows
+// from Accept Edits upward. Web reads remain available while a global kill
+// switch still denies.
 
 // Mirror the real agenticServicesDefaults the app ships with: shell auto-allows
 // only inside a granted workspace, file edits prompt, network is open.
@@ -133,30 +133,24 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
     expect(workspaceWrite.readOnly).toBe(false)
   })
 
-  it('DENIES file edits and shell under plan; ASKS under read_only — grants lift neither', () => {
-    // Posture inversion (2026-08-04): plan is the no-ask floor (deny, grant-immune);
-    // read_only ("Ask") prompts per-invocation, and the widened read_only hold keeps
-    // a standing grant from upgrading the ask at the resolver AND the gate.
-    expect(gateDecision('plan', 'fileChanges')).toBe('deny')
-    expect(gateDecision('plan', 'shellCommands')).toBe('deny')
-    expect(gateDecision('plan', 'fileChanges', { grant: true })).toBe('deny')
-    expect(gateDecision('plan', 'shellCommands', { grant: true })).toBe('deny')
+  it('ASKS for file edits and shell under Plan and Ask', () => {
+    expect(gateDecision('plan', 'fileChanges')).toBe('ask')
+    expect(gateDecision('plan', 'shellCommands')).toBe('ask')
     expect(gateDecision('read_only', 'fileChanges')).toBe('ask')
     expect(gateDecision('read_only', 'shellCommands')).toBe('ask')
     // This helper models resolver + PermissionService only. A standing grant
-    // upgrades the ask AT THIS LAYER — end-to-end the widened read_only
-    // grant-hold (isPlanInstrumentGrantHold, folded into neverAutoAllow at both
-    // gate sites) still forces the per-invocation prompt; that immunity is
-    // pinned in EffectiveRunPermissions.test.ts.
+    // upgrades the ask AT THIS LAYER. End-to-end, the Plan/Ask grant hold
+    // (folded into neverAutoAllow at both gate sites) still forces the modal;
+    // that immunity is pinned in EffectiveRunPermissions.test.ts.
+    expect(gateDecision('plan', 'fileChanges', { grant: true })).toBe('allow')
+    expect(gateDecision('plan', 'shellCommands', { grant: true })).toBe('allow')
     expect(gateDecision('read_only', 'fileChanges', { grant: true })).toBe('allow')
     expect(gateDecision('read_only', 'shellCommands', { grant: true })).toBe('allow')
   })
 
-  it('PROMPTS (never silently auto-executes) file edits and shell under default with no grant', () => {
-    // Accept Edits auto-accepts in-workspace edits at the preset layer (slice A,
-    // 2026-08-04); shell still falls to global policy => prompt with no grant.
+  it('auto-allows file edits and shell under Accept Edits', () => {
     expect(gateDecision('default', 'fileChanges')).toBe('allow')
-    expect(gateDecision('default', 'shellCommands')).toBe('ask')
+    expect(gateDecision('default', 'shellCommands')).toBe('allow')
     // The solo composer sends no preset for a plain 'default'/'auto_edit' run
     // (effectivePermissions undefined); the raw global fallback must still prompt.
     expect(gateDecision(undefined, 'fileChanges')).toBe('ask')
@@ -164,8 +158,7 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
   })
 
   it('auto-allows workspace_write without a second grant, honors standing grants under default, and keeps full_access open', () => {
-    // Shell under default still needs an explicit standing grant; file edits
-    // auto-accept at the preset layer (slice A).
+    // Standing grants remain compatible but are redundant at default+.
     expect(gateDecision('default', 'shellCommands', { grant: true })).toBe('allow')
     expect(gateDecision('default', 'fileChanges')).toBe('allow')
     // Full WS Access is the product opt-in for in-workspace shell/file — the

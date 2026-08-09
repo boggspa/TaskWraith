@@ -705,7 +705,7 @@ describe('ComposerService', () => {
     expect(payload.composer.workflowMode).toBe('plan')
   })
 
-  it('posture inversion: a Plan-workflow solo run keeps the no-ask floor except sub-thread delegation', async () => {
+  it('keeps the standard tool ladder modal-gated in a Plan-workflow solo run', async () => {
     const payload = await compose(
       { provider: 'claude', workflowMode: 'plan' },
       { approvalMode: 'default' }
@@ -714,12 +714,11 @@ describe('ComposerService', () => {
     expect(payload.workflowMode).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
     expect(payload.effectivePermissions?.presetId).toBe('plan')
-    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('deny')
-    expect(payload.effectivePermissions?.agenticServices.mediaEditing).toBe('deny')
-    // Sub-thread delegation remains modal-gated on Plan (2026-08-08).
+    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.mediaEditing).toBe('ask')
     expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('ask')
-    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
-    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('ask')
   })
 
   it('1.0.4-AF: strips a leading /discuss token and flags selfReflectiveRequested', async () => {
@@ -1360,7 +1359,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(payload.effectivePermissions?.approvalMode).toBe('auto_edit')
     expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
-    expect(payload.effectivePermissions?.agenticServices.mcpTools).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.mcpTools).toBe('allow')
     expect(payload.effectivePermissions?.networkAccess).toBe('allow')
   })
 })
