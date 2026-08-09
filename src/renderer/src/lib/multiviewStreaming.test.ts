@@ -78,14 +78,15 @@ describe('two-pane simultaneous streaming', () => {
     expect(propsB.isThinking).toBe(true)
   })
 
-  it('only one chat is the focused/interactive one while both stream', () => {
+  it('focus selects shared chrome without changing either pane runtime', () => {
     let s = createInitialMultiviewState('A')
     s = applySetLayout(s, 'vertical-2')
     s = applySetPaneChat(s, 1, 'B')
     s = applySetFocusedPane(s, 0)
     const focusedChatId = s.panes[s.focusedPaneIndex]?.chatId
     expect(focusedChatId).toBe('A')
-    // Switching focus to B does not stop A streaming, and vice versa.
+    // Both panes remain independently interactive; focus only selects which
+    // runtime is projected into the remaining shared app chrome.
     s = applySetFocusedPane(s, 1)
     expect(s.panes[s.focusedPaneIndex]?.chatId).toBe('B')
     expect(deriveChatIsRunning({ chat: chatA, runningChatIds })).toBe(true)

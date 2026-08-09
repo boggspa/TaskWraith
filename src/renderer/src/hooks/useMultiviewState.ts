@@ -69,6 +69,12 @@ export interface MultiviewCoreState {
   layout: MultiviewLayout
   /** One record per grid cell, in cell order. Length always === paneCount. */
   panes: MultiviewPaneRecord[]
+  /**
+   * Pane records hidden by a smaller layout. Layout changes are presentation,
+   * not destruction: switching to Single must not erase the other threads and
+   * switching back must not clone the focused thread into every cell.
+   */
+  parkedPanes: MultiviewPaneRecord[]
   focusedPaneIndex: number
   /** Per-layout dragged track fractions; missing => use the spec defaults. */
   trackSizes: MultiviewTrackSizes
@@ -266,6 +272,7 @@ export function createInitialMultiviewState(
   return {
     layout: DEFAULT_MULTIVIEW_LAYOUT,
     panes: [{ id: mintPaneId(1), chatId: initialPaneChatId }],
+    parkedPanes: [],
     focusedPaneIndex: 0,
     trackSizes: {},
     paneSettings: {},
@@ -276,6 +283,13 @@ export function createInitialMultiviewState(
 /** The chat ids in cell order — the backward-compatible index-based view. */
 export function paneChatIdsOf(state: MultiviewCoreState): (string | null)[] {
   return state.panes.map((pane) => pane.chatId)
+}
+
+/** Every pane the session still owns, including panes hidden by the layout. */
+export function paneRecordsIncludingParked(
+  state: Pick<MultiviewCoreState, 'panes' | 'parkedPanes'>
+): MultiviewPaneRecord[] {
+  return [...state.panes, ...state.parkedPanes]
 }
 
 export function removedCanvasIds(
@@ -319,13 +333,17 @@ export function getLayoutTracks(
 
 export interface ApplySetLayoutOptions {
   /**
-   * When supplied by the interactive layout picker, pin the currently visible
-   * chat into the focused pane and use it to hydrate newly-created panes.
+   * Compatibility seed for the focused pane only. New or restored panes never
+   * inherit it; their thread ownership is independent.
    */
   seedChatId?: string | null
 }
 
-/** Switch layout, re-clamping pane records and the focused index to fit. */
+/**
+ * Switch layout without treating presentation as ownership. Shrinking parks
+ * hidden panes; growing restores them before minting empty panes. The focused
+ * pane survives a shrink even when it lived outside the new cell range.
+ */
 export function applySetLayout(
   state: MultiviewCoreState,
   next: MultiviewLayout,
@@ -337,25 +355,52 @@ export function applySetLayout(
   }
   const previousPaneCount = paneCountForLayout(state.layout)
   const nextPaneCount = paneCountForLayout(next)
-  // Seed the focused pane's chat first (id preserved) before clamping.
-  const seededPanes = seedChatId
+  // Seed only the focused pane. A layout picker is not a duplicate-thread
+  // command; newly-visible panes keep their own record or remain empty.
+  let seededPanes = seedChatId
     ? withChatAt(state.panes, state.focusedPaneIndex, seedChatId)
     : state.panes
-  const clamped = clampPanes(seededPanes, next, state.nextPaneSeq)
-  let panes = clamped.panes
-  if (seedChatId && nextPaneCount > previousPaneCount) {
-    panes = panes.map((pane) => (pane.chatId == null ? { ...pane, chatId: seedChatId } : pane))
+  let parkedPanes = state.parkedPanes
+  let focusedPaneIndex = state.focusedPaneIndex
+  let nextPaneSeq = state.nextPaneSeq
+
+  if (nextPaneCount < previousPaneCount) {
+    // If focus would be truncated, keep that pane and park the displaced cells.
+    if (focusedPaneIndex >= nextPaneCount) {
+      const focusedPane = seededPanes[focusedPaneIndex]
+      const kept = seededPanes.slice(0, Math.max(0, nextPaneCount - 1))
+      seededPanes = focusedPane ? [...kept, focusedPane] : kept
+      const keptIds = new Set(seededPanes.map((pane) => pane.id))
+      parkedPanes = [
+        ...state.panes.filter((pane) => !keptIds.has(pane.id)),
+        ...state.parkedPanes
+      ]
+      focusedPaneIndex = Math.max(0, seededPanes.length - 1)
+    } else {
+      parkedPanes = [...seededPanes.slice(nextPaneCount), ...state.parkedPanes]
+      seededPanes = seededPanes.slice(0, nextPaneCount)
+    }
+  } else if (nextPaneCount > previousPaneCount) {
+    const restoreCount = Math.min(nextPaneCount - seededPanes.length, parkedPanes.length)
+    seededPanes = [...seededPanes, ...parkedPanes.slice(0, restoreCount)]
+    parkedPanes = parkedPanes.slice(restoreCount)
+    const clamped = clampPanes(seededPanes, next, nextPaneSeq)
+    seededPanes = clamped.panes
+    nextPaneSeq = clamped.nextPaneSeq
   }
+
+  const livePanes = [...seededPanes, ...parkedPanes]
   return {
     layout: next,
-    panes,
-    focusedPaneIndex: clampFocusedPaneIndex(state.focusedPaneIndex, next),
+    panes: seededPanes,
+    parkedPanes,
+    focusedPaneIndex: clampFocusedPaneIndex(focusedPaneIndex, next),
     // Track fractions are keyed by layout id, so they survive switching layouts
     // within a session (and a return to a previously-dragged layout restores it).
     trackSizes: state.trackSizes,
-    // Shrinking drops tail panes; prune their now-orphaned settings.
-    paneSettings: pruneSettings(state.paneSettings, panes),
-    nextPaneSeq: clamped.nextPaneSeq
+    // Parked panes still own their settings; only explicit close removes them.
+    paneSettings: pruneSettings(state.paneSettings, livePanes),
+    nextPaneSeq
   }
 }
 
@@ -413,9 +458,13 @@ export function applyClosePane(state: MultiviewCoreState, index: number): Multiv
   return {
     layout: nextLayout,
     panes: clamped.panes,
+    parkedPanes: state.parkedPanes,
     focusedPaneIndex: clampFocusedPaneIndex(nextFocus, nextLayout),
     trackSizes: state.trackSizes,
-    paneSettings: pruneSettings(state.paneSettings, clamped.panes),
+    paneSettings: pruneSettings(state.paneSettings, [
+      ...clamped.panes,
+      ...state.parkedPanes
+    ]),
     nextPaneSeq: clamped.nextPaneSeq
   }
 }
@@ -464,10 +513,16 @@ export function applyOpenInNewPane(
   let next = outgoingFocusedChatId
     ? applySetPaneChat(state, state.focusedPaneIndex, outgoingFocusedChatId)
     : state
-  const hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && pane.chatId == null)
-  if (!hasSpare) {
+  let hasSpare = next.panes.some(
+    (pane, i) => i !== next.focusedPaneIndex && pane.chatId == null
+  )
+  while (!hasSpare) {
     const grown = UPGRADE_LAYOUT[next.layout]
-    if (grown !== next.layout) next = applySetLayout(next, grown)
+    if (grown === next.layout) break
+    next = applySetLayout(next, grown)
+    hasSpare = next.panes.some(
+      (pane, i) => i !== next.focusedPaneIndex && pane.chatId == null
+    )
   }
   let target = next.panes.findIndex((pane, i) => i !== next.focusedPaneIndex && pane.chatId == null)
   if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
@@ -492,10 +547,16 @@ export function applyOpenMediaInNewPane(
   const isEmpty = (pane: MultiviewPaneRecord): boolean =>
     pane.chatId == null && !pane.canvasId && !pane.mediaRef
   let next = state
-  const hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
-  if (!hasSpare) {
+  let hasSpare = next.panes.some(
+    (pane, i) => i !== next.focusedPaneIndex && isEmpty(pane)
+  )
+  while (!hasSpare) {
     const grown = UPGRADE_LAYOUT[next.layout]
-    if (grown !== next.layout) next = applySetLayout(next, grown)
+    if (grown === next.layout) break
+    next = applySetLayout(next, grown)
+    hasSpare = next.panes.some(
+      (pane, i) => i !== next.focusedPaneIndex && isEmpty(pane)
+    )
   }
   let target = next.panes.findIndex((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
   if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
@@ -658,8 +719,23 @@ export function normalizeMultiviewCoreState(raw: unknown): MultiviewCoreState {
   }
 
   const clamped = clampPanes(sourcePanes, layout, seq)
+  const rawParkedPanes = Array.isArray(record.parkedPanes)
+    ? record.parkedPanes
+        .map((entry) => {
+          const pane = (entry ?? {}) as Record<string, unknown>
+          const chatId = typeof pane.chatId === 'string' ? pane.chatId : null
+          const media = (pane.mediaRef ?? null) as MultiviewPaneMediaRef | null
+          const id = typeof pane.id === 'string' && pane.id ? pane.id : mintPaneId(seq++)
+          return { id, chatId, ...(media ? { mediaRef: media } : {}) }
+        })
+        .filter((pane) => !clamped.panes.some((visible) => visible.id === pane.id))
+    : []
   // Never let the sequence trail behind an existing id, so future mints can't collide.
-  const nextPaneSeq = Math.max(clamped.nextPaneSeq, highestPaneSeq(clamped.panes) + 1)
+  const nextPaneSeq = Math.max(
+    clamped.nextPaneSeq,
+    seq,
+    highestPaneSeq([...clamped.panes, ...rawParkedPanes]) + 1
+  )
 
   const trackSizes =
     record.trackSizes && typeof record.trackSizes === 'object'
@@ -673,10 +749,11 @@ export function normalizeMultiviewCoreState(raw: unknown): MultiviewCoreState {
   return {
     layout,
     panes: clamped.panes,
+    parkedPanes: rawParkedPanes,
     focusedPaneIndex: clampFocusedPaneIndex(Number(record.focusedPaneIndex) || 0, layout),
     trackSizes,
     // Drop settings for any pane id not present after clamping.
-    paneSettings: pruneSettings(rawSettings, clamped.panes),
+    paneSettings: pruneSettings(rawSettings, [...clamped.panes, ...rawParkedPanes]),
     nextPaneSeq
   }
 }
@@ -795,11 +872,13 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     [state.panes]
   )
   useLayoutEffect(() => {
-    const livePaneIds = new Set(state.panes.map((pane) => pane.id))
+    const livePaneIds = new Set(
+      [...state.panes, ...state.parkedPanes].map((pane) => pane.id)
+    )
     for (const paneId of paneRefsByIdRef.current.keys()) {
       if (!livePaneIds.has(paneId)) paneRefsByIdRef.current.delete(paneId)
     }
-  }, [state.panes])
+  }, [state.panes, state.parkedPanes])
 
   const setLayout = useCallback((next: MultiviewLayout, seedChatId: string | null = null) => {
     setState((s) => applySetLayout(s, next, { seedChatId }))

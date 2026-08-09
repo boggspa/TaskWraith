@@ -62,9 +62,9 @@ describe('Multiview focused workspace presentation', () => {
     expect(paneSetter).toContain('updatePathKeyedWorkspaceSnapshot(prev, path, snapshot)')
   })
 
-  it('updates explicit pane focus once and hydrates its owned display state', () => {
+  it('selects pane focus without rewriting ownership, then projects legacy display state', () => {
     const focus = slice('const handleFocusMultiviewPane =', 'const handleOpenInMultiview =')
-    const focusIndex = focus.indexOf('multiview.focusPane(paneIndex, outgoingChatId)')
+    const focusIndex = focus.indexOf('multiview.setFocusedPane(paneIndex)')
     const navigationIndex = focus.indexOf(
       'setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })'
     )
@@ -75,6 +75,7 @@ describe('Multiview focused workspace presentation', () => {
     )
     expect(focus).not.toContain('startTransition(() => {')
     expect(focus).not.toContain('assignToNextPane')
+    expect(focus).not.toContain('multiview.focusPane(')
     expect(focus).toContain('setSessionTrust(false)')
     expect(focus).toContain('clearWorkspaceTrust()')
     expect(focus).toContain('currentWorkspaceIdRef.current !== paneWorkspaceId')

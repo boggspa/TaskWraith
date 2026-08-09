@@ -47,6 +47,7 @@ const panesOf = (chatIds: (string | null)[]): MultiviewPaneRecord[] =>
 const state = (over: Partial<MultiviewCoreState> = {}): MultiviewCoreState => ({
   layout: 'single',
   panes: panesOf([null]),
+  parkedPanes: [],
   focusedPaneIndex: 0,
   trackSizes: {},
   paneSettings: {},
@@ -62,6 +63,7 @@ describe('createInitialMultiviewState', () => {
     expect(createInitialMultiviewState()).toEqual({
       layout: 'single',
       panes: [{ id: 'pane-1', chatId: null }],
+      parkedPanes: [],
       focusedPaneIndex: 0,
       trackSizes: {},
       paneSettings: {},
@@ -144,44 +146,60 @@ describe('applySetLayout', () => {
     expect(next.nextPaneSeq).toBe(103)
   })
 
-  it('pins and duplicates the visible chat into new panes when seeded', () => {
+  it('seeds only the focused pane and leaves new panes independent', () => {
     const next = applySetLayout(state({ panes: panesOf(['old']) }), 'quad', {
       seedChatId: 'current'
     })
     expect(next.layout).toBe('quad')
-    expect(chatIds(next)).toEqual(['current', 'current', 'current', 'current'])
+    expect(chatIds(next)).toEqual(['current', null, null, null])
     expect(next.panes[0].id).toBe('t0') // the focused pane's id survives the seed
   })
 
-  it('fills existing empty panes on seeded growth while preserving occupied panes', () => {
+  it('does not fill other empty panes during seeded growth', () => {
     const next = applySetLayout(
       state({ layout: 'vertical-2', panes: panesOf(['a', null]), focusedPaneIndex: 0 }),
       'quad',
       { seedChatId: 'a' }
     )
-    expect(chatIds(next)).toEqual(['a', 'a', 'a', 'a'])
+    expect(chatIds(next)).toEqual(['a', null, null, null])
   })
 
-  it('truncates and clamps focus when shrinking — survivors keep ids, tail dropped', () => {
+  it('parks hidden panes when shrinking and preserves the focused pane', () => {
     const next = applySetLayout(
       state({ layout: 'quad', panes: panesOf(['a', 'b', 'c', 'd']), focusedPaneIndex: 3 }),
       'vertical-2'
     )
     expect(next.layout).toBe('vertical-2')
-    expect(chatIds(next)).toEqual(['a', 'b'])
-    expect(ids(next)).toEqual(['t0', 't1'])
+    expect(chatIds(next)).toEqual(['a', 'd'])
+    expect(ids(next)).toEqual(['t0', 't3'])
+    expect(next.parkedPanes.map((pane) => pane.chatId)).toEqual(['b', 'c'])
     expect(next.focusedPaneIndex).toBe(1)
   })
 
-  it('collapsing to single keeps pane 0 (id and all) and focuses it', () => {
+  it('collapsing to single keeps the focused pane and parks its neighbour', () => {
     const next = applySetLayout(
       state({ layout: 'vertical-2', panes: panesOf(['a', 'b']), focusedPaneIndex: 1 }),
       'single'
     )
     expect(next.layout).toBe('single')
-    expect(chatIds(next)).toEqual(['a'])
-    expect(ids(next)).toEqual(['t0'])
+    expect(chatIds(next)).toEqual(['b'])
+    expect(ids(next)).toEqual(['t1'])
+    expect(next.parkedPanes).toEqual([{ id: 't0', chatId: 'a' }])
     expect(next.focusedPaneIndex).toBe(0)
+  })
+
+  it('restores parked pane identities and threads when the layout grows again', () => {
+    const split = state({
+      layout: 'horizontal-2',
+      panes: panesOf(['a', 'b']),
+      focusedPaneIndex: 0
+    })
+    const single = applySetLayout(split, 'single')
+    const restored = applySetLayout(single, 'horizontal-2')
+
+    expect(chatIds(restored)).toEqual(['a', 'b'])
+    expect(ids(restored)).toEqual(['t0', 't1'])
+    expect(restored.parkedPanes).toEqual([])
   })
 
   it('returns the same reference when the layout is unchanged', () => {

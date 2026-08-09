@@ -68,6 +68,18 @@ describe('chatByteLru', () => {
     expect(result.stats.hydratedFullChatCount).toBe(2)
   })
 
+  it('keeps a visible multiview pane resident independently of focus', () => {
+    const paneChat = chat('pane', 'visible transcript')
+    const lru = new ChatByteLru({ maxBytes: 0 })
+    lru.pin(paneChat.appChatId, 'pane')
+
+    const result = lru.retain([paneChat])
+
+    expect(result.evictedIds).toEqual([])
+    expect(isChatSummaryRecord(result.chats[0]!)).toBe(false)
+    expect(ChatByteLru.pinReasons).toContain('pane')
+  })
+
   it('retainMap updates entries in place and reports evictions', () => {
     const heavy = 'z'.repeat(30_000)
     const map = new Map<string, ChatRecord>([

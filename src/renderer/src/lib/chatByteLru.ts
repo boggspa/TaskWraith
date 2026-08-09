@@ -9,11 +9,18 @@ import { isChatSummaryRecord } from './chatRecordMerge'
  * deleted as an LRU side effect (ADR §5.8).
  */
 
-export type ChatPinReason = 'focused' | 'side' | 'popout' | 'approval' | 'manual'
+export type ChatPinReason = 'focused' | 'pane' | 'side' | 'popout' | 'approval' | 'manual'
 
 export const DEFAULT_MAX_HYDRATED_CHAT_BYTES = 384 * 1024 * 1024
 
-const PIN_REASONS: readonly ChatPinReason[] = ['focused', 'side', 'popout', 'approval', 'manual']
+const PIN_REASONS: readonly ChatPinReason[] = [
+  'focused',
+  'pane',
+  'side',
+  'popout',
+  'approval',
+  'manual'
+]
 
 export function estimateJsonishBytes(value: unknown): number {
   if (value == null) return 0

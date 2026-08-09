@@ -875,7 +875,12 @@ import {
   shouldAppendBusySendToExecutionStack,
   sortExecutionRunHistory
 } from './lib/executionGraphLiveState'
-import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
+import {
+  paneRecordsIncludingParked,
+  removedCanvasIds,
+  useMultiviewState
+} from './hooks/useMultiviewState'
+import { useMultiviewPaneHydration } from './hooks/useMultiviewPaneHydration'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
 import {
@@ -3494,17 +3499,18 @@ function App(): React.JSX.Element {
   useEffect(() => {
     focusedMultiviewPaneIdRef.current = multiview.focusedPaneId
   }, [multiview.focusedPaneId])
-  const previousMultiviewPanesRef = useRef(multiview.panes)
+  const previousMultiviewPanesRef = useRef(paneRecordsIncludingParked(multiview))
   useEffect(() => {
-    const removed = removedCanvasIds(previousMultiviewPanesRef.current, multiview.panes)
-    previousMultiviewPanesRef.current = multiview.panes
+    const ownedPanes = paneRecordsIncludingParked(multiview)
+    const removed = removedCanvasIds(previousMultiviewPanesRef.current, ownedPanes)
+    previousMultiviewPanesRef.current = ownedPanes
     if (removed.length === 0) return
     const closeCanvas = window.api?.canvas?.close
     if (!closeCanvas) return
     for (const canvasId of removed) {
       void closeCanvas(canvasId)
     }
-  }, [multiview.panes])
+  }, [multiview.panes, multiview.parkedPanes])
   // Detach a transcript A/V player into its own Multiview pane (the docked media
   // player). `ChatMediaRef` is a structural superset of the pane's
   // `MultiviewPaneMediaRef`; we narrow to the node-free subset (and clamp `kind`
@@ -6131,6 +6137,20 @@ function App(): React.JSX.Element {
       return applyHydratedChat(hydrated, { localAtRequestStart })
     },
     [applyHydratedChat]
+  )
+
+  // Visible panes own their thread residency. This deliberately does not read
+  // currentChat/focus: every pane hydrates by its own chat id, concurrent reads
+  // are deduplicated per id, and a failed pane cannot cancel its neighbours.
+  useMultiviewPaneHydration<ChatRecord>(
+    isMultiviewSplit ? multiview.paneChatIds : [],
+    {
+      resolveChat: (chatId) => chatByIdRef.current.get(chatId),
+      isHydrated: (chat) => !isChatSummaryRecord(chat),
+      hydrateChat: refreshSingleChat,
+      pinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.pin(chatId, 'pane'),
+      unpinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.unpin(chatId, 'pane')
+    }
   )
 
   const isValidModelForProvider = (
@@ -27407,7 +27427,10 @@ function App(): React.JSX.Element {
       currentWorkspaceIdRef.current = paneWorkspaceId
       currentWorkspacePathRef.current = paneWorkspace?.path || viewerChat.workspacePath || null
       setSessionTrust(false)
-      multiview.focusPane(paneIndex, outgoingChatId)
+      // Pane records are authoritative. Focus selects which pane projects into
+      // legacy app chrome; it must never write singleton currentChat back into
+      // the outgoing pane (that race was the cross-pane cloning bug).
+      multiview.setFocusedPane(paneIndex)
       setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })
       setActiveSidebarChatId(viewerChat.appChatId)
       setCurrentWorkspace(paneWorkspace)
@@ -27433,7 +27456,7 @@ function App(): React.JSX.Element {
       captureMainTranscriptScrollState,
       clearWorkspaceTrust,
       multiview.focusedPaneIndex,
-      multiview.focusPane,
+      multiview.setFocusedPane,
       multiview.paneRefs,
       restoreMainTranscriptScrollStateWhenReady,
       runningChatIds,
@@ -27444,7 +27467,7 @@ function App(): React.JSX.Element {
   )
   const handleOpenInMultiview = useCallback(
     (chat: ChatRecord) => {
-      multiview.openInNewPane(chat.appChatId, currentChatIdRef.current || null)
+      multiview.openInNewPane(chat.appChatId)
     },
     [multiview.openInNewPane]
   )
@@ -28162,7 +28185,7 @@ function App(): React.JSX.Element {
   )
   const handleSelectMultiviewLayout = useCallback(
     (layout: MultiviewLayout) => {
-      multiview.setLayout(layout, currentChatIdRef.current || null)
+      multiview.setLayout(layout)
     },
     [multiview.setLayout]
   )
