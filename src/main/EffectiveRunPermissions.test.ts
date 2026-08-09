@@ -270,7 +270,9 @@ describe('resolveEffectiveRunPermissions', () => {
     // reach web_fetch already has prompt-free, with a visible surface attached.
     expect(policyFor('read_only')).toBe('ask')
     expect(policyFor('plan')).toBe('deny')
-    expect(policyFor('default')).toBe('ask')
+    // Accept Edits is the explicit run-level authorization for ordinary
+    // browser navigation; no second per-navigation approval is required.
+    expect(policyFor('default')).toBe('allow')
     expect(policyFor('workspace_write')).toBe('allow')
     expect(policyFor('full_access')).toBe('allow')
 
@@ -289,7 +291,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(globallyDenied.agenticServices.webBrowsing).toBe('deny')
   })
 
-  it('webBrowsing stays per-invocation under Ask, denied under plan — grants promote it only under default', () => {
+  it('webBrowsing stays per-invocation under Ask, denied under plan, and is already allowed by Accept Edits', () => {
     const grants = [
       {
         id: 'grant-browse',
@@ -315,14 +317,15 @@ describe('resolveEffectiveRunPermissions', () => {
       presetId: 'plan'
     })
     expect(planHeld.agenticServices.webBrowsing).toBe('deny')
-    // The SAME grant is real: under default it promotes to the workspace tier.
+    // Accept Edits itself is stronger than the stored grant: it authorizes
+    // ordinary browsing for this run without manufacturing a workspace tier.
     const def = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       settings: settings({ agenticWorkspaceGrants: grants }),
       presetId: 'default'
     })
-    expect(def.agenticServices.webBrowsing).toBe('workspace')
+    expect(def.agenticServices.webBrowsing).toBe('allow')
   })
 
   it('plan tightens read_only except its attended modal instruments', () => {
@@ -456,13 +459,10 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.sketchCanvas).toBe('allow')
     // canvasEval does NOT promote under any preset — it is non-grantable.
     expect(def.agenticServices.canvasEval).toBe('ask')
-    // canvasInteraction now behaves the same way here, but for a DIFFERENT
-    // reason, and the distinction matters if anyone revisits this: it is still
-    // grantable, it simply has no workspace tier. A canvas grant names one
-    // surface; "click anything, in any chat, in this workspace, until revoked"
-    // is not a scope a user can meaningfully consent to and would outlive every
-    // surface it was given for. Session grants still work — bound to a canvasId.
-    expect(def.agenticServices.canvasInteraction).toBe('ask')
+    // Accept Edits is now the explicit run-level authorization for ordinary
+    // click/fill control. The stale workspace grant remains inert (Canvas
+    // grants still bind to one surface), but no grant is needed for this run.
+    expect(def.agenticServices.canvasInteraction).toBe('allow')
   })
 
   it('asks Canvas control and Sketch edits under read_only (Ask) and allows both under full_access', () => {

@@ -290,7 +290,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_network',
   'canvas_console',
   'canvas_resize',
-  // P1 interaction + annotation. click/fill mutate the app (gated; read-only-DENY);
+  // P1 interaction + annotation. Accept Edits+ authorizes ordinary click/fill;
+  // stricter postures never auto-run them. Credential fields stay refused.
   // annotate overlays numbered Set-of-Mark boxes for the human (gated).
   'canvas_click',
   'canvas_fill',
@@ -299,9 +300,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   // gated via the canvasEval service (never auto-allowed), egress-cut while running.
   'canvas_eval',
   // Canvas Browser navigation — goto/back/forward/reload/stop on the chat's
-  // sandboxed web canvas, auto-opening one when none is open. Gated by the
-  // dedicated webBrowsing service: ask + grantable under Accept Edits,
-  // per-invocation ask under Ask and Plan. Never actuation:
+  // sandboxed web canvas, auto-opening one in the chat dock when none is open.
+  // Gated by the dedicated webBrowsing service: allowed under Accept Edits+,
+  // per-invocation ask under Ask, denied under Plan. Never actuation:
   // click/fill/eval keep their own stricter services.
   'canvas_navigate',
   'canvas_close',

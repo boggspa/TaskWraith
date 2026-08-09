@@ -485,7 +485,11 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // their explicit dock-presentation option: full +769. Both tools remain
     // discovery-only for gateway profiles, so immutable v1, fresh v15, and the
     // v15-mesh direct transport are byte-identical; the <40,000 assertions stay.
-    expect(fullChars).toBe(144_004)
+    // Re-measured 2026-08-09 after Canvas Browser permission/presentation
+    // guidance made Accept Edits and human-only credential handoff explicit.
+    // Full grows by 339; exact direct-transport pins below prove whether any of
+    // that model guidance reaches gateway sessions.
+    expect(fullChars).toBe(144_343)
     expect(gatewayChars).toBe(41_748)
     expect(freshGatewayChars).toBe(37_796)
     expect(freshMeshGatewayChars).toBe(39_617)

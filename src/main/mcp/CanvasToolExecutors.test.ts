@@ -312,7 +312,7 @@ describe('executeCanvasTool', () => {
     expect(result.structuredContent?.canvasId).toBe('w2')
   })
 
-  it('canvas_navigate auto-opens the Canvas Browser for a url when no web canvas is open', async () => {
+  it('canvas_navigate auto-opens and presents the Canvas Browser in the active chat dock', async () => {
     const opens: unknown[] = []
     const controller = fakeController({
       list: () => [],
@@ -351,11 +351,14 @@ describe('executeCanvasTool', () => {
       {
         driver: 'web',
         url: 'https://example.test',
-        viewport: { width: 1280, height: 800 }
+        viewport: { width: 1280, height: 800 },
+        embed: true,
+        presentation: 'dock'
       }
     ])
     expect(result.structuredContent?.opened).toBe(true)
     expect(result.structuredContent?.canvasId).toBe('fresh1')
+    expect(result.structuredContent?.presentation).toBe('dock')
   })
 
   it('canvas_navigate refuses a history action with no open web canvas, and bad input shapes', async () => {

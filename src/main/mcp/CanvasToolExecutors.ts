@@ -916,7 +916,9 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             return fail(toolName, 'Provide exactly one of `url` or `action`.')
           }
           // Resolve the target: explicit canvasId → the chat's most recent open
-          // web canvas → (goto only) auto-open a fresh browser canvas.
+          // web canvas → (goto only) auto-open a fresh browser canvas in the
+          // active chat dock. A casual "browse to …" should present its work;
+          // callers need not know the lower-level canvas_open presentation arg.
           let targetId = canvasId
           if (!targetId) {
             const webSessions = controller
@@ -932,13 +934,17 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               )
             }
             const viewport = resolveViewport({ width: args.width, height: args.height })
-            const opened = await controller.open({ driver: 'web', url, viewport }, ctx)
+            const opened = await controller.open(
+              { driver: 'web', url, viewport, embed: true, presentation: 'dock' },
+              ctx
+            )
             const state = controller.status(opened.canvasId, ctx)
             return jsonResult({
               ok: true,
               tool: toolName,
               canvasId: opened.canvasId,
               opened: true,
+              presentation: 'dock',
               url: redactUrlQuery(opened.url),
               title: opened.title,
               isLoading: state?.isLoading ?? false,

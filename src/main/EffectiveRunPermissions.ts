@@ -142,19 +142,28 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     id: 'default',
     label: 'Accept Edits',
     approvalMode: 'default',
-    // Accept Edits' defining behavior (user decision 2026-08-04): choosing the
-    // preset IS the run-level authorization for in-workspace file edits — no
-    // per-edit prompt, mirroring the workspace_write rationale above but ONLY
-    // for fileChanges. Everything else (shell, media, canvas, publish, …) keeps
-    // resolving from the user's globals/grants exactly as before.
+    // Accept Edits' defining behavior (user decisions 2026-08-04 / 2026-08-09):
+    // choosing the preset IS the run-level authorization for in-workspace file
+    // edits and ordinary control of the sandboxed Canvas Browser. Browser
+    // navigation/click/fill therefore stay fluid instead of presenting an
+    // approval card for every page action. Shell, media, publish, arbitrary
+    // canvas eval, and generic MCP calls keep resolving from globals/grants.
     //
     // Security that still holds under this posture:
     //   - global fileChanges 'deny' remains absolute (preserveExplicitDeny)
     //   - tool executors reject outside-workspace paths; external-path
     //     detection force-prompts (never auto-allows escapes)
-    //   - preview-risk models clamp fileChanges back to 'ask'
+    //   - Canvas refuses credential/OTP fields and yields to recent human input
+    //   - canvasEval remains separately signed-elevated and per-call gated
+    //   - preview-risk models clamp these services back to 'ask'
     agenticServices: {
       fileChanges: 'allow',
+      // Ordinary browser actuation. Surface ownership, stale-observation,
+      // recent-human-input, and credential-field guards remain executor-level
+      // invariants; this removes only the redundant per-click approval card.
+      canvasInteraction: 'allow',
+      // Opening/navigating public websites in the sandboxed Canvas Browser.
+      webBrowsing: 'allow',
       // Accept Edits authorizes TaskWraith sub-thread delegation as a standard
       // brokered tool (no per-call modal). Ask/Plan remain modal-gated.
       subThreadDelegation: 'allow',
@@ -191,6 +200,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // DELIBERATELY no mediaRecording here — capture is non-grantable and
       // stays at its default-deny.
       mediaEditing: 'allow',
+      // Higher permission tiers retain Accept Edits' ordinary browser control.
+      // Credential fields and eval stay outside this authorization.
+      canvasInteraction: 'allow',
       // Chat-owned Mesh Canvas authoring/import is workspace bounded: source
       // assets are jailed to this workspace and copied into TaskWraith's vault.
       meshCanvas: 'allow',
@@ -200,7 +212,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       externalPublish: 'allow',
       // Browser navigation adds no egress a workspace_write seat lacks (shell
       // 'allow' already reaches the network); the surface itself stays
-      // sandboxed + SSRF-guarded, and actuation remains separately gated.
+      // sandboxed + SSRF-guarded.
       webBrowsing: 'allow',
       // Full WS Access also authorizes standard brokered sub-thread delegation
       // and Simulator Canvas control.
