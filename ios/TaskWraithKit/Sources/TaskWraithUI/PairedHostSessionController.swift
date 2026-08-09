@@ -72,6 +72,43 @@ public final class PairedHostSessionController: ObservableObject {
     self.snapshotStore = snapshotStore
   }
 
+  /// Publish this paired Mac's last coherent replica before the relay finishes
+  /// connecting. Cached bytes are always demoted to stale and no command
+  /// transport is installed until the authenticated session establishes.
+  public func prepareOffline(
+    hostIdentity: String,
+    phoneIdentity: PairedHostProjectionIdentity
+  ) {
+    activationId = UUID()
+    fallbackTask?.cancel()
+    fallbackTask = nil
+    resyncTask?.cancel()
+    resyncTask = nil
+    resyncToken = nil
+    resyncInFlight = false
+
+    let hostChanged = self.hostIdentity != hostIdentity
+    self.hostIdentity = hostIdentity
+    transport = nil
+    lastReceipt = nil
+    var cacheError: String?
+    if hostChanged || replica?.identity != phoneIdentity {
+      var cached: HostSnapshot?
+      if let loaded = snapshotStore.load(hostIdentity: hostIdentity) {
+        switch loaded {
+        case .ok(let value): cached = value
+        case .error(let reason): cacheError = reason
+        }
+      }
+      replica = PairedHostProjectionReplica(
+        identity: phoneIdentity,
+        cachedSnapshot: cached)
+    }
+    replica?.markTransportClosed()
+    publishReplica()
+    if let cacheError { lastError = cacheError }
+  }
+
   /// Bind a newly-established E2EE session. The Mac-side gateway will push a
   /// welcome + snapshot immediately; a delayed pull is only a loss-recovery
   /// fallback, not a competing source of state.
@@ -161,6 +198,15 @@ public final class PairedHostSessionController: ObservableObject {
     welcome = nil
     lastReceipt = nil
     lastError = nil
+  }
+
+  /// Remove offline replicas for hosts that are no longer paired. The session
+  /// model uses this for "Forget all" because only the active Host is bound to
+  /// `hostIdentity`; inactive hosts can still have a legitimate per-host cache.
+  public func removePersistedSnapshots(hostIdentities: [String]) {
+    for hostIdentity in Set(hostIdentities) where !hostIdentity.isEmpty {
+      snapshotStore.remove(hostIdentity: hostIdentity)
+    }
   }
 
   public func requestFullSnapshot() {

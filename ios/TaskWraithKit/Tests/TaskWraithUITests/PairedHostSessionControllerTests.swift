@@ -120,20 +120,25 @@ struct PairedHostSessionControllerTests {
   func offlineCacheAndForget() throws {
     let store = MemoryHostSnapshotStore()
     store.seed(snapshotFrame(cursor: 4).snapshot, hostIdentity: "mac-a")
+    store.seed(snapshotFrame(cursor: 5).snapshot, hostIdentity: "mac-b")
     let controller = PairedHostSessionController(snapshotStore: store)
     let identity = try #require(makeIdentity())
 
-    controller.activate(
+    controller.prepareOffline(
       hostIdentity: "mac-a",
-      phoneIdentity: identity,
-      transport: FakePairedHostTransport())
+      phoneIdentity: identity)
     #expect(controller.snapshot?.cursor == 4)
     #expect(controller.snapshot?.freshness == .stale)
+    #expect(controller.phase == .reconnecting)
 
     controller.clear(removePersistedSnapshot: true)
     #expect(controller.snapshot == nil)
     #expect(controller.phase == .unavailable)
     #expect(!store.contains("mac-a"))
+    #expect(store.contains("mac-b"))
+
+    controller.removePersistedSnapshots(hostIdentities: ["mac-b", "mac-b", ""])
+    #expect(!store.contains("mac-b"))
   }
 
   @Test("a cursor gap pulls one full snapshot and converges atomically")

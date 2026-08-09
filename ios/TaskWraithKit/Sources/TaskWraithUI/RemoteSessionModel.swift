@@ -1083,6 +1083,7 @@ public final class RemoteSessionModel: ObservableObject {
     private var identitySeed: Data
     private let identityStore: IdentitySeedStore
     private let pairingStore: PairedHostStore
+    public let hostProjection: PairedHostSessionController
     private var client: RelayTransportClient?
     private var eventTask: Task<Void, Never>?
     private var pinnedMacIdentityB64: String?
@@ -1097,9 +1098,11 @@ public final class RemoteSessionModel: ObservableObject {
 
     public init(
         identityStore: IdentitySeedStore,
-        pairingStore: PairedHostStore = UserDefaultsPairedHostStore()
+        pairingStore: PairedHostStore = UserDefaultsPairedHostStore(),
+        hostSnapshotStore: any PairedHostSnapshotStore = UserDefaultsPairedHostSnapshotStore()
     ) {
         self.identityStore = identityStore
+        self.hostProjection = PairedHostSessionController(snapshotStore: hostSnapshotStore)
         var seed = Data()
         var loadError: String? = nil
         do {
@@ -1213,6 +1216,19 @@ public final class RemoteSessionModel: ObservableObject {
     private func cancelSocketHealthCheck() {
         socketHealthTask?.cancel()
         socketHealthTask = nil
+    }
+
+    private func prepareHostProjectionOffline(hostIdentity: String) {
+        guard
+            let phoneIdentity = pairedHostProjectionIdentity(
+                identityPublicKeyBase64: identityPublicKeyBase64)
+        else {
+            hostProjection.clear(removePersistedSnapshot: false)
+            return
+        }
+        hostProjection.prepareOffline(
+            hostIdentity: hostIdentity,
+            phoneIdentity: phoneIdentity)
     }
 
     private func preferRemoteRelayFirst(relayUrls: [String]?, fallback: String) -> Bool {
@@ -1472,6 +1488,7 @@ public final class RemoteSessionModel: ObservableObject {
         }
         macDisplayName = bootstrap.macDisplayName
         pinnedMacIdentityB64 = bootstrap.macIdentityPubKey
+        prepareHostProjectionOffline(hostIdentity: bootstrap.macIdentityPubKey)
         lastRelayUrls = bootstrap.relayUrls
         lastHostPlatform = bootstrap.hostPlatform
         phase = .connecting
@@ -1578,6 +1595,7 @@ public final class RemoteSessionModel: ObservableObject {
         teardown()
         macDisplayName = Self.sanitizedMacName(record.macDisplayName)
         pinnedMacIdentityB64 = record.macIdentityPubKey
+        prepareHostProjectionOffline(hostIdentity: record.macIdentityPubKey)
         lastRelayUrls = record.relayUrls
         lastHostPlatform = record.hostPlatform
         relayUrl = record.relayUrl
@@ -1854,6 +1872,7 @@ public final class RemoteSessionModel: ObservableObject {
             aliveRehydrateInvocationsForTesting += 1
         #endif
         requestFullProjection()
+        hostProjection.requestFullSnapshot()
         if let tid = visibleThreadId {
             requestThreadSnapshot(tid, bypassVisibleStreamSuppression: streamingRunIds[tid] == nil)
         }
@@ -1907,6 +1926,7 @@ public final class RemoteSessionModel: ObservableObject {
             return
         }
         requestFullProjection()
+        hostProjection.requestFullSnapshot()
         if let tid = visibleThreadId {
             requestThreadSnapshot(tid, bypassVisibleStreamSuppression: streamingRunIds[tid] == nil)
         }
@@ -2191,6 +2211,9 @@ public final class RemoteSessionModel: ObservableObject {
     // (transcripts, streaming, usage, nav targets, suppression sets), reset it
     // HERE or it will silently bleed across hosts.
     private func clearCachedProjectionState() {
+        // Host v2 keeps a per-Mac offline replica on disk, but its currently
+        // visible object graph must never bleed into demo mode or another Mac.
+        hostProjection.clear(removePersistedSnapshot: false)
         // A Live Activity that outlived its Mac would leave one host's run on
         // the lock screen after the user switched to another — the same "leave
         // nothing readable" rule the caches below follow. The flag holds off the
@@ -2705,6 +2728,7 @@ public final class RemoteSessionModel: ObservableObject {
         lastRelayUrls = nil
         lastHostPlatform = nil
         disconnect()
+        hostProjection.clear(removePersistedSnapshot: true)
         // Security review: forgetting the active host must leave NOTHING
         // readable — disconnect() clears the live lists, but cached snapshots,
         // streaming buffers, and usage panels survive it.
@@ -2720,6 +2744,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// Forget EVERY paired host (full reset). Durable: clearAll() persists an
     /// empty v2 document so the legacy single-host blob can't resurrect a host.
     public func forgetAllHosts() {
+        let forgottenHostIds = pairedHosts.map(\.macIdentityPubKey)
         pairingStore.clearAll()
         refreshPairedHostsPublished()
         pinnedMacIdentityB64 = nil
@@ -2728,6 +2753,8 @@ public final class RemoteSessionModel: ObservableObject {
         lastHostPlatform = nil
         macDisplayName = ""
         disconnect()
+        hostProjection.clear(removePersistedSnapshot: true)
+        hostProjection.removePersistedSnapshots(hostIdentities: forgottenHostIds)
         wipeProjectionCaches()
     }
 
@@ -2789,6 +2816,7 @@ public final class RemoteSessionModel: ObservableObject {
     private func handleSocketClosed() {
         // Intentional teardown nils the client BEFORE closing — ignore.
         guard client != nil else { return }
+        hostProjection.markTransportClosed()
         guard case .connected = phase else { return }
         if hasStoredPairing {
             phase = .error("Connection lost — reconnecting…")
@@ -2802,6 +2830,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func teardown() {
+        hostProjection.markTransportClosed()
         eventTask?.cancel()
         eventTask = nil
         projectionSnapshotCoalescer.reset()
@@ -2884,6 +2913,17 @@ public final class RemoteSessionModel: ObservableObject {
                 case .established:
                     await MainActor.run {
                         guard self.client === client else { return }
+                        if let hostIdentity = self.pinnedMacIdentityB64,
+                            let phoneIdentity = pairedHostProjectionIdentity(
+                                identityPublicKeyBase64: client.identityPublicKeyBase64)
+                        {
+                            self.hostProjection.activate(
+                                hostIdentity: hostIdentity,
+                                phoneIdentity: phoneIdentity,
+                                transport: client)
+                        } else {
+                            self.hostProjection.clear(removePersistedSnapshot: false)
+                        }
                         self.cancelAutoReconnect(resetAttempts: true)
                         self.phase = .connected
                         self.reconnectCoordinator.markAttemptFinished()
@@ -3261,6 +3301,12 @@ public final class RemoteSessionModel: ObservableObject {
     private func handle(method: String, params: Data?) async {
         guard let params else { return }
         switch method {
+        case PairedHostProjectionMethods.welcome,
+            PairedHostProjectionMethods.snapshot,
+            PairedHostProjectionMethods.deltas,
+            PairedHostProjectionMethods.health,
+            PairedHostProjectionMethods.state:
+            _ = hostProjection.receive(method: method, params: params)
         case "bridge.broadcastRemoteProjectionSnapshot":
             projectionSnapshotCoalescer.enqueue(params)
         case "bridge.broadcastWorkspaceList":
