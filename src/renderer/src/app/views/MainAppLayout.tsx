@@ -1314,8 +1314,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       (currentProvider === 'gemini' && isOldVersion) ||
       visibleAuditRunNotice ||
       visibleAuditRun ||
-      threadSearchVisible ||
-      (!isChatPopoutWindow && !showWorkspaceSidebar)
+      threadSearchVisible
   )
 
   return (

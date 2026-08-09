@@ -67,26 +67,33 @@ describe('Multiview focused workspace presentation', () => {
     expect(source).toContain('gitSnapshotPath={viewerGitPresentationPath}')
   })
 
-  it('selects pane focus without rewriting ownership, then projects legacy display state', () => {
-    const focus = slice('const handleFocusMultiviewPane =', 'const handleOpenInMultiview =')
-    const focusIndex = focus.indexOf('multiview.setFocusedPane(paneIndex)')
-    const navigationIndex = focus.indexOf(
+  it('keeps ordinary focus local and reserves legacy projection for host-only actions', () => {
+    const localFocus = slice('const handleFocusMultiviewPane =', 'const handleOpenInMultiview =')
+    expect(localFocus).toContain('multiview.setFocusedPane(paneIndex)')
+    expect(localFocus).not.toContain('setCurrentChat(')
+    expect(localFocus).not.toContain('setCurrentWorkspace(')
+    expect(localFocus).not.toContain('startTransition(')
+
+    const projection = slice(
+      'const projectMultiviewPaneToHost =',
+      '// Ordinary pane activation is presentation-only.'
+    )
+    const focusIndex = projection.indexOf('multiview.setFocusedPane(paneIndex)')
+    const navigationIndex = projection.indexOf(
       'setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })'
     )
-    const workspaceIndex = focus.indexOf('setCurrentWorkspace(paneWorkspace)')
-    const chatIndex = focus.indexOf('setCurrentChat(viewerChat)')
-    const composerIndex = focus.indexOf(
+    const workspaceIndex = projection.indexOf('setCurrentWorkspace(paneWorkspace)')
+    const chatIndex = projection.indexOf('setCurrentChat(viewerChat)')
+    const composerIndex = projection.indexOf(
       'applyChatComposerSelectionRef.current(viewerChat, viewerProvider)'
     )
-    const transitionIndex = focus.indexOf('startTransition(() => {')
+    const transitionIndex = projection.indexOf('startTransition(() => {')
     expect(transitionIndex).toBeGreaterThanOrEqual(0)
-    expect(focus).not.toContain('assignToNextPane')
-    expect(focus).not.toContain('multiview.focusPane(')
-    expect(focus).toContain('paneIndex === multiview.focusedPaneIndex')
-    expect(focus).toContain('setSessionTrust(false)')
-    expect(focus).toContain('clearWorkspaceTrust()')
-    expect(focus).toContain('currentWorkspaceIdRef.current !== paneWorkspaceId')
-    expect(focus).toContain(
+    expect(projection).toContain('paneIndex === multiview.focusedPaneIndex')
+    expect(projection).toContain('setSessionTrust(false)')
+    expect(projection).toContain('clearWorkspaceTrust()')
+    expect(projection).toContain('currentWorkspaceIdRef.current !== paneWorkspaceId')
+    expect(projection).toContain(
       'outgoingMainScrollState || captureChatScrollState(outgoingPaneRefs?.scrollRef.current)'
     )
     expect(focusIndex).toBeGreaterThan(transitionIndex)
@@ -96,10 +103,11 @@ describe('Multiview focused workspace presentation', () => {
     expect(composerIndex).toBeGreaterThan(chatIndex)
     expect(layoutSource).toContain('renderFocusedChatCell={')
     expect(layoutSource).toContain('const focusedHostOverlayRequired = Boolean(')
-    expect(layoutSource).toContain('topLeftChromeExtra: humanCollaborationControls')
+    expect(layoutSource).toContain('chatId === currentChatAppChatId ? humanCollaborationControls')
     expect(layoutSource).toContain('showFocusedHostOverlay={focusedHostOverlayRequired}')
+    expect(layoutSource).not.toContain('(!isChatPopoutWindow && !showWorkspaceSidebar)')
     expect(source).toContain(
-      'viewerOwnsFocusedTrust ? composerCtx : resolveRestingPaneComposerCtx()'
+      'viewerOwnsHostProjection ? composerCtx : resolveRestingPaneComposerCtx()'
     )
   })
 
