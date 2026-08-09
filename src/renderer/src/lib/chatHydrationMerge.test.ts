@@ -89,7 +89,7 @@ describe('resolveChatHydration', () => {
     expect(selectedHydrationLast).toBe(current)
   })
 
-  it('guards both ordinary refresh and selected-after-paint hydration in App', () => {
+  it('guards hydration once and shares it with selected-after-paint presentation in App', () => {
     const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
     const refresh = source.slice(
       source.indexOf('const refreshSingleChat ='),
@@ -102,8 +102,10 @@ describe('resolveChatHydration', () => {
 
     expect(refresh).toContain('const localAtRequestStart =')
     expect(refresh).toContain('applyHydratedChat(hydrated, { localAtRequestStart })')
-    expect(selected).toContain('const localAtRequestStart =')
-    expect(selected).toContain('applyHydratedChat(hydrated, { localAtRequestStart })')
+    expect(refresh).toContain('requestPool.run(chatId, async () =>')
+    expect(selected).toContain('refreshSingleChat(chat.appChatId)')
+    expect(selected).not.toContain('window.api.getChat')
+    expect(selected).not.toContain('applyHydratedChat')
     expect(selected).not.toContain('setCurrentChat(hydrated)')
     // applyHydratedChat owns setCurrentChat; after-paint only syncs composer chrome.
     expect(selected).not.toContain('setCurrentChat(resolved)')

@@ -1,3 +1,4 @@
+import type { ChatRecord } from '../../../main/store/types'
 import { ChatByteLru, DEFAULT_MAX_HYDRATED_CHAT_BYTES } from './chatByteLru'
 import { ChatTranscriptStore } from './chatTranscriptStore'
 
@@ -19,6 +20,34 @@ export interface ChatHydrationRuntime {
   maxBytes: number
   byteLru: ChatByteLru
   transcriptStore: ChatTranscriptStore
+  requestPool: ChatHydrationRequestPool<ChatRecord | null>
+}
+
+/**
+ * One keyed hydration authority for every surface in a renderer.
+ *
+ * It shares only the exact read+commit promise for one chat id. Focus,
+ * composer state, pin reasons, and different chat ids remain independent.
+ */
+export class ChatHydrationRequestPool<T> {
+  private readonly inFlight = new Map<string, Promise<T>>()
+
+  run(chatId: string, hydrate: () => Promise<T>): Promise<T> {
+    const existing = this.inFlight.get(chatId)
+    if (existing) return existing
+
+    const request = Promise.resolve()
+      .then(hydrate)
+      .finally(() => {
+        if (this.inFlight.get(chatId) === request) this.inFlight.delete(chatId)
+      })
+    this.inFlight.set(chatId, request)
+    return request
+  }
+
+  pendingChatIds(): string[] {
+    return Array.from(this.inFlight.keys())
+  }
 }
 
 function readEnvMap(
@@ -57,7 +86,8 @@ export function createChatHydrationRuntime(options?: {
   return {
     maxBytes,
     byteLru: new ChatByteLru({ maxBytes }),
-    transcriptStore: new ChatTranscriptStore()
+    transcriptStore: new ChatTranscriptStore(),
+    requestPool: new ChatHydrationRequestPool<ChatRecord | null>()
   }
 }
 

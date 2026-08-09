@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ChatListItem, ChatRecord } from '../../../main/store/types'
 import { commitHydratedChat } from './chatHydrationMerge'
 import { demoteChatToSummary, estimateChatRecordBytes } from './chatByteLru'
 import {
   APP_MAX_HYDRATED_MESSAGE_BYTES,
+  ChatHydrationRequestPool,
   MAX_HYDRATED_BYTES_ENV_KEY,
   createChatHydrationRuntime,
   reconcileHydrationOptions,
@@ -44,6 +45,36 @@ describe('resolveMaxHydratedMessageBytes', () => {
     expect(resolveMaxHydratedMessageBytes({ [MAX_HYDRATED_BYTES_ENV_KEY]: '-1' })).toBe(
       APP_MAX_HYDRATED_MESSAGE_BYTES
     )
+  })
+})
+
+describe('ChatHydrationRequestPool', () => {
+  it('shares one same-chat read while keeping different chats independent', async () => {
+    const pool = new ChatHydrationRequestPool<string>()
+    let finishShared!: (value: string) => void
+    const hydrateShared = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishShared = resolve
+        })
+    )
+
+    const first = pool.run('shared', hydrateShared)
+    const joined = pool.run('shared', hydrateShared)
+    const neighbour = pool.run('neighbour', async () => 'neighbour-ready')
+    expect(joined).toBe(first)
+    expect(hydrateShared).toHaveBeenCalledTimes(0)
+    expect(pool.pendingChatIds()).toEqual(['shared', 'neighbour'])
+
+    await Promise.resolve()
+    expect(hydrateShared).toHaveBeenCalledTimes(1)
+    await expect(neighbour).resolves.toBe('neighbour-ready')
+    finishShared('shared-ready')
+    await expect(first).resolves.toBe('shared-ready')
+    await expect(joined).resolves.toBe('shared-ready')
+    expect(pool.pendingChatIds()).toEqual([])
+
+    await expect(pool.run('shared', async () => 'fresh-read')).resolves.toBe('fresh-read')
   })
 })
 

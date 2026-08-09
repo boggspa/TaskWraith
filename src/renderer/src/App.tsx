@@ -6153,14 +6153,16 @@ function App(): React.JSX.Element {
   const refreshSingleChat = useCallback(
     async (chatId: string | null | undefined): Promise<ChatRecord | null> => {
       if (!chatId) return null
-      const localAtRequestStart =
-        chatByIdRef.current.get(chatId) ||
-        (activeRunChatSnapshotRef.current?.appChatId === chatId
-          ? activeRunChatSnapshotRef.current
-          : null)
-      const hydrated = await window.api.getChat(chatId)
-      if (!hydrated) return null
-      return applyHydratedChat(hydrated, { localAtRequestStart })
+      return chatHydrationRuntimeRef.current.requestPool.run(chatId, async () => {
+        const localAtRequestStart =
+          chatByIdRef.current.get(chatId) ||
+          (activeRunChatSnapshotRef.current?.appChatId === chatId
+            ? activeRunChatSnapshotRef.current
+            : null)
+        const hydrated = await window.api.getChat(chatId)
+        if (!hydrated) return null
+        return applyHydratedChat(hydrated, { localAtRequestStart })
+      })
     },
     [applyHydratedChat]
   )
@@ -6576,13 +6578,10 @@ function App(): React.JSX.Element {
 
   const hydrateSelectedChatAfterPaint = (chat: ChatRecord) => {
     if (!isChatSummaryRecord(chat)) return
-    const localAtRequestStart = chatByIdRef.current.get(chat.appChatId) || chat
     scheduleAfterNextPaint(() => {
-      void window.api
-        .getChat(chat.appChatId)
-        .then((hydrated) => {
-          if (!hydrated || currentChatIdRef.current !== hydrated.appChatId) return
-          const resolved = applyHydratedChat(hydrated, { localAtRequestStart })
+      void refreshSingleChat(chat.appChatId)
+        .then((resolved) => {
+          if (!resolved || currentChatIdRef.current !== resolved.appChatId) return
           const provider = getChatProvider(resolved)
           startTransition(() => {
             applyChatComposerSelection(resolved, provider)
