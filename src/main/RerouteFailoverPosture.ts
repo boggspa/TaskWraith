@@ -53,8 +53,10 @@ export function presetAuthorityRank(presetId: string | null | undefined): number
  * - plan → `read_only`.
  * - auto_edit → `full_access` ONLY if the original already had full_access,
  *   else `workspace_write` (never inflate workspace_write → full_access).
- * - default / undefined → `undefined` (no effectivePermissions object, matching
- *   every existing producer for a default-mode run).
+ * - default → `default` when the original carried a known signed default-or-
+ *   higher preset, preserving Accept Edits on the target; an absent/custom
+ *   original stays undefined rather than manufacturing authority.
+ * - undefined → `undefined`.
  *
  * Returns `undefined` to mean "attach no effectivePermissions object".
  */
@@ -67,6 +69,14 @@ export function reroutePresetId(
   if (cappedApprovalMode === 'plan') return 'read_only'
   if (cappedApprovalMode === 'auto_edit') {
     return originalPresetId === 'full_access' ? 'full_access' : 'workspace_write'
+  }
+  if (
+    cappedApprovalMode === 'default' &&
+    (originalPresetId === 'default' ||
+      originalPresetId === 'workspace_write' ||
+      originalPresetId === 'full_access')
+  ) {
+    return 'default'
   }
   return undefined
 }

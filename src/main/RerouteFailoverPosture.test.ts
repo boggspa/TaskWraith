@@ -18,8 +18,15 @@ describe('reroutePresetId — preserve, never escalate', () => {
     expect(reroutePresetId('auto_edit', undefined, 'codex')).toBe('workspace_write')
   })
 
-  it('default / undefined mode → no effectivePermissions object', () => {
-    expect(reroutePresetId('default', 'workspace_write', 'codex')).toBeUndefined()
+  it('default mode preserves a known signed Accept Edits-or-higher origin', () => {
+    expect(reroutePresetId('default', 'default', 'codex')).toBe('default')
+    expect(reroutePresetId('default', 'workspace_write', 'codex')).toBe('default')
+    expect(reroutePresetId('default', 'full_access', 'codex')).toBe('default')
+  })
+
+  it('does not manufacture a default posture from an absent/custom origin', () => {
+    expect(reroutePresetId('default', undefined, 'codex')).toBeUndefined()
+    expect(reroutePresetId('default', 'custom', 'codex')).toBeUndefined()
     expect(reroutePresetId(undefined, 'full_access', 'codex')).toBeUndefined()
   })
 
