@@ -203,6 +203,49 @@ describe('retry guidance and preserved hard guards', () => {
     ).toBeNull()
   })
 
+  it('does not advertise an impossible mutation-scope retry for non-shell tools', () => {
+    const failure =
+      'start_background_process cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command.'
+
+    expect(
+      buildToolPermissionRetryInstruction({
+        available: true,
+        toolName: 'start_background_process',
+        arguments: { command: "printf 'hello' > notes.txt" },
+        failure,
+        definitions,
+        isAutoAllowed
+      })
+    ).toBeNull()
+    expect(
+      validateToolPermissionRetryRequest({
+        value: {
+          toolName: 'start_background_process',
+          arguments: { command: "printf 'hello' > notes.txt" },
+          failure
+        },
+        definitions,
+        isAutoAllowed
+      })
+    ).toMatchObject({ ok: false, code: 'non_retriable_failure' })
+
+    expect(
+      buildToolPermissionRetryInstruction({
+        available: true,
+        toolName: 'run_shell_command',
+        arguments: { command: "printf 'hello' > notes.txt" },
+        failure: 'run_shell_command cannot prove an exact file/hunk mutation scope',
+        definitions,
+        isAutoAllowed
+      })
+    ).toMatchObject({
+      available: true,
+      arguments: {
+        arguments: { toolName: 'run_shell_command' }
+      }
+    })
+  })
+
   it('uses the portable Ensemble name when the immutable profile omits the legacy name', () => {
     const instruction = buildToolPermissionRetryInstruction({
       available: true,

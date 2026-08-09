@@ -18,6 +18,9 @@ const MAX_FAILURE_LENGTH = 4000
 const MAX_RATIONALE_LENGTH = 600
 const MAX_ARGUMENT_BYTES = 64 * 1024
 
+const UNPROVABLE_MUTATION_SCOPE_PATTERN =
+  /\bcannot prove an exact (?:file\/hunk )?mutation scope\b/i
+
 const NON_RETRIABLE_TARGETS = new Set<TaskWraithMcpToolName>([
   TOOL_PERMISSION_RETRY_TOOL_NAME,
   'ask_user_question',
@@ -115,6 +118,7 @@ export type ToolPermissionRetryValidationErrorCode =
   | 'non_retriable_target'
   | 'target_does_not_need_permission'
   | 'explicit_user_decline'
+  | 'non_retriable_failure'
   | 'not_permission_failure'
   | 'invalid_target_arguments'
   | 'invalid_target_schema'
@@ -178,6 +182,15 @@ export function validateToolPermissionRetryRequest(input: {
       code: 'explicit_user_decline',
       message:
         'The prior result says the user explicitly declined or cancelled. Respect that decision and do not request the same permission again.'
+    }
+  }
+  if (rawToolName !== 'run_shell_command' && UNPROVABLE_MUTATION_SCOPE_PATTERN.test(failure)) {
+    return {
+      ok: false,
+      code: 'non_retriable_failure',
+      message:
+        `${rawToolName} cannot use one-shot permission retry for an unprovable mutation scope; ` +
+        'the caller must choose an exact workspace tool instead.'
     }
   }
   if (!isPermissionBoundaryFailure(failure)) {
