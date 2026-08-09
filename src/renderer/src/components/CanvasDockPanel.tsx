@@ -18,6 +18,10 @@ import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 import { friendlyCanvasError } from './CanvasComposerButton'
 import { isNavigableCanvasUrl } from '../lib/canvasBrowserUrl'
 import {
+  isCanvasDockPresentationEvent,
+  selectUnownedDockPresentations
+} from '../lib/canvasPresentation'
+import {
   consumeMeshCanvasOpenRequest,
   getPendingMeshCanvasOpenRequest,
   subscribeMeshCanvasOpenRequests
@@ -174,6 +178,7 @@ export interface CanvasDockSummary {
   isLoading?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  presentation?: 'dock'
 }
 
 /** Defensive decode of a canvas summary that crossed the IPC bridge. */
@@ -189,7 +194,8 @@ export function toCanvasDockSummary(value: unknown): CanvasDockSummary | null {
     status: typeof raw.status === 'string' ? raw.status : '',
     ...(typeof raw.isLoading === 'boolean' ? { isLoading: raw.isLoading } : {}),
     ...(typeof raw.canGoBack === 'boolean' ? { canGoBack: raw.canGoBack } : {}),
-    ...(typeof raw.canGoForward === 'boolean' ? { canGoForward: raw.canGoForward } : {})
+    ...(typeof raw.canGoForward === 'boolean' ? { canGoForward: raw.canGoForward } : {}),
+    ...(raw.presentation === 'dock' ? { presentation: 'dock' as const } : {})
   }
 }
 
@@ -248,6 +254,10 @@ function PopOutGlyph() {
 
 export interface CanvasDockPanelProps {
   chatId: string
+}
+
+interface CanvasPresentationBridge {
+  adoptEmbedded?: (args: { chatId: string; canvasId: string }) => Promise<unknown>
 }
 
 export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
@@ -311,15 +321,58 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
         (summary): summary is CanvasDockSummary => summary !== null
       )
       if (chatIdRef.current !== chatId) return
-      canvasDockSessionStore.reconcile(chatId, new Set(owned.map((s) => s.canvasId)))
-      setOwnedSummaries(new Map(owned.map((s) => [s.canvasId, s])))
       const chatWide = api.listForChat ? await api.listForChat(chatId) : []
       if (chatIdRef.current !== chatId) return
-      setChatSummaries(
-        chatWide.map(toCanvasDockSummary).filter(
-          (summary): summary is CanvasDockSummary => summary !== null
-        )
-      )
+      const decodedChatWide = chatWide
+        .map(toCanvasDockSummary)
+        .filter((summary): summary is CanvasDockSummary => summary !== null)
+      const ownedById = new Map(owned.map((summary) => [summary.canvasId, summary]))
+      const presentationApi = api as typeof api & CanvasPresentationBridge
+
+      for (const candidate of selectUnownedDockPresentations(
+        decodedChatWide,
+        new Set(ownedById.keys())
+      )) {
+        if (!presentationApi.adoptEmbedded) {
+          setError(
+            'Canvas presentation needs the updated preload bridge. Restart TaskWraith and try again.'
+          )
+          break
+        }
+        const result = await presentationApi.adoptEmbedded({
+          chatId,
+          canvasId: candidate.canvasId
+        })
+        if (chatIdRef.current !== chatId) return
+        const record =
+          result && typeof result === 'object' ? (result as Record<string, unknown>) : null
+        if (!record || record.ok !== true) {
+          setError(
+            friendlyCanvasError(
+              record && typeof record.error === 'string'
+                ? record.error
+                : 'Could not adopt the Canvas presentation.'
+            )
+          )
+          continue
+        }
+        const adopted = toCanvasDockSummary(record)
+        if (adopted) ownedById.set(adopted.canvasId, adopted)
+      }
+
+      for (const summary of ownedById.values()) {
+        if (summary.presentation !== 'dock') continue
+        const stored = canvasDockSessionStore.snapshot(chatId)
+        if (stored.sessions.some((session) => session.canvasId === summary.canvasId)) continue
+        canvasDockSessionStore.add(chatId, {
+          canvasId: summary.canvasId,
+          kind: summary.driver === 'sketch' ? 'sketch' : 'web'
+        })
+      }
+
+      canvasDockSessionStore.reconcile(chatId, new Set(ownedById.keys()))
+      setOwnedSummaries(ownedById)
+      setChatSummaries(decodedChatWide)
     } catch {
       // Listing is best-effort; the launcher stays usable without it.
     }
@@ -419,6 +472,11 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     const off = api.onEvent((event) => {
       const record = event as { chatId?: unknown } | null
       if (!record || record.chatId !== chatId) return
+      if (isCanvasDockPresentationEvent(event, chatId)) {
+        setShowMesh(false)
+        setShowSimulator(false)
+        setShowLauncher(false)
+      }
       if (timer !== null) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
         timer = null

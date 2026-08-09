@@ -54,6 +54,7 @@ describe('toCanvasDockSummary', () => {
         url: 'http://localhost:3000/',
         title: 'App',
         status: 'active',
+        presentation: 'dock',
         viewport: { width: 1, height: 1 }
       })
     ).toEqual({
@@ -61,7 +62,8 @@ describe('toCanvasDockSummary', () => {
       driver: 'web',
       url: 'http://localhost:3000/',
       title: 'App',
-      status: 'active'
+      status: 'active',
+      presentation: 'dock'
     })
   })
 

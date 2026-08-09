@@ -731,6 +731,7 @@ import {
   getPendingMeshCanvasOpenRequest,
   subscribeMeshCanvasOpenRequests
 } from './lib/meshCanvasLaunch'
+import { isCanvasDockPresentationEvent } from './lib/canvasPresentation'
 import {
   getPendingSimulatorCanvasOpenRequest,
   subscribeSimulatorCanvasOpenRequests
@@ -25747,6 +25748,18 @@ function App(): React.JSX.Element {
     return api.onEvent((event) => {
       const record = event as { chatId?: unknown; kind?: unknown } | null
       if (record?.chatId !== chatId || record.kind !== 'scene.presented') return
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    })
+  }, [currentChat?.appChatId])
+  // `canvas_open` with presentation:"dock" is the generic live-preview
+  // equivalent of mesh_scene_present: focus Canvas only for the active chat.
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    const api = window.api?.canvas
+    if (!chatId || !api?.onEvent) return
+    return api.onEvent((event) => {
+      if (!isCanvasDockPresentationEvent(event, chatId)) return
       setIsCanvasDockPanelOpen(true)
       setRightDockTab('canvas')
     })
