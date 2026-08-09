@@ -253,6 +253,26 @@ describe('MultiviewPaneGrid', () => {
     expect(renderEmpty).toHaveBeenCalledWith(1)
   })
 
+  it('keeps a focused empty pane on its placeholder instead of mounting the singleton host', () => {
+    const renderEmpty = vi.fn(empty)
+    const focusedHost = vi.fn(focused)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={makePanes(['a', null])}
+        focusedPaneIndex={1}
+        renderFocusedCell={focusedHost}
+        renderFocusedChatCell={viewer}
+        renderViewerCell={viewer}
+        renderEmptyCell={renderEmpty}
+      />
+    )
+    expect(out).toContain('empty-cell')
+    expect(out).not.toContain('focused-cell')
+    expect(renderEmpty).toHaveBeenCalledWith(1)
+    expect(focusedHost).not.toHaveBeenCalled()
+  })
+
   it('quad layout renders four cells', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid

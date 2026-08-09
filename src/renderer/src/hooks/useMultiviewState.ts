@@ -213,6 +213,10 @@ function withChatAt(
   return next
 }
 
+function isPaneEmpty(pane: MultiviewPaneRecord | undefined): boolean {
+  return Boolean(pane && pane.chatId == null && !pane.canvasId && !pane.mediaRef)
+}
+
 /** Put a live-embedded canvas in a pane (clears its chat + any detached media).
  * `null` clears the canvas. */
 export function applySetPaneCanvas(
@@ -423,19 +427,24 @@ export function applySetFocusedPane(state: MultiviewCoreState, index: number): M
 }
 
 /**
- * Focus a pane while first recording the chat currently visible in the outgoing
- * focused pane. This keeps the pane map in sync with App.tsx's singleton
- * currentChat/composer state.
+ * Focus an explicitly selected EMPTY pane. The legacy host chat is adopted by
+ * its outgoing pane only when that pane has no owner yet (the initial split
+ * case); an already-owned pane is authoritative and is never overwritten by
+ * singleton projection state.
  */
-export function applyFocusPane(
+export function applyFocusEmptyPane(
   state: MultiviewCoreState,
   index: number,
-  outgoingFocusedChatId: string | null = null
+  outgoingVisibleChatId: string | null = null
 ): MultiviewCoreState {
-  const pinnedState = outgoingFocusedChatId
-    ? applySetPaneChat(state, state.focusedPaneIndex, outgoingFocusedChatId)
-    : state
-  return applySetFocusedPane(pinnedState, index)
+  const target = clampFocusedPaneIndex(index, state.layout)
+  if (target === state.focusedPaneIndex || !isPaneEmpty(state.panes[target])) return state
+  const outgoingPane = state.panes[state.focusedPaneIndex]
+  const seededState =
+    outgoingVisibleChatId && isPaneEmpty(outgoingPane)
+      ? applySetPaneChat(state, state.focusedPaneIndex, outgoingVisibleChatId)
+      : state
+  return applySetFocusedPane(seededState, target)
 }
 
 /**
@@ -825,7 +834,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   /** Put a detached audio/video player in a pane; `null` clears it. */
   setPaneMedia: (index: number, mediaRef: MultiviewPaneMediaRef | null) => void
   setFocusedPane: (index: number) => void
-  focusPane: (index: number, outgoingFocusedChatId?: string | null) => void
+  /** Select an empty pane without allowing singleton state to overwrite pane ownership. */
+  focusEmptyPane: (index: number, outgoingVisibleChatId?: string | null) => void
   closePane: (index: number) => void
   /** Place a chat in the focused pane, or focus its existing pane. */
   assignToFocusedPane: (chatId: string) => void
@@ -893,9 +903,12 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     (index: number) => setState((s) => applySetFocusedPane(s, index)),
     []
   )
-  const focusPane = useCallback((index: number, outgoingFocusedChatId: string | null = null) => {
-    setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))
-  }, [])
+  const focusEmptyPane = useCallback(
+    (index: number, outgoingVisibleChatId: string | null = null) => {
+      setState((s) => applyFocusEmptyPane(s, index, outgoingVisibleChatId))
+    },
+    []
+  )
   const closePane = useCallback((index: number) => setState((s) => applyClosePane(s, index)), [])
   const assignToFocusedPane = useCallback((chatId: string) => {
     setState((s) => applyAssignToFocusedPane(s, chatId).state)
@@ -960,7 +973,7 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     setPaneCanvas,
     setPaneMedia,
     setFocusedPane,
-    focusPane,
+    focusEmptyPane,
     closePane,
     assignToFocusedPane,
     openInNewPane,

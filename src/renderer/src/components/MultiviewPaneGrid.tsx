@@ -54,7 +54,7 @@ export interface MultiviewPaneGridProps {
   renderCanvasCell?: (canvasId: string, paneIndex: number) => ReactNode
   /** A pane hosting a detached audio/video player — when the record has a mediaRef. */
   renderMediaCell?: (mediaRef: MultiviewPaneMediaRef, paneIndex: number) => ReactNode
-  /** Placeholder for a non-focused empty cell. */
+  /** Placeholder for an empty cell, including the focused selection target. */
   renderEmptyCell?: (paneIndex: number) => ReactNode
   /** Close a pane — non-focused cells get a close affordance. */
   onClosePane?: (paneIndex: number) => void
@@ -251,6 +251,9 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
     if (paneIndex === props.focusedPaneIndex) {
       if (pane?.chatId && props.renderFocusedChatCell) {
         return renderChatRuntime(pane.chatId, paneIndex, true)
+      }
+      if (!pane?.chatId && !pane?.canvasId && !pane?.mediaRef && props.renderEmptyCell) {
+        return props.renderEmptyCell(paneIndex)
       }
       return props.renderFocusedCell()
     }

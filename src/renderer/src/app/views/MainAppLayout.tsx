@@ -101,7 +101,6 @@ import { AuditRunNotice } from '../../components/AuditRunNotice'
 import { MultiviewPaneGrid } from '../../components/MultiviewPaneGrid'
 import { MediaPane } from '../../components/MediaPane'
 import { CanvasPane } from '../../components/CanvasPane'
-import { CanvasPaneLauncher } from '../../components/CanvasPaneLauncher'
 import { Composer, type ComposerProps } from '../../components/Composer'
 import { ExecutionMapView } from '../../components/ExecutionMapView'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
@@ -1842,22 +1841,29 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               rowFractions={multiview.tracks.rows}
               onResizeTrack={multiview.resizeTrack}
               onResetTracks={multiview.resetTrackSizes}
-              renderEmptyCell={(emptyPaneIndex) => (
-                <div className="multiview-empty-pane" data-pane-index={emptyPaneIndex}>
-                  <span className="multiview-empty-pane-label">Select a chat for this pane</span>
-                  <CanvasPaneLauncher
-                    onOpen={(url) => {
-                      if (!currentChatAppChatId) return
-                      void window.api.canvas
-                        .openEmbedded({ url, chatId: currentChatAppChatId })
-                        .then((opened) => {
-                          if (opened.ok) multiview.setPaneCanvas(emptyPaneIndex, opened.canvasId)
-                        })
-                        .catch(() => {})
-                    }}
-                  />
-                </div>
-              )}
+              renderEmptyCell={(emptyPaneIndex) => {
+                const isFocused = multiview.focusedPaneIndex === emptyPaneIndex
+                return (
+                  <button
+                    type="button"
+                    className="multiview-empty-pane multiview-empty-pane-select"
+                    data-pane-index={emptyPaneIndex}
+                    aria-pressed={isFocused}
+                    onClick={() =>
+                      multiview.focusEmptyPane(emptyPaneIndex, currentChatAppChatId)
+                    }
+                  >
+                    <span className="multiview-empty-pane-label">
+                      {isFocused ? 'Choose a chat from the sidebar' : 'Select this pane'}
+                    </span>
+                    <span className="multiview-empty-pane-hint">
+                      {isFocused
+                        ? 'The next sidebar chat opens here'
+                        : 'Then choose a chat from the sidebar'}
+                    </span>
+                  </button>
+                )
+              }}
               renderCanvasCell={(canvasId, paneIndex) => (
                 <CanvasPane
                   canvasId={canvasId}

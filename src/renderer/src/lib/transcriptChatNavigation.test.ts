@@ -32,6 +32,21 @@ describe('transcript chat navigation integration', () => {
     )
   })
 
+  it('makes empty multiview panes explicit sidebar targets without a browser launcher', () => {
+    const source = readFileSync(
+      new URL('../app/views/MainAppLayout.tsx', import.meta.url),
+      'utf8'
+    )
+    const emptyPane = source.slice(
+      source.indexOf('renderEmptyCell={(emptyPaneIndex)'),
+      source.indexOf('renderCanvasCell={(canvasId, paneIndex)')
+    )
+    expect(emptyPane).toContain('multiview.focusEmptyPane(emptyPaneIndex, currentChatAppChatId)')
+    expect(emptyPane).toContain("'The next sidebar chat opens here'")
+    expect(emptyPane).not.toContain('CanvasPaneLauncher')
+    expect(emptyPane).not.toContain('openEmbedded')
+  })
+
   it('keeps external restore ownership until the chat-switch effect observes it', () => {
     const source = readFileSync(
       new URL('../app/state/useTranscriptScrollState.ts', import.meta.url),

@@ -7,7 +7,7 @@ import type {
 import {
   applyAssignToFocusedPane,
   applyClosePane,
-  applyFocusPane,
+  applyFocusEmptyPane,
   applyOpenInNewPane,
   applyOpenMediaInNewPane,
   applyResetTrackSizes,
@@ -432,46 +432,44 @@ describe('applySetFocusedPane', () => {
   })
 })
 
-describe('applyFocusPane', () => {
-  it('pins the outgoing visible chat before focusing another pane (ids unchanged)', () => {
-    const next = applyFocusPane(
-      state({ layout: 'vertical-2', panes: panesOf(['stale', 'b']), focusedPaneIndex: 0 }),
+describe('applyFocusEmptyPane', () => {
+  it('adopts the initial singleton host into its unowned pane before focusing an empty pane', () => {
+    const next = applyFocusEmptyPane(
+      state({ layout: 'vertical-2', panes: panesOf([null, null]), focusedPaneIndex: 0 }),
       1,
       'current'
     )
-    expect(chatIds(next)).toEqual(['current', 'b'])
+    expect(chatIds(next)).toEqual(['current', null])
     expect(next.focusedPaneIndex).toBe(1)
     expect(ids(next)).toEqual(['t0', 't1'])
   })
 
-  it('honors the clicked pane when seeded panes still show the same chat', () => {
-    const seeded = state({
-      layout: 'two-top-one-bottom',
-      panes: panesOf(['a', 'a', 'a']),
-      focusedPaneIndex: 0
-    })
-    const next = applyFocusPane(seeded, 2, 'a')
-
-    expect(chatIds(next)).toEqual(['a', 'a', 'a'])
-    expect(next.focusedPaneIndex).toBe(2)
-    expect(ids(next)).toEqual(['t0', 't1', 't2'])
+  it('never overwrites an owned outgoing pane with singleton projection state', () => {
+    const next = applyFocusEmptyPane(
+      state({ layout: 'vertical-2', panes: panesOf(['pane-a', null]), focusedPaneIndex: 0 }),
+      1,
+      'stale-singleton-chat'
+    )
+    expect(chatIds(next)).toEqual(['pane-a', null])
+    expect(next.focusedPaneIndex).toBe(1)
+    expect(ids(next)).toEqual(['t0', 't1'])
   })
 
-  it('keeps distinct pane ownership stable through repeated focus churn', () => {
-    let next = state({
+  it('cannot focus a populated target or seed the already-focused empty pane', () => {
+    const populated = state({
       layout: 'vertical-2',
       panes: panesOf(['a', 'b']),
       focusedPaneIndex: 0
     })
-    for (let index = 0; index < 20; index += 1) {
-      const target = index % 2 === 0 ? 1 : 0
-      const outgoing = target === 1 ? 'a' : 'b'
-      next = applyFocusPane(next, target, outgoing)
-      expect(chatIds(next)).toEqual(['a', 'b'])
-      expect(new Set(chatIds(next)).size).toBe(2)
-      expect(next.focusedPaneIndex).toBe(target)
-      expect(ids(next)).toEqual(['t0', 't1'])
-    }
+    expect(applyFocusEmptyPane(populated, 1, 'a')).toBe(populated)
+
+    const alreadyFocused = state({
+      layout: 'vertical-2',
+      panes: panesOf(['a', null]),
+      focusedPaneIndex: 1
+    })
+    expect(applyFocusEmptyPane(alreadyFocused, 1, 'a')).toBe(alreadyFocused)
+    expect(chatIds(alreadyFocused)).toEqual(['a', null])
   })
 })
 
@@ -575,10 +573,10 @@ describe('applyAssignToFocusedPane', () => {
   })
 
   it('composes focus and assignment after another state update in the same React batch', () => {
-    const initial = state({ panes: panesOf(['a']) })
+    const initial = state({ panes: panesOf([null]) })
     const queuedUpdates: Array<(value: MultiviewCoreState) => MultiviewCoreState> = [
       (value) => applySetLayout(value, 'vertical-2'),
-      (value) => applyFocusPane(value, 1, 'a'),
+      (value) => applyFocusEmptyPane(value, 1, 'a'),
       (value) => applyAssignToFocusedPane(value, 'b').state
     ]
     const next = queuedUpdates.reduce((value, update) => update(value), initial)
@@ -589,7 +587,7 @@ describe('applyAssignToFocusedPane', () => {
 
     const source = readFileSync(new URL('./useMultiviewState.ts', import.meta.url), 'utf8')
     const hook = source.slice(source.indexOf('export function useMultiviewState'))
-    expect(hook).toContain('setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))')
+    expect(hook).toContain('setState((s) => applyFocusEmptyPane(s, index, outgoingVisibleChatId))')
     expect(hook).toContain('setState((s) => applyAssignToFocusedPane(s, chatId).state)')
     expect(hook).not.toContain('stateRef.current')
     expect(hook).not.toContain('setState(result.state)')
