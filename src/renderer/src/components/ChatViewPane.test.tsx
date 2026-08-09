@@ -288,8 +288,9 @@ describe('ChatViewPane welcome viewer', () => {
 })
 
 describe('ChatViewPane shared composer', () => {
-  it('does not promote a pane when the user interacts with its transcript or composer', () => {
-    expect(paneSource).not.toContain('onMouseDownCapture')
+  it('locally activates a pane from pointer or keyboard focus without a host projection', () => {
+    expect(paneSource).toContain('onPointerDownCapture')
+    expect(paneSource).toContain('onFocusCapture')
     expect(paneSource).toContain('onClick: props.onFocusPane')
   })
 

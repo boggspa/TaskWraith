@@ -54,7 +54,7 @@ describe('Multiview pane Composer context parity', () => {
     expect(render).toContain('const fresh = buildPaneComposerCtx(viewerChatId, viewerPaneIndex)')
     expect(render).toContain('paneComposerRuntimeRegistryRef.current.stabilize(')
     expect(render).toContain(
-      'viewerOwnsFocusedTrust ? composerCtx : resolveRestingPaneComposerCtx()'
+      'viewerOwnsHostProjection ? composerCtx : resolveRestingPaneComposerCtx()'
     )
   })
 

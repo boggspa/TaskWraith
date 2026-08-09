@@ -16,9 +16,11 @@ import {
 
 /**
  * useMultiviewState — owns the renderer-only Multiview state (which layout,
- * which chat is in each pane, which pane is focused, and per-pane settings). The
- * focused pane is wired to the existing currentChat machinery in App.tsx; this
- * hook writes no App singleton. All real logic lives in the pure `apply*`
+ * which chat is in each pane, which pane is focused, and per-pane settings).
+ * Focus has its own tiny external store: selecting a pane updates only the grid
+ * and never asks the 30k-line App composition root to reconcile. The selected
+ * pane can still be explicitly projected into legacy currentChat machinery by
+ * the few host-only actions that need it. All real logic lives in the pure `apply*`
  * transitions below so they can be unit-tested without a DOM (the repo avoids
  * jsdom).
  *
@@ -87,6 +89,51 @@ export interface MultiviewCoreState {
    * lets a future persisted state resume minting without id collisions.
    */
   nextPaneSeq: number
+}
+
+/**
+ * Narrow focus subscription consumed by MultiviewPaneGrid. Keeping this store
+ * outside App's React state makes ordinary pane activation O(subscribers)
+ * instead of a full application render while retaining a synchronous getter
+ * for sidebar assignment and host-only commands.
+ */
+export interface MultiviewFocusStore {
+  getSnapshot: () => number
+  subscribe: (listener: () => void) => () => void
+  set: (index: number) => void
+}
+
+export function createMultiviewFocusStore(initialIndex = 0): MultiviewFocusStore {
+  let focusedPaneIndex = initialIndex
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => focusedPaneIndex,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    set: (index) => {
+      if (index === focusedPaneIndex) return
+      focusedPaneIndex = index
+      for (const listener of listeners) listener()
+    }
+  }
+}
+
+/** True when two snapshots differ only by focus ownership. */
+export function isMultiviewFocusOnlyChange(
+  previous: MultiviewCoreState,
+  next: MultiviewCoreState
+): boolean {
+  return (
+    previous.focusedPaneIndex !== next.focusedPaneIndex &&
+    previous.layout === next.layout &&
+    previous.panes === next.panes &&
+    previous.parkedPanes === next.parkedPanes &&
+    previous.trackSizes === next.trackSizes &&
+    previous.paneSettings === next.paneSettings &&
+    previous.nextPaneSeq === next.nextPaneSeq
+  )
 }
 
 /** Minimum size (px) any pane may be shrunk to while dragging a gutter. */
@@ -822,6 +869,8 @@ export interface UseMultiviewStateOptions {
 }
 
 export interface UseMultiviewStateResult extends MultiviewCoreState {
+  /** Local focus authority. MultiviewPaneGrid subscribes without re-rendering App. */
+  focusStore: MultiviewFocusStore
   /** paneChatIds[focusedPaneIndex] (or null). The chat the sidebar/composer drive. */
   focusedChatId: string | null
   /** The stable id of the focused pane (or null) — key future per-pane settings off this. */
@@ -872,6 +921,18 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   const [state, setState] = useState<MultiviewCoreState>(() =>
     createInitialMultiviewState(options.initialPaneChatId ?? null)
   )
+  // `stateRef` is authoritative for focus-only transitions that deliberately
+  // skip setState. Structural transitions mirror it back into React state.
+  const stateRef = useRef(state)
+  const focusStoreRef = useRef(createMultiviewFocusStore(state.focusedPaneIndex))
+  const commitState = useCallback((transition: (current: MultiviewCoreState) => MultiviewCoreState) => {
+    const previous = stateRef.current
+    const next = transition(previous)
+    if (next === previous) return
+    stateRef.current = next
+    focusStoreRef.current.set(next.focusedPaneIndex)
+    if (!isMultiviewFocusOnlyChange(previous, next)) setState(next)
+  }, [])
 
   const paneRefsByIdRef = useRef(new Map<string, MultiviewPaneRefs>())
   const paneRefs = useMemo(
@@ -888,60 +949,63 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   }, [state.panes, state.parkedPanes])
 
   const setLayout = useCallback((next: MultiviewLayout, seedChatId: string | null = null) => {
-    setState((s) => applySetLayout(s, next, { seedChatId }))
-  }, [])
+    commitState((s) => applySetLayout(s, next, { seedChatId }))
+  }, [commitState])
   const setPaneChat = useCallback(
-    (index: number, chatId: string | null) => setState((s) => applySetPaneChat(s, index, chatId)),
-    []
+    (index: number, chatId: string | null) => commitState((s) => applySetPaneChat(s, index, chatId)),
+    [commitState]
   )
   const setPaneCanvas = useCallback(
     (index: number, canvasId: string | null) =>
-      setState((s) => applySetPaneCanvas(s, index, canvasId)),
-    []
+      commitState((s) => applySetPaneCanvas(s, index, canvasId)),
+    [commitState]
   )
   const setPaneMedia = useCallback(
     (index: number, mediaRef: MultiviewPaneMediaRef | null) =>
-      setState((s) => applySetPaneMedia(s, index, mediaRef)),
-    []
+      commitState((s) => applySetPaneMedia(s, index, mediaRef)),
+    [commitState]
   )
   const setFocusedPane = useCallback(
-    (index: number) => setState((s) => applySetFocusedPane(s, index)),
-    []
+    (index: number) => commitState((s) => applySetFocusedPane(s, index)),
+    [commitState]
   )
   const focusEmptyPane = useCallback(
     (index: number, outgoingVisibleChatId: string | null = null) => {
-      setState((s) => applyFocusEmptyPane(s, index, outgoingVisibleChatId))
+      commitState((s) => applyFocusEmptyPane(s, index, outgoingVisibleChatId))
     },
-    []
+    [commitState]
   )
-  const closePane = useCallback((index: number) => setState((s) => applyClosePane(s, index)), [])
+  const closePane = useCallback(
+    (index: number) => commitState((s) => applyClosePane(s, index)),
+    [commitState]
+  )
   const assignToFocusedPane = useCallback((chatId: string) => {
-    setState((s) => applyAssignToFocusedPane(s, chatId).state)
-  }, [])
+    commitState((s) => applyAssignToFocusedPane(s, chatId).state)
+  }, [commitState])
   const openInNewPane = useCallback(
     (chatId: string, outgoingFocusedChatId: string | null = null) => {
-      setState((s) => applyOpenInNewPane(s, chatId, outgoingFocusedChatId))
+      commitState((s) => applyOpenInNewPane(s, chatId, outgoingFocusedChatId))
     },
-    []
+    [commitState]
   )
   const openMediaInNewPane = useCallback((mediaRef: MultiviewPaneMediaRef) => {
-    setState((s) => applyOpenMediaInNewPane(s, mediaRef))
-  }, [])
+    commitState((s) => applyOpenMediaInNewPane(s, mediaRef))
+  }, [commitState])
   const resizeTrack = useCallback((args: ApplyResizeTrackArgs) => {
-    setState((s) => applyResizeTrack(s, args))
-  }, [])
+    commitState((s) => applyResizeTrack(s, args))
+  }, [commitState])
   const resetTrackSizes = useCallback((layout?: MultiviewLayout) => {
-    setState((s) => applyResetTrackSizes(s, layout ?? s.layout))
-  }, [])
+    commitState((s) => applyResetTrackSizes(s, layout ?? s.layout))
+  }, [commitState])
   const setPaneFxFlag = useCallback(
     (paneIndex: number, flag: MultiviewPaneFxFlag, value: boolean) => {
-      setState((s) => {
+      commitState((s) => {
         const paneId = s.panes[paneIndex]?.id
         if (!paneId) return s
         return applySetPaneFxFlag(s, paneId, flag, value)
       })
     },
-    []
+    [commitState]
   )
 
   // Backward-compatible index-based views, memoized so their identity is stable
@@ -957,9 +1021,6 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     return map
   }, [state.panes, state.paneSettings])
 
-  const focusedPane = state.panes[state.focusedPaneIndex]
-  const focusedChatId = focusedPane?.chatId ?? null
-  const focusedPaneId = focusedPane?.id ?? null
   const tracks = useMemo(
     () => getLayoutTracks(state.trackSizes, state.layout),
     [state.trackSizes, state.layout]
@@ -967,8 +1028,20 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
 
   return {
     ...state,
-    focusedChatId,
-    focusedPaneId,
+    // Accessors stay live even when App itself has not rendered since the last
+    // focus click. Event handlers may safely read these through an old closure.
+    get focusedPaneIndex() {
+      return focusStoreRef.current.getSnapshot()
+    },
+    get focusedChatId() {
+      const focusedPane = stateRef.current.panes[focusStoreRef.current.getSnapshot()]
+      return focusedPane?.chatId ?? null
+    },
+    get focusedPaneId() {
+      const focusedPane = stateRef.current.panes[focusStoreRef.current.getSnapshot()]
+      return focusedPane?.id ?? null
+    },
+    focusStore: focusStoreRef.current,
     paneChatIds,
     isMultiview: state.layout !== 'single',
     paneRefs,

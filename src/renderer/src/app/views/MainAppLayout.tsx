@@ -1819,6 +1819,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             <MultiviewPaneGrid
               layout={multiview.layout}
               panes={multiview.panes}
+              focusStore={multiview.focusStore}
               focusedPaneIndex={multiview.focusedPaneIndex}
               resolvePaneTitle={(paneIndex, pane) => {
                 if (pane.mediaRef?.name) return pane.mediaRef.name
@@ -1882,7 +1883,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               renderViewerCell={renderMultiviewPaneCell}
               renderFocusedChatCell={(chatId, paneIndex) =>
                 renderMultiviewPaneCell(chatId, paneIndex, {
-                  topLeftChromeExtra: humanCollaborationControls
+                  topLeftChromeExtra:
+                    chatId === currentChatAppChatId ? humanCollaborationControls : undefined
                 })
               }
               showFocusedHostOverlay={focusedHostOverlayRequired}

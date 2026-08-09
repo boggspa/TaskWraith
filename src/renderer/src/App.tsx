@@ -3512,10 +3512,6 @@ function App(): React.JSX.Element {
   // Multiview: split the central pane into 1-4 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
-  const focusedMultiviewPaneIdRef = useRef(multiview.focusedPaneId)
-  useEffect(() => {
-    focusedMultiviewPaneIdRef.current = multiview.focusedPaneId
-  }, [multiview.focusedPaneId])
   const previousMultiviewPanesRef = useRef(paneRecordsIncludingParked(multiview))
   useEffect(() => {
     const ownedPanes = paneRecordsIncludingParked(multiview)
@@ -27456,7 +27452,7 @@ function App(): React.JSX.Element {
   const providerShellClass = providerShellEnabled
     ? `provider-shell provider-shell-${interfaceStyle}`
     : 'provider-shell-default'
-  const handleFocusMultiviewPane = useCallback(
+  const projectMultiviewPaneToHost = useCallback(
     (paneIndex: number, chatId: string) => {
       const viewerChat = chatByIdRef.current.get(chatId)
       if (!viewerChat) return
@@ -27554,7 +27550,6 @@ function App(): React.JSX.Element {
       currentWorkspace,
       captureMainTranscriptScrollState,
       clearWorkspaceTrust,
-      multiview.focusedPaneIndex,
       multiview.setFocusedPane,
       multiview.paneRefs,
       restoreMainTranscriptScrollStateWhenReady,
@@ -27563,6 +27558,17 @@ function App(): React.JSX.Element {
       syncThinkingForChat,
       workspaces
     ]
+  )
+  // Ordinary pane activation is presentation-only. The focus store notifies
+  // MultiviewPaneGrid directly, so clicking or tabbing between already-mounted
+  // composers does not reconcile App, swap currentChat, or rebuild either
+  // Composer context. Host-only actions call projectMultiviewPaneToHost above.
+  const handleFocusMultiviewPane = useCallback(
+    (paneIndex: number, chatId: string) => {
+      if (multiview.panes[paneIndex]?.chatId !== chatId) return
+      multiview.setFocusedPane(paneIndex)
+    },
+    [multiview.panes, multiview.setFocusedPane]
   )
   const handleOpenInMultiview = useCallback(
     (chat: ChatRecord) => {
@@ -27637,7 +27643,7 @@ function App(): React.JSX.Element {
       updateChatById(chatId, () => canonical)
       if (
         initiatingPaneId &&
-        focusedMultiviewPaneIdRef.current === initiatingPaneId &&
+        multiview.focusedPaneId === initiatingPaneId &&
         currentChatIdRef.current === chatId
       ) {
         const focusedRendererAlreadyBound =
@@ -27659,20 +27665,20 @@ function App(): React.JSX.Element {
         // clears Full Access, stops any old-workspace persistent provider,
         // and drops stale diff/run presentation before the new workspace owns
         // the focused renderer.
-        handleFocusMultiviewPane(_paneIndex, chatId)
+        projectMultiviewPaneToHost(_paneIndex, chatId)
         void refreshWorkspaceTrust(workspace)
         void refreshUsageSummary(workspace.id, paneProvider)
         void refreshProviderMetadata(paneProvider, workspace.path)
       }
     },
-    [currentWorkspace, handleFocusMultiviewPane, multiview.panes, refreshWorkspaceTrust, updateChatById]
+    [currentWorkspace, multiview.panes, projectMultiviewPaneToHost, refreshWorkspaceTrust, updateChatById]
   )
   const handleMultiviewPaneAddWorkspace = useCallback(
     (paneIndex: number, chatId: string) => {
-      handleFocusMultiviewPane(paneIndex, chatId)
+      projectMultiviewPaneToHost(paneIndex, chatId)
       void handleSelectWorkspace()
     },
-    [handleFocusMultiviewPane, handleSelectWorkspace]
+    [handleSelectWorkspace, projectMultiviewPaneToHost]
   )
   const handleMultiviewPaneSelectNoWorkspace = useCallback(
     async (_paneIndex: number, chatId: string) => {
@@ -27698,7 +27704,7 @@ function App(): React.JSX.Element {
       updateChatById(chatId, () => canonical)
       if (
         initiatingPaneId &&
-        focusedMultiviewPaneIdRef.current === initiatingPaneId &&
+        multiview.focusedPaneId === initiatingPaneId &&
         currentChatIdRef.current === chatId
       ) {
         const focusedRendererAlreadyGlobal =
@@ -27713,10 +27719,10 @@ function App(): React.JSX.Element {
           })
         )
           return
-        handleFocusMultiviewPane(_paneIndex, chatId)
+        projectMultiviewPaneToHost(_paneIndex, chatId)
       }
     },
-    [currentWorkspace, handleFocusMultiviewPane, multiview.panes, updateChatById]
+    [currentWorkspace, multiview.panes, projectMultiviewPaneToHost, updateChatById]
   )
   const handleMultiviewPaneToggleScreenWatch = useCallback(
     (_paneIndex: number, chatId: string) => {
@@ -27734,7 +27740,7 @@ function App(): React.JSX.Element {
       openDiscordContextPicker()
       return
     }
-    handleFocusMultiviewPane(paneIndex, chatId)
+    projectMultiviewPaneToHost(paneIndex, chatId)
     window.alert(
       'Discord context opens from the focused pane. This pane is now focused; choose Discord context again.'
     )
@@ -28075,7 +28081,7 @@ function App(): React.JSX.Element {
       workspace: WorkspaceRecord | null,
       item: CommandPaletteItem
     ): boolean | void => {
-      const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
+      const focusPane = (): void => projectMultiviewPaneToHost(paneIndex, chat.appChatId)
       const paneGitActionPath = resolveComposerEffectiveWorkspacePath(
         workspace?.path,
         composerWorktreeSelectionForChat(
@@ -28180,7 +28186,7 @@ function App(): React.JSX.Element {
     [
       codexModels,
       composerWorktreeByChatId,
-      handleFocusMultiviewPane,
+      projectMultiviewPaneToHost,
       handleReviewDiffForChat,
       openInspectorTab,
       refreshCodexThreads,
@@ -28214,7 +28220,7 @@ function App(): React.JSX.Element {
     ) => {
       const slashParticipant = selectedParticipant
       const slashProvider = slashParticipant?.provider ?? provider
-      const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
+      const focusPane = (): void => projectMultiviewPaneToHost(paneIndex, chat.appChatId)
       const preserveForFocusedFlow = (ctx: SlashCommandRunContext, message: string): void =>
         preserveSlashDraftForFocusedFlow(ctx, focusPane, message)
       const paletteItems = paneSlashCommandHelpers.resolveSlashPaletteItems(slashProvider)
@@ -28272,7 +28278,7 @@ function App(): React.JSX.Element {
       currentProvider,
       currentProviderCapabilities,
       handleCancelMultiviewPane,
-      handleFocusMultiviewPane,
+      projectMultiviewPaneToHost,
       handleMultiviewPaneCopyTranscript,
       handleMultiviewPanePickAttachments,
       paneSlashCommandHelpers,
@@ -28306,9 +28312,11 @@ function App(): React.JSX.Element {
     }
     const viewerProvider = getChatProvider(viewerChat)
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
-    const viewerOwnsFocusedTrust =
-      viewerPaneIndex === multiview.focusedPaneIndex &&
-      currentChatIdRef.current === viewerChatId
+    // The one legacy host projection stays attached to its chat until a
+    // host-only action explicitly moves it. Local pane focus must not swap two
+    // 290-prop Composer contexts merely to move the selection border/sidebar
+    // target; every other pane remains on its stable pane-owned context.
+    const viewerOwnsHostProjection = currentChatIdRef.current === viewerChatId
     const viewerWorkspace = getWorkspaceForChat(viewerChat)
     const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
     const viewerWorktreeSelection = composerWorktreeSelectionForChat(
@@ -28386,7 +28394,7 @@ function App(): React.JSX.Element {
     })
     const viewerPinnedMessageCount = cachedPanePinnedCount(viewerChat, undefined)
     const focusPaneForChromeAction = (paneIndex: number, chatId: string): void => {
-      handleFocusMultiviewPane(paneIndex, chatId)
+      projectMultiviewPaneToHost(paneIndex, chatId)
     }
     const focusPaneAndSelectDock = (
       paneIndex: number,
@@ -28716,7 +28724,7 @@ function App(): React.JSX.Element {
     // `currentChat` comes from chatByIdRef. If that chat object advanced since
     // the memo was built, fall back to the freshly-built pane ctx.
     const effectivePaneComposerCtx =
-      viewerOwnsFocusedTrust ? composerCtx : resolveRestingPaneComposerCtx()
+      viewerOwnsHostProjection ? composerCtx : resolveRestingPaneComposerCtx()
 
     return (
       <ChatViewPane
@@ -29503,7 +29511,7 @@ function App(): React.JSX.Element {
       const paneRememberComposerSelection = (patch: Record<string, unknown>): void =>
         rememberMultiviewPaneComposerSelection(viewerChatId, patch)
       const focusPaneForGoalControl = (): void =>
-        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+        projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
       // Model/reasoning/fast/permission setters: <Composer>'s internal wrappers
       // call the chat-level setState setters (which drive the FOCUSED composer's
       // UI) AND `rememberCurrentChatComposerSelection`. For a pane, the focused
@@ -29669,13 +29677,13 @@ function App(): React.JSX.Element {
         executionStackProjection: paneExecutionStackView.projection,
         executionHistory: paneExecutionStackView.history,
         onOpenExecutionMap: (runId: string, stepId?: string) => {
-          handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+          projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
           handleOpenExecutionMap(runId, stepId)
         },
         onAddToExecutionStack: paneIsChatBusyForSteer
           ? (runId: string) => {
               preferredExecutionByChatIdRef.current[viewerChatId] = runId
-              handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+              projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
               setOpenExecutionMap(null)
             }
           : undefined,
@@ -29709,7 +29717,7 @@ function App(): React.JSX.Element {
             item
           ),
         openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
-          handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+          projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
           setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
           window.alert('Side-chat commands open from the focused pane. This pane is now focused; run the command again.')
           return false
@@ -29837,7 +29845,7 @@ function App(): React.JSX.Element {
         handleCancel: paneHandleCancel,
         handleProviderChange: paneHandleProviderChange,
         handleReviewCurrentDiff: async () => {
-          handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+          projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
           await paneCtxHelpers.handleReviewDiffForChat(
             viewerChat,
             viewerProvider,
@@ -30012,7 +30020,7 @@ function App(): React.JSX.Element {
       externalPrByOwner,
       handleCancelExecutionStackStep,
       handleCancelMultiviewPane,
-      handleFocusMultiviewPane,
+      projectMultiviewPaneToHost,
       handleOpenExecutionMap,
       handlePanePaletteCommand,
       handleMultiviewPaneAddKnownWorkspaceAsSecondary,

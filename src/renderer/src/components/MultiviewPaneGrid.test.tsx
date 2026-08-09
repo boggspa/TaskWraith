@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MultiviewPaneGrid } from './MultiviewPaneGrid'
+import { createMultiviewFocusStore } from '../hooks/useMultiviewState'
 import type {
   MultiviewPaneMediaRef,
   MultiviewPaneRecord
@@ -178,6 +179,24 @@ describe('MultiviewPaneGrid', () => {
     expect(focusedChat).toHaveBeenCalledWith('b', 1)
     expect(focusedHost).not.toHaveBeenCalled()
     expect(out).toContain('>a</div>')
+  })
+
+  it('reads focus from the local store instead of the parent App snapshot', () => {
+    const focusStore = createMultiviewFocusStore(1)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={makePanes(['a', 'b'])}
+        focusStore={focusStore}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderFocusedChatCell={viewer}
+        renderViewerCell={viewer}
+      />
+    )
+
+    expect(out).toMatch(/multiview-cell-focused[^>]*grid-area:b/)
+    expect(out).not.toMatch(/multiview-cell-focused[^>]*grid-area:a/)
   })
 
   it('keeps the pane runtime mounted under a legacy focused takeover', () => {

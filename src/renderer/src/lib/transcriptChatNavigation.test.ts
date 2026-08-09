@@ -23,11 +23,11 @@ describe('transcript chat navigation integration', () => {
     expect(navigationHelper.indexOf('multiview.assignToFocusedPane(nextChatId)')).toBeLessThan(
       navigationHelper.indexOf('currentChatIdRef.current = nextChatId')
     )
-    const paneFocus = source.slice(
-      source.indexOf('const handleFocusMultiviewPane ='),
-      source.indexOf('const handleOpenInMultiview =')
+    const paneProjection = source.slice(
+      source.indexOf('const projectMultiviewPaneToHost ='),
+      source.indexOf('// Ordinary pane activation is presentation-only.')
     )
-    expect(paneFocus).toContain(
+    expect(paneProjection).toContain(
       'setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })'
     )
   })

@@ -124,7 +124,7 @@ describe('live execution graph integration', () => {
     // Stack projection wiring may still flow for Execution Map focus, but the
     // composer above-row no longer mounts Stack UI (see Composer.tsx).
     expect(appSource).toContain(
-      'handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)\n          handleOpenExecutionMap(runId, stepId)'
+      'projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)\n          handleOpenExecutionMap(runId, stepId)'
     )
   })
 

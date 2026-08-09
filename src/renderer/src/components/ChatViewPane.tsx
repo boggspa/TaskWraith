@@ -122,7 +122,7 @@ export interface ChatViewPaneProps extends Omit<
     vote: 'up' | 'down',
     details?: MessageFeedbackDetails
   ) => void
-  /** Explicit legacy-chrome projection; ordinary pane input never promotes ownership. */
+  /** Local pane activation. It never projects the chat into the App singleton. */
   onFocusPane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
 }
@@ -519,6 +519,12 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
       data-multiview-pane-chat-id={props.chat?.appChatId ?? undefined}
       role="group"
       aria-label={props.ariaLabel}
+      onPointerDownCapture={() => {
+        if (chatId) props.onFocusPane?.(props.paneIndex, chatId)
+      }}
+      onFocusCapture={() => {
+        if (chatId) props.onFocusPane?.(props.paneIndex, chatId)
+      }}
     >
       {/* Per-pane provider glow. First child so it sits behind pane content
        * (it's `position:absolute; inset:0; pointer-events:none`). The focused

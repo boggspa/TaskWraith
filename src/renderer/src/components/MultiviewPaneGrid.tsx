@@ -2,6 +2,7 @@ import {
   useCallback,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode
@@ -15,6 +16,7 @@ import {
   type MultiviewPaneMediaRef,
   type MultiviewPaneRecord
 } from '../../../shared/multiviewLayouts'
+import type { MultiviewFocusStore } from '../hooks/useMultiviewState'
 
 /**
  * MultiviewPaneGrid — arranges the central chat pane into a CSS grid of panes.
@@ -41,6 +43,9 @@ export interface MultiviewPaneGridProps {
   layout: MultiviewLayout
   /** Stable per-pane records (id + chatId) in cell order; length === paneCount. */
   panes: MultiviewPaneRecord[]
+  /** Local focus authority; when present, only this grid subscribes to focus. */
+  focusStore?: MultiviewFocusStore
+  /** Compatibility snapshot used when no focusStore is supplied. */
   focusedPaneIndex: number
   /** The existing inline main-pane content (transcript + composer). */
   renderFocusedCell: () => ReactNode
@@ -87,6 +92,15 @@ type GridStyle = Record<string, string>
 
 export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
   const gridRef = useRef<HTMLDivElement | null>(null)
+  const fallbackFocusSnapshot = useCallback(
+    () => props.focusedPaneIndex,
+    [props.focusedPaneIndex]
+  )
+  const focusedPaneIndex = useSyncExternalStore(
+    props.focusStore?.subscribe ?? (() => () => undefined),
+    props.focusStore?.getSnapshot ?? fallbackFocusSnapshot,
+    props.focusStore?.getSnapshot ?? fallbackFocusSnapshot
+  )
   // Active drag, captured at pointerdown so pointermove can compute a delta.
   const dragRef = useRef<{
     orientation: 'column' | 'row'
@@ -248,7 +262,7 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
 
   const renderCell = (paneIndex: number): ReactNode => {
     const pane = props.panes[paneIndex]
-    if (paneIndex === props.focusedPaneIndex) {
+    if (paneIndex === focusedPaneIndex) {
       if (pane?.chatId && props.renderFocusedChatCell) {
         return renderChatRuntime(pane.chatId, paneIndex, true)
       }
@@ -290,13 +304,13 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
         <div
           key={paneIndex}
           className={`multiview-cell${
-            paneIndex === props.focusedPaneIndex ? ' multiview-cell-focused' : ''
+            paneIndex === focusedPaneIndex ? ' multiview-cell-focused' : ''
           }`}
           style={{ gridArea: area }}
           data-pane-index={paneIndex}
           data-pane-id={props.panes[paneIndex]?.id}
         >
-          {props.onClosePane && paneIndex !== props.focusedPaneIndex && (
+          {props.onClosePane && paneIndex !== focusedPaneIndex && (
             <button
               type="button"
               className="multiview-pane-close"

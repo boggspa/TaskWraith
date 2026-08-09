@@ -18,11 +18,13 @@ import {
   applySetPaneChat,
   applySetPaneFxFlag,
   applySetPaneMedia,
+  createMultiviewFocusStore,
   createMultiviewPaneRefs,
   createInitialMultiviewState,
   getLayoutTracks,
   MULTIVIEW_MIN_PANE_PX,
   normalizeMultiviewCoreState,
+  isMultiviewFocusOnlyChange,
   removedCanvasIds,
   resolveMultiviewPaneRefs,
   type MultiviewCoreState
@@ -57,6 +59,37 @@ const state = (over: Partial<MultiviewCoreState> = {}): MultiviewCoreState => ({
 
 const chatIds = (s: MultiviewCoreState): (string | null)[] => s.panes.map((p) => p.chatId)
 const ids = (s: MultiviewCoreState): string[] => s.panes.map((p) => p.id)
+
+describe('Multiview local focus authority', () => {
+  it('publishes focus without notifying on no-op selections', () => {
+    const focus = createMultiviewFocusStore(0)
+    const listener = vi.fn()
+    const unsubscribe = focus.subscribe(listener)
+
+    focus.set(0)
+    focus.set(1)
+    focus.set(1)
+
+    expect(focus.getSnapshot()).toBe(1)
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+    focus.set(0)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('recognizes a focus-only reducer result so App state can stay untouched', () => {
+    const before = state({
+      layout: 'vertical-2',
+      panes: panesOf(['a', 'b']),
+      focusedPaneIndex: 0
+    })
+    const focused = applySetFocusedPane(before, 1)
+    const reassigned = applySetPaneChat(before, 1, 'c')
+
+    expect(isMultiviewFocusOnlyChange(before, focused)).toBe(true)
+    expect(isMultiviewFocusOnlyChange(before, reassigned)).toBe(false)
+  })
+})
 
 describe('createInitialMultiviewState', () => {
   it('starts single, one cell, focused on pane 0', () => {
@@ -600,7 +633,7 @@ describe('applyAssignToFocusedPane', () => {
     expect(chatIds(result.state)).toEqual(['z'])
   })
 
-  it('composes focus and assignment after another state update in the same React batch', () => {
+  it('composes local focus and assignment against authoritative state without rerendering App', () => {
     const initial = state({ panes: panesOf([null]) })
     const queuedUpdates: Array<(value: MultiviewCoreState) => MultiviewCoreState> = [
       (value) => applySetLayout(value, 'vertical-2'),
@@ -615,10 +648,13 @@ describe('applyAssignToFocusedPane', () => {
 
     const source = readFileSync(new URL('./useMultiviewState.ts', import.meta.url), 'utf8')
     const hook = source.slice(source.indexOf('export function useMultiviewState'))
-    expect(hook).toContain('setState((s) => applyFocusEmptyPane(s, index, outgoingVisibleChatId))')
-    expect(hook).toContain('setState((s) => applyAssignToFocusedPane(s, chatId).state)')
-    expect(hook).not.toContain('stateRef.current')
-    expect(hook).not.toContain('setState(result.state)')
+    expect(hook).toContain(
+      'commitState((s) => applyFocusEmptyPane(s, index, outgoingVisibleChatId))'
+    )
+    expect(hook).toContain('commitState((s) => applyAssignToFocusedPane(s, chatId).state)')
+    expect(hook).toContain('const previous = stateRef.current')
+    expect(hook).toContain('stateRef.current = next')
+    expect(hook).toContain('if (!isMultiviewFocusOnlyChange(previous, next)) setState(next)')
   })
 })
 
