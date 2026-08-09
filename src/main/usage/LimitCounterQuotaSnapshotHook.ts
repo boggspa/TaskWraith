@@ -33,6 +33,10 @@ export interface LimitCounterQuotaSnapshotHookDependencies {
   runPlutil?: (plistPath: string) => Promise<string>
 }
 
+export interface CachedLimitCounterQuotaSnapshotHookDependencies extends LimitCounterQuotaSnapshotHookDependencies {
+  cacheTtlMs?: number
+}
+
 export function limitCounterQuotaSnapshotPlistPath(homeDirectory = homedir()): string {
   return join(
     homeDirectory,
@@ -275,5 +279,45 @@ export async function fetchLimitCounterQuotaSnapshotHook(
     return parseLimitCounterQuotaSnapshotHook(encoded, dependencies.now?.() ?? Date.now())
   } catch {
     return []
+  }
+}
+
+/**
+ * Main-process read boundary for the local helper snapshot.
+ *
+ * `plutil` can wait behind the helper's own frequent plist writes until its
+ * three-second deadline. Joining concurrent callers and briefly caching even
+ * an empty result prevents navigation, remote projection, and the usage
+ * heartbeat from maintaining a permanent queue of identical child processes.
+ */
+export function createCachedLimitCounterQuotaSnapshotHook(
+  dependencies: CachedLimitCounterQuotaSnapshotHookDependencies = {}
+): () => Promise<QuotaSnapshotHookSnapshot[]> {
+  const cacheTtlMs = Math.max(0, dependencies.cacheTtlMs ?? 30_000)
+  let cached: { readAt: number; snapshots: QuotaSnapshotHookSnapshot[] } | null = null
+  let inFlight: Promise<QuotaSnapshotHookSnapshot[]> | null = null
+  const now = () => dependencies.now?.() ?? Date.now()
+
+  return () => {
+    const currentTime = now()
+    if (cached && currentTime - cached.readAt < cacheTtlMs) {
+      return Promise.resolve(cached.snapshots)
+    }
+    if (inFlight) return inFlight
+
+    const request = fetchLimitCounterQuotaSnapshotHook(dependencies).then((snapshots) => {
+      cached = { readAt: now(), snapshots }
+      return snapshots
+    })
+    inFlight = request
+    void request.then(
+      () => {
+        if (inFlight === request) inFlight = null
+      },
+      () => {
+        if (inFlight === request) inFlight = null
+      }
+    )
+    return request
   }
 }

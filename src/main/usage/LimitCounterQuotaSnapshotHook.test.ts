@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createCachedLimitCounterQuotaSnapshotHook,
   fetchLimitCounterQuotaSnapshotHook,
   limitCounterQuotaSnapshotPlistPath,
   parseLimitCounterQuotaSnapshotHook
@@ -196,5 +197,68 @@ describe('fetchLimitCounterQuotaSnapshotHook', () => {
     await expect(
       fetchLimitCounterQuotaSnapshotHook({ platform: 'darwin', runPlutil })
     ).resolves.toEqual([])
+  })
+})
+
+describe('createCachedLimitCounterQuotaSnapshotHook', () => {
+  it('joins concurrent helper reads and serves the result until its TTL expires', async () => {
+    let now = NOW
+    let finishRead!: (encoded: string) => void
+    const runPlutil = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishRead = resolve
+        })
+    )
+    const read = createCachedLimitCounterQuotaSnapshotHook({
+      platform: 'darwin',
+      now: () => now,
+      runPlutil,
+      cacheTtlMs: 30_000
+    })
+
+    const first = read()
+    const joined = read()
+    expect(joined).toBe(first)
+    expect(runPlutil).toHaveBeenCalledTimes(1)
+
+    finishRead(encode([snapshot('antigravity')]))
+    const snapshots = await first
+    await expect(joined).resolves.toBe(snapshots)
+    await expect(read()).resolves.toBe(snapshots)
+    expect(runPlutil).toHaveBeenCalledTimes(1)
+
+    now += 30_001
+    const refreshed = read()
+    expect(runPlutil).toHaveBeenCalledTimes(2)
+    finishRead(
+      encode([
+        snapshot('deepseek', {
+          windows: [{ label: 'Credit used', used: 1, total: 10, unit: 'USD' }]
+        })
+      ])
+    )
+    await expect(refreshed).resolves.toMatchObject([{ provider: 'deepseek' }])
+  })
+
+  it('briefly caches an empty timeout result instead of immediately respawning the helper', async () => {
+    let now = NOW
+    const runPlutil = vi.fn(async () => {
+      throw new Error('timeout')
+    })
+    const read = createCachedLimitCounterQuotaSnapshotHook({
+      platform: 'darwin',
+      now: () => now,
+      runPlutil,
+      cacheTtlMs: 30_000
+    })
+
+    await expect(read()).resolves.toEqual([])
+    await expect(read()).resolves.toEqual([])
+    expect(runPlutil).toHaveBeenCalledTimes(1)
+
+    now += 30_001
+    await expect(read()).resolves.toEqual([])
+    expect(runPlutil).toHaveBeenCalledTimes(2)
   })
 })

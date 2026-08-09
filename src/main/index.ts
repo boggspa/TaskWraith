@@ -1728,7 +1728,7 @@ import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPrese
 import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
-import { fetchLimitCounterQuotaSnapshotHook } from './usage/LimitCounterQuotaSnapshotHook'
+import { createCachedLimitCounterQuotaSnapshotHook } from './usage/LimitCounterQuotaSnapshotHook'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { createMainOwnedScheduledAttachmentPersistence } from './ScheduledAttachmentDurability'
 import { registerRunQueueHandlers, type RendererRunQueueMutation } from './ipc/runQueueHandlers'
@@ -51470,7 +51470,7 @@ if (isGeminiMcpBridgeProcess) {
       fetchClaudeUsageSnapshot,
       fetchKimiUsageSnapshot,
       fetchCursorUsageSnapshot,
-      fetchQuotaSnapshotHook: () => fetchLimitCounterQuotaSnapshotHook(),
+      fetchQuotaSnapshotHook: createCachedLimitCounterQuotaSnapshotHook(),
       getProviderCapabilityContract,
       getPluginActivationSnapshot: () =>
         pluginContributionManagerRef?.getActivationSnapshot() || {
