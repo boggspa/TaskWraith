@@ -571,6 +571,31 @@ const SIDEBAR_RECENTS_MAX = 20
 
 export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' | 'system' | 'tool'
 
+const SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER = 8
+const SIDEBAR_SETTINGS_MENU_MAX_WIDTH = 260
+
+export function resolveSidebarSettingsMenuPortalPosition(
+  anchorRect: Pick<DOMRect, 'left' | 'top'>,
+  viewport: { width: number; height: number }
+): Pick<CSSProperties, 'position' | 'left' | 'bottom'> {
+  return {
+    position: 'fixed',
+    left: Math.max(
+      SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER,
+      Math.min(
+        anchorRect.left,
+        viewport.width -
+          SIDEBAR_SETTINGS_MENU_MAX_WIDTH -
+          SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER
+      )
+    ),
+    bottom: Math.max(
+      SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER,
+      viewport.height - anchorRect.top + SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER
+    )
+  }
+}
+
 const SIDEBAR_COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string }> = [
   { value: 'default', label: 'TaskWraith native' },
   { value: 'codex', label: 'Codex shell' },
@@ -851,7 +876,9 @@ export function SidebarSettingsMenu({
   onOpenWorkspacePopout,
   canOpenWorkspacePopout,
   onQuitApp,
-  onClose
+  onClose,
+  className = '',
+  style
 }: {
   pane: SidebarSettingsMenuPane
   setPane: (pane: SidebarSettingsMenuPane) => void
@@ -862,7 +889,10 @@ export function SidebarSettingsMenu({
   canOpenWorkspacePopout?: boolean
   onQuitApp?: () => void
   onClose: () => void
+  className?: string
+  style?: CSSProperties
 }) {
+  const menuClassName = `sidebar-settings-menu${className ? ` ${className}` : ''}`
   const selectAppearance = (
     next: NonNullable<SidebarProps['onAppearanceQuickChange']> extends (arg: infer Arg) => void
       ? Arg
@@ -929,7 +959,8 @@ export function SidebarSettingsMenu({
   if (pane === 'themes') {
     return (
       <div
-        className="sidebar-settings-menu"
+        className={menuClassName}
+        style={style}
         role="menu"
         aria-label="Theme shortcuts"
         onKeyDown={moveMenuFocus}
@@ -985,7 +1016,8 @@ export function SidebarSettingsMenu({
   if (pane === 'composer') {
     return (
       <div
-        className="sidebar-settings-menu"
+        className={menuClassName}
+        style={style}
         role="menu"
         aria-label="Composer shell shortcuts"
         onKeyDown={moveMenuFocus}
@@ -1004,7 +1036,8 @@ export function SidebarSettingsMenu({
   if (pane === 'accent') {
     return (
       <div
-        className="sidebar-settings-menu"
+        className={menuClassName}
+        style={style}
         role="menu"
         aria-label="Accent theme shortcuts"
         onKeyDown={moveMenuFocus}
@@ -1023,7 +1056,8 @@ export function SidebarSettingsMenu({
   if (pane === 'system') {
     return (
       <div
-        className="sidebar-settings-menu"
+        className={menuClassName}
+        style={style}
         role="menu"
         aria-label="System theme shortcuts"
         onKeyDown={moveMenuFocus}
@@ -1042,7 +1076,8 @@ export function SidebarSettingsMenu({
   if (pane === 'tool') {
     return (
       <div
-        className="sidebar-settings-menu"
+        className={menuClassName}
+        style={style}
         role="menu"
         aria-label="Tool call theme shortcuts"
         onKeyDown={moveMenuFocus}
@@ -1060,7 +1095,8 @@ export function SidebarSettingsMenu({
 
   return (
     <div
-      className="sidebar-settings-menu"
+      className={menuClassName}
+      style={style}
       role="menu"
       aria-label="Settings shortcuts"
       onKeyDown={moveMenuFocus}
@@ -3140,6 +3176,9 @@ export function Sidebar({
   const [sharedCreateMenuOpen, setSharedCreateMenuOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
+  const [settingsMenuPortalPosition, setSettingsMenuPortalPosition] = useState<CSSProperties | null>(
+    null
+  )
   // Footer control-row popovers (Approvals / Shares / Devices). At most one is
   // open at a time — each button's onClick closes the others (and the settings
   // menu) before toggling itself.
@@ -3243,6 +3282,43 @@ export function Sidebar({
   const newMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const sharedCreateMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuWrapRef = useRef<HTMLDivElement | null>(null)
+  const settingsMenuPortalRef = useRef<HTMLDivElement | null>(null)
+  const positionSettingsMenu = useCallback(() => {
+    if (typeof window === 'undefined') return
+    const anchor = settingsMenuWrapRef.current
+    if (!anchor) return
+
+    const { left, top } = anchor.getBoundingClientRect()
+    const sidebarWidth = window.getComputedStyle(anchor).getPropertyValue('--sidebar-width')
+    setSettingsMenuPortalPosition({
+      ...resolveSidebarSettingsMenuPortalPosition(
+        { left, top },
+        { width: window.innerWidth, height: window.innerHeight }
+      ),
+      ...(sidebarWidth ? ({ '--sidebar-width': sidebarWidth } as CSSProperties) : {})
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!settingsMenuOpen) {
+      setSettingsMenuPortalPosition(null)
+      return
+    }
+
+    positionSettingsMenu()
+    window.addEventListener('resize', positionSettingsMenu)
+    const anchor = settingsMenuWrapRef.current
+    const observer =
+      anchor && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(positionSettingsMenu)
+        : null
+    if (anchor) observer?.observe(anchor)
+    return () => {
+      window.removeEventListener('resize', positionSettingsMenu)
+      observer?.disconnect()
+    }
+  }, [positionSettingsMenu, settingsMenuOpen])
+
   // One wrap around the whole footer control cluster (Approvals/Shares/Devices
   // anchors + their popovers) so a single outside-click/Escape listener
   // dismisses whichever popover is open.
@@ -4158,8 +4234,13 @@ export function Sidebar({
     if (!settingsMenuOpen) return
     const handleMouseDown = (event: globalThis.MouseEvent) => {
       const wrap = settingsMenuWrapRef.current
-      if (!wrap) return
-      if (event.target instanceof Node && wrap.contains(event.target)) return
+      const portal = settingsMenuPortalRef.current
+      if (
+        event.target instanceof Node &&
+        (wrap?.contains(event.target) || portal?.contains(event.target))
+      ) {
+        return
+      }
       setSettingsMenuOpen(false)
       setSettingsMenuPane('root')
     }
@@ -6762,6 +6843,7 @@ export function Sidebar({
                 setApprovalsPopoverOpen(false)
                 setSharesPopoverOpen(false)
                 setDevicesPopoverOpen(false)
+                if (!settingsMenuOpen) positionSettingsMenu()
                 setSettingsMenuOpen((current) => !current)
                 setSettingsMenuPane('root')
               }}
@@ -6773,22 +6855,6 @@ export function Sidebar({
               <GearSymbolIcon />
               <span>Settings</span>
             </button>
-            {settingsMenuOpen && (
-              <SidebarSettingsMenu
-                pane={settingsMenuPane}
-                setPane={setSettingsMenuPane}
-                quickSettings={appearanceQuickSettings}
-                onAppearanceQuickChange={onAppearanceQuickChange}
-                onOpenSettings={onOpenSettings}
-                onOpenWorkspacePopout={onOpenWorkspacePopout}
-                canOpenWorkspacePopout={canOpenWorkspacePopout}
-                onQuitApp={onQuitApp}
-                onClose={() => {
-                  setSettingsMenuOpen(false)
-                  setSettingsMenuPane('root')
-                }}
-              />
-            )}
           </div>
           {/* Traffic-light control cluster: Approvals (red) / Shares (yellow) /
               Devices (green). Each opens a popover anchored to its own icon;
@@ -6930,6 +6996,30 @@ export function Sidebar({
         </div>
         <AppShellStatsToolbar />
       </div>
+      {settingsMenuOpen &&
+        settingsMenuPortalPosition &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div ref={settingsMenuPortalRef}>
+            <SidebarSettingsMenu
+              pane={settingsMenuPane}
+              setPane={setSettingsMenuPane}
+              quickSettings={appearanceQuickSettings}
+              onAppearanceQuickChange={onAppearanceQuickChange}
+              onOpenSettings={onOpenSettings}
+              onOpenWorkspacePopout={onOpenWorkspacePopout}
+              canOpenWorkspacePopout={canOpenWorkspacePopout}
+              onQuitApp={onQuitApp}
+              onClose={() => {
+                setSettingsMenuOpen(false)
+                setSettingsMenuPane('root')
+              }}
+              className="sidebar-settings-menu--portaled"
+              style={settingsMenuPortalPosition}
+            />
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

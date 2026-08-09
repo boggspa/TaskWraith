@@ -3142,11 +3142,38 @@
   transform-origin: bottom left;
 }
 
+/* The expanded-sidebar Settings menu is body-portaled so its backdrop samples
+ * the app behind the sidebar, not the sidebar's already-painted glass layer. */
+.sidebar-settings-menu--portaled {
+  z-index: 10060;
+}
+
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-settings-menu {
   border-color: var(--surface-border);
   background: var(--tw-popover-glass-bg);
   color: var(--surface-text);
   box-shadow: var(--tw-popover-material-shadow);
+}
+
+/* These two themes invert their sidebar material. The expanded Settings menu
+ * now portals to <body>, so restate the sidebar-local aliases it previously
+ * inherited from `.app-sidebar`. */
+[data-theme="alabaster"] .sidebar-settings-menu--portaled {
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
+  --tw-glass-solid: var(--tw-neutral-material-solid-dark);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-dark);
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
+}
+
+[data-theme="obsidian"] .sidebar-settings-menu--portaled {
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
+  --text-primary: rgba(18, 21, 27, 0.92);
+  --panel-border: rgba(18, 21, 27, 0.1);
+  color-scheme: light;
 }
 
 .sidebar-settings-menu-item {

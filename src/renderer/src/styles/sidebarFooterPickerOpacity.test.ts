@@ -132,6 +132,25 @@ describe('sidebar footer picker opacity CSS', () => {
     }
   })
 
+  it('keeps the body-portaled Settings menu on its sidebar-specific material', () => {
+    const css = readCss('05-polish-fx-layouts.css')
+    const portaledSettings = cssBlockStartingAt(css, '.sidebar-settings-menu--portaled {')
+    const alabasterSettings = cssBlockStartingAt(
+      css,
+      '[data-theme="alabaster"] .sidebar-settings-menu--portaled {'
+    )
+    const obsidianSettings = cssBlockStartingAt(
+      css,
+      '[data-theme="obsidian"] .sidebar-settings-menu--portaled {'
+    )
+
+    expect(portaledSettings).toContain('z-index: 10060')
+    expect(alabasterSettings).toContain('--tw-popover-glass-bg: var(--tw-neutral-material-bg-dark)')
+    expect(alabasterSettings).toContain('color-scheme: dark')
+    expect(obsidianSettings).toContain('--tw-popover-glass-bg: var(--tw-neutral-material-bg-light)')
+    expect(obsidianSettings).toContain('color-scheme: light')
+  })
+
   it('routes masthead new and shared-chat create pickers through the shared glass bed', () => {
     const css = readCss('09-ensemble-work-session.css')
 

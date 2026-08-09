@@ -12,6 +12,7 @@ import type {
 import {
   Sidebar,
   SidebarSettingsMenu,
+  resolveSidebarSettingsMenuPortalPosition,
   DevicesFooterPopover,
   ApprovalsFooterPopover,
   SharesFooterPopover,
@@ -307,6 +308,19 @@ describe('Sidebar settings quick menu', () => {
     expect(html).toContain('ChatGPT shell')
     expect(html.indexOf('Codex shell')).toBeLessThan(html.indexOf('ChatGPT shell'))
     expect(html.indexOf('ChatGPT shell')).toBeLessThan(html.indexOf('Claude shell'))
+  })
+
+  it('keeps the portaled menu above its footer trigger and within the viewport', () => {
+    expect(
+      resolveSidebarSettingsMenuPortalPosition({ left: 0, top: 900 }, { width: 1280, height: 980 })
+    ).toEqual({ position: 'fixed', left: 8, bottom: 88 })
+
+    expect(
+      resolveSidebarSettingsMenuPortalPosition(
+        { left: 1200, top: 600 },
+        { width: 1280, height: 800 }
+      )
+    ).toEqual({ position: 'fixed', left: 1012, bottom: 208 })
   })
 })
 
