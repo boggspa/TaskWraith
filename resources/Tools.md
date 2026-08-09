@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 202 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 205 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1150,11 +1150,11 @@ Return launch attempts (status, detected http://localhost URLs, errors). Pass `a
 
 ## canvas_open
 
-Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" (default) loads an http(s) `url` (typically a local dev server, e.g. http://localhost:3000) and supports the full structured surface (snapshot/inspect/click/fill/eval). Driver "device" launches an app by `bundleId` in a booted iOS Simulator (optionally installing a built `appPath` first; optional `udid`, default the booted sim) and is SCREENSHOT-ONLY — only canvas_screenshot/canvas_close apply; the DOM verbs return an error. Prefer simulator_* tools for Simulator Canvas QA; device driver shares the same host substrate. Returns a canvasId used by every other canvas_* tool. Gated; the web driver blocks file://, link-local and cloud-metadata addresses.
+Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" (default) loads an http(s) `url` (typically a local dev server, e.g. http://localhost:3000) and supports the full structured surface (snapshot/inspect/click/fill/eval). For a web preview, set `presentation: "dock"` to put the live surface in the active chat's Canvas dock; omit it or use `"window"` for the floating Canvas window. Driver "device" launches an app by `bundleId` in a booted iOS Simulator (optionally installing a built `appPath` first; optional `udid`, default the booted sim) and is SCREENSHOT-ONLY — only canvas_screenshot/canvas_close apply; the DOM verbs return an error. Prefer simulator_* tools for Simulator Canvas QA; device driver shares the same host substrate. Returns a canvasId used by every other canvas_* tool. Gated; the web driver blocks file://, link-local and cloud-metadata addresses.
 
 - Access: governed by your run permission role
 - Required args: none
-- Optional args: driver, url, bundleId, appPath, udid, width, height, originAllowlist
+- Optional args: driver, presentation, url, bundleId, appPath, udid, width, height, originAllowlist
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_open","arguments":{"driver":"text"}}}}`
 
 ## canvas_render_html
@@ -1177,11 +1177,11 @@ Open an EXISTING image attachment in a TaskWraith Canvas and return it as an ima
 
 ## canvas_open_launch
 
-Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemptId` from launch_start / launch_status. This tool NEVER starts a process and accepts only an attempt owned by the canonical calling chat/run. It first opens a detected loopback URL with the web driver. Without one, an eligible live macOS 15.2+ managed launch can open its user-picked Screen Watch window only after a separate View & Control consent and current Accessibility trust; the opaque exact-run native lease is AX-only (observe/inspect/click/fill), defaults to 15 minutes and 20 click/fill attempts, and never grants arbitrary desktop control. Secure fields are refused; every native click needs a main-owned one-use human confirmation bound to the exact lease/ref/observation/input epoch and a value-free target summary (consequential keywords are advisory only), and an accepted in-flight click may finish if detach races immediately afterward. Raw canvas_open cannot request this driver. If the macOS launch lacks a matching attachment/control lease, the result tells you to ask the user to attach it in Screen Watch and approve View & Control; unsupported/non-native attempts render the escaped outputTail fallback. Gated like canvas_open.
+Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemptId` from launch_start / launch_status. This tool NEVER starts a process and accepts only an attempt owned by the canonical calling chat/run. It first opens a detected loopback URL with the web driver; set `presentation: "dock"` to put that live preview in the active chat's Canvas dock, or omit it/use `"window"` for a floating window. Dock presentation requires that detected live URL. Without one, an eligible live macOS 15.2+ managed launch can open its user-picked Screen Watch window only after a separate View & Control consent and current Accessibility trust; the opaque exact-run native lease is AX-only (observe/inspect/click/fill), defaults to 15 minutes and 20 click/fill attempts, and never grants arbitrary desktop control. Secure fields are refused; every native click needs a main-owned one-use human confirmation bound to the exact lease/ref/observation/input epoch and a value-free target summary (consequential keywords are advisory only), and an accepted in-flight click may finish if detach races immediately afterward. Raw canvas_open cannot request this driver. If the macOS launch lacks a matching attachment/control lease, the result tells you to ask the user to attach it in Screen Watch and approve View & Control; unsupported/non-native attempts render the escaped outputTail fallback. Gated like canvas_open.
 
 - Access: governed by your run permission role
 - Required args: attemptId
-- Optional args: width, height
+- Optional args: presentation, width, height
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_open_launch","arguments":{"attemptId":"text"}}}}`
 
 ## canvas_sketch_open
@@ -1405,6 +1405,31 @@ Delete a chat-owned Mesh Canvas scene and remove any private imported assets no 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: sceneId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_delete","arguments":{"sceneId":"text"}}}}`
+
+## mesh_topology_convert
+
+Convert one existing primitive or imported Mesh Canvas node into editable topology. The source primitive/import provenance is retained and imported workspace files are never overwritten. Returns stable topology ids, revision 0, and counts. Gated via Mesh Canvas.
+
+- Access: governed by your run permission role
+- Required args: sceneId, nodeId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_topology_convert","arguments":{"sceneId":"text","nodeId":"text"}}}}`
+
+## mesh_topology_inspect
+
+Inspect a revisioned editable topology in bounded pages. Sections: summary, vertices, edges, faces, uvs, bones, recent_mutations. Face results retain ordered loops and per-loop UVs, so seams are visible. Gated via Mesh Canvas; returns no source filesystem paths.
+
+- Access: read-only (no approval needed)
+- Required args: sceneId, nodeId
+- Optional args: section, offset, limit
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_topology_inspect","arguments":{"sceneId":"text","nodeId":"text"}}}}`
+
+## mesh_topology_edit
+
+Atomically edit an editable node with optimistic concurrency. Always pass the latest expectedRevision and a stable clientMutationId; stale ensemble writers get a revision conflict and must re-inspect. Up to 64 operations: move/create/delete/merge vertices, create/delete/extrude/inset/subdivide faces, split/collapse/mark edges, set/project per-loop UVs, sculpt draw/inflate/smooth/flatten/pinch/grab, upsert/remove/pose bones, set vertex weights, or replace_geometry. Returns counts/revision and created/deleted ids, never the full topology. Gated via Mesh Canvas.
+
+- Access: governed by your run permission role
+- Required args: sceneId, nodeId, expectedRevision, clientMutationId, operations
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_topology_edit","arguments":{"sceneId":"text","nodeId":"text","expectedRevision":0,"clientMutationId":"text","operations":[]}}}}`
 
 ## simulator_status
 
