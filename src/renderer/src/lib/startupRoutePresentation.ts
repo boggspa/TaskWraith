@@ -3,6 +3,8 @@ export interface StartupRoutePresentationInput {
   initialRouteReady: boolean
   hasCommittedRoute: boolean
   allowEmptyRoute: boolean
+  /** Startup has already revealed a committed route in this renderer session. */
+  routeWasRevealed?: boolean
 }
 
 /**
@@ -14,8 +16,9 @@ export interface StartupRoutePresentationInput {
  */
 export function shouldRevealStartupRoute(input: StartupRoutePresentationInput): boolean {
   return (
-    input.appearanceLoaded &&
-    input.initialRouteReady &&
-    (input.hasCommittedRoute || input.allowEmptyRoute)
+    input.routeWasRevealed === true ||
+    (input.appearanceLoaded &&
+      input.initialRouteReady &&
+      (input.hasCommittedRoute || input.allowEmptyRoute))
   )
 }

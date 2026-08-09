@@ -54,4 +54,16 @@ describe('shouldRevealStartupRoute', () => {
       })
     ).toBe(true)
   })
+
+  it('stays revealed when the selected chat is deleted after startup', () => {
+    expect(
+      shouldRevealStartupRoute({
+        appearanceLoaded: true,
+        initialRouteReady: true,
+        hasCommittedRoute: false,
+        allowEmptyRoute: false,
+        routeWasRevealed: true
+      })
+    ).toBe(true)
+  })
 })

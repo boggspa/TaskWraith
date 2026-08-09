@@ -2338,12 +2338,14 @@ function App(): React.JSX.Element {
   const appearance = useAppearance()
   const [initialRouteReady, setInitialRouteReady] = useState(false)
   const [initialRouteAllowEmptyShell, setInitialRouteAllowEmptyShell] = useState(false)
+  const [initialRouteWasRevealed, setInitialRouteWasRevealed] = useState(false)
   const [bootMaskVisible, setBootMaskVisible] = useState(true)
   const isBootReady = shouldRevealStartupRoute({
     appearanceLoaded: appearance.loaded,
     initialRouteReady,
     hasCommittedRoute: Boolean(currentChat),
-    allowEmptyRoute: initialRouteAllowEmptyShell
+    allowEmptyRoute: initialRouteAllowEmptyShell,
+    routeWasRevealed: initialRouteWasRevealed
   })
   const isBootMaskLeaving = isBootReady && bootMaskVisible
   const openInspectorTab = (tab: InspectorRightTab) => {
@@ -7084,6 +7086,7 @@ function App(): React.JSX.Element {
       setBootMaskVisible(true)
       return
     }
+    setInitialRouteWasRevealed(true)
     const timeout = window.setTimeout(() => {
       setBootMaskVisible(false)
     }, 760)
