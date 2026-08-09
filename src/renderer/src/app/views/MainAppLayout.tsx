@@ -1268,6 +1268,24 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       </div>
     ) : null
 
+  // The pane-owned focused renderer is the normal split-mode path. A small set
+  // of legacy host-only overlays temporarily cover (but never unmount) that
+  // runtime until those overlays become pane slots. This preserves every
+  // capability while removing the singleton swap from ordinary use.
+  const focusedHostOverlayRequired = Boolean(
+    executionMapProjection ||
+      workProjectHeader ||
+      chatContextNotice ||
+      showJumpToLatestPill ||
+      previewChatMediaRef ||
+      showRunDataVizFx ||
+      (currentProvider === 'gemini' && isOldVersion) ||
+      visibleAuditRunNotice ||
+      visibleAuditRun ||
+      threadSearchVisible ||
+      (!isChatPopoutWindow && !showWorkspaceSidebar)
+  )
+
   return (
       <div
         className={`app-main ${isChatExpanded ? 'chat-expanded' : ''} ${providerShellClass} ${
@@ -1823,6 +1841,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 />
               )}
               renderViewerCell={renderMultiviewPaneCell}
+              renderFocusedChatCell={(chatId, paneIndex) =>
+                renderMultiviewPaneCell(chatId, paneIndex, {
+                  topLeftChromeExtra: humanCollaborationControls
+                })
+              }
+              showFocusedHostOverlay={focusedHostOverlayRequired}
               renderFocusedCell={() => {
                 if (executionMapProjection) {
                   return (

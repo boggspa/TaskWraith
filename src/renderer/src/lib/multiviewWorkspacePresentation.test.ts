@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { updatePathKeyedWorkspaceSnapshot } from './multiviewWorkspacePresentation'
 
 const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+const layoutSource = readFileSync(new URL('../app/views/MainAppLayout.tsx', import.meta.url), 'utf8')
 
 function slice(start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -77,17 +78,27 @@ describe('Multiview focused workspace presentation', () => {
     const composerIndex = focus.indexOf(
       'applyChatComposerSelectionRef.current(viewerChat, viewerProvider)'
     )
-    expect(focus).not.toContain('startTransition(() => {')
+    const transitionIndex = focus.indexOf('startTransition(() => {')
+    expect(transitionIndex).toBeGreaterThanOrEqual(0)
     expect(focus).not.toContain('assignToNextPane')
     expect(focus).not.toContain('multiview.focusPane(')
+    expect(focus).toContain('paneIndex === multiview.focusedPaneIndex')
     expect(focus).toContain('setSessionTrust(false)')
     expect(focus).toContain('clearWorkspaceTrust()')
     expect(focus).toContain('currentWorkspaceIdRef.current !== paneWorkspaceId')
-    expect(focusIndex).toBeGreaterThanOrEqual(0)
+    expect(focus).toContain(
+      'outgoingMainScrollState || captureChatScrollState(outgoingPaneRefs?.scrollRef.current)'
+    )
+    expect(focusIndex).toBeGreaterThan(transitionIndex)
     expect(navigationIndex).toBeGreaterThan(focusIndex)
     expect(workspaceIndex).toBeGreaterThan(navigationIndex)
     expect(chatIndex).toBeGreaterThan(workspaceIndex)
     expect(composerIndex).toBeGreaterThan(chatIndex)
+    expect(layoutSource).toContain('renderFocusedChatCell={')
+    expect(layoutSource).toContain('const focusedHostOverlayRequired = Boolean(')
+    expect(layoutSource).toContain('topLeftChromeExtra: humanCollaborationControls')
+    expect(layoutSource).toContain('showFocusedHostOverlay={focusedHostOverlayRequired}')
+    expect(source).toContain('viewerOwnsFocusedTrust\n        ? composerCtx')
   })
 
   it('guards workspace trust refreshes against late ownership changes', () => {

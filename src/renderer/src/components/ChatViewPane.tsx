@@ -103,6 +103,8 @@ export interface ChatViewPaneProps extends Omit<
   dashboardAutoCycleSeconds?: number
   topLeftChrome?: ReactNode
   topRightChrome?: ReactNode
+  /** Focused-only legacy chrome that has not yet moved into a pane action. */
+  topLeftChromeExtra?: ReactNode
   topLeftChromeAction?: ChatViewPaneChromeAction
   topRightChromeActions?: ChatViewPaneChromeAction[]
   onDeleteMessage?: (paneIndex: number, chatId: string, messageId: string) => void
@@ -120,7 +122,7 @@ export interface ChatViewPaneProps extends Omit<
     vote: 'up' | 'down',
     details?: MessageFeedbackDetails
   ) => void
-  /** Optional visual-focus callback for pane selection affordances. */
+  /** Explicit legacy-chrome projection; ordinary pane input never promotes ownership. */
   onFocusPane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
 }
@@ -253,6 +255,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     // Chrome.
     a.topLeftChrome === b.topLeftChrome &&
     a.topRightChrome === b.topRightChrome &&
+    a.topLeftChromeExtra === b.topLeftChromeExtra &&
     chatViewPaneChromeActionEqual(a.topLeftChromeAction, b.topLeftChromeAction) &&
     chatViewPaneChromeActionsEqual(a.topRightChromeActions, b.topRightChromeActions) &&
     // Transcript handlers (the composer's own handlers moved into <Composer>).
@@ -404,6 +407,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
             </span>
           )}
         </div>
+        {props.topLeftChromeExtra}
       </div>
       {props.topRightChromeActions && props.topRightChromeActions.length > 0 && (
         <MainPaneActionPill
@@ -515,10 +519,6 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
       data-multiview-pane-chat-id={props.chat?.appChatId ?? undefined}
       role="group"
       aria-label={props.ariaLabel}
-      onMouseDownCapture={() => {
-        const focusChatId = props.chat?.appChatId
-        if (focusChatId) props.onFocusPane?.(props.paneIndex, focusChatId)
-      }}
     >
       {/* Per-pane provider glow. First child so it sits behind pane content
        * (it's `position:absolute; inset:0; pointer-events:none`). The focused

@@ -155,6 +155,55 @@ describe('MultiviewPaneGrid', () => {
     expect(out).toContain('grid-area:b') // viewer pane in cell area 'b'
   })
 
+  it('keeps the focused chat on the pane-owned renderer when the host opts in', () => {
+    const focusedChat = vi.fn((chatId: string) => (
+      <div className="focused-pane-runtime">{chatId}</div>
+    ))
+    const focusedHost = vi.fn(focused)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={makePanes(['a', 'b'])}
+        focusedPaneIndex={1}
+        renderFocusedCell={focusedHost}
+        renderFocusedChatCell={focusedChat}
+        renderViewerCell={viewer}
+      />
+    )
+
+    expect(out).toContain('focused-pane-runtime')
+    expect(out).toContain('multiview-pane-runtime-stack is-focused')
+    expect((out.match(/multiview-pane-runtime-stack/g) || []).length).toBe(2)
+    expect(out).toContain('>b</div>')
+    expect(focusedChat).toHaveBeenCalledWith('b', 1)
+    expect(focusedHost).not.toHaveBeenCalled()
+    expect(out).toContain('>a</div>')
+  })
+
+  it('keeps the pane runtime mounted under a legacy focused takeover', () => {
+    const focusedChat = vi.fn((chatId: string) => (
+      <div className="focused-pane-runtime">{chatId}</div>
+    ))
+    const focusedHost = vi.fn(focused)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={makePanes(['a', 'b'])}
+        focusedPaneIndex={0}
+        renderFocusedCell={focusedHost}
+        renderFocusedChatCell={focusedChat}
+        showFocusedHostOverlay
+        renderViewerCell={viewer}
+      />
+    )
+
+    expect(focusedChat).toHaveBeenCalledWith('a', 0)
+    expect(focusedHost).toHaveBeenCalledOnce()
+    expect(out).toContain('multiview-pane-runtime is-suspended')
+    expect(out).toContain('aria-hidden="true"')
+    expect(out).toContain('id="focused-cell"')
+  })
+
   it('tags each cell with its stable pane id (data-pane-id) in cell order', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid

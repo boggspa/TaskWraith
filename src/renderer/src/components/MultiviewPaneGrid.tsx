@@ -19,14 +19,12 @@ import {
 /**
  * MultiviewPaneGrid — arranges the central chat pane into a CSS grid of panes.
  *
- * Design: the FOCUSED pane is rendered by the host (App.tsx) exactly as today
- * via `renderFocusedCell` — same inline `.app-transcript` + composer subtree,
- * same refs, same singleton wiring (FX layers + GhostCompanion + the shared
- * `<Composer>`) — and is simply placed into its grid cell. Non-focused
- * populated cells render a `<ChatViewPane>` (`renderViewerCell`), which now
- * hosts the SAME `<Composer>` component (pane-scoped props) rather than a
- * hand-written clone; empty cells render a placeholder. In single layout we
- * return the focused content with NO wrapper at all, so the single-pane DOM is
+ * Design: in split layouts every chat cell can stay on the SAME pane-owned
+ * renderer, including the focused chat, via `renderFocusedChatCell`. Focus then
+ * changes presentation metadata without replacing one pane's component tree
+ * with the legacy singleton tree. The host renderer remains available for
+ * special focused takeovers (for example Execution Map). In single layout we
+ * always return the host content with NO wrapper, so the single-pane DOM is
  * byte-identical to before Multiview existed.
  *
  * Grid cells are placed by `grid-area` name, so DOM order is irrelevant — the
@@ -46,6 +44,10 @@ export interface MultiviewPaneGridProps {
   focusedPaneIndex: number
   /** The existing inline main-pane content (transcript + composer). */
   renderFocusedCell: () => ReactNode
+  /** Pane-owned renderer for the focused chat in split layouts. */
+  renderFocusedChatCell?: (chatId: string, paneIndex: number) => ReactNode
+  /** Show the legacy host above a still-mounted focused pane runtime. */
+  showFocusedHostOverlay?: boolean
   /** A pane-scoped ChatViewPane (hosting the shared Composer) for a non-focused, populated cell. */
   renderViewerCell: (chatId: string, paneIndex: number) => ReactNode
   /** A pane hosting a live-embedded Canvas (web preview) — when the record has a canvasId. */
@@ -225,9 +227,33 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
     ? fractionsToTrackList(props.rowFractions)
     : spec.gridTemplateRows
 
+  const renderChatRuntime = (chatId: string, paneIndex: number, focused: boolean): ReactNode => {
+    const showHost = focused && Boolean(props.showFocusedHostOverlay)
+    const renderPane =
+      focused && props.renderFocusedChatCell ? props.renderFocusedChatCell : props.renderViewerCell
+    return (
+      <div className={`multiview-pane-runtime-stack${focused ? ' is-focused' : ''}`}>
+        <div
+          className={`multiview-pane-runtime${showHost ? ' is-suspended' : ''}`}
+          aria-hidden={showHost || undefined}
+        >
+          {renderPane(chatId, paneIndex)}
+        </div>
+        {showHost && (
+          <div className="multiview-focused-host-runtime">{props.renderFocusedCell()}</div>
+        )}
+      </div>
+    )
+  }
+
   const renderCell = (paneIndex: number): ReactNode => {
-    if (paneIndex === props.focusedPaneIndex) return props.renderFocusedCell()
     const pane = props.panes[paneIndex]
+    if (paneIndex === props.focusedPaneIndex) {
+      if (pane?.chatId && props.renderFocusedChatCell) {
+        return renderChatRuntime(pane.chatId, paneIndex, true)
+      }
+      return props.renderFocusedCell()
+    }
     // A detached media pane (audio/video player) takes precedence over canvas/chat;
     // mediaRef, canvasId, and chatId are mutually exclusive on a record.
     if (pane?.mediaRef && props.renderMediaCell) {
@@ -239,7 +265,7 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
       return props.renderCanvasCell(pane.canvasId, paneIndex)
     }
     const chatId = pane?.chatId ?? null
-    if (chatId) return props.renderViewerCell(chatId, paneIndex)
+    if (chatId) return renderChatRuntime(chatId, paneIndex, false)
     return props.renderEmptyCell ? props.renderEmptyCell(paneIndex) : null
   }
 

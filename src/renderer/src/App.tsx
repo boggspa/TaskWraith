@@ -27380,6 +27380,12 @@ function App(): React.JSX.Element {
     (paneIndex: number, chatId: string) => {
       const viewerChat = chatByIdRef.current.get(chatId)
       if (!viewerChat) return
+      if (
+        paneIndex === multiview.focusedPaneIndex &&
+        currentChatIdRef.current === viewerChat.appChatId
+      ) {
+        return
+      }
       const viewerProvider = getChatProvider(viewerChat)
       const outgoingChatId = currentChatIdRef.current || null
       const incomingPaneRefs = multiview.paneRefs[paneIndex]
@@ -27394,66 +27400,75 @@ function App(): React.JSX.Element {
         incomingPaneRefs.chatScrollStateByIdRef.current.set(chatId, incomingCachedScroll)
       }
       const outgoingPaneRefs = multiview.paneRefs[multiview.focusedPaneIndex]
-      const outgoingScrollState = captureMainTranscriptScrollState()
+      const outgoingMainScrollState = captureMainTranscriptScrollState()
+      const outgoingScrollState =
+        outgoingMainScrollState || captureChatScrollState(outgoingPaneRefs?.scrollRef.current)
       if (outgoingChatId && outgoingPaneRefs && outgoingScrollState) {
         const outgoingCachedScroll = {
           scrollState: outgoingScrollState,
-          autoFollow: autoFollowRef.current
+          autoFollow: outgoingMainScrollState
+            ? autoFollowRef.current
+            : (outgoingPaneRefs.autoFollowRef.current ?? outgoingScrollState.atBottom)
         }
         outgoingPaneRefs.setAutoFollow(outgoingCachedScroll.autoFollow)
         outgoingPaneRefs.chatScrollStateByIdRef.current.set(outgoingChatId, outgoingCachedScroll)
       }
-      const paneWorkspace = resolvePaneWorkspace({
-        chat: viewerChat,
-        isGlobalChat: isGlobalChat(viewerChat),
-        workspaces,
-        currentWorkspace
-      })
-      const paneWorkspaceId = viewerChat.workspaceId || paneWorkspace?.id || null
-      const workspaceChanged = currentWorkspaceIdRef.current !== paneWorkspaceId
-      if (workspaceChanged) {
-        const geminiSessionApi = window.api as any
-        if (
-          persistentSessionActiveRef.current &&
-          typeof geminiSessionApi.stopGeminiSession === 'function'
-        ) {
-          geminiSessionApi.stopGeminiSession().catch(() => {})
-        }
-        persistentSessionActiveRef.current = false
-        setIsPersistentSessionEnabled(false)
-        setPersistentSessionStatus('idle')
-        setPersistentSessionNeedsRestart(false)
-        clearWorkspaceTrust()
-        setDiff(null)
-      } else if (!paneWorkspace) {
-        clearWorkspaceTrust()
-      }
-      currentWorkspaceIdRef.current = paneWorkspaceId
-      currentWorkspacePathRef.current = paneWorkspace?.path || viewerChat.workspacePath || null
-      setSessionTrust(false)
-      // Pane records are authoritative. Focus selects which pane projects into
-      // legacy app chrome; it must never write singleton currentChat back into
-      // the outgoing pane (that race was the cross-pane cloning bug).
-      multiview.setFocusedPane(paneIndex)
-      setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })
-      setActiveSidebarChatId(viewerChat.appChatId)
-      setCurrentWorkspace(paneWorkspace)
-      setCurrentChat(viewerChat)
-      if (incomingCachedScroll) {
-        restoreMainTranscriptScrollStateWhenReady(incomingCachedScroll.scrollState, {
-          syncAutoFollow: true,
-          targetChatId: viewerChat.appChatId,
-          autoFollow: incomingCachedScroll.autoFollow
+      // Split panes stay mounted on their pane-owned renderer. This transition
+      // only projects the explicitly selected pane into legacy app chrome and
+      // dock state; ordinary transcript/composer input never invokes it.
+      startTransition(() => {
+        const paneWorkspace = resolvePaneWorkspace({
+          chat: viewerChat,
+          isGlobalChat: isGlobalChat(viewerChat),
+          workspaces,
+          currentWorkspace
         })
-      }
-      applyChatComposerSelectionRef.current(viewerChat, viewerProvider)
-      if (viewerProvider === 'codex') setShowGeminiTerminal(false)
-      setRunDiff(null)
-      setRunCompleteNotice(
-        deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
-      )
-      setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
-      syncThinkingForChat(viewerChat)
+        const paneWorkspaceId = viewerChat.workspaceId || paneWorkspace?.id || null
+        const workspaceChanged = currentWorkspaceIdRef.current !== paneWorkspaceId
+        if (workspaceChanged) {
+          const geminiSessionApi = window.api as any
+          if (
+            persistentSessionActiveRef.current &&
+            typeof geminiSessionApi.stopGeminiSession === 'function'
+          ) {
+            geminiSessionApi.stopGeminiSession().catch(() => {})
+          }
+          persistentSessionActiveRef.current = false
+          setIsPersistentSessionEnabled(false)
+          setPersistentSessionStatus('idle')
+          setPersistentSessionNeedsRestart(false)
+          clearWorkspaceTrust()
+          setDiff(null)
+        } else if (!paneWorkspace) {
+          clearWorkspaceTrust()
+        }
+        currentWorkspaceIdRef.current = paneWorkspaceId
+        currentWorkspacePathRef.current = paneWorkspace?.path || viewerChat.workspacePath || null
+        setSessionTrust(false)
+        // Pane records are authoritative. Focus selects which pane projects into
+        // legacy app chrome; it must never write singleton currentChat back into
+        // the outgoing pane (that race was the cross-pane cloning bug).
+        multiview.setFocusedPane(paneIndex)
+        setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })
+        setActiveSidebarChatId(viewerChat.appChatId)
+        setCurrentWorkspace(paneWorkspace)
+        setCurrentChat(viewerChat)
+        if (incomingCachedScroll) {
+          restoreMainTranscriptScrollStateWhenReady(incomingCachedScroll.scrollState, {
+            syncAutoFollow: true,
+            targetChatId: viewerChat.appChatId,
+            autoFollow: incomingCachedScroll.autoFollow
+          })
+        }
+        applyChatComposerSelectionRef.current(viewerChat, viewerProvider)
+        if (viewerProvider === 'codex') setShowGeminiTerminal(false)
+        setRunDiff(null)
+        setRunCompleteNotice(
+          deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
+        )
+        setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
+        syncThinkingForChat(viewerChat)
+      })
     },
     [
       currentWorkspace,
@@ -28191,7 +28206,11 @@ function App(): React.JSX.Element {
     },
     [multiview.setLayout]
   )
-  const renderMultiviewPaneCell = (viewerChatId: string, viewerPaneIndex: number): ReactNode => {
+  const renderMultiviewPaneCell = (
+    viewerChatId: string,
+    viewerPaneIndex: number,
+    options: { topLeftChromeExtra?: ReactNode } = {}
+  ): ReactNode => {
     const viewerChat = chatByIdRef.current.get(viewerChatId)
     if (!viewerChat) {
       return (
@@ -29223,12 +29242,19 @@ function App(): React.JSX.Element {
     }
     const paneComposerKey = `${viewerPaneIndex}:${viewerChatId}`
     const memoizedPaneComposerCtx = paneComposerCtxByKey[paneComposerKey]
-    // The memoized ctx is keyed for render stability, but its `currentChat`
-    // comes from chatByIdRef. If this pane's chat object has advanced since the
-    // memo was built, fall back to the freshly-built ctx so composer controls
-    // like Plan/Goal see the same live chat as the transcript.
+    // Focused and resting chats keep the same mounted Composer component. The
+    // focused runtime receives the exact legacy composer projection (full goal,
+    // approval, trust, and slash-command controls); resting runtimes receive
+    // their independently keyed context. Focus changes props, never tree type.
+    // The memoized resting ctx is keyed for render stability, but its
+    // `currentChat` comes from chatByIdRef. If that chat object advanced since
+    // the memo was built, fall back to the freshly-built pane ctx.
     const effectivePaneComposerCtx =
-      memoizedPaneComposerCtx?.currentChat === viewerChat ? memoizedPaneComposerCtx : paneComposerCtx
+      viewerOwnsFocusedTrust
+        ? composerCtx
+        : memoizedPaneComposerCtx?.currentChat === viewerChat
+          ? memoizedPaneComposerCtx
+          : paneComposerCtx
 
     return (
       <ChatViewPane
@@ -29288,6 +29314,7 @@ function App(): React.JSX.Element {
             setShowWorkspaceSidebar((current) => !current)
           }
         }}
+        topLeftChromeExtra={options.topLeftChromeExtra}
         topRightChromeActions={viewerChromeActions}
         pendingPlanChoice={pendingPlanChoiceByChatId[viewerChatId] || null}
         pendingAgentQuestions={

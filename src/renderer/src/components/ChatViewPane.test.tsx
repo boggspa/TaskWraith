@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
@@ -11,6 +12,8 @@ import {
 } from './ChatViewPane'
 import { createMultiviewPaneRefs } from '../hooks/useMultiviewState'
 import { WorkspaceGitSnapshotStore } from '../lib/workspaceGitSnapshotStore'
+
+const paneSource = readFileSync(new URL('./ChatViewPane.tsx', import.meta.url), 'utf8')
 
 // The pane composer is now the SAME first-class <Composer> the focused main
 // pane renders (built by App from `composerCtx` with per-pane overrides). It
@@ -285,6 +288,11 @@ describe('ChatViewPane welcome viewer', () => {
 })
 
 describe('ChatViewPane shared composer', () => {
+  it('does not promote a pane when the user interacts with its transcript or composer', () => {
+    expect(paneSource).not.toContain('onMouseDownCapture')
+    expect(paneSource).toContain('onClick: props.onFocusPane')
+  })
+
   it('renders the shared <Composer> (forwarding the pane context) when composerProps is supplied', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
@@ -371,6 +379,19 @@ describe('ChatViewPane shared composer', () => {
 })
 
 describe('ChatViewPane chrome actions', () => {
+  it('keeps focused-only legacy controls inside the pane header', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+          topLeftChromeExtra: <button type="button">People</button>
+        })}
+      />
+    )
+
+    expect(html).toContain('>People</button>')
+  })
+
   it('renders the same six workspace actions as the focused pane with pane-scoped ids', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
