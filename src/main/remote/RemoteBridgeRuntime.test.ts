@@ -1,10 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   RemoteBridgeRuntime,
+  pairIdFromIdentityPubKey,
   relayHttpBase,
+  type PairedHostProjectionGatewayPort,
   type RemotePairingPrompt,
   type RemotePairingPersistence
 } from './RemoteBridgeRuntime'
+import type { PairedHostProjectionAttachment } from './PairedHostProjectionGateway'
 import type { PersistedRemotePairing } from './RemotePairingStore'
 import type { TransportSocketFactory, TransportSocketHandlers } from './RemoteTransportClient'
 import { E2eeSession } from '../../shared/e2ee/session'
@@ -55,6 +58,20 @@ function memoryPairingStore(initial: PersistedRemotePairing[] = []): {
   }
 }
 
+function hostGatewayHarness() {
+  const attachments: PairedHostProjectionAttachment[] = []
+  const gateway = {
+    attach: vi.fn(async (attachment: PairedHostProjectionAttachment) => {
+      attachments.push(attachment)
+    }),
+    detach: vi.fn(),
+    dispose: vi.fn(),
+    request: vi.fn(async () => ({ kind: 'health.get', frame: { hostStatus: 'ok' } })),
+    resync: vi.fn(async () => true)
+  } satisfies PairedHostProjectionGatewayPort
+  return { gateway, attachments }
+}
+
 function harness(
   opts: {
     pairingWindowMs?: number
@@ -62,6 +79,7 @@ function harness(
     hostPlatform?: string
     advertiseRelayUrls?: string[]
     runEventFilter?: (event: RunEvent) => boolean
+    hostProjectionGateway?: PairedHostProjectionGatewayPort
   } = {}
 ) {
   const macId = generateIdentityKeyPair()
@@ -104,6 +122,7 @@ function harness(
     socketFactory,
     appStore: emptyAppStore,
     projectionSource: { listRemoteProjectionEnvelopes: () => [envelope] },
+    hostProjectionGateway: opts.hostProjectionGateway,
     routeAction: vi.fn(async (method: string, params: unknown) => {
       routed.push({ method, params })
       return { accepted: true, reasonCode: 'testStub' }
@@ -381,6 +400,76 @@ describe('RemoteBridgeRuntime established channel', () => {
       kind: 'taskCard',
       payload: { id: 'chat-1' }
     })
+  })
+
+  it('attaches Host v2 to the pinned device identity and forwards its push frames', async () => {
+    const host = hostGatewayHarness()
+    const h = harness({ hostProjectionGateway: host.gateway })
+    await establish(h)
+
+    const deviceKey = b64.encode(exportRawEd25519PublicKey(h.iphoneId.publicKey))
+    expect(host.gateway.attach).toHaveBeenCalledOnce()
+    expect(host.attachments[0]).toMatchObject({
+      deviceKey,
+      clientId: pairIdFromIdentityPubKey(deviceKey),
+      displayName: 'iPad'
+    })
+
+    host.attachments[0]!.send('bridge.hostState', { phase: 'live' })
+    await settle()
+    expect(h.iphoneMessages.at(-1)).toEqual({
+      method: 'bridge.hostState',
+      params: { phase: 'live' }
+    })
+  })
+
+  it('routes exact Host requests without accepting a client-supplied device identity', async () => {
+    const host = hostGatewayHarness()
+    const h = harness({ hostProjectionGateway: host.gateway })
+    await establish(h)
+    h.iphoneMessages.length = 0
+
+    h.sendFromIphone('bridge.requestHost', {
+      requestId: 'host-req-1',
+      deviceKey: 'spoofed-device-key',
+      kind: 'health.get',
+      params: {}
+    })
+    await settle()
+
+    const deviceKey = b64.encode(exportRawEd25519PublicKey(h.iphoneId.publicKey))
+    expect(host.gateway.request).toHaveBeenCalledWith(deviceKey, {
+      kind: 'health.get',
+      params: {}
+    })
+    expect(h.routed).toHaveLength(0)
+    expect(h.iphoneMessages).toContainEqual({
+      method: 'bridge.ack',
+      params: {
+        requestId: 'host-req-1',
+        method: 'bridge.requestHost',
+        ok: true,
+        result: { kind: 'health.get', frame: { hostStatus: 'ok' } }
+      }
+    })
+  })
+
+  it('targets Host replay recovery and detaches the gateway on unpair', async () => {
+    const host = hostGatewayHarness()
+    const h = harness({ hostProjectionGateway: host.gateway })
+    await establish(h)
+    const deviceKey = b64.encode(exportRawEd25519PublicKey(h.iphoneId.publicKey))
+
+    ;(
+      h.runtime as unknown as {
+        resyncDeviceOnReplayGap: (key: string) => void
+      }
+    ).resyncDeviceOnReplayGap(deviceKey)
+    await settle()
+    expect(host.gateway.resync).toHaveBeenCalledWith(deviceKey)
+
+    h.runtime.unpair(deviceKey)
+    expect(host.gateway.detach).toHaveBeenCalledWith(deviceKey)
   })
 
   it('forwards run events as bridge.runEvent', async () => {

@@ -41,6 +41,10 @@ import type { RunEvent, RunEventSink } from '../RunEventBus'
 import { E2EE_PROTOCOL, type PairingBootstrapPayload } from '../../shared/e2ee/protocol'
 import { b64, exportRawEd25519PublicKey, type KeyPair } from '../../shared/e2ee/keys'
 import { signRegisterRequest, type RegisterRequest } from '../../shared/e2ee/resolve'
+import {
+  PAIRED_HOST_PROJECTION_METHODS,
+  type PairedHostProjectionAttachment
+} from './PairedHostProjectionGateway'
 import { RemoteTransportClient, type TransportSocketFactory } from './RemoteTransportClient'
 import type { PersistedRemotePairing } from './RemotePairingStore'
 
@@ -77,6 +81,14 @@ export interface PairedDeviceSummary {
 /** Inbound methods the runtime forwards to the action router. Everything
  * else is rejected (audited surface stays exactly the router's). */
 const ROUTABLE_METHODS = new Set(['bridge.requestActionAck', 'bridge.requestPrepareStartTurnAck'])
+
+export interface PairedHostProjectionGatewayPort {
+  attach(attachment: PairedHostProjectionAttachment): Promise<void>
+  detach(deviceKey: string): void
+  dispose(): void
+  request(deviceKey: string, value: unknown): Promise<unknown>
+  resync(deviceKey: string): Promise<boolean>
+}
 
 /** The slice of RemotePairingStore the runtime needs (injectable for tests). */
 export interface RemotePairingPersistence {
@@ -147,6 +159,8 @@ export interface RemoteBridgeRuntimeOptions {
   remoteProjectionSnapshotThrottleMs?: number | (() => number)
   /** The policy spine — `BridgeActionRouter.route` in production. */
   routeAction: (method: string, params: unknown) => Promise<unknown>
+  /** Host v2 projection/command bridge, owned by this runtime when supplied. */
+  hostProjectionGateway?: PairedHostProjectionGatewayPort
   /** `runEventBus.subscribe` in production; returns the unsubscribe fn. */
   subscribeRunEvents: (sink: RunEventSink) => () => void
   /** Optional host-side interest filter for the bridge run-event sink. */
@@ -477,6 +491,7 @@ export class RemoteBridgeRuntime {
     this.teardownPending()
     this.teardownAllEstablished()
     this.teardownBroadcaster()
+    this.opts.hostProjectionGateway?.dispose()
   }
 
   // ── internals ───────────────────────────────────────────────────────────────
@@ -489,24 +504,27 @@ export class RemoteBridgeRuntime {
   }): RemoteTransportClient {
     const knownPubKey = overrides.iphoneIdentityPubKey
     const clientRef: { current?: RemoteTransportClient } = {}
+    const resolveDeviceKey = (): string | null => {
+      if (knownPubKey) return knownPubKey
+      const raw = clientRef.current?.trustedPeerIdentityRaw()
+      return raw ? b64.encode(raw) : null
+    }
     const client = new RemoteTransportClient({
       identityKeyPair: this.opts.identity,
       socketFactory: this.opts.socketFactory,
       pinnedPeerIdentityRaw: overrides.pinnedPeerIdentityRaw,
       onConfirmCode: overrides.onConfirmCode,
       onMessage: (method, params) => {
-        const pubKey =
-          knownPubKey ??
-          (() => {
-            const raw = clientRef.current?.trustedPeerIdentityRaw()
-            return raw ? b64.encode(raw) : null
-          })()
-        void this.handleInbound(pubKey, method, params)
+        void this.handleInbound(resolveDeviceKey(), method, params)
       },
       onEstablished: () => {
         overrides.onEstablished?.()
       },
       onConnectionChange: (connected) => {
+        const deviceKey = resolveDeviceKey()
+        if (!connected && deviceKey) {
+          this.opts.hostProjectionGateway?.detach(deviceKey)
+        }
         this.opts.log?.(
           `[remote-bridge] transport ${connected ? 'established' : 'down'} (${knownPubKey ?? 'pending'})`
         )
@@ -521,13 +539,7 @@ export class RemoteBridgeRuntime {
         // RC5: same pubKey resolution as onMessage. A same-epoch resume evicted
         // un-acked tail — push a targeted full snapshot so the returning peer
         // recovers any one-shot it missed.
-        const pubKey =
-          knownPubKey ??
-          (() => {
-            const raw = clientRef.current?.trustedPeerIdentityRaw()
-            return raw ? b64.encode(raw) : null
-          })()
-        this.resyncDeviceOnReplayGap(pubKey)
+        this.resyncDeviceOnReplayGap(resolveDeviceKey())
       },
       log: this.opts.log
     })
@@ -542,8 +554,9 @@ export class RemoteBridgeRuntime {
   private resyncDeviceOnReplayGap(iphoneIdentityPubKey: string | null): void {
     if (!iphoneIdentityPubKey) return
     const device = this.established.get(iphoneIdentityPubKey)
-    if (!device || !this.broadcaster) return
-    this.broadcaster.emitSnapshotTo((method, params) => device.client.send(method, params))
+    if (!device) return
+    this.broadcaster?.emitSnapshotTo((method, params) => device.client.send(method, params))
+    void this.opts.hostProjectionGateway?.resync(iphoneIdentityPubKey)
     this.opts.log?.(
       `[remote-bridge] replay gap → targeted resync (${pairIdFromIdentityPubKey(iphoneIdentityPubKey)})`
     )
@@ -678,6 +691,7 @@ export class RemoteBridgeRuntime {
       )
     }
     this.broadcaster.broadcastSnapshot()
+    this.attachHostProjectionDevices()
     this.opts.onDeviceEstablished?.()
     // Live count for the run-event filter / git feed; paired count for the
     // powerSaveBlocker (this device is genuinely connected now).
@@ -692,6 +706,46 @@ export class RemoteBridgeRuntime {
   ): Promise<void> {
     const dict = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
     const requestId = typeof dict.requestId === 'string' ? dict.requestId : null
+    if (method === PAIRED_HOST_PROJECTION_METHODS.request) {
+      if (!requestId) {
+        this.opts.log?.('[remote-bridge] dropped Host request without requestId')
+        return
+      }
+      if (!iphoneIdentityPubKey) {
+        this.opts.log?.('[remote-bridge] dropped Host request — no trusted pairing')
+        return
+      }
+      const gateway = this.opts.hostProjectionGateway
+      if (!gateway) {
+        this.sendToDevice(iphoneIdentityPubKey, 'bridge.ack', {
+          requestId,
+          method,
+          ok: false,
+          error: 'Host projection is unavailable'
+        })
+        return
+      }
+      try {
+        const result = await gateway.request(iphoneIdentityPubKey, {
+          kind: dict.kind,
+          params: dict.params
+        })
+        this.sendToDevice(iphoneIdentityPubKey, 'bridge.ack', {
+          requestId,
+          method,
+          ok: true,
+          result
+        })
+      } catch (err) {
+        this.sendToDevice(iphoneIdentityPubKey, 'bridge.ack', {
+          requestId,
+          method,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
+      return
+    }
     if (!ROUTABLE_METHODS.has(method)) {
       this.opts.log?.(`[remote-bridge] dropped unsupported inbound method "${method}"`)
       if (requestId) {
@@ -739,6 +793,34 @@ export class RemoteBridgeRuntime {
     this.established.get(iphoneIdentityPubKey)?.client.send(method, params)
   }
 
+  private attachHostProjectionDevices(): void {
+    const gateway = this.opts.hostProjectionGateway
+    if (!gateway) return
+    for (const device of this.established.values()) {
+      if (!device.client.isConnected) continue
+      const deviceKey = device.iphoneIdentityPubKey
+      void gateway
+        .attach({
+          deviceKey,
+          clientId: pairIdFromIdentityPubKey(deviceKey),
+          displayName: device.controllerDisplayName,
+          send: (method, params) => {
+            const current = this.established.get(deviceKey)
+            if (current?.client === device.client && current.client.isConnected) {
+              current.client.send(method, params)
+            }
+          }
+        })
+        .catch((err: unknown) => {
+          this.opts.log?.(
+            `[remote-bridge] Host projection attach failed (${pairIdFromIdentityPubKey(deviceKey)}): ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          )
+        })
+    }
+  }
+
   /** Slice 1 (RC1/RC2): re-push the current visible projection to EXACTLY one
    * requesting device — never a broadcast, never resetThrottle. Synchronous, so
    * the snapshot frames enqueue on the device's session ahead of the action ack
@@ -776,6 +858,7 @@ export class RemoteBridgeRuntime {
     const device = this.established.get(iphoneIdentityPubKey)
     if (!device) return
     this.stopRegistrationRefresh(device)
+    this.opts.hostProjectionGateway?.detach(iphoneIdentityPubKey)
     device.client.dispose()
     this.established.delete(iphoneIdentityPubKey)
     // Post-delete: recompute the live count AND the paired count — the last
