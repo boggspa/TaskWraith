@@ -1191,6 +1191,8 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-embedded', args),
+    adoptEmbedded: (args: { chatId: string; canvasId: string }): Promise<unknown> =>
+      ipcRenderer.invoke('canvas:adopt-embedded', args),
     openSketchWindow: (args: {
       chatId: string
     }): Promise<

@@ -3848,7 +3848,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_open',
       description:
-        'Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" (default) loads an http(s) `url` (typically a local dev server, e.g. http://localhost:3000) and supports the full structured surface (snapshot/inspect/click/fill/eval). Driver "device" launches an app by `bundleId` in a booted iOS Simulator (optionally installing a built `appPath` first; optional `udid`, default the booted sim) and is SCREENSHOT-ONLY — only canvas_screenshot/canvas_close apply; the DOM verbs return an error. Prefer simulator_* tools for Simulator Canvas QA; device driver shares the same host substrate. Returns a canvasId used by every other canvas_* tool. Gated; the web driver blocks file://, link-local and cloud-metadata addresses.',
+        'Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" (default) loads an http(s) `url` (typically a local dev server, e.g. http://localhost:3000) and supports the full structured surface (snapshot/inspect/click/fill/eval). For a web preview, set `presentation: "dock"` to put the live surface in the active chat\'s Canvas dock; omit it or use `"window"` for the floating Canvas window. Driver "device" launches an app by `bundleId` in a booted iOS Simulator (optionally installing a built `appPath` first; optional `udid`, default the booted sim) and is SCREENSHOT-ONLY — only canvas_screenshot/canvas_close apply; the DOM verbs return an error. Prefer simulator_* tools for Simulator Canvas QA; device driver shares the same host substrate. Returns a canvasId used by every other canvas_* tool. Gated; the web driver blocks file://, link-local and cloud-metadata addresses.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3859,6 +3859,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: {
           driver: { type: 'string', enum: ['web', 'device'] },
+          presentation: {
+            type: 'string',
+            enum: ['window', 'dock'],
+            description:
+              'Web driver only: "dock" presents the live surface in the active chat Canvas dock; "window" (default) opens a floating Canvas window.'
+          },
           url: { type: 'string', description: 'web driver: the http(s) URL to preview.' },
           bundleId: {
             type: 'string',
@@ -3926,7 +3932,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_open_launch',
       description:
-        'Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemptId` from launch_start / launch_status. This tool NEVER starts a process and accepts only an attempt owned by the canonical calling chat/run. It first opens a detected loopback URL with the web driver. Without one, an eligible live macOS 15.2+ managed launch can open its user-picked Screen Watch window only after a separate View & Control consent and current Accessibility trust; the opaque exact-run native lease is AX-only (observe/inspect/click/fill), defaults to 15 minutes and 20 click/fill attempts, and never grants arbitrary desktop control. Secure fields are refused; every native click needs a main-owned one-use human confirmation bound to the exact lease/ref/observation/input epoch and a value-free target summary (consequential keywords are advisory only), and an accepted in-flight click may finish if detach races immediately afterward. Raw canvas_open cannot request this driver. If the macOS launch lacks a matching attachment/control lease, the result tells you to ask the user to attach it in Screen Watch and approve View & Control; unsupported/non-native attempts render the escaped outputTail fallback. Gated like canvas_open.',
+        'Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemptId` from launch_start / launch_status. This tool NEVER starts a process and accepts only an attempt owned by the canonical calling chat/run. It first opens a detected loopback URL with the web driver; set `presentation: "dock"` to put that live preview in the active chat\'s Canvas dock, or omit it/use `"window"` for a floating window. Dock presentation requires that detected live URL. Without one, an eligible live macOS 15.2+ managed launch can open its user-picked Screen Watch window only after a separate View & Control consent and current Accessibility trust; the opaque exact-run native lease is AX-only (observe/inspect/click/fill), defaults to 15 minutes and 20 click/fill attempts, and never grants arbitrary desktop control. Secure fields are refused; every native click needs a main-owned one-use human confirmation bound to the exact lease/ref/observation/input epoch and a value-free target summary (consequential keywords are advisory only), and an accepted in-flight click may finish if detach races immediately afterward. Raw canvas_open cannot request this driver. If the macOS launch lacks a matching attachment/control lease, the result tells you to ask the user to attach it in Screen Watch and approve View & Control; unsupported/non-native attempts render the escaped outputTail fallback. Gated like canvas_open.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3939,6 +3945,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           attemptId: {
             type: 'string',
             description: 'A launch attempt id returned by launch_start or launch_status.'
+          },
+          presentation: {
+            type: 'string',
+            enum: ['window', 'dock'],
+            description:
+              'Detected live URLs only: "dock" presents in the active chat Canvas dock; "window" (default) opens a floating Canvas window.'
           },
           width: { type: 'number' },
           height: { type: 'number' }

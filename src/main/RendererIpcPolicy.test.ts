@@ -51,6 +51,7 @@ describe('RendererIpcPolicy', () => {
     'attach-window:pick',
     'attach-window:control-session',
     'canvas:open-embedded',
+    'canvas:adopt-embedded',
     'canvas:set-bounds',
     'mesh-scene:import-user-model',
     'mesh-scene:import-user-package',
@@ -154,6 +155,15 @@ describe('RendererIpcPolicy', () => {
     expect(main).toContain('authorizeImagePreviewPath(filePath, {')
     expect(preload).toContain("ipcRenderer.send('authorize-dropped-attachment', filePath)")
     expect(main).toContain("ipcMain.on('authorize-dropped-attachment'")
+  })
+
+  it('exposes Canvas dock adoption only through the main-renderer preload bridge', () => {
+    const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
+    const preloadTypes = readFileSync(join(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
+
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(true)
+    expect(preload).toContain("ipcRenderer.invoke('canvas:adopt-embedded', args)")
+    expect(preloadTypes).toContain('adoptEmbedded: (args: { chatId: string; canvasId: string })')
   })
 
   it('requires a preload-minted trusted one-shot intent for host clipboard image reads', () => {

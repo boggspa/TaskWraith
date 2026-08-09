@@ -59,6 +59,20 @@ describe('TaskWraith MCP tool registry', () => {
     expect(yieldTool?.description).toContain('normal serial routing resumes')
   })
 
+  it('advertises first-class Canvas dock presentation for live web previews', () => {
+    const definitions = createTaskWraithMcpToolDefinitions()
+    for (const name of ['canvas_open', 'canvas_open_launch']) {
+      const tool = definitions.find((candidate) => candidate.name === name)
+      expect(tool?.description).toContain('presentation')
+      expect(tool?.description).toContain('Canvas dock')
+      expect(tool?.inputSchema).toMatchObject({
+        properties: {
+          presentation: { type: 'string', enum: ['window', 'dock'] }
+        }
+      })
+    }
+  })
+
   it('offers a compact portable control front door without duplicating authority logic', () => {
     const portable = createTaskWraithMcpToolDefinitions().find(
       (tool) => tool.name === 'ensemble_control'

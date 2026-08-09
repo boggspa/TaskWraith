@@ -36,6 +36,7 @@ type ArgSpec =
   | 'bugReportPayload'
   | 'optionalCanvasOpenArgs'
   | 'optionalCanvasSketchArgs'
+  | 'canvasAdoptArgs'
   | 'canvasBounds'
   | 'stickyAppWatchStash'
 
@@ -382,6 +383,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'canvas:open-embedded': ['optionalCanvasOpenArgs'],
   'canvas:open-sketch-window': ['optionalCanvasSketchArgs'],
   'canvas:open-sketch-embedded': ['optionalCanvasSketchArgs'],
+  'canvas:adopt-embedded': ['canvasAdoptArgs'],
   'canvas:set-bounds': ['nonEmptyString', 'canvasBounds'],
   'canvas:set-visible': ['nonEmptyString', 'boolean'],
   'canvas:close': ['nonEmptyString'],
@@ -827,6 +829,7 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
   if (spec === 'bugReportPayload') validateBugReportPayload(channel, value)
   if (spec === 'optionalCanvasOpenArgs') validateCanvasOpenArgs(channel, value)
   if (spec === 'optionalCanvasSketchArgs') validateCanvasSketchArgs(channel, value)
+  if (spec === 'canvasAdoptArgs') validateCanvasAdoptArgs(channel, value)
   if (spec === 'canvasBounds') validateCanvasBounds(channel, value)
   if (spec === 'stickyAppWatchStash') validateStickyAppWatchStash(channel, value)
 }
@@ -873,6 +876,15 @@ function validateCanvasSketchArgs(channel: string, value: unknown): void {
   if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
   validateKnownKeys(channel, value, new Set(['chatId']))
   validateOptionalCanvasChatId(channel, value.chatId)
+}
+
+function validateCanvasAdoptArgs(channel: string, value: unknown): void {
+  if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
+  validateKnownKeys(channel, value, new Set(['chatId', 'canvasId']))
+  assertSafeChatId(value.chatId, `${channel} chat id`)
+  if (typeof value.canvasId !== 'string' || !value.canvasId.trim() || value.canvasId.length > 512) {
+    throw new Error(`${channel} canvasId must be a non-empty string of at most 512 characters.`)
+  }
 }
 
 function validateCanvasBounds(channel: string, value: unknown): void {

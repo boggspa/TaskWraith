@@ -180,6 +180,9 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: 1, y: 2, width: 800, height: 600 }])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:adopt-embedded', [{ chatId: 'chat-1', canvasId: 'canvas-1' }])
+    ).not.toThrow()
 
     expect(() => validateIpcArgs('canvas:open-window', [{ chatId: '../settings' }])).toThrow(
       /safe chat id/
@@ -194,6 +197,17 @@ describe('IpcValidation', () => {
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: 1, y: 2, width: -1, height: 600 }])
     ).toThrow(/dimensions must be non-negative/)
     expect(() => validateIpcArgs('canvas:set-visible', ['canvas-1', 'false'])).toThrow(/boolean/)
+    expect(() =>
+      validateIpcArgs('canvas:adopt-embedded', [{ chatId: '../settings', canvasId: 'canvas-1' }])
+    ).toThrow(/safe chat id/)
+    expect(() =>
+      validateIpcArgs('canvas:adopt-embedded', [{ chatId: 'chat-1', canvasId: '' }])
+    ).toThrow(/canvasId must be a non-empty string/)
+    expect(() =>
+      validateIpcArgs('canvas:adopt-embedded', [
+        { chatId: 'chat-1', canvasId: 'canvas-1', senderId: 42 }
+      ])
+    ).toThrow(/unknown field/)
   })
 
   it('requires chat-scoped native-window IPC and an exact positive generation for detach', () => {

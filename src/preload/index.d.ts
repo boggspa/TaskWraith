@@ -1236,6 +1236,22 @@ declare global {
             }
           | { ok: false; error: string }
         >
+        adoptEmbedded: (args: { chatId: string; canvasId: string }) => Promise<
+          | {
+              ok: true
+              canvasId: string
+              driver: string
+              url: string
+              title: string
+              viewport: { width: number; height: number }
+              status: string
+              presentation: 'dock'
+              isLoading?: boolean
+              canGoBack?: boolean
+              canGoForward?: boolean
+            }
+          | { ok: false; error: string }
+        >
         openSketchWindow: (args: { chatId: string }) => Promise<
           | {
               ok: true

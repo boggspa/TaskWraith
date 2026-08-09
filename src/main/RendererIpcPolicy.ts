@@ -327,6 +327,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'canvas:open-embedded',
   'canvas:open-sketch-window',
   'canvas:open-sketch-embedded',
+  'canvas:adopt-embedded',
   'canvas:set-bounds',
   'canvas:set-visible',
   'canvas:close',
