@@ -111,23 +111,27 @@ export type RiskAcknowledgementSheetProps = Omit<
   'acknowledged' | 'onAcknowledgedChange'
 >
 
-export function RiskAcknowledgementSheet(props: RiskAcknowledgementSheetProps): ReactElement {
+export function RiskAcknowledgementSheet({
+  onCancel,
+  ...surfaceProps
+}: RiskAcknowledgementSheetProps): ReactElement {
   const [acknowledged, setAcknowledged] = useState(false)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        props.onCancel()
+        onCancel()
       }
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [props.onCancel])
+  }, [onCancel])
 
   return createPortal(
     <RiskAcknowledgementSheetSurface
-      {...props}
+      {...surfaceProps}
+      onCancel={onCancel}
       acknowledged={acknowledged}
       onAcknowledgedChange={setAcknowledged}
     />,

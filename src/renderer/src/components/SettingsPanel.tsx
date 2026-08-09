@@ -117,6 +117,7 @@ import { ThirdPartyNoticesSettings } from './ThirdPartyNoticesSettings'
 import { ActivityReportingSettings } from './ActivityReportingSettings'
 import { NotificationBannerSettings } from './NotificationBannerSettings'
 import { ModelUsageCard } from './ModelUsageCard'
+import { PolicyPostureOverrideSheet, PolicyPostureSettings } from './PolicyPostureSettings'
 import {
   ModelUsageSettingsTable,
   ProviderApiRatesSettingsTable,
@@ -128,6 +129,13 @@ import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
 import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
+import {
+  AGENTIC_SERVICE_POLICY_OPTIONS,
+  NETWORK_POLICY_OPTIONS,
+  NON_GRANTABLE_AGENTIC_SERVICE_POLICY_OPTIONS,
+  buildPolicyPostureRows,
+  summarizePolicyPosture
+} from '../lib/policyPosture'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import type {
   TaskWraithPluginActivatedConnector,
@@ -735,23 +743,6 @@ const COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string; helpe
   }
 ]
 
-const AGENTIC_SERVICE_POLICY_OPTIONS: Array<{ value: AgenticServicePolicy; label: string }> = [
-  { value: 'workspace', label: 'Ask, then allow workspace' },
-  { value: 'ask', label: 'Ask every time' },
-  { value: 'allow', label: 'Always allow' },
-  { value: 'deny', label: 'Block' }
-]
-const NON_GRANTABLE_AGENTIC_SERVICE_POLICY_OPTIONS: Array<{
-  value: AgenticServicePolicy
-  label: string
-}> = [
-  { value: 'ask', label: 'Ask every time' },
-  { value: 'deny', label: 'Block' }
-]
-const NETWORK_POLICY_OPTIONS: Array<{ value: AgenticNetworkPolicy; label: string }> = [
-  { value: 'allow', label: 'Allow' },
-  { value: 'deny', label: 'Block' }
-]
 const NATIVE_SUB_AGENT_REQUEST_OPTIONS: Array<{
   value: NativeSubAgentRequestPolicy
   label: string
@@ -4132,6 +4123,8 @@ export function SettingsPanel({
   const [showDeleteHistoryConfirm, setShowDeleteHistoryConfirm] = useState(false)
   const [deleteHistoryPending, setDeleteHistoryPending] = useState(false)
   const [deleteHistoryError, setDeleteHistoryError] = useState('')
+  const [policyPostureOverrideUnlocked, setPolicyPostureOverrideUnlocked] = useState(false)
+  const [showPolicyPostureOverrideWarning, setShowPolicyPostureOverrideWarning] = useState(false)
   const managedPolicyActive = managedPolicyStatus?.active === true
   const managedPolicyLockedSettings = managedPolicySettingList(managedPolicyStatus?.lockedSettings)
   const managedPolicyErrorCount = Array.isArray(managedPolicyStatus?.errors)
@@ -4164,6 +4157,8 @@ export function SettingsPanel({
     managedPolicyStatus,
     'agenticServices'
   )
+  const policyPostureControlsDisabled =
+    agenticServicesManagedLocked || !policyPostureOverrideUnlocked
   const approvalTimeoutsManagedLocked = isManagedPolicySettingLocked(
     managedPolicyStatus,
     'approvalTimeouts'
@@ -4903,8 +4898,20 @@ export function SettingsPanel({
     key: K,
     value: AgenticServicesSettings[K]
   ): void => {
-    if (agenticServicesManagedLocked) return
+    if (policyPostureControlsDisabled) return
     onChange({ agenticServices: { ...agenticServices, [key]: value } })
+  }
+  const requestPolicyPostureOverride = (): void => {
+    if (agenticServicesManagedLocked) return
+    setShowPolicyPostureOverrideWarning(true)
+  }
+  const finishPolicyPostureOverride = (): void => {
+    setShowPolicyPostureOverrideWarning(false)
+    setPolicyPostureOverrideUnlocked(false)
+  }
+  const updatePolicyPosture = (next: AgenticServicesSettings): void => {
+    if (policyPostureControlsDisabled) return
+    onChange({ agenticServices: next })
   }
   const auditProviderAllowlist = auditOrchestration?.providerAllowlist ?? []
   const updateAuditOrchestration = (
@@ -5327,121 +5334,12 @@ export function SettingsPanel({
   const activeKeyCommandCount = keyCommandRows.filter((command) => command.binding !== null).length
   const customizedKeyCommandCount = keyCommandRows.filter((command) => command.customized).length
   const conflictKeyCommandCount = keyCommandRows.filter((command) => command.conflict).length
-  const policyTone = (
-    value: AgenticServicePolicy | AgenticNetworkPolicy
-  ): 'ok' | 'watch' | 'risk' => {
-    if (value === 'allow') return 'risk'
-    if (value === 'workspace') return 'watch'
-    return 'ok'
-  }
-  const agenticPolicyLabel = (value: AgenticServicePolicy): string =>
-    AGENTIC_SERVICE_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
-  const networkPolicyLabel = (value: AgenticNetworkPolicy): string =>
-    NETWORK_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
-  const canvasInteractionPolicy = agenticServices.canvasInteraction ?? 'ask'
-  const sketchCanvasPolicy = agenticServices.sketchCanvas ?? 'allow'
-  const externalPublishPolicy = agenticServices.externalPublish ?? 'ask'
-  const mediaEditingPolicy = agenticServices.mediaEditing ?? 'ask'
-  const webBrowsingPolicy = agenticServices.webBrowsing ?? 'ask'
-  const safetyPolicyRows = [
-    {
-      id: 'shell',
-      label: 'Shell commands',
-      scope: 'Workspace',
-      value: agenticServices.shellCommands,
-      display: agenticPolicyLabel(agenticServices.shellCommands),
-      tone: policyTone(agenticServices.shellCommands),
-      description: 'Provider runs can request terminal commands inside the active workspace.'
-    },
-    {
-      id: 'files',
-      label: 'File changes',
-      scope: 'Workspace',
-      value: agenticServices.fileChanges,
-      display: agenticPolicyLabel(agenticServices.fileChanges),
-      tone: policyTone(agenticServices.fileChanges),
-      description: 'Write, replace, and patch tools stay inside the workspace boundary.'
-    },
-    {
-      id: 'publish',
-      label: 'External publishing',
-      scope: 'External',
-      value: externalPublishPolicy,
-      display: agenticPolicyLabel(externalPublishPolicy),
-      tone: policyTone(externalPublishPolicy),
-      description:
-        'Agent-routed pushes, pull requests, and release publishing require explicit approval.'
-    },
-    {
-      id: 'mcp',
-      label: 'Provider tools',
-      scope: 'Provider',
-      value: agenticServices.mcpTools,
-      display: agenticPolicyLabel(agenticServices.mcpTools),
-      tone: policyTone(agenticServices.mcpTools),
-      description:
-        'TaskWraith provider tools expose workspace, audit, editor, and app-control surfaces.'
-    },
-    {
-      id: 'subthread',
-      label: 'Sub-thread delegation',
-      scope: 'Provider',
-      value: agenticServices.subThreadDelegation,
-      display: agenticPolicyLabel(agenticServices.subThreadDelegation),
-      tone: policyTone(agenticServices.subThreadDelegation),
-      description: 'Agents can spawn or resume provider sub-threads under the current workspace.'
-    },
-    {
-      id: 'canvas',
-      label: 'Canvas interaction',
-      scope: 'Workspace',
-      value: canvasInteractionPolicy,
-      display: agenticPolicyLabel(canvasInteractionPolicy),
-      tone: policyTone(canvasInteractionPolicy),
-      description: 'Agents can click and fill preview UI when the workspace policy permits it.'
-    },
-    {
-      id: 'browser',
-      label: 'Browser navigation',
-      scope: 'Workspace',
-      value: webBrowsingPolicy,
-      display: agenticPolicyLabel(webBrowsingPolicy),
-      tone: policyTone(webBrowsingPolicy),
-      description:
-        'Agents can open and navigate websites in the sandboxed Canvas Browser; clicking and typing stay under Canvas interaction.'
-    },
-    {
-      id: 'sketch',
-      label: 'Sketch Canvas',
-      scope: 'Chat',
-      value: sketchCanvasPolicy,
-      display: agenticPolicyLabel(sketchCanvasPolicy),
-      tone: policyTone(sketchCanvasPolicy),
-      description:
-        'Agents can edit structured shapes and text in chat-owned sketches; opening and reading stay available to read-only seats.'
-    },
-    {
-      id: 'media',
-      label: 'Media editing',
-      scope: 'Workspace',
-      value: mediaEditingPolicy,
-      display: agenticPolicyLabel(mediaEditingPolicy),
-      tone: policyTone(mediaEditingPolicy),
-      description:
-        'Transcode, encode, probe, and mix workspace audio/video files. Denied under read-only.'
-    },
-    {
-      id: 'network',
-      label: 'Network access',
-      scope: 'Provider',
-      value: agenticServices.networkAccess,
-      display: networkPolicyLabel(agenticServices.networkAccess),
-      tone: policyTone(agenticServices.networkAccess),
-      description: 'Provider tool loops may fetch from the network when this is allowed.'
-    }
-  ]
-  const riskyPolicyCount = safetyPolicyRows.filter((row) => row.tone === 'risk').length
-  const watchPolicyCount = safetyPolicyRows.filter((row) => row.tone === 'watch').length
+  const safetyPolicyRows = buildPolicyPostureRows(agenticServices)
+  const {
+    riskyPolicyCount,
+    watchPolicyCount,
+    overrideCount: policyPostureOverrideCount
+  } = summarizePolicyPosture(safetyPolicyRows)
   const providerPrivacyRows = [
     { label: 'Codex', summary: codexAuthSummary },
     { label: 'Claude', summary: claudeAuthSummary },
@@ -7670,21 +7568,56 @@ export function SettingsPanel({
               <PromptCacheSettingsSection />
 
               <div className="settings-group span-all">
-                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                  Agentic services
-                </h4>
-                {agenticServicesManagedLocked && (
-                  <p className="settings-hint">
-                    Agentic service policy is managed by organization policy.
-                  </p>
-                )}
+                <div className="settings-safety-header">
+                  <div>
+                    <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                      Agentic services
+                    </h4>
+                    <p className="settings-hint">
+                      These controls mirror Safety &amp; Privacy → Policy posture. Unlocking either
+                      surface unlocks both for this Settings session.
+                    </p>
+                  </div>
+                  <div className="settings-safety-header-actions">
+                    <span className="settings-scope-pill">
+                      {policyPostureOverrideCount === 0
+                        ? 'Suggested defaults'
+                        : `${policyPostureOverrideCount} ${
+                            policyPostureOverrideCount === 1 ? 'override' : 'overrides'
+                          }`}
+                    </span>
+                    <PillButton
+                      size="compact"
+                      variant={policyPostureOverrideUnlocked ? 'secondary' : 'danger'}
+                      onClick={
+                        policyPostureOverrideUnlocked
+                          ? finishPolicyPostureOverride
+                          : requestPolicyPostureOverride
+                      }
+                      disabled={agenticServicesManagedLocked}
+                    >
+                      {agenticServicesManagedLocked
+                        ? 'Managed by organization'
+                        : policyPostureOverrideUnlocked
+                          ? 'Close override hatch'
+                          : 'Override policies…'}
+                    </PillButton>
+                  </div>
+                </div>
+                <p className="settings-hint">
+                  {agenticServicesManagedLocked
+                    ? 'Agentic service policy is managed by organization policy.'
+                    : policyPostureOverrideUnlocked
+                      ? 'Override hatch open. Changes persist immediately and affect future runs.'
+                      : 'Suggested defaults are protected until you acknowledge the override warning.'}
+                </p>
                 <div className="settings-service-list">
                   <label className="settings-service-row">
                     <span>Shell commands</span>
                     <select
                       className="settings-select"
                       value={agenticServices.shellCommands}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService(
                           'shellCommands',
@@ -7705,7 +7638,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.fileChanges}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService('fileChanges', e.target.value as AgenticServicePolicy)
                       }
@@ -7729,7 +7662,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.externalPublish ?? 'ask'}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService(
                           'externalPublish',
@@ -7750,7 +7683,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.mcpTools}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService('mcpTools', e.target.value as AgenticServicePolicy)
                       }
@@ -7776,7 +7709,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.subThreadDelegation}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService(
                           'subThreadDelegation',
@@ -7804,7 +7737,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.canvasInteraction ?? 'ask'}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService(
                           'canvasInteraction',
@@ -7833,7 +7766,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.webBrowsing ?? 'ask'}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService('webBrowsing', e.target.value as AgenticServicePolicy)
                       }
@@ -7858,7 +7791,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.sketchCanvas ?? 'allow'}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService('sketchCanvas', e.target.value as AgenticServicePolicy)
                       }
@@ -7884,7 +7817,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.mediaEditing ?? 'ask'}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService('mediaEditing', e.target.value as AgenticServicePolicy)
                       }
@@ -7932,7 +7865,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.networkAccess}
-                      disabled={agenticServicesManagedLocked}
+                      disabled={policyPostureControlsDisabled}
                       onChange={(e) =>
                         updateAgenticService(
                           'networkAccess',
@@ -10698,29 +10631,55 @@ export function SettingsPanel({
             <ActivityReportingSettings />
 
             <div className="settings-group span-all">
-              <div className="settings-safety-section-title">
-                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                  Policy posture
-                </h4>
+              <div className="settings-safety-header">
+                <div className="settings-safety-section-title">
+                  <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                    Policy posture
+                  </h4>
+                  <p className="settings-hint">
+                    Suggested defaults work with each seat&apos;s permission posture. Scope badges
+                    show where a policy applies; warning rows are most likely to surprise during
+                    autonomous runs.
+                  </p>
+                </div>
+                <div className="settings-safety-header-actions">
+                  <span className="settings-scope-pill">
+                    {policyPostureOverrideCount === 0
+                      ? 'Suggested defaults'
+                      : `${policyPostureOverrideCount} ${
+                          policyPostureOverrideCount === 1 ? 'override' : 'overrides'
+                        }`}
+                  </span>
+                  <PillButton
+                    size="compact"
+                    variant={policyPostureOverrideUnlocked ? 'secondary' : 'danger'}
+                    onClick={
+                      policyPostureOverrideUnlocked
+                        ? finishPolicyPostureOverride
+                        : requestPolicyPostureOverride
+                    }
+                    disabled={agenticServicesManagedLocked}
+                  >
+                    {agenticServicesManagedLocked
+                      ? 'Managed by organization'
+                      : policyPostureOverrideUnlocked
+                        ? 'Close override hatch'
+                        : 'Override policies…'}
+                  </PillButton>
+                </div>
+              </div>
+              {agenticServicesManagedLocked && (
                 <p className="settings-hint">
-                  Scope badges show where each policy applies. Warning rows are the settings most
-                  likely to surprise a user during autonomous runs.
+                  Policy posture is locked by organization-managed policy.
                 </p>
-              </div>
-              <div className="settings-safety-policy-list">
-                {safetyPolicyRows.map((row) => (
-                  <article key={row.id} className={`settings-safety-policy-row tone-${row.tone}`}>
-                    <div className="settings-safety-policy-main">
-                      <strong>{row.label}</strong>
-                      <p>{row.description}</p>
-                    </div>
-                    <div className="settings-safety-policy-meta">
-                      <span className="settings-scope-pill">{row.scope}</span>
-                      <span className="settings-risk-pill">{row.display}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
+              )}
+              <PolicyPostureSettings
+                agenticServices={agenticServices}
+                rows={safetyPolicyRows}
+                overrideUnlocked={policyPostureOverrideUnlocked}
+                managedLocked={agenticServicesManagedLocked}
+                onChange={updatePolicyPosture}
+              />
             </div>
 
             <div className="settings-group span-all">
@@ -11646,6 +11605,15 @@ export function SettingsPanel({
         {activeTab === 'shares' && <SharesPanel />}
       </div>
       {/* end settings-panel-content */}
+      {showPolicyPostureOverrideWarning && (
+        <PolicyPostureOverrideSheet
+          onCancel={() => setShowPolicyPostureOverrideWarning(false)}
+          onConfirm={() => {
+            setShowPolicyPostureOverrideWarning(false)
+            setPolicyPostureOverrideUnlocked(true)
+          }}
+        />
+      )}
     </div>
   )
 }

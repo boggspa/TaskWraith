@@ -829,6 +829,52 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Open MCP Servers')
   })
 
+  it('protects the suggested policy posture behind the override hatch', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'safety-privacy' })} />
+    )
+
+    expect(html).toContain('Suggested defaults work with each seat')
+    expect(html).toContain('Suggested defaults')
+    expect(html).toContain('Override policies…')
+    expect(html).toContain('data-policy-origin="suggested"')
+    expect(html).not.toContain('aria-label="Shell commands policy"')
+  })
+
+  it('reports saved posture overrides before the hatch is opened', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'safety-privacy',
+          agenticServices: {
+            ...DEFAULT_AGENTIC_SERVICES,
+            shellCommands: 'allow',
+            fileChanges: 'allow'
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('2 overrides')
+    expect(html).toContain('Always allow')
+    expect(html).toContain('>Override</span>')
+  })
+
+  it('gates the legacy Provider policy controls with the same hatch', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'providers' })} />
+    )
+
+    expect(html).toContain('Unlocking either surface unlocks both')
+    expect(html).toContain('Override policies…')
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Shell commands<\/span><select class="settings-select" disabled="">/
+    )
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Network access<\/span><select class="settings-select" disabled="">/
+    )
+  })
+
   it('renders the General auto-update checkbox enabled by default', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />
