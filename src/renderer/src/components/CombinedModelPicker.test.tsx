@@ -218,6 +218,30 @@ describe('CombinedModelPicker', () => {
     expect(html).not.toContain('--provider-accent:')
   })
 
+  it('derives the AntiGravity reasoning hue hook from the concrete model id', () => {
+    const model = { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash' }
+    const html = renderToStaticMarkup(
+      <CombinedModelPicker
+        provider="antigravity"
+        composerStyle="gemini"
+        modelOptions={[model]}
+        selectedModelId={model.id}
+        onSelectModel={() => undefined}
+        reasoningOptions={[]}
+        selectedReasoning=""
+        onSelectReasoning={() => undefined}
+      />
+    )
+
+    // The effort is part of the agy wire id, so it remains accurate even
+    // while the picker has no separate slider selection during a refresh.
+    expect(html).toContain('data-provider="antigravity"')
+    expect(html).toContain('data-provider-hue="antigravity"')
+    expect(html).toContain('--chip-accent:var(--provider-antigravity-color, var(--accent))')
+    expect(html).toContain('data-selected-reasoning="high"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">High</span>')
+  })
+
   it('uses every selected Pi model upstream hue without changing its runtime provider mark', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
       const id = Object.keys(PI_MODEL_LABELS).find((model) =>

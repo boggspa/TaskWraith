@@ -45,6 +45,7 @@ import type {
 } from '../lib/combinedModelPickerTypes'
 import { CodexFastBoltIcon } from './icons/CodexFastBoltIcon'
 import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
+import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
 import { modelRequiresApiKey } from '../../../shared/apiKeyModelIndicator'
 import { PillButton } from './PillButton'
 import { getProviderName } from './Sidebar'
@@ -1259,6 +1260,14 @@ export function CombinedModelPicker({
       kimiReasoningEffort
     ]
   )
+  // AntiGravity encodes effort in the selected agy wire model
+  // (`gemini-3.6-flash-high`) rather than a separate persisted setting. The
+  // text suffix already derives from that id; make the CSS hook do the same
+  // so it never falls back to plain shell ink while the catalogue refreshes.
+  const chipReasoningValue =
+    provider === 'antigravity'
+      ? (antigravityEffortForModelId(selectedModelOption.id) ?? selectedReasoning)
+      : selectedReasoning
 
   // Split chip text into "model" and "reasoning" pieces so we can
   // style them differently (model normal, reasoning muted/dimmed —
@@ -1934,7 +1943,7 @@ export function CombinedModelPicker({
         data-composer-control={customTrigger ? undefined : 'model'}
         data-provider={provider}
         data-provider-hue={providerHueClass}
-        data-selected-reasoning={selectedReasoning || ''}
+        data-selected-reasoning={chipReasoningValue || ''}
         data-fast-mode-active={fastModeEnabled && fastModeCapable ? 'true' : 'false'}
         // Provider brand hue for the Ultra/Ultracode shimmer + sparkles (the
         // popover's --accent is generic — see the ladder's --ladder-accent).
@@ -1996,7 +2005,7 @@ export function CombinedModelPicker({
                       {claudeChipSegments.reasoning && (
                         <TriggerReasoningSuffix
                           text={claudeChipSegments.reasoning}
-                          sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
+                          sparkle={chipReasoningSparkleTier(chipReasoningValue || '')}
                         />
                       )}
                     </span>
@@ -2008,7 +2017,7 @@ export function CombinedModelPicker({
                     </span>
                     <TriggerReasoningSuffix
                       text={claudeChipSegments.reasoning}
-                      sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
+                      sparkle={chipReasoningSparkleTier(chipReasoningValue || '')}
                     />
                   </span>
                 ) : null}
@@ -2021,7 +2030,7 @@ export function CombinedModelPicker({
                 {chipPieces.suffix && (
                   <TriggerReasoningSuffix
                     text={chipPieces.suffix}
-                    sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
+                    sparkle={chipReasoningSparkleTier(chipReasoningValue || '')}
                   />
                 )}
                 {chipPieces.tail && (
