@@ -27,13 +27,19 @@ describe('FirstLaunchSheet host integration', () => {
     expect(mount).toContain('void handleProviderLogin(provider)')
   })
 
-  it('refreshes every live provider discovery snapshot at app launch', () => {
+  it('refreshes the active provider immediately and defers the remaining discovery queue', () => {
     const start = appSource.indexOf('void refreshProviderMetadata(initialProvider)')
     const end = appSource.indexOf('// 1.0.6-G3d', start)
     const launchDiscovery = appSource.slice(start, end)
+    const warmupStart = appSource.indexOf('const armProviderMetadataWarmup')
+    const warmupEnd = appSource.indexOf('const markInitialRouteSettled', warmupStart)
+    const warmup = appSource.slice(warmupStart, warmupEnd)
 
-    expect(launchDiscovery).toContain('LIVE_SELECTABLE_PROVIDER_IDS')
-    expect(launchDiscovery).toContain('void refreshProviderMetadata(provider)')
-    expect(launchDiscovery).not.toContain('void refreshProviderModelCatalog(provider)')
+    expect(launchDiscovery).not.toContain('for (const provider of LIVE_SELECTABLE_PROVIDER_IDS')
+    expect(warmup).toContain('scheduleProviderMetadataWarmup')
+    expect(warmup).toContain('provider !== activeProvider')
+    expect(warmup).toContain('refresh: (provider) => refreshProviderMetadata(provider)')
+    const arm = appSource.indexOf('armProviderMetadataWarmup(initialProvider)')
+    expect(arm).toBeLessThan(appSource.indexOf('markInitialRouteSettled()', arm))
   })
 })

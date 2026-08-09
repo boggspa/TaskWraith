@@ -9,6 +9,10 @@ import {
 } from './lib/usageRecordsCache'
 import { resolveWithinDeadline } from './lib/backgroundHydration'
 import { LateBackgroundRefreshCoordinator } from './lib/lateBackgroundRefreshCoordinator'
+import {
+  scheduleProviderMetadataWarmup,
+  type ProviderMetadataWarmupController
+} from './lib/providerMetadataWarmup'
 import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
@@ -6861,49 +6865,58 @@ function App(): React.JSX.Element {
     provider: ProviderId,
     workspacePath: string | null | undefined = currentWorkspace?.path
   ) => {
+    const refreshes: Promise<unknown>[] = []
     const capabilityWorkspacePath = workspacePath || undefined
     if (typeof window.api.getProviderCapabilities === 'function') {
-      window.api
-        .getProviderCapabilities(provider, capabilityWorkspacePath, approvalMode)
-        .then((capabilities) => {
-          setProviderCapabilitiesByProvider((prev) => ({ ...prev, [provider]: capabilities }))
-        })
-        .catch(() => {
-          setProviderCapabilitiesByProvider((prev) => ({ ...prev, [provider]: undefined }))
-        })
+      refreshes.push(
+        window.api
+          .getProviderCapabilities(provider, capabilityWorkspacePath, approvalMode)
+          .then((capabilities) => {
+            setProviderCapabilitiesByProvider((prev) => ({ ...prev, [provider]: capabilities }))
+          })
+          .catch(() => {
+            setProviderCapabilitiesByProvider((prev) => ({ ...prev, [provider]: undefined }))
+          })
+      )
     }
     if (provider === 'gemini' || typeof window.api.getAgentStatus !== 'function') {
+      await Promise.allSettled(refreshes)
       return
     }
-    void refreshProviderModelCatalog(provider)
-    window.api
-      .getAgentStatus(provider)
-      .then((status) => {
-        if (provider === 'codex') {
-          setCodexStatus(status)
-          if (currentWorkspaceIdRef.current) {
-            void refreshUsageSummary(currentWorkspaceIdRef.current, 'codex', status)
-          }
-        } else {
-          setAgentStatusByProvider((prev) => ({ ...prev, [provider]: status }))
-        }
-      })
-      .catch(() => {
-        if (provider === 'codex') setCodexStatus(null)
-        else setAgentStatusByProvider((prev) => ({ ...prev, [provider]: null }))
-      })
-    if (typeof window.api.getAgentMcpStatus === 'function') {
+    refreshes.push(refreshProviderModelCatalog(provider))
+    refreshes.push(
       window.api
-        .getAgentMcpStatus(provider)
+        .getAgentStatus(provider)
         .then((status) => {
-          if (provider === 'codex') setCodexMcpStatus(status)
-          else setAgentMcpStatusByProvider((prev) => ({ ...prev, [provider]: status }))
+          if (provider === 'codex') {
+            setCodexStatus(status)
+            if (currentWorkspaceIdRef.current) {
+              void refreshUsageSummary(currentWorkspaceIdRef.current, 'codex', status)
+            }
+          } else {
+            setAgentStatusByProvider((prev) => ({ ...prev, [provider]: status }))
+          }
         })
         .catch(() => {
-          if (provider === 'codex') setCodexMcpStatus(null)
-          else setAgentMcpStatusByProvider((prev) => ({ ...prev, [provider]: null }))
+          if (provider === 'codex') setCodexStatus(null)
+          else setAgentStatusByProvider((prev) => ({ ...prev, [provider]: null }))
         })
+    )
+    if (typeof window.api.getAgentMcpStatus === 'function') {
+      refreshes.push(
+        window.api
+          .getAgentMcpStatus(provider)
+          .then((status) => {
+            if (provider === 'codex') setCodexMcpStatus(status)
+            else setAgentMcpStatusByProvider((prev) => ({ ...prev, [provider]: status }))
+          })
+          .catch(() => {
+            if (provider === 'codex') setCodexMcpStatus(null)
+            else setAgentMcpStatusByProvider((prev) => ({ ...prev, [provider]: null }))
+          })
+      )
     }
+    await Promise.allSettled(refreshes)
   }
 
   const refreshGeminiAuthStatus = async () => {
@@ -7039,6 +7052,20 @@ function App(): React.JSX.Element {
   }
 
   const loadInitialDataRef = useRef<(() => Promise<void>) | null>(null)
+  const providerMetadataWarmupRef = useRef<ProviderMetadataWarmupController | null>(null)
+
+  const armProviderMetadataWarmup = (activeProvider: ProviderId): void => {
+    providerMetadataWarmupRef.current?.dispose()
+    providerMetadataWarmupRef.current = null
+    if (isChatPopoutWindow) return
+    providerMetadataWarmupRef.current = scheduleProviderMetadataWarmup({
+      providers: (LIVE_SELECTABLE_PROVIDER_IDS as readonly ProviderId[]).filter(
+        (provider) => provider !== activeProvider
+      ),
+      refresh: (provider) => refreshProviderMetadata(provider),
+      eventTarget: window
+    })
+  }
 
   const markInitialRouteSettled = useCallback((allowEmptyRoute?: boolean) => {
     setInitialRouteAllowEmptyShell(
@@ -7070,6 +7097,14 @@ function App(): React.JSX.Element {
     })
     window.api.getGeminiVersion().then((v) => setGeminiVersion(v))
   }, [markInitialRouteSettled])
+
+  useEffect(
+    () => () => {
+      providerMetadataWarmupRef.current?.dispose()
+      providerMetadataWarmupRef.current = null
+    },
+    []
+  )
 
   useEffect(() => {
     const recordRendererCrash = (input: {
@@ -7169,19 +7204,10 @@ function App(): React.JSX.Element {
     const initialProvider =
       s.activeProvider === 'antigravity' ? s.activeProvider : coerceLiveProvider(s.activeProvider)
     void refreshProviderMetadata(initialProvider)
-    // Warm EVERY live seat's discovery snapshot, not a hand-listed subset.
-    // The picker needs model catalogs, while Settings → Provider Tools needs
-    // binary/auth/bridge status. Previously only the active seat refreshed the
-    // latter, so a successfully installed or signed-in provider could still
-    // look dead until the user found and pressed its manual Refresh button.
-    //
-    // `refreshProviderMetadata` refreshes capabilities, runtime status, MCP
-    // status, and models together; it no-ops for anything outside the live set.
-    // Keeping the source of truth here means a future live seat gets background
-    // discovery at app launch by construction.
-    for (const provider of LIVE_SELECTABLE_PROVIDER_IDS as readonly ProviderId[]) {
-      if (provider !== initialProvider) void refreshProviderMetadata(provider)
-    }
+    // The active composer still receives its status immediately. Non-active
+    // providers are queued only after the initial route settles, then require
+    // a fresh user-idle window one provider at a time. The picker and Settings
+    // keep their complete discovery snapshot without a launch-time CLI storm.
     // 1.0.6-G3d — derive Grok availability from the registered adapters (the
     // registry includes 'grok' only when the experimental gate is on).
     if (typeof window.api.getProviderAdapters === 'function') {
@@ -7412,6 +7438,7 @@ function App(): React.JSX.Element {
         console.warn('[TaskWraith] Failed to attach initial chat to Work project:', error)
       }
     }
+    armProviderMetadataWarmup(initialProvider)
     markInitialRouteSettled()
   }
   loadInitialDataRef.current = loadInitialData
