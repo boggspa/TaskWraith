@@ -41,11 +41,13 @@ describe('SimulatorControlSetupService', () => {
       enabled: true,
       ready: true
     })
-    expect(run).toHaveBeenCalledTimes(4)
-    expect(run).toHaveBeenNthCalledWith(1, '/opt/homebrew/bin/brew', ['tap', 'facebook/fb'])
-    expect(run).toHaveBeenNthCalledWith(2, '/opt/homebrew/bin/brew', ['install', 'idb-companion'])
-    expect(run).toHaveBeenNthCalledWith(3, '/usr/bin/python3', ['-m', 'venv', managedVenv])
-    expect(run).toHaveBeenNthCalledWith(4, managedPython, [
+    expect(run).toHaveBeenCalledTimes(3)
+    expect(run).toHaveBeenNthCalledWith(1, '/opt/homebrew/bin/brew', [
+      'install',
+      'facebook/fb/idb-companion'
+    ])
+    expect(run).toHaveBeenNthCalledWith(2, '/usr/bin/python3', ['-m', 'venv', managedVenv])
+    expect(run).toHaveBeenNthCalledWith(3, managedPython, [
       '-m',
       'pip',
       'install',

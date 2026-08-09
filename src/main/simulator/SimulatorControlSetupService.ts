@@ -8,6 +8,7 @@ import type {
 import { findExecutableOnHost } from '../HostToolResolver'
 
 const SETUP_TIMEOUT_MS = 5 * 60_000
+const IDB_COMPANION_FORMULA = 'facebook/fb/idb-companion'
 
 export type SimulatorControlCommandRunner = (
   executable: string,
@@ -161,8 +162,9 @@ export class SimulatorControlSetupService {
             'Simulator control needs Homebrew to finish setup. Try again after Homebrew is installed.'
           )
         }
-        await this.run(brew, ['tap', 'facebook/fb'])
-        await this.run(brew, ['install', 'idb-companion'])
+        // Homebrew 6 requires third-party formulas to be trusted. A fully
+        // qualified install trusts only this formula, rather than the whole tap.
+        await this.run(brew, ['install', IDB_COMPANION_FORMULA])
       }
 
       if (!this.resolveBinary('idb')) {
