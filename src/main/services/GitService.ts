@@ -1326,10 +1326,17 @@ export class GitService {
           cwd: repo.repoRoot,
           timeoutMs: this.timeoutMs
         }),
-        this.run('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
-          cwd: repo.repoRoot,
-          timeoutMs: this.timeoutMs
-        }),
+        // Snapshot status is a background read. Without --no-optional-locks,
+        // Git may refresh/write the index stat cache; the repo watcher then
+        // observes its own read and schedules another snapshot indefinitely.
+        this.run(
+          'git',
+          ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all'],
+          {
+            cwd: repo.repoRoot,
+            timeoutMs: this.timeoutMs
+          }
+        ),
         this.readMergeState(repo.repoRoot),
         this.readLineStats(repo.repoRoot)
       ])

@@ -231,6 +231,31 @@ describe('GitService', () => {
     expect(result.data.clean).toBe(true)
   })
 
+  it('runs background snapshot status without optional index locks', async () => {
+    const calls: string[][] = []
+    const runner: GitCommandRunner = async (_command, args) => {
+      calls.push(args)
+      if (args.includes('--show-toplevel')) {
+        return { stdout: `${repo}\n`, stderr: '', code: 0 }
+      }
+      if (args.includes('--get-regexp')) return { stdout: '', stderr: '', code: 1 }
+      if (args.includes('symbolic-ref')) return { stdout: 'main\n', stderr: '', code: 0 }
+      if (args.includes('--short')) return { stdout: 'abc123\n', stderr: '', code: 0 }
+      if (args.includes('@{u}')) return { stdout: '', stderr: '', code: 1 }
+      if (args.includes('remote.origin.url')) return { stdout: '', stderr: '', code: 1 }
+      if (args.includes('--git-dir')) return { stdout: '.git\n', stderr: '', code: 0 }
+      return { stdout: '', stderr: '', code: 0 }
+    }
+
+    const result = await new GitService({ run: runner }).snapshot(repo)
+
+    expect(result.ok).toBe(true)
+    const status = calls.find((args) => args.includes('status'))
+    expect(status).toBeDefined()
+    expect(status).toContain('--no-optional-locks')
+    expect(status!.indexOf('--no-optional-locks')).toBeLessThan(status!.indexOf('status'))
+  })
+
   it('strips inherited Git routing variables before invoking the default runner', async () => {
     const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG_COUNT'] as const
     const previous = new Map(keys.map((key) => [key, process.env[key]]))

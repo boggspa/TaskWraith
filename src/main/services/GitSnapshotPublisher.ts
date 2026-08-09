@@ -83,6 +83,51 @@ const GIT_SIGNAL_FILES = new Set([
   'config'
 ])
 
+/** Requested path is subscriber presentation; every other field is repo state. */
+export function gitRepositorySnapshotsEqual(
+  left: GitRepositorySnapshot | null,
+  right: GitRepositorySnapshot | null
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  if (
+    left.repoRoot !== right.repoRoot ||
+    left.branch !== right.branch ||
+    left.commit !== right.commit ||
+    left.detached !== right.detached ||
+    left.upstream !== right.upstream ||
+    left.remoteName !== right.remoteName ||
+    left.remoteUrl !== right.remoteUrl ||
+    left.ahead !== right.ahead ||
+    left.behind !== right.behind ||
+    left.clean !== right.clean ||
+    left.mergeState !== right.mergeState ||
+    left.conflicts !== right.conflicts ||
+    left.counts.changed !== right.counts.changed ||
+    left.counts.staged !== right.counts.staged ||
+    left.counts.unstaged !== right.counts.unstaged ||
+    left.counts.untracked !== right.counts.untracked ||
+    left.lineStats.additions !== right.lineStats.additions ||
+    left.lineStats.deletions !== right.lineStats.deletions ||
+    left.files.length !== right.files.length
+  ) {
+    return false
+  }
+  return left.files.every((file, index) => {
+    const other = right.files[index]
+    return (
+      other != null &&
+      file.path === other.path &&
+      file.originalPath === other.originalPath &&
+      file.index === other.index &&
+      file.workingTree === other.workingTree &&
+      file.kind === other.kind &&
+      file.staged === other.staged &&
+      file.unstaged === other.unstaged
+    )
+  })
+}
+
 export class GitSnapshotPublisher {
   private readonly gitService: Pick<GitService, 'snapshot'>
   private readonly debounceMs: number
@@ -234,7 +279,9 @@ export class GitSnapshotPublisher {
         result.data.repoRoot === state.repoRoot &&
         state.generation === startedGeneration
       ) {
+        const changed = !gitRepositorySnapshotsEqual(state.lastGood, result.data)
         state.lastGood = result.data
+        if (!changed) return
         state.generation += 1
         this.broadcast(state, result.data, reason)
       }

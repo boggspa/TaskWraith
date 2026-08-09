@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GitSnapshotPublisher } from './GitSnapshotPublisher'
+import {
+  GitSnapshotPublisher,
+  gitRepositorySnapshotsEqual
+} from './GitSnapshotPublisher'
 import type { GitRepositorySnapshot, GitService } from './GitService'
 
 function makeSnapshot(
@@ -31,6 +34,32 @@ describe('GitSnapshotPublisher', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('compares repository state without treating subscriber paths as mutations', () => {
+    const left = makeSnapshot('/repo/left', {
+      files: [
+        {
+          path: 'src/App.tsx',
+          index: ' ',
+          workingTree: 'M',
+          kind: 'modified',
+          staged: false,
+          unstaged: true
+        }
+      ],
+      counts: { changed: 1, staged: 0, unstaged: 1, untracked: 0 },
+      clean: false
+    })
+    const right = { ...left, requestedPath: '/repo/right' }
+
+    expect(gitRepositorySnapshotsEqual(left, right)).toBe(true)
+    expect(
+      gitRepositorySnapshotsEqual(left, {
+        ...right,
+        lineStats: { additions: 1, deletions: 0 }
+      })
+    ).toBe(false)
   })
 
   it('subscribes by repo root and emits debounced authoritative refreshes', async () => {
@@ -99,6 +128,33 @@ describe('GitSnapshotPublisher', () => {
         })
       })
     )
+  })
+
+  it('does not broadcast an unchanged filesystem refresh', async () => {
+    const gitService = {
+      snapshot: vi.fn<Pick<GitService, 'snapshot'>['snapshot']>(async (path) => ({
+        ok: true,
+        data: makeSnapshot(path)
+      }))
+    }
+    const watchers: Array<(filename: string) => void> = []
+    const send = vi.fn()
+    const publisher = new GitSnapshotPublisher({
+      gitService,
+      debounceMs: 25,
+      minIntervalMs: 0,
+      watcherFactory: (_repoRoot, onChange) => {
+        watchers.push((filename) => onChange(filename))
+        return { on: vi.fn(), close: vi.fn() } as any
+      }
+    })
+    await publisher.subscribe({ subscriptionId: 'sub-1', requestedPath: '/repo', send })
+
+    watchers[0]('src/App.tsx')
+    await vi.advanceTimersByTimeAsync(25)
+
+    expect(gitService.snapshot).toHaveBeenCalledTimes(2)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('ignores noisy watcher paths and closes watchers when the last subscriber leaves', async () => {
