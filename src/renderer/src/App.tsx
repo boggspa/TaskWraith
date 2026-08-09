@@ -8,6 +8,7 @@ import {
   loadRendererUsageRecords
 } from './lib/usageRecordsCache'
 import { resolveWithinDeadline } from './lib/backgroundHydration'
+import { LateBackgroundRefreshCoordinator } from './lib/lateBackgroundRefreshCoordinator'
 import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
@@ -2581,14 +2582,18 @@ function App(): React.JSX.Element {
       _workspaceId?: string,
       _providerHint?: ProviderId,
       codexStatusHint?: any,
-      options?: { force?: boolean; forceUsageRecords?: boolean; quotaOnly?: boolean }
+      options?: {
+        force?: boolean
+        forceUsageRecords?: boolean
+        quotaOnly?: boolean
+        allowLateQuotaFollowup?: boolean
+      }
     ) => Promise<void>
   >(async () => {})
   const usageRefreshInFlightRef = useRef(false)
   const usageRefreshLastFiredAtRef = useRef<number | null>(null)
   const usageRecordsRefreshPendingRef = useRef(false)
-  const lateQuotaRefreshQueuedRef = useRef(false)
-  const lateQuotaRefreshTimerRef = useRef<number | null>(null)
+  const lateQuotaRefreshCoordinatorRef = useRef<LateBackgroundRefreshCoordinator | null>(null)
   const rawLogHydrationInFlightRef = useRef<Set<string>>(new Set())
   const [imageAttachmentsByChatId, setImageAttachmentsByChatId] = useState<
     Record<string, ImageAttachment[]>
@@ -3936,33 +3941,37 @@ function App(): React.JSX.Element {
       .catch(() => {})
       .finally(completeUsageRefresh)
   }
-  /** A quota response that missed the UI deadline is still useful data. Once
-   * it lands, re-read the now-warm provider caches promptly instead of making
-   * a meter wait for the 90-second heartbeat. Debouncing coalesces the five
-   * providers' late completions into one lightweight quota-only projection. */
+  /** A quota response that missed the UI deadline is still useful data. One
+   * bounded follow-up re-reads the now-warm provider caches; that follow-up
+   * cannot report itself as late and recursively create a permanent refresh
+   * loop when a provider or local helper remains slow. */
   const queueLateQuotaRefresh = () => {
-    if (lateQuotaRefreshQueuedRef.current) return
-    lateQuotaRefreshQueuedRef.current = true
-
-    const run = () => {
-      lateQuotaRefreshTimerRef.current = null
-      if (usageRefreshInFlightRef.current) {
-        lateQuotaRefreshTimerRef.current = window.setTimeout(run, 250)
-        return
-      }
-
-      lateQuotaRefreshQueuedRef.current = false
-      usageRefreshInFlightRef.current = true
-      usageRefreshLastFiredAtRef.current = Date.now()
-      void refreshUsageSummaryRef
-        .current(currentWorkspaceIdRef.current || undefined, undefined, undefined, {
-          quotaOnly: true
-        })
-        .catch(() => {})
-        .finally(completeUsageRefresh)
+    if (!lateQuotaRefreshCoordinatorRef.current) {
+      lateQuotaRefreshCoordinatorRef.current = new LateBackgroundRefreshCoordinator({
+        isBusy: () => usageRefreshInFlightRef.current,
+        runFollowup: async () => {
+          usageRefreshInFlightRef.current = true
+          usageRefreshLastFiredAtRef.current = Date.now()
+          try {
+            await refreshUsageSummaryRef.current(
+              currentWorkspaceIdRef.current || undefined,
+              undefined,
+              undefined,
+              { quotaOnly: true, allowLateQuotaFollowup: false }
+            )
+          } catch {
+            // Optional telemetry must never hold the global refresh gate.
+          } finally {
+            completeUsageRefresh()
+          }
+        },
+        schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        cancel: (handle) => window.clearTimeout(handle as number),
+        retryDelayMs: 250,
+        cooldownMs: CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS
+      })
     }
-
-    lateQuotaRefreshTimerRef.current = window.setTimeout(run, 250)
+    lateQuotaRefreshCoordinatorRef.current.queue()
   }
   const currentWorkspacePathRef = useRef<string | null>(null)
   const workspaceTrustGenerationRef = useRef(0)
@@ -8858,6 +8867,7 @@ function App(): React.JSX.Element {
       force?: boolean
       forceUsageRecords?: boolean
       quotaOnly?: boolean
+      allowLateQuotaFollowup?: boolean
     } = {}
   ) => {
     const now = Date.now()
@@ -8877,7 +8887,9 @@ function App(): React.JSX.Element {
         Promise.resolve().then(load),
         null,
         BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS,
-        { onLateResolve: queueLateQuotaRefresh }
+        options.allowLateQuotaFollowup === false
+          ? undefined
+          : { onLateResolve: queueLateQuotaRefresh }
       )
     const usageRecordsSignature = (records: UsageRecord[]) =>
       JSON.stringify(
@@ -11005,6 +11017,8 @@ function App(): React.JSX.Element {
 
     return () => {
       window.clearInterval(intervalId)
+      lateQuotaRefreshCoordinatorRef.current?.dispose()
+      lateQuotaRefreshCoordinatorRef.current = null
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('focus', handleVisibilityChange)
       window.removeEventListener('online', handleOnline)
