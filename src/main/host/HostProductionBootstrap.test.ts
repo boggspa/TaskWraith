@@ -121,6 +121,17 @@ function validOptions(
   }
 }
 
+function projectionFamilyPorts(): Partial<HostProductionBootstrapOptions> {
+  return {
+    missions: { listMissions: () => [] },
+    rounds: { listRounds: () => [] },
+    participants: { listParticipants: () => [] },
+    questions: { listQuestions: () => [] },
+    schedules: { listSchedules: () => [] },
+    artifacts: { listArtifacts: () => [] }
+  }
+}
+
 /** Bootstrap with a supervisor spy; returns the captured supervisor input. */
 function captureSupervisorInput(overrides: Partial<HostProductionBootstrapOptions> = {}): {
   supervisorInput: HostSupervisorInput
@@ -359,7 +370,7 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
     // The root supplies only what it uniquely holds. If either of these ever
     // moves back into Options, index.ts has to construct a Host type again
     // and this test is the tripwire.
-    const { compositionInput } = captureSupervisorInput()
+    const { compositionInput } = captureSupervisorInput(projectionFamilyPorts())
 
     expect(typeof compositionInput.commandExecutor).toBe('function')
     expect(compositionInput.hostCapabilityOffer).toEqual([
@@ -433,7 +444,32 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
   })
 
   it('withholds capabilities the donor cannot honestly populate', () => {
-    const { compositionInput } = captureSupervisorInput()
+    const withoutPorts = captureSupervisorInput().compositionInput
+    // Host-native approvals and compact export remain real without optional
+    // AppStore shadows; the other family offers must not overclaim.
+    expect(withoutPorts.hostCapabilityOffer).toEqual([
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'commands',
+      'receipts',
+      'health',
+      'approvals',
+      'compact-export',
+      'recovery'
+    ])
+    for (const withheld of [
+      'usage',
+      'missions',
+      'ensemble',
+      'schedules',
+      'artifacts',
+      'questions'
+    ]) {
+      expect(withoutPorts.hostCapabilityOffer).not.toContain(withheld)
+    }
+
+    const { compositionInput } = captureSupervisorInput(projectionFamilyPorts())
     // usage stays unavailable; the .twmission consumer makes compact-export honest.
     for (const withheld of ['usage']) {
       expect(compositionInput.hostCapabilityOffer).not.toContain(withheld)
@@ -450,6 +486,23 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
       expect(compositionInput.hostCapabilityOffer).toContain(offered)
     }
     expect(compositionInput.hostCapabilityOffer).toContain('compact-export')
+  })
+
+  it('offers ensemble only when both round and participant projections exist', () => {
+    expect(
+      captureSupervisorInput({ rounds: { listRounds: () => [] } }).compositionInput
+        .hostCapabilityOffer
+    ).not.toContain('ensemble')
+    expect(
+      captureSupervisorInput({ participants: { listParticipants: () => [] } }).compositionInput
+        .hostCapabilityOffer
+    ).not.toContain('ensemble')
+    expect(
+      captureSupervisorInput({
+        rounds: { listRounds: () => [] },
+        participants: { listParticipants: () => [] }
+      }).compositionInput.hostCapabilityOffer
+    ).toContain('ensemble')
   })
 
   it('wires the production evaluator, not an allow-all fixture', async () => {

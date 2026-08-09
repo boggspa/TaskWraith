@@ -126,29 +126,13 @@ const HOST_INTERNAL_CONTEXT: HostAuthorityCallContext = {
 /**
  * The capability offer a production Host advertises.
  *
- * Base transport caps always offered. Domain families are advertised only
- * when a real production port feeds them (Track3/Track4 shadows + Phase 2/3
- * approvals/questions). `compact-export` is backed by the composition's
- * integrity-verified snapshot capture. Still withheld: `usage` (availability unavailable).
- * Advertising an empty
- * or unavailable family is fabricated telemetry — forbidden by the arc goal.
+ * Base transport/receipt caps and Host-native deferred approvals are always
+ * offered. Optional projection families are advertised only when the real
+ * production ports that populate them are present. `compact-export` is backed
+ * by the composition's integrity-verified snapshot capture. Still withheld:
+ * `usage` (availability unavailable). Advertising an unavailable family is
+ * fabricated telemetry — forbidden by the arc goal.
  */
-const HOST_PRODUCTION_CAPABILITY_OFFER: readonly HostCapability[] = [
-  'bootstrap',
-  'snapshot',
-  'deltas',
-  'commands',
-  'receipts',
-  'health',
-  'missions',
-  'ensemble',
-  'approvals',
-  'questions',
-  'schedules',
-  'artifacts',
-  'compact-export',
-  'recovery'
-]
 
 /* ------------------------------------------------------------------ */
 /*  Options                                                          */
@@ -233,6 +217,29 @@ export interface HostProductionBootstrapOptions {
   readonly createServer?: (options: HostLocalServerOptions) => HostLocalServer
   /** Supervisor factory seam; defaults to createHostSupervisor. */
   readonly createSupervisor?: (input: HostSupervisorInput) => HostSupervisor
+}
+
+function hostProductionCapabilityOffer(
+  options: HostProductionBootstrapOptions
+): readonly HostCapability[] {
+  const capabilities: HostCapability[] = [
+    'bootstrap',
+    'snapshot',
+    'deltas',
+    'commands',
+    'receipts',
+    'health'
+  ]
+  if (options.missions) capabilities.push('missions')
+  if (options.rounds && options.participants) capabilities.push('ensemble')
+  // Deferred Host commands always project their own approval challenges even
+  // when the optional AppStore pending-approval shadow is absent.
+  capabilities.push('approvals')
+  if (options.questions) capabilities.push('questions')
+  if (options.schedules) capabilities.push('schedules')
+  if (options.artifacts) capabilities.push('artifacts')
+  capabilities.push('compact-export', 'recovery')
+  return capabilities
 }
 
 /* ------------------------------------------------------------------ */
@@ -473,7 +480,7 @@ export function createHostProductionBootstrap(
     authorityEvaluator,
     healthProvider,
     host: options.host,
-    hostCapabilityOffer: HOST_PRODUCTION_CAPABILITY_OFFER,
+    hostCapabilityOffer: hostProductionCapabilityOffer(options),
     pipelineFactory,
     ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
     ...(options.nowIso ? { now: options.nowIso } : {})
