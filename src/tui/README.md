@@ -39,6 +39,25 @@ For a deterministic, non-interactive 80x24 frame:
 npm run tui:snapshot
 ```
 
+Machine-readable projection output uses the same authenticated Host snapshot:
+
+```sh
+tw --dev --json
+```
+
+Capture and replay a bounded, privacy-safe mission flight recorder:
+
+```sh
+tw --dev --export ./incident.twmission
+tw --replay ./incident.twmission --width 100 --height 30
+tw --replay ./incident.twmission --json
+```
+
+Export refuses to replace an existing file unless `--force` is explicit.
+Replay validates the schema, protocol/projection versions, size ceiling and
+integrity digest before rendering. It is detached: replay cannot connect to or
+mutate live Host state.
+
 Build only the sidecar with `npm run tui:build`. The compiled entry point is
 `out/tui/tui/cli.js`, exposed as both `taskwraith` and `tw` when the package is
 linked or installed. `NO_COLOR=1` and `--no-animation` provide static
@@ -86,6 +105,7 @@ width-1 ASCII invariant are in [`DESIGN.md`](./DESIGN.md).
 | `Ctrl+A` / `Ctrl+E`       | Jump to the start / end of the composer              |
 | `Ctrl+O`                  | Toggle the context lens                              |
 | `Ctrl+K`                  | Toggle the thread picker                             |
+| `Ctrl+R`                  | Toggle live/historical mission control               |
 | `Ctrl+G`                  | Toggle the tune lens (model/reasoning, or seats)     |
 | `Ctrl+P`                  | Toggle the command reference                         |
 | `Page Up` / `Page Down`   | Scroll the transcript                                |
@@ -93,9 +113,11 @@ width-1 ASCII invariant are in [`DESIGN.md`](./DESIGN.md).
 | `Ctrl+U`                  | Clear the composer                                   |
 | `Ctrl+C`                  | Clear a non-empty composer; press again to leave     |
 
-Slash commands are `/context`, `/threads`, `/model`, `/seats`, `/help`,
-`/cancel`, and `/quit`. Cancellation is always an explicit command and is still
-validated by Electron main.
+Slash commands are `/context`, `/threads`, `/missions`, `/history`, `/model`,
+`/seats`, `/help`, `/cancel`, and `/quit`. Mission control filters Active,
+History, or All and shows the selected mission's round, routing/fan-out,
+provider outcomes, and paged participant cast at the Host generation/cursor.
+Cancellation is always an explicit command and is still validated by Host.
 
 The tune lens is a deliberately narrow preview surface. On a solo thread it
 stages a model/reasoning switch **within the thread's current provider**: the
@@ -170,6 +192,11 @@ The client can currently:
   action;
 - cancel a solo run or an ensemble round through their respective main-owned
   action paths.
+- resume ordered Host deltas and resnapshot on generation/cursor discontinuity;
+- browse live and historical missions, rounds, routing and participant state;
+- print the coherent Host projection as JSON;
+- export integrity-checked `.twmission` bundles and render them as detached,
+  command-free replays.
 
 The facade derives workspace, provider, model, reasoning, and live run identity
 from canonical AppStore records. Client input cannot nominate a different

@@ -19,6 +19,7 @@ export type TuiConnectionState =
   | 'offline'
   | 'incompatible-protocol'
   | 'demo'
+  | 'replay'
 export type TuiOverlay = 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 

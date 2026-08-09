@@ -128,8 +128,9 @@ const HOST_INTERNAL_CONTEXT: HostAuthorityCallContext = {
  *
  * Base transport caps always offered. Domain families are advertised only
  * when a real production port feeds them (Track3/Track4 shadows + Phase 2/3
- * approvals/questions). Still withheld: `usage` (availability unavailable)
- * and `compact-export` (no production consumer yet). Advertising an empty
+ * approvals/questions). `compact-export` is backed by the composition's
+ * integrity-verified snapshot capture. Still withheld: `usage` (availability unavailable).
+ * Advertising an empty
  * or unavailable family is fabricated telemetry — forbidden by the arc goal.
  */
 const HOST_PRODUCTION_CAPABILITY_OFFER: readonly HostCapability[] = [
@@ -145,6 +146,7 @@ const HOST_PRODUCTION_CAPABILITY_OFFER: readonly HostCapability[] = [
   'questions',
   'schedules',
   'artifacts',
+  'compact-export',
   'recovery'
 ]
 

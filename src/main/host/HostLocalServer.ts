@@ -54,6 +54,7 @@ import {
   type HostAuthorityCallContext,
   parseHostAuthorityReceiptLookup
 } from './HostAuthority'
+import { TW_MISSION_MAX_BUNDLE_BYTES } from './twmission'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,6 +63,7 @@ import {
 const HANDSHAKE_TIMEOUT_MS = 5_000
 const MAX_CLIENTS_DEFAULT = 6
 const MAX_LINE_BYTES = 256_000
+const MAX_COMPACT_EXPORT_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
 
 // ---------------------------------------------------------------------------
 // Options
@@ -127,7 +129,11 @@ function socketWrite(socket: Socket, frame: HostLocalTransportHostFrame): boolea
   if (socket.destroyed || !socket.writable) return false
   let line = `${JSON.stringify(frame)}\n`
   let bytes = Buffer.byteLength(line, 'utf8')
-  if (bytes > MAX_LINE_BYTES) {
+  const lineBudget =
+    frame.type === 'response' && frame.ok && frame.result.kind === 'twmission.export'
+      ? MAX_COMPACT_EXPORT_LINE_BYTES
+      : MAX_LINE_BYTES
+  if (bytes > lineBudget) {
     // Response too large for the transport.  Send a body-free error frame
     // with the same id when the frame carried one, then destroy.
     if (frame.type === 'response' && frame.ok === true) {
@@ -143,7 +149,7 @@ function socketWrite(socket: Socket, frame: HostLocalTransportHostFrame): boolea
       return false
     }
   }
-  if (socket.writableLength + bytes > MAX_LINE_BYTES * 2) {
+  if (socket.writableLength + bytes > lineBudget * 2) {
     socket.destroy(new Error('Host local client is not draining responses.'))
     return false
   }
@@ -809,7 +815,10 @@ export class HostLocalServer {
     }
     const success: HostLocalTransportSuccessResult = {
       kind: 'twmission.export',
-      result: result as Record<string, unknown>
+      // Bytes are deterministically reconstructed and integrity-verified by
+      // the client. Sending both bundle and Uint8Array would double the wire
+      // payload and JSON-encode bytes as an object with numeric keys.
+      result: { bundle: result.bundle }
     }
     return {
       type: 'response',

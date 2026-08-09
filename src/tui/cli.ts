@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
+import { chmod, readFile, stat, writeFile } from 'node:fs/promises'
 import { HostProjectionClient } from '../main/host/HostProjectionClient'
 import {
-  defaultTaskWraithDevUserDataPath,
-  defaultTaskWraithUserDataPath
-} from '../shared/taskWraithControlPaths.node'
-import { Ansi, detectAnsiColorMode, type AnsiColorMode } from './ansi'
+  TW_MISSION_MAX_BUNDLE_BYTES,
+  importTwMissionBundleBytes,
+  type TwMissionManifest
+} from '../main/host/twmission'
+import type { HostSnapshot } from '../shared/hostProtocol'
+import { Ansi } from './ansi'
 import { TaskWraithTui } from './TaskWraithTui'
+import {
+  parseTaskWraithTuiArgs,
+  taskWraithTuiUsage,
+  type TaskWraithTuiCliOptions
+} from './cliOptions'
 import {
   mapHostSnapshotToControlSnapshot,
   mapHostSnapshotToThreadDetail
@@ -17,132 +24,7 @@ import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 
-const TUI_VERSION = '0.1.0'
-
-interface CliOptions {
-  demo: boolean
-  dev: boolean
-  snapshot: boolean
-  width: number
-  height: number
-  colorMode: AnsiColorMode
-  animationEnabled: boolean
-  /** Force ASCII chrome; also set by TASKWRAITH_TUI_ASCII=1 via detectTuiUnicode. */
-  ascii: boolean
-  threadId?: string
-  userDataPath?: string
-  help: boolean
-  version: boolean
-}
-
-function usage(): string {
-  return `TaskWraith TUI ${TUI_VERSION}
-
-Usage:
-  taskwraith [options]
-  tw [options]
-
-Options:
-  --demo                 Run the self-contained presentation demo
-  --dev                  Connect to TaskWraith Dev (honours TASKWRAITH_INSTANCE_ID)
-  --snapshot             Render one frame and exit
-  --width <columns>      Snapshot width (default: terminal or 80)
-  --height <rows>        Snapshot height (default: terminal or 24)
-  --thread <id>          Open a specific TaskWraith thread
-  --user-data <path>     Override Electron's TaskWraith userData directory
-  --no-color             Disable ANSI colour
-  --color <mode>         truecolor, ansi256, or none
-  --ascii                Force ASCII chrome (also: TASKWRAITH_TUI_ASCII=1)
-  --no-animation         Use the static working indicator
-  --version              Print the TUI version
-  --help                 Show this help
-
-Interactive keys:
-  Ctrl+O context  Ctrl+K threads  Ctrl+P commands  PgUp/PgDn scroll
-  Enter send      Ctrl+C clear/quit               /cancel active run
-  y/n             Answer a pending Host approval ask (Wave 4.2b)
-
-The normal sidecar connects to a running TaskWraith Host (v2 local protocol).
-Wave 4.2b submits mutations over the same HostProjectionClient (commands +
-receipts). Deferred Host asks surface as pending receipts — never as success —
-and resolve via approval.decide or receipt poll. v1 TaskWraithControlClient is
-retained in tree but unused on this entry path.`
-}
-
-function positiveInteger(raw: string | undefined, flag: string): number {
-  const value = Number(raw)
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`${flag} expects a positive integer.`)
-  }
-  return value
-}
-
-function colorMode(raw: string | undefined): AnsiColorMode {
-  if (raw === 'truecolor' || raw === 'ansi256' || raw === 'none') return raw
-  throw new Error('--color expects truecolor, ansi256, or none.')
-}
-
-function takeValue(args: string[], index: number, flag: string): [string, number] {
-  const value = args[index + 1]
-  if (!value || value.startsWith('--')) throw new Error(`${flag} expects a value.`)
-  return [value, index + 1]
-}
-
-function parseArgs(args: string[]): CliOptions {
-  const options: CliOptions = {
-    demo: false,
-    dev: false,
-    snapshot: false,
-    width: process.stdout.columns || 80,
-    height: process.stdout.rows || 24,
-    colorMode: detectAnsiColorMode(),
-    animationEnabled: true,
-    ascii: false,
-    help: false,
-    version: false
-  }
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index]
-    const [flag, inline] = argument.includes('=')
-      ? [argument.slice(0, argument.indexOf('=')), argument.slice(argument.indexOf('=') + 1)]
-      : [argument, undefined]
-    if (flag === '--demo') options.demo = true
-    else if (flag === '--dev') options.dev = true
-    else if (flag === '--snapshot') options.snapshot = true
-    else if (flag === '--no-color') options.colorMode = 'none'
-    else if (flag === '--ascii') options.ascii = true
-    else if (flag === '--no-animation') options.animationEnabled = false
-    else if (flag === '--help' || flag === '-h') options.help = true
-    else if (flag === '--version' || flag === '-v') options.version = true
-    else if (flag === '--width') {
-      const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--width')
-      options.width = positiveInteger(value, '--width')
-      index = consumed
-    } else if (flag === '--height') {
-      const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--height')
-      options.height = positiveInteger(value, '--height')
-      index = consumed
-    } else if (flag === '--color') {
-      const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--color')
-      options.colorMode = colorMode(value)
-      index = consumed
-    } else if (flag === '--thread') {
-      const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--thread')
-      options.threadId = value
-      index = consumed
-    } else if (flag === '--user-data') {
-      const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--user-data')
-      options.userDataPath = resolve(value)
-      index = consumed
-    } else {
-      throw new Error(`Unknown option: ${argument}`)
-    }
-  }
-  if (options.dev && !options.userDataPath) {
-    options.userDataPath = defaultTaskWraithDevUserDataPath()
-  }
-  return options
-}
+const TUI_VERSION = '0.2.0'
 
 function pickThread(
   snapshot: { threads: Array<{ id: string; archived: boolean; updatedAt: number }> },
@@ -154,11 +36,48 @@ function pickThread(
     .sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id
 }
 
-function resolveCliGlyphs(options: CliOptions): TuiGlyphSet {
+function resolveCliGlyphs(options: TaskWraithTuiCliOptions): TuiGlyphSet {
   return resolveTuiGlyphs(options.ascii ? false : detectTuiUnicode())
 }
 
-async function connectedSnapshot(options: CliOptions): Promise<TaskWraithTuiState> {
+function stateFromHostSnapshot(
+  hostSnapshot: HostSnapshot,
+  options: {
+    connection: 'connected' | 'replay'
+    threadId?: string
+    hostVersion?: string
+  }
+): TaskWraithTuiState {
+  const snapshot = mapHostSnapshotToControlSnapshot(hostSnapshot)
+  const threadId = pickThread(snapshot, options.threadId)
+  const detail = threadId ? mapHostSnapshotToThreadDetail(hostSnapshot, threadId) : null
+  return {
+    connection: options.connection,
+    ...(options.hostVersion ? { hostVersion: options.hostVersion } : {}),
+    snapshot,
+    hostProjection: hostSnapshot,
+    ...(detail ? { thread: detail.thread, selectedThreadId: detail.thread.thread.id } : {}),
+    input: '',
+    inputCursor: 0,
+    overlay: 'none',
+    overlayIndex: 0,
+    missionFilter: 'active',
+    missionParticipantOffset: 0,
+    scrollOffset: 0,
+    animationFrame: 0,
+    tuneEffortIndex: 0,
+    ...(options.connection === 'replay'
+      ? {
+          notice: {
+            text: 'Detached replay · commands disabled',
+            tone: 'neutral' as const
+          }
+        }
+      : {})
+  }
+}
+
+async function connectedSnapshot(options: TaskWraithTuiCliOptions): Promise<TaskWraithTuiState> {
   const client = new HostProjectionClient({
     client: {
       clientId: `tui-snapshot-${randomUUID()}`,
@@ -167,34 +86,44 @@ async function connectedSnapshot(options: CliOptions): Promise<TaskWraithTuiStat
       displayName: 'TaskWraith TUI'
     },
     capabilities: ['bootstrap', 'snapshot', 'health'],
-    userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
+    userDataPath: options.userDataPath
   })
   try {
     const welcome = await client.connect()
     const frame = await client.getSnapshot()
-    const snapshot = mapHostSnapshotToControlSnapshot(frame.snapshot)
-    const threadId = pickThread(snapshot, options.threadId)
-    const detail = threadId ? mapHostSnapshotToThreadDetail(frame.snapshot, threadId) : null
-    return {
+    return stateFromHostSnapshot(frame.snapshot, {
       connection: 'connected',
       hostVersion: welcome.hostVersion,
-      snapshot,
-      ...(detail ? { thread: detail.thread, selectedThreadId: detail.thread.thread.id } : {}),
-      input: '',
-      inputCursor: 0,
-      overlay: 'none',
-      overlayIndex: 0,
-      scrollOffset: 0,
-      animationFrame: 0,
-      tuneEffortIndex: 0
-    }
+      ...(options.threadId ? { threadId: options.threadId } : {})
+    })
   } finally {
     client.close()
   }
 }
 
-async function renderSnapshot(options: CliOptions): Promise<void> {
-  const state = options.demo ? createTaskWraithTuiDemoState() : await connectedSnapshot(options)
+async function loadReplay(
+  options: TaskWraithTuiCliOptions
+): Promise<{ state: TaskWraithTuiState; manifest: TwMissionManifest }> {
+  const replayPath = options.replayPath
+  if (!replayPath) throw new Error('Replay path is required.')
+  const metadata = await stat(replayPath)
+  if (!metadata.isFile()) throw new Error('Replay path must name a regular file.')
+  if (metadata.size > TW_MISSION_MAX_BUNDLE_BYTES) {
+    throw new Error('Replay bundle exceeds the size ceiling.')
+  }
+  const bytes = await readFile(replayPath)
+  const imported = importTwMissionBundleBytes(bytes)
+  if (!imported.ok) throw new Error(`Replay rejected: ${imported.error}`)
+  return {
+    state: stateFromHostSnapshot(imported.replay.snapshot, {
+      connection: 'replay',
+      ...(options.threadId ? { threadId: options.threadId } : {})
+    }),
+    manifest: imported.replay.manifest
+  }
+}
+
+function renderSnapshotState(state: TaskWraithTuiState, options: TaskWraithTuiCliOptions): void {
   const output = renderTaskWraithTui(state, {
     width: options.width,
     height: options.height,
@@ -205,25 +134,99 @@ async function renderSnapshot(options: CliOptions): Promise<void> {
   process.stdout.write(`${output}\n`)
 }
 
+function printJsonProjection(
+  state: TaskWraithTuiState,
+  source: 'host' | 'demo' | 'twmission-replay',
+  manifest?: TwMissionManifest
+): void {
+  const snapshot = state.hostProjection
+  if (!snapshot) throw new Error('No coherent Host projection is available for JSON output.')
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        source,
+        ...(state.hostVersion ? { hostVersion: state.hostVersion } : {}),
+        generation: snapshot.generation,
+        cursor: snapshot.cursor,
+        freshness: snapshot.freshness,
+        ...(state.selectedThreadId ? { selectedThreadId: state.selectedThreadId } : {}),
+        ...(manifest ? { manifest } : {}),
+        snapshot
+      },
+      null,
+      2
+    )}\n`
+  )
+}
+
+async function exportTwMission(options: TaskWraithTuiCliOptions): Promise<void> {
+  const exportPath = options.exportPath
+  if (!exportPath) throw new Error('Export path is required.')
+  const client = new HostProjectionClient({
+    client: {
+      clientId: `tui-export-${randomUUID()}`,
+      clientClass: 'tui',
+      clientVersion: TUI_VERSION,
+      displayName: 'TaskWraith TUI export'
+    },
+    capabilities: ['bootstrap', 'snapshot', 'compact-export', 'health'],
+    userDataPath: options.userDataPath
+  })
+  try {
+    const welcome = await client.connect()
+    if (!welcome.capabilities.includes('compact-export')) {
+      throw new Error('This TaskWraith Host does not offer compact export.')
+    }
+    const exported = await client.exportTwMission()
+    await writeFile(exportPath, exported.bytes, {
+      flag: options.force ? 'w' : 'wx',
+      mode: 0o600
+    })
+    await chmod(exportPath, 0o600)
+    process.stdout.write(
+      `Exported ${exported.bytes.byteLength} bytes to ${exportPath}\n${exported.bundle.manifest.integrityDigest}\n`
+    )
+  } finally {
+    client.close()
+  }
+}
+
 let activeTui: TaskWraithTui | null = null
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2))
+  const options = parseTaskWraithTuiArgs(process.argv.slice(2))
   if (options.help) {
-    process.stdout.write(`${usage()}\n`)
+    process.stdout.write(`${taskWraithTuiUsage(TUI_VERSION)}\n`)
     return
   }
   if (options.version) {
     process.stdout.write(`${TUI_VERSION}\n`)
     return
   }
+  if (options.exportPath) {
+    await exportTwMission(options)
+    return
+  }
+  if (options.replayPath) {
+    const replay = await loadReplay(options)
+    if (options.json) printJsonProjection(replay.state, 'twmission-replay', replay.manifest)
+    else renderSnapshotState(replay.state, options)
+    return
+  }
+  if (options.json) {
+    const state = options.demo ? createTaskWraithTuiDemoState() : await connectedSnapshot(options)
+    printJsonProjection(state, options.demo ? 'demo' : 'host')
+    return
+  }
   if (options.snapshot) {
-    await renderSnapshot(options)
+    const state = options.demo ? createTaskWraithTuiDemoState() : await connectedSnapshot(options)
+    renderSnapshotState(state, options)
     return
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
-      'Interactive mode requires a terminal. Use --snapshot (or --demo --snapshot) for redirected output.'
+      'Interactive mode requires a terminal. Use --snapshot, --json, --export, or --replay for redirected output.'
     )
   }
   activeTui = new TaskWraithTui({
@@ -251,8 +254,7 @@ process.once('SIGHUP', () => {
   process.exitCode = 129
 })
 // A last line of defence: an escaped exception anywhere in the run loop must
-// still restore raw mode / the alternate screen before the process ends, or
-// the user's shell is left broken after the sidecar crashes.
+// still restore raw mode / the alternate screen before the process ends.
 process.once('uncaughtException', (error) => {
   activeTui?.stop()
   process.stderr.write(
@@ -267,8 +269,6 @@ process.once('unhandledRejection', (reason) => {
   )
   process.exitCode = 1
 })
-// Synchronous last-resort restoration: `stop()` is idempotent, so this is a
-// no-op whenever an earlier handler already restored the terminal.
 process.on('exit', () => {
   activeTui?.stop()
 })

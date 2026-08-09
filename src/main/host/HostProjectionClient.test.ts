@@ -35,6 +35,7 @@ import {
   HostProjectionIncompatibleProtocolError,
   HostProjectionTransportError
 } from './HostProjectionClient'
+import { exportTwMissionBundle } from './twmission'
 
 const cleanup: Array<() => Promise<void> | void> = []
 
@@ -420,6 +421,58 @@ describe('HostProjectionClient', () => {
       result: { kind: 'command.submit', receipt }
     })
     expect((await commandPending).commandId).toBe('cmd-1')
+  })
+
+  it('exports and integrity-verifies a detached twmission bundle', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const exported = exportTwMissionBundle({
+      snapshot: makeEmptySnapshot(),
+      cursorRange: { generation: 3, fromCursor: 0, toCursor: 42 },
+      exportedAt: '2026-08-09T00:00:00.000Z',
+      hostId: 'test-host'
+    })
+    if (!exported.ok) throw new Error(exported.error)
+
+    const pending = client.exportTwMission()
+    const request = await readLine(hostSocket)
+    expect(request.kind).toBe('twmission.export')
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(request.id),
+      ok: true,
+      result: { kind: 'twmission.export', result: { bundle: exported.bundle } }
+    })
+
+    const received = await pending
+    expect(received.bundle.manifest.integrityDigest).toBe(exported.bundle.manifest.integrityDigest)
+    expect(received.bundle.snapshot).toEqual(makeEmptySnapshot())
+    expect(received.bytes.byteLength).toBeGreaterThan(0)
+  })
+
+  it('rejects a twmission export whose integrity digest was tampered', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const exported = exportTwMissionBundle({
+      snapshot: makeEmptySnapshot(),
+      cursorRange: { generation: 3, fromCursor: 0, toCursor: 42 },
+      exportedAt: '2026-08-09T00:00:00.000Z'
+    })
+    if (!exported.ok) throw new Error(exported.error)
+    const tampered = {
+      ...exported.bundle,
+      manifest: { ...exported.bundle.manifest, integrityDigest: '0'.repeat(64) }
+    }
+
+    const pending = client.exportTwMission()
+    const request = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(request.id),
+      ok: true,
+      result: { kind: 'twmission.export', result: { bundle: tampered } }
+    })
+    await expect(pending).rejects.toThrow(/integrityDigest mismatch/)
   })
 
   it('emits deltas/health events and ends the socket on host.closing', async () => {

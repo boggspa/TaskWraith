@@ -728,7 +728,14 @@ describe('HostLocalServer', () => {
     it('twmission.export routes to authority.exportTwMission when available', async () => {
       const exportTwMission = vi.fn().mockResolvedValue({
         ok: true,
-        bundle: { schemaVersion: 1, protocolVersion: 2, manifest: {}, snapshot: {} },
+        // Larger than the ordinary 256 KB RPC line budget: compact export has
+        // its own bounded 8 MB envelope and must not degrade to host_unavailable.
+        bundle: {
+          schemaVersion: 1,
+          protocolVersion: 2,
+          manifest: {},
+          snapshot: { padding: 'x'.repeat(300_000) }
+        },
         bytes: new Uint8Array([1, 2, 3])
       })
       // Rebuild server with the augmented authority for this test only
@@ -759,7 +766,8 @@ describe('HostLocalServer', () => {
         if (frame.ok) {
           expect(frame.result.kind).toBe('twmission.export')
           if (frame.result.kind === 'twmission.export') {
-            expect(frame.result.result.ok).toBe(true)
+            expect(frame.result.result.bundle).toBeDefined()
+            expect(frame.result.result.bytes).toBeUndefined()
           }
         }
       }

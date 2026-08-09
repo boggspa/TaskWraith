@@ -50,9 +50,15 @@ import {
   taskWraithHostDiscoveryPath,
   type TaskWraithHostDiscovery
 } from '../../shared/taskWraithHostPaths.node'
+import {
+  TW_MISSION_MAX_BUNDLE_BYTES,
+  encodeTwMissionBundle,
+  importTwMissionBundleBytes,
+  type TwMissionBundle
+} from './twmission'
 
-/** Match HostLocalServer line budget so client and server fail closed together. */
-export const HOST_PROJECTION_CLIENT_MAX_LINE_BYTES = 256_000
+/** Bounded compact export plus its transport envelope. */
+export const HOST_PROJECTION_CLIENT_MAX_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
 
 const DEFAULT_CLIENT_CAPABILITIES: readonly HostCapability[] = [
   'bootstrap',
@@ -94,6 +100,11 @@ export interface HostProjectionCachedSnapshot {
   /** Cursor observed when the snapshot was last received live. */
   cursor: number
   receivedAt: string
+}
+
+export interface HostProjectionTwMissionExport {
+  readonly bundle: TwMissionBundle
+  readonly bytes: Uint8Array
 }
 
 export interface HostProjectionClientEvents {
@@ -323,6 +334,29 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       throw new Error('TaskWraith Host returned an unexpected command result kind.')
     }
     return result.receipt
+  }
+
+  /** Export one integrity-verified, detached `.twmission` bundle. */
+  async exportTwMission(): Promise<HostProjectionTwMissionExport> {
+    const result = await this.request('twmission.export', {})
+    if (result.kind !== 'twmission.export') {
+      throw new Error('TaskWraith Host returned an unexpected twmission export result kind.')
+    }
+    const encoded = encodeTwMissionBundle(result.result.bundle as TwMissionBundle)
+    if (!encoded.ok) {
+      throw new Error(`TaskWraith Host returned an invalid twmission bundle: ${encoded.error}`)
+    }
+    const imported = importTwMissionBundleBytes(encoded.bytes)
+    if (!imported.ok) {
+      throw new Error(`TaskWraith Host returned an invalid twmission bundle: ${imported.error}`)
+    }
+    return {
+      bundle: {
+        manifest: imported.replay.manifest,
+        snapshot: imported.replay.snapshot
+      },
+      bytes: encoded.bytes
+    }
   }
 
   private buildHello(token: string) {
