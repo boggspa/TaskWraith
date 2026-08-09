@@ -120,6 +120,15 @@ describe('resolveChatHydration', () => {
     expect(apply).toContain('commitHydratedChat({')
     expect(apply).toContain('chatHydrationRuntimeRef.current.transcriptStore')
     expect(apply).toContain('chatHydrationRuntimeRef.current.byteLru')
+    expect(apply).not.toContain('pinReason: currentChatIdRef.current')
+  })
+
+  it('owns focused residency for exactly the focused chat lifecycle', () => {
+    const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain("byteLru.pin(chatId, 'focused')")
+    expect(source).toContain("return () => byteLru.unpin(chatId, 'focused')")
+    expect(source).toContain('}, [currentChat?.appChatId])')
   })
 
   it('cancels pending hydration before delete, clear-all, and reap removal', () => {

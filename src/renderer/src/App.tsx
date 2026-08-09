@@ -3610,6 +3610,18 @@ function App(): React.JSX.Element {
     })()
   )
 
+  // Focus is a residency lease, not a permanent property of every chat ever
+  // visited. Pair ownership with React's chat-id lifecycle so the previous
+  // transcript becomes evictable as soon as focus moves elsewhere. Visible
+  // multiview/side surfaces retain their own independent pane/side leases.
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    const byteLru = chatHydrationRuntimeRef.current.byteLru
+    byteLru.pin(chatId, 'focused')
+    return () => byteLru.unpin(chatId, 'focused')
+  }, [currentChat?.appChatId])
+
   useEffect(() => {
     if (!inspectingRunId) return
     const runs = currentChat?.runs || []
@@ -6145,8 +6157,7 @@ function App(): React.JSX.Element {
       const committed = commitHydratedChat({
         chat: merged,
         transcriptStore: chatHydrationRuntimeRef.current.transcriptStore,
-        byteLru: chatHydrationRuntimeRef.current.byteLru,
-        pinReason: currentChatIdRef.current === merged.appChatId ? 'focused' : undefined
+        byteLru: chatHydrationRuntimeRef.current.byteLru
       })
       chatByIdRef.current.set(committed.appChatId, committed)
       setChats((prev) => mergeChatRecord(prev, committed))
