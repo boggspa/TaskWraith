@@ -2825,10 +2825,20 @@
     ),
     color-mix(in srgb, var(--surface-2, #24242a) 82%, transparent);
 }
+.first-launch-sheet-theme-preview {
+  display: grid;
+  gap: 8px;
+}
+.first-launch-sheet-theme-preview > .first-launch-sheet-preference-field {
+  display: block;
+}
 .first-launch-sheet-preference-controls {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+.first-launch-sheet-preference-controls--secondary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .first-launch-sheet-preference-field {
   display: flex;

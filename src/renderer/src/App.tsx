@@ -31042,6 +31042,7 @@ function App(): React.JSX.Element {
         themeAppearance={appearance.themeAppearance || 'system'}
         composerStyle={appearance.composerStyle || 'default'}
         userBubbleColor={appearance.userBubbleColor || 'system'}
+        diffStatColors={appearance.diffStatColors}
         userName={settings?.userName ?? ''}
         onAppearancePreviewChange={handleSettingsChange}
         cliPathDirectories={settings?.cliPathDirectories ?? []}

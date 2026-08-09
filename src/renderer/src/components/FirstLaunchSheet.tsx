@@ -7,6 +7,8 @@ import type {
   ThemeAppearance,
   UserBubbleColor
 } from '../../../main/store/types'
+import type { DiffStatColors } from '../../../shared/diffStatColors'
+import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
@@ -30,6 +32,7 @@ import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { FirstLaunchProductObservation } from './FirstLaunchProductObservation'
 import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
 import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
+import { ThemeAppearancePreviewStack } from './ThemeAppearancePreviewStack'
 
 type OnboardingProviderId = ProviderId
 
@@ -116,6 +119,8 @@ export interface FirstLaunchSheetProps {
   themeAppearance?: ThemeAppearance
   composerStyle?: ComposerStyle
   userBubbleColor?: UserBubbleColor
+  /** Reuses saved Appearance colors when onboarding is reopened later. */
+  diffStatColors?: DiffStatColors
   userName?: string
   onAppearancePreviewChange?: (
     next: Partial<
@@ -226,32 +231,6 @@ function applyOutOfUsage(
   }
 }
 
-const ONBOARDING_THEME_OPTIONS: Array<{ value: ThemeAppearance; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'light', label: 'Light' },
-  { value: 'midnight', label: 'Midnight' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'red', label: 'Red' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'yellow', label: 'Yellow' },
-  { value: 'green', label: 'Green' },
-  { value: 'graphite', label: 'Graphite' },
-  { value: 'rainbow', label: 'Rainbow' },
-  { value: 'nebula', label: 'Nebula' },
-  { value: 'citrus', label: 'Citrus' },
-  { value: 'twilight', label: 'Twilight' },
-  { value: 'ocean', label: 'Ocean' },
-  { value: 'sunset', label: 'Sunset' },
-  { value: 'forest', label: 'Forest' },
-  { value: 'cyber', label: 'Cyber' },
-  { value: 'candy', label: 'Candy' },
-  { value: 'mist', label: 'Mist' },
-  { value: 'sage', label: 'Sage' }
-]
-
 const ONBOARDING_COMPOSER_OPTIONS: Array<{ value: ComposerStyle; label: string }> = [
   { value: 'default', label: 'TaskWraith native' },
   { value: 'codex', label: 'Codex shell' },
@@ -302,6 +281,7 @@ export function FirstLaunchSheet({
   themeAppearance = 'system',
   composerStyle = 'default',
   userBubbleColor = 'system',
+  diffStatColors = DEFAULT_DIFF_STAT_COLORS,
   userName = '',
   onAppearancePreviewChange,
   cliPathDirectories,
@@ -382,6 +362,7 @@ export function FirstLaunchSheet({
 
   if (!open) return null
 
+  const normalizedDiffStatColors = normalizeDiffStatColors(diffStatColors)
   const codexSummary = summariseCodexStatus(codexStatus)
   const claudeSummary = summariseProviderApiKeyStatus(claudeAuthStatus, 'Claude')
   const kimiSummary = summariseProviderApiKeyStatus(kimiAuthStatus, 'Kimi')
@@ -764,24 +745,18 @@ export function FirstLaunchSheet({
             data-composer-style={composerStyle}
             data-user-bubble-color={userBubbleColor}
           >
-            <div className="first-launch-sheet-preference-controls">
-              <label className="first-launch-sheet-preference-field">
-                <span>Theme</span>
-                <select
-                  value={themeAppearance}
-                  onChange={(e) =>
-                    onAppearancePreviewChange?.({
-                      themeAppearance: e.target.value as ThemeAppearance
-                    })
-                  }
-                >
-                  {ONBOARDING_THEME_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="first-launch-sheet-theme-preview">
+              <span className="first-launch-sheet-preference-field">Theme</span>
+              <ThemeAppearancePreviewStack
+                themeAppearance={themeAppearance}
+                additionsColor={normalizedDiffStatColors.additions}
+                deletionsColor={normalizedDiffStatColors.deletions}
+                onThemeChange={(nextTheme) =>
+                  onAppearancePreviewChange?.({ themeAppearance: nextTheme })
+                }
+              />
+            </div>
+            <div className="first-launch-sheet-preference-controls first-launch-sheet-preference-controls--secondary">
               <label className="first-launch-sheet-preference-field">
                 <span>Composer shell</span>
                 <select

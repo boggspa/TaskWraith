@@ -170,9 +170,16 @@ describe('FirstLaunchSheet', () => {
         kimiAuthStatus={null}        themeAppearance="blue"
         composerStyle="claude"
         userBubbleColor="purple"
+        diffStatColors={{ additions: '#12C4A0', deletions: '#F15A70' }}
       />
     )
     expect(html).toContain('Theme')
+    expect(html).toContain('aria-label="Theme previews"')
+    expect(html).toContain('data-theme-preview="blue"')
+    expect(html).toContain('data-theme-preview="forest"')
+    expect(html).toContain('Theme-aware code diff')
+    expect(html).toContain('--theme-preview-diff-additions:#12C4A0')
+    expect(html).toContain('--theme-preview-diff-deletions:#F15A70')
     expect(html).toContain('Composer shell')
     expect(html).toContain('Gemini shell')
     expect(html).toContain('Message bubble')
