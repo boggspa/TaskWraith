@@ -1,0 +1,429 @@
+/* Channels P2 — first host-side, human-only Channel surface.
+ *
+ * The control intentionally lives beside the existing People controls. P4,
+ * not this stylesheet, owns any later consolidation or retirement. */
+
+.channel-host-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.channel-host-trigger[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-elevated));
+}
+
+.channel-host-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--success, #34d399);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success, #34d399) 18%, transparent);
+}
+
+.channel-host-trigger-count {
+  min-width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  padding-inline: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.channel-host-panel {
+  position: absolute;
+  inset-block-start: calc(100% + 9px);
+  inset-inline-start: 0;
+  z-index: 40;
+  width: min(430px, calc(100vw - 28px));
+  max-height: min(720px, calc(100vh - 78px));
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
+  border-radius: 16px;
+  background: var(--tw-popover-glass-bg, var(--surface-elevated));
+  color: var(--text-primary);
+  box-shadow: var(--tw-popover-material-shadow, var(--shadow-lg));
+  backdrop-filter: var(--tw-popover-material-backdrop, blur(20px) saturate(1.1));
+  -webkit-backdrop-filter: var(--tw-popover-material-backdrop, blur(20px) saturate(1.1));
+  text-align: start;
+  pointer-events: auto;
+}
+
+.human-collaboration-header-floating .channel-host-panel {
+  inset-inline: auto 0;
+}
+
+.channel-host-panel :is(button, input, textarea) {
+  font: inherit;
+}
+
+.channel-host-panel button {
+  border: 1px solid color-mix(in srgb, var(--panel-border) 76%, transparent);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.channel-host-panel button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-elevated));
+}
+
+.channel-host-panel button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.channel-host-panel .channel-host-primary-button {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-elevated));
+  font-weight: 650;
+}
+
+.channel-host-panel-header,
+.channel-host-section-heading,
+.channel-host-summary,
+.channel-host-compose > div,
+.channel-host-inline-actions {
+  display: flex;
+  align-items: center;
+}
+
+.channel-host-panel-header,
+.channel-host-section-heading,
+.channel-host-compose > div {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.channel-host-panel-header h2,
+.channel-host-section-heading h3,
+.channel-host-invite h3 {
+  margin: 0;
+}
+
+.channel-host-panel-header h2 {
+  margin-block-start: 2px;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.channel-host-eyebrow {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.channel-host-panel .channel-host-icon-button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.channel-host-safety-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-inline-start: 3px solid color-mix(in srgb, var(--accent) 64%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.channel-host-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.channel-host-feedback.is-error {
+  background: color-mix(in srgb, var(--danger, #e2554f) 13%, transparent);
+  color: color-mix(in srgb, var(--danger, #e2554f) 84%, var(--text-primary));
+}
+
+.channel-host-feedback.is-success {
+  background: color-mix(in srgb, var(--success, #34d399) 11%, transparent);
+  color: color-mix(in srgb, var(--success, #34d399) 78%, var(--text-primary));
+}
+
+.channel-host-empty,
+.channel-host-create {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 74%, transparent);
+}
+
+.channel-host-create {
+  display: grid;
+  gap: 9px;
+}
+
+.channel-host-create p {
+  margin: 0 0 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.channel-host-create label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.channel-host-panel :is(input, textarea) {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--content-bg) 72%, transparent);
+  color: var(--text-primary);
+  padding: 8px 9px;
+  outline: none;
+  resize: vertical;
+}
+
+.channel-host-panel :is(input, textarea):focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--panel-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.channel-host-summary {
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.channel-host-summary > span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.channel-host-summary .channel-host-status {
+  font-weight: 700;
+}
+
+.channel-host-status.is-active {
+  color: color-mix(in srgb, var(--success, #34d399) 78%, var(--text-primary));
+}
+
+.channel-host-status:is(.is-closed, .is-blocked) {
+  color: color-mix(in srgb, var(--warning, #d98b2b) 78%, var(--text-primary));
+}
+
+.channel-host-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block-start: 2px;
+}
+
+.channel-host-section-heading h3,
+.channel-host-invite h3 {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.channel-host-section-heading > span,
+.channel-host-section-heading > div > span {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.channel-host-members {
+  display: grid;
+  gap: 5px;
+}
+
+.channel-host-member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.channel-host-member > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.channel-host-member strong {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-host-member span {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.channel-host-member.is-revoked {
+  opacity: 0.58;
+}
+
+.channel-host-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--panel-border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.channel-host-inline-actions {
+  gap: 5px;
+}
+
+.channel-host-invite textarea {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.channel-host-invite p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.channel-host-invite .channel-host-invite-warning {
+  color: color-mix(in srgb, var(--warning, #d98b2b) 82%, var(--text-primary));
+}
+
+.channel-host-history {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 2px;
+}
+
+.channel-host-message {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 7px 9px;
+  border-radius: 10px 10px 10px 3px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.channel-host-message.is-own {
+  align-self: flex-end;
+  border-radius: 10px 10px 3px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.channel-host-message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 9.5px;
+}
+
+.channel-host-message-meta time {
+  overflow: hidden;
+  max-width: 165px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-host-message p {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.channel-host-load-more {
+  align-self: center;
+}
+
+.channel-host-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-block-start: 3px;
+}
+
+.channel-host-compose > div > span,
+.channel-host-muted {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.channel-host-danger-zone {
+  padding-block-start: 10px;
+  border-block-start: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+}
+
+.channel-host-danger-zone > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.channel-host-danger-zone .is-danger {
+  border-color: color-mix(in srgb, var(--danger, #e2554f) 55%, var(--panel-border));
+  background: color-mix(in srgb, var(--danger, #e2554f) 14%, transparent);
+  color: color-mix(in srgb, var(--danger, #e2554f) 84%, var(--text-primary));
+}
+
+@media (max-width: 620px) {
+  .channel-host-panel {
+    position: fixed;
+    inset: 54px 10px 10px;
+    width: auto;
+    max-height: none;
+  }
+}
+
+:root[data-reduce-transparency='true'] .channel-host-panel {
+  background: var(--tw-glass-solid, var(--surface-elevated));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
