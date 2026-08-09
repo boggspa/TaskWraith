@@ -57,6 +57,11 @@ export interface ConfiguredProviderDiscoveryStatus {
 
 export const CONFIGURED_PROVIDER_PROBE_DEADLINE_MS = 1_000
 export const CONFIGURED_PROVIDER_PROBE_STAGGER_MS = 250
+// The AntiGravity catalog has its own 900ms per-lane fallback window. Give the
+// outer configured-provider probe enough scheduler headroom to receive that
+// consent-and-binary-gated fallback instead of racing it at the 1s generic
+// deadline and publishing a misleading ready-but-empty snapshot.
+export const ANTIGRAVITY_CONFIGURED_CATALOG_PROBE_DEADLINE_MS = 1_500
 
 type ProviderProbeOutcome = 'configured' | 'unconfigured' | 'unknown'
 
@@ -64,6 +69,8 @@ interface ProviderProbe {
   provider: ProviderId
   /** A timeout must never make AntiGravity visible or eligible for a roster. */
   includeWhenUnknown?: boolean
+  /** Provider-specific deadline for a nested bounded probe. */
+  deadlineMs?: number
   run: () => Promise<ProviderProbeResult>
 }
 
@@ -137,7 +144,8 @@ function settingsConfiguredProviders(settings: AppSettings): Set<ProviderId> {
 
 function configuredProviderProbes(
   settings: AppSettings,
-  dependencies: DetectConfiguredProvidersDependencies
+  dependencies: DetectConfiguredProvidersDependencies,
+  deadlineMs: number = CONFIGURED_PROVIDER_PROBE_DEADLINE_MS
 ): ProviderProbe[] {
   const resolveProviderBinary = dependencies.resolveProviderBinary ?? resolveCliProviderBinary
   const getOllamaStatus = dependencies.getOllamaStatus ?? getOllamaStatusSnapshot
@@ -215,6 +223,7 @@ function configuredProviderProbes(
     probes.push({
       provider: 'antigravity',
       includeWhenUnknown: false,
+      deadlineMs: Math.max(deadlineMs, ANTIGRAVITY_CONFIGURED_CATALOG_PROBE_DEADLINE_MS),
       run: async () => {
         const models = await getAntigravityConfiguredModels(settings)
         return { configured: models.length > 0, models }
@@ -254,13 +263,13 @@ export async function detectConfiguredProviders(
     Number.isFinite(dependencies.probeDeadlineMs) && (dependencies.probeDeadlineMs ?? 0) > 0
       ? Math.floor(dependencies.probeDeadlineMs!)
       : CONFIGURED_PROVIDER_PROBE_DEADLINE_MS
-  const probes = configuredProviderProbes(settings, dependencies)
+  const probes = configuredProviderProbes(settings, dependencies, deadlineMs)
 
   const outcomes = await Promise.all(
-    probes.map(async ({ provider, run, includeWhenUnknown = true }) => ({
+    probes.map(async ({ provider, run, includeWhenUnknown = true, deadlineMs: providerDeadlineMs }) => ({
       provider,
       includeWhenUnknown,
-      ...(await boundedProviderProbe(Promise.resolve().then(run), deadlineMs))
+      ...(await boundedProviderProbe(Promise.resolve().then(run), providerDeadlineMs ?? deadlineMs))
     }))
   )
   for (const { provider, outcome, includeWhenUnknown } of outcomes) {
@@ -336,7 +345,7 @@ export function createConfiguredProviderDetector(
     confirmedConfigured = new Set()
     configuredModels = new Map()
     const currentGeneration = ++generation
-    const probes = configuredProviderProbes(settings, dependencies)
+    const probes = configuredProviderProbes(settings, dependencies, deadlineMs)
     let remaining = probes.length
     if (remaining === 0) {
       completedKey = key
@@ -344,9 +353,12 @@ export function createConfiguredProviderDetector(
       return
     }
 
-    probes.forEach(({ provider, run, includeWhenUnknown = true }, index) => {
+    probes.forEach(({ provider, run, includeWhenUnknown = true, deadlineMs: providerDeadlineMs }, index) => {
       const timer = setTimeout(() => {
-        void boundedProviderProbe(Promise.resolve().then(run), deadlineMs).then(({ outcome, result }) => {
+        void boundedProviderProbe(
+          Promise.resolve().then(run),
+          providerDeadlineMs ?? deadlineMs
+        ).then(({ outcome, result }) => {
           if (currentGeneration !== generation) return
           if (outcome === 'configured') {
             rosterConfigured.add(provider)

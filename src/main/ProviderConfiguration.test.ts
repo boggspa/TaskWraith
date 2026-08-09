@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AppSettings } from './store/types'
 import {
+  ANTIGRAVITY_CONFIGURED_CATALOG_PROBE_DEADLINE_MS,
   CONFIGURED_PROVIDER_PROBE_DEADLINE_MS,
   createConfiguredProviderDetector,
   detectConfiguredProviders,
@@ -426,11 +427,47 @@ describe('configured AntiGravity discovery', () => {
           probeDeadlineMs: 1_000
         }
       )
-      await vi.advanceTimersByTimeAsync(1_000)
+      await vi.advanceTimersByTimeAsync(ANTIGRAVITY_CONFIGURED_CATALOG_PROBE_DEADLINE_MS)
 
       expect(empty.has('antigravity')).toBe(false)
       expect(rejected.has('antigravity')).toBe(false)
       await expect(timedOut).resolves.not.toContain('antigravity')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('allows the nested AntiGravity fallback to settle after the generic probe deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const lateFallback = vi.fn(
+        () =>
+          new Promise<{ id: string; label: string }[]>((resolve) => {
+            setTimeout(
+              () => resolve([{ id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash High' }]),
+              CONFIGURED_PROVIDER_PROBE_DEADLINE_MS + 100
+            )
+          })
+      )
+      const detector = createConfiguredProviderDetector(
+        {
+          ...antigravityDependencies(lateFallback),
+          probeDeadlineMs: CONFIGURED_PROVIDER_PROBE_DEADLINE_MS
+        },
+        { staggerMs: 0 }
+      )
+
+      detector.start(optedInSettings)
+      await vi.advanceTimersByTimeAsync(CONFIGURED_PROVIDER_PROBE_DEADLINE_MS + 100)
+
+      expect(lateFallback).toHaveBeenCalledOnce()
+      expect(detector.statusSnapshot(optedInSettings)).toEqual({
+        ready: true,
+        configuredProviders: new Set(['antigravity'])
+      })
+      expect(detector.modelsSnapshot(optedInSettings).get('antigravity')).toEqual([
+        { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash High' }
+      ])
     } finally {
       vi.useRealTimers()
     }
