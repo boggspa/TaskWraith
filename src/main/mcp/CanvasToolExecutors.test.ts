@@ -536,6 +536,76 @@ describe('executeCanvasTool', () => {
     expect(seen).toMatchObject({ driver: 'web', url: 'http://localhost:5173/' })
     expect(result.structuredContent?.source).toBe('detectedUrl')
     expect(result.structuredContent?.canvasId).toBe('cw')
+    expect(result.structuredContent?.presentation).toBe('window')
+  })
+
+  it('canvas_open_launch can present its detected URL in the active Canvas dock', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return {
+          canvasId: 'dock-launch',
+          url: input.url || '',
+          title: 'Docked dev app',
+          viewport: { width: 1280, height: 800 }
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt()]
+    })
+
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1', presentation: 'dock' },
+      ctx,
+      'claude'
+    )
+
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({
+      driver: 'web',
+      url: 'http://localhost:5173/',
+      embed: true
+    })
+    expect(result.structuredContent).toMatchObject({
+      source: 'detectedUrl',
+      canvasId: 'dock-launch',
+      presentation: 'dock'
+    })
+  })
+
+  it('canvas_open_launch refuses dock presentation when no live web surface exists', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [
+        fakeLaunchAttempt({
+          status: 'failed',
+          detectedUrls: [],
+          targetKind: 'build'
+        })
+      ]
+    })
+
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1', presentation: 'dock' },
+      ctx,
+      'claude'
+    )
+
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error)).toMatch(/detected loopback URL/i)
+    expect(opened).toBe(false)
   })
 
   it('canvas_open_launch opens an exact native target through the opaque window route', async () => {

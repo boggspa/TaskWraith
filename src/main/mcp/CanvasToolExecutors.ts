@@ -548,6 +548,17 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         case 'canvas_open_launch': {
           const attemptId = asOptString(args.attemptId)
           if (!attemptId) return fail(toolName, '`attemptId` is required (from launch_start / launch_status).')
+          const requestedPresentation = asOptString(args.presentation)
+          if (
+            requestedPresentation &&
+            requestedPresentation !== 'window' &&
+            requestedPresentation !== 'dock'
+          ) {
+            return fail(
+              toolName,
+              `Unsupported canvas presentation: ${requestedPresentation}. Use "window" or "dock".`
+            )
+          }
           const appChatId = asCanonicalContextString(context.appChatId)
           const appRunId = asCanonicalContextString(context.appRunId)
           if (!appChatId || !appRunId) {
@@ -567,7 +578,15 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           const viewport = resolveViewport({ width: args.width, height: args.height })
           const url = firstPreviewableLaunchUrl(attempt)
           if (url) {
-            const opened = await controller.open({ driver: 'web', url, viewport }, ctx)
+            const opened = await controller.open(
+              {
+                driver: 'web',
+                url,
+                viewport,
+                ...(requestedPresentation === 'dock' ? { embed: true } : {})
+              },
+              ctx
+            )
             return jsonResult({
               ok: true,
               tool: toolName,
@@ -576,8 +595,16 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               canvasId: opened.canvasId,
               url: redactUrlQuery(opened.url),
               title: opened.title,
-              viewport: opened.viewport
+              viewport: opened.viewport,
+              presentation: requestedPresentation === 'dock' ? 'dock' : 'window'
             })
+          }
+
+          if (requestedPresentation === 'dock') {
+            return fail(
+              toolName,
+              'Dock presentation requires a running launch with a detected loopback URL.'
+            )
           }
 
           if (liveLaunchAttempt(attempt)) {
