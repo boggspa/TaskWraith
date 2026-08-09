@@ -112,7 +112,6 @@ import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { AgentPoolContainer } from './AgentPoolContainer'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { ArchivedThreadsSettings } from './ArchivedThreadsSettings'
-import { UpdateStatusPane } from './UpdateStatusPane'
 import { ThirdPartyNoticesSettings } from './ThirdPartyNoticesSettings'
 import { ActivityReportingSettings } from './ActivityReportingSettings'
 import { NotificationBannerSettings } from './NotificationBannerSettings'
@@ -768,11 +767,6 @@ const NATIVE_SUB_AGENT_REQUEST_OPTIONS: Array<{
 const CODEX_SANDBOX_FALLBACK_OPTIONS: Array<{ value: CodexSandboxFallbackMode; label: string }> = [
   { value: 'ask_rerun', label: 'Ask to rerun outside sandbox' },
   { value: 'off', label: 'Off' }
-]
-const PRODUCT_UPDATE_CHANNEL_OPTIONS: Array<{ value: ProductUpdateChannel; label: string }> = [
-  { value: 'debug', label: 'Debug' },
-  { value: 'stable', label: 'Stable' },
-  { value: 'nightly', label: 'Nightly' }
 ]
 const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; helper: string }> = [
   { value: 'off', label: 'Off', helper: 'No cinematic effects.' },
@@ -2833,9 +2827,8 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'behavior',
     label: 'General',
     group: 'app',
-    description:
-      'Core app behavior, dashboard defaults, updates, approval timeouts, and desktop operations.',
-    aliases: ['behavior', 'system', 'updates', 'timeouts', 'currency', 'dashboard', 'desktop'],
+    description: 'Core app behavior, dashboard defaults, approval timeouts, and maintenance.',
+    aliases: ['behavior', 'system', 'timeouts', 'currency', 'dashboard', 'desktop'],
     scope: 'global'
   },
   {
@@ -3964,8 +3957,6 @@ export function SettingsPanel({
   funFxEnabled,
   funFxMode,
   advancedFx,
-  autoUpdateEnabled,
-  updateChannel,
   approvalTimeouts,
   auditRetention,
   auditBundleExportAvailability,
@@ -4144,15 +4135,6 @@ export function SettingsPanel({
     'userMcpServers'
   )
   const userMcpManagedLockMessage = 'User MCP server editing is managed by organization policy.'
-  const autoUpdateManagedLocked = isManagedPolicySettingLocked(
-    managedPolicyStatus,
-    'autoUpdateEnabled'
-  )
-  const updateChannelManagedLocked = isManagedPolicySettingLocked(
-    managedPolicyStatus,
-    'updateChannel'
-  )
-  const productUpdateManagedLocked = autoUpdateManagedLocked || updateChannelManagedLocked
   const agenticServicesManagedLocked = isManagedPolicySettingLocked(
     managedPolicyStatus,
     'agenticServices'
@@ -10716,14 +10698,7 @@ export function SettingsPanel({
           </div>
         )}
 
-        {/* ── System (merged into the General tab — same `behavior` id) ── */}
-        {/*
-          Renders alongside the Behavior content above. The original
-          standalone "System" tab carried just one settings group
-          ("Product operations" — update channel, diagnostics, repair)
-          which never warranted a tab of its own; folding it under
-          General keeps the operational defaults in one place.
-        */}
+        {/* ── General maintenance ────────────────────────────────────── */}
         {
           activeTab === 'behavior' && (
             <>
@@ -10761,46 +10736,12 @@ export function SettingsPanel({
                 )}
               </div>
 
-              <div className="settings-group span-all">
-                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                  Product operations
-                </h4>
-                {productUpdateManagedLocked && (
-                  <p className="settings-hint">
-                    Product update settings are managed by organization policy. Health checks,
-                    diagnostics, repair, and audit-bundle exports remain available.
-                  </p>
-                )}
-                <label className="settings-service-row">
-                  <span>Enable Auto-Update</span>
-                  <input
-                    type="checkbox"
-                    checked={autoUpdateEnabled}
-                    disabled={autoUpdateManagedLocked}
-                    onChange={(e) => {
-                      if (autoUpdateManagedLocked) return
-                      onChange({ autoUpdateEnabled: e.target.checked })
-                    }}
-                  />
-                </label>
-                <label className="settings-service-row">
-                  <span>Update channel</span>
-                  <select
-                    className="settings-select"
-                    value={updateChannel}
-                    disabled={updateChannelManagedLocked}
-                    onChange={(e) => {
-                      if (updateChannelManagedLocked) return
-                      onChange({ updateChannel: e.target.value as ProductUpdateChannel })
-                    }}
-                  >
-                    {PRODUCT_UPDATE_CHANNEL_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <details className="settings-group span-all settings-user-mcp-config">
+                <summary>Advanced troubleshooting &amp; audit data</summary>
+                <p className="settings-hint">
+                  Updates are managed from the sidebar. Use these controls only for troubleshooting,
+                  support, or audit retention.
+                </p>
                 <div className="settings-option-list settings-option-list-inline">
                   <PillButton
                     size="compact"
@@ -10917,16 +10858,10 @@ export function SettingsPanel({
                     )}
                   </div>
                 )}
-                {/* Phase G2: auto-update status pane. Self-contained so the
-            SettingsPanel doesn't need to plumb the snapshot through —
-            it reads it via the api binding on mount + listens for live
-            updates. */}
-                <UpdateStatusPane autoUpdateEnabled={autoUpdateEnabled} />
-
                 <p className="settings-hint">
                   {productOperationsStatus
                     ? `Health is ${productOperationsStatus.overallStatus}; ${productOperationsStatus.counts.queuedRuns} queued, ${productOperationsStatus.counts.activeRuns} active, ${productOperationsStatus.recentCrashes.length} recent crash ${productOperationsStatus.recentCrashes.length === 1 ? 'record' : 'records'}.`
-                    : 'Product operations health has not been checked yet.'}
+                    : 'Maintenance health has not been checked yet.'}
                 </p>
                 {productOperationsStatus && (
                   <p className="settings-hint">
@@ -11119,7 +11054,7 @@ export function SettingsPanel({
                   Retention purges are opt-in. Dry-runs and purges write capped purge receipts that
                   are included in diagnostics and audit bundles.
                 </p>
-              </div>
+              </details>
             </>
           ) /* end system */
         }

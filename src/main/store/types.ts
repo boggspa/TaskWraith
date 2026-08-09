@@ -2724,8 +2724,8 @@ export interface AppSettings {
    * consent toggle and not a default.
    */
   codexReuseExistingLogin?: boolean
-  /** Settings -> General "Enable Auto-Update". Defaults on; when false,
-   * the updater service stays disabled even on stable/nightly channels. */
+  /** Defaults on; when false, the updater service stays disabled even on
+   * stable/nightly channels. Update actions are surfaced in the sidebar. */
   autoUpdateEnabled?: boolean
   /** Privacy-minimised, no-ID product activity check-in. Off until the user
    * affirmatively enables it; a build without an endpoint sends nothing. */

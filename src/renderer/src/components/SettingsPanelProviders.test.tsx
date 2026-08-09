@@ -875,15 +875,17 @@ describe('SettingsPanel provider cards', () => {
     )
   })
 
-  it('renders the General auto-update checkbox enabled by default', () => {
+  it('keeps update controls out of General and tucks maintenance behind a disclosure', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />
     )
 
-    expect(html).toContain('Enable Auto-Update')
-    expect(html).toMatch(
-      /<label class="settings-service-row"><span>Enable Auto-Update<\/span><input type="checkbox" checked=""/
-    )
+    expect(html).toContain('Advanced troubleshooting &amp; audit data')
+    expect(html).toContain('Updates are managed from the sidebar.')
+    expect(html).toMatch(/<details class="settings-group span-all settings-user-mcp-config">/)
+    expect(html).not.toContain('Enable Auto-Update')
+    expect(html).not.toContain('Update channel')
+    expect(html).not.toContain('Check for updates')
   })
 
   it('does not render Gemini checkpointing in General', () => {
@@ -917,34 +919,6 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Managed by organization')
     expect(html).toContain('Acme Corp is enforcing TaskWraith settings from signed-mdm-preferences.')
     expect(html).toContain('Locked controls: agenticServices, approvalTimeouts')
-  })
-
-  it('locks product update controls when organization policy owns them', () => {
-    const html = renderToStaticMarkup(
-      <SettingsPanel
-        {...makeSettingsProps({
-          activeTab: 'behavior',
-          managedPolicyStatus: {
-            active: true,
-            organizationName: 'Acme Corp',
-            source: 'signed-mdm-preferences',
-            lockedSettings: ['autoUpdateEnabled', 'updateChannel'],
-            enforcedSettings: ['autoUpdateEnabled'],
-            errors: []
-          }
-        })}
-      />
-    )
-
-    expect(html).toContain('Product update settings are managed by organization policy.')
-    expect(html).toMatch(
-      /<label class="settings-service-row"><span>Enable Auto-Update<\/span><input type="checkbox" disabled="" checked=""/
-    )
-    expect(html).toMatch(
-      /<select class="settings-select" disabled=""><option value="debug">Debug<\/option><option value="stable" selected="">Stable<\/option><option value="nightly">Nightly<\/option><\/select>/
-    )
-    expect(html).toContain('Export diagnostics')
-    expect(html).toContain('Export full audit bundle')
   })
 
   it('locks audit retention controls when organization policy owns them', () => {
@@ -1242,17 +1216,6 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Copy audit JSON')
   })
 
-  it('renders the General auto-update checkbox unchecked when disabled', () => {
-    const html = renderToStaticMarkup(
-      <SettingsPanel
-        {...makeSettingsProps({ activeTab: 'behavior', autoUpdateEnabled: false })}
-      />
-    )
-
-    expect(html).toMatch(
-      /<label class="settings-service-row"><span>Enable Auto-Update<\/span><input type="checkbox"\/?>/
-    )
-  })
 })
 
 describe('parseUserMcpServersImportJson', () => {
