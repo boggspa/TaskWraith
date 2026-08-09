@@ -886,6 +886,17 @@ describe('SettingsPanel provider cards', () => {
     )
   })
 
+  it('does not render Gemini checkpointing in General', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'behavior', geminiCheckpointingEnabled: true })}
+      />
+    )
+
+    expect(html).not.toContain('Gemini checkpointing')
+    expect(html).not.toContain('--checkpointing')
+  })
+
   it('renders managed-policy status when organization controls are active', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

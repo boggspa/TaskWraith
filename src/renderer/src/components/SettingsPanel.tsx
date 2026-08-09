@@ -292,6 +292,7 @@ interface SettingsPanelProps {
   liveActivityViewport: boolean
   sidebarOpacity: number
   mainPaneOpacity: number
+  /** Retained for legacy settings compatibility; no longer exposed in General. */
   geminiCheckpointingEnabled: boolean
   chatContextTurns: number
   /** 1.0.5-EW25 — User-selected display currency for cost / token-
@@ -3921,7 +3922,6 @@ export function SettingsPanel({
   liveActivityViewport,
   sidebarOpacity,
   mainPaneOpacity,
-  geminiCheckpointingEnabled,
   chatContextTurns,
   currency,
   currencyOverestimatePercent,
@@ -6282,29 +6282,6 @@ export function SettingsPanel({
                   Shown in the New General Chat greeting. Leave blank to omit.
                 </p>
               </div>
-              <div className="settings-group">
-                <label
-                  className="settings-label"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'var(--space-sm)',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={geminiCheckpointingEnabled}
-                    onChange={(e) => onChange({ geminiCheckpointingEnabled: e.target.checked })}
-                  />
-                  Gemini checkpointing
-                </label>
-                <p className="settings-hint">
-                  Starts new Gemini CLI runs and persistent sessions with --checkpointing. Restart
-                  an active persistent session to apply changes.
-                </p>
-              </div>
-
               <div className="settings-group span-all">
                 <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                   Simulator
