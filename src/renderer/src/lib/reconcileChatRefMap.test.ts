@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { ChatRecord, ChatListItem } from '../../../main/store/types'
 import { reconcileChatRefMap, RECENTLY_COMPLETED_WINDOW_MS } from './reconcileChatRefMap'
 
@@ -135,5 +135,37 @@ describe('reconcileChatRefMap — preserve predicates', () => {
       now: 1_000_000
     })
     expect(content(next, 'A')).toBe('abcdefg')
+  })
+})
+
+describe('reconcileChatRefMap — incremental hydration retention', () => {
+  it('delegates to the renderer-lifetime authority with all dynamic pins', () => {
+    const records = [chat('focus', 'a'), chat('active', 'b'), chat('recent', 'c')]
+    const retain = vi.fn((chats: readonly ChatRecord[], _pinnedIds?: ReadonlySet<string>) => ({
+      chats: [...chats],
+      evictedIds: [],
+      stats: {
+        hydratedFullChatCount: chats.length,
+        hydratedMessageBytes: 0,
+        pinnedChatCount: 0,
+        entryCount: chats.length
+      }
+    }))
+
+    reconcileChatRefMap({
+      chats: records,
+      currentChat: records[0],
+      prev: new Map(records.map((record) => [record.appChatId, record])),
+      activeRunChatId: 'active',
+      activeRunChatIds: new Set(['active']),
+      recentlyCompleted: new Map([['recent', 999_999]]),
+      now: 1_000_000,
+      pinnedChatIds: new Set(['surface']),
+      hydrationRetention: { retain }
+    })
+
+    expect(retain).toHaveBeenCalledTimes(1)
+    const pins = retain.mock.calls[0]![1]!
+    expect(Array.from(pins).sort()).toEqual(['active', 'focus', 'recent', 'surface'])
   })
 })

@@ -101,6 +101,20 @@ export interface RetainChatsWithinByteBudgetResult {
   stats: ChatByteLruStats
 }
 
+interface ChatByteEstimateCacheEntry {
+  messages: ChatRecord['messages']
+  runs: ChatRecord['runs']
+  title: string
+  updatedAt: number
+  persistenceRevision: number | undefined
+  messageCount: number
+  runCount: number
+  lastMessage: ChatMessage | undefined
+  lastMessageContent: string | undefined
+  lastRun: ChatRun | undefined
+  bytes: number
+}
+
 function compareLruOrder(
   leftId: string,
   rightId: string,
@@ -125,6 +139,17 @@ export function retainChatsWithinByteBudget(
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_HYDRATED_CHAT_BYTES
   const pinnedIds = input.pinnedIds ?? new Set<string>()
   const estimate = input.estimateBytes ?? estimateChatRecordBytes
+  // One retention pass asks for the same record more than once while computing
+  // totals and subtracting evictions. Never recursively walk a transcript twice
+  // inside one pass, even when the caller has no longer-lived LRU authority.
+  const passEstimateCache = new Map<ChatRecord, number>()
+  const estimateOnce = (chat: ChatRecord): number => {
+    const cached = passEstimateCache.get(chat)
+    if (cached !== undefined) return cached
+    const bytes = estimate(chat)
+    passEstimateCache.set(chat, bytes)
+    return bytes
+  }
   const orderIndex = new Map<string, number>()
   ;(input.lruOrder ?? []).forEach((id, index) => {
     if (!orderIndex.has(id)) orderIndex.set(id, index)
@@ -146,7 +171,7 @@ export function retainChatsWithinByteBudget(
     for (const chat of next) {
       if (isChatSummaryRecord(chat)) continue
       hydratedFullChatCount += 1
-      hydratedMessageBytes += estimate(chat)
+      hydratedMessageBytes += estimateOnce(chat)
     }
     return { hydratedFullChatCount, hydratedMessageBytes }
   }
@@ -158,7 +183,7 @@ export function retainChatsWithinByteBudget(
     if (index === undefined) continue
     const current = next[index]
     if (!current || isChatSummaryRecord(current) || pinnedIds.has(current.appChatId)) continue
-    const before = estimate(current)
+    const before = estimateOnce(current)
     next[index] = demoteChatToSummary(current)
     hydratedMessageBytes -= before
     evictedIds.push(current.appChatId)
@@ -181,6 +206,7 @@ export class ChatByteLru {
   private readonly estimateBytes: (chat: ChatRecord) => number
   private readonly pins = new Map<string, Set<ChatPinReason>>()
   private readonly touchOrder: string[] = []
+  private estimateCache = new WeakMap<ChatRecord, ChatByteEstimateCacheEntry>()
 
   constructor(options?: { maxBytes?: number; estimateBytes?: (chat: ChatRecord) => number }) {
     this.maxBytes = options?.maxBytes ?? DEFAULT_MAX_HYDRATED_CHAT_BYTES
@@ -221,13 +247,57 @@ export class ChatByteLru {
     this.touchOrder.push(chatId)
   }
 
-  retain(chats: readonly ChatRecord[]): RetainChatsWithinByteBudgetResult {
+  private estimateRecord(chat: ChatRecord): number {
+    const messages = chat.messages ?? []
+    const runs = chat.runs ?? []
+    const lastMessage = messages[messages.length - 1]
+    const lastRun = runs[runs.length - 1]
+    const cached = this.estimateCache.get(chat)
+    if (
+      cached &&
+      cached.messages === chat.messages &&
+      cached.runs === chat.runs &&
+      cached.title === chat.title &&
+      cached.updatedAt === chat.updatedAt &&
+      cached.persistenceRevision === chat.persistenceRevision &&
+      cached.messageCount === messages.length &&
+      cached.runCount === runs.length &&
+      cached.lastMessage === lastMessage &&
+      cached.lastMessageContent === lastMessage?.content &&
+      cached.lastRun === lastRun
+    ) {
+      return cached.bytes
+    }
+
+    const bytes = this.estimateBytes(chat)
+    this.estimateCache.set(chat, {
+      messages: chat.messages,
+      runs: chat.runs,
+      title: chat.title,
+      updatedAt: chat.updatedAt,
+      persistenceRevision: chat.persistenceRevision,
+      messageCount: messages.length,
+      runCount: runs.length,
+      lastMessage,
+      lastMessageContent: lastMessage?.content,
+      lastRun,
+      bytes
+    })
+    return bytes
+  }
+
+  retain(
+    chats: readonly ChatRecord[],
+    additionalPinnedIds?: ReadonlySet<string>
+  ): RetainChatsWithinByteBudgetResult {
+    const pinnedIds = this.pinnedIds()
+    for (const chatId of additionalPinnedIds ?? []) pinnedIds.add(chatId)
     return retainChatsWithinByteBudget({
       chats,
-      pinnedIds: this.pinnedIds(),
+      pinnedIds,
       maxBytes: this.maxBytes,
       lruOrder: this.touchOrder,
-      estimateBytes: this.estimateBytes
+      estimateBytes: (chat) => this.estimateRecord(chat)
     })
   }
 
@@ -247,7 +317,7 @@ export class ChatByteLru {
     for (const chat of chats) {
       if (isChatSummaryRecord(chat)) continue
       hydratedFullChatCount += 1
-      hydratedMessageBytes += this.estimateBytes(chat)
+      hydratedMessageBytes += this.estimateRecord(chat)
     }
     return {
       hydratedFullChatCount,
@@ -260,6 +330,7 @@ export class ChatByteLru {
   clear(): void {
     this.pins.clear()
     this.touchOrder.length = 0
+    this.estimateCache = new WeakMap<ChatRecord, ChatByteEstimateCacheEntry>()
   }
 
   /** Test/debug helper — pin reason vocabulary is closed. */

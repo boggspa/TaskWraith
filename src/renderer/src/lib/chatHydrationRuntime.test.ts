@@ -124,4 +124,12 @@ describe('T7 App wiring — demote then rehydrate on focus', () => {
       estimateChatRecordBytes(cold)
     )
   })
+
+  it('passes the renderer-lifetime LRU through reconcile wiring', () => {
+    const runtime = createChatHydrationRuntime({ maxBytes: 123 })
+    const options = reconcileHydrationOptions(runtime)
+
+    expect(options.maxHydratedMessageBytes).toBe(123)
+    expect(options.hydrationRetention).toBe(runtime.byteLru)
+  })
 })

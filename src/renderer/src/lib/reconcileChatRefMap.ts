@@ -1,5 +1,5 @@
 import type { ChatRecord, ChatListItem } from '../../../main/store/types'
-import { retainChatsWithinByteBudget } from './chatByteLru'
+import { retainChatsWithinByteBudget, type ChatByteLru } from './chatByteLru'
 
 /*
  * reconcileChatRefMap — pure core of the "token-drop reconcile".
@@ -65,6 +65,12 @@ export interface ReconcileChatRefMapInput {
   maxHydratedMessageBytes?: number
   /** Extra pin ids (popout / side / approval). Focused + active runs always pin. */
   pinnedChatIds?: ReadonlySet<string>
+  /**
+   * Renderer-lifetime retention authority. Supplying it preserves byte-estimate
+   * cache + LRU touch order across reconciles instead of deep-scanning every
+   * hydrated transcript after each click.
+   */
+  hydrationRetention?: Pick<ChatByteLru, 'retain'>
 }
 
 export function reconcileChatRefMap(input: ReconcileChatRefMapInput): Map<string, ChatRecord> {
@@ -78,7 +84,8 @@ export function reconcileChatRefMap(input: ReconcileChatRefMapInput): Map<string
     now,
     recentlyCompletedWindowMs = RECENTLY_COMPLETED_WINDOW_MS,
     maxHydratedMessageBytes,
-    pinnedChatIds
+    pinnedChatIds,
+    hydrationRetention
   } = input
 
   // General case: rebuild from React state. A live non-summary entry wins
@@ -119,7 +126,10 @@ export function reconcileChatRefMap(input: ReconcileChatRefMapInput): Map<string
 
   // T7b — optional byte-budget demotion. Default path (budget omitted) is
   // unchanged. Pinned = focused + live/recent runs + caller extras (popout/side).
-  if (typeof maxHydratedMessageBytes === 'number' && maxHydratedMessageBytes >= 0) {
+  if (
+    hydrationRetention ||
+    (typeof maxHydratedMessageBytes === 'number' && maxHydratedMessageBytes >= 0)
+  ) {
     const pins = new Set<string>(pinnedChatIds ?? [])
     if (currentChat?.appChatId) pins.add(currentChat.appChatId)
     if (activeRunChatId) pins.add(activeRunChatId)
@@ -127,11 +137,14 @@ export function reconcileChatRefMap(input: ReconcileChatRefMapInput): Map<string
     for (const [chatId, completedAt] of recentlyCompleted) {
       if (now - completedAt < recentlyCompletedWindowMs) pins.add(chatId)
     }
-    const retained = retainChatsWithinByteBudget({
-      chats: Array.from(next.values()),
-      pinnedIds: pins,
-      maxBytes: maxHydratedMessageBytes
-    })
+    const records = Array.from(next.values())
+    const retained = hydrationRetention
+      ? hydrationRetention.retain(records, pins)
+      : retainChatsWithinByteBudget({
+          chats: records,
+          pinnedIds: pins,
+          maxBytes: maxHydratedMessageBytes
+        })
     for (const chat of retained.chats) {
       next.set(chat.appChatId, chat)
     }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import {
   ChatByteLru,
@@ -94,5 +94,48 @@ describe('chatByteLru', () => {
     expect(evicted).toEqual(['a'])
     expect(isChatSummaryRecord(map.get('a')!)).toBe(true)
     expect(isChatSummaryRecord(map.get('b')!)).toBe(false)
+  })
+
+  it('measures a record once per pure retention pass', () => {
+    const stable = chat('stable', 'x'.repeat(2_000))
+    const estimateBytes = vi.fn(estimateChatRecordBytes)
+
+    retainChatsWithinByteBudget({
+      chats: [stable],
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      estimateBytes
+    })
+
+    expect(estimateBytes).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses byte estimates across reconciles and invalidates changed transcript content', () => {
+    const stable = chat('stable', 'first')
+    const estimateBytes = vi.fn(estimateChatRecordBytes)
+    const lru = new ChatByteLru({ maxBytes: Number.MAX_SAFE_INTEGER, estimateBytes })
+
+    lru.retain([stable])
+    lru.retain([stable])
+    expect(estimateBytes).toHaveBeenCalledTimes(1)
+
+    stable.messages[0]!.content = 'second, longer streamed content'
+    lru.retain([stable])
+    expect(estimateBytes).toHaveBeenCalledTimes(2)
+
+    const replacement = chat('stable', 'immutable replacement')
+    lru.retain([replacement])
+    expect(estimateBytes).toHaveBeenCalledTimes(3)
+  })
+
+  it('unions reconcile-time pins with surface-owned pins', () => {
+    const focused = chat('focus', 'focused transcript')
+    const pane = chat('pane', 'pane transcript')
+    const lru = new ChatByteLru({ maxBytes: 0 })
+    lru.pin('pane', 'pane')
+
+    const result = lru.retain([focused, pane], new Set(['focus']))
+
+    expect(result.evictedIds).toEqual([])
+    expect(result.stats.pinnedChatCount).toBe(2)
   })
 })

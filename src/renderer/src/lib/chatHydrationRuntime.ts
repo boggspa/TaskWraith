@@ -95,10 +95,12 @@ export function createChatHydrationRuntime(options?: {
 export function reconcileHydrationOptions(runtime: ChatHydrationRuntime): {
   maxHydratedMessageBytes: number
   pinnedChatIds: ReadonlySet<string>
+  hydrationRetention: Pick<ChatByteLru, 'retain'>
 } {
   return {
     maxHydratedMessageBytes: runtime.maxBytes,
-    pinnedChatIds: runtime.byteLru.pinnedIds()
+    pinnedChatIds: runtime.byteLru.pinnedIds(),
+    hydrationRetention: runtime.byteLru
   }
 }
 
