@@ -160,6 +160,13 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('mcp__TaskWraith__mesh_scene_import')).toBe('mesh')
   })
 
+  it('maps topology tools to dedicated monoline families', () => {
+    expect(toolNameToFamily('mesh_topology_convert')).toBe('mesh-convert')
+    expect(toolNameToFamily('mesh_topology_inspect')).toBe('mesh-inspect')
+    expect(toolNameToFamily('mesh_topology_edit')).toBe('mesh-edit')
+    expect(toolNameToFamily('mcp__TaskWraith__mesh_topology_edit')).toBe('mesh-edit')
+  })
+
   it('maps media tools to image/audio/video families', () => {
     expect(toolNameToFamily('image_generate')).toBe('image')
     expect(toolNameToFamily('svg_rasterize')).toBe('image')
@@ -336,7 +343,10 @@ describe('toolNameToFamily', () => {
       'plan',
       'handoff',
       'mail',
-      'mesh'
+      'mesh',
+      'mesh-convert',
+      'mesh-inspect',
+      'mesh-edit'
     ]
 
     for (const family of families) {

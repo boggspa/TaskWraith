@@ -56,6 +56,9 @@ export type ToolFamily =
   | 'handoff'
   | 'mail'
   | 'mesh'
+  | 'mesh-convert'
+  | 'mesh-inspect'
+  | 'mesh-edit'
 
 interface ToolFamilyIconProps {
   family: ToolFamily | null | undefined
@@ -327,10 +330,13 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'mesh_scene_present':
     case 'mesh_scene_close':
     case 'mesh_scene_delete':
-    case 'mesh_topology_convert':
-    case 'mesh_topology_inspect':
-    case 'mesh_topology_edit':
       return 'mesh'
+    case 'mesh_topology_convert':
+      return 'mesh-convert'
+    case 'mesh_topology_inspect':
+      return 'mesh-inspect'
+    case 'mesh_topology_edit':
+      return 'mesh-edit'
     // Appearance, not a canvas surface — these change the user's own theme
     // tokens. 'window-context' is the closest existing family (it is about the
     // app's own chrome rather than a workspace artifact); no new glyph needed.
@@ -691,6 +697,49 @@ function FamilyPaths({ family }: { family: ToolFamily }): ReactElement {
           <path d="M18.2 4.7 14.1 8.9" />
           <path d="M18.4 13 14.3 17.2" />
           <path d="M9.9 13.2 6.1 17.4" />
+        </g>
+      )
+    case 'mesh-convert':
+      return (
+        <g>
+          <path d="M9.6 4.9 18.2 4.7 18.4 13 9.9 13.2Z" />
+          <path d="M5.8 9.2 14.1 8.9 14.3 17.2 6.1 17.4Z" />
+          <path d="M9.6 4.9 5.8 9.2" />
+          <path d="M18.2 4.7 14.1 8.9" />
+          <path d="M18.4 13 14.3 17.2" />
+          <path d="M9.9 13.2 6.1 17.4" />
+          <path d="M3.2 7.1V4.4H5.9" />
+          <path d="M3.2 4.4 6.1 7.3" />
+          <path d="M20.8 16.9V19.6H18.1" />
+          <path d="M20.8 19.6 17.9 16.7" />
+        </g>
+      )
+    case 'mesh-inspect':
+      return (
+        <g>
+          <path d="M8.3 4.2 15.6 4 15.8 11.3 8.5 11.5Z" />
+          <path d="M5.1 8 12.4 7.8 12.6 15.1 5.4 15.3Z" />
+          <path d="M8.3 4.2 5.1 8" />
+          <path d="M15.6 4 12.4 7.8" />
+          <path d="M15.8 11.3 12.6 15.1" />
+          <path d="M8.5 11.5 5.4 15.3" />
+          <circle cx="16.8" cy="16.4" r="3.2" />
+          <path d="M19.1 18.7 21.2 20.8" />
+        </g>
+      )
+    case 'mesh-edit':
+      return (
+        <g>
+          <path d="M8.4 4.2 16.3 4 16.5 11.7 8.6 11.9Z" />
+          <path d="M5.1 8.1 12.8 7.9 13 15.6 5.4 15.8Z" />
+          <path d="M8.4 4.2 5.1 8.1" />
+          <path d="M16.3 4 12.8 7.9" />
+          <path d="M16.5 11.7 13 15.6" />
+          <path d="M8.6 11.9 5.4 15.8" />
+          <circle cx="5.1" cy="8.1" r="1" />
+          <circle cx="12.8" cy="7.9" r="1" />
+          <path d="M13.3 18.8 18.3 13.8 21 16.5 16 21.5 12.5 22.2Z" />
+          <path d="M17.3 14.8 20 17.5" />
         </g>
       )
     case 'image':
