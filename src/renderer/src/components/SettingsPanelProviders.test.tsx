@@ -164,6 +164,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('#2DB777')
     expect(html).toContain('#EC3D35')
     expect(html).toContain('HSL')
+    expect(html).toContain('A perfectly normal “small cleanup”')
+    expect(html).toContain('settings-diff-stat-preview-counts')
     expect(html).not.toContain('Tool-icon color')
   })
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MascotGhost } from './AppChromeSymbols'
 import { ComposerShellPreview } from './ComposerShellPreview'
+import { SettingsDiffStatPreview } from './SettingsDiffStatPreview'
 import type {
   AgenticNetworkPolicy,
   AgenticServiceId,
@@ -5748,6 +5749,10 @@ export function SettingsPanel({
                     }
                   />
                 </div>
+                <SettingsDiffStatPreview
+                  additionsColor={normalizedDiffStatColors.additions}
+                  deletionsColor={normalizedDiffStatColors.deletions}
+                />
                 <p className="settings-hint">
                   Drives the +N / -N counters in composer rows, transcript file summaries, and
                   tool-call rows.

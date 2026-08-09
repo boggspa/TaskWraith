@@ -3,7 +3,7 @@ import type React from 'react'
 const MINIMUM_EXAMPLE_LINE_COUNT = 1_000_000
 const MAXIMUM_EXAMPLE_LINE_COUNT = 9_999_999
 
-export interface DiffStatPreviewExample {
+interface DiffStatPreviewExample {
   additions: number
   deletions: number
 }
@@ -14,7 +14,7 @@ function randomExampleLineCount(random: () => number): number {
   return MINIMUM_EXAMPLE_LINE_COUNT + offset
 }
 
-export function createDiffStatPreviewExample(random = Math.random): DiffStatPreviewExample {
+function createDiffStatPreviewExample(random = Math.random): DiffStatPreviewExample {
   return {
     additions: randomExampleLineCount(random),
     deletions: randomExampleLineCount(random)
@@ -28,12 +28,10 @@ const numberFormatter = new Intl.NumberFormat('en-US')
 
 export function SettingsDiffStatPreview({
   additionsColor,
-  deletionsColor,
-  example = SESSION_DIFF_STAT_PREVIEW
+  deletionsColor
 }: {
   additionsColor: string
   deletionsColor: string
-  example?: DiffStatPreviewExample
 }): React.JSX.Element {
   return (
     <section
@@ -47,10 +45,10 @@ export function SettingsDiffStatPreview({
       <p className="settings-diff-stat-preview-label">A perfectly normal “small cleanup”:</p>
       <div className="settings-diff-stat-preview-counts">
         <span className="settings-diff-stat-preview-additions">
-          +{numberFormatter.format(example.additions)}
+          +{numberFormatter.format(SESSION_DIFF_STAT_PREVIEW.additions)}
         </span>
         <span className="settings-diff-stat-preview-deletions">
-          −{numberFormatter.format(example.deletions)}
+          −{numberFormatter.format(SESSION_DIFF_STAT_PREVIEW.deletions)}
         </span>
       </div>
       <p className="settings-diff-stat-preview-note">
