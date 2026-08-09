@@ -4,11 +4,8 @@ import {
   isUnattendedElevationAckCurrent,
   resolveUnattendedApprovalMode,
   unattendedElevationPresetId,
-  unattendedSimulatorCanvasOverride,
-  unattendedSubThreadDelegationOverride,
   UNATTENDED_SAFE_APPROVAL_MODE,
   type UnattendedElevationAck,
-  type UnattendedSimulatorCanvasEffective,
   type WorkflowForElevationAck
 } from './UnattendedPostureGate'
 import { signUnattendedElevation, verifyUnattendedElevation } from './UnattendedElevationSignature'
@@ -21,89 +18,6 @@ const ack = (over: Partial<UnattendedElevationAck> = {}): UnattendedElevationAck
   acknowledgedApprovalMode: 'auto_edit',
   authorityDigest: AUTHORITY_DIGEST,
   ...over
-})
-
-describe('unattendedSubThreadDelegationOverride', () => {
-  it('denies sub-thread delegation on every unattended resolve (plan floor + elevation)', () => {
-    // Attended Plan/Accept may ask or allow; scheduled runs must never modal
-    // or silently spawn children under the same preset ids.
-    expect(unattendedSubThreadDelegationOverride()).toEqual({
-      agenticServices: { subThreadDelegation: 'deny' }
-    })
-  })
-})
-
-describe('unattendedSimulatorCanvasOverride (fork 4B)', () => {
-  const slice = (
-    over: Partial<UnattendedSimulatorCanvasEffective> = {}
-  ): UnattendedSimulatorCanvasEffective => ({
-    presetId: over.presetId ?? 'plan',
-    readOnly: over.readOnly ?? true,
-    workspaceGrantServiceIds: over.workspaceGrantServiceIds ?? [],
-    agenticServices: over.agenticServices ?? { simulatorCanvas: 'ask' }
-  })
-
-  it('plan-floor unattended: no-op (keeps ask; does NOT force deny like subThreadDelegation)', () => {
-    expect(
-      unattendedSimulatorCanvasOverride(
-        slice({
-          presetId: 'plan',
-          readOnly: true,
-          agenticServices: { simulatorCanvas: 'ask' }
-        })
-      )
-    ).toEqual({})
-  })
-
-  it('elevated unattended without explicit grant: forces ask (not Allow Edits/Full WS allow)', () => {
-    expect(
-      unattendedSimulatorCanvasOverride(
-        slice({
-          presetId: 'workspace_write',
-          readOnly: false,
-          agenticServices: { simulatorCanvas: 'allow' }
-        })
-      )
-    ).toEqual({ agenticServices: { simulatorCanvas: 'ask' } })
-  })
-
-  it('elevated unattended with explicit simulatorCanvas workspace grant: allows', () => {
-    expect(
-      unattendedSimulatorCanvasOverride(
-        slice({
-          presetId: 'workspace_write',
-          readOnly: false,
-          workspaceGrantServiceIds: ['simulatorCanvas'],
-          agenticServices: { simulatorCanvas: 'allow' }
-        })
-      )
-    ).toEqual({ agenticServices: { simulatorCanvas: 'allow' } })
-
-    // Grant present but resolve left policy at ask/workspace — still upgrade to allow.
-    expect(
-      unattendedSimulatorCanvasOverride(
-        slice({
-          presetId: 'default',
-          readOnly: false,
-          workspaceGrantServiceIds: ['simulatorCanvas'],
-          agenticServices: { simulatorCanvas: 'workspace' }
-        })
-      )
-    ).toEqual({ agenticServices: { simulatorCanvas: 'allow' } })
-  })
-
-  it('preserves a global deny even under elevated + grant', () => {
-    expect(
-      unattendedSimulatorCanvasOverride(
-        slice({
-          presetId: 'workspace_write',
-          readOnly: false,
-          workspaceGrantServiceIds: ['simulatorCanvas'],
-          agenticServices: { simulatorCanvas: 'deny' }
-        })
-      )
-    ).toEqual({})
-  })
 })
 
 describe('resolveUnattendedApprovalMode', () => {

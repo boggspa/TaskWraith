@@ -1853,16 +1853,14 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
     )
     expect(payload.approvalMode).toBe('plan')
     // Read-only permissions must be POPULATED (forced before the plan-population
-    // block) — not read-only in name only. Posture inversion (2026-08-04):
-    // unattended runs take the plan no-ask floor.
+    // block) — not read-only in name only. Unattended runs take the safe Plan
+    // posture and standard-service asks fail closed through approval timeout.
     expect(payload.effectivePermissions?.readOnly).toBe(true)
     expect(payload.effectivePermissions?.presetId).toBe('plan')
-    // Attended Plan asks for sub-thread spawn; unattended Plan must deny so the
-    // scheduled no-modal floor cannot hang on delegate_to_subthread approval.
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
-    // Fork 4B: Simulator Canvas stays ASK on the unattended plan floor (timer
-    // deny) — do NOT mirror subThreadDelegation's hard deny.
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('ask')
     expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('ask')
   })
 
   it('clears externalPathGrants for the forced-plan unattended run (interactive contrast keeps them)', async () => {
@@ -1972,12 +1970,10 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.readOnly).toBe(false)
     // Unattended elevation force-denies network egress (no exfiltration on a loop).
     expect(payload.effectivePermissions?.networkAccess).toBe('deny')
-    // Interactive Accept Edits / Full WS allow sub-thread spawn; elevated
-    // unattended must not silently auto-allow child seats.
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
-    // Fork 4B: elevated unattended must NOT inherit Accept Edits / Full WS
-    // simulatorCanvas:allow without an explicit simulatorCanvas grant.
-    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
+    // The verified elevation carries the same standard-service ladder as the
+    // corresponding interactive posture; no second grant layer is required.
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('allow')
+    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('allow')
     // Elevated ⇒ approvalMode !== 'plan' ⇒ the grant-clear is skipped.
     expect(payload.externalPathGrants).toEqual([grant])
     expect(payload.prompt).toContain('/outside')
@@ -2002,7 +1998,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     ).toBe(true)
   })
 
-  it('fork 4B: elevated unattended allows simulatorCanvas only with an explicit workspace grant', async () => {
+  it('keeps recorded Simulator grants compatible but redundant after elevation', async () => {
     const payload = await composeUnattended(
       { level: 'full_access', mode: 'auto_edit' },
       undefined,
@@ -2024,8 +2020,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
     expect(payload.effectivePermissions?.workspaceGrantServiceIds).toContain('simulatorCanvas')
     expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('allow')
-    // Sub-thread still hard-denied on every unattended resolve.
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('allow')
   })
 
   it('honors a verified full-access ack for GA GPT-5.6 scheduled runs (5.5 parity)', async () => {
@@ -2088,18 +2083,17 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.approvalMode).toBe('default')
     expect(payload.effectivePermissions?.presetId).toBe('default')
     expect(payload.effectivePermissions?.readOnly).toBe(false)
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
-    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('allow')
+    expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('allow')
   })
 
-  it('no ack (resolve → null) → plan approvalMode + plan no-ask floor (P1 regression); tampered/stale surface here as null too', async () => {
+  it('no ack (resolve → null) → safe Plan posture; tampered/stale surface here as null too', async () => {
     const payload = await composeUnattended(null)
     expect(payload.approvalMode).toBe('plan')
-    // Posture inversion (2026-08-04): the unattended fallback is the plan
-    // no-ask floor, not read_only (Ask) — no modals with nobody attending.
+    // Standard-service asks remain promptable and fail closed on timeout.
     expect(payload.effectivePermissions?.presetId).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
-    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('ask')
     expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 })

@@ -8,9 +8,7 @@ import {
 import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
-  applyUnattendedSimulatorCanvasOverride,
   unattendedElevationPresetId,
-  unattendedSubThreadDelegationOverride,
   type UnattendedElevationLevel
 } from '../UnattendedPostureGate'
 import {
@@ -4529,16 +4527,15 @@ export class EnsembleOrchestrator {
     fanoutPolicy?: EnsembleFanoutPolicy
     /**
      * P1b — set for a scheduled/workflow occurrence (unattended run).
-     * Forces every participant's posture to the plan no-ask floor so an unattended
-     * scheduled ensemble can't silently auto-accept edits via a
-     * write-capable participant preset.
+     * Forces every participant to the safe Plan posture so an unattended
+     * scheduled ensemble cannot inherit a write-capable participant preset.
      */
     unattended?: boolean
     /**
      * P2 — a VERIFIED unattended-elevation level (resolved + HMAC-checked
      * main-side). On an unattended round, every participant's uniform posture
      * rises from read-only to the level's preset (full_access → workspace_write,
-     * default → default). Absent ⇒ P1b plan (no-ask floor). Ignored when `unattended` is false.
+     * default → default). Absent ⇒ safe Plan. Ignored when `unattended` is false.
      */
     unattendedElevationLevel?: UnattendedElevationLevel
     /**
@@ -20525,7 +20522,7 @@ export class EnsembleOrchestrator {
     // read-only posture for EVERY participant of an unattended round,
     // regardless of preset / overrides. This is
     // the single chokepoint for both the serial writer and every
-    // fan-out lane, and the read_only preset resolves to approvalMode
+    // fan-out lane, and the plan preset resolves to approvalMode
     // 'plan' + readOnly:true, so both signing sites sign the safe
     // posture automatically.
     const round = this.roundsByChatId.get(chat.appChatId)
@@ -20533,7 +20530,7 @@ export class EnsembleOrchestrator {
     if (roundUnattended) {
       // P2 — a VERIFIED elevation lifts the uniform posture from read-only to the
       // level's preset (full_access → workspace_write, default → default). No
-      // verified elevation ⇒ P1b plan (no-ask floor). The level was HMAC-verified main-side
+      // verified elevation ⇒ safe Plan posture. The level was HMAC-verified main-side
       // before reaching the runtime, so it's a trusted capability here; the preset
       // still flows through resolveEffectiveRunPermissions (approval gates intact).
       const previewRiskModel = isPreviewRiskModel(participant.provider, participant.model)
@@ -20541,32 +20538,23 @@ export class EnsembleOrchestrator {
         round?.unattendedElevationLevel && !previewRiskModel
           ? unattendedElevationPresetId(round.unattendedElevationLevel)
           : undefined
-      // Fork 4B: Simulator Canvas is NOT hard-denied with subThreadDelegation —
-      // applyUnattendedSimulatorCanvasOverride keeps plan-floor ask and demotes
-      // elevated Accept Edits / Full WS allow unless an explicit grant exists.
-      return applyUnattendedSimulatorCanvasOverride(
-        resolveEffectiveRunPermissions({
-          provider: participant.provider,
-          workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
-          model: participant.model,
-          settings: this.deps.getSettings(),
-          // Posture inversion (2026-08-04): the unattended fallback is the plan
-          // NO-ASK floor — read_only (Ask) would raise approval modals nobody is
-          // attending (they die by timeout as denials anyway, noisily).
-          presetId: elevatedPreset || 'plan',
-          // Force-deny network egress in EVERY unattended posture (plan/read
-          // presets carry networkAccess 'allow' for attended web reads, and
-          // workspace_write/default fall to the settings default 'allow').
-          // Also deny sub-thread delegation so unattended Plan/elevation cannot
-          // modal-ask or silently spawn children.
-          overrides: {
-            networkAccess: 'deny',
-            ...unattendedSubThreadDelegationOverride()
-          }
-          // Deliberately drop explicitExternalPathGrants either way: an unattended
-          // round must not widen file access via composer-supplied grants.
-        })
-      )
+      return resolveEffectiveRunPermissions({
+        provider: participant.provider,
+        workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+        model: participant.model,
+        settings: this.deps.getSettings(),
+        // The unattended fallback is Plan. Standard-service asks remain
+        // promptable and fail closed through approval timeout.
+        presetId: elevatedPreset || 'plan',
+        // Force-deny network egress in EVERY unattended posture (Plan carries
+        // networkAccess 'allow' for attended web reads, and workspace_write /
+        // default fall to the settings default 'allow').
+        overrides: {
+          networkAccess: 'deny'
+        }
+        // Deliberately drop explicitExternalPathGrants either way: an unattended
+        // round must not widen file access via composer-supplied grants.
+      })
     }
     const requestedPresetId = options.presetId || participant.permissionPresetId
     const trustedSessionGranted =

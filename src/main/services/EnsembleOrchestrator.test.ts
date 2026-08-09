@@ -19799,7 +19799,7 @@ Next action:
     expect(scoutNote).toBeUndefined()
   })
 
-  it('P1b: clamps every participant to the plan no-ask floor for an unattended (scheduled) round', async () => {
+  it('P1b: clamps every participant to safe Plan for an unattended round', async () => {
     // Default fixture: Claude (read_only) then Codex (workspace_write).
     // An unattended/scheduled round must force BOTH to read-only so a
     // write-capable participant preset can't auto-accept edits with no
@@ -19819,9 +19819,8 @@ Next action:
     expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(true)
     expect(harness.dispatched[0].approvalMode).toBe('plan')
     expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
-      'deny'
+      'ask'
     )
-    // Fork 4B: plan-floor unattended keeps simulatorCanvas ASK (not hard deny).
     expect(harness.dispatched[0].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
 
     // Advance to the write-capable Codex participant.
@@ -19839,10 +19838,10 @@ Next action:
     expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(true)
     expect(harness.dispatched[1].effectivePermissions?.approvalMode).toBe('plan')
     expect(harness.dispatched[1].approvalMode).toBe('plan')
-    expect(harness.dispatched[1].effectivePermissions?.agenticServices.shellCommands).toBe('deny')
-    expect(harness.dispatched[1].effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.shellCommands).toBe('ask')
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.fileChanges).toBe('ask')
     expect(harness.dispatched[1].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
-      'deny'
+      'ask'
     )
     expect(harness.dispatched[1].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
@@ -19887,11 +19886,11 @@ Next action:
     // Unattended elevation force-denies network egress.
     expect(harness.dispatched[0].effectivePermissions?.networkAccess).toBe('deny')
     expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
-      'deny'
+      'allow'
     )
-    // Fork 4B: elevated unattended without an explicit simulatorCanvas grant
-    // must not inherit Accept Edits / Full WS allow.
-    expect(harness.dispatched[0].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
+    expect(harness.dispatched[0].effectivePermissions?.agenticServices.simulatorCanvas).toBe(
+      'allow'
+    )
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -19903,12 +19902,14 @@ Next action:
     expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
     expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(false)
     expect(harness.dispatched[1].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
-      'deny'
+      'allow'
     )
-    expect(harness.dispatched[1].effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.simulatorCanvas).toBe(
+      'allow'
+    )
   })
 
-  it('fork 4B: elevated unattended allows simulatorCanvas with an explicit workspace grant', async () => {
+  it('keeps recorded Simulator grants compatible but redundant after elevation', async () => {
     const harness = makeHarness({
       getSettings: () => ({
         ...makeSettings(),
@@ -19940,7 +19941,7 @@ Next action:
       'allow'
     )
     expect(harness.dispatched[0].effectivePermissions?.agenticServices.subThreadDelegation).toBe(
-      'deny'
+      'allow'
     )
   })
 
@@ -19986,7 +19987,7 @@ Next action:
     expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(false)
   })
 
-  it('P2: no elevation level on an unattended round → plan no-ask floor (P1b regression)', async () => {
+  it('P2: no elevation level on an unattended round → safe Plan', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',

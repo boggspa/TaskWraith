@@ -27,10 +27,8 @@ import {
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
 import {
-  applyUnattendedSimulatorCanvasOverride,
   resolveUnattendedApprovalMode,
   unattendedElevationPresetId,
-  unattendedSubThreadDelegationOverride,
   type UnattendedElevationAck
 } from '../UnattendedPostureGate'
 import { resolveProviderDispatch, type ProviderDispatchResolution } from '../ProviderRunPause'
@@ -689,12 +687,11 @@ export class ComposerService {
             // are distinguished ONLY by workflowMode (the renderer derives the
             // same 'read_only' vs 'plan' label from it). The Plan row
             // (workflowMode 'plan') resolves the `plan` instrument tier; the
-            // Ask row (workflowMode 'normal') the strict floor. Both
+            // Ask row (workflowMode 'normal') the attended Ask posture. Both
             // keep readOnly:true so the signed posture still clears the clamp.
-            // Unattended (scheduled) plan-mode runs force the plan no-ask floor:
-            // an Ask posture would raise modals nobody is attending.
-            presetId: workflowMode === 'plan' || unattended ? 'plan' : 'read_only',
-            ...(unattended ? { overrides: unattendedSubThreadDelegationOverride() } : {})
+            // Unattended (scheduled) safe runs use Plan: standard-service asks
+            // remain promptable and fail closed through approval timeout.
+            presetId: workflowMode === 'plan' || unattended ? 'plan' : 'read_only'
           })
         : elevatedPresetId
           ? resolveEffectiveRunPermissions({
@@ -706,14 +703,9 @@ export class ComposerService {
               presetId: elevatedPresetId,
               // Unattended elevation NEVER gets network egress (exfiltration risk on
               // an unattended loop). workspace_write/default don't set networkAccess
-              // (→ settings default 'allow'), so force-deny it here. Sub-thread
-              // delegation is also denied so elevated unattended loops cannot
-              // silently spawn children (interactive Accept/Full WS still allow).
-              // Fork 4B: Simulator Canvas is NOT hard-denied here — see
-              // applyUnattendedSimulatorCanvasOverride after resolve.
+              // (→ settings default 'allow'), so force-deny it here.
               overrides: {
-                networkAccess: 'deny',
-                ...unattendedSubThreadDelegationOverride()
+                networkAccess: 'deny'
               }
             })
           : previewRiskModel
@@ -751,12 +743,7 @@ export class ComposerService {
                     }
                   : {})
               })
-    // Fork 4B: demote elevated unattended simulatorCanvas:allow unless an
-    // explicit workspace grant is present; plan-floor keeps ask.
-    const effectiveRunPermissions =
-      unattended && resolvedRunPermissions
-        ? applyUnattendedSimulatorCanvasOverride(resolvedRunPermissions)
-        : resolvedRunPermissions
+    const effectiveRunPermissions = resolvedRunPermissions
     const payload: ComposerRunPayload = {
       provider,
       scope,
