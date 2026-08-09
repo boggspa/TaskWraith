@@ -30870,6 +30870,7 @@ function App(): React.JSX.Element {
     collaboratingChatIds,
     composerDraftChatIds,
     composerCtx,
+    composerSurfaceBase: composerStableBase,
     configuredProviderSnapshot,
     executionMapProjection: openExecutionMap ? openExecutionMapProjection : null,
     executionMapSelectedStepId: openExecutionMap?.selectedStepId,

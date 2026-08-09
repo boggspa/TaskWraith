@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import {
   buildSideChatComposerProps,
   handleSideChatComposerKeyDown,
+  SideChatComposerRuntime,
   shouldSubmitSideChatComposerKey
 } from './sideChatComposer'
 
@@ -55,6 +56,10 @@ describe('sideChatComposer', () => {
     const toggleParentEnsemble = vi.fn()
     const syncParentGeminiModel = vi.fn()
     const respondToParentApproval = vi.fn()
+    const updateParentFanoutIsolation = vi.fn()
+    const updateParentConcurrentMode = vi.fn()
+    const setParentGoalDraft = vi.fn()
+    const setParentGoalEditing = vi.fn()
     const parentExternalTextareaRef = { current: { id: 'parent-textarea' } }
     const focused = {
       currentChat: { appChatId: 'parent' },
@@ -79,6 +84,19 @@ describe('sideChatComposer', () => {
       showWorkspaceGitAboveRows: true,
       resumeAppWatchSnapshot: { windowMeta: { applicationName: 'Parent App' } },
       geminiWorkspaceTrustReady: false,
+      goalDraft: 'parent goal draft',
+      goalEditing: true,
+      isPreparingDiffReview: true,
+      workflowDraft: { chatId: 'parent' },
+      multiview: { layout: 'quad' },
+      planImportExecutionEstimate: { runs: 12 },
+      planImportGroundingBusy: true,
+      planImportGroundingDisabledReason: 'parent-only',
+      currentGoalModeLabel: 'Parent goal mode',
+      setGoalDraft: setParentGoalDraft,
+      setGoalEditing: setParentGoalEditing,
+      updateCurrentEnsembleFanoutIsolation: updateParentFanoutIsolation,
+      updateCurrentEnsembleConcurrentMode: updateParentConcurrentMode,
       sessionYoloMode: { enabled: true },
       externalPathGrants: [{ id: 'parent-path' }],
       visibleScheduledTasks: [{ id: 'parent-schedule' }],
@@ -110,6 +128,15 @@ describe('sideChatComposer', () => {
     expect(isolatedWithoutSideAttachments.diffActionMenuOpen).toBe(false)
     expect(isolatedWithoutSideAttachments.resumeAppWatchSnapshot).toBeNull()
     expect(isolatedWithoutSideAttachments.geminiWorkspaceTrustReady).toBe(true)
+    expect(isolatedWithoutSideAttachments.goalDraft).toBe('')
+    expect(isolatedWithoutSideAttachments.goalEditing).toBe(false)
+    expect(isolatedWithoutSideAttachments.isPreparingDiffReview).toBe(false)
+    expect(isolatedWithoutSideAttachments.workflowDraft).toBeNull()
+    expect(isolatedWithoutSideAttachments.multiview).toEqual({ layout: 'single' })
+    expect(isolatedWithoutSideAttachments.planImportExecutionEstimate).toBeNull()
+    expect(isolatedWithoutSideAttachments.planImportGroundingBusy).toBe(false)
+    expect(isolatedWithoutSideAttachments.planImportGroundingDisabledReason).toBeUndefined()
+    expect(isolatedWithoutSideAttachments.currentGoalModeLabel).toBe('')
     expect(isolatedWithoutSideAttachments.sessionYoloMode).toEqual({ enabled: false })
     expect(isolatedWithoutSideAttachments.goalButtonRef).not.toBe(parentGoalButtonRef)
     expect(isolatedWithoutSideAttachments.goalPopoverRef).not.toBe(parentGoalPopoverRef)
@@ -130,7 +157,49 @@ describe('sideChatComposer', () => {
     expect(isolatedWithoutSideAttachments.externalComposerTextareaRef).toBeUndefined()
     expect(isolatedWithoutSideAttachments.showWorkspaceGitAboveRows).toBe(false)
     isolatedWithoutSideAttachments.setDiffActionMenuOpen(true)
+    isolatedWithoutSideAttachments.setGoalDraft('side draft')
+    isolatedWithoutSideAttachments.setGoalEditing(true)
     expect(setParentDiffActionMenuOpen).not.toHaveBeenCalled()
+    expect(setParentGoalDraft).not.toHaveBeenCalled()
+    expect(setParentGoalEditing).not.toHaveBeenCalled()
+  })
+
+  it('keeps equivalent side runtime props stable while dispatching to the latest handlers', () => {
+    type RuntimeProps = {
+      chatId: string
+      onRun: () => void
+      rows: string[]
+      telemetry: { tokens: number }
+    }
+    const firstRun = vi.fn()
+    const secondRun = vi.fn()
+    const runtime = new SideChatComposerRuntime<RuntimeProps>()
+    const first = runtime.stabilize({
+      chatId: 'side-a',
+      onRun: firstRun,
+      rows: [],
+      telemetry: { tokens: 12 }
+    })
+    const second = runtime.stabilize({
+      chatId: 'side-a',
+      onRun: secondRun,
+      rows: [],
+      telemetry: { tokens: 12 }
+    })
+
+    expect(second).toBe(first)
+    expect(second.onRun).toBe(first.onRun)
+    second.onRun()
+    expect(firstRun).not.toHaveBeenCalled()
+    expect(secondRun).toHaveBeenCalledOnce()
+
+    const switched = runtime.stabilize({
+      chatId: 'side-b',
+      onRun: secondRun,
+      rows: [],
+      telemetry: { tokens: 12 }
+    })
+    expect(switched).not.toBe(second)
   })
 
   it('keeps the linked-chat pane on the shared Composer instead of a bespoke form', () => {
@@ -140,6 +209,8 @@ describe('sideChatComposer', () => {
     )
 
     expect(source).toContain('<Composer {...sideComposerCtx} />')
+    expect(source).toContain('buildSideChatComposerProps(composerSurfaceBase, {')
+    expect(source).not.toContain('buildSideChatComposerProps(composerCtx, {')
     expect(source).not.toContain('side-chat-compact-composer')
   })
 
@@ -186,6 +257,8 @@ describe('sideChatComposer', () => {
       "window.alert('Nested side chats are unavailable from a linked chat.')"
     )
     expect(layoutSource).toContain("approvalMode: sideComposerSelection?.approvalMode || 'default'")
+    expect(layoutSource).toContain('updateCurrentEnsembleFanoutIsolation: (isolation: any) =>')
+    expect(layoutSource).toContain('updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>')
   })
 
   it('gives the linked surface its own hydration and residency lifecycle', () => {

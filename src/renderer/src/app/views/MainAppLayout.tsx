@@ -7,7 +7,10 @@ import {
   NOOP_PLAN_CHOICE_SUBMIT,
   NOOP_PROPOSED_PLAN_CUSTOM
 } from '../../lib/stableEmpties'
-import { buildSideChatComposerProps } from '../../lib/sideChatComposer'
+import {
+  buildSideChatComposerProps,
+  SideChatComposerRuntime
+} from '../../lib/sideChatComposer'
 import { activeEnsembleRoundForComposer } from '../../lib/chatBusyState'
 import { resolveSlashParticipantForChat } from '../../lib/resolveSlashParticipant'
 import { buildEnsembleProviderBlendStyle } from '../../lib/multiviewEnsembleComposer'
@@ -21,6 +24,8 @@ import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
 } from '../../lib/ensembleFanoutPolicy'
+import { resolveEnsembleFanoutIsolationPolicy } from '../../../../shared/ensembleFanoutIsolation'
+import { activeGoalModeLabel } from '../../../../main/GoalState'
 import { isImageAttachmentPath } from '../../lib/imageAttachments'
 import {
   MIN_RIGHT_PANEL_WIDTH,
@@ -173,6 +178,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   codexThreads,
   collaboratingChatIds,
   composerCtx,
+  composerSurfaceBase,
   composerDraftChatIds,
   configuredProviderSnapshot,
   executionMapProjection,
@@ -773,7 +779,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     if (nextChat.parentChatRelation === 'sideChat') {
       handleSideChatChange(nextChat)
     } else {
-      composerCtx.setChats((current: any[]) =>
+      composerSurfaceBase.setChats((current: any[]) =>
         current.map((chat: any) => (chat.appChatId === nextChat.appChatId ? nextChat : chat))
       )
     }
@@ -914,8 +920,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   }
   const noSideComposerAction = (): void => {}
 
-  const sideComposerCtx = sideChat
-    ? (buildSideChatComposerProps(composerCtx, {
+  const sideComposerRuntimeRef = useRef<SideChatComposerRuntime<ComposerProps> | null>(null)
+  if (!sideComposerRuntimeRef.current) {
+    sideComposerRuntimeRef.current = new SideChatComposerRuntime<ComposerProps>()
+  }
+  const nextSideComposerCtx = sideChat
+    ? (buildSideChatComposerProps(composerSurfaceBase, {
         prompt: sidePrompt,
         currentChat: sideChat,
         currentChatIdRef: sideComposerChatIdRef,
@@ -1000,6 +1010,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         composerFileAttachments: sideComposerFileAttachments,
         currentActiveGoal: sideChat.activeGoal || null,
         currentGoalStatus: sideChat.activeGoal?.status || 'empty',
+        currentGoalModeLabel: sideChat.activeGoal
+          ? activeGoalModeLabel(sideChat.activeGoal.mode)
+          : 'Guided by TaskWraith',
         currentGoalButtonTitle: sideChat.activeGoal
           ? `${sideChat.activeGoal.status}: ${sideChat.activeGoal.objective}`
           : 'Set active goal',
@@ -1081,7 +1094,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         handlePickImages: async () => {
           const selected = await window.api.selectImageFiles()
           if (selected?.length) {
-            await composerCtx.addImageAttachmentsToChat(sideChat.appChatId, selected)
+            await composerSurfaceBase.addImageAttachmentsToChat(sideChat.appChatId, selected)
           }
         },
         handleRemoveImageAttachment: handleRemoveSideImageAttachment,
@@ -1146,6 +1159,17 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             concurrentModeEnabled: ensembleFanoutPolicyEnabled(normalized)
           })
         },
+        updateCurrentEnsembleFanoutIsolation: (isolation: any) =>
+          patchSideEnsemble({
+            fanoutIsolation: resolveEnsembleFanoutIsolationPolicy(isolation)
+          }),
+        updateCurrentEnsembleConcurrentMode: (enabled: boolean) => {
+          const policy = enabled ? 'read_only' : 'off'
+          patchSideEnsemble({
+            fanoutPolicy: policy,
+            concurrentModeEnabled: enabled
+          })
+        },
         updateCurrentEnsembleContextChars: (value: number) =>
           patchSideEnsemble({
             ensembleContextChars: Math.max(
@@ -1194,6 +1218,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         setIntentNote: noSideComposerAction,
         openSlashCommandsRequestId: 0
       } satisfies Partial<ComposerProps>) as ComposerProps)
+    : null
+  const sideComposerCtx = nextSideComposerCtx
+    ? sideComposerRuntimeRef.current.stabilize(nextSideComposerCtx)
     : null
 
   const mainPaneWorkspaceLabel = resolveMainPaneWorkspaceLabel({
