@@ -6560,6 +6560,40 @@ public final class RemoteSessionModel: ObservableObject {
         // left the modal stuck on screen after Accept.
         repliedApprovalToolCallIds.insert(toolCallId)
         approvals.removeAll { $0.toolCallId == toolCallId }
+        let hostRoute = PairedHostActionRouting.approval(
+            approvalId: toolCallId,
+            decision: decision,
+            commandsAvailable: hostProjection.canSubmitCommands)
+        if case .host(let command) = hostRoute {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let receipt = try await self.hostProjection.submitCommand(
+                        name: command.name,
+                        target: command.target,
+                        arguments: command.arguments)
+                    self.lastActionMessage = PairedHostActionRouting.message(
+                        for: receipt, success: label)
+                    if PairedHostActionRouting.alreadyResolvedApproval(receipt) {
+                        self.repliedApprovalToolCallIds.remove(toolCallId)
+                        self.approvals.removeAll { $0.toolCallId == toolCallId }
+                    } else if !PairedHostActionRouting.accepted(receipt) {
+                        self.repliedApprovalToolCallIds.remove(toolCallId)
+                        if !self.approvals.contains(where: { $0.toolCallId == toolCallId }) {
+                            self.approvals.insert(card, at: 0)
+                        }
+                    }
+                } catch {
+                    self.lastActionMessage = error.localizedDescription
+                    self.repliedApprovalToolCallIds.remove(toolCallId)
+                    if !self.approvals.contains(where: { $0.toolCallId == toolCallId }) {
+                        self.approvals.insert(card, at: 0)
+                    }
+                }
+            }
+            scheduleThreadRefreshAfterUserAction(thread)
+            return
+        }
         send(
             BridgeAction.approvalReply(
                 toolCallId: toolCallId, decision: decision, workspaceId: ws, threadId: thread),
@@ -6626,6 +6660,25 @@ public final class RemoteSessionModel: ObservableObject {
         guard let context = replyContext(workspaceId: workspaceId, threadId: threadId, runId: nil)
         else { return false }
         let label = decision == "accept" ? "Allowed once." : "Denied."
+        let hostRoute = PairedHostActionRouting.approval(
+            approvalId: toolCallId,
+            decision: decision,
+            commandsAvailable: hostProjection.canSubmitCommands)
+        if case .host(let command) = hostRoute {
+            do {
+                let receipt = try await hostProjection.submitCommand(
+                    name: command.name,
+                    target: command.target,
+                    arguments: command.arguments)
+                lastActionMessage = PairedHostActionRouting.message(
+                    for: receipt, success: label)
+                return PairedHostActionRouting.accepted(receipt)
+                    || PairedHostActionRouting.alreadyResolvedApproval(receipt)
+            } catch {
+                lastActionMessage = error.localizedDescription
+                return false
+            }
+        }
         // Bound the ack request so reconnect (≤timeoutMs) + ack stays within the
         // OS background-execution budget.
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
@@ -6696,6 +6749,38 @@ public final class RemoteSessionModel: ObservableObject {
         let thread = context.threadId
         repliedQuestionIds.insert(promptId)
         questions.removeAll { $0.resolvedId == promptId }
+        let hostRoute = PairedHostActionRouting.questionAnswer(
+            questionId: promptId,
+            answer: text,
+            isCustom: isCustom,
+            commandsAvailable: hostProjection.canSubmitCommands)
+        if case .host(let command) = hostRoute {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let receipt = try await self.hostProjection.submitCommand(
+                        name: command.name,
+                        target: command.target,
+                        arguments: command.arguments)
+                    self.lastActionMessage = PairedHostActionRouting.message(
+                        for: receipt, success: "Answer sent.")
+                    if !PairedHostActionRouting.accepted(receipt) {
+                        self.repliedQuestionIds.remove(promptId)
+                        if !self.questions.contains(where: { $0.resolvedId == promptId }) {
+                            self.questions.insert(card, at: 0)
+                        }
+                    }
+                } catch {
+                    self.lastActionMessage = error.localizedDescription
+                    self.repliedQuestionIds.remove(promptId)
+                    if !self.questions.contains(where: { $0.resolvedId == promptId }) {
+                        self.questions.insert(card, at: 0)
+                    }
+                }
+            }
+            scheduleThreadRefreshAfterUserAction(thread)
+            return
+        }
         send(
             BridgeAction.questionReply(
                 questionId: promptId, answer: text, workspaceId: ws, threadId: thread,
@@ -6721,6 +6806,36 @@ public final class RemoteSessionModel: ObservableObject {
         let thread = context.threadId
         repliedQuestionIds.insert(promptId)
         questions.removeAll { $0.resolvedId == promptId }
+        let hostRoute = PairedHostActionRouting.questionDismiss(
+            questionId: promptId,
+            commandsAvailable: hostProjection.canSubmitCommands)
+        if case .host(let command) = hostRoute {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let receipt = try await self.hostProjection.submitCommand(
+                        name: command.name,
+                        target: command.target,
+                        arguments: command.arguments)
+                    self.lastActionMessage = PairedHostActionRouting.message(
+                        for: receipt, success: "Question dismissed.")
+                    if !PairedHostActionRouting.accepted(receipt) {
+                        self.repliedQuestionIds.remove(promptId)
+                        if !self.questions.contains(where: { $0.resolvedId == promptId }) {
+                            self.questions.insert(card, at: 0)
+                        }
+                    }
+                } catch {
+                    self.lastActionMessage = error.localizedDescription
+                    self.repliedQuestionIds.remove(promptId)
+                    if !self.questions.contains(where: { $0.resolvedId == promptId }) {
+                        self.questions.insert(card, at: 0)
+                    }
+                }
+            }
+            scheduleThreadRefreshAfterUserAction(thread)
+            return
+        }
         send(
             BridgeAction.questionReject(
                 promptId: promptId, workspaceId: ws, threadId: thread, runId: context.runId),
@@ -6916,6 +7031,26 @@ public final class RemoteSessionModel: ObservableObject {
 
     public func cancelRun(_ card: RemoteTaskCard) {
         guard let thread = card.threadId else { return }
+        let hostRoute = PairedHostActionRouting.runCancel(
+            threadId: thread,
+            commandsAvailable: hostProjection.canSubmitCommands)
+        if case .host(let command) = hostRoute {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let receipt = try await self.hostProjection.submitCommand(
+                        name: command.name,
+                        target: command.target,
+                        arguments: command.arguments)
+                    self.lastActionMessage = PairedHostActionRouting.message(
+                        for: receipt,
+                        success: card.isEnsemble ? "Round cancelled." : "Run cancelled.")
+                } catch {
+                    self.lastActionMessage = error.localizedDescription
+                }
+            }
+            return
+        }
         // Global chats carry no workspaceId; present the reserved "global" scope
         // (NOT an empty string) so the Mac's allowlist gate ACCEPTS the cancel.
         let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
@@ -7224,6 +7359,48 @@ public final class RemoteSessionModel: ObservableObject {
             ? currentRunSummaryFingerprints(
                 threadId: card.id, fallbackRunId: card.runId,
                 fallbackEnsembleRoundId: ensembleRoundId) : []
+        let hostRoute = PairedHostActionRouting.composerSend(
+            threadId: thread,
+            text: prompt,
+            model: model,
+            reasoningEffort: reasoningEffort,
+            hasUnsupportedArguments: approvalMode != nil || workflowMode != nil
+                || permissionPresetId != nil || providerOverride != nil
+                || imageAttachments?.isEmpty == false || extraWorkspaceIds?.isEmpty == false
+                || fastModeEnabled != nil || kimiThinkingEnabled != nil,
+            commandsAvailable: hostProjection.canSubmitCommands)
+        if case .host(let command) = hostRoute {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let receipt = try await self.hostProjection.submitCommand(
+                        name: command.name,
+                        target: command.target,
+                        arguments: command.arguments)
+                    self.lastActionMessage = PairedHostActionRouting.message(
+                        for: receipt,
+                        success: card.isEnsemble ? "Sent to ensemble." : "Sent.")
+                    guard PairedHostActionRouting.accepted(receipt) else {
+                        onActionUnsent?()
+                        return
+                    }
+                    if navigateOnAck { self.navigationTarget = thread }
+                    if receipt.status == .succeeded {
+                        self.hideRunSummaryFingerprintsForNextTurn(
+                            threadSummaryFingerprints, threadId: thread)
+                        if card.id != thread {
+                            self.hideRunSummaryFingerprintsForNextTurn(
+                                cardSummaryFingerprints, threadId: card.id)
+                        }
+                    }
+                } catch {
+                    self.lastActionMessage = error.localizedDescription
+                    onActionUnsent?()
+                }
+            }
+            scheduleThreadRefreshAfterUserAction(thread)
+            return
+        }
         if card.isEnsemble {
             send(
                 BridgeAction.ensembleSteer(

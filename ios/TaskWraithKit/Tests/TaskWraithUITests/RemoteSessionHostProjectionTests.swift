@@ -8,14 +8,27 @@ private struct HostProjectionStaticSeed: IdentitySeedStore {
   func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
 }
 
-private actor HostProjectionNoopTransport: PairedHostRequestTransport {
+private actor HostProjectionTestTransport: PairedHostRequestTransport {
+  private var replies: [AckResult]
+  private var recorded: [Data] = []
+
+  init(replies: [AckResult] = []) {
+    self.replies = replies
+  }
+
   func requestSerialized(
     _ method: String,
     paramsData: Data,
     timeoutMs: Int
   ) async throws -> AckResult {
-    AckResult(ok: false, result: nil, error: "not requested")
+    recorded.append(paramsData)
+    guard !replies.isEmpty else {
+      return AckResult(ok: false, result: nil, error: "not requested")
+    }
+    return replies.removeFirst()
   }
+
+  func requests() -> [Data] { recorded }
 }
 
 private final class HostProjectionMemoryStore: PairedHostSnapshotStore, @unchecked Sendable {
@@ -77,6 +90,89 @@ struct RemoteSessionHostProjectionTests {
     #expect(store.contains("mac-a"))
   }
 
+  @Test("a matching iOS question submits exactly once through Host v2")
+  func questionAnswerUsesHost() async throws {
+    let store = HostProjectionMemoryStore()
+    let model = makeModel(snapshotStore: store)
+    let identity = try #require(
+      pairedHostProjectionIdentity(
+        identityPublicKeyBase64: model.identityPublicKeyBase64))
+    let receipt = HostCommandReceipt(
+      commandId: "11111111-1111-4111-8111-111111111111",
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      name: .questionAnswer,
+      actor: HostActorIdentity(
+        actorId: identity.clientId,
+        clientId: identity.clientId,
+        clientClass: .ios),
+      authority: HostAuthorityDecision(decision: .allow),
+      status: .succeeded,
+      commandFingerprint: String(repeating: "a", count: 64),
+      generation: 7,
+      cursor: 0,
+      createdAt: "2026-08-09T20:00:00Z",
+      updatedAt: "2026-08-09T20:00:01Z")
+    let response = HostProjectionCommandResponse(kind: .commandSubmit, receipt: receipt)
+    let transport = HostProjectionTestTransport(
+      replies: [
+        AckResult(
+          ok: true,
+          result: try JSONEncoder().encode(response),
+          error: nil)
+      ])
+    var snapshot = createEmptyHostSnapshot(
+      generation: 7,
+      cursor: 0,
+      freshness: .live,
+      generatedAt: "2026-08-09T20:00:00Z")
+    snapshot.questions = [
+      HostQuestionProjection(
+        questionId: "question-1",
+        threadId: "thread-1",
+        status: .open,
+        promptPreview: "Proceed?",
+        askedAt: 1)
+    ]
+    try seedLiveHost(
+      on: model,
+      hostIdentity: "mac-a",
+      transport: transport,
+      snapshot: snapshot)
+
+    model.answer(
+      MobileQuestionCard(
+        promptId: "question-1",
+        questionId: nil,
+        question: "Proceed?",
+        prompt: nil,
+        options: ["Yes", "No"],
+        context: nil,
+        createdAt: "2026-08-09T20:00:00Z",
+        expiresAt: nil,
+        provider: "codex",
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        runId: "run-1",
+        status: "pending"),
+      "Yes",
+      isCustom: false)
+
+    await waitUntil { await transport.requests().count == 1 }
+    let requests = await transport.requests()
+    let envelope = try #require(
+      JSONSerialization.jsonObject(with: requests[0]) as? [String: Any])
+    #expect(envelope["kind"] as? String == "command.submit")
+    let command = try #require(envelope["params"] as? [String: Any])
+    #expect(command["name"] as? String == "question.answer")
+    #expect(command["target"] as? [String: String] == ["questionId": "question-1"])
+    let arguments = try #require(command["arguments"] as? [String: Any])
+    #expect(arguments["decision"] as? String == "answer")
+    #expect(arguments["answer"] as? String == "Yes")
+    #expect(arguments["isCustom"] as? Bool == false)
+    #expect(model.hostProjection.lastReceipt == receipt)
+    #expect(model.lastActionMessage == "Answer sent.")
+  }
+
   private func makeModel(snapshotStore: HostProjectionMemoryStore) -> RemoteSessionModel {
     let defaults = UserDefaults(
       suiteName: "RemoteSessionHostProjectionTests.\(UUID().uuidString)")!
@@ -88,7 +184,9 @@ struct RemoteSessionHostProjectionTests {
 
   private func seedLiveHost(
     on model: RemoteSessionModel,
-    hostIdentity: String
+    hostIdentity: String,
+    transport: HostProjectionTestTransport = HostProjectionTestTransport(),
+    snapshot: HostSnapshot? = nil
   ) throws {
     let identity = try #require(
       pairedHostProjectionIdentity(
@@ -96,7 +194,7 @@ struct RemoteSessionHostProjectionTests {
     model.hostProjection.activate(
       hostIdentity: hostIdentity,
       phoneIdentity: identity,
-      transport: HostProjectionNoopTransport())
+      transport: transport)
     _ = model.hostProjection.receive(
       method: PairedHostProjectionMethods.welcome,
       params: try JSONEncoder().encode(
@@ -117,11 +215,12 @@ struct RemoteSessionHostProjectionTests {
       method: PairedHostProjectionMethods.snapshot,
       params: try JSONEncoder().encode(
         HostSnapshotFrame(
-          snapshot: createEmptyHostSnapshot(
-            generation: 7,
-            cursor: 0,
-            freshness: .live,
-            generatedAt: "2026-08-09T20:00:00Z"))))
+          snapshot: snapshot
+            ?? createEmptyHostSnapshot(
+              generation: 7,
+              cursor: 0,
+              freshness: .live,
+              generatedAt: "2026-08-09T20:00:00Z"))))
     _ = model.hostProjection.receive(
       method: PairedHostProjectionMethods.state,
       params: try JSONEncoder().encode(
@@ -130,5 +229,24 @@ struct RemoteSessionHostProjectionTests {
           generation: 7,
           cursor: 0)))
     #expect(model.hostProjection.phase == .live)
+  }
+
+  private func waitUntil(
+    timeoutNanoseconds: UInt64 = 2_000_000_000,
+    _ predicate: @escaping @Sendable () async -> Bool
+  ) async {
+    let started = DispatchTime.now().uptimeNanoseconds
+    while !(await predicate()) {
+      if DispatchTime.now().uptimeNanoseconds - started > timeoutNanoseconds {
+        Issue.record("condition timed out")
+        return
+      }
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+  }
+
+  private struct HostProjectionCommandResponse: Codable {
+    let kind: PairedHostRequestKind
+    let receipt: HostCommandReceipt
   }
 }

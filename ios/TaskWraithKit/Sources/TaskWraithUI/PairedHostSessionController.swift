@@ -56,6 +56,11 @@ public final class PairedHostSessionController: ObservableObject {
   public var generation: HostGeneration? { snapshot?.generation }
   public var cursor: HostCursor? { snapshot?.cursor }
   public var isLive: Bool { phase == .live }
+  public var canSubmitCommands: Bool {
+    PairedHostActionRouting.commandsAvailable(
+      phase: phase,
+      capabilities: welcome?.capabilities)
+  }
 
   private let snapshotStore: any PairedHostSnapshotStore
   private var replica: PairedHostProjectionReplica?
