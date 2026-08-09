@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import {
   ChatViewPane,
   chatViewPaneCanOpenWorkspacePopout,
@@ -9,6 +10,7 @@ import {
   type ChatViewPaneProps
 } from './ChatViewPane'
 import { createMultiviewPaneRefs } from '../hooks/useMultiviewState'
+import { WorkspaceGitSnapshotStore } from '../lib/workspaceGitSnapshotStore'
 
 // The pane composer is now the SAME first-class <Composer> the focused main
 // pane renders (built by App from `composerCtx` with per-pane overrides). It
@@ -21,11 +23,15 @@ vi.mock('./Composer', () => ({
     prompt?: string
     composerAreaRef?: { current: HTMLDivElement | null }
     showWelcomeNotifications?: boolean
+    primaryGitSnapshot?: { branch?: string }
+    workspaceDiffStats?: { filesChanged: number; additions: number; deletions: number }
   }) => (
     <div
       data-testid="pane-composer-stub"
       data-has-local-composer-ref={String(Boolean(props.composerAreaRef))}
       data-show-welcome-notifications={String(props.showWelcomeNotifications)}
+      data-git-branch={props.primaryGitSnapshot?.branch || ''}
+      data-git-changed={String(props.workspaceDiffStats?.filesChanged ?? 0)}
     >{`pane-composer:${props.prompt ?? ''}`}</div>
   )
 }))
@@ -141,6 +147,16 @@ describe('chatViewPanePropsEqual', () => {
     // reconcile the pane — this replaces the old per-control comparator checks.
     expect(
       chatViewPanePropsEqual(makeProps(), makeProps({ composerProps: stubComposerProps('x') }))
+    ).toBe(false)
+  })
+
+  it('re-renders when its path-scoped Git subscription changes ownership', () => {
+    const store = new WorkspaceGitSnapshotStore()
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ gitSnapshotStore: store, gitSnapshotPath: '/one' }),
+        makeProps({ gitSnapshotStore: store, gitSnapshotPath: '/two' })
+      )
     ).toBe(false)
   })
 
@@ -281,6 +297,38 @@ describe('ChatViewPane shared composer', () => {
     expect(html).toContain('data-testid="pane-composer-stub"')
     expect(html).toContain('data-has-local-composer-ref="true"')
     expect(html).toContain('pane-composer:Pane prompt') // pane context forwarded verbatim
+  })
+
+  it('projects only its path-scoped Git snapshot into the shared composer', () => {
+    const store = new WorkspaceGitSnapshotStore()
+    store.set('/repo', {
+      requestedPath: '/repo',
+      repoRoot: '/repo',
+      branch: 'pane-branch',
+      detached: false,
+      ahead: 0,
+      behind: 0,
+      files: [],
+      counts: { changed: 3, staged: 0, unstaged: 3, untracked: 0 },
+      clean: false,
+      mergeState: null,
+      conflicts: 0,
+      lineStats: { additions: 8, deletions: 2 }
+    } as GitRepositorySnapshot)
+
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+          composerProps: stubComposerProps(),
+          gitSnapshotStore: store,
+          gitSnapshotPath: '/repo'
+        })}
+      />
+    )
+
+    expect(html).toContain('data-git-branch="pane-branch"')
+    expect(html).toContain('data-git-changed="3"')
   })
 
   it('mounts SubThreadStatusTicker above the transcript for a parent with a running child', () => {

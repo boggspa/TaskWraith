@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel, transcriptRunningChatIdsSignature } from './TranscriptPanel'
@@ -14,6 +14,10 @@ import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData } from '../lib/welcomeUsageDashboard'
 import { bindComposerReservation } from '../lib/composerReservation'
 import { useTranscriptScrollState } from '../app/state/useTranscriptScrollState'
+import {
+  type WorkspaceGitSnapshotStore,
+  useWorkspaceGitSnapshot
+} from '../lib/workspaceGitSnapshotStore'
 import {
   AgentAuraLayer,
   LivingWorkspaceLayer,
@@ -49,6 +53,9 @@ export interface ChatViewPaneProps extends Omit<
    * stay light; the live Multiview path always provides it.
    */
   composerProps?: ComposerProps
+  /** Path-scoped live Git state; only this pane subscribes to its workspace. */
+  gitSnapshotStore?: WorkspaceGitSnapshotStore
+  gitSnapshotPath?: string | null
   /** appearance.composerStyle / interface style for the `interface-*` class. */
   interfaceStyle: ComposerStyle
   /** Provider (or Ollama brand) class for the `provider-*` tint. */
@@ -265,6 +272,8 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     // The shared <Composer> is driven entirely by this object; a new identity
     // (App rebuilds it per render with this pane's values) reconciles the pane.
     a.composerProps === b.composerProps &&
+    a.gitSnapshotStore === b.gitSnapshotStore &&
+    a.gitSnapshotPath === b.gitSnapshotPath &&
     a.onFocusPane === b.onFocusPane &&
     a.ariaLabel === b.ariaLabel
   )
@@ -444,7 +453,24 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const paneComposerAreaRef = useRef<HTMLDivElement | null>(null)
   const chatId = props.chat?.appChatId ?? ''
-  const hasComposerProps = Boolean(props.composerProps)
+  const paneGitSnapshot = useWorkspaceGitSnapshot(props.gitSnapshotStore, props.gitSnapshotPath)
+  const effectiveComposerProps = useMemo<ComposerProps | undefined>(() => {
+    if (!props.composerProps || !props.gitSnapshotStore || !props.gitSnapshotPath) {
+      return props.composerProps
+    }
+    return {
+      ...props.composerProps,
+      primaryGitSnapshot: paneGitSnapshot,
+      workspaceDiffStats: paneGitSnapshot
+        ? {
+            filesChanged: paneGitSnapshot.counts?.changed ?? 0,
+            additions: paneGitSnapshot.lineStats?.additions ?? 0,
+            deletions: paneGitSnapshot.lineStats?.deletions ?? 0
+          }
+        : { filesChanged: 0, additions: 0, deletions: 0 }
+    }
+  }, [paneGitSnapshot, props.composerProps, props.gitSnapshotPath, props.gitSnapshotStore])
+  const hasComposerProps = Boolean(effectiveComposerProps)
   const paneScrollState = useTranscriptScrollState({
     chatId: chatId || null,
     messages: props.messages,
@@ -522,7 +548,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         />
       )}
       {props.showSky && <SkyWeatherVisual weather={props.weather ?? null} />}
-      <ChatViewPaneChrome {...props} />
+      <ChatViewPaneChrome {...props} composerProps={effectiveComposerProps} />
       {props.isWelcomeChat &&
         props.showWelcomeUsageDashboard &&
         props.welcomeUsageDashboardData && (
@@ -582,9 +608,9 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
           />
         </div>
       )}
-      {props.composerProps && (
+      {effectiveComposerProps && (
         <Composer
-          {...props.composerProps}
+          {...effectiveComposerProps}
           composerAreaRef={paneComposerAreaRef}
           showWelcomeNotifications={false}
         />

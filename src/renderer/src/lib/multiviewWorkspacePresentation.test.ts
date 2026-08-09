@@ -32,6 +32,8 @@ describe('Multiview focused workspace presentation', () => {
   it('derives the focused path from the chat and keys visible snapshot subscriptions by path', () => {
     expect(source).toContain('resolvePaneWorkspacePath({')
     expect(source).toContain('const multiviewPaneWorkspacePathsKey = (() => {')
+    expect(source).toContain('new WorkspaceGitSnapshotStore()')
+    expect(source).not.toContain('setGitSnapshotByWorkspace')
   })
 
   it('uses the path-keyed pane snapshot for focused split presentation', () => {
@@ -39,7 +41,7 @@ describe('Multiview focused workspace presentation', () => {
       'const focusedPrimaryGitSnapshot =',
       'const currentExternalWorkspaceState ='
     )
-    expect(focusedSnapshot).toContain('gitSnapshotByWorkspace[currentGitPresentationPath] ?? null')
+    expect(focusedSnapshot).toContain('focusedMultiviewGitSnapshot')
     expect(focusedSnapshot).toContain('normalizeWorkspacePath(primaryPrOwnerPathRef.current')
     expect(focusedSnapshot).toContain('normalizeWorkspacePath(primaryCiOwnerPathRef.current')
     expect(focusedSnapshot).toContain('normalizeWorkspacePath(snapshot.requestedPath)')
@@ -59,7 +61,9 @@ describe('Multiview focused workspace presentation', () => {
       'const handleMultiviewPanePrimaryGitSnapshot =',
       'const handleMultiviewPaneComposerWorktreeChange ='
     )
-    expect(paneSetter).toContain('updatePathKeyedWorkspaceSnapshot(prev, path, snapshot)')
+    expect(paneSetter).toContain('multiviewGitSnapshotStore.set(path, snapshot)')
+    expect(source).toContain('gitSnapshotStore={multiviewGitSnapshotStore}')
+    expect(source).toContain('gitSnapshotPath={viewerGitPresentationPath}')
   })
 
   it('selects pane focus without rewriting ownership, then projects legacy display state', () => {
