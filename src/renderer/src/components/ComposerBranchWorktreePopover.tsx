@@ -43,28 +43,40 @@ export interface ComposerBranchWorktreePopoverProps {
 
 type PopoverPlacement = 'above' | 'below'
 
-function computePopoverPosition(
-  rect: DOMRect,
-  popoverSize: { width: number; height: number }
-): { left: number; top: number; placement: PopoverPlacement } {
+export interface ComposerBranchPopoverPosition {
+  left: number
+  top: number
+  width: number
+  placement: PopoverPlacement
+}
+
+export function computeComposerBranchPopoverPosition(
+  rect: Pick<DOMRect, 'left' | 'top' | 'bottom'>,
+  viewport: { width: number; height: number },
+  popoverSize: { width: number; height: number },
+  composerRect?: Pick<DOMRect, 'left' | 'width'>
+): ComposerBranchPopoverPosition {
   const margin = 8
-  const width = Math.min(popoverSize.width, window.innerWidth - margin * 2)
-  const height = Math.min(popoverSize.height, window.innerHeight - margin * 2)
+  const availableWidth = Math.max(0, viewport.width - margin * 2)
+  const width = Math.min(Math.max(0, composerRect?.width ?? popoverSize.width), availableWidth)
+  const height = Math.min(popoverSize.height, viewport.height - margin * 2)
+  const preferredLeft = composerRect?.left ?? rect.left
   const left = Math.min(
-    Math.max(rect.left, margin),
-    Math.max(margin, window.innerWidth - width - margin)
+    Math.max(preferredLeft, margin),
+    Math.max(margin, viewport.width - width - margin)
   )
   const aboveAnchorTop = rect.top - 8
   if (aboveAnchorTop - height >= margin) {
-    return { left, top: aboveAnchorTop, placement: 'above' }
+    return { left, top: aboveAnchorTop, width, placement: 'above' }
   }
   const belowTop = rect.bottom + 8
-  if (belowTop + height <= window.innerHeight - margin) {
-    return { left, top: belowTop, placement: 'below' }
+  if (belowTop + height <= viewport.height - margin) {
+    return { left, top: belowTop, width, placement: 'below' }
   }
   return {
     left,
     top: Math.max(margin + height, aboveAnchorTop),
+    width,
     placement: 'above'
   }
 }
@@ -84,6 +96,7 @@ export function ComposerBranchWorktreePopover({
   const [position, setPosition] = useState<{
     left: number
     top: number
+    width: number
     placement: PopoverPlacement
   } | null>(null)
   const [branches, setBranches] = useState<GitBranchEntry[]>([])
@@ -140,8 +153,18 @@ export function ComposerBranchWorktreePopover({
       return
     }
     const rect = trigger.getBoundingClientRect()
+    const composerArea = trigger.closest('.composer-area')
+    const composerSurface = composerArea?.querySelector<HTMLElement>('.composer-surface')
+    const composerRect = (composerSurface || composerArea)?.getBoundingClientRect()
     const popoverHeight = popoverRef.current?.offsetHeight || 280
-    setPosition(computePopoverPosition(rect, { width: 320, height: popoverHeight }))
+    setPosition(
+      computeComposerBranchPopoverPosition(
+        rect,
+        { width: window.innerWidth, height: window.innerHeight },
+        { width: 640, height: popoverHeight },
+        composerRect ? { left: composerRect.left, width: composerRect.width } : undefined
+      )
+    )
   }, [])
 
   const closePopover = useCallback((): void => {
@@ -255,6 +278,7 @@ export function ComposerBranchWorktreePopover({
             style={{
               left: position.left,
               top: position.top,
+              width: position.width,
               transform: position.placement === 'above' ? 'translateY(-100%)' : undefined
             }}
             role="dialog"

@@ -31,8 +31,9 @@
   position: fixed;
   z-index: 1200;
   min-width: 16rem;
-  max-width: min(24rem, calc(100vw - 1.5rem));
+  max-width: calc(100vw - 1rem);
   max-height: min(22rem, calc(100vh - 2rem));
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 0;
