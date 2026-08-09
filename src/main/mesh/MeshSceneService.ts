@@ -30,7 +30,15 @@ import {
   type MeshSceneView,
   type MeshTransform
 } from '../../shared/meshScene'
+import {
+  meshTopologySummary,
+  type MeshTopologyDocument,
+  type MeshTopologyEditResult
+} from '../../shared/meshTopology'
 import type { MeshAssetStore } from './MeshAssetStore'
+import { meshTopologyFromImportedNode, meshTopologyFromPrimitive } from './MeshTopologyGeometry'
+import { applyMeshTopologyEdit, type MeshTopologyEditInput } from './MeshTopologyMutations'
+import type { MeshTopologyStore } from './MeshTopologyStore'
 import {
   bindMeshSceneNodeProperty,
   cloneMeshSceneDependencyGraph,
@@ -46,6 +54,7 @@ export interface MeshSceneCallContext {
   chatId?: string
   runId?: string
   workspacePath?: string
+  participantId?: string
 }
 
 export interface MeshHistoryAuthority {
@@ -119,6 +128,7 @@ export type MeshSceneMutation =
 export interface MeshSceneServiceDeps {
   store: MeshSceneStore
   assets: MeshAssetStore
+  topologies: MeshTopologyStore
   uuid: () => string
   now: () => string
   broadcast?: (event: MeshSceneEvent) => void
@@ -197,6 +207,15 @@ function cloneNode(node: MeshSceneNode): MeshSceneNode {
       material: mergeMaterial(node.material)
     }
   }
+  if (node.kind === 'editable') {
+    return {
+      ...node,
+      topologySummary: JSON.parse(JSON.stringify(node.topologySummary)),
+      source: { ...node.source },
+      transform: mergeTransform(node.transform),
+      material: mergeMaterial(node.material)
+    }
+  }
   return {
     ...node,
     transform: mergeTransform(node.transform),
@@ -230,6 +249,7 @@ export class MeshSceneService {
   private persist(scene: MeshSceneRecord): MeshSceneRecord {
     const saved = this.deps.store.upsert(scene)
     this.deps.assets.remove(saved.orphanedAssetIds)
+    this.deps.topologies.remove(saved.orphanedTopologyIds)
     return saved.scene
   }
 
@@ -302,6 +322,7 @@ export class MeshSceneService {
     const scene: MeshSceneRecord = {
       schemaVersion: MESH_SCENE_SCHEMA_VERSION,
       id: this.deps.uuid(),
+      revision: 0,
       chatId,
       ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
       ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
@@ -341,6 +362,7 @@ export class MeshSceneService {
     const scene: MeshSceneRecord = {
       schemaVersion: MESH_SCENE_SCHEMA_VERSION,
       id: this.deps.uuid(),
+      revision: 0,
       chatId,
       ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
       ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
@@ -415,6 +437,7 @@ export class MeshSceneService {
     const scene: MeshSceneRecord = {
       schemaVersion: MESH_SCENE_SCHEMA_VERSION,
       id: this.deps.uuid(),
+      revision: 0,
       chatId,
       ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
       ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
@@ -472,6 +495,7 @@ export class MeshSceneService {
       visible: true
     }
     scene.nodes.push(node)
+    scene.revision += 1
     scene.updatedAt = this.deps.now()
     let saved: MeshSceneRecord
     try {
@@ -590,10 +614,137 @@ export class MeshSceneService {
     // descendants in one durable transaction before the renderer hears about
     // the resulting scene.updated event.
     resolveMeshSceneDependencyGraph(scene)
+    scene.revision += 1
     scene.updatedAt = this.deps.now()
     const saved = this.persist(scene)
     this.emit('scene.updated', saved)
     return cloneScene(saved)
+  }
+
+  /** Materialize a renderer primitive or opaque import as chat-owned editable topology. */
+  makeEditable(
+    sceneId: string,
+    input: { nodeId: string },
+    ctx: MeshSceneCallContext
+  ): { scene: MeshSceneRecord; topology: MeshTopologyDocument } {
+    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const nodeIndex = scene.nodes.findIndex((entry) => entry.id === input.nodeId)
+    if (nodeIndex < 0) throw new Error('Mesh Canvas node was not found.')
+    const node = scene.nodes[nodeIndex]
+    if (node.kind === 'editable') {
+      const topology = this.deps.topologies.get(node.topologyId)
+      if (!topology) throw new Error('Editable topology is no longer available.')
+      return { scene, topology }
+    }
+    const topologyId = this.deps.uuid()
+    const topology =
+      node.kind === 'primitive'
+        ? meshTopologyFromPrimitive({
+            topologyId,
+            primitive: node.primitive,
+            name: node.name,
+            uuid: this.deps.uuid,
+            now: this.deps.now
+          })
+        : meshTopologyFromImportedNode({
+            topologyId,
+            node,
+            assets: this.deps.assets,
+            uuid: this.deps.uuid,
+            now: this.deps.now
+          })
+    if (topology.source.kind === 'generated') {
+      throw new Error('Converted topology lost its primitive/import provenance.')
+    }
+    const summary = meshTopologySummary(topology)
+    scene.nodes[nodeIndex] = {
+      id: node.id,
+      kind: 'editable',
+      name: node.name,
+      topologyId: topology.id,
+      topologyRevision: topology.revision,
+      topologySummary: summary,
+      source: topology.source,
+      transform: mergeTransform(node.transform),
+      material: mergeMaterial(node.kind === 'primitive' ? node.material : node.material),
+      visible: node.visible
+    }
+    scene.revision += 1
+    scene.updatedAt = this.deps.now()
+    this.deps.topologies.upsert(topology)
+    let saved: MeshSceneRecord
+    try {
+      saved = this.persist(scene)
+    } catch (error) {
+      this.deps.topologies.remove([topology.id])
+      throw error
+    }
+    this.emit('scene.updated', saved)
+    return { scene: cloneScene(saved), topology }
+  }
+
+  inspectTopology(
+    sceneId: string,
+    input: { nodeId: string },
+    ctx: MeshSceneCallContext
+  ): { sceneRevision: number; nodeId: string; topology: MeshTopologyDocument } {
+    const scene = this.getOwned(sceneId, ctx)
+    const node = scene.nodes.find((entry) => entry.id === input.nodeId)
+    if (!node || node.kind !== 'editable')
+      throw new Error('Editable Mesh Canvas node was not found.')
+    const topology = this.deps.topologies.get(node.topologyId)
+    if (!topology || topology.revision !== node.topologyRevision) {
+      throw new Error('Editable topology is unavailable or out of sync with its scene node.')
+    }
+    return { sceneRevision: scene.revision, nodeId: node.id, topology }
+  }
+
+  editTopology(
+    sceneId: string,
+    input: { nodeId: string; edit: MeshTopologyEditInput },
+    ctx: MeshSceneCallContext
+  ): { scene: MeshSceneRecord; edit: MeshTopologyEditResult } {
+    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const nodeIndex = scene.nodes.findIndex((entry) => entry.id === input.nodeId)
+    const node = nodeIndex >= 0 ? scene.nodes[nodeIndex] : null
+    if (!node || node.kind !== 'editable')
+      throw new Error('Editable Mesh Canvas node was not found.')
+    const current = this.deps.topologies.get(node.topologyId)
+    if (!current || current.revision !== node.topologyRevision) {
+      throw new Error('Editable topology is unavailable or out of sync with its scene node.')
+    }
+    const edit = applyMeshTopologyEdit(
+      current,
+      {
+        ...input.edit,
+        editor: {
+          ...(nonEmpty(ctx.provider, 100) ? { provider: nonEmpty(ctx.provider, 100)! } : {}),
+          ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
+          ...(nonEmpty(ctx.participantId, 256)
+            ? { participantId: nonEmpty(ctx.participantId, 256)! }
+            : {})
+        }
+      },
+      { uuid: this.deps.uuid, now: this.deps.now }
+    )
+    if (edit.duplicate) return { scene, edit }
+    scene.nodes[nodeIndex] = {
+      ...node,
+      topologyRevision: edit.document.revision,
+      topologySummary: edit.summary
+    }
+    scene.revision += 1
+    scene.updatedAt = this.deps.now()
+    this.deps.topologies.upsert(edit.document)
+    let saved: MeshSceneRecord
+    try {
+      saved = this.persist(scene)
+    } catch (error) {
+      this.deps.topologies.upsert(current)
+      throw error
+    }
+    this.emit('scene.updated', saved)
+    return { scene: cloneScene(saved), edit }
   }
 
   setMaterial(
@@ -630,6 +781,7 @@ export class MeshSceneService {
       ...(nonEmpty(ctx.provider, 100) ? { presenter: nonEmpty(ctx.provider, 100)! } : {}),
       ...(nonEmpty(input.title, 200) ? { title: nonEmpty(input.title, 200)! } : {})
     }
+    scene.revision += 1
     scene.updatedAt = this.deps.now()
     const saved = this.persist(scene)
     this.emit('scene.presented', saved)
@@ -639,6 +791,7 @@ export class MeshSceneService {
   closePresentation(sceneId: string, ctx: MeshSceneCallContext): MeshSceneRecord {
     const scene = cloneScene(this.getOwned(sceneId, ctx))
     delete scene.presentation
+    scene.revision += 1
     scene.updatedAt = this.deps.now()
     const saved = this.persist(scene)
     this.emit('scene.closed', saved)
@@ -650,6 +803,7 @@ export class MeshSceneService {
     const result = this.deps.store.remove(scene.id)
     if (!result.removed) throw new Error('Mesh Canvas scene was not found.')
     this.deps.assets.remove(result.orphanedAssetIds)
+    this.deps.topologies.remove(result.orphanedTopologyIds)
     this.emit('scene.deleted', scene)
     return scene.id
   }
@@ -661,7 +815,7 @@ export class MeshSceneService {
     const assetIds = new Set<string>()
     for (const node of scene.nodes) {
       if (node.kind === 'import') assetIds.add(node.assetId)
-      if (node.kind === 'primitive' && node.material.textureAssetId) {
+      if ((node.kind === 'primitive' || node.kind === 'editable') && node.material.textureAssetId) {
         assetIds.add(node.material.textureAssetId)
       }
       if (node.kind === 'import' && node.material?.textureAssetId) {
@@ -693,12 +847,20 @@ export class MeshSceneService {
       })
       if (url) modelUrls[node.id] = url
     }
+    const topologies: Record<string, MeshTopologyDocument> = {}
+    for (const node of scene.nodes) {
+      if (node.kind !== 'editable') continue
+      const topology = this.deps.topologies.get(node.topologyId)
+      if (topology && topology.revision === node.topologyRevision) {
+        topologies[node.topologyId] = topology
+      }
+    }
     const {
       workspacePath: _workspacePath,
       dependencies: _dependencies,
       ...rendererScene
     } = cloneScene(scene)
-    return { ...rendererScene, assetUrls, modelUrls }
+    return { ...rendererScene, assetUrls, modelUrls, topologies }
   }
 
   listForChat(chatId: string): MeshSceneSummary[] {
@@ -718,8 +880,9 @@ export class MeshSceneService {
       this.workspaceHolds.set(workspacePath, (this.workspaceHolds.get(workspacePath) ?? 0) + 1)
     }
     try {
-      const assets = this.deps.store.purgeAuthorities({ chatIds, workspacePaths })
-      this.deps.assets.remove(assets)
+      const removed = this.deps.store.purgeAuthorities({ chatIds, workspacePaths })
+      this.deps.assets.remove(removed.assetIds)
+      this.deps.topologies.remove(removed.topologyIds)
       return Promise.resolve()
     } catch (error) {
       return Promise.reject(error)
@@ -746,9 +909,11 @@ export class MeshSceneService {
   beginHistoryClear(): Promise<void> {
     this.historyClearHolds += 1
     try {
-      const assets = this.deps.store.clearAll()
-      this.deps.assets.remove(assets)
+      const removed = this.deps.store.clearAll()
+      this.deps.assets.remove(removed.assetIds)
+      this.deps.topologies.remove(removed.topologyIds)
       this.deps.assets.clearAll()
+      this.deps.topologies.clearAll()
       return Promise.resolve()
     } catch (error) {
       return Promise.reject(error)

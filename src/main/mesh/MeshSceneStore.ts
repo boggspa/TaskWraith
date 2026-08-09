@@ -2,6 +2,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import {
+  MESH_SCENE_LEGACY_SCHEMA_VERSION,
   MESH_SCENE_SCHEMA_VERSION,
   MESH_MAX_SCENE_NODES,
   cloneDefaultCamera,
@@ -16,6 +17,7 @@ import {
   type MeshTransform,
   type MeshVector3
 } from '../../shared/meshScene'
+import type { MeshTopologySummary } from '../../shared/meshTopology'
 import {
   normalizeMeshSceneDependencyGraph,
   resolveMeshSceneDependencyGraph
@@ -84,6 +86,48 @@ function asMaterial(value: unknown): MeshPbrMaterial {
   }
 }
 
+function asTopologySummary(value: unknown, topologyId: string): MeshTopologySummary | null {
+  if (!isRecord(value) || value.topologyId !== topologyId || !isRecord(value.bounds)) return null
+  const revision = asFinite(value.revision, -1, -1, Number.MAX_SAFE_INTEGER)
+  const counts = [
+    value.vertexCount,
+    value.edgeCount,
+    value.faceCount,
+    value.triangleCount,
+    value.uvLoopCount,
+    value.seamCount,
+    value.boneCount,
+    value.weightedVertexCount
+  ].map((entry) => asFinite(entry, -1, -1, Number.MAX_SAFE_INTEGER))
+  const min = isRecord(value.bounds.min) ? asVector(value.bounds.min, { x: 0, y: 0, z: 0 }) : null
+  const max = isRecord(value.bounds.max) ? asVector(value.bounds.max, { x: 0, y: 0, z: 0 }) : null
+  const updatedAt = asString(value.updatedAt, 128)
+  if (
+    revision < 0 ||
+    !Number.isInteger(revision) ||
+    counts.some((entry) => entry < 0 || !Number.isInteger(entry)) ||
+    !min ||
+    !max ||
+    !updatedAt
+  ) {
+    return null
+  }
+  return {
+    topologyId,
+    revision,
+    vertexCount: counts[0],
+    edgeCount: counts[1],
+    faceCount: counts[2],
+    triangleCount: counts[3],
+    uvLoopCount: counts[4],
+    seamCount: counts[5],
+    boneCount: counts[6],
+    weightedVertexCount: counts[7],
+    bounds: { min, max },
+    updatedAt
+  }
+}
+
 function asNode(value: unknown): MeshSceneNode | null {
   if (!isRecord(value)) return null
   const id = asString(value.id, 128)
@@ -97,6 +141,53 @@ function asNode(value: unknown): MeshSceneNode | null {
       kind: 'primitive',
       primitive: value.primitive,
       name,
+      transform,
+      material: asMaterial(value.material),
+      visible
+    }
+  }
+  const topologyId = asString(value.topologyId, 128)
+  const topologyRevision = asFinite(value.topologyRevision, -1, -1, Number.MAX_SAFE_INTEGER)
+  const topologySummary = topologyId ? asTopologySummary(value.topologySummary, topologyId) : null
+  if (
+    value.kind === 'editable' &&
+    topologyId &&
+    /^[a-zA-Z0-9_-]{3,128}$/.test(topologyId) &&
+    Number.isInteger(topologyRevision) &&
+    topologyRevision >= 0 &&
+    topologySummary &&
+    topologySummary.revision === topologyRevision &&
+    isRecord(value.source)
+  ) {
+    const primitiveSource =
+      value.source.kind === 'primitive' && isMeshPrimitiveKind(value.source.primitive)
+        ? { kind: 'primitive' as const, primitive: value.source.primitive }
+        : null
+    const sourceAssetId = asString(value.source.assetId, 128)
+    const sourceEntryPath = typeof value.source.entryPath === 'string' ? value.source.entryPath : ''
+    const importSource =
+      value.source.kind === 'import' &&
+      sourceAssetId &&
+      /^[a-zA-Z0-9_-]{16,128}$/.test(sourceAssetId) &&
+      isMeshImportFormat(value.source.format) &&
+      isSafeMeshAssetRelativePath(sourceEntryPath)
+        ? {
+            kind: 'import' as const,
+            assetId: sourceAssetId,
+            format: value.source.format,
+            entryPath: sourceEntryPath
+          }
+        : null
+    const source = primitiveSource ?? importSource
+    if (!source) return null
+    return {
+      id,
+      kind: 'editable',
+      name,
+      topologyId,
+      topologyRevision,
+      topologySummary,
+      source,
       transform,
       material: asMaterial(value.material),
       visible
@@ -133,7 +224,8 @@ function normalizeScene(value: unknown): MeshSceneRecord | null {
   const createdAt = asString(value.createdAt, 128)
   const updatedAt = asString(value.updatedAt, 128)
   if (
-    value.schemaVersion !== MESH_SCENE_SCHEMA_VERSION ||
+    (value.schemaVersion !== MESH_SCENE_SCHEMA_VERSION &&
+      value.schemaVersion !== MESH_SCENE_LEGACY_SCHEMA_VERSION) ||
     !id ||
     !/^[a-zA-Z0-9_-]{3,128}$/.test(id) ||
     !title ||
@@ -165,6 +257,10 @@ function normalizeScene(value: unknown): MeshSceneRecord | null {
   const scene: MeshSceneRecord = {
     schemaVersion: MESH_SCENE_SCHEMA_VERSION,
     id,
+    revision:
+      value.schemaVersion === MESH_SCENE_SCHEMA_VERSION
+        ? Math.floor(asFinite(value.revision, 0, 0, Number.MAX_SAFE_INTEGER))
+        : 0,
     ...(asString(value.chatId, 256) ? { chatId: asString(value.chatId, 256)! } : {}),
     ...(asString(value.runId, 256) ? { runId: asString(value.runId, 256)! } : {}),
     ...(asString(value.workspacePath, 4_096)
@@ -202,7 +298,8 @@ function assetsInScene(scene: MeshSceneRecord): Set<string> {
   const assets = new Set<string>()
   for (const node of scene.nodes) {
     if (node.kind === 'import') assets.add(node.assetId)
-    if (node.kind === 'primitive' && node.material.textureAssetId) {
+    if (node.kind === 'editable' && node.source.kind === 'import') assets.add(node.source.assetId)
+    if ((node.kind === 'primitive' || node.kind === 'editable') && node.material.textureAssetId) {
       assets.add(node.material.textureAssetId)
     }
     if (node.kind === 'import' && node.material?.textureAssetId) {
@@ -210,6 +307,12 @@ function assetsInScene(scene: MeshSceneRecord): Set<string> {
     }
   }
   return assets
+}
+
+function topologiesInScene(scene: MeshSceneRecord): Set<string> {
+  return new Set(
+    scene.nodes.filter((node) => node.kind === 'editable').map((node) => node.topologyId)
+  )
 }
 
 function orphanedAssets(
@@ -221,14 +324,25 @@ function orphanedAssets(
   return [...retiredAssets].filter((asset) => !retainedAssets.has(asset))
 }
 
+function orphanedTopologies(
+  retired: readonly MeshSceneRecord[],
+  retained: readonly MeshSceneRecord[]
+): string[] {
+  const retainedTopologies = new Set(retained.flatMap((scene) => [...topologiesInScene(scene)]))
+  const retiredTopologies = new Set(retired.flatMap((scene) => [...topologiesInScene(scene)]))
+  return [...retiredTopologies].filter((topology) => !retainedTopologies.has(topology))
+}
+
 export interface MeshSceneUpsertResult {
   scene: MeshSceneRecord
   orphanedAssetIds: string[]
+  orphanedTopologyIds: string[]
 }
 
 export interface MeshSceneRemoveResult {
   removed: MeshSceneRecord | null
   orphanedAssetIds: string[]
+  orphanedTopologyIds: string[]
 }
 
 /** Small atomic JSON store isolated from the shared AppStore. */
@@ -299,43 +413,52 @@ export class MeshSceneStore {
     this.writeAll(next)
     return {
       scene: normalized,
-      orphanedAssetIds: orphanedAssets([...replaced, ...evicted], next)
+      orphanedAssetIds: orphanedAssets([...replaced, ...evicted], next),
+      orphanedTopologyIds: orphanedTopologies([...replaced, ...evicted], next)
     }
   }
 
   remove(sceneId: string): MeshSceneRemoveResult {
     const scenes = this.list()
     const removed = scenes.find((scene) => scene.id === sceneId) ?? null
-    if (!removed) return { removed: null, orphanedAssetIds: [] }
+    if (!removed) return { removed: null, orphanedAssetIds: [], orphanedTopologyIds: [] }
     const retained = scenes.filter((scene) => scene.id !== sceneId)
     this.writeAll(retained)
-    return { removed, orphanedAssetIds: orphanedAssets([removed], retained) }
+    return {
+      removed,
+      orphanedAssetIds: orphanedAssets([removed], retained),
+      orphanedTopologyIds: orphanedTopologies([removed], retained)
+    }
   }
 
-  purgeAuthorities(input: {
-    chatIds?: Iterable<string>
-    workspacePaths?: Iterable<string>
-  }): string[] {
+  purgeAuthorities(input: { chatIds?: Iterable<string>; workspacePaths?: Iterable<string> }): {
+    assetIds: string[]
+    topologyIds: string[]
+  } {
     const chatIds = new Set([...(input.chatIds ?? [])].map((value) => value.trim()).filter(Boolean))
     const workspacePaths = new Set(
       [...(input.workspacePaths ?? [])].map((value) => value.trim()).filter(Boolean)
     )
-    if (!chatIds.size && !workspacePaths.size) return []
+    if (!chatIds.size && !workspacePaths.size) return { assetIds: [], topologyIds: [] }
     const scenes = this.list()
     const removed = scenes.filter(
       (scene) =>
         Boolean(scene.chatId && chatIds.has(scene.chatId)) ||
         Boolean(scene.workspacePath && workspacePaths.has(scene.workspacePath))
     )
-    if (!removed.length) return []
+    if (!removed.length) return { assetIds: [], topologyIds: [] }
     const retained = scenes.filter((scene) => !removed.includes(scene))
     this.writeAll(retained)
-    return orphanedAssets(removed, retained)
+    return {
+      assetIds: orphanedAssets(removed, retained),
+      topologyIds: orphanedTopologies(removed, retained)
+    }
   }
 
-  clearAll(): string[] {
+  clearAll(): { assetIds: string[]; topologyIds: string[] } {
     const assets = new Set(this.list().flatMap((scene) => [...assetsInScene(scene)]))
+    const topologies = new Set(this.list().flatMap((scene) => [...topologiesInScene(scene)]))
     this.writeAll([])
-    return [...assets]
+    return { assetIds: [...assets], topologyIds: [...topologies] }
   }
 }

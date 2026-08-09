@@ -5,6 +5,7 @@ import * as path from 'path'
 import { MeshAssetStore } from '../mesh/MeshAssetStore'
 import { MeshSceneService, type MeshSceneEvent } from '../mesh/MeshSceneService'
 import { MeshSceneStore } from '../mesh/MeshSceneStore'
+import { MeshTopologyStore } from '../mesh/MeshTopologyStore'
 import { createMeshToolExecutors } from './MeshToolExecutors'
 
 describe('MeshToolExecutors', () => {
@@ -23,6 +24,7 @@ describe('MeshToolExecutors', () => {
     const service = new MeshSceneService({
       store: new MeshSceneStore(path.join(root, 'scenes')),
       assets: new MeshAssetStore(path.join(root, 'assets')),
+      topologies: new MeshTopologyStore(path.join(root, 'topologies')),
       uuid: () => `scene-node-${++sequence}`,
       now: () => '2026-07-27T12:00:00.000Z',
       broadcast: (event) => events.push(event)

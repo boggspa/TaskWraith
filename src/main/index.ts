@@ -1273,6 +1273,7 @@ import { MeshAssetStore } from './mesh/MeshAssetStore'
 import { registerMeshAssetProtocol, MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
 import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
 import { MeshSceneStore } from './mesh/MeshSceneStore'
+import { MeshTopologyStore } from './mesh/MeshTopologyStore'
 import { registerMeshSceneHandlers } from './ipc/meshSceneHandlers'
 import { registerSimulatorCanvasHandlers } from './ipc/simulatorCanvasHandlers'
 import { registerSimulatorControlSetupHandlers } from './ipc/simulatorControlSetupHandlers'
@@ -4121,9 +4122,13 @@ const CANVAS_HTML_RENDER_TIMEOUT_MS = 15_000
 // through a chat-scoped projection; MCP results never receive vault/source paths.
 const meshAssetStore = new MeshAssetStore(join(app.getPath('userData'), 'mesh-assets'))
 const meshSceneStore = new MeshSceneStore(join(app.getPath('userData'), 'mesh-canvas'))
+const meshTopologyStore = new MeshTopologyStore(
+  join(app.getPath('userData'), 'mesh-canvas', 'topologies')
+)
 const meshSceneService = new MeshSceneService({
   store: meshSceneStore,
   assets: meshAssetStore,
+  topologies: meshTopologyStore,
   uuid: () => randomUUID(),
   now: () => new Date().toISOString(),
   broadcast: (event: MeshSceneEvent) => {

@@ -201,7 +201,7 @@ describe('applyMeshTopologyEdit', () => {
       state.now
     ).document
 
-    expect(document.bones[0].pose?.rotation.z).toBe(30)
+    expect(document.bones[0]!.pose?.rotation?.z).toBe(30)
     expect(document.vertices.find((vertex) => vertex.id === vertexId)?.weights).toEqual([
       { boneId, weight: 1 }
     ])

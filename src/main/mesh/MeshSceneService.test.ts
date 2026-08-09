@@ -9,12 +9,15 @@ import {
 import { MeshAssetStore } from './MeshAssetStore'
 import { MeshSceneService, type MeshSceneEvent } from './MeshSceneService'
 import { MeshSceneStore } from './MeshSceneStore'
+import { MeshTopologyStore } from './MeshTopologyStore'
+import { MeshTopologyRevisionConflictError } from './MeshTopologyMutations'
 
 describe('MeshSceneService', () => {
   let root: string
   let workspace: string
   let assets: MeshAssetStore
   let service: MeshSceneService
+  let topologies: MeshTopologyStore
   let events: MeshSceneEvent[]
   let sequence: number
 
@@ -25,9 +28,11 @@ describe('MeshSceneService', () => {
     events = []
     sequence = 0
     assets = new MeshAssetStore(path.join(root, 'assets'))
+    topologies = new MeshTopologyStore(path.join(root, 'topologies'))
     service = new MeshSceneService({
       store: new MeshSceneStore(path.join(root, 'scenes')),
       assets,
+      topologies,
       uuid: () => `mesh-node-${++sequence}`,
       now: () => '2026-07-27T12:00:00.000Z',
       broadcast: (event) => events.push(event)
@@ -42,6 +47,7 @@ describe('MeshSceneService', () => {
     chatId,
     runId: 'run-a',
     provider: 'codex',
+    participantId: 'seat-a',
     workspacePath: workspace
   })
 
@@ -72,6 +78,82 @@ describe('MeshSceneService', () => {
       expect.objectContaining({ sceneId: scene.id, nodeCount: 1, primitiveCount: 1 })
     ])
     expect(events.map((event) => event.kind)).toEqual(['scene.created', 'scene.updated'])
+  })
+
+  it('converts a primitive and applies collaborative topology edits with strict revision CAS', () => {
+    const scene = service.create({ title: 'Collaborative topology' }, context())
+    const composed = service.apply(
+      scene.id,
+      { operation: 'add_primitive', primitive: 'box', name: 'Editable box' },
+      context()
+    )
+    const nodeId = composed.nodes[0].id
+    const converted = service.makeEditable(scene.id, { nodeId }, context())
+    const editable = converted.scene.nodes[0]
+    expect(editable).toMatchObject({
+      kind: 'editable',
+      topologyRevision: 0,
+      source: { kind: 'primitive', primitive: 'box' }
+    })
+    if (editable.kind !== 'editable') throw new Error('expected editable node')
+    expect(service.viewForChat(scene.id, 'chat-a')?.topologies[editable.topologyId]).toBeTruthy()
+
+    const vertexId = converted.topology.vertices[0].id
+    const first = service.editTopology(
+      scene.id,
+      {
+        nodeId,
+        edit: {
+          expectedRevision: 0,
+          clientMutationId: 'seat-a-move',
+          operations: [{ operation: 'move_vertices', vertices: [{ vertexId, delta: { x: 0.2 } }] }]
+        }
+      },
+      context()
+    )
+    expect(first.edit.summary.revision).toBe(1)
+    expect(first.edit.document.recentMutations[0].editor).toMatchObject({
+      provider: 'codex',
+      runId: 'run-a',
+      participantId: 'seat-a'
+    })
+    expect(() =>
+      service.editTopology(
+        scene.id,
+        {
+          nodeId,
+          edit: {
+            expectedRevision: 0,
+            clientMutationId: 'seat-b-stale',
+            operations: [
+              { operation: 'move_vertices', vertices: [{ vertexId, delta: { y: 0.2 } }] }
+            ]
+          }
+        },
+        { ...context(), participantId: 'seat-b' }
+      )
+    ).toThrow(MeshTopologyRevisionConflictError)
+    expect(() => service.inspectTopology(scene.id, { nodeId }, context('chat-b'))).toThrow(
+      'does not belong to this chat'
+    )
+
+    service.remove(scene.id, context())
+    expect(topologies.get(editable.topologyId)).toBeNull()
+  })
+
+  it('converts an imported OBJ without overwriting or losing its source asset', () => {
+    const sourcePath = path.join(workspace, 'source.obj')
+    const sourceText = ['v 0 0 0', 'v 1 0 0', 'v 0 1 0', 'f 1 2 3'].join('\n')
+    fs.writeFileSync(sourcePath, sourceText)
+    const scene = service.create({ title: 'Imported rewrite' }, context())
+    const imported = service.importModel(scene.id, { sourcePath }, context())
+    const nodeId = imported.nodes[0].id
+    const converted = service.makeEditable(scene.id, { nodeId }, context())
+    expect(converted.scene.nodes[0]).toMatchObject({
+      kind: 'editable',
+      source: { kind: 'import', format: 'obj', entryPath: 'source.obj' }
+    })
+    expect(fs.readFileSync(sourcePath, 'utf8')).toBe(sourceText)
   })
 
   it('imports OBJ/MTL/texture bundles without retaining a source path in the scene', () => {

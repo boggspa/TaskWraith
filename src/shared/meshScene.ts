@@ -7,7 +7,10 @@
  * into a graphics surface.
  */
 
-export const MESH_SCENE_SCHEMA_VERSION = 1 as const
+import type { MeshTopologyDocument, MeshTopologySource, MeshTopologySummary } from './meshTopology'
+
+export const MESH_SCENE_SCHEMA_VERSION = 2 as const
+export const MESH_SCENE_LEGACY_SCHEMA_VERSION = 1 as const
 /** Bound durable scene complexity before an import can allocate a private asset bundle. */
 export const MESH_MAX_SCENE_NODES = 500
 /** Maximum total bytes copied for one imported model or scene package. */
@@ -76,7 +79,21 @@ export interface MeshImportedNode {
   visible: boolean
 }
 
-export type MeshSceneNode = MeshPrimitiveNode | MeshImportedNode
+export interface MeshEditableNode {
+  id: string
+  kind: 'editable'
+  name: string
+  topologyId: string
+  topologyRevision: number
+  topologySummary: MeshTopologySummary
+  /** Original primitive/import provenance; conversion never overwrites it. */
+  source: Exclude<MeshTopologySource, { kind: 'generated' }>
+  transform: MeshTransform
+  material: MeshPbrMaterial
+  visible: boolean
+}
+
+export type MeshSceneNode = MeshPrimitiveNode | MeshImportedNode | MeshEditableNode
 
 /**
  * The small, typed property vocabulary available to the reactive scene graph.
@@ -153,6 +170,8 @@ export interface MeshScenePresentation {
 export interface MeshSceneRecord {
   schemaVersion: typeof MESH_SCENE_SCHEMA_VERSION
   id: string
+  /** Monotonic scene metadata revision; editable geometry has its own CAS revision. */
+  revision: number
   chatId?: string
   runId?: string
   workspacePath?: string
@@ -173,6 +192,7 @@ export interface MeshSceneSummary {
   nodeCount: number
   importCount: number
   primitiveCount: number
+  editableCount: number
   backgroundColor: string
   updatedAt: string
   presentedAt?: string
@@ -190,6 +210,8 @@ export type MeshSceneView = Omit<MeshSceneRecord, 'workspacePath' | 'dependencie
   assetUrls: Record<string, string>
   /** Import-node-specific entry URLs, allowing a scene package to share one vault bundle across roots. */
   modelUrls: Record<string, string>
+  /** Main-owned topology documents required by editable renderer nodes. */
+  topologies: Record<string, MeshTopologyDocument>
 }
 
 export interface MeshAssetManifest {
@@ -248,12 +270,15 @@ export function isMeshSceneDependencyProperty(
 
 export function meshSceneSummary(scene: MeshSceneRecord): MeshSceneSummary {
   const imports = scene.nodes.filter((node) => node.kind === 'import').length
+  const primitives = scene.nodes.filter((node) => node.kind === 'primitive').length
+  const editable = scene.nodes.filter((node) => node.kind === 'editable').length
   return {
     sceneId: scene.id,
     title: scene.title,
     nodeCount: scene.nodes.length,
     importCount: imports,
-    primitiveCount: scene.nodes.length - imports,
+    primitiveCount: primitives,
+    editableCount: editable,
     backgroundColor: scene.backgroundColor,
     updatedAt: scene.updatedAt,
     ...(scene.presentation ? { presentedAt: scene.presentation.presentedAt } : {})
