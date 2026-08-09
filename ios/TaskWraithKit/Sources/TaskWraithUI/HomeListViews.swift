@@ -624,6 +624,10 @@ struct HomeView: View {
                 hostIdentityRow(showChevron: false)
                     .listRowBackground(TWTheme.surface1)
             }
+            if !model.isDemo {
+                HostMissionControlLauncher(controller: model.hostProjection)
+                    .listRowBackground(TWTheme.surface1)
+            }
         }
 
         if !model.approvals.isEmpty {
