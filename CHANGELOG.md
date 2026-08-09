@@ -43,6 +43,13 @@ to answer.
 
 - **Simulator Canvas dock.** Optional chat-owned iOS Simulator preview via Composer → Canvas → Open Simulator Canvas; `simctl` screenshots for the bezel; human tap/type/swipe and Home/Lock/Rotate via idb when a controller lease is held and idb is ready; agent HID tools (`simulator_tap` / `type` / `scroll` / `button` / `rotate`) under the `simulatorCanvas` policy; absolute orientations (`PORTRAIT` / `PORTRAIT_UPSIDE_DOWN` / `LANDSCAPE_LEFT` / `LANDSCAPE_RIGHT`); human lease release on dock close (see `ADVANCED_OPTIONAL_SETUP.md`).
 
+### Mesh Canvas topology authoring
+
+- **Create and remodel geometry directly.** Agents can start from Mesh Canvas primitives or safely convert an imported OBJ/glTF/GLB node, then atomically edit stable vertices, edges, face loops, per-loop UVs, sculpt strokes, bones, weights, and poses. Complete internal geometry replacement is validated and never mutates the imported workspace source.
+- **Conflict-safe collaboration.** Topology edits carry expected revisions, idempotent mutation ids, and participant attribution, so solo and Ensemble seats refine the same chat-owned object without silent last-writer overwrites.
+- **Editable topology in the dock.** The Three.js viewer renders the current topology and exposes Surface, Edges, Vertices, and Rig overlays with live geometry counts.
+- **Permission parity across seats.** Ask and Plan remain per-call/request-only; Accept Edits, Full WS Access, and Full Access auto-allow Mesh work for all supported seats, including Pi's run-bound extension. Fresh v15 provider sessions receive direct topology tools; older frozen receipts keep their original catalogue.
+
 ## 1.9.3 - 2026-08-07
 
 1.9.3 is a broad platform-integration and release-hardening cycle. The Host
