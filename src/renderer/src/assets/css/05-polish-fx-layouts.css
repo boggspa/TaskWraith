@@ -3115,6 +3115,15 @@
   left: 0;
   bottom: calc(100% + 8px);
   z-index: 90;
+  /* The host sidebar intentionally enlarges its UI scale. Popovers use their
+     own semantic type so identical menu content does not render ~17% larger
+     merely because this shell is nested instead of portaled. */
+  --font-size-sm: var(--tw-popover-type-label-size);
+  --font-size-xs: var(--tw-popover-type-meta-size);
+  font-family: var(--tw-popover-type-family);
+  font-size: var(--tw-popover-type-label-size);
+  font-weight: var(--tw-popover-type-label-weight);
+  line-height: var(--tw-popover-type-label-line-height);
   width: min(260px, calc(var(--sidebar-width, 280px) - 28px));
   max-height: min(70vh, 520px);
   overflow: auto;

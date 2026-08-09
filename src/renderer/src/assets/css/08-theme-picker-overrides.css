@@ -9843,6 +9843,23 @@
   background: color-mix(in srgb, var(--color-warning, #d29922) 8%, transparent);
 }
 
+.composer-combined-picker-row-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--tw-popover-row-stack-gap);
+}
+
+.composer-combined-picker-row-body > .composer-combined-picker-row-label {
+  flex: 0 1 auto;
+}
+
+.composer-combined-picker-row-body > .composer-combined-picker-row-sub {
+  margin-top: 0;
+}
+
 .composer-combined-picker-row-label {
   flex: 1;
   min-width: 0;

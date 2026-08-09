@@ -368,6 +368,15 @@
   top: calc(100% + 8px);
   right: 0;
   z-index: 80;
+  /* Match popover typography regardless of the sidebar's deliberately larger
+   * navigation scale. The local legacy aliases keep existing descendants and
+   * the bare-button fallback on the same semantic hierarchy. */
+  --font-size-sm: var(--tw-popover-type-label-size);
+  --font-size-xs: var(--tw-popover-type-meta-size);
+  font-family: var(--tw-popover-type-family);
+  font-size: var(--tw-popover-type-label-size);
+  font-weight: var(--tw-popover-type-label-weight);
+  line-height: var(--tw-popover-type-label-line-height);
   width: min(260px, calc(var(--sidebar-width, 280px) - 28px));
   min-width: 220px;
   padding: 6px;

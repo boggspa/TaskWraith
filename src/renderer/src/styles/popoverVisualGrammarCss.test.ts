@@ -8,6 +8,16 @@ const readRendererFile = (file: string): string => readFileSync(join(rendererRoo
 
 const readThemeCss = (): string => readRendererFile('styles/theme.css')
 
+const readAssetCss = (file: string): string => readRendererFile(`assets/css/${file}`)
+
+function cssBlockStartingAt(source: string, selector: string): string {
+  const start = source.indexOf(selector)
+  expect(start, `Missing selector: ${selector}`).toBeGreaterThanOrEqual(0)
+  const end = source.indexOf('}', start)
+  expect(end, `Missing block end: ${selector}`).toBeGreaterThan(start)
+  return source.slice(start, end + 1)
+}
+
 function rendererSourceFiles(directory = rendererRoot): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name)
@@ -197,5 +207,62 @@ describe('popover visual grammar tokens', () => {
     ]) {
       expect(grammar).not.toContain(featureOwnedToken)
     }
+  })
+})
+
+describe('first popover typography consumers', () => {
+  it('isolates Settings and New from the sidebar type multiplier at their roots', () => {
+    const settingsCss = readAssetCss('05-polish-fx-layouts.css')
+    const newCss = readAssetCss('09-ensemble-work-session.css')
+    const settings = cssBlockStartingAt(settingsCss, '.sidebar-settings-menu {')
+    const newMenu = cssBlockStartingAt(newCss, '.sidebar-new-menu {')
+
+    for (const shell of [settings, newMenu]) {
+      expect(shell).toContain('--font-size-sm: var(--tw-popover-type-label-size)')
+      expect(shell).toContain('--font-size-xs: var(--tw-popover-type-meta-size)')
+      expect(shell).toContain('font-family: var(--tw-popover-type-family)')
+      expect(shell).toContain('font-size: var(--tw-popover-type-label-size)')
+      expect(shell).toContain('font-weight: var(--tw-popover-type-label-weight)')
+      expect(shell).toContain('line-height: var(--tw-popover-type-label-line-height)')
+    }
+
+    expect(cssBlockStartingAt(settingsCss, '.sidebar-settings-menu-item {')).toContain(
+      'font-size: var(--font-size-sm, 13px)'
+    )
+    expect(cssBlockStartingAt(newCss, '.sidebar-new-menu-item {')).toContain(
+      'font-size: var(--font-size-sm, 13px)'
+    )
+  })
+
+  it('preserves the existing compact footer scale', () => {
+    const footer = cssBlockStartingAt(
+      readAssetCss('05-polish-fx-layouts.css'),
+      '.sidebar-footer-popover {'
+    )
+
+    expect(footer).toContain('--font-size-sm: 12.5px')
+    expect(footer).toContain('--font-size-xs: 11px')
+  })
+
+  it('stacks permission labels and descriptions without changing shared picker rows', () => {
+    const pickerCss = readAssetCss('08-theme-picker-overrides.css')
+    const body = cssBlockStartingAt(pickerCss, '.composer-combined-picker-row-body {')
+    const label = cssBlockStartingAt(
+      pickerCss,
+      '.composer-combined-picker-row-body > .composer-combined-picker-row-label {'
+    )
+    const description = cssBlockStartingAt(
+      pickerCss,
+      '.composer-combined-picker-row-body > .composer-combined-picker-row-sub {'
+    )
+
+    expect(body).toContain('display: flex')
+    expect(body).toContain('flex: 1 1 auto')
+    expect(body).toContain('min-width: 0')
+    expect(body).toContain('flex-direction: column')
+    expect(body).toContain('align-items: stretch')
+    expect(body).toContain('gap: var(--tw-popover-row-stack-gap)')
+    expect(label).toContain('flex: 0 1 auto')
+    expect(description).toContain('margin-top: 0')
   })
 })
