@@ -4,6 +4,7 @@ This area covers the Canvas preview system — floating windows, embedded panes,
 
 ## Guides
 
+- [How to: Canvas Browser](./canvas-browser.md)
 - [How to: Canvas composer button](./canvas-composer-button.md)
 - [How to: Canvas multiview pane](./canvas-multiview-pane.md)
 - [How to: Import a 3D scene into Mesh Canvas](./mesh-canvas.md)

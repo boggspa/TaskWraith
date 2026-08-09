@@ -50,6 +50,14 @@ to answer.
 - **Editable topology in the dock.** The Three.js viewer renders the current topology and exposes Surface, Edges, Vertices, and Rig overlays with live geometry counts.
 - **Permission parity across seats.** Ask and Plan remain per-call/request-only; Accept Edits, Full WS Access, and Full Access auto-allow Mesh work for all supported seats, including Pi's run-bound extension. Fresh v15 provider sessions receive direct topology tools; older frozen receipts keep their original catalogue.
 
+### First-class Canvas Browser
+
+- **Ask once, then watch it happen.** A request such as “search Google for Cambridge weather and open the BBC forecast” now opens the Canvas Browser in the active task's dock. Under Accept Edits and higher, ordinary navigation, clicks, and non-secret typing run without per-action approval cards; Ask and Plan remain attended per invocation.
+- **A durable TaskWraith profile.** Cookies, sign-ins, and site storage now survive app restarts in one TaskWraith-owned browser profile. It stays isolated from Safari, Chrome, and provider credentials, while shared Electron-session routing preserves the existing SSRF, permission, download, and containment policy for every Canvas surface.
+- **Human credential handoff.** Password, one-time-code, and credential-marked fields remain non-actuatable by agents. The Canvas stays open for the user to complete sign-in, and ordinary agent work can resume afterward without accessing a credential store.
+- **Human-only reset.** The new profile menu can close browser tabs across all tasks and clear cookies, sign-ins, site data, and cache. It preserves Sketch, Mesh, Simulator, rendered HTML, image, and device canvases and is intentionally absent from the agent/MCP surface.
+- **Calmer browser-first dock.** The default Canvas view is now a focused New tab surface with compact surface and privacy menus instead of a stack of setup options, while Browser, Sketch, Mesh, and Simulator remain one control away.
+
 ## 1.9.3 - 2026-08-07
 
 1.9.3 is a broad platform-integration and release-hardening cycle. The Host
