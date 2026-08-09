@@ -84,15 +84,23 @@ function optionLabel(options: readonly PolicyPostureOption[], value: PolicyPostu
 
 function row(
   settings: AgenticServicesSettings,
-  input: Omit<PolicyPostureRow, 'value' | 'suggestedValue' | 'display' | 'tone' | 'isSuggested'>
+  input: Omit<PolicyPostureRow, 'value' | 'suggestedValue' | 'display' | 'tone' | 'isSuggested'> & {
+    displayOptions?: readonly PolicyPostureOption[]
+  }
 ): PolicyPostureRow {
+  const { displayOptions = input.options, ...rowInput } = input
   const suggestedValue = SUGGESTED_POLICY_POSTURE[input.policyKey]
   const value = settings[input.policyKey] ?? suggestedValue
+  const display = optionLabel(displayOptions, value)
+  const options = input.options.some((option) => option.value === value)
+    ? input.options
+    : [{ value, label: `${display} (current)` }, ...input.options]
   return {
-    ...input,
+    ...rowInput,
     value,
     suggestedValue,
-    display: optionLabel(input.options, value),
+    display,
+    options,
     tone: policyTone(value),
     isSuggested: value === suggestedValue
   }
@@ -124,6 +132,7 @@ export function buildPolicyPostureRows(
       label: 'External publishing',
       scope: 'External',
       options: NON_GRANTABLE_AGENTIC_SERVICE_POLICY_OPTIONS,
+      displayOptions: AGENTIC_SERVICE_POLICY_OPTIONS,
       description:
         'Agent-routed pushes, pull requests, and release publishing require explicit approval.'
     }),

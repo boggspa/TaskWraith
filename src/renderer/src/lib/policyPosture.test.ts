@@ -58,4 +58,16 @@ describe('policyPosture', () => {
     expect(rows.find((row) => row.policyKey === 'webBrowsing')?.value).toBe('ask')
     expect(rows.find((row) => row.policyKey === 'mediaEditing')?.value).toBe('ask')
   })
+
+  it('keeps a legacy external-publishing value visible until the user replaces it', () => {
+    const rows = buildPolicyPostureRows({ ...suggestedSettings, externalPublish: 'allow' })
+    const publishing = rows.find((row) => row.policyKey === 'externalPublish')
+
+    expect(publishing?.display).toBe('Always allow')
+    expect(publishing?.options).toEqual([
+      { value: 'allow', label: 'Always allow (current)' },
+      { value: 'ask', label: 'Ask every time' },
+      { value: 'deny', label: 'Block' }
+    ])
+  })
 })
