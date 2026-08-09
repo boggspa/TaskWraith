@@ -227,6 +227,20 @@ describe('seat-change chrome strip CSS', () => {
     )
     expect(cssSource).toContain(':root[data-reduce-motion="true"] .char-odometer__slot')
   })
+
+  it('rests infinite close-out decoration without suppressing the finite seat roll', () => {
+    const start = cssSource.indexOf(
+      '.seat-change-message.is-inline:not(:hover):not(:focus-within)\n'
+    )
+    expect(start).toBeGreaterThanOrEqual(0)
+    const block = cssSource.slice(start, cssSource.indexOf('}', start))
+
+    expect(block).toContain('.composer-combined-picker-trigger-sparkle')
+    expect(block).toContain('.composer-combined-picker-trigger-suffix')
+    expect(block).toContain('.digit-odometer__cell')
+    expect(block).toContain('animation-play-state: paused')
+    expect(block).not.toContain('.digit-odometer__column')
+  })
 })
 
 describe('close-out table reuses the seat element', () => {

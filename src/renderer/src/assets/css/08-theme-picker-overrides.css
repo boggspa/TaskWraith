@@ -12228,6 +12228,21 @@
   cursor: default;
 }
 
+/* A completed close-out table is history, not a bank of live composers. Each
+ * inline seat reuses the real composer chip, including its infinite shimmer
+ * and six sparkle animations; an eight-seat card otherwise keeps ~90
+ * decorative animations repainting forever. Rest those infinite effects when
+ * the row is idle, while hover/focus still runs the original composer motion.
+ * The finite odometer roll is deliberately untouched: it carries the visible
+ * before → after transition when a row first mounts. */
+.seat-change-message.is-inline:not(:hover):not(:focus-within)
+  .composer-combined-picker-trigger-sparkle,
+.seat-change-message.is-inline:not(:hover):not(:focus-within)
+  .composer-combined-picker-trigger-suffix,
+.seat-change-message.is-inline:not(:hover):not(:focus-within) .digit-odometer__cell {
+  animation-play-state: paused;
+}
+
 /* The role is right-aligned in the transcript row by the flex gap alone; in a
  * table cell it sits directly after the permission chip. */
 .seat-change-message.is-inline .seat-change-role {
