@@ -659,7 +659,7 @@ import {
   shouldDrainEnsembleMailbox
 } from './EnsembleSubThreadMailboxDelivery'
 import { gateBlocksActiveGoal } from './ReviewGateScope'
-import { isNonEscalatingPreset, reroutePresetId } from './RerouteFailoverPosture'
+import { applyVerifiedFailoverReroutePosture } from './RerouteFailoverPosture'
 import {
   runProviderAutoFailover,
   type AutoFailoverNotice,
@@ -3626,36 +3626,11 @@ function applyFailoverReroutePosture(
   routedPayload: AgentRunPayload,
   originalPayload: AgentRunPayload
 ): void {
-  const target = routedPayload.provider
-  // Auto-failover is a non-escalating safety path: cap a reroute TARGETING Ollama
-  // to plan/read-only regardless of the origin posture. (This is deliberately
-  // MORE conservative than an interactive Ollama run, which now honors the user's
-  // picked role — see runOllamaProviderAdapter — because a machine-initiated
-  // failover must never silently gain write/shell authority the user didn't pick
-  // for this target.)
-  if (target === 'ollama') routedPayload.approvalMode = 'plan'
-  const cappedMode = routedPayload.approvalMode
-  const originalPresetId = originalPayload.effectivePermissions?.presetId
-  const presetId = reroutePresetId(cappedMode, originalPresetId, target)
-  if (!isNonEscalatingPreset(presetId, originalPresetId)) {
-    // Would escalate ⇒ bail; normalize then fails it closed to read-only.
-    return
-  }
-  let effective: EffectiveRunPermissions | undefined
-  if (presetId && !(routedPayload.scope === 'global' && cappedMode !== 'plan')) {
-    effective = resolveEffectiveRunPermissions({
-      provider: target,
-      workspacePath: routedPayload.scope === 'global' ? undefined : routedPayload.workspace,
-      settings: AppStore.getSettings(),
-      presetId
-    })
-  }
-  routedPayload.effectivePermissions = effective
-  routedPayload.effectivePermissionsSignature = signRunPosture(
-    routedPayload.approvalMode,
-    effective,
-    runPostureContextFromPayload(routedPayload)
-  )
+  applyVerifiedFailoverReroutePosture(routedPayload, originalPayload, {
+    settings: AppStore.getSettings(),
+    verifyPosture: verifyRunPosture,
+    signPosture: signRunPosture
+  })
 }
 
 /** Snapshot a dispatched request so a future quota wall can re-run it faithfully. */

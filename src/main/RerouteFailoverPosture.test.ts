@@ -1,10 +1,50 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
+  applyVerifiedFailoverReroutePosture,
   reroutePresetId,
   isNonEscalatingPreset,
   presetAuthorityRank,
   selectFailoverTarget
 } from './RerouteFailoverPosture'
+import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
+import type { AgentRunPayload } from './run/AgentRunTypes'
+import type { AppSettings } from './store/types'
+
+const permissionSettings: Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'> = {
+  agenticServices: {
+    shellCommands: 'ask',
+    fileChanges: 'ask',
+    externalPublish: 'ask',
+    mcpTools: 'ask',
+    subThreadDelegation: 'ask',
+    canvasInteraction: 'ask',
+    sketchCanvas: 'ask',
+    meshCanvas: 'ask',
+    simulatorCanvas: 'ask',
+    crossThreadRead: 'ask',
+    threadMessage: 'ask',
+    mediaEditing: 'ask',
+    mediaRecording: 'deny',
+    canvasEval: 'ask',
+    webBrowsing: 'ask',
+    networkAccess: 'allow'
+  },
+  agenticWorkspaceGrants: []
+}
+
+function runPayload(overrides: Partial<AgentRunPayload> = {}): AgentRunPayload {
+  return {
+    provider: 'claude',
+    scope: 'workspace',
+    workspace: '/repo',
+    prompt: 'continue after failover',
+    appRunId: 'run-1',
+    appChatId: 'chat-1',
+    approvalMode: 'default',
+    workflowMode: 'normal',
+    ...overrides
+  }
+}
 
 describe('reroutePresetId — preserve, never escalate', () => {
   it('plan → read_only on any non-ollama target', () => {
@@ -71,6 +111,91 @@ describe('reroutePresetId + isNonEscalatingPreset compose to fail safe', () => {
     expect(target).toBe('workspace_write')
     // guard catches it because original authority is unknown/default
     expect(isNonEscalatingPreset(target, undefined)).toBe(false)
+  })
+})
+
+describe('applyVerifiedFailoverReroutePosture', () => {
+  it('refuses to mint a target posture from an unverified renderer claim', () => {
+    const original = runPayload({
+      effectivePermissions: resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: permissionSettings,
+        presetId: 'full_access'
+      }),
+      effectivePermissionsSignature: 'forged-source-signature',
+      failoverHopCount: 1
+    })
+    const routed = runPayload({
+      provider: 'codex',
+      effectivePermissions: original.effectivePermissions,
+      effectivePermissionsSignature: 'must-be-cleared'
+    })
+    const signPosture = vi.fn(() => 'must-not-sign')
+
+    expect(
+      applyVerifiedFailoverReroutePosture(routed, original, {
+        settings: permissionSettings,
+        verifyPosture: vi.fn(() => false),
+        signPosture
+      })
+    ).toBe(false)
+    expect(routed.effectivePermissions).toBeUndefined()
+    expect(routed.effectivePermissionsSignature).toBeUndefined()
+    expect(signPosture).not.toHaveBeenCalled()
+  })
+
+  it('re-derives a verified Accept Edits origin for the target model and current denies', () => {
+    const original = runPayload({
+      effectivePermissions: resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: permissionSettings,
+        presetId: 'default'
+      }),
+      effectivePermissionsSignature: 'verified-source-signature',
+      failoverHopCount: 1
+    })
+    const routed = runPayload({
+      provider: 'codex',
+      model: 'preview:openai:gpt-5.6:sol',
+      effectivePermissions: undefined,
+      effectivePermissionsSignature: undefined
+    })
+    const targetSettings = {
+      ...permissionSettings,
+      agenticServices: { ...permissionSettings.agenticServices, shellCommands: 'deny' as const }
+    }
+    const verifyPosture = vi.fn(() => true)
+    const signPosture = vi.fn(() => 'target-signature')
+
+    expect(
+      applyVerifiedFailoverReroutePosture(routed, original, {
+        settings: targetSettings,
+        verifyPosture,
+        signPosture
+      })
+    ).toBe(true)
+    expect(verifyPosture).toHaveBeenCalledWith(
+      'default',
+      original.effectivePermissions,
+      'verified-source-signature',
+      expect.objectContaining({ provider: 'claude', appRunId: 'run-1' })
+    )
+    expect(routed.effectivePermissions).toMatchObject({
+      presetId: 'default',
+      networkAccess: 'deny',
+      agenticServices: {
+        shellCommands: 'deny',
+        fileChanges: 'ask'
+      }
+    })
+    expect(routed.effectivePermissionsSignature).toBe('target-signature')
+    expect(signPosture).toHaveBeenCalledWith(
+      'default',
+      routed.effectivePermissions,
+      expect.objectContaining({ provider: 'codex', appRunId: 'run-1' })
+    )
   })
 })
 

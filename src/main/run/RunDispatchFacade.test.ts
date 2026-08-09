@@ -636,6 +636,63 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     )
   })
 
+  it('preserves the exact target-bound signed posture for a validated composer reroute', async () => {
+    const deps = makeDeps([])
+    const targetPermissions = { presetId: 'default' } as never
+    vi.mocked(resolveProviderDispatch).mockImplementation((_settings, provider) =>
+      provider === 'codex'
+        ? ({
+            provider: 'claude',
+            reroute: {
+              from: 'codex',
+              to: 'claude',
+              reason: 'provider-paused',
+              savedAsDefault: true
+            },
+            reroutePlan: {}
+          } as never)
+        : ({ provider } as never)
+    )
+    vi.mocked(applyReroutePlanToPayload).mockImplementation((p, resolution) =>
+      resolution.reroute
+        ? ({
+            ...p,
+            provider: resolution.provider,
+            providerReroute: resolution.reroute,
+            effectivePermissions: undefined,
+            effectivePermissionsSignature: undefined
+          } as never)
+        : (p as never)
+    )
+
+    await createRunDispatchFacade(deps)(
+      payload({
+        provider: 'claude',
+        providerReroute: {
+          from: 'codex',
+          to: 'claude',
+          reason: 'provider-paused',
+          savedAsDefault: true
+        },
+        approvalMode: 'default',
+        effectivePermissions: targetPermissions,
+        effectivePermissionsSignature: 'main-target-signature'
+      }),
+      senderEvent
+    )
+
+    expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'claude',
+        effectivePermissions: targetPermissions,
+        effectivePermissionsSignature: 'main-target-signature'
+      }),
+      senderEvent,
+      expect.any(Object)
+    )
+    expect(deps.applyFailoverReroutePosture).not.toHaveBeenCalled()
+  })
+
   it('reconstructs a user-failover claim only when the live resolver proves it exactly', async () => {
     const deps = makeDeps([])
     vi.mocked(resolveProviderDispatch).mockImplementation((_settings, provider) =>

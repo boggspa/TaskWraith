@@ -121,6 +121,7 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
     // pause plan proves the exact source→target route. All other claims vanish.
     let resolution = resolveProviderDispatch(settings, payload.provider)
     let dispatchInput = payloadWithoutClaim
+    let validatedClaimedReroute = false
     if (scheduledOwner) {
       if (
         claimedReroute !== undefined ||
@@ -145,6 +146,7 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
         ) {
           resolution = sourceResolution
           dispatchInput = { ...payloadWithoutClaim, provider: claimedReroute.from }
+          validatedClaimedReroute = true
         }
       } catch {
         // The source pause is no longer a valid reroute; dispatch the requested
@@ -152,6 +154,17 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
       }
     }
     const routedPayload = applyReroutePlanToPayload(dispatchInput, resolution)
+    if (validatedClaimedReroute) {
+      // ComposerService already resolved and signed this posture for the target
+      // provider before the renderer round-trip. Route reconstruction briefly
+      // rewrites the payload to the source provider, so the generic reroute
+      // helper clears it as cross-provider state. Restore the exact target-
+      // bound bytes without re-signing; AgentRunNormalizer remains the trust
+      // boundary and will reject any renderer mutation or forged signature.
+      routedPayload.effectivePermissions = payloadWithoutClaim.effectivePermissions
+      routedPayload.effectivePermissionsSignature =
+        payloadWithoutClaim.effectivePermissionsSignature
+    }
     const routedScheduledTaskId = scheduledTaskIdFromPayload(routedPayload)
     if (scheduledOwner) {
       const exactIdentityPreserved =

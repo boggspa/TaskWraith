@@ -1,5 +1,16 @@
-import type { PermissionPresetId, ProviderId } from './store/types'
+import type { AgentRunPayload } from './run/AgentRunTypes'
+import type {
+  AppSettings,
+  EffectiveRunPermissions,
+  PermissionPresetId,
+  ProviderId
+} from './store/types'
 import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../shared/retiredProviders'
+import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
+import {
+  runPostureContextFromPayload,
+  type RunPermissionPostureContext
+} from './RunPermissionPosture'
 
 /**
  * Pure decision logic for an auto-failover reroute's permission posture and
@@ -93,6 +104,81 @@ export function isNonEscalatingPreset(
 ): boolean {
   if (!targetPresetId) return true
   return presetAuthorityRank(targetPresetId) <= presetAuthorityRank(originalPresetId)
+}
+
+export interface VerifiedFailoverReroutePostureDeps {
+  settings: Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'>
+  verifyPosture: (
+    approvalMode: string | null | undefined,
+    effectivePermissions: EffectiveRunPermissions | null | undefined,
+    signature: string | null | undefined,
+    context?: RunPermissionPostureContext | null
+  ) => boolean
+  signPosture: (
+    approvalMode: string | null | undefined,
+    effectivePermissions: EffectiveRunPermissions | null | undefined,
+    context?: RunPermissionPostureContext | null
+  ) => string
+}
+
+/**
+ * Re-derive a provider-failover target posture only from a posture that MAIN
+ * can prove it signed for the source run. `failoverHopCount` is renderer-
+ * writable routing metadata, not authority; it must never be enough to mint a
+ * new signed permission object by itself.
+ *
+ * Returns true only when the verified origin was safely re-signed for the
+ * target. A failed proof leaves the provider-change payload without a posture,
+ * so the normalizer downgrades it instead of trusting renderer-supplied fields.
+ */
+export function applyVerifiedFailoverReroutePosture(
+  routedPayload: AgentRunPayload,
+  originalPayload: AgentRunPayload,
+  deps: VerifiedFailoverReroutePostureDeps
+): boolean {
+  const originalContext = runPostureContextFromPayload(originalPayload)
+  const originVerified = deps.verifyPosture(
+    originalPayload.approvalMode,
+    originalPayload.effectivePermissions,
+    originalPayload.effectivePermissionsSignature,
+    originalContext
+  )
+  if (!originVerified) {
+    routedPayload.effectivePermissions = undefined
+    routedPayload.effectivePermissionsSignature = undefined
+    return false
+  }
+
+  const target = routedPayload.provider
+  // Auto-failover is a non-escalating safety path: a machine-initiated reroute
+  // to Ollama always lands on the attended Ask posture.
+  if (target === 'ollama') routedPayload.approvalMode = 'plan'
+  const cappedMode = routedPayload.approvalMode
+  const originalPresetId = originalPayload.effectivePermissions?.presetId
+  const presetId = reroutePresetId(cappedMode, originalPresetId, target)
+  if (!isNonEscalatingPreset(presetId, originalPresetId)) {
+    routedPayload.effectivePermissions = undefined
+    routedPayload.effectivePermissionsSignature = undefined
+    return false
+  }
+
+  let effective: EffectiveRunPermissions | undefined
+  if (presetId && !(routedPayload.scope === 'global' && cappedMode !== 'plan')) {
+    effective = resolveEffectiveRunPermissions({
+      provider: target,
+      workspacePath: routedPayload.scope === 'global' ? undefined : routedPayload.workspace,
+      model: routedPayload.model,
+      settings: deps.settings,
+      presetId
+    })
+  }
+  routedPayload.effectivePermissions = effective
+  routedPayload.effectivePermissionsSignature = deps.signPosture(
+    routedPayload.approvalMode,
+    effective,
+    runPostureContextFromPayload(routedPayload)
+  )
+  return true
 }
 
 export interface SelectFailoverTargetInput {
