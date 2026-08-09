@@ -62,7 +62,8 @@ const emptyProvenance: WorkProvenanceSnapshot = {
 
 function renderPanel(
   lockSnapshot: WorkLockProjectionSnapshot | null,
-  provenanceSnapshot: WorkProvenanceSnapshot | null = emptyProvenance
+  provenanceSnapshot: WorkProvenanceSnapshot | null = emptyProvenance,
+  provenanceError: string | null = null
 ): string {
   return renderToStaticMarkup(
     <WorkspaceStatsPanel
@@ -72,7 +73,8 @@ function renderPanel(
       statsError={null}
       provenanceSnapshot={provenanceSnapshot}
       provenanceLoading={false}
-      provenanceError={null}
+      provenanceError={provenanceError}
+      onRefreshProvenance={vi.fn()}
       lockSnapshot={lockSnapshot}
       locksLoading={false}
       id="workspace-stats"
@@ -102,6 +104,8 @@ describe('WorkspaceStatsPopover', () => {
     expect(html).toContain('1,223,743')
     expect(html).toContain('1 of 49')
     expect(html).toContain('No current work evidence')
+    expect(html).toContain('aria-label="Refresh work evidence"')
+    expect(html).toContain('title="Run one bounded local provenance scan"')
     expect(html).toContain('No active TaskWraith work locks')
     expect(html).toContain('Neither is inferred authorship')
   })
@@ -171,6 +175,26 @@ describe('WorkspaceStatsPopover', () => {
     expect(html).toContain('Work evidence unavailable')
     expect(html).toContain('Projection unavailable.')
     expect(html).not.toContain('0 active locks')
+  })
+
+  it('keeps prior evidence visibly stale when an explicit refresh fails', () => {
+    const error = 'Git repository root could not be resolved for this registered workspace.'
+    const html = renderPanel(
+      {
+        schemaVersion: 1,
+        generation: 1,
+        sampledAt: '2026-08-03T19:00:00.000Z',
+        locks: []
+      },
+      emptyProvenance,
+      error
+    )
+
+    expect(html).toContain('workspace-stats-provenance-summary is-stale')
+    expect(html).toContain('Refresh failed · showing previous evidence')
+    expect(html).toContain('Work evidence refresh failed')
+    expect(html).toContain(error)
+    expect(html).toContain('No current work evidence')
   })
 
   it('binds to a selected effective worktree and hides the action for global chats', () => {

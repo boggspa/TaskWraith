@@ -4,6 +4,7 @@ import type { WorkProvenanceSnapshot } from '../../../shared/workProvenance'
 import type { WorkLockProjectionSnapshot } from '../../../shared/workLockProjection'
 import { workLockProjectionIsActive } from '../../../shared/workLockProjection'
 import { useWorkspaceLocks } from '../hooks/useWorkspaceLocks'
+import { useWorkspaceProvenance } from '../hooks/useWorkspaceProvenance'
 import { normalizeWorkspacePath } from '../lib/composerWorktreeSelection'
 import { DigitOdometer } from './DigitOdometer'
 import { XSymbolIcon } from './AppChromeSymbols'
@@ -35,13 +36,12 @@ export function WorkspaceStatsPopover({
     data: GitWorkspaceStats | null
     error: string | null
   }>({ requestKey: '', loading: true, data: null, error: null })
-  const [provenanceState, setProvenanceState] = useState<{
-    requestKey: string
-    loading: boolean
-    data: WorkProvenanceSnapshot | null
-    error: string | null
-  }>({ requestKey: '', loading: true, data: null, error: null })
   const locks = useWorkspaceLocks({
+    workspacePath: context.workspacePath,
+    chatId: context.chatId
+  })
+  const provenance = useWorkspaceProvenance({
+    baseWorkspacePath: context.baseWorkspacePath,
     workspacePath: context.workspacePath,
     chatId: context.chatId
   })
@@ -100,87 +100,17 @@ export function WorkspaceStatsPopover({
     requestKey
   ])
 
-  useEffect(() => {
-    let active = true
-    let timer: number | null = null
-    const readProvenance = window.api.gitWorkProvenance
-    const schedule = (snapshot: WorkProvenanceSnapshot | null): void => {
-      if (!active) return
-      const hasLiveEvidence = Boolean(
-        snapshot?.available &&
-        snapshot.workItems.some(
-          (item) => item.lifecycle === 'unresolved' && ['live', 'runtime'].includes(item.liveness)
-        )
-      )
-      timer = window.setTimeout(query, hasLiveEvidence ? 5_000 : 30_000)
-    }
-    const query = (): void => {
-      setProvenanceState((current) => ({
-        requestKey,
-        loading: current.requestKey !== requestKey || !current.data,
-        data: current.requestKey === requestKey ? current.data : null,
-        error: null
-      }))
-      void Promise.resolve()
-        .then(() => {
-          if (typeof readProvenance !== 'function') {
-            throw new Error('Local work provenance is unavailable in this build.')
-          }
-          return readProvenance({
-            repoPath: context.baseWorkspacePath,
-            worktreePath: context.workspacePath,
-            chatId: context.chatId
-          })
-        })
-        .then((result) => {
-          if (!active) return
-          if (!result.ok) {
-            setProvenanceState((current) => ({
-              requestKey,
-              loading: false,
-              data: current.requestKey === requestKey ? current.data : null,
-              error: result.error
-            }))
-            schedule(null)
-            return
-          }
-          setProvenanceState({
-            requestKey,
-            loading: false,
-            data: result.data,
-            error: null
-          })
-          schedule(result.data)
-        })
-        .catch((error) => {
-          if (!active) return
-          setProvenanceState((current) => ({
-            requestKey,
-            loading: false,
-            data: current.requestKey === requestKey ? current.data : null,
-            error: error instanceof Error ? error.message : 'Local work provenance is unavailable.'
-          }))
-          schedule(null)
-        })
-    }
-    query()
-    return () => {
-      active = false
-      if (timer !== null) window.clearTimeout(timer)
-    }
-  }, [context.baseWorkspacePath, context.chatId, context.workspacePath, requestKey])
-
   const currentState = state.requestKey === requestKey ? state : null
-  const currentProvenanceState = provenanceState.requestKey === requestKey ? provenanceState : null
   return (
     <WorkspaceStatsPanel
       context={context}
       stats={currentState?.data || null}
       statsLoading={currentState?.loading ?? true}
       statsError={currentState?.error || null}
-      provenanceSnapshot={currentProvenanceState?.data || null}
-      provenanceLoading={currentProvenanceState?.loading ?? true}
-      provenanceError={currentProvenanceState?.error || null}
+      provenanceSnapshot={provenance.snapshot}
+      provenanceLoading={provenance.loading}
+      provenanceError={provenance.error}
+      onRefreshProvenance={provenance.refresh}
       lockSnapshot={locks.snapshot}
       locksLoading={locks.loading}
       containerRef={containerRef}
@@ -199,6 +129,7 @@ export function WorkspaceStatsPanel({
   provenanceSnapshot,
   provenanceLoading,
   provenanceError,
+  onRefreshProvenance,
   lockSnapshot,
   locksLoading,
   containerRef,
@@ -213,6 +144,7 @@ export function WorkspaceStatsPanel({
   provenanceSnapshot: WorkProvenanceSnapshot | null
   provenanceLoading: boolean
   provenanceError: string | null
+  onRefreshProvenance: () => void
   lockSnapshot: WorkLockProjectionSnapshot | null
   locksLoading: boolean
   containerRef?: RefObject<HTMLDivElement | null>
@@ -377,20 +309,32 @@ export function WorkspaceStatsPanel({
 
       <section className="workspace-stats-provenance" aria-label="TaskWraith work evidence">
         <div
-          className={`workspace-stats-provenance-summary${provenanceSnapshot?.stale ? ' is-stale' : ''}`}
+          className={`workspace-stats-provenance-summary${provenanceSnapshot?.stale || provenanceError ? ' is-stale' : ''}`}
         >
           <div>
             <span className="workspace-stats-provenance-dot" aria-hidden />
             <strong>Work evidence</strong>
           </div>
-          <span>
-            {workProvenanceSummary(
-              provenanceSnapshot,
-              provenanceLoading,
-              provenanceError,
-              activeEvidenceContributors
-            )}
-          </span>
+          <div className="workspace-stats-provenance-actions">
+            <span>
+              {workProvenanceSummary(
+                provenanceSnapshot,
+                provenanceLoading,
+                provenanceError,
+                activeEvidenceContributors
+              )}
+            </span>
+            <button
+              type="button"
+              className="workspace-stats-provenance-refresh"
+              onClick={onRefreshProvenance}
+              disabled={provenanceLoading}
+              aria-label="Refresh work evidence"
+              title="Run one bounded local provenance scan"
+            >
+              {provenanceLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
         </div>
         {provenanceLoading && !provenanceSnapshot && (
           <div className="workspace-provenance-empty">
@@ -401,11 +345,13 @@ export function WorkspaceStatsPanel({
             </div>
           </div>
         )}
-        {!provenanceLoading && provenanceError && !provenanceSnapshot && (
+        {!provenanceLoading && provenanceError && (
           <div className="workspace-provenance-empty is-unavailable">
             <span aria-hidden />
             <div>
-              <strong>Work evidence unavailable</strong>
+              <strong>
+                {provenanceSnapshot ? 'Work evidence refresh failed' : 'Work evidence unavailable'}
+              </strong>
               <small>{provenanceError}</small>
             </div>
           </div>
@@ -557,6 +503,7 @@ function workProvenanceSummary(
   activeContributors: number
 ): string {
   if (loading && !snapshot) return 'Reading bounded local evidence…'
+  if (error && snapshot) return 'Refresh failed · showing previous evidence'
   if (error && !snapshot) return 'Work evidence unavailable'
   if (!snapshot?.available) return 'Work evidence unavailable'
   const classifiedPaths = snapshot.attribution.root.files
