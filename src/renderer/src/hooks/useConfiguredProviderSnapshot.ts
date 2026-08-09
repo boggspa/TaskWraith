@@ -147,8 +147,11 @@ export const CONFIGURED_PROVIDER_SETTLE_INTERVAL_MS = 250
  * the configured-provider snapshot leaf consumers already understand.
  *
  * Honesty (same rules as `describeHostProviders` / Waves 5d–5e):
- * - Host not live, projection missing, or freshness not live → not ready
+ * - Host not live, projection missing, or an unanchored cache → not ready
  *   (never a confident empty ready panel).
+ * - A delta-applied cache with explicit live-baseline continuity is coherent
+ *   enough for this presentation-only catalogue. Its freshness stays cached,
+ *   and authoritative run admission remains in main.
  * - `provider_source_not_ready` warning code → not ready (empty array is not
  *   a measured zero until the source settles).
  * - Live + ready + empty rows → ready with empty ids (genuine measured none).
@@ -161,7 +164,11 @@ export function configuredProviderSnapshotFromHostProjection(
   state: HostProjectionState
 ): ConfiguredProviderSnapshot {
   const projection = state.projection
-  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+  if (
+    !projection ||
+    state.status !== 'live' ||
+    (projection.freshness !== 'live' && state.liveBaselineContinuity !== true)
+  ) {
     return PENDING_CONFIGURED_PROVIDER_SNAPSHOT
   }
 
@@ -210,10 +217,13 @@ export function configuredProviderSnapshotFromHostProjection(
  * `window.api.getConfiguredProviderSnapshot` and does not invent a second
  * socket: it reads the app-scope `HostProjectionStore` via context.
  *
- * When Host is idle/loading/unavailable/cached, or the provider source is not
- * ready, returns `{ ready: false, providerIds: [] }` so consumers keep cold-
- * start / unknown behaviour (no fabricated recommended panel, no confident
- * empty ready). AntiGravity secret mutations still force a pending empty until
+ * When Host is idle/loading/unavailable, its cache lacks live-baseline
+ * continuity, or the provider source is not ready, returns
+ * `{ ready: false, providerIds: [] }` so consumers keep cold-start / unknown
+ * behaviour (no fabricated recommended panel, no confident empty ready).
+ * Coherent delta caches retain the catalogue while the Host connection is
+ * live, preventing periodic provider groups from withdrawing between full
+ * snapshots. AntiGravity secret mutations still force a pending empty until
  * the next Host refresh settles, so stale models never flash.
  *
  * Wave 5c replaced the old IPC settle poll with a one-shot Host refresh. Live

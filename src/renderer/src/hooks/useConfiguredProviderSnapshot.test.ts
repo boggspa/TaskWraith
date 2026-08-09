@@ -2,7 +2,10 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  HOST_PROJECTION_VERSION,
+  HOST_PROTOCOL_VERSION,
   HOST_WARNING_PROVIDER_SOURCE_NOT_READY,
+  type HostDeltaEnvelope,
   type HostSnapshot
 } from '../../../shared/hostProtocol'
 import { HostProjectionProvider } from '../components/HostProjectionProvider'
@@ -22,8 +25,8 @@ import {
 
 function hostSnapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
   return {
-    protocolVersion: 1,
-    projectionVersion: 1,
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
     generatedAt: '2026-08-07T12:00:00.000Z',
     generation: 1,
     cursor: 1,
@@ -47,7 +50,7 @@ function hostSnapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
     usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
     artifacts: [],
     warnings: [],
-    recovery: {},
+    recovery: { reopenStatus: 'unknown' },
     ...overrides
   } as unknown as HostSnapshot
 }
@@ -319,6 +322,95 @@ describe('successful Gemini API mutation refresh signal', () => {
     expect(renderedSnapshot.modelsByProvider?.antigravity?.[0]?.id).toBe('agy-model')
     vi.useRealTimers()
   })
+
+  it('keeps AntiGravity rows mounted across a coherent live-connected Host delta', async () => {
+    const container = installMinimalRendererDom()
+    const renderedSnapshots: ConfiguredProviderSnapshot[] = []
+    const antigravitySnapshot = hostSnapshot({
+      providers: [
+        {
+          providerId: 'antigravity',
+          displayProvider: 'AntiGravity',
+          shortCode: 'AG',
+          available: true,
+          modelId: 'agy-model',
+          modelLabel: 'AGY model'
+        }
+      ]
+    })
+    const unrelatedThreadDelta: HostDeltaEnvelope = {
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      projectionVersion: HOST_PROJECTION_VERSION,
+      generation: 1,
+      cursor: 2,
+      previousCursor: 1,
+      kind: 'upsert',
+      family: 'thread',
+      entityId: 'thread-1',
+      payload: {
+        id: 'thread-1',
+        workspaceId: null,
+        title: 'Unrelated Host activity',
+        chatKind: 'single',
+        archived: false,
+        pinned: false,
+        updatedAt: 2,
+        messageCount: 1
+      },
+      at: '2026-08-07T12:00:01.000Z'
+    }
+    const fetchSnapshot = vi.fn(async () => antigravitySnapshot)
+    const store = new HostProjectionStore({
+      fetchSnapshot,
+      fetchDeltas: async () => ({
+        kind: 'deltas',
+        generation: 1,
+        fromCursor: 1,
+        toCursor: 2,
+        deltas: [unrelatedThreadDelta]
+      })
+    })
+    function Harness(): null {
+      renderedSnapshots.push(useConfiguredProviderSnapshot())
+      return null
+    }
+
+    await act(async () => {
+      mountedRoot = createRoot(container)
+      mountedRoot.render(
+        // eslint-disable-next-line react/no-children-prop -- props.children required by HostProjectionProviderProps for tsc
+        createElement(HostProjectionProvider, {
+          store,
+          children: createElement(Harness)
+        })
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(renderedSnapshots.at(-1)?.providerIds).toEqual(['antigravity'])
+    const renderCountBeforeDelta = renderedSnapshots.length
+
+    await act(async () => {
+      await store.catchUp()
+    })
+
+    expect(store.getState().status).toBe('live')
+    expect(store.getState().projection?.freshness).toBe('cached')
+    expect(store.getState().liveBaselineContinuity).toBe(true)
+    const deltaRenders = renderedSnapshots.slice(renderCountBeforeDelta)
+    expect(deltaRenders.length).toBeGreaterThan(0)
+    expect(
+      deltaRenders.every(
+        (snapshot) =>
+          snapshot.ready &&
+          snapshot.providerIds.includes('antigravity') &&
+          snapshot.modelsByProvider?.antigravity?.[0]?.id === 'agy-model'
+      )
+    ).toBe(true)
+    // The delta no longer trips the not-ready settle loop into a full refresh.
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('antigravityGeminiApiSecretRefreshIdentity', () => {
@@ -467,7 +559,7 @@ describe('configuredProviderSnapshotFromHostProjection · honesty pins', () => {
     }
   })
 
-  it('RED: cached projection is not live authority', () => {
+  it('RED: an unanchored cached projection is not live authority', () => {
     expect(
       configuredProviderSnapshotFromHostProjection(
         hostState({
@@ -487,6 +579,37 @@ describe('configuredProviderSnapshotFromHostProjection · honesty pins', () => {
         })
       )
     ).toEqual({ ready: false, providerIds: [] })
+  })
+
+  it('maps an explicitly live-baseline delta cache for presentation without promoting it', () => {
+    expect(
+      configuredProviderSnapshotFromHostProjection(
+        hostState({
+          status: 'live',
+          liveBaselineContinuity: true,
+          projection: {
+            freshness: 'cached',
+            providers: [
+              {
+                providerId: 'antigravity',
+                displayProvider: 'AntiGravity',
+                shortCode: 'AG',
+                available: true,
+                modelId: 'agy-model',
+                modelLabel: 'AGY model'
+              }
+            ],
+            warningCodes: []
+          } as never
+        })
+      )
+    ).toEqual({
+      ready: true,
+      providerIds: ['antigravity'],
+      modelsByProvider: {
+        antigravity: [{ id: 'agy-model', label: 'AGY model' }]
+      }
+    })
   })
 
   it('RED: provider_source_not_ready → not ready (empty is not a measured zero)', () => {
