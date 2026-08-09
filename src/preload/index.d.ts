@@ -86,7 +86,13 @@ import {
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
-import type { HostCommand, HostCommandReceipt, HostSnapshot } from '../shared/hostProtocol'
+import type {
+  HostCommand,
+  HostCommandReceipt,
+  HostCursorPosition,
+  HostDeltasSinceResult,
+  HostSnapshot
+} from '../shared/hostProtocol'
 import type {
   LicenseNoticeKind,
   LicenseNoticeStatus,
@@ -1140,6 +1146,10 @@ declare global {
       hostProjectionSnapshot: () => Promise<
         { ok: true; snapshot: HostSnapshot } | { ok: false; error: string }
       >
+      /** Ordered Host delta catch-up; full-resnapshot-required is a value. */
+      hostProjectionDeltasSince: (
+        position: HostCursorPosition
+      ) => Promise<{ ok: true; result: HostDeltasSinceResult } | { ok: false; error: string }>
       /**
        * Host Arc 4.3b — submit a HostCommand over the same main-owned client.
        * Returns the initial receipt; pending must not be treated as success.

@@ -35,11 +35,20 @@
 
 import { ipcMain } from 'electron'
 
-import type { HostCommand, HostCommandReceipt, HostSnapshot } from '../../shared/hostProtocol'
+import type {
+  HostCommand,
+  HostCommandReceipt,
+  HostCursorPosition,
+  HostDeltasSinceResult,
+  HostSnapshot
+} from '../../shared/hostProtocol'
 import { HostProjectionClient } from '../host/HostProjectionClient'
 
 /** Read channel — HostSnapshot. */
 export const HOST_PROJECTION_SNAPSHOT_CHANNEL = 'host-projection:snapshot'
+
+/** Ordered delta catch-up from a renderer-held generation/cursor. */
+export const HOST_PROJECTION_DELTAS_SINCE_CHANNEL = 'host-projection:deltas-since'
 
 /** Wave 4.3b — submit a HostCommand; returns the initial receipt. */
 export const HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL = 'host-projection:command-submit'
@@ -57,6 +66,7 @@ export const HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL = 'host-projection:receipt-l
 const DESKTOP_HOST_CAPABILITIES = [
   'bootstrap',
   'snapshot',
+  'deltas',
   'health',
   'commands',
   'receipts'
@@ -65,6 +75,10 @@ const DESKTOP_HOST_CAPABILITIES = [
 /** Typed IPC result. Never a thrown Error, never a fabricated snapshot. */
 export type HostProjectionSnapshotResult =
   | { readonly ok: true; readonly snapshot: HostSnapshot }
+  | { readonly ok: false; readonly error: string }
+
+export type HostProjectionDeltasResult =
+  | { readonly ok: true; readonly result: HostDeltasSinceResult }
   | { readonly ok: false; readonly error: string }
 
 export type HostProjectionCommandResult =
@@ -79,6 +93,7 @@ export type HostProjectionReceiptLookupResult =
 export interface HostProjectionClientPort {
   connect(): Promise<unknown>
   getSnapshot(): Promise<{ snapshot: HostSnapshot }>
+  getDeltasSince(position: HostCursorPosition): Promise<{ result: HostDeltasSinceResult }>
   submitCommand(command: HostCommand): Promise<HostCommandReceipt>
   lookupReceipt(params: { commandId: string }): Promise<HostCommandReceipt>
   close(): void
@@ -190,6 +205,31 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
     if (!outcome.ok) return { ok: false, error: outcome.error }
     return { ok: true, snapshot: outcome.value.snapshot }
   })
+
+  ipc.removeHandler?.(HOST_PROJECTION_DELTAS_SINCE_CHANNEL)
+  ipc.handle(
+    HOST_PROJECTION_DELTAS_SINCE_CHANNEL,
+    async (_event, position: unknown): Promise<HostProjectionDeltasResult> => {
+      const candidate = position as Partial<HostCursorPosition> | null
+      if (
+        !candidate ||
+        !Number.isSafeInteger(candidate.generation) ||
+        Number(candidate.generation) < 0 ||
+        !Number.isSafeInteger(candidate.cursor) ||
+        Number(candidate.cursor) < 0
+      ) {
+        return { ok: false, error: 'host projection delta lookup requires generation and cursor' }
+      }
+      const outcome = await withClient((active) =>
+        active.getDeltasSince({
+          generation: Number(candidate.generation),
+          cursor: Number(candidate.cursor)
+        })
+      )
+      if (!outcome.ok) return { ok: false, error: outcome.error }
+      return { ok: true, result: outcome.value.result }
+    }
+  )
 
   ipc.removeHandler?.(HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL)
   ipc.handle(

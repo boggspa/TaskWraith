@@ -7,8 +7,8 @@
  * from a real `HostProjectionClient` over the authenticated local socket.
  *
  * WAVE 4.3b COMMANDS live in `HostCommandClient` (same preload surface:
- * `hostProjectionCommandSubmit` / `hostProjectionReceiptLookup`). This module
- * stays snapshot-only so the read path remains independently testable.
+ * `hostProjectionCommandSubmit` / `hostProjectionReceiptLookup`). Delta
+ * catch-up rides a sibling preload method on the same main-owned client.
  *
  * WHY IT IS A SEPARATE MODULE. The store and mapper are pure and provable
  * without Electron; this is the only place that knows a bridge exists. Keeping
@@ -34,7 +34,11 @@
  * import. The `.d.ts` entry is the authoritative declaration of the channel.
  */
 
-import type { HostSnapshot } from '../../../../shared/hostProtocol'
+import type {
+  HostCursorPosition,
+  HostDeltasSinceResult,
+  HostSnapshot
+} from '../../../../shared/hostProtocol'
 import type { HostProjectionTransport } from './HostProjectionStore'
 
 /**
@@ -48,9 +52,14 @@ export type HostProjectionBridgeResult =
   | { readonly ok: true; readonly snapshot: HostSnapshot }
   | { readonly ok: false; readonly error: string }
 
+export type HostProjectionDeltasBridgeResult =
+  | { readonly ok: true; readonly result: HostDeltasSinceResult }
+  | { readonly ok: false; readonly error: string }
+
 /** The single method this adapter needs from `window.api`. */
 export interface HostProjectionSnapshotBridge {
   hostProjectionSnapshot(): Promise<HostProjectionBridgeResult>
+  hostProjectionDeltasSince(position: HostCursorPosition): Promise<HostProjectionDeltasBridgeResult>
 }
 
 /** Reason surfaced when the preload conduit is not present at all. */
@@ -115,6 +124,25 @@ export function createHostProjectionIpcTransport(
       }
 
       return result.snapshot
+    },
+
+    async fetchDeltas(position: HostCursorPosition): Promise<HostDeltasSinceResult> {
+      const active = resolveBridge()
+      if (!active || typeof active.hostProjectionDeltasSince !== 'function') {
+        throw new Error(HOST_PROJECTION_BRIDGE_UNAVAILABLE)
+      }
+
+      const result = await active.hostProjectionDeltasSince(position)
+      if (!result || typeof result !== 'object' || typeof result.ok !== 'boolean') {
+        throw new Error(HOST_PROJECTION_BRIDGE_MALFORMED)
+      }
+      if (!result.ok) {
+        throw new Error(result.error || HOST_PROJECTION_BRIDGE_MALFORMED)
+      }
+      if (!result.result || typeof result.result !== 'object') {
+        throw new Error(HOST_PROJECTION_BRIDGE_MALFORMED)
+      }
+      return result.result
     }
   }
 }

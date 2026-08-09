@@ -14,11 +14,13 @@ import type { HostCommand, HostCommandReceipt } from '../../shared/hostProtocol'
 import { HOST_PROTOCOL_VERSION } from '../../shared/hostProtocol'
 import {
   HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL,
+  HOST_PROJECTION_DELTAS_SINCE_CHANNEL,
   HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL,
   HOST_PROJECTION_SNAPSHOT_CHANNEL,
   registerHostProjectionHandlers,
   type HostProjectionClientPort,
   type HostProjectionCommandResult,
+  type HostProjectionDeltasResult,
   type HostProjectionReceiptLookupResult,
   type HostProjectionSnapshotResult
 } from './hostProjectionHandlers'
@@ -89,6 +91,15 @@ function clientPort(overrides: Partial<HostProjectionClientPort> = {}): HostProj
   return {
     connect: vi.fn(async () => ({})),
     getSnapshot: vi.fn(async () => ({ snapshot: SNAPSHOT })),
+    getDeltasSince: vi.fn(async ({ generation, cursor }) => ({
+      result: {
+        kind: 'deltas' as const,
+        generation,
+        fromCursor: cursor,
+        toCursor: cursor,
+        deltas: []
+      }
+    })),
     submitCommand: vi.fn(async () => receipt()),
     lookupReceipt: vi.fn(async () =>
       receipt({ status: 'succeeded', authority: { decision: 'allow' } })
@@ -100,6 +111,7 @@ function clientPort(overrides: Partial<HostProjectionClientPort> = {}): HostProj
 
 function register(createClient: () => HostProjectionClientPort): {
   snapshot: RegisteredHandler
+  deltas: RegisteredHandler
   submit: RegisteredHandler
   lookup: RegisteredHandler
 } {
@@ -110,6 +122,7 @@ function register(createClient: () => HostProjectionClientPort): {
   })
   return {
     snapshot: handlerFor(HOST_PROJECTION_SNAPSHOT_CHANNEL),
+    deltas: handlerFor(HOST_PROJECTION_DELTAS_SINCE_CHANNEL),
     submit: handlerFor(HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL),
     lookup: handlerFor(HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL)
   }
@@ -127,12 +140,13 @@ describe('registerHostProjectionHandlers · registration', () => {
     ).toThrow(/userDataPath/)
   })
 
-  it('registers snapshot + command.submit + receipt.lookup (Wave 4.3b)', () => {
+  it('registers snapshot + delta catch-up + command.submit + receipt.lookup', () => {
     register(() => clientPort())
 
     const channels = mockedHandle.mock.calls.map(([channel]) => channel)
     expect(channels).toEqual([
       HOST_PROJECTION_SNAPSHOT_CHANNEL,
+      HOST_PROJECTION_DELTAS_SINCE_CHANNEL,
       HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL,
       HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL
     ])
@@ -143,6 +157,7 @@ describe('registerHostProjectionHandlers · registration', () => {
     // Electron throws on a duplicate handle(); that throw would abort whatever
     // startup step registers us.
     expect(mockedRemoveHandler).toHaveBeenCalledWith(HOST_PROJECTION_SNAPSHOT_CHANNEL)
+    expect(mockedRemoveHandler).toHaveBeenCalledWith(HOST_PROJECTION_DELTAS_SINCE_CHANNEL)
     expect(mockedRemoveHandler).toHaveBeenCalledWith(HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL)
     expect(mockedRemoveHandler).toHaveBeenCalledWith(HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL)
   })
@@ -151,6 +166,46 @@ describe('registerHostProjectionHandlers · registration', () => {
     const connect = vi.fn(async () => ({}))
     register(() => clientPort({ connect }))
     expect(connect).not.toHaveBeenCalled()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Delta catch-up                                                     */
+/* ------------------------------------------------------------------ */
+
+describe('registerHostProjectionHandlers · deltas', () => {
+  it('passes the exact renderer position to the shared Host client', async () => {
+    const getDeltasSince = vi.fn(async () => ({
+      result: {
+        kind: 'deltas' as const,
+        generation: 3,
+        fromCursor: 42,
+        toCursor: 42,
+        deltas: []
+      }
+    }))
+    const { deltas } = register(() => clientPort({ getDeltasSince }))
+
+    const result = (await deltas({}, { generation: 3, cursor: 42 })) as HostProjectionDeltasResult
+    expect(result.ok).toBe(true)
+    expect(getDeltasSince).toHaveBeenCalledWith({ generation: 3, cursor: 42 })
+  })
+
+  it('rejects malformed positions before touching Host', async () => {
+    const getDeltasSince = vi.fn(async () => ({
+      result: {
+        kind: 'deltas' as const,
+        generation: 1,
+        fromCursor: 0,
+        toCursor: 0,
+        deltas: []
+      }
+    }))
+    const { deltas } = register(() => clientPort({ getDeltasSince }))
+
+    const result = (await deltas({}, { generation: 1, cursor: -1 })) as HostProjectionDeltasResult
+    expect(result.ok).toBe(false)
+    expect(getDeltasSince).not.toHaveBeenCalled()
   })
 })
 

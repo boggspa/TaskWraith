@@ -34,7 +34,7 @@
  * simply to deliver the real store rather than a hollow substitute.
  */
 
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
 import { createHostProjectionIpcTransport } from '../lib/host/hostProjectionIpcTransport'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
@@ -67,6 +67,8 @@ export function HostProjectionProvider({ children, store }: HostProjectionProvid
   const [value] = useState(
     () => store ?? new HostProjectionStore(createHostProjectionIpcTransport())
   )
+
+  useEffect(() => value.startSync(), [value])
 
   return <HostProjectionContext.Provider value={value}>{children}</HostProjectionContext.Provider>
 }

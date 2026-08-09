@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   HOST_PROJECTION_VERSION,
   HOST_PROTOCOL_VERSION,
+  type HostDeltaEnvelope,
   type HostSnapshot
 } from '../../../../shared/hostProtocol'
 import { HostProjectionStore, type HostProjectionTransport } from './HostProjectionStore'
@@ -53,7 +54,7 @@ function snapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
     usage: { availability: 'unavailable', confidence: 'unknown', band: 'unknown' },
     artifacts: [],
     warnings: [],
-    recovery: {},
+    recovery: { reopenStatus: 'unknown' },
     ...overrides
   } as unknown as HostSnapshot
 }
@@ -196,6 +197,136 @@ describe('HostProjectionStore · concurrent refresh', () => {
     await store.refresh()
 
     expect(fetchSnapshot).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('HostProjectionStore · delta continuity', () => {
+  function threadDelta(overrides: Partial<HostDeltaEnvelope> = {}): HostDeltaEnvelope {
+    return {
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      projectionVersion: HOST_PROJECTION_VERSION,
+      generation: 3,
+      cursor: 43,
+      previousCursor: 42,
+      kind: 'upsert',
+      family: 'thread',
+      entityId: 't2',
+      payload: {
+        id: 't2',
+        workspaceId: 'w1',
+        title: 'Two',
+        chatKind: 'single',
+        archived: false,
+        pinned: false,
+        updatedAt: 2,
+        messageCount: 1
+      },
+      at: '2026-08-06T12:00:01.000Z',
+      ...overrides
+    }
+  }
+
+  it('atomically applies ordered deltas and advances the retained position', async () => {
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () => snapshot(),
+      fetchDeltas: async () => ({
+        kind: 'deltas',
+        generation: 3,
+        fromCursor: 42,
+        toCursor: 43,
+        deltas: [threadDelta()]
+      })
+    })
+    await store.refresh()
+
+    const state = await store.catchUp()
+
+    expect(state.status).toBe('live')
+    expect(state.lastCursor).toBe(43)
+    expect(state.projection?.threads.map((thread) => thread.id)).toEqual(['t1', 't2'])
+    // Delta-applied client caches are coherent but never promoted to live.
+    expect(state.projection?.freshness).toBe('cached')
+  })
+
+  it('falls back to a full snapshot on a retention/generation fence', async () => {
+    const fetchSnapshot = vi
+      .fn<() => Promise<HostSnapshot>>()
+      .mockResolvedValueOnce(snapshot())
+      .mockResolvedValueOnce(snapshot({ generation: 4, cursor: 2 }))
+    const store = new HostProjectionStore({
+      fetchSnapshot,
+      fetchDeltas: async () => ({
+        kind: 'full_resnapshot_required',
+        reason: 'generation_reset',
+        generation: 4,
+        cursor: 2,
+        clientGeneration: 3,
+        clientCursor: 42
+      })
+    })
+    await store.refresh()
+
+    const state = await store.catchUp()
+
+    expect(fetchSnapshot).toHaveBeenCalledTimes(2)
+    expect(state.status).toBe('live')
+    expect(state.lastGeneration).toBe(4)
+    expect(state.lastCursor).toBe(2)
+    expect(state.projection?.freshness).toBe('live')
+  })
+
+  it('rejects an out-of-order batch without publishing a partial cache', async () => {
+    const fetchSnapshot = vi
+      .fn<() => Promise<HostSnapshot>>()
+      .mockResolvedValueOnce(snapshot())
+      .mockResolvedValueOnce(snapshot({ cursor: 50 }))
+    const store = new HostProjectionStore({
+      fetchSnapshot,
+      fetchDeltas: async () => ({
+        kind: 'deltas',
+        generation: 3,
+        fromCursor: 42,
+        toCursor: 45,
+        deltas: [threadDelta({ cursor: 45, previousCursor: 42 })]
+      })
+    })
+    await store.refresh()
+
+    const state = await store.catchUp()
+
+    expect(fetchSnapshot).toHaveBeenCalledTimes(2)
+    expect(state.lastCursor).toBe(50)
+    expect(state.projection?.threads.map((thread) => thread.id)).toEqual(['t1'])
+    expect(state.projection?.freshness).toBe('live')
+  })
+
+  it('runs one bounded loop: deltas frequently, full snapshots periodically', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-06T12:00:00.000Z'))
+    try {
+      const fetchSnapshot = vi.fn(async () => snapshot())
+      const fetchDeltas = vi.fn(async () => ({
+        kind: 'deltas' as const,
+        generation: 3,
+        fromCursor: 42,
+        toCursor: 42,
+        deltas: []
+      }))
+      const store = new HostProjectionStore({ fetchSnapshot, fetchDeltas })
+      await store.refresh()
+      const stop = store.startSync({ deltaPollMs: 10, fullRefreshMs: 25 })
+
+      await vi.advanceTimersByTimeAsync(35)
+      expect(fetchDeltas).toHaveBeenCalledTimes(2)
+      expect(fetchSnapshot).toHaveBeenCalledTimes(2)
+
+      stop()
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchDeltas).toHaveBeenCalledTimes(2)
+      expect(fetchSnapshot).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

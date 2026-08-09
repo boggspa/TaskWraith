@@ -33,7 +33,12 @@
  */
 
 import { projectHostSnapshot, type HostProjectedSnapshot } from './hostSnapshotProjection'
-import type { HostSnapshot } from '../../../../shared/hostProtocol'
+import { applyHostSnapshotDeltas } from '../../../../shared/hostSnapshotApply'
+import type {
+  HostCursorPosition,
+  HostDeltasSinceResult,
+  HostSnapshot
+} from '../../../../shared/hostProtocol'
 
 /* ------------------------------------------------------------------ */
 /*  Transport port                                                    */
@@ -50,6 +55,17 @@ import type { HostSnapshot } from '../../../../shared/hostProtocol'
 export interface HostProjectionTransport {
   /** Fetch the current snapshot. Rejects when Host is unreachable. */
   fetchSnapshot(): Promise<HostSnapshot>
+  /** Fetch ordered deltas after a coherent snapshot position. */
+  fetchDeltas?(position: HostCursorPosition): Promise<HostDeltasSinceResult>
+}
+
+export const HOST_PROJECTION_DELTA_POLL_MS = 1_000
+export const HOST_PROJECTION_FULL_REFRESH_MS = 5_000
+
+export interface HostProjectionSyncOptions {
+  readonly deltaPollMs?: number
+  readonly fullRefreshMs?: number
+  readonly now?: () => number
 }
 
 /* ------------------------------------------------------------------ */
@@ -101,8 +117,14 @@ export class HostProjectionStore {
   private readonly transport: HostProjectionTransport
   private readonly listeners = new Set<Listener>()
   private state: HostProjectionState = IDLE_STATE
+  /** Full Host shape retained only for validated delta application. */
+  private sourceSnapshot: HostSnapshot | null = null
+  private lastFullRefreshAt = 0
   /** Guards against overlapping refreshes racing each other's results. */
   private inFlight: Promise<HostProjectionState> | null = null
+  private syncTimer: ReturnType<typeof setTimeout> | null = null
+  private syncGeneration = 0
+  private syncNow: () => number = () => Date.now()
 
   constructor(transport: HostProjectionTransport) {
     if (!transport || typeof transport.fetchSnapshot !== 'function') {
@@ -139,15 +161,114 @@ export class HostProjectionStore {
       status: 'loading'
     })
 
+    return this.runExclusive(() => this.performFullRefresh())
+  }
+
+  /**
+   * Resume from the retained generation/cursor. Any discontinuity, malformed
+   * batch, retention gap, or unsupported mutation falls back to one full
+   * snapshot; the partially-applied working copy is never published.
+   */
+  async catchUp(): Promise<HostProjectionState> {
+    if (this.inFlight) return this.inFlight
+    const base = this.sourceSnapshot
+    const fetchDeltas = this.transport.fetchDeltas
+    if (!base || typeof fetchDeltas !== 'function') {
+      return this.refresh()
+    }
+
+    return this.runExclusive(async () => {
+      const result = await fetchDeltas.call(this.transport, {
+        generation: base.generation,
+        cursor: base.cursor
+      })
+      if (result.kind === 'full_resnapshot_required') {
+        await this.performFullRefresh()
+        return
+      }
+      if (result.generation !== base.generation || result.fromCursor !== base.cursor) {
+        await this.performFullRefresh()
+        return
+      }
+
+      const applied = applyHostSnapshotDeltas(base, result.deltas)
+      if (
+        applied.outcome === 'rejected' ||
+        applied.outcome === 'require_resnapshot' ||
+        applied.cursor !== result.toCursor
+      ) {
+        await this.performFullRefresh()
+        return
+      }
+
+      this.sourceSnapshot = applied.snapshot
+      this.setState({
+        status: 'live',
+        projection: projectHostSnapshot(
+          applied.snapshot,
+          applied.snapshot.freshness === 'live' ? 'live' : 'cached'
+        ),
+        lastCursor: applied.cursor,
+        lastGeneration: applied.generation
+      })
+    })
+  }
+
+  /**
+   * Start one provider-owned continuity loop. Delta polls keep Host-command
+   * mutations current; periodic full snapshots reconcile legacy shadows that
+   * do not yet publish into the journal. The returned stop is generation-
+   * fenced, so an old React cleanup cannot stop a newer loop.
+   */
+  startSync(options: HostProjectionSyncOptions = {}): () => void {
+    const deltaPollMs = positiveDelay(options.deltaPollMs, HOST_PROJECTION_DELTA_POLL_MS)
+    const fullRefreshMs = positiveDelay(options.fullRefreshMs, HOST_PROJECTION_FULL_REFRESH_MS)
+    const now = options.now ?? (() => Date.now())
+    this.syncNow = now
+    if (this.sourceSnapshot) this.lastFullRefreshAt = now()
+    const generation = ++this.syncGeneration
+    if (this.syncTimer) clearTimeout(this.syncTimer)
+
+    const schedule = (): void => {
+      if (generation !== this.syncGeneration) return
+      this.syncTimer = setTimeout(() => {
+        this.syncTimer = null
+        const needsFull = !this.sourceSnapshot || now() - this.lastFullRefreshAt >= fullRefreshMs
+        const operation = needsFull ? this.refreshQuietly() : this.catchUp()
+        void operation.finally(schedule)
+      }, deltaPollMs)
+    }
+    schedule()
+
+    return () => {
+      if (generation !== this.syncGeneration) return
+      this.syncGeneration += 1
+      if (this.syncTimer) clearTimeout(this.syncTimer)
+      this.syncTimer = null
+    }
+  }
+
+  private async refreshQuietly(): Promise<HostProjectionState> {
+    if (this.inFlight) return this.inFlight
+    return this.runExclusive(() => this.performFullRefresh())
+  }
+
+  private async performFullRefresh(): Promise<void> {
+    const snapshot = await this.transport.fetchSnapshot()
+    this.sourceSnapshot = snapshot
+    this.lastFullRefreshAt = this.syncNow()
+    this.setState({
+      status: 'live',
+      projection: projectHostSnapshot(snapshot, 'live'),
+      lastCursor: snapshot.cursor,
+      lastGeneration: snapshot.generation
+    })
+  }
+
+  private runExclusive(operation: () => Promise<void>): Promise<HostProjectionState> {
     const run = (async (): Promise<HostProjectionState> => {
       try {
-        const snapshot = await this.transport.fetchSnapshot()
-        this.setState({
-          status: 'live',
-          projection: projectHostSnapshot(snapshot, 'live'),
-          lastCursor: snapshot.cursor,
-          lastGeneration: snapshot.generation
-        })
+        await operation()
       } catch (error) {
         this.setState(this.toUnavailable(error))
       } finally {
@@ -155,7 +276,6 @@ export class HostProjectionStore {
       }
       return this.state
     })()
-
     this.inFlight = run
     return run
   }
@@ -188,4 +308,10 @@ export class HostProjectionStore {
       listener(next)
     }
   }
+}
+
+function positiveDelay(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : fallback
 }

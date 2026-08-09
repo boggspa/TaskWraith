@@ -1085,7 +1085,7 @@ const api = {
     ipcRenderer.invoke('run-approved-host-command', requestId),
   listGeminiSessions: () => ipcRenderer.invoke('list-gemini-sessions'),
   getHostWeather: () => ipcRenderer.invoke('get-host-weather'),
-  // Host Arc 4.3a-wire + 4.3b — Desktop Host projection (snapshot + commands).
+  // Host Arc 4.3a-wire + 4.3b — Desktop Host projection (snapshot, deltas + commands).
   // Thin conduit ONLY: the renderer is sandboxed and cannot open the Host
   // socket, so main brokers it. No domain logic here by design — the result is
   // returned verbatim, including its `{ ok: false, error }` failure shape, so
@@ -1093,6 +1093,8 @@ const api = {
   // a fabricated empty snapshot. approval.decide is a Host command name sent
   // through command-submit (same as TUI 4.2b), not a separate IPC verb.
   hostProjectionSnapshot: () => ipcRenderer.invoke('host-projection:snapshot'),
+  hostProjectionDeltasSince: (position: { generation: number; cursor: number }) =>
+    ipcRenderer.invoke('host-projection:deltas-since', position),
   hostProjectionCommandSubmit: (command: unknown) =>
     ipcRenderer.invoke('host-projection:command-submit', command),
   hostProjectionReceiptLookup: (params: { commandId: string }) =>

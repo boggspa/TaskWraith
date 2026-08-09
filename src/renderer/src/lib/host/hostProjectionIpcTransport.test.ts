@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   HOST_PROJECTION_VERSION,
   HOST_PROTOCOL_VERSION,
+  type HostDeltasSinceResult,
   type HostSnapshot
 } from '../../../../shared/hostProtocol'
 import { HostProjectionStore } from './HostProjectionStore'
@@ -58,6 +59,15 @@ function bridgeOf(impl: () => Promise<unknown>): HostProjectionSnapshotBridge {
   return { hostProjectionSnapshot: impl } as unknown as HostProjectionSnapshotBridge
 }
 
+function bridgeWithDeltas(
+  deltaImpl: (position: { generation: number; cursor: number }) => Promise<unknown>
+): HostProjectionSnapshotBridge {
+  return {
+    hostProjectionSnapshot: async () => ({ ok: true, snapshot: snapshot() }),
+    hostProjectionDeltasSince: deltaImpl
+  } as unknown as HostProjectionSnapshotBridge
+}
+
 /* ------------------------------------------------------------------ */
 /*  Success                                                           */
 /* ------------------------------------------------------------------ */
@@ -82,6 +92,21 @@ describe('createHostProjectionIpcTransport · success', () => {
     await transport.fetchSnapshot()
 
     expect(hostProjectionSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns ordered delta catch-up and preserves the requested position', async () => {
+    const result: HostDeltasSinceResult = {
+      kind: 'deltas',
+      generation: 3,
+      fromCursor: 42,
+      toCursor: 42,
+      deltas: []
+    }
+    const hostProjectionDeltasSince = vi.fn(async () => ({ ok: true, result }))
+    const transport = createHostProjectionIpcTransport(bridgeWithDeltas(hostProjectionDeltasSince))
+
+    await expect(transport.fetchDeltas?.({ generation: 3, cursor: 42 })).resolves.toBe(result)
+    expect(hostProjectionDeltasSince).toHaveBeenCalledWith({ generation: 3, cursor: 42 })
   })
 })
 
@@ -127,6 +152,20 @@ describe('createHostProjectionIpcTransport · failures reject', () => {
       })
     )
     await expect(transport.fetchSnapshot()).rejects.toThrow('ipc channel closed')
+  })
+
+  it('rejects malformed and failed delta bridge results', async () => {
+    const malformed = createHostProjectionIpcTransport(bridgeWithDeltas(async () => ({ ok: true })))
+    await expect(malformed.fetchDeltas?.({ generation: 3, cursor: 42 })).rejects.toThrow(
+      HOST_PROJECTION_BRIDGE_MALFORMED
+    )
+
+    const failed = createHostProjectionIpcTransport(
+      bridgeWithDeltas(async () => ({ ok: false, error: 'delta socket dropped' }))
+    )
+    await expect(failed.fetchDeltas?.({ generation: 3, cursor: 42 })).rejects.toThrow(
+      'delta socket dropped'
+    )
   })
 })
 

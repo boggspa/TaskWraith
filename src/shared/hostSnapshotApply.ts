@@ -327,7 +327,7 @@ function applyCollection(
       return { ok: false, reason: `${delta.family} ${delta.kind} forbids payload` }
     }
     const next = list.filter((entry) => entityIdOf(delta.family, entry) !== delta.entityId)
-    ;(working as Record<string, unknown>)[key] = next
+    ;(working as unknown as Record<string, unknown>)[key] = next
     return { ok: true }
   }
 
@@ -351,16 +351,16 @@ function applyCollection(
   const previous = list.slice()
   const without = previous.filter((entry) => entityIdOf(delta.family, entry) !== delta.entityId)
   without.push(delta.payload as never)
-  ;(working as Record<string, unknown>)[key] = without
+  ;(working as unknown as Record<string, unknown>)[key] = without
 
   const checked = decodeHostSnapshot(working)
   if (!checked.ok) {
-    ;(working as Record<string, unknown>)[key] = previous
+    ;(working as unknown as Record<string, unknown>)[key] = previous
     return { ok: false, reason: checked.error }
   }
 
   // Re-assign the decoded (bounded/rebuild) collection so privacy extras never stick.
-  ;(working as Record<string, unknown>)[key] = checked.value[key]
+  ;(working as unknown as Record<string, unknown>)[key] = checked.value[key]
   return { ok: true }
 }
 
