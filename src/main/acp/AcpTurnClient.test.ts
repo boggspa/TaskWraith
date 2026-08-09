@@ -588,6 +588,115 @@ describe('runAcpTurn — neutral core', () => {
     expect(requests[1]?.rawToolCall).not.toHaveProperty('rawInput')
   })
 
+  it('correlates metadata-only tool_call_update evidence into a sparse permission request', async () => {
+    const child = new FakeAcpChild()
+    const requests: AcpPermissionRequest[] = []
+    baseOptions(child, {
+      onPermissionRequest: (request) => {
+        requests.push(request)
+        return 'deny'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'vibe-write-1',
+          kind: 'other',
+          status: 'in_progress',
+          _meta: { tool_name: 'TaskWraith_write_file', effect_kind: 'tool' }
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { toolCallId: 'vibe-write-1' },
+        options: [{ optionId: 'r', name: 'Reject', kind: 'reject_once' }]
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.rawToolCall).toMatchObject({
+      toolCallId: 'vibe-write-1',
+      kind: 'other',
+      status: 'in_progress',
+      _meta: { tool_name: 'TaskWraith_write_file', effect_kind: 'tool' }
+    })
+    expect(requests[0]?.rawToolCall).not.toHaveProperty('rawInput')
+  })
+
+  it('fails closed on conflicting metadata across updates or the permission fragment', async () => {
+    const child = new FakeAcpChild()
+    const requests: AcpPermissionRequest[] = []
+    baseOptions(child, {
+      onPermissionRequest: (request) => {
+        requests.push(request)
+        return 'deny'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    const toolUpdate = (toolCallId: string, toolName: string) => ({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          kind: 'other',
+          _meta: { tool_name: toolName, effect_kind: 'tool' }
+        }
+      }
+    })
+    const permissionRequest = (
+      id: number,
+      toolCallId: string,
+      metadata?: Record<string, unknown>
+    ) => ({
+      jsonrpc: '2.0',
+      id,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: {
+          toolCallId,
+          ...(metadata ? { _meta: metadata } : {})
+        },
+        options: [{ optionId: 'r', name: 'Reject', kind: 'reject_once' }]
+      }
+    })
+
+    child.emit(toolUpdate('update-conflict', 'TaskWraith_write_file'))
+    child.emit(toolUpdate('update-conflict', 'OtherBroker_write_file'))
+    child.emit(permissionRequest(9, 'update-conflict'))
+    child.emit(toolUpdate('permission-conflict', 'TaskWraith_write_file'))
+    child.emit(
+      permissionRequest(10, 'permission-conflict', {
+        tool_name: 'OtherBroker_write_file',
+        effect_kind: 'tool'
+      })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.rawToolCall).toEqual({ toolCallId: 'update-conflict' })
+    expect(requests[1]?.rawToolCall).toEqual({
+      toolCallId: 'permission-conflict',
+      _meta: { tool_name: 'OtherBroker_write_file', effect_kind: 'tool' }
+    })
+  })
+
   it('does not correlate ToolCall input across a tool-call id or session boundary', async () => {
     const child = new FakeAcpChild()
     const rawToolCalls: Array<Record<string, unknown> | null> = []

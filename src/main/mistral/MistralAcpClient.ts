@@ -88,14 +88,20 @@ function canonicalVibeTaskWraithToolName(machineName: unknown): string | null {
  * different kinds and metadata, so they remain on the normal permission path.
  * The returned descriptor is local permission evidence only; it does not
  * rewrite the provider invocation or bypass the broker's signed mutation gate.
+ * When Vibe omits rawInput from ACP, the broker still validates the provider's
+ * original invocation arguments before any operation executes.
  */
 export function normalizeMistralVibePermissionRequest(
   request: AcpPermissionRequest
 ): AcpPermissionRequest {
   const rawToolCall = record(request.rawToolCall)
-  const rawInput = record(rawToolCall?.rawInput)
   const metadata = record(rawToolCall?._meta)
-  if (!rawToolCall || !rawInput || !metadata) return request
+  if (!rawToolCall || !metadata) return request
+  const rawInputValue = rawToolCall.rawInput
+  if (rawInputValue !== undefined && rawInputValue !== null && !record(rawInputValue)) {
+    return request
+  }
+  const rawInput = record(rawInputValue) || {}
   if (rawToolCall.kind !== 'other' || metadata.effect_kind !== 'tool') return request
   if (request.toolKind && request.toolKind !== 'other') return request
 

@@ -181,7 +181,7 @@ describe('normalizeMistralVibePermissionRequest', () => {
 })
 
 describe('runMistralAcpTurn permission normalization', () => {
-  it('correlates Vibe machine metadata before the Mistral permission handler runs', async () => {
+  it('correlates Vibe metadata-only progress before the Mistral permission handler runs', async () => {
     const child = new FakeAcpChild()
     const seen: AcpPermissionRequest[] = []
     const handle = runMistralAcpTurn({
@@ -206,14 +206,10 @@ describe('runMistralAcpTurn permission normalization', () => {
       params: {
         sessionId: 'session-1',
         update: {
-          sessionUpdate: 'tool_call',
+          sessionUpdate: 'tool_call_update',
           toolCallId: 'vibe-write-1',
-          title: 'TaskWraith_write_file',
           kind: 'other',
-          rawInput: {
-            path: 'taskwraith-provider-accept-edits-qa.txt',
-            content: 'MISTRAL_ACCEPT_EDITS_QA_OK'
-          },
+          status: 'in_progress',
           _meta: { tool_name: 'TaskWraith_write_file', effect_kind: 'tool' }
         }
       }
@@ -234,9 +230,7 @@ describe('runMistralAcpTurn permission normalization', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(seen).toHaveLength(1)
-    expect(seen[0]?.rawToolCall?.rawInput).toMatchObject({
-      path: 'taskwraith-provider-accept-edits-qa.txt',
-      content: 'MISTRAL_ACCEPT_EDITS_QA_OK',
+    expect(seen[0]?.rawToolCall?.rawInput).toEqual({
       tool_name: 'TaskWraith__write_file'
     })
     expect(child.sent().find((message) => message.id === 9)).toMatchObject({

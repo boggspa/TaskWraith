@@ -395,21 +395,63 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let lastObservedToolName: string | null = null
   const toolNamesById = new Map<string, string>()
   // ACP emits the full ToolCall notification before request_permission, but
-  // some agents (including Kimi Code) repeat only its id/title/kind in the
-  // permission request. Retain a small, session-bound, one-use copy so the
-  // human approval sees the exact input and downstream brokers can bind their
-  // receipt to those arguments. This is presentation/correlation data only;
-  // it never changes the permission decision.
+  // some agents repeat only its id/title/kind in the permission request. Vibe
+  // can also put its structured machine identity on a later tool_call_update
+  // while omitting rawInput entirely. Retain a small, session-bound, one-use
+  // merged copy so the permission adapter sees every correlated transport
+  // field. This is presentation/correlation data only; it never changes the
+  // permission decision.
   const pendingToolCalls = new Map<string, Record<string, unknown>>()
+  const conflictedToolCallKeys = new Set<string>()
+  const structuredToolMetadataConflicts = (
+    first: Record<string, unknown> | null,
+    second: Record<string, unknown> | null
+  ): boolean =>
+    Boolean(
+      first &&
+      second &&
+      ['tool_name', 'effect_kind'].some(
+        (field) =>
+          first[field] !== undefined &&
+          second[field] !== undefined &&
+          first[field] !== second[field]
+      )
+    )
   const rememberToolCall = (message: Record<string, unknown>): void => {
     if (message.method !== 'session/update') return
     const params = isRecord(message.params) ? message.params : null
     const update = params && isRecord(params.update) ? params.update : null
-    if (!update || update.sessionUpdate !== 'tool_call') return
-    if (!isRecord(update.rawInput) && !isRecord(update.input)) return
+    if (
+      !update ||
+      (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update')
+    ) {
+      return
+    }
+    if (!isRecord(update.rawInput) && !isRecord(update.input) && !isRecord(update._meta)) return
     const key = acpToolCallKey(params?.sessionId, update)
     if (!key) return
-    pendingToolCalls.set(key, { ...update })
+    if (conflictedToolCallKeys.has(key)) return
+    const previous = pendingToolCalls.get(key)
+    const previousMetadata = isRecord(previous?._meta) ? previous._meta : null
+    const updateMetadata = isRecord(update._meta) ? update._meta : null
+    if (structuredToolMetadataConflicts(previousMetadata, updateMetadata)) {
+      pendingToolCalls.delete(key)
+      conflictedToolCallKeys.add(key)
+      if (conflictedToolCallKeys.size > 64) {
+        const oldest = conflictedToolCallKeys.values().next().value
+        if (typeof oldest === 'string') conflictedToolCallKeys.delete(oldest)
+      }
+      return
+    }
+    const merged = { ...previous, ...update }
+    if (!isRecord(update.rawInput) && isRecord(previous?.rawInput)) {
+      merged.rawInput = previous.rawInput
+    }
+    if (!isRecord(update.input) && isRecord(previous?.input)) merged.input = previous.input
+    if (previousMetadata || updateMetadata) {
+      merged._meta = { ...previousMetadata, ...updateMetadata }
+    }
+    pendingToolCalls.set(key, merged)
     if (pendingToolCalls.size > 64) {
       const oldest = pendingToolCalls.keys().next().value
       if (typeof oldest === 'string') pendingToolCalls.delete(oldest)
@@ -420,14 +462,24 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     if (!rawToolCall) return request
     const key = acpToolCallKey(request.sessionId, rawToolCall)
     if (!key) return request
+    if (conflictedToolCallKeys.delete(key)) {
+      pendingToolCalls.delete(key)
+      return request
+    }
     const remembered = pendingToolCalls.get(key)
     if (!remembered) return request
     pendingToolCalls.delete(key)
+    const rememberedMetadata = isRecord(remembered._meta) ? remembered._meta : null
+    const requestMetadata = isRecord(rawToolCall._meta) ? rawToolCall._meta : null
+    if (structuredToolMetadataConflicts(rememberedMetadata, requestMetadata)) return request
     return {
       ...request,
       rawToolCall: {
         ...remembered,
         ...rawToolCall,
+        ...(rememberedMetadata || requestMetadata
+          ? { _meta: { ...rememberedMetadata, ...requestMetadata } }
+          : {}),
         ...(!isRecord(rawToolCall.rawInput) && isRecord(remembered.input)
           ? { rawInput: remembered.input }
           : {})
