@@ -102,6 +102,7 @@ import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPre
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
+import type { ChannelIpcApi } from '../shared/collaboration/ChannelIpc'
 import type { HostCliToolId } from '../shared/hostCliToolCatalog'
 import type { OfficeDocumentReadResult } from '../shared/office/officeFormats'
 import type { OutlookConnectionStatus } from '../main/outlook/OutlookCredentialStore'
@@ -588,6 +589,7 @@ declare global {
     api: {
       hostPlatform: NodeJS.Platform
       getRuntimeVersions: () => NodeJS.ProcessVersions
+      channels: ChannelIpcApi
       selectWorkspace: () => Promise<WorkspaceRecord | null>
       selectImageFiles: () => Promise<string[]>
       // Resolves a dragged/pasted File's absolute path (Electron 32+ removed

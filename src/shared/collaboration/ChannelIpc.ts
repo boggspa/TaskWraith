@@ -177,4 +177,5 @@ export interface ChannelIpcApi {
   append(input: ChannelIpcAppendInput): Promise<ChannelIpcResult<ChannelIpcAppendResult>>
   revokeMember(input: ChannelIpcRevokeMemberInput): Promise<ChannelIpcResult<ChannelIpcMember>>
   close(input: ChannelIpcCloseInput): Promise<ChannelIpcResult<ChannelIpcChannel>>
+  onChanged(callback: (event: ChannelIpcChangeEvent) => void): () => void
 }

@@ -57,6 +57,7 @@ import type {
   PromoteQueuedJobForSteerResult
 } from '../main/services/RunLifecycleCoordinator'
 import { createAntigravityGeminiApiSecretBridge } from './antigravityGeminiApiSecretContract'
+import { createChannelIpcBridge } from './channelIpcBridge'
 import { createPiKeyBridge } from './piKeyContract'
 import type {
   ExecutionGraphLayout,
@@ -466,6 +467,7 @@ function stickyAppWatchOk(value: unknown): { ok: boolean } {
 const api = {
   hostPlatform: process.platform,
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
+  channels: createChannelIpcBridge(ipcRenderer),
   selectWorkspace: () => ipcRenderer.invoke('select-workspace'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
   // Electron 32+ removed `File.path`, so a dragged/pasted file's absolute path
@@ -2930,6 +2932,7 @@ const api = {
     ipcRenderer.removeAllListeners('human-collaboration-admission-began')
     ipcRenderer.removeAllListeners('human-collaboration-collaborator-projection')
     ipcRenderer.removeAllListeners('human-collaboration-collaborator-status')
+    ipcRenderer.removeAllListeners('channels:changed')
     ipcRenderer.removeAllListeners('run-trusted-media-refs')
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')
