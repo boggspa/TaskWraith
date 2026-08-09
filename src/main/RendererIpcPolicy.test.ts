@@ -106,6 +106,17 @@ describe('RendererIpcPolicy', () => {
     }
   )
 
+  it('keeps Host projection reads popout-safe and governed mutations main-only', () => {
+    for (const channel of ['host-projection:snapshot', 'host-projection:deltas-since']) {
+      expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
+      expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
+    }
+    for (const channel of ['host-projection:command-submit', 'host-projection:receipt-lookup']) {
+      expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+      expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
+    }
+  })
+
   it('classifies the complete registered IPC catalogue exactly once', () => {
     const registeredChannels = Object.keys(IPC_ARGUMENT_SCHEMAS).sort()
     const unclassified = registeredChannels.filter(

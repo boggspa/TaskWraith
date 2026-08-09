@@ -298,6 +298,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // this boundary still has to register their coarse wire shapes or the
   // fail-closed IPC wrapper rejects the calls before those handlers run.
   'host-projection:snapshot': [],
+  'host-projection:deltas-since': ['object'],
   'host-projection:command-submit': ['object'],
   'host-projection:receipt-lookup': ['object'],
   'set-appearance-mode': ['any'],

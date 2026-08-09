@@ -89,6 +89,11 @@ describe('IpcValidation', () => {
   it('shape-gates the Host projection bridge', () => {
     expect(() => validateIpcArgs('host-projection:snapshot', [])).not.toThrow()
     expect(() =>
+      validateIpcArgs('host-projection:deltas-since', [{ generation: 3, cursor: 9 }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('host-projection:deltas-since', [])).toThrow(/object/)
+    expect(() => validateIpcArgs('host-projection:deltas-since', [9])).toThrow(/object/)
+    expect(() =>
       validateIpcArgs('host-projection:command-submit', [
         { type: 'host.command', commandId: 'command-1' }
       ])

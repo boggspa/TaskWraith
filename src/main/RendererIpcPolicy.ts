@@ -143,6 +143,10 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'github:set-watched-pr',
   'github:watch-pr-notify-ack',
   'grok-usage:probe',
+  // Every renderer mounts the Host projection provider. These two read-only
+  // channels keep popouts coherent; governed mutations remain main-only.
+  'host-projection:snapshot',
+  'host-projection:deltas-since',
   'human-collaboration-collaborator:append-comment',
   'human-collaboration-collaborator:load-older',
   'human-collaboration-collaborator:confirm',
@@ -285,6 +289,10 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
  * catalogue changes.
  */
 export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
+  // Host commands and receipt correlation are currently presented only by
+  // the primary app surface. Read-only projection continuity is safe above.
+  'host-projection:command-submit',
+  'host-projection:receipt-lookup',
   // The Gemini API key is main-renderer-only; workspace popouts and utility
   // renderers must never be able to submit or clear credential material.
   'antigravity-gemini-api:get-secret-status',
