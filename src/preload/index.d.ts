@@ -1284,6 +1284,9 @@ declare global {
         >
         listForChat: (chatId: string) => Promise<unknown[]>
         closeForChat: (chatId: string, canvasId: string) => Promise<void>
+        clearBrowserProfile: () => Promise<
+          { ok: true; closedSurfaceCount: number } | { ok: false; error: string }
+        >
         navigateForChat: (
           chatId: string,
           canvasId: string,

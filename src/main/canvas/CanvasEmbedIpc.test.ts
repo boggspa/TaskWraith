@@ -84,7 +84,11 @@ function fakeDeps() {
     chatId,
     workspacePath: '/workspace/a'
   }))
-  return { controller, embed, resolveContext, calls }
+  const clearBrowserProfile = vi.fn(async () => ({
+    closedCanvasIds: ['c1'],
+    closedSurfaceCount: 1
+  }))
+  return { controller, embed, clearBrowserProfile, resolveContext, calls }
 }
 
 describe('registerCanvasEmbedIpc', () => {
@@ -101,12 +105,48 @@ describe('registerCanvasEmbedIpc', () => {
       'canvas:set-visible',
       'canvas:close',
       'canvas:close-chat',
+      'canvas:clear-browser-profile',
       'canvas:navigate-chat',
       'canvas:list',
       'canvas:list-chat'
     ]) {
       expect(ipc.has(channel)).toBe(true)
     }
+  })
+
+  it('clears the app-wide Browser profile as a human action and retires closed embeds', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await ipc.invoke('canvas:open-embedded', {
+      url: 'https://example.test',
+      chatId: 'chat-a'
+    })
+
+    await expect(ipc.invoke('canvas:clear-browser-profile')).resolves.toEqual({
+      ok: true,
+      closedSurfaceCount: 1
+    })
+    expect(deps.clearBrowserProfile).toHaveBeenCalledTimes(1)
+    expect(deps.calls).toContainEqual(['detach', ['c1']])
+    expect(await ipc.invoke('canvas:list')).toEqual([])
+  })
+
+  it('returns a normal reset error and preserves a still-live owned surface', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    deps.clearBrowserProfile.mockRejectedValueOnce(new Error('storage busy'))
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await ipc.invoke('canvas:open-embedded', {
+      url: 'https://example.test',
+      chatId: 'chat-a'
+    })
+
+    await expect(ipc.invoke('canvas:clear-browser-profile')).resolves.toEqual({
+      ok: false,
+      error: 'storage busy'
+    })
+    expect(await ipc.invoke('canvas:list')).toHaveLength(1)
   })
 
   it('navigates any chat canvas as the human, unmetered, with sanitized input', async () => {

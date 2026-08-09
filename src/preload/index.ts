@@ -1226,6 +1226,11 @@ const api = {
       ipcRenderer.invoke('canvas:list-chat', chatId),
     closeForChat: (chatId: string, canvasId: string): Promise<void> =>
       ipcRenderer.invoke('canvas:close-chat', chatId, canvasId),
+    // Human-only app-wide profile reset. This is intentionally not represented
+    // in the Canvas MCP catalogue or any agent permission grant.
+    clearBrowserProfile: (): Promise<
+      { ok: true; closedSurfaceCount: number } | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:clear-browser-profile'),
     // Browser chrome for the Canvas Browser: navigate any web canvas in the
     // sender's chat (address bar / back / forward / reload / stop).
     navigateForChat: (

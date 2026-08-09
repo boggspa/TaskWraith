@@ -332,6 +332,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'canvas:set-visible',
   'canvas:close',
   'canvas:close-chat',
+  'canvas:clear-browser-profile',
   'canvas:navigate-chat',
   'canvas:list',
   'canvas:list-chat',

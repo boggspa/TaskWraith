@@ -4220,6 +4220,7 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
 })
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
+  clearBrowserProfileData: () => canvasBrowserProfile.clearBrowsingData(),
   createDriver: (
     kind: CanvasDriverKind,
     sessionId: string,
@@ -6049,6 +6050,7 @@ installIpcValidation(ipcMain, (channel, event) => {
 const canvasEmbedIpcAuthority = registerCanvasEmbedIpc(ipcMain, {
   controller: canvasService,
   embed: canvasEmbedController,
+  clearBrowserProfile: () => canvasService.clearBrowserProfile(),
   resolveContext: (event, chatId) => {
     assertRendererChatScope(event, chatId)
     const chat = AppStore.getChat(chatId)

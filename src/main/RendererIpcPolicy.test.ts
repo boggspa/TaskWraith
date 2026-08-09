@@ -53,6 +53,7 @@ describe('RendererIpcPolicy', () => {
     'canvas:open-embedded',
     'canvas:adopt-embedded',
     'canvas:set-bounds',
+    'canvas:clear-browser-profile',
     'mesh-scene:import-user-model',
     'mesh-scene:import-user-package',
     'mesh-scene:view',
@@ -157,13 +158,16 @@ describe('RendererIpcPolicy', () => {
     expect(main).toContain("ipcMain.on('authorize-dropped-attachment'")
   })
 
-  it('exposes Canvas dock adoption only through the main-renderer preload bridge', () => {
+  it('exposes Canvas dock adoption and profile reset only through the main-renderer bridge', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
     const preloadTypes = readFileSync(join(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
 
     expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:clear-browser-profile')).toBe(true)
     expect(preload).toContain("ipcRenderer.invoke('canvas:adopt-embedded', args)")
+    expect(preload).toContain("ipcRenderer.invoke('canvas:clear-browser-profile')")
     expect(preloadTypes).toContain('adoptEmbedded: (args: { chatId: string; canvasId: string })')
+    expect(preloadTypes).toContain('clearBrowserProfile: () => Promise<')
   })
 
   it('requires a preload-minted trusted one-shot intent for host clipboard image reads', () => {

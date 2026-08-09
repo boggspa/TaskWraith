@@ -388,6 +388,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'canvas:set-visible': ['nonEmptyString', 'boolean'],
   'canvas:close': ['nonEmptyString'],
   'canvas:close-chat': ['nonEmptyString', 'nonEmptyString'],
+  'canvas:clear-browser-profile': [],
   'canvas:navigate-chat': ['nonEmptyString', 'nonEmptyString', 'object'],
   'canvas:list': [],
   'canvas:list-chat': ['nonEmptyString'],
@@ -1050,11 +1051,13 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
   if (!schema) {
     throw new Error(`No IPC schema registered for ${channel}.`)
   }
-  // Detach is a generation-bound revoke operation, so trailing renderer data
-  // must not be silently ignored. Session lifecycle operations share the same
-  // exact-argument posture. Preserve legacy optional-tail behavior elsewhere.
+  // Detach is a generation-bound revoke operation, and Browser-profile reset
+  // is an app-wide destructive human action, so trailing renderer data must not
+  // be silently ignored. Preserve legacy optional-tail behavior elsewhere.
   if (
-    (channel === 'attach-window:detach' || channel === 'attach-window:control-session') &&
+    (channel === 'attach-window:detach' ||
+      channel === 'attach-window:control-session' ||
+      channel === 'canvas:clear-browser-profile') &&
     args.length > schema.length
   ) {
     throw new Error(`${channel} received too many arguments.`)

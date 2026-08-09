@@ -15,11 +15,14 @@ import type {
   CanvasNavigateInput,
   CanvasSessionSummary
 } from './canvasTypes'
+import type { CanvasBrowserProfileClearResult } from './CanvasService'
 import type { CanvasEmbedController, CanvasEmbedRect } from './CanvasEmbedController'
 
 export interface CanvasEmbedIpcDeps {
   controller: CanvasController
   embed: CanvasEmbedController
+  /** Main-owned, app-wide human reset. Deliberately absent from CanvasController/MCP. */
+  clearBrowserProfile: () => Promise<CanvasBrowserProfileClearResult>
   /** Resolve payload chatId through main-owned sender/chat/clear authority. */
   resolveContext: (event: IpcMainInvokeEvent, chatId: string) => CanvasCallContext
 }
@@ -250,6 +253,38 @@ export function registerCanvasEmbedIpc(
     await deps.controller.close(canvasId, context)
     owned.delete(canvasId)
     deps.embed.detach(canvasId)
+  })
+
+  // App-wide Browser-profile reset is a HUMAN settings action. The channel is
+  // no-argument and main-renderer-only at the global IPC boundary; no Canvas
+  // MCP executor exposes it. CanvasService fences new web opens and contains
+  // every existing web surface before Chromium storage is touched.
+  ipcMain.handle('canvas:clear-browser-profile', async () => {
+    try {
+      const result = await deps.clearBrowserProfile()
+      for (const canvasId of result.closedCanvasIds) {
+        owned.delete(canvasId)
+        deps.embed.detach(canvasId)
+      }
+      return { ok: true, closedSurfaceCount: result.closedSurfaceCount }
+    } catch (err) {
+      // A profile-data clear can fail after drivers were already contained.
+      // Retire only renderer bookkeeping that no longer maps to a live Canvas;
+      // leave genuinely live/failed-close surfaces owned so the human can retry.
+      for (const [canvasId, entry] of owned) {
+        try {
+          const stillLive = deps.controller
+            .list(entry.context)
+            .some((candidate) => candidate.canvasId === canvasId)
+          if (stillLive) continue
+          owned.delete(canvasId)
+          deps.embed.detach(canvasId)
+        } catch {
+          // Keep the ownership entry when liveness cannot be proven.
+        }
+      }
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   // Browser-chrome navigation for ANY web canvas in the sender's chat — the

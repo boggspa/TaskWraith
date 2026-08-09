@@ -183,6 +183,10 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('canvas:adopt-embedded', [{ chatId: 'chat-1', canvasId: 'canvas-1' }])
     ).not.toThrow()
+    expect(() => validateIpcArgs('canvas:clear-browser-profile', [])).not.toThrow()
+    expect(() => validateIpcArgs('canvas:clear-browser-profile', ['unexpected'])).toThrow(
+      /too many arguments/
+    )
 
     expect(() => validateIpcArgs('canvas:open-window', [{ chatId: '../settings' }])).toThrow(
       /safe chat id/
