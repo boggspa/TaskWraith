@@ -33,38 +33,29 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'webBrowsing'
 ]
 
-// Posture inversion (owner directive 2026-08-04 — docs/refactors/
-// PermissionTierBehaviorAlignment.md slice C). `read_only` ("Ask") and `plan`
-// ("Plan") are BOTH read-only-for-writes postures (`approvalMode: 'plan'`,
-// `readOnly: true` — native lanes stay physically plan-contained), but they now
-// differ on the OPPOSITE axis from the original W7 split:
-//
-//   plan ("Plan" — the strict floor): NO mid-run permission asks for ordinary
-//     mutating services. Anything not auto-allowed is DENIED — "denied and no
-//     elevation offered". Deliberate attended exceptions (2026-08-09):
-//     `subThreadDelegation`, `meshCanvas`, and `simulatorCanvas` stay ASK so their tools can
-//     modal-approve. Unattended/scheduled Plan hard-denies only
-//     `subThreadDelegation`; fork 4B keeps `simulatorCanvas` at ASK (timer
-//     deny) and demotes elevated Accept Edits / Full WS allow unless an
-//     explicit simulatorCanvas grant is present.
-//     The only other elevation is the proposed-plan document approval (which
-//     flips the chat to Accept Edits and re-dispatches), and the only write is
-//     the product-managed markdown plan artifact (executor-owned carve-out, not
-//     a service policy).
-//   read_only ("Ask" — the ask tier): anything not auto-allowed MAY be asked
-//     via the approval modal — per-invocation human approval, NO auto-deny.
-//     Approval genuinely executes on the brokered lane (the gate is the only
-//     enforcement; executors carry no independent readOnly block), while
-//     provider-NATIVE mutating tools remain contained by the physical plan
-//     mode both postures still run under.
-//
-// plan is therefore a strict SUBSET of read_only in reachable authority for
-// ordinary services: it only ever TIGHTENS read_only's ASK to DENY, never the
-// reverse — except the attended subThreadDelegation / Mesh Canvas / Simulator
-// Canvas carve-outs above. The deny-survival line in effectiveAgenticSettings still
-// preserves every global DENY across the key-by-key rebuild, and the grant-
-// hold below keeps standing grants from zero-clicking read_only's asks (and
-// Plan's modal instruments).
+// The standard user-facing tool surface follows one permission ladder. Ask and
+// Plan always present the approval modal; Accept Edits and higher authorize the
+// same services for the run without a second grant decision. Keep this list
+// separate from AGENTIC_SERVICE_IDS: cross-thread messaging, eval, and capture
+// retain their existing specialist policies.
+export const LINEAR_PERMISSION_SERVICES: readonly AgenticServiceId[] = [
+  'shellCommands',
+  'fileChanges',
+  'externalPublish',
+  'mcpTools',
+  'subThreadDelegation',
+  'canvasInteraction',
+  'sketchCanvas',
+  'meshCanvas',
+  'simulatorCanvas',
+  'mediaEditing',
+  'webBrowsing'
+]
+
+// `read_only` ("Ask") and `plan` ("Plan") are both read-only provider
+// postures (`approvalMode: 'plan'`, `readOnly: true`). Brokered standard tools
+// remain reachable through an attended per-invocation approval modal. Native
+// mutating tools stay physically contained by the provider's plan mode.
 const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'ask',
   fileChanges: 'ask',
@@ -89,29 +80,25 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   webBrowsing: 'ask'
 }
 
-// `plan` = the no-ask floor for ordinary mutating services. Plan must not
-// interrupt mid-run for shell/file/canvas/… — those stay DENY and elevate only
-// via the plan document. Deliberate exceptions (2026-08-09): subThreadDelegation,
-// meshCanvas, and simulatorCanvas are ASK so their tools stay reachable with a request
-// modal on Plan seats (grant-held via PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES).
-// Generic mcpTools stays DENY; scoped TaskWraith broker attach may still list
-// the gated instrument set without reopening the full MCP ask surface.
+// Plan shares Ask's attended policy for the standard ladder. Unrelated
+// cross-thread, eval, and capture permissions deliberately keep their existing
+// Plan restrictions.
 const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
-  shellCommands: 'deny',
-  fileChanges: 'deny',
-  externalPublish: 'deny',
-  mcpTools: 'deny',
+  shellCommands: 'ask',
+  fileChanges: 'ask',
+  externalPublish: 'ask',
+  mcpTools: 'ask',
   subThreadDelegation: 'ask',
-  canvasInteraction: 'deny',
-  sketchCanvas: 'deny',
+  canvasInteraction: 'ask',
+  sketchCanvas: 'ask',
   meshCanvas: 'ask',
   simulatorCanvas: 'ask',
   crossThreadRead: 'deny',
   threadMessage: 'deny',
-  mediaEditing: 'deny',
+  mediaEditing: 'ask',
   mediaRecording: 'deny',
   canvasEval: 'deny',
-  webBrowsing: 'deny'
+  webBrowsing: 'ask'
 }
 
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
@@ -143,35 +130,38 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     label: 'Accept Edits',
     approvalMode: 'default',
     // Accept Edits' defining behavior (user decisions 2026-08-04 / 2026-08-09):
-    // choosing the preset IS the run-level authorization for in-workspace file
-    // edits and ordinary control of the sandboxed Canvas Browser. Browser
-    // navigation/click/fill therefore stay fluid instead of presenting an
-    // approval card for every page action. Shell, media, publish, arbitrary
-    // canvas eval, and generic MCP calls keep resolving from globals/grants.
+    // choosing the preset IS the run-level authorization for the standard
+    // brokered tool surface. Shell, files, publishing, tool calls,
+    // delegation, Canvas surfaces, media editing, and browser navigation stay
+    // fluid instead of presenting a second grant decision.
     //
     // Security that still holds under this posture:
-    //   - global fileChanges 'deny' remains absolute (preserveExplicitDeny)
+    //   - every global service 'deny' remains absolute (preserveExplicitDeny)
     //   - tool executors reject outside-workspace paths; external-path
     //     detection force-prompts (never auto-allows escapes)
     //   - Canvas refuses credential/OTP fields and yields to recent human input
-    //   - canvasEval remains separately signed-elevated and per-call gated
+    //   - canvasEval, recording, and cross-thread actions keep their existing
+    //     specialist policies
     //   - preview-risk models clamp these services back to 'ask'
     agenticServices: {
+      shellCommands: 'allow',
       fileChanges: 'allow',
+      externalPublish: 'allow',
+      mcpTools: 'allow',
+      subThreadDelegation: 'allow',
       // Ordinary browser actuation. Surface ownership, stale-observation,
       // recent-human-input, and credential-field guards remain executor-level
       // invariants; this removes only the redundant per-click approval card.
       canvasInteraction: 'allow',
-      // Opening/navigating public websites in the sandboxed Canvas Browser.
-      webBrowsing: 'allow',
-      // Accept Edits authorizes TaskWraith sub-thread delegation as a standard
-      // brokered tool (no per-call modal). Ask/Plan remain modal-gated.
-      subThreadDelegation: 'allow',
+      sketchCanvas: 'allow',
       // Chat-owned Mesh Canvas authoring remains inside TaskWraith's durable
       // scene store; workspace imports are jailed and copied into its vault.
       meshCanvas: 'allow',
       // Same Accept Edits authorization for Simulator Canvas control.
-      simulatorCanvas: 'allow'
+      simulatorCanvas: 'allow',
+      mediaEditing: 'allow',
+      // Opening/navigating public websites in the sandboxed Canvas Browser.
+      webBrowsing: 'allow'
     }
   },
   workspace_write: {
@@ -196,6 +186,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     agenticServices: {
       shellCommands: 'allow',
       fileChanges: 'allow',
+      mcpTools: 'allow',
       // Media editing follows shell/file auto-allow under workspace_write.
       // DELIBERATELY no mediaRecording here — capture is non-grantable and
       // stays at its default-deny.
@@ -283,26 +274,36 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'webBrowsing'
 ]
 
-// Plan's deliberate per-invocation instruments (2026-08-09): sub-thread
-// delegation, Mesh Canvas, and Simulator Canvas stay ASK under Plan and must not be
-// zero-clicked by a standing grant minted under Accept Edits / Full WS /
-// Full Access. Kept exported so the approval gate folds them into
+// Plan's standard services stay ASK and must not be zero-clicked by a standing
+// grant minted under Accept Edits / Full WS / Full Access. External publishing
+// is held by POSTURE_APPROVAL_ONLY_SERVICES below; every other standard service
+// is held here. Kept exported so the approval gate folds them into
 // neverAutoAllow.
 export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
-  new Set<AgenticServiceId>(['subThreadDelegation', 'meshCanvas', 'simulatorCanvas'])
+  new Set<AgenticServiceId>([
+    'shellCommands',
+    'fileChanges',
+    'mcpTools',
+    'subThreadDelegation',
+    'canvasInteraction',
+    'sketchCanvas',
+    'meshCanvas',
+    'simulatorCanvas',
+    'mediaEditing',
+    'webBrowsing'
+  ])
 
 // The Ask tier's defining property is PER-INVOCATION human approval: anything
 // the map asks for must genuinely prompt, so a standing workspace grant or an
 // in-run session grant minted under `default`+ must NOT silently auto-allow it
 // on a read_only ("Ask") seat. Every asked mutating service joins the hold.
-// Deliberately absent: `mcpTools` (generic MCP reads were ASK + grantable under
-// read_only long before the inversion — grant-immunity there would double-tax
-// existing recon workflows) and `externalPublish` (already held for
-// read_only/plan via POSTURE_APPROVAL_ONLY_SERVICES below).
+// External publishing is already held for read_only/plan via
+// POSTURE_APPROVAL_ONLY_SERVICES below.
 export const READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
   new Set<AgenticServiceId>([
     'shellCommands',
     'fileChanges',
+    'mcpTools',
     'subThreadDelegation',
     'simulatorCanvas',
     'canvasInteraction',
@@ -320,8 +321,8 @@ const POSTURE_APPROVAL_ONLY_SERVICES: ReadonlySet<AgenticServiceId> =
 
 /**
  * Should a would-be automatic approval of `service` be downgraded to a
- * per-invocation prompt because the run is on the `plan` preset and the service
- * is one of plan's approval-only instruments (canvasInteraction / mediaEditing)?
+ * per-invocation prompt because the run is on the `plan` or `read_only` preset
+ * and the service belongs to its approval-only set?
  *
  * This is the ENFORCEMENT-GATE half of the resolver's `PLAN_APPROVAL_ONLY_*`
  * guard. The resolver keeps these entries at 'ask' (never upgrading to
@@ -340,8 +341,8 @@ export function isPlanInstrumentGrantHold(
 ): boolean {
   if (!service) return false
   if (presetId === 'plan') return PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
-  // read_only carries the same hold for its single ASK instrument, so a grant
-  // minted under default can never silently auto-allow browsing on a Recon seat.
+  // read_only carries the same hold so a grant minted under default can never
+  // silently auto-allow an Ask-seat prompt.
   if (presetId === 'read_only') return READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
   return false
 }
