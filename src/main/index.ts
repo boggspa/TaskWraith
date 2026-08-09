@@ -893,6 +893,7 @@ import {
 import { AppStore } from './store'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
+import { createHostProductionChatListCoalescer } from './host/HostProductionChatListCoalescer'
 import { createHostProductionProviderAdmission } from './host/HostProductionProviderAdmission'
 import { createHostProductionApprovalShadow } from './host/HostProductionApprovalShadow'
 import { createHostProductionQuestionShadow } from './host/HostProductionQuestionShadow'
@@ -42835,13 +42836,15 @@ if (isGeminiMcpBridgeProcess) {
               // Older phones omit the chip-vs-typed flag; treat absent as a
               // typed answer (the pre-flag labelling) so nothing regresses.
               response.isCustom ?? true,
-              'remote'
+              'remote',
+              action.receiptId
             ).ok
           }
           return remoteQuestionRegistry.rejectScoped(
             action.promptId,
             scope,
-            response.reason || 'user-dismissed'
+            response.reason || 'user-dismissed',
+            action.receiptId
           ).ok
         },
         registerApnsTokenFn: async (action) => {
@@ -48740,6 +48743,7 @@ if (isGeminiMcpBridgeProcess) {
     // would bind the same host data dir and local socket before quitting —
     // and the bootstrap supervisor registry is process-global, not a
     // cross-process fence.
+    const hostChatList = createHostProductionChatListCoalescer(AppStore)
     let hostSupervisor: ReturnType<typeof createHostProductionBootstrap> | undefined
     try {
       hostSupervisor = createHostProductionBootstrap({
@@ -48748,7 +48752,7 @@ if (isGeminiMcpBridgeProcess) {
           hostId: resolveHostInstallId({ userDataPath: app.getPath('userData') }),
           hostVersion: app.getVersion()
         },
-        chatList: AppStore,
+        chatList: hostChatList,
         bridge: createBridgeActionExecutor(),
         // Governed Host mutations re-read canonical context immediately before
         // Bridge dispatch. Keep these as lazy, wiring-only source callbacks:
@@ -48796,6 +48800,16 @@ if (isGeminiMcpBridgeProcess) {
               question: r.question,
               createdAt: r.createdAt,
               ...(r.threadId ? { threadId: r.threadId } : {})
+            })),
+          listResolved: () =>
+            remoteQuestionRegistry.listResolved().map((r) => ({
+              questionId: r.questionId,
+              question: r.question,
+              createdAt: r.createdAt,
+              status: r.status,
+              resolvedAt: r.resolvedAt,
+              receiptId: r.receiptId,
+              ...(r.threadId ? { threadId: r.threadId } : {})
             }))
         }),
         // Track3 Mixed Wave B — family shadows. Lazy arrows where sources may
@@ -48816,7 +48830,7 @@ if (isGeminiMcpBridgeProcess) {
         }),
         missions: createHostProductionMissionShadow({
           listGoals: () =>
-            AppStore.getChatList().flatMap((chat) => {
+            hostChatList.getChatList().flatMap((chat) => {
               const goal = chat.activeGoal
               if (!goal) return []
               const activeRoundId = chat.ensemble?.activeRound?.roundId
@@ -48834,7 +48848,7 @@ if (isGeminiMcpBridgeProcess) {
         }),
         rounds: createHostProductionRoundShadow({
           listRounds: () =>
-            AppStore.getChatList().flatMap((chat) => {
+            hostChatList.getChatList().flatMap((chat) => {
               const round = chat.ensemble?.activeRound
               if (!round) return []
               const participants = Array.isArray(round.participants) ? round.participants : []
@@ -48887,7 +48901,7 @@ if (isGeminiMcpBridgeProcess) {
         // artifacts/ensemble are already offered from HostProductionBootstrap.
         participants: createHostProductionParticipantShadow({
           listParticipants: () =>
-            AppStore.getChatList().flatMap((chat) => {
+            hostChatList.getChatList().flatMap((chat) => {
               const roster = chat.ensemble?.participants
               if (!Array.isArray(roster) || roster.length === 0) return []
               const roundLive = isEnsembleRoundDispatchLive(chat.ensemble?.activeRound)
