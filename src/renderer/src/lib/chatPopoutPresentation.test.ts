@@ -65,14 +65,16 @@ describe('chat popout presentation handoff integration', () => {
     const initial = sourceSlice(
       appSource,
       'const popoutHandoff = readChatPopoutHandoff(popoutChat.appChatId)',
-      'setInitialRouteReady(true)'
+      "console.warn('[chat-popout] requested chat was not found:'"
     )
     const initialHydrateIndex = initial.indexOf('hydrateSessionRoundExpansionForChat')
     const initialRenderIndex = initial.indexOf('setCurrentChat(popoutChat)')
     const initialRestoreIndex = initial.indexOf('restoreMainTranscriptScrollStateWhenReady')
+    const initialRouteReadyIndex = initial.indexOf('markInitialRouteSettled(false)')
     expect(initialHydrateIndex).toBeGreaterThanOrEqual(0)
     expect(initialRenderIndex).toBeGreaterThan(initialHydrateIndex)
     expect(initialRestoreIndex).toBeGreaterThan(initialHydrateIndex)
+    expect(initialRouteReadyIndex).toBeGreaterThan(initialRestoreIndex)
 
     const incoming = sourceSlice(
       appSource,
