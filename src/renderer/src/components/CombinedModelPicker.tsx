@@ -807,6 +807,14 @@ export function ReasoningLadderSlider({
   const currentIndex =
     unavailablePresentation?.index ?? clampedLadderIndex(provider, selectedReasoning, ladder)
   const displayIndex = interactive && dragIndex != null ? dragIndex : currentIndex
+  const providerHueClass = modelPickerHueClass(provider, modelId)
+  // Mistral Medium's High stop is fixed by its runtime schema, not absent. Let
+  // that branded, meaningful stop keep the same colour field and slow FX as an
+  // editable ladder without making it focusable or draggable. Checking the
+  // resolved hue also covers the Mistral upstream when it is surfaced by Pi.
+  const showFixedMistralFx =
+    Boolean(unavailablePresentation) && providerHueClass === 'mistral' && currentIndex > 0
+  const showReasoningFx = interactive || showFixedMistralFx
   const currentLabel =
     unavailablePresentation?.label ??
     ladder.labelByIndex[displayIndex] ??
@@ -814,10 +822,9 @@ export function ReasoningLadderSlider({
     '—'
   // Provider hue, pulse, shimmer, and sparkles begin at Low/Thinking (index 1)
   // and taper smoothly to full intensity/density at Ultra/Ultracode (index 6).
-  const fxProfile = reasoningLadderFxProfile(interactive ? displayIndex : 0)
+  const fxProfile = reasoningLadderFxProfile(showReasoningFx ? displayIndex : 0)
   const fillHeight = ladderStopBottom(displayIndex)
-  const providerHueClass = modelPickerHueClass(provider, modelId)
-  const fxTier = interactive
+  const fxTier = showReasoningFx
     ? displayIndex === LADDER_MAX_INDEX
       ? 'ultracode'
       : displayIndex === 5
@@ -846,7 +853,7 @@ export function ReasoningLadderSlider({
       // the theme accent for any unknown provider.
       style={
         {
-          '--ladder-accent': interactive
+          '--ladder-accent': showReasoningFx
             ? `var(--provider-${providerHueClass}-color, var(--accent))`
             : 'var(--text-secondary)'
         } as React.CSSProperties

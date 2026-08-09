@@ -238,6 +238,14 @@ describe('unavailable reasoning presentation', () => {
     expect(markup).toContain('aria-valuetext="High"')
     expect(markup).toContain('data-disabled="true"')
     expect(markup).toContain('title="Mistral Medium 3.5 always thinks at High."')
+    expect(markup).toContain('--ladder-accent:var(--provider-mistral-color, var(--accent))')
+    expect(markup).toContain('data-fx-active="true"')
+    expect(markup).toContain('--ladder-fx-strength:0.5')
+    expect(markup).toContain('composer-combined-picker-ladder-pulse')
+    expect(markup).toContain('composer-combined-picker-ladder-shimmer')
+    expect(markup).toContain('composer-combined-picker-ladder-sparkles')
+    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(8)
+    expect(markup.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(2)
   })
 
   it('renders inert generic zero and Cursor Medium ladders without active FX', () => {
