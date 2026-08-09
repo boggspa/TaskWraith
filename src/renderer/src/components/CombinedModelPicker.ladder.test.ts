@@ -180,6 +180,27 @@ describe('unavailable reasoning presentation', () => {
     expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3', kimiMutable)).toEqual({
       mutable: true
     })
+
+    const markup = renderToStaticMarkup(
+      createElement(ReasoningLadderSlider, {
+        provider: 'kimi',
+        modelId: 'kimi-k2.7-code',
+        ladder: kimiFixed,
+        selectedReasoning: 'on',
+        onSelectReasoning: () => undefined,
+        unavailablePresentation: resolveReasoningLadderAvailability(
+          'kimi',
+          'kimi-k2.7-code',
+          kimiFixed
+        ).unavailablePresentation,
+        onInteract: () => undefined
+      })
+    )
+    expect(markup).toContain('data-disabled="true"')
+    expect(markup).toContain('aria-valuenow="1"')
+    expect(markup).toContain('--ladder-accent:var(--provider-kimi-color, var(--accent))')
+    expect(markup).toContain('data-fx-active="true"')
+    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
   })
 
   it('pins Mistral Medium 3.5 at locked High (vibe schema thinking=high), not the generic dash', () => {
@@ -248,7 +269,7 @@ describe('unavailable reasoning presentation', () => {
     expect(markup.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(2)
   })
 
-  it('renders inert generic zero and Cursor Medium ladders without active FX', () => {
+  it('keeps generic zero neutral and animates implicit Cursor Medium', () => {
     const renderUnavailable = (provider: 'cursor' | 'ollama', modelId: string) => {
       const ladder = buildLadderModel(provider, [])
       const availability = resolveReasoningLadderAvailability(provider, modelId, ladder)
@@ -276,10 +297,13 @@ describe('unavailable reasoning presentation', () => {
       const cursor = renderUnavailable('cursor', modelId)
       expect(cursor).toContain('aria-valuenow="2"')
       expect(cursor).toContain('aria-valuetext="Medium"')
-      expect(cursor).not.toContain('data-fx-active')
-      expect(cursor).not.toContain('composer-combined-picker-ladder-pulse')
-      expect(cursor).not.toContain('composer-combined-picker-ladder-shimmer')
-      expect(cursor).not.toContain('composer-combined-picker-ladder-sparkles')
+      expect(cursor).toContain('--ladder-accent:var(--provider-cursor-color, var(--accent))')
+      expect(cursor).toContain('data-fx-active="true"')
+      expect(cursor).toContain('composer-combined-picker-ladder-pulse')
+      expect(cursor).toContain('composer-combined-picker-ladder-shimmer')
+      expect(cursor).toContain('composer-combined-picker-ladder-sparkles')
+      expect(cursor.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(5)
+      expect(cursor.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(1)
     }
   })
 })

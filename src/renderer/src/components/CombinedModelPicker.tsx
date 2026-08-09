@@ -808,13 +808,13 @@ export function ReasoningLadderSlider({
     unavailablePresentation?.index ?? clampedLadderIndex(provider, selectedReasoning, ladder)
   const displayIndex = interactive && dragIndex != null ? dragIndex : currentIndex
   const providerHueClass = modelPickerHueClass(provider, modelId)
-  // Mistral Medium's High stop is fixed by its runtime schema, not absent. Let
-  // that branded, meaningful stop keep the same colour field and slow FX as an
-  // editable ladder without making it focusable or draggable. Checking the
-  // resolved hue also covers the Mistral upstream when it is surfaced by Pi.
-  const showFixedMistralFx =
-    Boolean(unavailablePresentation) && providerHueClass === 'mistral' && currentIndex > 0
-  const showReasoningFx = interactive || showFixedMistralFx
+  // A locked nonzero stop is still meaningful reasoning state (K2.7's On,
+  // Mistral Medium's High, Cursor Composer's implicit Medium, or a live
+  // catalog's one-value offer). Keep its provider colour field and slow FX
+  // without making the slider focusable or draggable. The `—` placeholder
+  // remains neutral because it has no reasoning state to represent.
+  const showFixedReasoningFx = Boolean(unavailablePresentation) && currentIndex > 0
+  const showReasoningFx = interactive || showFixedReasoningFx
   const currentLabel =
     unavailablePresentation?.label ??
     ladder.labelByIndex[displayIndex] ??
