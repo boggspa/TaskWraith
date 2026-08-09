@@ -281,15 +281,14 @@ export class ChannelMessageLog {
     }
 
     const records: ChannelMessage[] = []
-    let bytes = 0
     for (const record of loaded.messages.slice(args.resumeAfter)) {
-      const recordBytes = Buffer.byteLength(JSON.stringify(record), 'utf8')
+      const recordBytes = Buffer.byteLength(JSON.stringify([record]), 'utf8')
       if (recordBytes > byteLimit) {
         throw new ChannelError('recovery_blocked', 'A retained record cannot fit the replay limit')
       }
-      if (records.length >= recordLimit || bytes + recordBytes > byteLimit) break
+      const candidateBytes = Buffer.byteLength(JSON.stringify([...records, record]), 'utf8')
+      if (records.length >= recordLimit || candidateBytes > byteLimit) break
       records.push(clone(record))
-      bytes += recordBytes
     }
     return { records, highWaterSequence }
   }
