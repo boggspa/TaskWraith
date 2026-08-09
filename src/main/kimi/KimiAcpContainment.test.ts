@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { resolve, relative } from 'path'
 import {
+  KIMI_ACP_BROKERED_MCP_ALLOW_PATTERN,
   KIMI_ACP_DENY_TOOLS,
+  buildKimiBrokeredMcpAllowRule,
   buildKimiDenyWall,
   buildKimiIsolatedConfig,
   forceTelemetryOff,
@@ -171,12 +173,16 @@ describe('buildKimiIsolatedConfig', () => {
     'base_url = "https://api.kimi.com/coding/v1/search"'
   ].join('\n')
 
-  it('forces telemetry off, strips allow rules, and appends the egress deny wall', () => {
+  it('forces telemetry off, strips user allows, admits only the broker, and appends the deny wall', () => {
     const out = buildKimiIsolatedConfig({ baseConfig: base })
     expect(out).toContain('telemetry = false')
     expect(out).not.toContain('telemetry = true')
     // The migrated allow rule for Bash is gone (B8).
     expect(out).not.toMatch(/decision = "allow"\npattern = "Bash"/)
+    expect(out).toContain(
+      `decision = "allow"\npattern = "${KIMI_ACP_BROKERED_MCP_ALLOW_PATTERN}"`
+    )
+    expect(out).not.toContain('pattern = "mcp__*"')
     // Every default-denied tool has a deny rule.
     for (const tool of KIMI_ACP_DENY_TOOLS) {
       expect(out).toContain(`pattern = "${tool}"`)
@@ -187,6 +193,29 @@ describe('buildKimiIsolatedConfig', () => {
   it('honours extra deny tools', () => {
     const out = buildKimiIsolatedConfig({ baseConfig: base, extraDenyTools: ['Bash'] })
     expect(out).toContain('pattern = "Bash"')
+  })
+
+  it('keeps explicit user tightening ahead of the managed broker transport allow', () => {
+    const out = buildKimiIsolatedConfig({
+      baseConfig: [
+        'telemetry = true',
+        '',
+        '[[permission.rules]]',
+        'decision = "deny"',
+        'pattern = "mcp__taskwraith__mesh_topology_edit"',
+        '',
+        '[[permission.rules]]',
+        'decision = "ask"',
+        'pattern = "mcp__taskwraith__mesh_scene_import"'
+      ].join('\n')
+    })
+    const managed = `pattern = "${KIMI_ACP_BROKERED_MCP_ALLOW_PATTERN}"`
+    expect(out.indexOf('pattern = "mcp__taskwraith__mesh_topology_edit"')).toBeLessThan(
+      out.indexOf(managed)
+    )
+    expect(out.indexOf('pattern = "mcp__taskwraith__mesh_scene_import"')).toBeLessThan(
+      out.indexOf(managed)
+    )
   })
 
   it('forces K3 thinking on at the selected effort', () => {
@@ -261,6 +290,17 @@ describe('buildKimiDenyWall', () => {
     const wall = buildKimiDenyWall(['FetchURL', 'WebSearch'])
     expect(wall.match(/\[\[permission.rules\]\]/g)).toHaveLength(2)
     expect(wall).toContain('decision = "deny"')
+  })
+})
+
+describe('buildKimiBrokeredMcpAllowRule', () => {
+  it('uses one server-scoped MCP wildcard and no native or foreign identity', () => {
+    const rule = buildKimiBrokeredMcpAllowRule()
+    expect(rule.match(/\[\[permission.rules\]\]/g)).toHaveLength(1)
+    expect(rule).toContain('decision = "allow"')
+    expect(rule).toContain(`pattern = "${KIMI_ACP_BROKERED_MCP_ALLOW_PATTERN}"`)
+    expect(rule).not.toContain('mcp__*')
+    expect(rule).not.toContain('Bash')
   })
 })
 

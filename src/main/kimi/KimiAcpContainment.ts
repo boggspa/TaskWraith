@@ -22,8 +22,10 @@
 // The config is TRANSFORMED from the user's real config.toml (proven to keep
 // the built-in tool surface working) rather than synthesised from scratch (a
 // hand-built minimal config silently produced an empty tool set). The transform
-// also strips any migrated `decision = "allow"` permission rule (dossier B8) so
-// no standing always-allow reaches the ACP session.
+// also strips any migrated `decision = "allow"` permission rule (dossier B8).
+// The sole managed allow that is then added covers the isolated, authenticated
+// TaskWraith MCP server. It is transport admission only: every call still
+// crosses Electron main's signed, argument-aware broker and service gate.
 
 /**
  * Historical workspace-relative Kimi project-config entries that auto-execute
@@ -72,6 +74,12 @@ export const KIMI_ACP_DENY_TOOLS = [
   'Write',
   'Edit'
 ] as const
+
+/** Kimi validates permission rules before ACP session/new registers the
+ * per-run HTTP server. A server wildcard remains valid at that point whereas
+ * individual dynamically registered tool names are discarded as unknown.
+ * The isolated home has no other MCP server with this name. */
+export const KIMI_ACP_BROKERED_MCP_ALLOW_PATTERN = 'mcp__taskwraith__*' as const
 
 /**
  * Strip every `[[permission.rules]]` block whose decision is `allow` from a
@@ -211,6 +219,22 @@ export function buildKimiDenyWall(tools: readonly string[] = KIMI_ACP_DENY_TOOLS
     .join('')
 }
 
+/** Admit the app-owned MCP transport at Kimi's provider-local layer. This does
+ * not authorize a tool action: the authenticated TaskWraith broker applies the
+ * signed run posture, exact service policy, approval ledger, and call guard.
+ * Existing user deny/ask rules stay earlier in the transformed config and can
+ * therefore tighten this default through Kimi's first-match semantics. */
+export function buildKimiBrokeredMcpAllowRule(
+  pattern: string = KIMI_ACP_BROKERED_MCP_ALLOW_PATTERN
+): string {
+  return (
+    `\n[[permission.rules]]\n` +
+    `decision = "allow"\n` +
+    `pattern = "${pattern}"\n` +
+    `reason = "TaskWraith main broker owns tool approval"\n`
+  )
+}
+
 /**
  * Force `[thinking] enabled = <value>` in a config body. Kimi Code dropped the
  * `--thinking/--no-thinking` CLI flags (poison on any kimi-code argv); thinking
@@ -285,12 +309,14 @@ export function buildKimiIsolatedConfig(options: KimiIsolatedConfigOptions): str
     ? forceThinkingEffort(withThinking, options.thinkingEffort)
     : withThinking
   const denyTools = [...KIMI_ACP_DENY_TOOLS, ...(options.extraDenyTools ?? [])]
+  const brokeredMcpAllow = buildKimiBrokeredMcpAllowRule()
   const deny = buildKimiDenyWall(denyTools)
   return (
     `# TaskWraith-managed isolated Kimi Code profile (per-run KIMI_CODE_HOME).\n` +
-    `# Generated from the user config with allow-rules stripped, telemetry off,\n` +
-    `# and a static deny wall (${denyTools.join(', ')}). Do not edit by hand.\n` +
-    `${withThinkingEffort.replace(/\s*$/, '')}\n${deny}`
+    `# User allow-rules are stripped; the authenticated TaskWraith MCP transport\n` +
+    `# is broker-owned; telemetry is off; native deny wall: ${denyTools.join(', ')}.\n` +
+    `# Do not edit by hand.\n` +
+    `${withThinkingEffort.replace(/\s*$/, '')}\n${brokeredMcpAllow}${deny}`
   )
 }
 
