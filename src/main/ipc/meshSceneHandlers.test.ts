@@ -4,7 +4,7 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { registerMeshSceneHandlers } from './meshSceneHandlers'
 
 describe('registerMeshSceneHandlers', () => {
-  it('only projects scene data through the caller’s resolved chat authority', async () => {
+  it('projects scene data through the caller’s resolved chat and workspace authority', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {
       handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -46,7 +46,8 @@ describe('registerMeshSceneHandlers', () => {
     })
     expect(await handlers.get('mesh-scene:delete')?.(event, 'chat-a', 'scene-a')).toBe('scene-a')
     expect(resolveContext).toHaveBeenCalledWith(event, 'chat-a')
-    expect(controller.viewForChat).toHaveBeenCalledWith('scene-a', 'chat-a')
+    expect(controller.listForChat).toHaveBeenCalledWith('chat-a', '/workspace')
+    expect(controller.viewForChat).toHaveBeenCalledWith('scene-a', 'chat-a', '/workspace')
     expect(controller.closePresentation).toHaveBeenCalledWith('scene-a', {
       chatId: 'chat-a',
       workspacePath: '/workspace'

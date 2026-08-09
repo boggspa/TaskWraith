@@ -166,12 +166,17 @@ export interface MeshScenePresentation {
   title?: string
 }
 
-/** Durable, chat-owned scene record. Never contains a source filesystem path. */
+/**
+ * Durable scene record. Workspace scenes are recallable by every thread in the
+ * same canonical workspace; records without a workspace remain chat-scoped.
+ * Imported source paths are never stored here.
+ */
 export interface MeshSceneRecord {
   schemaVersion: typeof MESH_SCENE_SCHEMA_VERSION
   id: string
   /** Monotonic scene metadata revision; editable geometry has its own CAS revision. */
   revision: number
+  /** Originating chat attribution. This is the authority only for global scenes. */
   chatId?: string
   runId?: string
   workspacePath?: string

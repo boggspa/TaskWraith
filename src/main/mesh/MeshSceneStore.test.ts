@@ -51,4 +51,41 @@ describe('MeshSceneStore schema migration', () => {
     const persisted = JSON.parse(fs.readFileSync(path.join(directory, 'mesh-scenes.json'), 'utf8'))
     expect(persisted[0]).toMatchObject({ schemaVersion: MESH_SCENE_SCHEMA_VERSION, revision: 1 })
   })
+
+  it('keeps workspace scenes when their originating chat is cleared', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-mesh-scenes-'))
+    temporaryDirectories.push(directory)
+    const workspace = path.join(directory, 'workspace')
+    fs.mkdirSync(workspace)
+    const record = (id: string, workspacePath?: string) => ({
+      schemaVersion: MESH_SCENE_SCHEMA_VERSION,
+      id,
+      revision: 0,
+      chatId: 'chat-a',
+      ...(workspacePath ? { workspacePath } : {}),
+      title: id,
+      backgroundColor: '#171a21',
+      lighting: { environment: 'studio', intensity: 1 },
+      camera: {
+        position: { x: 4, y: 3, z: 5 },
+        target: { x: 0, y: 0, z: 0 },
+        fieldOfView: 45
+      },
+      nodes: [],
+      dependencies: { sources: [], bindings: [] },
+      createdAt: '2026-07-27T00:00:00.000Z',
+      updatedAt: '2026-07-27T00:00:00.000Z'
+    })
+    fs.writeFileSync(
+      path.join(directory, 'mesh-scenes.json'),
+      JSON.stringify([record('workspace-scene', workspace), record('global-scene')])
+    )
+    const store = new MeshSceneStore(directory)
+
+    store.purgeAuthorities({ chatIds: ['chat-a'] })
+    expect(store.list().map((scene) => scene.id)).toEqual(['workspace-scene'])
+
+    store.purgeAuthorities({ workspacePaths: [workspace] })
+    expect(store.list()).toEqual([])
+  })
 })

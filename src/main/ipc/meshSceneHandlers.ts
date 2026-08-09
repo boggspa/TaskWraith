@@ -1,4 +1,4 @@
-/** Chat-scoped renderer IPC for the declarative Mesh Canvas viewer. */
+/** Canonical-chat IPC that projects the active chat's workspace-recallable Mesh scenes. */
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, OpenDialogOptions } from 'electron'
 import * as path from 'path'
 import { meshSceneSummary } from '../../shared/meshScene'
@@ -48,13 +48,17 @@ export function registerMeshSceneHandlers(ipcMain: IpcMain, deps: MeshSceneIpcDe
   ipcMain.handle('mesh-scene:list-chat', (event, chatId: unknown) => {
     const context = deps.resolveContext(event, requiredChatId(chatId))
     if (!context.chatId) throw new Error('Mesh Canvas chat authority is unavailable.')
-    return deps.controller.listForChat(context.chatId)
+    return deps.controller.listForChat(context.chatId, context.workspacePath)
   })
 
   ipcMain.handle('mesh-scene:view', (event, chatId: unknown, sceneId: unknown) => {
     const context = deps.resolveContext(event, requiredChatId(chatId))
     if (!context.chatId) throw new Error('Mesh Canvas chat authority is unavailable.')
-    return deps.controller.viewForChat(requiredSceneId(sceneId), context.chatId)
+    return deps.controller.viewForChat(
+      requiredSceneId(sceneId),
+      context.chatId,
+      context.workspacePath
+    )
   })
 
   ipcMain.handle('mesh-scene:close-presentation', (event, chatId: unknown, sceneId: unknown) => {

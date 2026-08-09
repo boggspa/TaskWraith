@@ -1,4 +1,4 @@
-/** Durable, chat-owned Mesh Canvas scene records. */
+/** Durable workspace-recallable (or, without a workspace, chat-scoped) Mesh Canvas scenes. */
 import * as fs from 'fs'
 import * as path from 'path'
 import {
@@ -25,6 +25,14 @@ import {
 
 const SCENES_FILE = 'mesh-scenes.json'
 const MAX_SCENES = 200
+
+function canonicalWorkspacePath(value: string): string {
+  try {
+    return fs.realpathSync(value)
+  } catch {
+    return path.resolve(value)
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -437,14 +445,19 @@ export class MeshSceneStore {
   } {
     const chatIds = new Set([...(input.chatIds ?? [])].map((value) => value.trim()).filter(Boolean))
     const workspacePaths = new Set(
-      [...(input.workspacePaths ?? [])].map((value) => value.trim()).filter(Boolean)
+      [...(input.workspacePaths ?? [])]
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map(canonicalWorkspacePath)
     )
     if (!chatIds.size && !workspacePaths.size) return { assetIds: [], topologyIds: [] }
     const scenes = this.list()
     const removed = scenes.filter(
       (scene) =>
-        Boolean(scene.chatId && chatIds.has(scene.chatId)) ||
-        Boolean(scene.workspacePath && workspacePaths.has(scene.workspacePath))
+        Boolean(!scene.workspacePath && scene.chatId && chatIds.has(scene.chatId)) ||
+        Boolean(
+          scene.workspacePath && workspacePaths.has(canonicalWorkspacePath(scene.workspacePath))
+        )
     )
     if (!removed.length) return { assetIds: [], topologyIds: [] }
     const retained = scenes.filter((scene) => !removed.includes(scene))

@@ -36,18 +36,22 @@ describe('MeshToolExecutors', () => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 
-  const context = (chatId = 'chat-a') => ({
+  const context = (chatId = 'chat-a', workspacePath = workspace) => ({
     appChatId: chatId,
     appRunId: 'run-a',
     ensembleRun: { participantId: 'seat-a' },
-    workspacePath: workspace
+    workspacePath
   })
 
-  async function execute(name: Parameters<typeof executors.executeMeshTool>[0], args: unknown) {
-    return executors.executeMeshTool(name, args, context(), 'codex')
+  async function execute(
+    name: Parameters<typeof executors.executeMeshTool>[0],
+    args: unknown,
+    callContext = context()
+  ) {
+    return executors.executeMeshTool(name, args, callContext, 'codex')
   }
 
-  it('creates, edits, inspects, and presents a chat-owned declarative scene', async () => {
+  it('creates, edits, inspects, and presents a workspace-recallable declarative scene', async () => {
     const created = await execute('mesh_scene_create', { title: 'Product study' })
     expect(created.isError).not.toBe(true)
     const createValue = created.structuredContent as { scene: { id: string } }
@@ -98,6 +102,33 @@ describe('MeshToolExecutors', () => {
       ok: true,
       scenes: []
     })
+  })
+
+  it('recalls and refines the latest scene across threads in one workspace', async () => {
+    const created = await execute('mesh_scene_create', { title: 'Shared workspace mesh' })
+    const sceneId = (created.structuredContent as { scene: { id: string } }).scene.id
+    const applied = await execute('mesh_scene_apply', {
+      sceneId,
+      operation: 'add_primitive',
+      primitive: 'box'
+    })
+    expect(applied.structuredContent).toMatchObject({ scene: { revision: 1 } })
+
+    const recalled = await execute('mesh_scene_inspect', { sceneId }, context('chat-b'))
+    expect(recalled.structuredContent).toMatchObject({
+      ok: true,
+      scene: { id: sceneId, revision: 1, nodes: [{ primitive: 'box' }] }
+    })
+    const refined = await execute(
+      'mesh_scene_apply',
+      { sceneId, operation: 'set_scene', title: 'Refined from chat B' },
+      context('chat-b')
+    )
+    expect(refined.structuredContent).toMatchObject({
+      ok: true,
+      scene: { id: sceneId, revision: 2, title: 'Refined from chat B' }
+    })
+    expect(events.at(-1)).toMatchObject({ kind: 'scene.updated', chatId: 'chat-b' })
   })
 
   it('converts, pages, and CAS-edits first-class topology without returning the whole document', async () => {
@@ -263,9 +294,11 @@ describe('MeshToolExecutors', () => {
     })
   })
 
-  it('refuses out-of-workspace imports and cross-chat scene access', async () => {
+  it('refuses out-of-workspace imports and cross-workspace scene access', async () => {
     const outside = path.join(root, 'outside.obj')
+    const otherWorkspace = path.join(root, 'other-workspace')
     fs.writeFileSync(outside, 'v 0 0 0\n')
+    fs.mkdirSync(otherWorkspace)
     const created = await execute('mesh_scene_create', {})
     const sceneId = (created.structuredContent as { scene: { id: string } }).scene.id
 
@@ -273,13 +306,13 @@ describe('MeshToolExecutors', () => {
     expect(outsideImport).toMatchObject({ isError: true })
     expect(outsideImport.text).toContain('inside the active workspace')
 
-    const crossChat = await executors.executeMeshTool(
+    const crossWorkspace = await executors.executeMeshTool(
       'mesh_scene_inspect',
       { sceneId },
-      context('chat-b'),
+      context('chat-b', otherWorkspace),
       'codex'
     )
-    expect(crossChat).toMatchObject({ isError: true })
-    expect(crossChat.text).toContain('does not belong')
+    expect(crossWorkspace).toMatchObject({ isError: true })
+    expect(crossWorkspace.text).toContain('not available in this workspace')
   })
 })

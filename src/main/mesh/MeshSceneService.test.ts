@@ -51,7 +51,7 @@ describe('MeshSceneService', () => {
     workspacePath: workspace
   })
 
-  it('creates chat-owned declarative scenes and applies primitives', () => {
+  it('creates workspace-recallable declarative scenes and applies primitives', () => {
     const scene = service.create(
       { title: 'Materials study', backgroundColor: '#102030' },
       context()
@@ -96,7 +96,9 @@ describe('MeshSceneService', () => {
       source: { kind: 'primitive', primitive: 'box' }
     })
     if (editable.kind !== 'editable') throw new Error('expected editable node')
-    expect(service.viewForChat(scene.id, 'chat-a')?.topologies[editable.topologyId]).toBeTruthy()
+    expect(
+      service.viewForChat(scene.id, 'chat-a', workspace)?.topologies[editable.topologyId]
+    ).toBeTruthy()
 
     const vertexId = converted.topology.vertices[0].id
     const first = service.editTopology(
@@ -117,6 +119,10 @@ describe('MeshSceneService', () => {
       runId: 'run-a',
       participantId: 'seat-a'
     })
+    expect(service.inspectTopology(scene.id, { nodeId }, context('chat-b')).topology.revision).toBe(1)
+    expect(service.list(context('chat-b'))).toEqual([
+      expect.objectContaining({ sceneId: scene.id, editableCount: 1 })
+    ])
     expect(() =>
       service.editTopology(
         scene.id,
@@ -130,15 +136,53 @@ describe('MeshSceneService', () => {
             ]
           }
         },
-        { ...context(), participantId: 'seat-b' }
+        { ...context('chat-b'), participantId: 'seat-b' }
       )
     ).toThrow(MeshTopologyRevisionConflictError)
-    expect(() => service.inspectTopology(scene.id, { nodeId }, context('chat-b'))).toThrow(
-      'does not belong to this chat'
+    const second = service.editTopology(
+      scene.id,
+      {
+        nodeId,
+        edit: {
+          expectedRevision: 1,
+          clientMutationId: 'seat-b-fresh',
+          operations: [
+            { operation: 'move_vertices', vertices: [{ vertexId, delta: { y: 0.2 } }] }
+          ]
+        }
+      },
+      { ...context('chat-b'), participantId: 'seat-b' }
     )
+    expect(second.edit.summary.revision).toBe(2)
+    expect(events.at(-1)).toMatchObject({ kind: 'scene.updated', chatId: 'chat-b' })
 
-    service.remove(scene.id, context())
+    service.remove(scene.id, context('chat-b'))
     expect(topologies.get(editable.topologyId)).toBeNull()
+  })
+
+  it('isolates workspace scenes from other workspaces and global scenes from other chats', () => {
+    const otherWorkspace = path.join(root, 'other-workspace')
+    fs.mkdirSync(otherWorkspace)
+    const workspaceScene = service.create({ title: 'Workspace scene' }, context('chat-a'))
+
+    expect(() =>
+      service.inspect(workspaceScene.id, {
+        ...context('chat-b'),
+        workspacePath: otherWorkspace
+      })
+    ).toThrow('not available in this workspace')
+
+    const globalContext = {
+      chatId: 'global-a',
+      runId: 'run-global',
+      provider: 'codex',
+      participantId: 'seat-global'
+    }
+    const globalScene = service.create({ title: 'Global scene' }, globalContext)
+    expect(service.inspect(globalScene.id, globalContext).id).toBe(globalScene.id)
+    expect(() =>
+      service.inspect(globalScene.id, { ...globalContext, chatId: 'global-b' })
+    ).toThrow('does not belong to this chat')
   })
 
   it('converts an imported OBJ without overwriting or losing its source asset', () => {
@@ -178,7 +222,7 @@ describe('MeshSceneService', () => {
     const manifest = assets.get(node.assetId)
     expect(manifest?.files).toEqual(['fixture.obj', 'material.mtl', 'texture.png'])
     expect(JSON.stringify(imported)).not.toContain(sourceDir)
-    const view = service.viewForChat(scene.id, 'chat-a')
+    const view = service.viewForChat(scene.id, 'chat-a', workspace)
     expect(view?.assetUrls[node.assetId]).toMatch(/^twmesh:\/\/asset\//)
     expect(JSON.stringify(view)).not.toContain(workspace)
     // The tool-facing inspection record has no vault token; only the renderer
@@ -195,17 +239,21 @@ describe('MeshSceneService', () => {
     expect(resolved?.mimeType).toBe('image/png')
   })
 
-  it('refuses imports outside the active workspace and cross-chat scene access', () => {
+  it('refuses imports outside the active workspace and cross-workspace scene access', () => {
     const external = path.join(root, 'external.obj')
+    const otherWorkspace = path.join(root, 'other-workspace-import')
     fs.writeFileSync(external, 'v 0 0 0\n')
+    fs.mkdirSync(otherWorkspace)
     const scene = service.create({}, context())
     expect(() => service.importModel(scene.id, { sourcePath: external }, context())).toThrow(
       /inside the active workspace/
     )
-    expect(() => service.inspect(scene.id, context('chat-b'))).toThrow(/does not belong/)
+    expect(() =>
+      service.inspect(scene.id, { ...context('chat-b'), workspacePath: otherWorkspace })
+    ).toThrow(/not available in this workspace/)
   })
 
-  it('imports a human-selected external model as a chat-owned scene agents can edit', () => {
+  it('imports a human-selected external model as a workspace-recallable scene agents can edit', () => {
     const downloads = path.join(root, 'Downloads')
     fs.mkdirSync(downloads)
     const selected = path.join(downloads, 'manual-fixture.obj')
@@ -235,7 +283,7 @@ describe('MeshSceneService', () => {
     expect(events.map((event) => event.kind)).toEqual(['scene.created', 'scene.updated'])
   })
 
-  it('imports a selected multi-root scene package as one chat-owned vault bundle', () => {
+  it('imports a selected multi-root scene package as one workspace-recallable vault bundle', () => {
     const exports = path.join(root, 'Downloads', 'gallery-export')
     fs.mkdirSync(path.join(exports, 'models'), { recursive: true })
     fs.writeFileSync(
@@ -276,7 +324,7 @@ describe('MeshSceneService', () => {
     expect(new Set(imports.map((node) => node.assetId)).size).toBe(1)
     expect(JSON.stringify(scene)).not.toContain(exports)
 
-    const view = service.viewForChat(scene.id, 'chat-a')
+    const view = service.viewForChat(scene.id, 'chat-a', workspace)
     expect(view?.modelUrls[imports[0]!.id]).toMatch(/models\/gallery\.glb$/)
     expect(view?.modelUrls[imports[1]!.id]).toMatch(/models\/sign\.obj$/)
     const bundle = assets.get(imports[0]!.assetId)
@@ -363,7 +411,7 @@ describe('MeshSceneService', () => {
       bindings: [{ targetNodeId: leader.id }, { targetNodeId: follower.id }]
     })
     // The renderer gets only already-resolved scene nodes, not raw object facts.
-    expect(service.viewForChat(scene.id, 'chat-a')).not.toHaveProperty('dependencies')
+    expect(service.viewForChat(scene.id, 'chat-a', workspace)).not.toHaveProperty('dependencies')
     expect(events.at(-1)).toMatchObject({ kind: 'scene.updated', sceneId: scene.id })
   })
 
@@ -409,7 +457,7 @@ describe('MeshSceneService', () => {
     expect(service.inspect(scene.id, context()).dependencies.bindings).toHaveLength(1)
   })
 
-  it('purges scoped scene metadata and its private assets under the matching history authority', async () => {
+  it('preserves workspace scenes across chat clears and purges them with workspace history', async () => {
     const source = path.join(workspace, 'fixture.glb')
     fs.writeFileSync(source, Buffer.from('glTF'))
     const scene = service.create({}, context())
@@ -419,6 +467,14 @@ describe('MeshSceneService', () => {
 
     await service.beginAuthorityHistoryClear({ chatIds: ['chat-a'] })
     service.endAuthorityHistoryClear({ chatIds: ['chat-a'] })
+
+    expect(service.list(context('chat-b'))).toEqual([
+      expect.objectContaining({ sceneId: scene.id, importCount: 1 })
+    ])
+    expect(assets.get(node.assetId)).not.toBeNull()
+
+    await service.beginAuthorityHistoryClear({ workspacePaths: [workspace] })
+    service.endAuthorityHistoryClear({ workspacePaths: [workspace] })
 
     expect(service.list(context())).toEqual([])
     expect(assets.get(node.assetId)).toBeNull()

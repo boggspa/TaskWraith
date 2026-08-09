@@ -1,9 +1,10 @@
 /**
  * Trusted main-process coordinator for Mesh Canvas scenes.
  *
- * It owns chat attribution, source-workspace containment, durable scene edits,
- * private asset imports, history purges, and renderer event broadcasts. The
- * renderer only receives a declarative scene plus tokenized local asset URLs.
+ * It owns chat attribution, workspace-scoped recall, source-workspace
+ * containment, durable scene edits, private asset imports, history purges, and
+ * renderer event broadcasts. The renderer only receives a declarative scene
+ * plus tokenized local asset URLs.
  */
 import * as fs from 'fs'
 import * as path from 'path'
@@ -140,6 +141,16 @@ function nonEmpty(value: unknown, limit = 200): string | null {
   return result && result.length <= limit ? result : null
 }
 
+function canonicalWorkspacePath(value: unknown): string | null {
+  const candidate = nonEmpty(value, 4_096)
+  if (!candidate) return null
+  try {
+    return fs.realpathSync(candidate)
+  } catch {
+    return path.resolve(candidate)
+  }
+}
+
 function safeHexColor(value: unknown): string | null {
   const color = nonEmpty(value, 16)
   return color && (/^#[0-9a-f]{6}$/i.test(color) || /^#[0-9a-f]{3}$/i.test(color)) ? color : null
@@ -238,7 +249,7 @@ function cloneScene(scene: MeshSceneRecord): MeshSceneRecord {
   }
 }
 
-/** A clean ownership boundary around mesh scene mutation and rendering data. */
+/** A clean workspace/chat authority boundary around scene mutation and rendering data. */
 export class MeshSceneService {
   private historyClearHolds = 0
   private readonly chatHolds = new Map<string, number>()
@@ -253,22 +264,28 @@ export class MeshSceneService {
     return saved.scene
   }
 
-  private emit(kind: MeshSceneEvent['kind'], scene: MeshSceneRecord): void {
+  private emit(
+    kind: MeshSceneEvent['kind'],
+    scene: MeshSceneRecord,
+    ctx?: MeshSceneCallContext
+  ): void {
+    const eventChatId = nonEmpty(ctx?.chatId, 256) ?? scene.chatId
     this.deps.broadcast?.({
       schemaVersion: 1,
       kind,
       sceneId: scene.id,
-      ...(scene.chatId ? { chatId: scene.chatId } : {}),
+      ...(eventChatId ? { chatId: eventChatId } : {}),
       summary: meshSceneSummary(scene),
       createdAt: this.deps.now()
     })
   }
 
   private blocked(ctx: MeshSceneCallContext): boolean {
+    const workspacePath = canonicalWorkspacePath(ctx.workspacePath)
     return Boolean(
       this.historyClearHolds > 0 ||
       (ctx.chatId && (this.chatHolds.get(ctx.chatId) ?? 0) > 0) ||
-      (ctx.workspacePath && (this.workspaceHolds.get(ctx.workspacePath) ?? 0) > 0)
+      (workspacePath && (this.workspaceHolds.get(workspacePath) ?? 0) > 0)
     )
   }
 
@@ -278,15 +295,25 @@ export class MeshSceneService {
     return chatId
   }
 
+  private sceneIsAccessible(scene: MeshSceneRecord, ctx: MeshSceneCallContext): boolean {
+    const chatId = this.requireChat(ctx)
+    if (!scene.workspacePath) return scene.chatId === chatId
+    const sceneWorkspace = canonicalWorkspacePath(scene.workspacePath)
+    const callerWorkspace = canonicalWorkspacePath(ctx.workspacePath)
+    return Boolean(sceneWorkspace && callerWorkspace && sceneWorkspace === callerWorkspace)
+  }
+
   private assertSceneAuthority(scene: MeshSceneRecord, ctx: MeshSceneCallContext): void {
     if (this.blocked(ctx))
       throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
-    const chatId = this.requireChat(ctx)
-    if (scene.chatId !== chatId)
-      throw new Error('The Mesh Canvas scene does not belong to this chat.')
+    if (this.sceneIsAccessible(scene, ctx)) return
+    if (scene.workspacePath) {
+      throw new Error('The Mesh Canvas scene is not available in this workspace.')
+    }
+    throw new Error('The Mesh Canvas scene does not belong to this chat.')
   }
 
-  private getOwned(sceneId: string, ctx: MeshSceneCallContext): MeshSceneRecord {
+  private getAccessible(sceneId: string, ctx: MeshSceneCallContext): MeshSceneRecord {
     const scene = this.deps.store.get(sceneId)
     if (!scene) throw new Error('Mesh Canvas scene was not found.')
     this.assertSceneAuthority(scene, ctx)
@@ -318,6 +345,7 @@ export class MeshSceneService {
     if (this.blocked(ctx))
       throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
     const chatId = this.requireChat(ctx)
+    const workspacePath = canonicalWorkspacePath(ctx.workspacePath)
     const now = this.deps.now()
     const scene: MeshSceneRecord = {
       schemaVersion: MESH_SCENE_SCHEMA_VERSION,
@@ -325,7 +353,7 @@ export class MeshSceneService {
       revision: 0,
       chatId,
       ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
-      ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
+      ...(workspacePath ? { workspacePath } : {}),
       title: nonEmpty(input.title, 200) ?? 'Mesh scene',
       backgroundColor: safeHexColor(input.backgroundColor) ?? '#171a21',
       lighting: cloneDefaultLighting(),
@@ -336,7 +364,7 @@ export class MeshSceneService {
       updatedAt: now
     }
     const saved = this.persist(scene)
-    this.emit('scene.created', saved)
+    this.emit('scene.created', saved, ctx)
     return cloneScene(saved)
   }
 
@@ -345,8 +373,9 @@ export class MeshSceneService {
    * picker. Unlike `importModel`, this deliberately does not accept an
    * agent-supplied workspace path: the picker selection itself is the only
    * authority for a Documents/Downloads-style source. The copied vault asset
-   * and resulting scene remain chat-owned, so agents can subsequently inspect
-   * and edit it through their ordinary Mesh Canvas grant.
+   * and resulting scene remain workspace-recallable (or chat-scoped for a
+   * global chat), so agents can subsequently inspect and edit it through their
+   * ordinary Mesh Canvas grant.
    */
   importUserSelectedModel(
     input: { sourcePath: string; title?: string },
@@ -355,6 +384,7 @@ export class MeshSceneService {
     if (this.blocked(ctx))
       throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
     const chatId = this.requireChat(ctx)
+    const workspacePath = canonicalWorkspacePath(ctx.workspacePath)
     const asset = this.deps.assets.importModel(input.sourcePath).manifest
     const now = this.deps.now()
     const displayName =
@@ -365,7 +395,7 @@ export class MeshSceneService {
       revision: 0,
       chatId,
       ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
-      ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
+      ...(workspacePath ? { workspacePath } : {}),
       title: nonEmpty(input.title, 200) ?? displayName,
       backgroundColor: '#171a21',
       lighting: cloneDefaultLighting(),
@@ -393,7 +423,7 @@ export class MeshSceneService {
       this.deps.assets.remove([asset.id])
       throw error
     }
-    this.emit('scene.created', saved)
+    this.emit('scene.created', saved, ctx)
     return cloneScene(saved)
   }
 
@@ -410,6 +440,7 @@ export class MeshSceneService {
       throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
     }
     const chatId = this.requireChat(ctx)
+    const workspacePath = canonicalWorkspacePath(ctx.workspacePath)
     const imported = this.deps.assets.importScenePackage(input.manifestPath)
     if (imported.roots.length > MESH_MAX_SCENE_NODES) {
       this.deps.assets.remove([imported.manifest.id])
@@ -440,7 +471,7 @@ export class MeshSceneService {
       revision: 0,
       chatId,
       ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
-      ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
+      ...(workspacePath ? { workspacePath } : {}),
       title: nonEmpty(input.title, 200) ?? imported.title ?? firstNode.name,
       backgroundColor: '#171a21',
       lighting: cloneDefaultLighting(),
@@ -457,20 +488,20 @@ export class MeshSceneService {
       this.deps.assets.remove([imported.manifest.id])
       throw error
     }
-    this.emit('scene.created', saved)
+    this.emit('scene.created', saved, ctx)
     return cloneScene(saved)
   }
 
   list(ctx: MeshSceneCallContext): MeshSceneSummary[] {
-    const chatId = this.requireChat(ctx)
+    this.requireChat(ctx)
     return this.deps.store
       .list()
-      .filter((scene) => scene.chatId === chatId)
+      .filter((scene) => this.sceneIsAccessible(scene, ctx))
       .map(meshSceneSummary)
   }
 
   inspect(sceneId: string, ctx: MeshSceneCallContext): MeshSceneRecord {
-    return cloneScene(this.getOwned(sceneId, ctx))
+    return cloneScene(this.getAccessible(sceneId, ctx))
   }
 
   importModel(
@@ -478,7 +509,7 @@ export class MeshSceneService {
     input: { sourcePath: string; name?: string; transform?: MeshTransformInput },
     ctx: MeshSceneCallContext
   ): MeshSceneRecord {
-    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const scene = cloneScene(this.getAccessible(sceneId, ctx))
     if (scene.nodes.length >= MESH_MAX_SCENE_NODES) {
       throw new Error(`Mesh Canvas scenes support up to ${MESH_MAX_SCENE_NODES} objects.`)
     }
@@ -504,12 +535,12 @@ export class MeshSceneService {
       this.deps.assets.remove([asset.id])
       throw error
     }
-    this.emit('scene.updated', saved)
+    this.emit('scene.updated', saved, ctx)
     return cloneScene(saved)
   }
 
   apply(sceneId: string, mutation: MeshSceneMutation, ctx: MeshSceneCallContext): MeshSceneRecord {
-    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const scene = cloneScene(this.getAccessible(sceneId, ctx))
     if (mutation.operation === 'add_primitive') {
       if (!isMeshPrimitiveKind(mutation.primitive))
         throw new Error('Unsupported Mesh Canvas primitive.')
@@ -617,17 +648,17 @@ export class MeshSceneService {
     scene.revision += 1
     scene.updatedAt = this.deps.now()
     const saved = this.persist(scene)
-    this.emit('scene.updated', saved)
+    this.emit('scene.updated', saved, ctx)
     return cloneScene(saved)
   }
 
-  /** Materialize a renderer primitive or opaque import as chat-owned editable topology. */
+  /** Materialize a renderer primitive or opaque import as workspace-recallable topology. */
   makeEditable(
     sceneId: string,
     input: { nodeId: string },
     ctx: MeshSceneCallContext
   ): { scene: MeshSceneRecord; topology: MeshTopologyDocument } {
-    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const scene = cloneScene(this.getAccessible(sceneId, ctx))
     const nodeIndex = scene.nodes.findIndex((entry) => entry.id === input.nodeId)
     if (nodeIndex < 0) throw new Error('Mesh Canvas node was not found.')
     const node = scene.nodes[nodeIndex]
@@ -679,7 +710,7 @@ export class MeshSceneService {
       this.deps.topologies.remove([topology.id])
       throw error
     }
-    this.emit('scene.updated', saved)
+    this.emit('scene.updated', saved, ctx)
     return { scene: cloneScene(saved), topology }
   }
 
@@ -688,7 +719,7 @@ export class MeshSceneService {
     input: { nodeId: string },
     ctx: MeshSceneCallContext
   ): { sceneRevision: number; nodeId: string; topology: MeshTopologyDocument } {
-    const scene = this.getOwned(sceneId, ctx)
+    const scene = this.getAccessible(sceneId, ctx)
     const node = scene.nodes.find((entry) => entry.id === input.nodeId)
     if (!node || node.kind !== 'editable')
       throw new Error('Editable Mesh Canvas node was not found.')
@@ -704,7 +735,7 @@ export class MeshSceneService {
     input: { nodeId: string; edit: MeshTopologyEditInput },
     ctx: MeshSceneCallContext
   ): { scene: MeshSceneRecord; edit: MeshTopologyEditResult } {
-    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const scene = cloneScene(this.getAccessible(sceneId, ctx))
     const nodeIndex = scene.nodes.findIndex((entry) => entry.id === input.nodeId)
     const node = nodeIndex >= 0 ? scene.nodes[nodeIndex] : null
     if (!node || node.kind !== 'editable')
@@ -743,7 +774,7 @@ export class MeshSceneService {
       this.deps.topologies.upsert(current)
       throw error
     }
-    this.emit('scene.updated', saved)
+    this.emit('scene.updated', saved, ctx)
     return { scene: cloneScene(saved), edit }
   }
 
@@ -753,10 +784,10 @@ export class MeshSceneService {
     ctx: MeshSceneCallContext
   ): MeshSceneRecord {
     const material = { ...input.material }
-    // Validate the chat-owned node before allocating a new private texture
-    // asset, so a typo or cross-chat scene id cannot leave an orphaned vault
-    // bundle behind.
-    const existing = this.getOwned(sceneId, ctx)
+    // Validate the workspace-accessible node before allocating a new private
+    // texture asset, so a typo or cross-workspace scene id cannot leave an
+    // orphaned vault bundle behind.
+    const existing = this.getAccessible(sceneId, ctx)
     if (!existing.nodes.some((node) => node.id === input.nodeId)) {
       throw new Error('Mesh Canvas node was not found.')
     }
@@ -775,7 +806,7 @@ export class MeshSceneService {
   }
 
   present(sceneId: string, input: { title?: string }, ctx: MeshSceneCallContext): MeshSceneRecord {
-    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const scene = cloneScene(this.getAccessible(sceneId, ctx))
     scene.presentation = {
       presentedAt: this.deps.now(),
       ...(nonEmpty(ctx.provider, 100) ? { presenter: nonEmpty(ctx.provider, 100)! } : {}),
@@ -784,34 +815,34 @@ export class MeshSceneService {
     scene.revision += 1
     scene.updatedAt = this.deps.now()
     const saved = this.persist(scene)
-    this.emit('scene.presented', saved)
+    this.emit('scene.presented', saved, ctx)
     return cloneScene(saved)
   }
 
   closePresentation(sceneId: string, ctx: MeshSceneCallContext): MeshSceneRecord {
-    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const scene = cloneScene(this.getAccessible(sceneId, ctx))
     delete scene.presentation
     scene.revision += 1
     scene.updatedAt = this.deps.now()
     const saved = this.persist(scene)
-    this.emit('scene.closed', saved)
+    this.emit('scene.closed', saved, ctx)
     return cloneScene(saved)
   }
 
   remove(sceneId: string, ctx: MeshSceneCallContext): string {
-    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const scene = cloneScene(this.getAccessible(sceneId, ctx))
     const result = this.deps.store.remove(scene.id)
     if (!result.removed) throw new Error('Mesh Canvas scene was not found.')
     this.deps.assets.remove(result.orphanedAssetIds)
     this.deps.topologies.remove(result.orphanedTopologyIds)
-    this.emit('scene.deleted', scene)
+    this.emit('scene.deleted', scene, ctx)
     return scene.id
   }
 
   /** Renderer-only projection. The tokenized URLs never cross the MCP result. */
-  viewForChat(sceneId: string, chatId: string): MeshSceneView | null {
+  viewForChat(sceneId: string, chatId: string, workspacePath?: string): MeshSceneView | null {
     const scene = this.deps.store.get(sceneId)
-    if (!scene || scene.chatId !== chatId) return null
+    if (!scene || !this.sceneIsAccessible(scene, { chatId, workspacePath })) return null
     const assetIds = new Set<string>()
     for (const node of scene.nodes) {
       if (node.kind === 'import') assetIds.add(node.assetId)
@@ -863,17 +894,21 @@ export class MeshSceneService {
     return { ...rendererScene, assetUrls, modelUrls, topologies }
   }
 
-  listForChat(chatId: string): MeshSceneSummary[] {
+  listForChat(chatId: string, workspacePath?: string): MeshSceneSummary[] {
     return this.deps.store
       .list()
-      .filter((scene) => scene.chatId === chatId)
+      .filter((scene) => this.sceneIsAccessible(scene, { chatId, workspacePath }))
       .map(meshSceneSummary)
   }
 
   beginAuthorityHistoryClear(input: MeshHistoryAuthority): Promise<void> {
     const chatIds = new Set([...(input.chatIds ?? [])].map((value) => value.trim()).filter(Boolean))
     const workspacePaths = new Set(
-      [...(input.workspacePaths ?? [])].map((value) => value.trim()).filter(Boolean)
+      [...(input.workspacePaths ?? [])]
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map(canonicalWorkspacePath)
+        .filter((value): value is string => Boolean(value))
     )
     for (const chatId of chatIds) this.chatHolds.set(chatId, (this.chatHolds.get(chatId) ?? 0) + 1)
     for (const workspacePath of workspacePaths) {
@@ -898,7 +933,7 @@ export class MeshSceneService {
       else this.chatHolds.delete(chatId)
     }
     for (const value of input.workspacePaths ?? []) {
-      const workspacePath = value.trim()
+      const workspacePath = canonicalWorkspacePath(value)
       if (!workspacePath) continue
       const next = (this.workspaceHolds.get(workspacePath) ?? 0) - 1
       if (next > 0) this.workspaceHolds.set(workspacePath, next)
