@@ -292,6 +292,13 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'purge-product-audit-retention': ['optionalObject'],
   'repair-product-install': [],
   'app-shell-stats:snapshot': [],
+  // Desktop reads and mutates the authoritative Host projection through this
+  // bridge. The domain handlers perform the deep Host command/receipt checks;
+  // this boundary still has to register their coarse wire shapes or the
+  // fail-closed IPC wrapper rejects the calls before those handlers run.
+  'host-projection:snapshot': [],
+  'host-projection:command-submit': ['object'],
+  'host-projection:receipt-lookup': ['object'],
   'set-appearance-mode': ['any'],
   'get-host-weather': [],
   'native-capabilities:snapshot': [],

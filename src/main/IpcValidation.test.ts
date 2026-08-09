@@ -36,7 +36,10 @@ describe('IpcValidation', () => {
   // twice as a latent runtime crash (external-path:pick-and-persist in
   // EW71, fx-rates:get later). This test statically extracts every
   // handled channel and asserts each is registered, so the whole class is
-  // caught at build time instead of by users.
+  // caught at build time instead of by users. Extracted handlers may use the
+  // injected `ipc` alias and locally-declared channel constants, so the scan
+  // resolves those forms too; only matching literal `ipcMain.handle` calls is
+  // exactly how the Host projection bridge escaped this invariant.
   //
   // The handlers originally all lived in index.ts. As the IPC god-module is
   // broken up into per-domain modules under `src/main/ipc/`, the scan must
@@ -54,21 +57,48 @@ describe('IpcValidation', () => {
     }
     sources.push(readFileSync(join(process.cwd(), 'src/main/canvas/CanvasEmbedIpc.ts'), 'utf8'))
     const handled = new Set<string>()
-    const re = /ipcMain\.handle\(\s*['"`]([^'"`]+)['"`]/g
+    const unresolvedConstants = new Set<string>()
+    const constantRe = /(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*=\s*['"`]([^'"`]+)['"`]/g
+    const handleRe = /\b(?:ipcMain|ipc)\.handle\(\s*(?:['"`]([^'"`]+)['"`]|([A-Z][A-Z0-9_]*))/g
     for (const source of sources) {
-      re.lastIndex = 0
+      const constants = new Map<string, string>()
+      constantRe.lastIndex = 0
       let match: RegExpExecArray | null
-      while ((match = re.exec(source)) !== null) {
-        const channel = match[1]
+      while ((match = constantRe.exec(source)) !== null) {
+        constants.set(match[1], match[2])
+      }
+      handleRe.lastIndex = 0
+      while ((match = handleRe.exec(source)) !== null) {
+        const channel = match[1] || constants.get(match[2])
+        if (!channel) {
+          unresolvedConstants.add(match[2])
+          continue
+        }
         // Skip dynamically-composed channel names (template interpolation);
         // those can't be statically registered.
         if (channel.includes('${')) continue
         handled.add(channel)
       }
     }
+    expect([...unresolvedConstants]).toEqual([])
     expect(handled.size).toBeGreaterThan(0)
     const missing = [...handled].filter((channel) => !(channel in IPC_ARGUMENT_SCHEMAS)).sort()
     expect(missing).toEqual([])
+  })
+
+  it('shape-gates the Host projection bridge', () => {
+    expect(() => validateIpcArgs('host-projection:snapshot', [])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('host-projection:command-submit', [
+        { type: 'host.command', commandId: 'command-1' }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('host-projection:command-submit', [])).toThrow(/object/)
+    expect(() => validateIpcArgs('host-projection:command-submit', ['command-1'])).toThrow(/object/)
+    expect(() =>
+      validateIpcArgs('host-projection:receipt-lookup', [{ commandId: 'command-1' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('host-projection:receipt-lookup', [[]])).toThrow(/object/)
   })
 
   it('registers Canvas handlers only after the validation wrapper is installed', () => {
