@@ -171,6 +171,39 @@ struct RemoteSessionHostProjectionTests {
     #expect(arguments["isCustom"] as? Bool == false)
     #expect(model.hostProjection.lastReceipt == receipt)
     #expect(model.lastActionMessage == "Answer sent.")
+
+    let resolvedQuestion = HostQuestionProjection(
+      questionId: "question-1",
+      threadId: "thread-1",
+      status: .answered,
+      promptPreview: "Proceed?",
+      askedAt: 1,
+      answeredAt: 2,
+      receiptId: receipt.commandId)
+    let resolvedPayload = try JSONDecoder().decode(
+      HostJSONAny.self,
+      from: JSONEncoder().encode(resolvedQuestion))
+    let delta = HostDeltaEnvelope(
+      generation: 7,
+      cursor: 1,
+      previousCursor: 0,
+      kind: .upsert,
+      family: .question,
+      entityId: "question-1",
+      payload: resolvedPayload,
+      at: "2026-08-09T20:00:02Z")
+    let update = model.hostProjection.receive(
+      method: PairedHostProjectionMethods.deltas,
+      params: try JSONEncoder().encode(
+        HostDeltasFrame(
+          result: .deltas(
+            .init(generation: 7, fromCursor: 0, toCursor: 1, deltas: [delta])))))
+    #expect(update == .updated)
+    let projectedQuestion = try #require(model.hostProjection.snapshot?.questions.first)
+    #expect(projectedQuestion.status == .answered)
+    #expect(projectedQuestion.receiptId == receipt.commandId)
+    #expect(model.hostProjection.snapshot?.generation == 7)
+    #expect(model.hostProjection.snapshot?.cursor == 1)
   }
 
   private func makeModel(snapshotStore: HostProjectionMemoryStore) -> RemoteSessionModel {
