@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentApprovalCancelPresentation,
+  locatePendingApproval,
   shouldDismissAgentApproval
 } from './agentApprovalLifecycle'
 
@@ -31,5 +32,20 @@ describe('agent approval lifecycle UI', () => {
         method: 'gemini-mcp/tool'
       })
     ).toMatchObject({ label: 'Cancel request' })
+  })
+
+  it('locates an id in head or queue without trusting a pre-await snapshot', () => {
+    expect(
+      locatePendingApproval('b', { child: { id: 'b' } }, { child: [{ id: 'c' }] })
+    ).toEqual({ chatId: 'child', inHead: true, inQueue: false })
+    expect(
+      locatePendingApproval('c', { child: { id: 'b' } }, { child: [{ id: 'c' }] })
+    ).toEqual({ chatId: 'child', inHead: false, inQueue: true })
+    // After head A was accepted and B promoted, live maps show B as head —
+    // even if a stale snapshot still had B in the queue.
+    expect(
+      locatePendingApproval('b', { child: { id: 'b' } }, { child: [] })
+    ).toEqual({ chatId: 'child', inHead: true, inQueue: false })
+    expect(locatePendingApproval('missing', { child: { id: 'b' } }, {})).toBeNull()
   })
 })
