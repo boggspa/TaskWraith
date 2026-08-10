@@ -175,6 +175,9 @@ class FakeDriver implements CanvasDriver {
   navState(): CanvasNavState {
     return this.currentNav
   }
+  chartDocument() {
+    return this.lastOpenInput?.chartDocument ?? null
+  }
   async close(): Promise<void> {
     this.closeCalls += 1
     if (this.closeFailuresRemaining > 0) {
@@ -333,6 +336,51 @@ describe('CanvasService', () => {
     // html renders offscreen (no live surface) — the embed flag must not leak in.
     await service.open({ driver: 'html', html: '<p>x</p>', embed: true }, { chatId: 'chat-a' })
     expect(lastDriverOpts?.embedded).toBe(false)
+  })
+
+  it('chart docks via presentation:"dock" without WebContentsView embed', async () => {
+    const chartDocument = {
+      schemaVersion: 1 as const,
+      title: 'Latency',
+      kind: 'line' as const,
+      series: [
+        {
+          id: 'p50',
+          label: 'p50',
+          points: [
+            { x: 0, y: 10 },
+            { x: 1, y: 12 }
+          ]
+        }
+      ]
+    }
+    const chart = await service.open(
+      { driver: 'chart', chartDocument, presentation: 'dock' },
+      { chatId: 'chat-a' }
+    )
+    // Chart is a native dock surface — never a WebContentsView embed.
+    expect(lastDriverOpts?.embedded).toBe(false)
+    expect(service.status(chart.canvasId, { chatId: 'chat-a' })?.presentation).toBe('dock')
+    expect(service.status(chart.canvasId, { chatId: 'chat-a' })?.driver).toBe('chart')
+    // Dock TelemetryPane paints from list/status chartDocument — must be attached.
+    expect(service.status(chart.canvasId, { chatId: 'chat-a' })?.chartDocument).toEqual(
+      chartDocument
+    )
+    expect(
+      service.list({ chatId: 'chat-a' }).find((row) => row.canvasId === chart.canvasId)
+        ?.chartDocument
+    ).toEqual(chartDocument)
+    expect(
+      events.find((event) => event.canvasId === chart.canvasId && event.kind === 'session.opened')
+    ).toMatchObject({ detail: { presentation: 'dock', driver: 'chart' } })
+
+    // Without presentation:"dock", chart must not claim dock focus.
+    const undocked = await service.open({ driver: 'chart', chartDocument }, { chatId: 'chat-a' })
+    expect(service.status(undocked.canvasId, { chatId: 'chat-a' })?.presentation).toBeUndefined()
+    expect(service.status(undocked.canvasId, { chatId: 'chat-a' })?.driver).toBe('chart')
+    expect(service.status(undocked.canvasId, { chatId: 'chat-a' })?.chartDocument).toEqual(
+      chartDocument
+    )
   })
 
   it('device open requires canonical chat+run and a valid bundleId before the driver runs', async () => {

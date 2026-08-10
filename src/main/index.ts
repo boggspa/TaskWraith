@@ -1256,6 +1256,7 @@ import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
+import { CanvasChartDriver } from './canvas/CanvasChartDriver'
 import { CanvasImageDriver } from './canvas/CanvasImageDriver'
 import { CanvasSketchDriver } from './canvas/CanvasSketchDriver'
 import { CanvasWindowDriverFactory } from './canvas/CanvasWindowDriverFactory'
@@ -4272,6 +4273,12 @@ const canvasService = new CanvasService({
     }
     if (kind === 'html') {
       return new CanvasRenderDriver(sessionId, {
+        render: (html, width, height) =>
+          offscreenImageEngine.renderHtmlToPng(html, width, height, CANVAS_HTML_RENDER_TIMEOUT_MS)
+      })
+    }
+    if (kind === 'chart') {
+      return new CanvasChartDriver(sessionId, {
         render: (html, width, height) =>
           offscreenImageEngine.renderHtmlToPng(html, width, height, CANVAS_HTML_RENDER_TIMEOUT_MS)
       })

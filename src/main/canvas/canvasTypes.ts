@@ -9,9 +9,60 @@
  * Driver support is capability-gated by CanvasService. In particular, `window`
  * can open only through an internal, exact-run native lease target; declaring a
  * driver kind here never makes it agent-requestable.
+ *
+ * Chart document contracts + validation live in `src/shared/canvasChart.ts`
+ * (single source of truth for transcript fences + MCP dock). Re-exported here
+ * so existing main/canvas importers keep working.
  */
 
-export type CanvasDriverKind = 'web' | 'html' | 'image' | 'sketch' | 'window' | 'device'
+import type {
+  CanvasChartDocument,
+  CanvasChartKind,
+  CanvasChartPoint,
+  CanvasChartSeries,
+  CanvasChartValidation
+} from '../../shared/canvasChart'
+import {
+  CANVAS_CHART_KINDS,
+  CANVAS_CHART_MAX_JSON_BYTES,
+  CANVAS_CHART_MAX_POINTS_PER_SERIES,
+  CANVAS_CHART_MAX_SERIES,
+  CANVAS_CHART_MAX_TITLE_CHARS,
+  CANVAS_CHART_SCHEMA_VERSION,
+  validateCanvasChart
+} from '../../shared/canvasChart'
+
+export type {
+  CanvasChartDocument,
+  CanvasChartKind,
+  CanvasChartPoint,
+  CanvasChartSeries,
+  CanvasChartValidation
+}
+export {
+  CANVAS_CHART_KINDS,
+  CANVAS_CHART_MAX_JSON_BYTES,
+  CANVAS_CHART_MAX_POINTS_PER_SERIES,
+  CANVAS_CHART_MAX_SERIES,
+  CANVAS_CHART_MAX_TITLE_CHARS,
+  CANVAS_CHART_SCHEMA_VERSION,
+  validateCanvasChart
+}
+
+/** Compat aliases for earlier seat call sites. */
+export const MAX_CANVAS_CHART_SERIES = CANVAS_CHART_MAX_SERIES
+export const MAX_CANVAS_CHART_POINTS_PER_SERIES = CANVAS_CHART_MAX_POINTS_PER_SERIES
+export const MAX_CANVAS_CHART_TITLE_CHARS = CANVAS_CHART_MAX_TITLE_CHARS
+
+export type CanvasDriverKind =
+  | 'web'
+  | 'html'
+  | 'image'
+  | 'sketch'
+  | 'window'
+  | 'device'
+  /** Structured telemetry chart — screenshot-capable; docks without WebContentsView. */
+  | 'chart'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
 
@@ -63,7 +114,9 @@ export interface CanvasOpenInput {
   /**
    * INTERNAL ONLY. Distinguishes an explicit agent request to focus the Canvas
    * dock from an ordinary renderer-owned embed (for example, a multiview pane).
-   * Requires `embed: true`; renderer IPC never forwards this field.
+   * For web/sketch this requires `embed: true`. For `chart`, presentation:"dock"
+   * is allowed WITHOUT a WebContentsView embed (native TelemetryPane). Renderer
+   * IPC never forwards this field.
    */
   presentation?: 'dock'
   // --- html driver (agent-authored layout/SVG; canvas_render_html) ---
@@ -87,6 +140,12 @@ export interface CanvasOpenInput {
   mediaSha256?: string
   /** MIME type of the image asset (e.g. "image/png"). REQUIRED for the `image` driver. */
   mediaMimeType?: string
+  /**
+   * Structured chart document for the `chart` driver (canvas_render_chart).
+   * INTERNAL open-input only — agent-facing canvas_open must never accept
+   * `driver: "chart"`; the dedicated MCP tool owns the contract.
+   */
+  chartDocument?: CanvasChartDocument
   /**
    * Internal sketch driver bootstrap document. Set by CanvasService from the
    * persisted per-chat sketch document, never by agent-facing MCP schemas.
@@ -465,6 +524,11 @@ export interface CanvasDriver {
   navigate?(input: CanvasNavigateInput): Promise<CanvasNavState>
   /** Live chrome state (web driver only). Synchronous read of the surface. */
   navState?(): CanvasNavState
+  /**
+   * Structured chart document (chart driver only). Synchronous read so
+   * canvas_list / canvas_status can feed the Canvas dock TelemetryPane.
+   */
+  chartDocument?(): CanvasChartDocument | null
   close(): Promise<void>
 }
 
@@ -480,6 +544,11 @@ export interface CanvasSessionSummary {
   updatedAt: string
   /** Live host placement. Present only when the surface belongs in the Canvas dock. */
   presentation?: 'dock'
+  /**
+   * Structured chart payload for the Canvas dock TelemetryPane.
+   * Present only for live chart-driver sessions (not persisted history).
+   */
+  chartDocument?: CanvasChartDocument
   /** Live browser-chrome state; present only for open web-driver sessions. */
   isLoading?: boolean
   canGoBack?: boolean

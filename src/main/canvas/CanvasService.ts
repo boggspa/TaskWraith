@@ -47,6 +47,7 @@ import {
   isValidBundleId,
   redactUrlQuery,
   resolveViewport,
+  validateCanvasChart,
   validateCanvasHtml,
   validateCanvasImageRef,
   validateCanvasUrl
@@ -154,7 +155,8 @@ const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
   'image',
   'sketch',
   'device',
-  'window'
+  'window',
+  'chart'
 ])
 // Defence-in-depth cap so a hijacked agent (or a session-granted approval)
 // cannot machine-gun clicks/fills against a live app. Per live session.
@@ -612,6 +614,20 @@ export class CanvasService implements CanvasController {
     } else if (driverKind === 'sketch') {
       recordUrl = 'sketch://new'
       eventHost = undefined
+    } else if (driverKind === 'chart') {
+      // Structured chart document. No URL / no WebContentsView — rasterized from
+      // SVG offscreen. Dock presentation is granted without embed (native pane).
+      if (input.chartDocument === undefined) {
+        throw new Error('The chart driver requires a `chartDocument` object.')
+      }
+      const verdict = validateCanvasChart(input.chartDocument)
+      if (!verdict.ok) {
+        throw new Error(verdict.reason || 'Invalid chart document.')
+      }
+      // Prefer the normalized document for the driver open path.
+      input.chartDocument = verdict.document
+      recordUrl = `chart://${createHash('sha256').update(JSON.stringify(verdict.document)).digest('hex').slice(0, 8)}`
+      eventHost = undefined
     } else {
       const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
       if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
@@ -653,10 +669,14 @@ export class CanvasService implements CanvasController {
     }
 
     // Only drivers with a live, hostable surface can embed — web and sketch;
-    // html/image/device/window have no surface. Renderer opens set this directly;
-    // an agent may set it only through the explicit dock-presentation tool option.
+    // html/image/device/window/chart have no WebContentsView. Chart is the
+    // exception that may still claim presentation:"dock" (native TelemetryPane)
+    // so it focuses the Canvas dock without landing in off-screen agent canvases.
+    // Renderer opens set embed directly; agents set presentation only through the
+    // governed dock-presentation tool contract (canvas_render_chart for charts).
     const embedded = (driverKind === 'web' || driverKind === 'sketch') && input.embed === true
-    const dockPresentation = embedded && input.presentation === 'dock'
+    const dockPresentation =
+      input.presentation === 'dock' && (embedded || driverKind === 'chart')
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     let driver: CanvasDriver
     try {
@@ -856,6 +876,14 @@ export class CanvasService implements CanvasController {
         }
       } catch {
         // Surface may be tearing down; the plain record summary still stands.
+      }
+    }
+    if (session.record.driver === 'chart') {
+      try {
+        const document = session.driver.chartDocument?.()
+        if (document) summary.chartDocument = document
+      } catch {
+        // Driver may be tearing down; omit document rather than fail list/status.
       }
     }
     return summary

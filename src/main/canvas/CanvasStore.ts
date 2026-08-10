@@ -42,7 +42,8 @@ const CANVAS_DRIVER_KINDS: ReadonlySet<CanvasDriverKind> = new Set([
   'image',
   'sketch',
   'window',
-  'device'
+  'device',
+  'chart'
 ])
 const SKETCH_ELEMENT_KINDS = new Set(['rect', 'ellipse', 'line', 'arrow', 'text', 'path'])
 
