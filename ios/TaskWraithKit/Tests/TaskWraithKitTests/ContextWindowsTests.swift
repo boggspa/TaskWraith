@@ -51,6 +51,7 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-4-6") == 200_000)
+        #expect(ContextWindows.resolve(provider: "muse", model: "muse-spark-1.2") == 200_000)
     }
 
     @Test("unknown / missing model falls back to the provider window")
@@ -58,6 +59,7 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)
         #expect(ContextWindows.resolve(provider: "gemini", model: nil) == 1_048_576)
         #expect(ContextWindows.resolve(provider: "codex", model: nil) == 1_050_000)
+        #expect(ContextWindows.resolve(provider: "muse", model: nil) == 200_000)
     }
 
     @Test("provider match is case-insensitive")

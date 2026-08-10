@@ -78,6 +78,8 @@ public enum ContextWindows {
         "mistral-medium-3.5": 262_144,
         "mistral-vibe-cli-latest": 262_144,
         "devstral-small": 262_144,
+        // Muse Code CLI default model (opaque exec seat).
+        "muse-spark-1.2": 200_000,
         "groq/openai/gpt-oss-120b": 131_072,
         "groq/qwen/qwen3-32b": 131_072,
         "cerebras/zai-glm-4.7": 131_072,
@@ -174,6 +176,8 @@ public enum ContextWindows {
         // / `devstral-small` rows above. NOT the same identity as the
         // `mistral/<model>` rows, which are Pi's BYOK upstream.
         "mistral": 262_144,
+        // Muse opaque CLI seat — conservative fallback until a measured window lands.
+        "muse": 200_000,
     ]
 
     /// Resolve the context-window size for a thread, mirroring the desktop's
