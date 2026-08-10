@@ -127,6 +127,26 @@ describe('museExecEventToCompatPayload', () => {
       provider: 'muse'
     })
   })
+
+  it('stamps the requested model onto follow-up lifecycle inits', () => {
+    expect(
+      museExecEventToCompatPayload(
+        {
+          type: 'run_started',
+          payloadType: 'run.lifecycle.started',
+          sessionId: 'sess-1',
+          raw: {}
+        },
+        { model: 'muse-spark-1.2' }
+      )
+    ).toEqual({
+      type: 'init',
+      session_id: 'sess-1',
+      provider: 'muse',
+      timestamp: expect.any(String),
+      model: 'muse-spark-1.2'
+    })
+  })
 })
 
 describe('runMuseProviderFromIpc', () => {

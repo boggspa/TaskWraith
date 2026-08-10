@@ -137,6 +137,9 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
   'devstral-small': 'Devstral Small',
 
+  // ── Muse (Meta Muse Code CLI) ─────────────────────────────
+  'muse-spark-1.2': 'Muse Spark 1.2',
+
   // ── Ollama ────────────────────────────────────────────────
   'qwen3:4b-instruct': 'Qwen 3 (4B Param)',
   'qwen3.5:2b': 'Qwen 3.5 (2B Param)',

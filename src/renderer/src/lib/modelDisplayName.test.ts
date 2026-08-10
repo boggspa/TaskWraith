@@ -167,6 +167,13 @@ describe('humaniseModelId', () => {
     })
   })
 
+  describe('Muse', () => {
+    it('maps Spark wire ids to a human-readable name', () => {
+      expect(humaniseModelId('muse', 'muse-spark-1.2')).toBe('Muse Spark 1.2')
+      expect(canonicalModelIdForProvider('muse', 'cli-default')).toBe('muse-spark-1.2')
+    })
+  })
+
   describe('Newest seats — default sentinel', () => {
     it('resolves the default sentinel per seat rather than showing a "default" row', () => {
       expect(canonicalModelIdForProvider('antigravity', 'default')).toBe(

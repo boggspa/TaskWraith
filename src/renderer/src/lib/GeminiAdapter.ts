@@ -255,7 +255,11 @@ export class GeminiStreamAdapter {
           type: 'run_started',
           session_id:
             parsed.session_id || parsed.providerThreadId || parsed.provider_thread_id || '',
-          model: parsed.model || 'unknown',
+          // Never invent `unknown` — Muse (and others) emit model-less follow-up
+          // inits; a placeholder here overwrites a real actualModel in App.
+          ...(typeof parsed.model === 'string' && parsed.model.trim()
+            ? { model: parsed.model.trim() }
+            : {}),
           ...(typeof parsed.modelLabel === 'string' || typeof parsed.model_label === 'string'
             ? { modelLabel: parsed.modelLabel || parsed.model_label }
             : {}),

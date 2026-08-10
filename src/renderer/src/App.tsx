@@ -15450,9 +15450,17 @@ function App(): React.JSX.Element {
             const runIndex = findChatRunIndex(runs, currentRunId)
             if (runIndex >= 0) {
               const targetRun = runs[runIndex]
+              const nextModel =
+                typeof event.model === 'string' ? event.model.trim() : ''
+              // Model-less follow-up inits (Muse opaque exec) must not clobber a
+              // real requested/actual model with '' or the old 'unknown' sentinel.
+              const keepModel =
+                !nextModel || nextModel.toLowerCase() === 'unknown'
+                  ? targetRun.actualModel
+                  : nextModel
               runs[runIndex] = {
                 ...targetRun,
-                actualModel: event.model,
+                actualModel: keepModel,
                 ...(effectiveRunProvider !== 'gemini'
                   ? { providerThreadId: sessionId || targetRun.providerThreadId }
                   : {})

@@ -137,7 +137,8 @@ export function extractMuseMetaApiKey(raw: string | null | undefined): string | 
 }
 
 export function museExecEventToCompatPayload(
-  event: MuseExecNormalizedEvent
+  event: MuseExecNormalizedEvent,
+  options?: { model?: string | null }
 ): Record<string, unknown> | null {
   if (event.type === 'content' && event.text) {
     return { type: 'content', text: event.text, provider: 'muse' }
@@ -153,11 +154,14 @@ export function museExecEventToCompatPayload(
     }
   }
   if (event.type === 'run_started' || event.type === 'command_accepted') {
+    const model =
+      typeof options?.model === 'string' && options.model.trim() ? options.model.trim() : undefined
     return {
       type: 'init',
       session_id: event.sessionId || '',
       provider: 'muse',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      ...(model ? { model } : {})
     }
   }
   return null
@@ -342,7 +346,7 @@ export async function runMuseProviderFromIpc(
       spawn: deps.spawn,
       shouldCancel: () => cancelled,
       onEvent: (museEvent) => {
-        const compat = museExecEventToCompatPayload(museEvent)
+        const compat = museExecEventToCompatPayload(museEvent, { model: payload.model })
         if (!compat) return
         if (compat.type === 'result') emittedTerminalResult = true
         deps.sendCompatLine(event.sender, compat, route)

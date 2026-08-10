@@ -23,6 +23,30 @@ describe('GeminiStreamAdapter', () => {
     )
   })
 
+  // Muse opaque exec emits several model-less `init` lines after the first
+  // (command_accepted / run.lifecycle.started). Inventing `model: 'unknown'`
+  // made the transcript badge read "Muse unknown" once App overwrote
+  // actualModel from the later run_started events.
+  it('does not invent model unknown when init omits model', () => {
+    const onEvent = vi.fn()
+    const adapter = new GeminiStreamAdapter(onEvent)
+
+    adapter.appendChunk('{"type":"init","session_id":"muse-session","provider":"muse"}\n')
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'run_started',
+        session_id: 'muse-session'
+      })
+    )
+    const started = onEvent.mock.calls
+      .map((call) => call[0])
+      .find((event) => event && event.type === 'run_started')
+    expect(started).toBeTruthy()
+    expect(started.model).not.toBe('unknown')
+    expect(started.model == null || started.model === '').toBe(true)
+  })
+
   it('preserves provider model labels on run start and content deltas', () => {
     const onEvent = vi.fn()
     const adapter = new GeminiStreamAdapter(onEvent)

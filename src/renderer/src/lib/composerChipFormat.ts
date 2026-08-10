@@ -14,10 +14,7 @@
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
-import {
-  isCursorGrok45ModelId,
-  isGrok45ReasoningModelId
-} from '../../../shared/grok45Models'
+import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../../shared/grok45Models'
 import { humaniseModelId } from './modelDisplayName'
 
 export interface ComposerChipContext {
@@ -74,6 +71,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (provider === 'cursor') return 'Composer 2.5 Fast'
     if (provider === 'ollama') return 'Qwen 3 (4B Param)'
     if (provider === 'gemini') return 'Flash Lite'
+    if (provider === 'muse') return 'Spark 1.2'
     return label
   }
 
@@ -250,14 +248,24 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'glm-4.7-flash:q4_k_m' || id.startsWith('glm-4.7-flash:q4_k_m-')) {
       return 'GLM-4.7-Flash (30B-A3B Q4)'
     }
-    if (
-      id === 'north-mini-code-1.0:q4_k_m' ||
-      id.startsWith('north-mini-code-1.0:q4_k_m-')
-    ) {
+    if (id === 'north-mini-code-1.0:q4_k_m' || id.startsWith('north-mini-code-1.0:q4_k_m-')) {
       return 'North Mini Code 1.0 (30B-A3B Q4)'
     }
     if (id === 'llama3.2:3b' || id.startsWith('llama3.2:3b-')) {
       return 'Llama 3.2 (3B Param)'
+    }
+  }
+
+  if (provider === 'muse') {
+    // Provider label already says Muse; badge is the spark family only.
+    if (id === 'muse-spark-1.2' || id.includes('spark-1.2')) return 'Spark 1.2'
+    if (id.startsWith('muse-')) {
+      return id
+        .slice('muse-'.length)
+        .split('-')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ')
     }
   }
 
@@ -327,7 +335,9 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   if (provider === 'pi' && modelId === 'mistral/mistral-medium-3.5') return 'High'
 
   if (provider === 'muse') {
-    const value = String(ctx.museReasoningEffort || '').trim().toLowerCase()
+    const value = String(ctx.museReasoningEffort || '')
+      .trim()
+      .toLowerCase()
     // Muse Spark rejects `none`; omit the suffix when unset/off so the chip
     // does not invent a level the seat will refuse.
     if (!value || value === 'none' || value === 'off') return ''
