@@ -37,6 +37,8 @@ export function inheritedSubThreadPermissions(parent: {
 
 export type SubThreadWorkerIsolationRequest =
   | { kind: 'read_only' }
+  /** Same-checkout inherit of parent posture with Full Access demoted and parent grants stripped — used by ephemeral fleet worker/reviewer roles. */
+  | { kind: 'capped_inherit' }
   | {
       kind: 'worktree'
       baseWorkspacePath: string
@@ -63,7 +65,7 @@ export interface ResolveSubThreadWorkerPermissionsInput {
 export type SubThreadWorkerPermissionDecision =
   | {
       ok: true
-      isolation: 'read_only' | 'worktree' | 'direct_checkout'
+      isolation: 'read_only' | 'capped_inherit' | 'worktree' | 'direct_checkout'
       effectivePermissions: EffectiveRunPermissions
       sessionTrust: false
       effectiveWorkspacePath?: string
@@ -186,6 +188,17 @@ export function resolveSubThreadWorkerPermissions(
       ok: true,
       isolation: 'read_only',
       effectivePermissions: capAtReadOnly(input.parentPermissions, input.readOnlyPermissions),
+      sessionTrust: false
+    }
+  }
+
+  if (isolation.kind === 'capped_inherit') {
+    return {
+      ok: true,
+      isolation: 'capped_inherit',
+      effectivePermissions: input.parentPermissions
+        ? capWriterPermissions(input.parentPermissions, input.readOnlyPermissions)
+        : capAtReadOnly(undefined, input.readOnlyPermissions),
       sessionTrust: false
     }
   }

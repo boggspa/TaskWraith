@@ -182,8 +182,10 @@ export function markLinkedChildResultReturned(
     }
   }
   if (!chat.delegationContext) return chat
+  const ephemeral = chat.delegationContext.lifecycle === 'ephemeral'
   return {
     ...chat,
+    ...(ephemeral ? { archived: true } : {}),
     delegationContext: {
       ...chat.delegationContext,
       resultReturnedAt: returnedAt
