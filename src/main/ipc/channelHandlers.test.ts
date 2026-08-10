@@ -109,9 +109,27 @@ function fixture(
           acceptedAt: 2,
           contentHash: 'a'.repeat(64),
           tokenHash: 'must-not-cross-ipc'
+        },
+        {
+          channelId: input.channelId,
+          sequence: 2,
+          messageId: 'message-agent-2',
+          authorMemberId: `agent-${input.channelId}`,
+          clientMessageId: 'agent-client-2',
+          kind: 'agent.text' as const,
+          content: 'agent result',
+          acceptedAt: 3,
+          contentHash: 'b'.repeat(64),
+          agentProof: {
+            authorityRevision: 3,
+            signedPost: {
+              agentSignatureB64: 'must-not-cross-ipc',
+              post: { runAuthorityHash: 'must-not-cross-ipc' }
+            }
+          }
         }
       ],
-      highWaterSequence: 1,
+      highWaterSequence: 2,
       roomId: 'must-not-cross-ipc'
     })),
     listAudit: vi.fn(() => [
@@ -244,6 +262,10 @@ describe('registerChannelHandlers', () => {
           { memberId: 'owner-channel-a', kind: 'human' },
           { memberId: 'agent-channel-a', kind: 'agent' }
         ],
+        records: [
+          { messageId: 'message-1', kind: 'human.text' },
+          { messageId: 'message-agent-2', kind: 'agent.text', content: 'agent result' }
+        ],
         pendingAdmissions: [
           {
             memberId: 'joining-channel-a',
@@ -261,7 +283,7 @@ describe('registerChannelHandlers', () => {
       maxBytes: 4_096
     })
     expect(JSON.stringify(read)).not.toMatch(
-      /identityPublicKey|roomId|tokenHash|handshakeId|agentSeatId|keyGeneration/
+      /identityPublicKey|roomId|tokenHash|handshakeId|agentSeatId|keyGeneration|agentProof|agentSignatureB64|runAuthorityHash/
     )
 
     const audit = await own.invoke(CHANNEL_IPC_CHANNELS.audit, { limit: 12 })

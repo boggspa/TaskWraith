@@ -51,7 +51,7 @@ export class ChannelError extends Error {
 export type ChannelStatus = 'active' | 'closed'
 export type ChannelMemberStatus = 'pending' | 'active' | 'revoked'
 export type ChannelMemberKind = 'human' | 'agent'
-export type ChannelMessageKind = 'human.text'
+export type ChannelMessageKind = 'human.text' | 'agent.text'
 
 /**
  * A reference intentionally identifies TaskWraith-owned state without copying

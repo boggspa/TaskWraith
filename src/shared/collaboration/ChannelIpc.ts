@@ -79,7 +79,7 @@ export interface ChannelIpcMessage {
   messageId: string
   authorMemberId: string
   clientMessageId: string
-  kind: 'human.text'
+  kind: 'human.text' | 'agent.text'
   content: string
   acceptedAt: number
   contentHash: string

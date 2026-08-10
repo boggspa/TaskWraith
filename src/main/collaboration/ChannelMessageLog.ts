@@ -14,17 +14,30 @@ import {
 } from 'fs'
 import { createHash, randomUUID } from 'crypto'
 import { dirname, join } from 'path'
+import {
+  parseSignedChannelAgentPost,
+  type SignedChannelAgentPost
+} from '../../shared/collaboration/ChannelAgentProtocol'
 import { redactSecrets } from '../../shared/secretRedaction'
-import { ChannelError, type ChannelMessageKind, type ChannelStore } from './ChannelStore'
+import type {
+  ChannelAgentPostAuthorityResult,
+  VerifyChannelAgentPostAuthorityInput
+} from './ChannelAgentAuthorityState'
+import {
+  ChannelError,
+  type AgentChannelMember,
+  type ChannelMessageKind,
+  type ChannelStore
+} from './ChannelStore'
 
-export const CHANNEL_LOG_SCHEMA_VERSION = 1
+export const CHANNEL_LOG_SCHEMA_VERSION = 2
 export const MAX_CHANNEL_MESSAGE_BYTES = 8_000
 export const MAX_CLIENT_MESSAGE_ID_LENGTH = 200
 export const MAX_REPLAY_RECORDS = 256
 export const MAX_REPLAY_BYTES = 512 * 1024
 export const MAX_CHANNEL_LOG_BYTES = 64 * 1024 * 1024
 
-export interface ChannelMessage {
+interface ChannelMessageBase {
   channelId: string
   sequence: number
   messageId: string
@@ -36,8 +49,29 @@ export interface ChannelMessage {
   contentHash: string
 }
 
-interface StoredChannelMessage extends ChannelMessage {
-  schemaVersion: typeof CHANNEL_LOG_SCHEMA_VERSION
+export interface HumanChannelMessage extends ChannelMessageBase {
+  kind: 'human.text'
+  agentProof?: never
+}
+
+export interface ChannelAgentMessageProof {
+  /** Durable authority prefix used for non-retroactive historical verification. */
+  authorityRevision: number
+  signedPost: SignedChannelAgentPost
+}
+
+export interface AgentChannelMessage extends ChannelMessageBase {
+  kind: 'agent.text'
+  agentProof: ChannelAgentMessageProof
+}
+
+export type ChannelMessage = HumanChannelMessage | AgentChannelMessage
+
+type StoredChannelMessageWithoutChecksum = ChannelMessage & {
+  schemaVersion: 1 | typeof CHANNEL_LOG_SCHEMA_VERSION
+}
+
+type StoredChannelMessage = StoredChannelMessageWithoutChecksum & {
   checksum: string
 }
 
@@ -57,14 +91,26 @@ export interface ChannelAppendInput {
   identityPublicKey: string
   roomId?: string
   clientMessageId: string
-  kind?: ChannelMessageKind
+  kind?: Extract<ChannelMessageKind, 'human.text'>
   content: string
+  now?: number
+}
+
+export interface ChannelAgentAppendInput {
+  signedPost: unknown
   now?: number
 }
 
 export interface ChannelAppendResult {
   record: ChannelMessage
   deduplicated: boolean
+}
+
+export interface ChannelAgentPostAuthorityVerifier {
+  verifyPostAuthority(
+    channelId: string,
+    input: VerifyChannelAgentPostAuthorityInput
+  ): ChannelAgentPostAuthorityResult
 }
 
 function clone<T>(value: T): T {
@@ -75,8 +121,12 @@ function contentHash(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex')
 }
 
-function messageChecksum(message: Omit<StoredChannelMessage, 'checksum'>): string {
+function messageChecksum(message: StoredChannelMessageWithoutChecksum): string {
   return createHash('sha256').update(JSON.stringify(message), 'utf8').digest('hex')
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function idempotencyKey(authorMemberId: string, clientMessageId: string): string {
@@ -106,7 +156,7 @@ function normalizeContent(value: unknown, redact: (content: string) => string): 
   return normalized
 }
 
-/** Mandatory default scrubber for every persisted P1 human-text record. */
+/** Mandatory default scrubber for every persisted human or signed-agent record. */
 export function redactChannelContent(content: string): string {
   return redactSecrets(String(content))
     .replace(/(?:\/Users\/|\/home\/)[^/\s]+(?:\/[^\s]*)?/g, '[redacted-path]')
@@ -115,17 +165,66 @@ export function redactChannelContent(content: string): string {
     .replace(/\b[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s]*)*/g, '[redacted-path]')
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value)
+  if (actual.length !== expected.length) return false
+  const keys = new Set(expected)
+  return actual.every((key) => keys.has(key))
+}
+
+function storedMessage(message: ChannelMessage): StoredChannelMessage {
+  const withoutChecksum: StoredChannelMessageWithoutChecksum = {
+    schemaVersion: CHANNEL_LOG_SCHEMA_VERSION,
+    ...message
+  }
+  return { ...withoutChecksum, checksum: messageChecksum(withoutChecksum) }
+}
+
+function validateHistoricalAgentMember(
+  channels: ChannelStore,
+  signedPost: SignedChannelAgentPost,
+  acceptedAt: number
+): void {
+  const post = signedPost.post
+  const channel = channels.getChannel(post.channelId)
+  const member = channels.getMember(post.channelId, post.agentMemberId)
+  if (
+    !channel ||
+    !member ||
+    member.kind !== 'agent' ||
+    member.agentSeatId !== post.agentSeatId ||
+    member.identityPublicKey !== post.agentPublicKeyB64 ||
+    member.keyGeneration !== post.keyGeneration ||
+    member.joinedAt > post.createdAt ||
+    member.joinedAt > acceptedAt ||
+    (member.status !== 'active' && member.status !== 'revoked') ||
+    (member.status === 'revoked' &&
+      (member.revokedAt === undefined || acceptedAt >= member.revokedAt))
+  ) {
+    throw new ChannelError('recovery_blocked', 'Agent message membership proof is invalid')
+  }
+}
+
 function validateStoredMessage(
   value: unknown,
   channelId: string,
-  expectedSequence: number
+  expectedSequence: number,
+  channels: ChannelStore,
+  redactContent: (content: string) => string,
+  agentAuthority?: ChannelAgentPostAuthorityVerifier
 ): ChannelMessage {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ChannelError('recovery_blocked', 'Channel log record is malformed')
   }
   const raw = value as Record<string, unknown>
   if (
-    raw.schemaVersion !== CHANNEL_LOG_SCHEMA_VERSION ||
+    (raw.schemaVersion !== 1 && raw.schemaVersion !== CHANNEL_LOG_SCHEMA_VERSION) ||
     raw.channelId !== channelId ||
     raw.sequence !== expectedSequence ||
     typeof raw.messageId !== 'string' ||
@@ -135,7 +234,7 @@ function validateStoredMessage(
     typeof raw.clientMessageId !== 'string' ||
     !raw.clientMessageId ||
     raw.clientMessageId.length > MAX_CLIENT_MESSAGE_ID_LENGTH ||
-    raw.kind !== 'human.text' ||
+    (raw.kind !== 'human.text' && raw.kind !== 'agent.text') ||
     typeof raw.content !== 'string' ||
     !raw.content ||
     Buffer.byteLength(raw.content, 'utf8') > MAX_CHANNEL_MESSAGE_BYTES ||
@@ -149,39 +248,100 @@ function validateStoredMessage(
     throw new ChannelError('recovery_blocked', 'Channel log record is invalid')
   }
 
-  const withoutChecksum = {
+  let message: ChannelMessage
+  if (raw.kind === 'human.text') {
+    if (raw.agentProof !== undefined) {
+      throw new ChannelError('recovery_blocked', 'Human log record contains agent proof')
+    }
+    message = {
+      channelId: raw.channelId,
+      sequence: raw.sequence,
+      messageId: raw.messageId,
+      authorMemberId: raw.authorMemberId,
+      clientMessageId: raw.clientMessageId,
+      kind: 'human.text',
+      content: raw.content,
+      acceptedAt: raw.acceptedAt,
+      contentHash: raw.contentHash
+    }
+  } else {
+    if (
+      raw.schemaVersion !== CHANNEL_LOG_SCHEMA_VERSION ||
+      !Number.isSafeInteger(raw.acceptedAt) ||
+      !isPlainObject(raw.agentProof) ||
+      !hasExactKeys(raw.agentProof, ['authorityRevision', 'signedPost']) ||
+      !Number.isSafeInteger(raw.agentProof.authorityRevision) ||
+      (raw.agentProof.authorityRevision as number) < 1
+    ) {
+      throw new ChannelError('recovery_blocked', 'Agent log proof is malformed')
+    }
+    const signedPost = parseSignedChannelAgentPost(raw.agentProof.signedPost)
+    if (
+      !signedPost ||
+      signedPost.post.channelId !== raw.channelId ||
+      signedPost.post.agentMemberId !== raw.authorMemberId ||
+      signedPost.post.clientMessageId !== raw.clientMessageId ||
+      signedPost.post.kind !== raw.kind ||
+      signedPost.post.content !== raw.content ||
+      signedPost.post.contentHash !== raw.contentHash ||
+      redactContent(raw.content).trim() !== raw.content
+    ) {
+      throw new ChannelError('recovery_blocked', 'Agent log proof does not match its record')
+    }
+    message = {
+      channelId: raw.channelId,
+      sequence: raw.sequence,
+      messageId: raw.messageId,
+      authorMemberId: raw.authorMemberId,
+      clientMessageId: raw.clientMessageId,
+      kind: 'agent.text',
+      content: raw.content,
+      acceptedAt: raw.acceptedAt,
+      contentHash: raw.contentHash,
+      agentProof: {
+        authorityRevision: raw.agentProof.authorityRevision as number,
+        signedPost
+      }
+    }
+  }
+  const withoutChecksum: StoredChannelMessageWithoutChecksum = {
     schemaVersion: raw.schemaVersion,
-    channelId: raw.channelId,
-    sequence: raw.sequence,
-    messageId: raw.messageId,
-    authorMemberId: raw.authorMemberId,
-    clientMessageId: raw.clientMessageId,
-    kind: raw.kind,
-    content: raw.content,
-    acceptedAt: raw.acceptedAt,
-    contentHash: raw.contentHash
-  } as Omit<StoredChannelMessage, 'checksum'>
+    ...message
+  }
   if (
     contentHash(raw.content) !== raw.contentHash ||
     messageChecksum(withoutChecksum) !== raw.checksum
   ) {
     throw new ChannelError('recovery_blocked', 'Channel log checksum does not match')
   }
-  return {
-    channelId: raw.channelId,
-    sequence: raw.sequence,
-    messageId: raw.messageId,
-    authorMemberId: raw.authorMemberId,
-    clientMessageId: raw.clientMessageId,
-    kind: 'human.text',
-    content: raw.content,
-    acceptedAt: raw.acceptedAt,
-    contentHash: raw.contentHash
+  if (message.kind === 'agent.text') {
+    if (!agentAuthority) {
+      throw new ChannelError('recovery_blocked', 'Agent message authority is unavailable')
+    }
+    validateHistoricalAgentMember(channels, message.agentProof.signedPost, message.acceptedAt)
+    let authority: ChannelAgentPostAuthorityResult
+    try {
+      authority = agentAuthority.verifyPostAuthority(message.channelId, {
+        signedPost: message.agentProof.signedPost,
+        acceptedAt: message.acceptedAt,
+        authorityRevision: message.agentProof.authorityRevision
+      })
+    } catch {
+      throw new ChannelError('recovery_blocked', 'Agent message authority could not be verified')
+    }
+    if (
+      authority.kind !== 'authorized' ||
+      authority.authorityRevision !== message.agentProof.authorityRevision ||
+      !sameJson(authority.signedPost, message.agentProof.signedPost)
+    ) {
+      throw new ChannelError('recovery_blocked', 'Agent message authority proof is invalid')
+    }
   }
+  return message
 }
 
 /**
- * The P1 durable log owner. Files are append-only JSONL, one file per channel,
+ * The Channel durable log owner. Files are append-only JSONL, one file per channel,
  * and are not provider history or relay state. A complete record is synced
  * before append() returns, while a corrupt interior record blocks recovery.
  */
@@ -192,7 +352,8 @@ export class ChannelMessageLog {
   constructor(
     private readonly storageDirectory: string,
     private readonly channels: ChannelStore,
-    private readonly redactContent: (content: string) => string = redactChannelContent
+    private readonly redactContent: (content: string) => string = redactChannelContent,
+    private readonly agentAuthority?: ChannelAgentPostAuthorityVerifier
   ) {}
 
   append(args: ChannelAppendInput): ChannelMessage {
@@ -228,7 +389,7 @@ export class ChannelMessageLog {
       return { record: clone(existing), deduplicated: true }
     }
 
-    const message: ChannelMessage = {
+    const message: HumanChannelMessage = {
       channelId: args.channelId,
       sequence: loaded.messages.length + 1,
       messageId: randomUUID(),
@@ -239,12 +400,7 @@ export class ChannelMessageLog {
       acceptedAt: args.now ?? Date.now(),
       contentHash: contentHash(content)
     }
-    const stored: StoredChannelMessage = {
-      schemaVersion: CHANNEL_LOG_SCHEMA_VERSION,
-      ...message,
-      checksum: ''
-    }
-    stored.checksum = messageChecksum({ schemaVersion: CHANNEL_LOG_SCHEMA_VERSION, ...message })
+    const stored = storedMessage(message)
     const serialized = `${JSON.stringify(stored)}\n`
     this.appendDurably(args.channelId, serialized)
 
@@ -253,6 +409,96 @@ export class ChannelMessageLog {
     loaded.messages.push(message)
     loaded.idempotency.set(idempotencyKey(member.memberId, clientMessageId), message)
     this.channels.recordCommittedMessage(args.channelId, message.sequence, message.acceptedAt)
+    return { record: clone(message), deduplicated: false }
+  }
+
+  appendSignedAgentPost(args: ChannelAgentAppendInput): ChannelAppendResult {
+    const signedPost = parseSignedChannelAgentPost(args.signedPost)
+    if (!signedPost) {
+      throw new ChannelError('identity_mismatch', 'Signed agent post is invalid')
+    }
+    const post = signedPost.post
+    const clientMessageId = assertClientMessageId(post.clientMessageId)
+    if (clientMessageId !== post.clientMessageId) {
+      throw new ChannelError('identity_mismatch', 'Signed agent client message id is not canonical')
+    }
+    const redacted = this.redactContent(post.content).trim()
+    if (redacted !== post.content) {
+      throw new ChannelError(
+        'protocol_unsupported',
+        'Agent content must be redacted before it is signed'
+      )
+    }
+
+    const loaded = this.load(post.channelId)
+    const key = idempotencyKey(post.agentMemberId, clientMessageId)
+    const existing = loaded.idempotency.get(key)
+    if (existing) {
+      if (existing.kind !== 'agent.text' || !sameJson(existing.agentProof.signedPost, signedPost)) {
+        throw new ChannelError(
+          'idempotency_conflict',
+          'agent client message id was already committed with different proof'
+        )
+      }
+      this.channels.reconcileMessageCount(
+        post.channelId,
+        loaded.messages.length,
+        existing.acceptedAt
+      )
+      return { record: clone(existing), deduplicated: true }
+    }
+
+    const acceptedAt = args.now ?? Date.now()
+    if (!Number.isSafeInteger(acceptedAt) || acceptedAt < 0) {
+      throw new ChannelError('protocol_unsupported', 'Agent acceptance timestamp is invalid')
+    }
+    this.requireActiveAgentMember(signedPost, acceptedAt)
+    if (!this.agentAuthority) {
+      throw new ChannelError('protocol_unsupported', 'Agent message authority is unavailable')
+    }
+    let authority: ChannelAgentPostAuthorityResult
+    try {
+      authority = this.agentAuthority.verifyPostAuthority(post.channelId, {
+        signedPost,
+        acceptedAt
+      })
+    } catch {
+      throw new ChannelError('identity_mismatch', 'Agent message authority could not be verified')
+    }
+    if (
+      authority.kind !== 'authorized' ||
+      authority.authorityRevision < 1 ||
+      !sameJson(authority.signedPost, signedPost)
+    ) {
+      const revoked =
+        authority.kind === 'denied' &&
+        (authority.reason === 'authority_expired' || authority.reason === 'authority_revoked')
+      throw new ChannelError(
+        revoked ? 'revoked' : 'identity_mismatch',
+        'Agent message authority is invalid'
+      )
+    }
+
+    const message: AgentChannelMessage = {
+      channelId: post.channelId,
+      sequence: loaded.messages.length + 1,
+      messageId: randomUUID(),
+      authorMemberId: post.agentMemberId,
+      clientMessageId,
+      kind: 'agent.text',
+      content: post.content,
+      acceptedAt,
+      contentHash: post.contentHash,
+      agentProof: {
+        authorityRevision: authority.authorityRevision,
+        signedPost: authority.signedPost
+      }
+    }
+    const serialized = `${JSON.stringify(storedMessage(message))}\n`
+    this.appendDurably(post.channelId, serialized)
+    loaded.messages.push(message)
+    loaded.idempotency.set(key, message)
+    this.channels.recordCommittedMessage(post.channelId, message.sequence, acceptedAt)
     return { record: clone(message), deduplicated: false }
   }
 
@@ -386,7 +632,16 @@ export class ChannelMessageLog {
       const line = lines[index]
       if (!line) continue
       try {
-        messages.push(validateStoredMessage(JSON.parse(line), channelId, messages.length + 1))
+        messages.push(
+          validateStoredMessage(
+            JSON.parse(line),
+            channelId,
+            messages.length + 1,
+            this.channels,
+            this.redactContent,
+            this.agentAuthority
+          )
+        )
       } catch (error) {
         if (index === lastNonEmpty && !source.endsWith('\n')) {
           // A partial final write was never acknowledged. Retain only the
@@ -443,16 +698,36 @@ export class ChannelMessageLog {
     }
   }
 
+  private requireActiveAgentMember(
+    signedPost: SignedChannelAgentPost,
+    acceptedAt: number
+  ): AgentChannelMember {
+    const post = signedPost.post
+    const channel = this.channels.getChannel(post.channelId)
+    if (!channel) throw new ChannelError('not_member', 'Channel was not found')
+    if (channel.status !== 'active') throw new ChannelError('channel_closed', 'Channel is closed')
+    const member = this.channels.getMember(post.channelId, post.agentMemberId)
+    if (!member || member.kind !== 'agent') {
+      throw new ChannelError('not_member', 'Agent member was not found')
+    }
+    if (member.status === 'revoked') {
+      throw new ChannelError('revoked', 'Agent member is revoked')
+    }
+    if (
+      member.status !== 'active' ||
+      member.agentSeatId !== post.agentSeatId ||
+      member.identityPublicKey !== post.agentPublicKeyB64 ||
+      member.keyGeneration !== post.keyGeneration ||
+      member.joinedAt > post.createdAt ||
+      member.joinedAt > acceptedAt
+    ) {
+      throw new ChannelError('identity_mismatch', 'Agent member binding is invalid')
+    }
+    return member
+  }
+
   private repairTornTail(path: string, messages: ChannelMessage[]) {
-    const records = messages.map((message) => {
-      const stored: StoredChannelMessage = {
-        schemaVersion: CHANNEL_LOG_SCHEMA_VERSION,
-        ...message,
-        checksum: ''
-      }
-      stored.checksum = messageChecksum({ schemaVersion: CHANNEL_LOG_SCHEMA_VERSION, ...message })
-      return JSON.stringify(stored)
-    })
+    const records = messages.map((message) => JSON.stringify(storedMessage(message)))
     const temporary = `${path}.${randomUUID()}.tmp`
     writeFileSync(temporary, records.length ? `${records.join('\n')}\n` : '', 'utf8')
     renameSync(temporary, path)

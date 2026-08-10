@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -9,13 +10,25 @@ import {
   MAX_CHANNEL_MEMBERS,
   type TaskWraithReference
 } from './ChannelStore'
-import { ChannelMessageLog } from './ChannelMessageLog'
+import {
+  CHANNEL_LOG_SCHEMA_VERSION,
+  ChannelMessageLog,
+  redactChannelContent
+} from './ChannelMessageLog'
 import {
   CHANNEL_AGENT_PROTOCOL_VERSION,
+  hashChannelAgentContent,
   signChannelAgentDelegation,
-  type ChannelAgentDelegation
+  signChannelAgentDispatchGrant,
+  signChannelAgentPost,
+  signChannelAgentRevocation,
+  type ChannelAgentDelegation,
+  type ChannelAgentDispatchGrant,
+  type ChannelAgentPost,
+  type ChannelAgentRevocation
 } from '../../shared/collaboration/ChannelAgentProtocol'
 import { exportRawEd25519PublicKey, generateIdentityKeyPair } from '../../shared/e2ee/keys'
+import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
 
 const temporaryPaths: string[] = []
 
@@ -85,6 +98,98 @@ function agentChannelFixture() {
     baseDelegation,
     signDelegation,
     ...created
+  }
+}
+
+function agentLogFixture() {
+  const fixture = agentChannelFixture()
+  const signedDelegation = fixture.signDelegation()
+  const member = fixture.store.registerAgentMember({
+    channelId: fixture.channel.channelId,
+    displayName: 'Build Agent',
+    signedDelegation,
+    now: 2_000
+  })
+  const grantValue: ChannelAgentDispatchGrant = {
+    schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+    grantId: 'grant-agent-1',
+    channelId: fixture.channel.channelId,
+    ownerMemberId: fixture.owner.memberId,
+    agentMemberId: member.memberId,
+    agentSeatId: member.agentSeatId,
+    agentPublicKeyB64: member.identityPublicKey,
+    keyGeneration: member.keyGeneration,
+    delegationId: signedDelegation.delegation.delegationId,
+    trigger: 'mention',
+    allowedMentionerMemberIds: [fixture.owner.memberId],
+    workspaceIdentityHash: 'a'.repeat(64),
+    permissionPostureHash: 'b'.repeat(64),
+    issuedAt: 1_000,
+    notBefore: 1_000,
+    expiresAt: 100_000,
+    maxDispatches: 2
+  }
+  const signedGrant = signChannelAgentDispatchGrant(fixture.ownerKeys.privateKey, grantValue)
+  const makeAuthority = () =>
+    new ChannelAgentAuthorityStore({
+      storageDirectory: join(fixture.directory, 'agent-authority'),
+      resolveOwnerPublicKey: (channelId, ownerMemberId) =>
+        channelId === fixture.channel.channelId && ownerMemberId === fixture.owner.memberId
+          ? fixture.ownerKeys.publicKey
+          : null,
+      platform: 'darwin'
+    })
+  const authority = makeAuthority()
+  authority.registerDelegation(signedDelegation)
+  authority.registerDispatchGrant(signedGrant)
+  authority.consumeDispatch(fixture.channel.channelId, {
+    grantId: grantValue.grantId,
+    triggerMessageId: 'trigger-message-1',
+    mentionerMemberId: fixture.owner.memberId,
+    workspaceIdentityHash: grantValue.workspaceIdentityHash,
+    permissionPostureHash: grantValue.permissionPostureHash,
+    at: 3_000
+  })
+  const postValue = (overrides: Partial<ChannelAgentPost> = {}): ChannelAgentPost => {
+    const content = overrides.content ?? 'Agent result'
+    return {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      channelId: fixture.channel.channelId,
+      agentMemberId: member.memberId,
+      agentSeatId: member.agentSeatId,
+      agentPublicKeyB64: member.identityPublicKey,
+      keyGeneration: member.keyGeneration,
+      delegationId: signedDelegation.delegation.delegationId,
+      dispatchGrantId: grantValue.grantId,
+      triggerMessageId: 'trigger-message-1',
+      runId: 'run-agent-1',
+      runAuthorityHash: 'c'.repeat(64),
+      clientMessageId: 'agent-client-1',
+      kind: 'agent.text',
+      content,
+      contentHash: hashChannelAgentContent(content),
+      createdAt: 4_000,
+      ...overrides
+    }
+  }
+  const signPost = (overrides: Partial<ChannelAgentPost> = {}) =>
+    signChannelAgentPost(fixture.agentKeys.privateKey, postValue(overrides))
+  const log = new ChannelMessageLog(
+    join(fixture.directory, 'logs'),
+    fixture.store,
+    redactChannelContent,
+    authority
+  )
+  return {
+    ...fixture,
+    authority,
+    makeAuthority,
+    signedDelegation,
+    signedGrant,
+    member,
+    postValue,
+    signPost,
+    log
   }
 }
 
@@ -721,6 +826,201 @@ describe('ChannelMessageLog', () => {
         }),
       'idempotency_conflict'
     )
+  })
+
+  it('durably appends and restart-verifies signed agent text with its authority prefix', () => {
+    const { directory, storePath, channel, member, signPost, log, makeAuthority } =
+      agentLogFixture()
+    const signedPost = signPost()
+    const appended = log.appendSignedAgentPost({ signedPost, now: 5_000 })
+    expect(appended).toMatchObject({
+      deduplicated: false,
+      record: {
+        sequence: 1,
+        authorMemberId: member.memberId,
+        kind: 'agent.text',
+        content: 'Agent result',
+        agentProof: { authorityRevision: 3, signedPost }
+      }
+    })
+
+    const path = join(directory, 'logs', `${channel.channelId}.jsonl`)
+    const stored = JSON.parse(readFileSync(path, 'utf8')) as {
+      schemaVersion: number
+      agentProof: { authorityRevision: number }
+    }
+    expect(stored).toMatchObject({
+      schemaVersion: CHANNEL_LOG_SCHEMA_VERSION,
+      kind: 'agent.text',
+      agentProof: { authorityRevision: 3 }
+    })
+
+    const restarted = new ChannelMessageLog(
+      join(directory, 'logs'),
+      new ChannelStore(storePath),
+      redactChannelContent,
+      makeAuthority()
+    )
+    expect(restarted.replay({ channelId: channel.channelId, resumeAfter: 0 })).toEqual({
+      records: [appended.record],
+      highWaterSequence: 1
+    })
+  })
+
+  it('deduplicates a historical agent post after revocation without admitting a rewrite', () => {
+    const {
+      directory,
+      storePath,
+      store,
+      channel,
+      owner,
+      member,
+      authority,
+      makeAuthority,
+      signedGrant,
+      ownerKeys,
+      signPost,
+      log
+    } = agentLogFixture()
+    const signedPost = signPost()
+    const appended = log.appendSignedAgentPost({ signedPost, now: 5_000 })
+    const revocation: ChannelAgentRevocation = {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      revocationId: 'revoke-agent-posts',
+      channelId: channel.channelId,
+      ownerMemberId: owner.memberId,
+      agentSeatId: member.agentSeatId,
+      keyGeneration: member.keyGeneration,
+      targetKind: 'dispatch_grant',
+      targetId: signedGrant.grant.grantId,
+      revokedAt: 6_000,
+      reason: 'owner_revoked'
+    }
+    authority.registerRevocation(signChannelAgentRevocation(ownerKeys.privateKey, revocation))
+    store.revokeMember({ channelId: channel.channelId, memberId: member.memberId, now: 6_000 })
+
+    const restarted = new ChannelMessageLog(
+      join(directory, 'logs'),
+      new ChannelStore(storePath),
+      redactChannelContent,
+      makeAuthority()
+    )
+    expect(restarted.appendSignedAgentPost({ signedPost, now: 7_000 })).toEqual({
+      record: appended.record,
+      deduplicated: true
+    })
+    expectCode(
+      () =>
+        restarted.appendSignedAgentPost({
+          signedPost: signPost({ content: 'Changed result' }),
+          now: 7_000
+        }),
+      'idempotency_conflict'
+    )
+    expectCode(
+      () =>
+        restarted.appendSignedAgentPost({
+          signedPost: signPost({
+            clientMessageId: 'agent-client-after-revocation',
+            createdAt: 7_000
+          }),
+          now: 7_000
+        }),
+      'revoked'
+    )
+  })
+
+  it('rejects forged, unconsumed, unredacted, and authority-free agent posts', () => {
+    const { directory, store, channel, agentKeys, postValue, signPost, log } = agentLogFixture()
+    const foreignAgent = generateIdentityKeyPair()
+    expectCode(
+      () =>
+        log.appendSignedAgentPost({
+          signedPost: signChannelAgentPost(foreignAgent.privateKey, postValue()),
+          now: 5_000
+        }),
+      'identity_mismatch'
+    )
+    expectCode(
+      () =>
+        log.appendSignedAgentPost({
+          signedPost: signPost({ triggerMessageId: 'unconsumed-trigger' }),
+          now: 5_000
+        }),
+      'identity_mismatch'
+    )
+    expectCode(
+      () =>
+        log.appendSignedAgentPost({
+          signedPost: signChannelAgentPost(
+            agentKeys.privateKey,
+            postValue({ content: 'token=super-secret-value' })
+          ),
+          now: 5_000
+        }),
+      'protocol_unsupported'
+    )
+    const authorityFree = new ChannelMessageLog(join(directory, 'other-logs'), store)
+    expectCode(
+      () => authorityFree.appendSignedAgentPost({ signedPost: signPost(), now: 5_000 }),
+      'protocol_unsupported'
+    )
+    expect(log.highWaterSequence(channel.channelId)).toBe(0)
+  })
+
+  it('loads schema-v1 human records and writes only new records with schema v2', () => {
+    const { directory, storePath, channel, owner, log } = channelFixture()
+    log.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'legacy-one',
+      content: 'legacy'
+    })
+    const path = join(directory, 'logs', `${channel.channelId}.jsonl`)
+    const legacy = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    legacy.schemaVersion = 1
+    const { checksum: _checksum, ...withoutChecksum } = legacy
+    legacy.checksum = createHash('sha256')
+      .update(JSON.stringify(withoutChecksum), 'utf8')
+      .digest('hex')
+    writeFileSync(path, `${JSON.stringify(legacy)}\n`, 'utf8')
+
+    const restarted = new ChannelMessageLog(join(directory, 'logs'), new ChannelStore(storePath))
+    expect(restarted.highWaterSequence(channel.channelId)).toBe(1)
+    restarted.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'current-two',
+      content: 'current'
+    })
+    const versions = readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => (JSON.parse(line) as { schemaVersion: number }).schemaVersion)
+    expect(versions).toEqual([1, CHANNEL_LOG_SCHEMA_VERSION])
+  })
+
+  it('blocks restart when an agent proof revision is rewritten even with a fresh checksum', () => {
+    const { directory, storePath, channel, signPost, log, makeAuthority } = agentLogFixture()
+    log.appendSignedAgentPost({ signedPost: signPost(), now: 5_000 })
+    const path = join(directory, 'logs', `${channel.channelId}.jsonl`)
+    const rewritten = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    ;(rewritten.agentProof as Record<string, unknown>).authorityRevision = 2
+    const { checksum: _checksum, ...withoutChecksum } = rewritten
+    rewritten.checksum = createHash('sha256')
+      .update(JSON.stringify(withoutChecksum), 'utf8')
+      .digest('hex')
+    writeFileSync(path, `${JSON.stringify(rewritten)}\n`, 'utf8')
+
+    const restarted = new ChannelMessageLog(
+      join(directory, 'logs'),
+      new ChannelStore(storePath),
+      redactChannelContent,
+      makeAuthority()
+    )
+    expectCode(() => restarted.highWaterSequence(channel.channelId), 'recovery_blocked')
   })
 
   it('redacts secrets and local paths before hashing and durable persistence', () => {
