@@ -683,7 +683,9 @@ export class ChannelAgentRunLaunchRegistry {
       entry.status !== 'consumption_intent_unknown' &&
       entry.status !== 'consumption_unknown' &&
       entry.status !== 'launch_intent_unknown' &&
-      entry.status !== 'launch_confirmation_unknown'
+      entry.status !== 'launching' &&
+      entry.status !== 'launch_confirmation_unknown' &&
+      !(entry.status === 'confirmed' && entry.terminalSettled)
     ) {
       throw registryError(
         'release_forbidden',

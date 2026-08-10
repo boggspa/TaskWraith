@@ -535,6 +535,35 @@ describe('ChannelAgentRunLaunchRegistry', () => {
     expect(h.registry.pendingCount()).toBe(0)
   })
 
+  it('releases recovery ownership only when no live terminal collection can be lost', async () => {
+    const unconfirmed = harness()
+    const unconfirmedRegistration = register(unconfirmed)
+    unconfirmedRegistration.authorizeBeforeAdapterRun(unconfirmed.expectedPayload)
+    expect(unconfirmedRegistration.status()).toBe('launching')
+    unconfirmedRegistration.releaseForRecovery()
+    expect(unconfirmedRegistration.status()).toBe('released')
+    expect(unconfirmed.registry.pendingCount()).toBe(0)
+
+    const confirmed = harness()
+    const confirmedRegistration = register(confirmed)
+    confirmedRegistration.authorizeBeforeAdapterRun(confirmed.expectedPayload)
+    confirmedRegistration.observer.onAdapterInvoked?.(receipt(confirmed))
+    expect(confirmedRegistration.status()).toBe('confirmed')
+    expectRegistryError(() => confirmedRegistration.releaseForRecovery(), 'release_forbidden')
+
+    const terminal: ChannelAgentRunTerminalEvidence = {
+      status: 'failed',
+      exitCode: 1,
+      content: 'Bounded failure terminal.',
+      observedAt: CONSUMED_AT + 2
+    }
+    confirmed.collector.settle(terminal)
+    await expect(confirmedRegistration.terminal).resolves.toEqual(terminal)
+    confirmedRegistration.releaseForRecovery()
+    expect(confirmedRegistration.status()).toBe('released')
+    expect(confirmed.registry.pendingCount()).toBe(0)
+  })
+
   it('registers only an exact reserved journal, plan, and expected payload', () => {
     const missing = harness()
     missing.journal.missing = true

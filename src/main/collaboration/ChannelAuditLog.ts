@@ -33,6 +33,10 @@ export type ChannelAuditEventKind =
   | 'agent.key.rotated'
   | 'agent.mention.rejected'
   | 'agent.dispatch.blocked'
+  | 'agent.dispatch.started'
+  | 'agent.dispatch.completed'
+  | 'agent.dispatch.failed'
+  | 'agent.post.committed'
   | 'protocol.rejected'
 
 export interface ChannelAuditEvent {
@@ -100,8 +104,14 @@ export class ChannelAuditLog implements ChannelAuditLike {
       ...(input.detail ? { detail: sanitizeDetail(input.detail) } : {}),
       ...(input.dedupeKey ? { dedupeKey: input.dedupeKey } : {})
     }
-    this.events = capChannelAuditEvents([...this.events, event])
-    this.persist()
+    const previous = this.events
+    this.events = capChannelAuditEvents([...previous, event])
+    try {
+      this.persist()
+    } catch (error) {
+      this.events = previous
+      throw error
+    }
   }
 
   list(args?: { channelId?: string; limit?: number }): ChannelAuditEvent[] {

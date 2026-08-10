@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -142,6 +142,84 @@ describe('ChannelAuditLog', () => {
       /dedupe key is invalid/
     )
     expect(restarted.list()).toHaveLength(1)
+  })
+
+  it('retains deduplicated agent dispatch and post evidence without provider output', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-channel-dispatch-audit-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'audit.json')
+    const log = new ChannelAuditLog(path)
+    const entries = [
+      { kind: 'agent.dispatch.started' as const, code: 'codex', dedupeKey: '1'.repeat(64) },
+      {
+        kind: 'agent.dispatch.completed' as const,
+        code: 'succeeded',
+        dedupeKey: '2'.repeat(64)
+      },
+      {
+        kind: 'agent.dispatch.failed' as const,
+        code: 'launch_outcome_unknown',
+        dedupeKey: '3'.repeat(64)
+      },
+      {
+        kind: 'agent.post.committed' as const,
+        code: 'appended',
+        dedupeKey: '4'.repeat(64)
+      }
+    ]
+    for (const entry of entries) {
+      log.append({
+        ...entry,
+        channelId: 'channel',
+        memberId: 'agent-member',
+        contentHash: 'd'.repeat(64),
+        detail: 'provider=codex;status=succeeded',
+        at: 20
+      })
+      log.append({ ...entry, channelId: 'channel', memberId: 'agent-member', at: 21 })
+    }
+
+    const restarted = new ChannelAuditLog(path)
+    expect(restarted.list().map((event) => event.kind)).toEqual([
+      'agent.post.committed',
+      'agent.dispatch.failed',
+      'agent.dispatch.completed',
+      'agent.dispatch.started'
+    ])
+    const durable = readFileSync(path, 'utf8')
+    expect(durable).not.toContain('provider output')
+    expect(durable).not.toContain('prompt')
+    expect(durable).not.toContain('Exact terminal reply')
+  })
+
+  it('rolls back a failed durable append so the same dedupe key can be retried', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-channel-audit-retry-'))
+    temporaryDirectories.push(directory)
+    const blockedParent = join(directory, 'blocked-parent')
+    const path = join(blockedParent, 'audit.json')
+    writeFileSync(blockedParent, 'not-a-directory')
+    const log = new ChannelAuditLog(path)
+    const input = {
+      kind: 'agent.post.committed' as const,
+      channelId: 'channel',
+      memberId: 'agent-member',
+      code: 'appended',
+      dedupeKey: '4'.repeat(64),
+      at: 22
+    }
+
+    expect(() => log.append(input)).toThrow()
+    expect(log.list()).toEqual([])
+
+    rmSync(blockedParent)
+    mkdirSync(blockedParent)
+    expect(() => log.append(input)).not.toThrow()
+    expect(new ChannelAuditLog(path).list()).toEqual([
+      expect.objectContaining({
+        kind: 'agent.post.committed',
+        dedupeKey: '4'.repeat(64)
+      })
+    ])
   })
 
   it('purges selected Channel evidence and reserves global purge for whole-history deletion', () => {

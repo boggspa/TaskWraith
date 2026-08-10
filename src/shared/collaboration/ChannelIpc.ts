@@ -112,6 +112,10 @@ export type ChannelIpcAuditEventKind =
   | 'agent.key.rotated'
   | 'agent.mention.rejected'
   | 'agent.dispatch.blocked'
+  | 'agent.dispatch.started'
+  | 'agent.dispatch.completed'
+  | 'agent.dispatch.failed'
+  | 'agent.post.committed'
   | 'protocol.rejected'
 
 export interface ChannelIpcAuditEvent {
