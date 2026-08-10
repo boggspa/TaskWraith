@@ -465,6 +465,9 @@ describe('PeopleToChannelMigrationPlan', () => {
       'invalid_legacy_evidence',
       'source_chat_not_channel_eligible'
     ])
+
+    const untitled = createPeopleToChannelMigrationPlan(input({ chats: [chat({ title: '   ' })] }))
+    expect(untitled.entries[0].blockers).toContain('invalid_source_title')
   })
 
   it('blocks target authority conflicts and a closed Channel', () => {

@@ -75,6 +75,7 @@ export type PeopleToChannelMigrationBlocker =
   | 'invalid_channel_schema'
   | 'invalid_legacy_evidence'
   | 'invalid_source_identifier'
+  | 'invalid_source_title'
   | 'invalid_target_identifier'
   | 'missing_active_member_room'
   | 'missing_source_chat'
@@ -512,7 +513,10 @@ function entryForShare(args: {
   const chat = chatMatches[0]
   if (chatMatches.length > 1) blockers.push('duplicate_chat_inventory')
   if (!chat) blockers.push('missing_source_chat')
-  else if (!isEligibleSourceChat(chat)) blockers.push('source_chat_not_channel_eligible')
+  else {
+    if (!isEligibleSourceChat(chat)) blockers.push('source_chat_not_channel_eligible')
+    if (!chat.title.trim() || chat.title.length > 200) blockers.push('invalid_source_title')
+  }
   if (!pathIdentifier(share.shareId) || !boundedIdentifier(share.chatId)) {
     blockers.push('invalid_source_identifier')
   }

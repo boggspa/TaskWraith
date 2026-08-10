@@ -1,0 +1,290 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import type { ChatMessage } from '../store/types'
+import type { HumanCollaborationShare } from './HumanCollaborationStore'
+import { contributionRulesForPreset } from './HumanContributionRules'
+import type { Channel, ChannelInvite, ChannelMember } from './ChannelStore'
+import {
+  inventoryPeopleToChannelMigration,
+  PeopleToChannelMigrationInventoryError,
+  type PeopleToChannelInventoryChat,
+  type PeopleToChannelMigrationInventoryInput
+} from './PeopleToChannelMigrationInventory'
+import {
+  EXTERNAL_SEAT_TURN_KIND,
+  HUMAN_COLLABORATOR_COMMENT_KIND
+} from './HumanCollaboratorMessages'
+
+const HOST_KEY = 'host-key-private-material'
+const MEMBER_KEY = 'member-key-private-material'
+
+function share(overrides: Partial<HumanCollaborationShare> = {}): HumanCollaborationShare {
+  return {
+    shareId: 'share_one',
+    chatId: 'chat_one',
+    mode: 'comments',
+    enabled: true,
+    createdAt: 100,
+    updatedAt: 200,
+    nextSequence: 3,
+    participants: [
+      {
+        collaboratorId: 'collaborator_one',
+        displayName: 'Private Person',
+        publicKeyId: MEMBER_KEY,
+        status: 'active',
+        joinedAt: 120
+      }
+    ],
+    invites: [
+      {
+        inviteId: 'invite_one',
+        tokenHash: 'people-token-hash',
+        createdAt: 110,
+        expiresAt: 500,
+        consumedAt: 120,
+        collaboratorId: 'collaborator_one',
+        roomId: 'people-private-room'
+      }
+    ],
+    idempotency: {},
+    contributionRules: contributionRulesForPreset('comments'),
+    ...overrides
+  }
+}
+
+function contribution(
+  kind: typeof HUMAN_COLLABORATOR_COMMENT_KIND | typeof EXTERNAL_SEAT_TURN_KIND,
+  sequence: number,
+  content: string
+): ChatMessage {
+  return {
+    id: `message_${sequence}`,
+    role: 'system',
+    content,
+    timestamp: `2026-08-10T00:00:0${sequence}.000Z`,
+    metadata: {
+      kind,
+      sourceTrust: 'external_untrusted',
+      shareId: 'share_one',
+      collaboratorId: 'collaborator_one',
+      collaboratorDisplayName: 'Private Person',
+      clientMessageId: `client_${sequence}`,
+      sequence
+    }
+  }
+}
+
+function chat(overrides: Partial<PeopleToChannelInventoryChat> = {}): PeopleToChannelInventoryChat {
+  return {
+    appChatId: 'chat_one',
+    title: 'Private chat title',
+    chatKind: 'single',
+    messages: [
+      contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'private comment content'),
+      contribution(EXTERNAL_SEAT_TURN_KIND, 2, 'private delivered content')
+    ],
+    ...overrides
+  }
+}
+
+function existingChannel(): Channel {
+  return {
+    channelId: 'channel_existing',
+    chatId: 'chat_one',
+    ownerMemberId: 'owner_existing',
+    status: 'active',
+    createdAt: 1,
+    updatedAt: 2,
+    membershipRevision: 2,
+    messageCount: 0,
+    display: { title: 'Existing title', status: 'active', memberCount: 2, messageCount: 0 }
+  }
+}
+
+function existingMembers(): ChannelMember[] {
+  return [
+    {
+      memberId: 'owner_existing',
+      channelId: 'channel_existing',
+      kind: 'human',
+      displayName: 'Host',
+      identityPublicKey: HOST_KEY,
+      status: 'active',
+      joinedAt: 1
+    },
+    {
+      memberId: 'member_existing',
+      channelId: 'channel_existing',
+      kind: 'human',
+      displayName: 'Private Person',
+      identityPublicKey: MEMBER_KEY,
+      status: 'active',
+      roomId: 'channel-private-room',
+      joinedAt: 2
+    }
+  ]
+}
+
+function inventoryInput(
+  overrides: Partial<PeopleToChannelMigrationInventoryInput> = {}
+): PeopleToChannelMigrationInventoryInput {
+  return {
+    hostIdentityPublicKey: HOST_KEY,
+    people: { readMigrationSnapshot: () => ({ shares: [share()] }) },
+    channels: {
+      listChannels: () => [],
+      listMembers: () => [],
+      listInvites: () => []
+    },
+    chats: [chat()],
+    ...overrides
+  }
+}
+
+describe('PeopleToChannelMigrationInventory', () => {
+  it('hashes legacy contribution content into a deterministic content-free plan', () => {
+    const source = inventoryInput()
+    const before = JSON.stringify(source.chats)
+    const plan = inventoryPeopleToChannelMigration(source)
+    const again = inventoryPeopleToChannelMigration(source)
+
+    expect(plan).toEqual(again)
+    expect(JSON.stringify(source.chats)).toBe(before)
+    expect(plan.entries[0]).toMatchObject({
+      disposition: 'create',
+      blockers: [],
+      source: {
+        history: {
+          commentCount: 1,
+          externalSeatTurnCount: 1,
+          highestSequence: 2
+        }
+      }
+    })
+    expect(plan.entries[0].source.history.evidenceDigest).toMatch(/^[a-f0-9]{64}$/)
+
+    const serialized = JSON.stringify(plan)
+    for (const privateValue of [
+      'Private chat title',
+      'Private Person',
+      'private comment content',
+      'private delivered content',
+      'people-private-room',
+      'people-token-hash',
+      HOST_KEY,
+      MEMBER_KEY
+    ]) {
+      expect(serialized).not.toContain(privateValue)
+    }
+  })
+
+  it('binds the plan digest to content without retaining the content', () => {
+    const first = inventoryPeopleToChannelMigration(inventoryInput())
+    const changed = inventoryPeopleToChannelMigration(
+      inventoryInput({
+        chats: [
+          chat({
+            messages: [contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'changed private content')]
+          })
+        ]
+      })
+    )
+
+    expect(changed.sourceDigest).not.toBe(first.sourceDigest)
+    expect(JSON.stringify(changed)).not.toContain('changed private content')
+  })
+
+  it('collects existing Channel membership once per Channel for identity-safe merge planning', () => {
+    const listChannels = vi.fn(() => [existingChannel()])
+    const listMembers = vi.fn(() => existingMembers())
+    const listInvites = vi.fn((): ChannelInvite[] => [])
+    const plan = inventoryPeopleToChannelMigration(
+      inventoryInput({ channels: { listChannels, listMembers, listInvites } })
+    )
+
+    expect(listChannels).toHaveBeenCalledTimes(1)
+    expect(listMembers).toHaveBeenCalledWith('channel_existing')
+    expect(listInvites).toHaveBeenCalledWith('channel_existing')
+    expect(plan.entries[0]).toMatchObject({
+      disposition: 'merge',
+      blockers: [],
+      target: {
+        channelId: 'channel_existing',
+        memberMappings: [
+          {
+            sourceCollaboratorId: 'collaborator_one',
+            targetMemberId: 'member_existing',
+            reusedExistingMember: true
+          }
+        ]
+      }
+    })
+  })
+
+  it('marks workflow, ensemble, and linked-child chats as ineligible without guessing', () => {
+    for (const chats of [
+      [chat({ chatKind: 'ensemble' })],
+      [chat({ parentChatId: 'parent', parentChatRelation: 'subThread' })],
+      [chat({ sideChatContext: { createdAt: 100 } })]
+    ]) {
+      const plan = inventoryPeopleToChannelMigration(inventoryInput({ chats }))
+      expect(plan.entries[0].blockers).toContain('source_chat_not_channel_eligible')
+    }
+
+    const workflow = inventoryPeopleToChannelMigration(
+      inventoryInput({ workflowChatIds: ['chat_one'] })
+    )
+    expect(workflow.entries[0].blockers).toContain('source_chat_not_channel_eligible')
+  })
+
+  it('fails recovery closed on malformed or duplicated legacy contribution evidence', () => {
+    const malformed = contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'private')
+    delete malformed.metadata!.clientMessageId
+    expect(() =>
+      inventoryPeopleToChannelMigration(
+        inventoryInput({ chats: [chat({ messages: [malformed] })] })
+      )
+    ).toThrow(PeopleToChannelMigrationInventoryError)
+
+    const duplicateSequence = contribution(EXTERNAL_SEAT_TURN_KIND, 1, 'different private row')
+    duplicateSequence.id = 'message_duplicate'
+    duplicateSequence.metadata!.clientMessageId = 'client_duplicate'
+    expect(() =>
+      inventoryPeopleToChannelMigration(
+        inventoryInput({
+          chats: [
+            chat({
+              messages: [
+                contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'private'),
+                duplicateSequence
+              ]
+            })
+          ]
+        })
+      )
+    ).toThrow(/sequences are duplicated/)
+  })
+
+  it('ignores unrelated transcript rows and accepts legacy kind-only People evidence', () => {
+    const legacy = contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'legacy private row')
+    delete legacy.metadata!.sourceTrust
+    const unrelated: ChatMessage = {
+      id: 'ordinary',
+      role: 'user',
+      content: 'ordinary host content',
+      timestamp: '2026-08-10T00:00:00.000Z'
+    }
+    const plan = inventoryPeopleToChannelMigration(
+      inventoryInput({ chats: [chat({ messages: [unrelated, legacy] })] })
+    )
+
+    expect(plan.entries[0].source.history).toMatchObject({
+      commentCount: 1,
+      externalSeatTurnCount: 0,
+      highestSequence: 1
+    })
+    expect(JSON.stringify(plan)).not.toContain('ordinary host content')
+    expect(JSON.stringify(plan)).not.toContain('legacy private row')
+  })
+})
