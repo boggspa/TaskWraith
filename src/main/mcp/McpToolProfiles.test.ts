@@ -499,10 +499,12 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // Re-measured 2026-08-10: ephemeral fleet schema on delegate_wave
     // (lifecycle / allowMultiProvider / role / label / minItems 1 / maxItems 64)
     // + compact blurb rewrite. Fresh +201; mesh moves with the same compact path.
-    expect(fullChars).toBe(144_343)
-    expect(gatewayChars).toBe(41_748)
-    expect(freshGatewayChars).toBe(37_997)
-    expect(freshMeshGatewayChars).toBe(39_818)
+    // Re-measured after Muse joined the closed ProviderId schemas: full +91
+    // and immutable v1 gateway +35; fresh compact profiles grow by 28.
+    expect(fullChars).toBe(144_434)
+    expect(gatewayChars).toBe(41_783)
+    expect(freshGatewayChars).toBe(38_025)
+    expect(freshMeshGatewayChars).toBe(39_846)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBeLessThan(40_000)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)

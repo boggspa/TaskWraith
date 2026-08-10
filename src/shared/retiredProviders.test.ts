@@ -47,10 +47,12 @@ describe('retiredProviders', () => {
       'grok',
       'ollama',
       'pi',
-      'mistral'
+      'mistral',
+      'muse'
     ])
     expect(isLiveSelectableProvider('pi')).toBe(true)
     expect(isLiveSelectableProvider('mistral')).toBe(true)
+    expect(isLiveSelectableProvider('muse')).toBe(true)
     expect(isLiveSelectableProvider('codex')).toBe(true)
     expect(isLiveSelectableProvider('cursor')).toBe(true)
     expect(isLiveSelectableProvider('gemini')).toBe(false)

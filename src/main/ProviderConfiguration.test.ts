@@ -241,9 +241,9 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       expect(getOllamaStatus).not.toHaveBeenCalled()
       expect(onDiscoveryComplete).not.toHaveBeenCalled()
 
-      // Five staggered probes now (kimi, ollama, grok, cursor, pi at 100ms
-      // apart); pi resolves a binary but stores no keys, so it completes the
-      // round without joining the configured set.
+      // Six staggered probes now (kimi, ollama, grok, cursor, pi, muse at
+      // 100ms apart); pi and muse resolve binaries but have no injected
+      // credentials, so they complete the round without joining the set.
       await vi.advanceTimersByTimeAsync(500)
       await expect(discovery.snapshot(settings)).resolves.toEqual(
         new Set(['kimi', 'ollama', 'grok', 'cursor'])
@@ -253,14 +253,14 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
         configuredProviders: new Set(['kimi', 'ollama', 'grok', 'cursor'])
       })
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
-      expect(resolveProviderBinary).toHaveBeenCalledTimes(3)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(4)
       expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
 
       discovery.start(settings)
       await vi.runAllTimersAsync()
       expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
-      expect(resolveProviderBinary).toHaveBeenCalledTimes(3)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(4)
       expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
