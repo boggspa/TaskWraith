@@ -1,9 +1,7 @@
 import { createHash } from 'crypto'
 
 import {
-  CHANNEL_AGENT_PROTOCOL_VERSION,
   hashChannelAgentContent,
-  signChannelAgentPost,
   type SignedChannelAgentPost
 } from '../../shared/collaboration/ChannelAgentProtocol'
 import type {
@@ -13,14 +11,12 @@ import type {
   RunDispatchObserver
 } from '../run/AgentRunTypes'
 import type { ChannelAuditInput, ChannelAuditLike } from './ChannelAuditLog'
-import {
-  hashChannelAgentRunAuthoritySeal,
-  type ChannelAgentDispatchPlan,
-  type ChannelAgentRunAuthoritySeal
+import type {
+  ChannelAgentDispatchPlan,
+  ChannelAgentRunAuthoritySeal
 } from './ChannelAgentDispatchAuthority'
 import {
   ChannelAgentDispatchJournalState,
-  channelAgentPostClientMessageId,
   type ChannelAgentDispatchJournalBinding,
   type ChannelAgentDispatchJournalSnapshot
 } from './ChannelAgentDispatchJournalState'
@@ -32,6 +28,7 @@ import type { ChannelAgentIdentityStore } from './ChannelAgentIdentityStore'
 import type { ChannelAppendResult, AgentChannelMessage } from './ChannelMessageLog'
 import type { ChannelAgentRunTerminalEvidence } from './ChannelAgentRunEventCollector'
 import type { ChannelAgentRunComposer } from './ChannelAgentRunComposer'
+import { signChannelAgentTerminalPost } from './ChannelAgentTerminalPostSigner'
 import type {
   ChannelAgentRunLaunchRegistration,
   ChannelAgentRunLaunchRegistry,
@@ -365,8 +362,9 @@ export class ChannelAgentDispatchCoordinator {
       this.tryReleaseForRecovery(registration)
       return { ...base, kind: 'recovery_required', stage: 'terminal' }
     }
+    let terminalSnapshot: ChannelAgentDispatchJournalSnapshot
     try {
-      this.options.journal.recordTerminal(plan.channelId, binding.dispatchId, {
+      terminalSnapshot = this.options.journal.recordTerminal(plan.channelId, binding.dispatchId, {
         status: terminal.status,
         exitCode: terminal.exitCode,
         content: terminal.content,
@@ -389,7 +387,15 @@ export class ChannelAgentDispatchCoordinator {
 
     let signedPost: SignedChannelAgentPost
     try {
-      signedPost = this.signTerminalPost(plan, binding, seal, terminal)
+      const identity = this.options.identities.load(plan.seat.agentSeatId)
+      if (!identity || identity.publicKeyB64 !== plan.member.identityPublicKey) {
+        throw new Error('identity unavailable')
+      }
+      signedPost = signChannelAgentTerminalPost({
+        snapshot: terminalSnapshot,
+        identity,
+        at: this.currentTime(terminal.observedAt)
+      })
     } catch {
       return this.finishPostAuthorityFailure(plan, binding, registration, terminal)
     }
@@ -466,46 +472,6 @@ export class ChannelAgentDispatchCoordinator {
       record: appended.record,
       deduplicated: appended.deduplicated
     }
-  }
-
-  private signTerminalPost(
-    plan: ChannelAgentDispatchPlan,
-    binding: ChannelAgentDispatchJournalBinding,
-    seal: ChannelAgentRunAuthoritySeal,
-    terminal: ChannelAgentRunTerminalEvidence
-  ): SignedChannelAgentPost {
-    const identity = this.options.identities.load(plan.seat.agentSeatId)
-    if (
-      !identity ||
-      identity.agentSeatId !== plan.seat.agentSeatId ||
-      identity.keyGeneration !== plan.member.keyGeneration ||
-      identity.publicKeyB64 !== plan.member.identityPublicKey
-    ) {
-      throw new Error('identity unavailable')
-    }
-    const createdAt = this.currentTime(terminal.observedAt)
-    const delegation = plan.delegation.delegation
-    if (createdAt < delegation.notBefore || createdAt >= delegation.expiresAt) {
-      throw new Error('post authority expired')
-    }
-    return signChannelAgentPost(identity.privateKey, {
-      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
-      channelId: plan.channelId,
-      agentMemberId: plan.member.memberId,
-      agentSeatId: plan.seat.agentSeatId,
-      agentPublicKeyB64: identity.publicKeyB64,
-      keyGeneration: identity.keyGeneration,
-      delegationId: delegation.delegationId,
-      dispatchGrantId: plan.dispatchGrant.grant.grantId,
-      triggerMessageId: plan.triggerMessageId,
-      runId: binding.runId,
-      runAuthorityHash: hashChannelAgentRunAuthoritySeal(seal),
-      clientMessageId: channelAgentPostClientMessageId(binding.dispatchId),
-      kind: 'agent.text',
-      content: terminal.content,
-      contentHash: hashChannelAgentContent(terminal.content),
-      createdAt
-    })
   }
 
   private decline(
