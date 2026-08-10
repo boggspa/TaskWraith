@@ -8883,8 +8883,11 @@
 /* Top reasoning tiers (Max + Ultra/Ultracode) — provider-hued shimmer sweep on
  * the effort label (chip suffix), for ANY provider whose ladder reaches them.
  * `--chip-accent` is the provider brand hue (set inline on the trigger); reuses
- * the global `text-shimmer-sweep` from transcript FX. */
+ * the global `text-shimmer-sweep` from transcript FX. Muse wire uses `ultra`;
+ * Codex/Claude use `ultracode` — both must shimmer. */
 .composer-combined-picker-trigger[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix,
+.composer-combined-picker-trigger[data-selected-reasoning="ultra"]
   .composer-combined-picker-trigger-suffix,
 .composer-combined-picker-trigger[data-selected-reasoning="max"]
   .composer-combined-picker-trigger-suffix {
@@ -8930,6 +8933,9 @@
 
 [data-reduce-motion="true"]
   .composer-combined-picker-trigger[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix,
+[data-reduce-motion="true"]
+  .composer-combined-picker-trigger[data-selected-reasoning="ultra"]
   .composer-combined-picker-trigger-suffix,
 [data-reduce-motion="true"]
   .composer-combined-picker-trigger[data-selected-reasoning="max"]
@@ -9052,6 +9058,9 @@
   .composer-combined-picker-trigger-suffix,
 :is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
   .composer-combined-picker-trigger[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix,
+:is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
+  .composer-combined-picker-trigger[data-selected-reasoning="ultra"]
   .composer-combined-picker-trigger-suffix {
   animation: none !important;
   color: color-mix(in srgb, var(--chip-accent, #b088e8) 80%, var(--text-primary) 20%) !important;
@@ -12149,6 +12158,9 @@
  * gradient identical to that tier's composer rule above; they are the same
  * treatment seen through a different element. */
 .composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell,
+.composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="ultra"]
   .composer-combined-picker-trigger-suffix
   .digit-odometer__cell,
 .composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="max"]

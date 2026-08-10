@@ -335,6 +335,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     if (value === 'low') return 'Low'
     if (value === 'medium') return 'Medium'
     if (value === 'high') return 'High'
+    if (value === 'xhigh' || value === 'extra') return 'Extra High'
     if (value === 'ultra' || value === 'ultracode') return 'Ultra'
     return value.charAt(0).toUpperCase() + value.slice(1)
   }

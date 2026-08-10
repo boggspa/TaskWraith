@@ -193,6 +193,20 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('High')
   })
 
+  it('Muse Meta /effort labels match the slider ladder (including xhigh)', () => {
+    const base = {
+      provider: 'muse' as const,
+      composerStyle: 'codex' as const,
+      modelId: 'muse-spark-1.2',
+      modelLabel: 'Muse Spark 1.2'
+    }
+    expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'minimal' })).toBe('Minimal')
+    expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'low' })).toBe('Low')
+    expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'xhigh' })).toBe('Extra High')
+    expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'ultra' })).toBe('Ultra')
+    expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'none' })).toBe('')
+  })
+
   it('Claude xhigh and ultracode use TaskWraith labels', () => {
     expect(
       reasoningDisplayLabel({
