@@ -54,6 +54,7 @@ import { availableIconVariants, type AppIconVariant } from '../../../shared/icon
 import appIconRegularThumb from '../assets/app-icons/regular.png'
 import appIconMonolineThumb from '../assets/app-icons/monoline.png'
 import appIconGlassThumb from '../assets/app-icons/glass.png'
+import appIconLightMonolineThumb from '../assets/app-icons/light-monoline.png'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   COMPOSER_FONT_OPTIONS,
@@ -568,7 +569,8 @@ const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
 const APP_ICON_THUMBS: Record<AppIconVariant, string> = {
   regular: appIconRegularThumb,
   monoline: appIconMonolineThumb,
-  glass: appIconGlassThumb
+  glass: appIconGlassThumb,
+  lightMonoline: appIconLightMonolineThumb
 }
 /**
  * User chat-bubble colour palette. `system` (default) keeps the

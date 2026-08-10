@@ -16,7 +16,7 @@
  * `isAppIconVariant` and every consumer falls back to the default.
  */
 
-export type AppIconVariant = 'regular' | 'monoline' | 'glass'
+export type AppIconVariant = 'regular' | 'monoline' | 'glass' | 'lightMonoline'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'monoline'
 
@@ -29,12 +29,19 @@ export interface AppIconVariantMeta {
 export const APP_ICON_VARIANTS: readonly AppIconVariantMeta[] = [
   { id: 'monoline', label: 'Monoline', description: 'Outline ghost with a sculpted dark face.' },
   { id: 'regular', label: 'Regular', description: 'The sculpted glass ghost.' },
-  { id: 'glass', label: 'Glass', description: 'Frosted Liquid Glass ghost.' }
+  { id: 'glass', label: 'Glass', description: 'Frosted Liquid Glass ghost.' },
+  {
+    id: 'lightMonoline',
+    label: 'Light Monoline',
+    description: 'Bright monoline ghost on a soft light base.'
+  }
 ]
 
 /** True when `value` is a valid, currently-known variant id. */
 export function isAppIconVariant(value: unknown): value is AppIconVariant {
-  return value === 'regular' || value === 'monoline' || value === 'glass'
+  return (
+    value === 'regular' || value === 'monoline' || value === 'glass' || value === 'lightMonoline'
+  )
 }
 
 /** The variants to OFFER in a picker. All variants are always offered. */

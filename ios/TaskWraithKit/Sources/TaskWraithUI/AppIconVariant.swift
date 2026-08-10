@@ -14,6 +14,7 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
     case regular
     case monoline
     case glass
+    case lightMonoline
 
     public var id: String { rawValue }
 
@@ -23,6 +24,7 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
         case .monoline: return nil
         case .regular: return "AppIcon-Regular"
         case .glass: return "AppIcon-Glass"
+        case .lightMonoline: return "AppIcon-LightMonoline"
         }
     }
 
@@ -31,6 +33,7 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
         case .regular: return "Regular"
         case .monoline: return "Monoline"
         case .glass: return "Glass"
+        case .lightMonoline: return "Light Monoline"
         }
     }
 
@@ -40,6 +43,7 @@ public enum TWAppIconVariant: String, CaseIterable, Identifiable {
         case .regular: return "app-icon-regular"
         case .monoline: return "app-icon-monoline"
         case .glass: return "app-icon-glass"
+        case .lightMonoline: return "app-icon-light-monoline"
         }
     }
 

@@ -995,6 +995,9 @@ describe('MainSanitizers settings patches', () => {
     // whole key is silently dropped before it can persist.
     expect(sanitizeSettingsPatch({ appIconVariant: 'monoline' }).appIconVariant).toBe('monoline')
     expect(sanitizeSettingsPatch({ appIconVariant: 'regular' }).appIconVariant).toBe('regular')
+    expect(sanitizeSettingsPatch({ appIconVariant: 'lightMonoline' }).appIconVariant).toBe(
+      'lightMonoline'
+    )
     expect(
       'appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'bogus' as unknown as 'regular' })
     ).toBe(false)

@@ -1,16 +1,13 @@
 {
   "fill" : {
-    "solid" : "srgb:0.19002,0.17982,0.18577,1.00000"
+    "solid" : "srgb:0.49691,0.57551,0.65459,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
-          "blend-mode" : "normal",
-          "fill" : "automatic",
-          "hidden" : false,
-          "image-name" : "ghost-guy-mark-monoline.svg",
-          "name" : "ghost-guy-mark-monoline",
+          "image-name" : "ghost-guy-mark-monoline-white.svg",
+          "name" : "ghost-guy-mark-monoline-white",
           "opacity" : 1,
           "position" : {
             "scale" : 1.3,
@@ -24,8 +21,8 @@
           "blend-mode" : "normal",
           "fill" : {
             "linear-gradient" : [
-              "srgb:0.91150,0.89052,0.85029,1.00000",
-              "srgb:0.53443,0.61206,0.96184,0.89794"
+              "srgb:0.03578,0.03486,0.03340,1.00000",
+              "srgb:0.18731,0.21431,0.28398,0.89794"
             ],
             "orientation" : {
               "start" : {

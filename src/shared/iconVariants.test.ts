@@ -9,8 +9,13 @@ import {
 } from './iconVariants'
 
 describe('iconVariants', () => {
-  it('exposes the three variants with monoline as the default', () => {
-    expect(APP_ICON_VARIANTS.map((v) => v.id)).toEqual(['monoline', 'regular', 'glass'])
+  it('exposes the four variants with monoline as the default', () => {
+    expect(APP_ICON_VARIANTS.map((v) => v.id)).toEqual([
+      'monoline',
+      'regular',
+      'glass',
+      'lightMonoline'
+    ])
     expect(DEFAULT_APP_ICON_VARIANT).toBe('monoline')
   })
 
@@ -18,6 +23,7 @@ describe('iconVariants', () => {
     expect(isAppIconVariant('regular')).toBe(true)
     expect(isAppIconVariant('monoline')).toBe(true)
     expect(isAppIconVariant('glass')).toBe(true)
+    expect(isAppIconVariant('lightMonoline')).toBe(true)
     expect(isAppIconVariant('wwdc26')).toBe(false)
     expect(isAppIconVariant('nope')).toBe(false)
     expect(isAppIconVariant(undefined)).toBe(false)
@@ -25,7 +31,12 @@ describe('iconVariants', () => {
   })
 
   it('offers every variant unconditionally (no limited-time gate remains)', () => {
-    expect(availableIconVariants().map((v) => v.id)).toEqual(['monoline', 'regular', 'glass'])
+    expect(availableIconVariants().map((v) => v.id)).toEqual([
+      'monoline',
+      'regular',
+      'glass',
+      'lightMonoline'
+    ])
   })
 
   it('keeps the Swift twin in sync (drift guard)', () => {
