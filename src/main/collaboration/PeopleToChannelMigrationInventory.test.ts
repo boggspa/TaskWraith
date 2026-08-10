@@ -79,6 +79,7 @@ function chat(overrides: Partial<PeopleToChannelInventoryChat> = {}): PeopleToCh
   return {
     appChatId: 'chat_one',
     title: 'Private chat title',
+    scope: 'global',
     chatKind: 'single',
     messages: [
       contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'private comment content'),
@@ -163,6 +164,7 @@ describe('PeopleToChannelMigrationInventory', () => {
       }
     })
     expect(plan.entries[0].source.history.evidenceDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(plan.generalChats[0].disposition).toBe('covered_by_people')
 
     const serialized = JSON.stringify(plan)
     for (const privateValue of [
@@ -177,6 +179,32 @@ describe('PeopleToChannelMigrationInventory', () => {
     ]) {
       expect(serialized).not.toContain(privateValue)
     }
+  })
+
+  it('includes unshared General chats but excludes workspace, ensemble, linked, and workflow chats', () => {
+    const plan = inventoryPeopleToChannelMigration(
+      inventoryInput({
+        people: { readMigrationSnapshot: () => ({ shares: [] }) },
+        chats: [
+          chat({ appChatId: 'general', messages: [] }),
+          chat({ appChatId: 'workspace', scope: 'workspace', messages: [] }),
+          chat({ appChatId: 'ensemble', chatKind: 'ensemble', messages: [] }),
+          chat({
+            appChatId: 'child',
+            parentChatId: 'general',
+            parentChatRelation: 'subThread',
+            messages: []
+          }),
+          chat({ appChatId: 'workflow', messages: [] })
+        ],
+        workflowChatIds: ['workflow']
+      })
+    )
+
+    expect(plan.entries).toEqual([])
+    expect(plan.generalChats).toMatchObject([
+      { source: { chatId: 'general' }, disposition: 'create', blockers: [] }
+    ])
   })
 
   it('binds the plan digest to content without retaining the content', () => {

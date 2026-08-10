@@ -24,6 +24,7 @@ export type PeopleToChannelInventoryChat = Pick<
   ChatRecord,
   | 'appChatId'
   | 'title'
+  | 'scope'
   | 'chatKind'
   | 'parentChatId'
   | 'parentChatRelation'
@@ -157,6 +158,7 @@ function migrationChat(
   return {
     chatId: nonBlank(chat.appChatId, 'Chat id'),
     title: typeof chat.title === 'string' ? chat.title : '',
+    scope: chat.scope === 'global' ? 'global' : 'workspace',
     ...(chat.chatKind === 'ensemble' ? { chatKind: 'ensemble' as const } : {}),
     ...(chat.parentChatId ? { parentChatId: chat.parentChatId } : {}),
     ...(chat.parentChatRelation ? { parentChatRelation: chat.parentChatRelation } : {}),

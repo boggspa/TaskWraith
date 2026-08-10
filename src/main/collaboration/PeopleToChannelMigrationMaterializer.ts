@@ -14,7 +14,7 @@ import {
 
 export { channelStoreSubsetDigest as peopleToChannelChannelSubsetDigest } from './ChannelStoreSubsetDigest'
 
-export const PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION = 1
+export const PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION = 2
 
 export interface PeopleToChannelChannelMutation {
   mode: 'create' | 'merge'
@@ -49,6 +49,9 @@ export interface PeopleToChannelMigrationMaterialization {
   pendingAdmissionReissues: PeopleToChannelPendingAdmissionReissue[]
   migratedShareIds: string[]
   retainedShareIds: string[]
+  generalChatIds: string[]
+  backfilledGeneralChatIds: string[]
+  existingGeneralChatIds: string[]
   requirements: PeopleToChannelMigrationRequirement[]
   materializationDigest: string
 }
@@ -185,7 +188,12 @@ export function materializePeopleToChannels(input: {
     blocked('Migration plan no longer matches its source inventory')
   }
   if (
-    input.plan.entries.some((entry) => entry.disposition === 'blocked' || entry.blockers.length > 0)
+    input.plan.entries.some(
+      (entry) => entry.disposition === 'blocked' || entry.blockers.length > 0
+    ) ||
+    input.plan.generalChats.some(
+      (entry) => entry.disposition === 'blocked' || entry.blockers.length > 0
+    )
   ) {
     blocked('Blocked migration plan cannot be materialized')
   }
@@ -197,6 +205,9 @@ export function materializePeopleToChannels(input: {
   const pendingAdmissionReissues: PeopleToChannelPendingAdmissionReissue[] = []
   const migratedShareIds: string[] = []
   const retainedShareIds: string[] = []
+  const generalChatIds: string[] = []
+  const backfilledGeneralChatIds: string[] = []
+  const existingGeneralChatIds: string[] = []
   const requirements = new Set<PeopleToChannelMigrationRequirement>()
 
   for (const entry of input.plan.entries) {
@@ -380,6 +391,69 @@ export function materializePeopleToChannels(input: {
     entry.requirements.forEach((requirement) => requirements.add(requirement))
   }
 
+  for (const entry of input.plan.generalChats) {
+    generalChatIds.push(entry.source.chatId)
+    if (entry.disposition === 'covered_by_people') continue
+    const chat = chats.get(entry.source.chatId)
+    const target = entry.target
+    if (!chat || !target) blocked('General chat migration entry is incomplete')
+    if (
+      target.hostIdentityFingerprint !==
+        fingerprint('people-to-channel-host-identity', input.source.hostIdentityPublicKey) ||
+      target.titleFingerprint !== fingerprint('people-to-channel-title', chat.title)
+    ) {
+      blocked('General chat migration target no longer matches source content')
+    }
+    const existingChannel = input.source.channels.channels.find(
+      (channel) => channel.channelId === target.channelId
+    )
+    if (entry.disposition === 'existing') {
+      if (!existingChannel || existingChannel.chatId !== chat.chatId) {
+        blocked('General chat Channel disappeared after planning')
+      }
+      existingGeneralChatIds.push(chat.chatId)
+      continue
+    }
+    if (entry.disposition !== 'create' || existingChannel) {
+      blocked('General chat migration disposition no longer matches Channel state')
+    }
+    if (
+      input.source.channels.channels.some((channel) => channel.chatId === chat.chatId) ||
+      input.source.channels.members.some((member) => member.memberId === target.ownerMemberId) ||
+      mutations.some((mutation) => mutation.channel.channelId === target.channelId)
+    ) {
+      blocked('General chat migration target collides with Channel state')
+    }
+    const owner: HumanChannelMember = {
+      memberId: target.ownerMemberId,
+      channelId: target.channelId,
+      kind: 'human',
+      displayName: hostDisplayName,
+      identityPublicKey: input.source.hostIdentityPublicKey,
+      status: 'active',
+      joinedAt: migrationAt
+    }
+    const channel: Channel = {
+      channelId: target.channelId,
+      chatId: chat.chatId,
+      ownerMemberId: owner.memberId,
+      status: 'active',
+      createdAt: migrationAt,
+      updatedAt: migrationAt,
+      membershipRevision: 1,
+      messageCount: 0,
+      reference: { kind: 'chat', id: chat.chatId },
+      display: {
+        title: chat.title,
+        status: 'active',
+        memberCount: 1,
+        messageCount: 0
+      }
+    }
+    mutations.push({ mode: 'create', beforeDigest: null, channel, members: [owner], invites: [] })
+    backfilledGeneralChatIds.push(chat.chatId)
+  }
+
   const withoutDigest: Omit<PeopleToChannelMigrationMaterialization, 'materializationDigest'> = {
     schemaVersion: PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION,
     planId: input.plan.planId,
@@ -399,6 +473,9 @@ export function materializePeopleToChannels(input: {
     ),
     migratedShareIds: migratedShareIds.sort(compareText),
     retainedShareIds: retainedShareIds.sort(compareText),
+    generalChatIds: generalChatIds.sort(compareText),
+    backfilledGeneralChatIds: backfilledGeneralChatIds.sort(compareText),
+    existingGeneralChatIds: existingGeneralChatIds.sort(compareText),
     requirements: [...requirements].sort()
   }
   return {

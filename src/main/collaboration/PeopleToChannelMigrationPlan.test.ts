@@ -155,7 +155,12 @@ describe('PeopleToChannelMigrationPlan', () => {
       merge: 0,
       retainLegacy: 0,
       blocked: 0,
-      requiresResolution: 1
+      requiresResolution: 1,
+      generalChats: 0,
+      generalCreate: 0,
+      generalExisting: 0,
+      generalCoveredByPeople: 0,
+      generalBlocked: 0
     })
 
     const entry = plan.entries[0]
@@ -201,6 +206,94 @@ describe('PeopleToChannelMigrationPlan', () => {
     expect(serialized).not.toContain('collaborator-public-key-material')
     expect(serialized).not.toContain(HOST_KEY)
     expect(serialized).not.toContain('legacy-token-hash')
+  })
+
+  it('plans every eligible General chat while active People shares remain independently covered', () => {
+    const general = chat({
+      chatId: 'general_one',
+      title: 'Private General title',
+      scope: 'global',
+      legacyContributions: []
+    })
+    const plan = createPeopleToChannelMigrationPlan(
+      input({
+        people: { shares: [] },
+        chats: [
+          general,
+          chat({ chatId: 'workspace_chat', scope: 'workspace', legacyContributions: [] }),
+          chat({ chatId: 'general_ensemble', scope: 'global', chatKind: 'ensemble' }),
+          chat({
+            chatId: 'general_child',
+            scope: 'global',
+            parentChatId: 'general_one',
+            parentChatRelation: 'subThread'
+          }),
+          chat({ chatId: 'general_workflow', scope: 'global', workflowOwned: true })
+        ]
+      })
+    )
+
+    expect(plan.generalChats).toHaveLength(1)
+    expect(plan.generalChats[0]).toMatchObject({
+      source: { chatId: 'general_one', sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      disposition: 'create',
+      blockers: [],
+      target: {
+        channelId: expect.stringMatching(/^channel_[a-f0-9]{32}$/),
+        chatId: 'general_one',
+        ownerMemberId: expect.stringMatching(/^owner_[a-f0-9]{32}$/),
+        existingChannel: false,
+        memberMappings: []
+      }
+    })
+    expect(plan.summary).toMatchObject({
+      generalChats: 1,
+      generalCreate: 1,
+      generalExisting: 0,
+      generalCoveredByPeople: 0,
+      generalBlocked: 0
+    })
+    expect(JSON.stringify(plan)).not.toContain('Private General title')
+
+    const covered = createPeopleToChannelMigrationPlan(
+      input({ chats: [chat({ scope: 'global' })] })
+    )
+    expect(covered.generalChats[0]).toMatchObject({
+      disposition: 'covered_by_people',
+      target: { channelId: covered.entries[0].target!.channelId }
+    })
+    expect(covered.summary.generalCoveredByPeople).toBe(1)
+  })
+
+  it('recognizes an existing General Channel and blocks ambiguous General inventory', () => {
+    const existing = channel()
+    const recognized = createPeopleToChannelMigrationPlan(
+      input({
+        people: { shares: [] },
+        chats: [chat({ scope: 'global', legacyContributions: [] })],
+        channels: channelSnapshot([existing], [channelMember()])
+      })
+    )
+    expect(recognized.generalChats[0]).toMatchObject({
+      disposition: 'existing',
+      blockers: [],
+      target: { channelId: 'channel_existing', ownerMemberId: 'owner_existing' }
+    })
+
+    const duplicated = createPeopleToChannelMigrationPlan(
+      input({
+        people: { shares: [] },
+        chats: [
+          chat({ scope: 'global', legacyContributions: [] }),
+          chat({ scope: 'global', title: 'Duplicate', legacyContributions: [] })
+        ]
+      })
+    )
+    expect(duplicated.generalChats[0]).toMatchObject({
+      disposition: 'blocked',
+      blockers: ['duplicate_chat_inventory']
+    })
+    expect(duplicated.summary.generalBlocked).toBe(1)
   })
 
   it('is stable across source array ordering and changes when title or evidence changes', () => {

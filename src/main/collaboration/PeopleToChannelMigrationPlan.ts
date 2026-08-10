@@ -14,7 +14,7 @@ import {
   type ChannelStoreSnapshot
 } from './ChannelStore'
 
-export const PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION = 1
+export const PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION = 2
 
 export const PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS = [
   'general_chat_scope',
@@ -42,6 +42,7 @@ export interface PeopleToChannelLegacyContributionEvidence {
 export interface PeopleToChannelMigrationChat {
   chatId: string
   title: string
+  scope?: 'global' | 'workspace'
   chatKind?: 'single' | 'ensemble'
   parentChatId?: string
   parentChatRelation?: string
@@ -152,6 +153,24 @@ export interface PeopleToChannelMigrationEntry {
   requirements: PeopleToChannelMigrationRequirement[]
 }
 
+export type PeopleToChannelGeneralChatDisposition =
+  | 'create'
+  | 'existing'
+  | 'covered_by_people'
+  | 'blocked'
+
+export interface PeopleToChannelGeneralChatSourceSummary {
+  chatId: string
+  sourceDigest: string
+}
+
+export interface PeopleToChannelGeneralChatEntry {
+  source: PeopleToChannelGeneralChatSourceSummary
+  target: PeopleToChannelMigrationTarget | null
+  disposition: PeopleToChannelGeneralChatDisposition
+  blockers: PeopleToChannelMigrationBlocker[]
+}
+
 export interface PeopleToChannelMigrationPlan {
   schemaVersion: typeof PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION
   planId: string
@@ -159,6 +178,7 @@ export interface PeopleToChannelMigrationPlan {
   hostIdentityFingerprint: string
   cutoverDecisions: readonly PeopleToChannelCutoverDecision[]
   entries: PeopleToChannelMigrationEntry[]
+  generalChats: PeopleToChannelGeneralChatEntry[]
   summary: {
     shares: number
     create: number
@@ -166,6 +186,11 @@ export interface PeopleToChannelMigrationPlan {
     retainLegacy: number
     blocked: number
     requiresResolution: number
+    generalChats: number
+    generalCreate: number
+    generalExisting: number
+    generalCoveredByPeople: number
+    generalBlocked: number
   }
 }
 
@@ -223,6 +248,10 @@ function boundedIdentifier(value: string): boolean {
 
 function derivedOwnerMemberId(channelId: string, hostIdentityPublicKey: string): string {
   return `owner_${fingerprint('people-to-channel-owner', `${channelId}\u0000${hostIdentityPublicKey}`).slice(0, 32)}`
+}
+
+function derivedGeneralChannelId(chatId: string): string {
+  return `channel_${fingerprint('people-to-channel-general-channel', chatId).slice(0, 32)}`
 }
 
 function derivedHumanMemberId(
@@ -369,6 +398,17 @@ function isEligibleSharedSourceChat(chat: PeopleToChannelMigrationChat): boolean
   // would strand the exact live capability P4 is meant to preserve. Workflows
   // remain outside the Chat-surface Channels scope.
   return chat.workflowOwned !== true
+}
+
+function isEligibleGeneralChat(chat: PeopleToChannelMigrationChat): boolean {
+  return (
+    chat.scope === 'global' &&
+    chat.chatKind !== 'ensemble' &&
+    !chat.parentChatId &&
+    !chat.parentChatRelation &&
+    chat.sideChat !== true &&
+    chat.workflowOwned !== true
+  )
 }
 
 function latestParticipantRoom(
@@ -649,6 +689,102 @@ function entryForShare(args: {
   }
 }
 
+function entryForGeneralChat(args: {
+  chatId: string
+  chats: readonly PeopleToChannelMigrationChat[]
+  input: PeopleToChannelMigrationPlanInput
+  channelsByChatId: ReadonlyMap<string, Channel[]>
+  peopleEntries: readonly PeopleToChannelMigrationEntry[]
+  activePeopleEntry: PeopleToChannelMigrationEntry | undefined
+}): PeopleToChannelGeneralChatEntry {
+  const { chatId, chats, input, channelsByChatId, peopleEntries, activePeopleEntry } = args
+  const blockers: PeopleToChannelMigrationBlocker[] = []
+  const chat = chats.find(isEligibleGeneralChat) ?? chats[0]
+  const source: PeopleToChannelGeneralChatSourceSummary = {
+    chatId,
+    sourceDigest: sha256(canonicalJson({ chats: sortedChats(chats) }))
+  }
+  if (chats.length !== 1) blockers.push('duplicate_chat_inventory')
+  if (!boundedIdentifier(chatId)) blockers.push('invalid_source_identifier')
+  if (!chat || !chat.title.trim() || chat.title.length > 200) {
+    blockers.push('invalid_source_title')
+  }
+  if (input.channels.schemaVersion !== CHANNEL_SCHEMA_VERSION) {
+    blockers.push('invalid_channel_schema')
+  }
+  if (!input.hostIdentityPublicKey.trim()) blockers.push('host_identity_missing')
+
+  if (activePeopleEntry) {
+    const uniqueBlockers = uniqueSorted(blockers)
+    return {
+      source,
+      target: activePeopleEntry.target,
+      disposition: uniqueBlockers.length > 0 ? 'blocked' : 'covered_by_people',
+      blockers: uniqueBlockers
+    }
+  }
+
+  const channelMatches = channelsByChatId.get(chatId) ?? []
+  if (channelMatches.length > 1) blockers.push('duplicate_channel_for_chat')
+  const existingChannel = channelMatches[0]
+  const channelId = existingChannel?.channelId ?? derivedGeneralChannelId(chatId)
+  if (!pathIdentifier(channelId)) blockers.push('invalid_target_identifier')
+  const collision = input.channels.channels.find(
+    (channel) => channel.channelId === channelId && channel.chatId !== chatId
+  )
+  const plannedCollision = peopleEntries.find(
+    (entry) => entry.target?.channelId === channelId && entry.target.chatId !== chatId
+  )
+  if (collision || plannedCollision) blockers.push('channel_id_collision')
+  const existingMembers = existingChannel
+    ? input.channels.members.filter((member) => member.channelId === channelId)
+    : []
+  let ownerMemberId = derivedOwnerMemberId(channelId, input.hostIdentityPublicKey)
+  if (existingChannel) {
+    ownerMemberId = existingChannel.ownerMemberId
+    const owner = existingMembers.find((member) => member.memberId === ownerMemberId)
+    if (!owner) blockers.push('target_owner_missing')
+    else if (
+      owner.kind !== 'human' ||
+      owner.status !== 'active' ||
+      owner.identityPublicKey !== input.hostIdentityPublicKey
+    ) {
+      blockers.push('target_owner_identity_mismatch')
+    }
+  } else {
+    const plannedMemberCollision = peopleEntries.some(
+      (entry) =>
+        entry.target?.ownerMemberId === ownerMemberId ||
+        entry.target?.memberMappings.some((mapping) => mapping.targetMemberId === ownerMemberId)
+    )
+    if (
+      input.channels.members.some((member) => member.memberId === ownerMemberId) ||
+      plannedMemberCollision
+    ) {
+      blockers.push('target_member_id_conflict')
+    }
+  }
+  const target: PeopleToChannelMigrationTarget = {
+    channelId,
+    chatId,
+    ownerMemberId,
+    hostIdentityFingerprint: fingerprint(
+      'people-to-channel-host-identity',
+      input.hostIdentityPublicKey
+    ),
+    titleFingerprint: fingerprint('people-to-channel-title', chat?.title ?? ''),
+    existingChannel: Boolean(existingChannel),
+    memberMappings: []
+  }
+  const uniqueBlockers = uniqueSorted(blockers)
+  return {
+    source,
+    target,
+    disposition: uniqueBlockers.length > 0 ? 'blocked' : existingChannel ? 'existing' : 'create',
+    blockers: uniqueBlockers
+  }
+}
+
 /**
  * Build a deterministic, read-only migration inventory. It never opens a
  * store, writes a receipt, mutates either snapshot, or decides the three
@@ -694,6 +830,21 @@ export function createPeopleToChannelMigrationPlan(
         shareIdCount
       })
     )
+  const generalChats = [...chatsById.entries()]
+    .filter(([, chats]) => chats.some(isEligibleGeneralChat))
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([chatId, chats]) =>
+      entryForGeneralChat({
+        chatId,
+        chats,
+        input,
+        channelsByChatId,
+        peopleEntries: entries,
+        activePeopleEntry: entries.find(
+          (entry) => entry.source.enabled && entry.source.chatId === chatId
+        )
+      })
+    )
   return {
     schemaVersion: PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION,
     planId: fingerprint(
@@ -707,6 +858,7 @@ export function createPeopleToChannelMigrationPlan(
     ),
     cutoverDecisions: PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS,
     entries,
+    generalChats,
     summary: {
       shares: entries.length,
       create: entries.filter((entry) => entry.disposition === 'create').length,
@@ -714,7 +866,14 @@ export function createPeopleToChannelMigrationPlan(
       retainLegacy: entries.filter((entry) => entry.disposition === 'retain_legacy').length,
       blocked: entries.filter((entry) => entry.disposition === 'blocked').length,
       requiresResolution: entries.filter((entry) => entry.readiness === 'requires_resolution')
-        .length
+        .length,
+      generalChats: generalChats.length,
+      generalCreate: generalChats.filter((entry) => entry.disposition === 'create').length,
+      generalExisting: generalChats.filter((entry) => entry.disposition === 'existing').length,
+      generalCoveredByPeople: generalChats.filter(
+        (entry) => entry.disposition === 'covered_by_people'
+      ).length,
+      generalBlocked: generalChats.filter((entry) => entry.disposition === 'blocked').length
     }
   }
 }

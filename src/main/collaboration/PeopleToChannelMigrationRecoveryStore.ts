@@ -434,8 +434,13 @@ function validatePlan(plan: PeopleToChannelMigrationPlan): string {
     plan.schemaVersion !== PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION ||
     !validDigest(plan.planId) ||
     !validDigest(plan.sourceDigest) ||
+    !Array.isArray(plan.generalChats) ||
     plan.entries.some((entry) => entry.blockers.length > 0 || entry.disposition === 'blocked') ||
+    plan.generalChats.some(
+      (entry) => entry.blockers.length > 0 || entry.disposition === 'blocked'
+    ) ||
     plan.summary.blocked !== 0 ||
+    plan.summary.generalBlocked !== 0 ||
     canonicalJson(plan.cutoverDecisions) !== canonicalJson(PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS)
   ) {
     blocked('Migration plan is not executable')

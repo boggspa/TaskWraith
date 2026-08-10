@@ -237,6 +237,81 @@ describe('PeopleToChannelMigrationMaterializer', () => {
     expect(serialized).not.toContain('private-expired-token-hash')
   })
 
+  it('materializes unshared General chats and recognizes existing General Channels', () => {
+    const inventory = source({
+      people: { shares: [] },
+      chats: [
+        {
+          chatId: 'general_new',
+          title: 'New General',
+          scope: 'global',
+          chatKind: 'single'
+        },
+        {
+          chatId: 'general_ensemble',
+          title: 'Global ensemble',
+          scope: 'global',
+          chatKind: 'ensemble'
+        }
+      ]
+    })
+    const plan = createPeopleToChannelMigrationPlan(inventory)
+    const materialized = materializePeopleToChannels({
+      plan,
+      source: inventory,
+      hostDisplayName: 'Host Person',
+      migrationAt: 1_000
+    })
+
+    expect(materialized).toMatchObject({
+      migratedShareIds: [],
+      retainedShareIds: [],
+      generalChatIds: ['general_new'],
+      backfilledGeneralChatIds: ['general_new'],
+      existingGeneralChatIds: []
+    })
+    expect(materialized.mutations).toHaveLength(1)
+    expect(materialized.mutations[0]).toMatchObject({
+      mode: 'create',
+      beforeDigest: null,
+      channel: {
+        channelId: expect.stringMatching(/^channel_[a-f0-9]{32}$/),
+        chatId: 'general_new',
+        membershipRevision: 1,
+        messageCount: 0,
+        display: { title: 'New General', memberCount: 1, messageCount: 0 }
+      },
+      members: [
+        {
+          memberId: expect.stringMatching(/^owner_[a-f0-9]{32}$/),
+          displayName: 'Host Person',
+          identityPublicKey: HOST_KEY,
+          status: 'active'
+        }
+      ],
+      invites: []
+    })
+
+    const existingChannel = channel({ chatId: 'general_existing' })
+    const existingInventory = source({
+      people: { shares: [] },
+      chats: [{ chatId: 'general_existing', title: 'Existing', scope: 'global' }],
+      channels: channelSnapshot([existingChannel], [member()])
+    })
+    const existingMaterialized = materializePeopleToChannels({
+      plan: createPeopleToChannelMigrationPlan(existingInventory),
+      source: existingInventory,
+      hostDisplayName: 'Host Person',
+      migrationAt: 1_000
+    })
+    expect(existingMaterialized).toMatchObject({
+      mutations: [],
+      generalChatIds: ['general_existing'],
+      backfilledGeneralChatIds: [],
+      existingGeneralChatIds: ['general_existing']
+    })
+  })
+
   it('maps an existing identity without replacing Channel state', () => {
     const existingChannel = channel()
     const existingMember = member({
