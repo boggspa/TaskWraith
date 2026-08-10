@@ -758,7 +758,7 @@ export const FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT = 12
 // before the diff bubble appears, and slipping off the row (or the bubble)
 // must not snap it away mid-read.
 const FILE_CHANGE_DIFF_PREVIEW_OPEN_DELAY_MS = 900
-const FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS = 900
+const FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS = 1400
 export const FILE_CHANGE_SUMMARY_PAGE_SIZE = 24
 export const FILE_CHANGE_SUMMARY_MAX_VISIBLE = 120
 
