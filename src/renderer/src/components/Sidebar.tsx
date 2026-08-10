@@ -3368,8 +3368,22 @@ export function Sidebar({
       !isContentlessRemoteDraftChat(chat) &&
       !isHideableUnstartedDraft(chat, { protectedChatIds: draftVisibilityProtectedIds })
   )
+  // 1.0.8 — Sidebar thread-list fallback order must not race on `updatedAt`
+  // write recency. Active rounds/tool saves stamp `updatedAt = Date.now()`
+  // constantly, so concurrent active threads leapfrog for the top slot. Use
+  // the same stable, user-facing recency key as Recents (last genuine user
+  // message, else `createdAt`) and break ties by id so every list is
+  // deterministic. Drag-reorder state still overrides the fallback.
   const orderSidebarChatList = (listId: string, list: readonly ChatRecord[]): ChatRecord[] =>
-    orderSidebarThreads(list, listId, sidebarThreadOrderState)
+    orderSidebarThreads(
+      [...list].sort((left, right) => {
+        const keyDiff = chatRecentsSortKeyMs(right) - chatRecentsSortKeyMs(left)
+        if (keyDiff !== 0) return keyDiff
+        return left.appChatId.localeCompare(right.appChatId)
+      }),
+      listId,
+      sidebarThreadOrderState
+    )
   const applySidebarThreadDrop = (
     listId: string,
     listIds: readonly string[],
@@ -3509,19 +3523,7 @@ export function Sidebar({
     ),
     { limit: SIDEBAR_RECENTS_MAX }
   )
-  // 1.0.8 — Ensembles fallback order must not race on `updatedAt` write
-  // recency. Active rounds/tool saves stamp `updatedAt = Date.now()` constantly,
-  // so concurrent active ensembles leapfrog for the top slot. Use the same
-  // stable, user-facing recency key as Recents (last user message, else
-  // `createdAt`) and break ties by id so the list is deterministic.
-  const orderedEnsembleChats = orderSidebarChatList(
-    'code:ensembles',
-    [...ensembleChats].sort((left, right) => {
-      const keyDiff = chatRecentsSortKeyMs(right) - chatRecentsSortKeyMs(left)
-      if (keyDiff !== 0) return keyDiff
-      return left.appChatId.localeCompare(right.appChatId)
-    })
-  )
+  const orderedEnsembleChats = orderSidebarChatList('code:ensembles', ensembleChats)
   const visibleEnsembleChats = isSidebarSearchActive
     ? orderedEnsembleChats.filter(
         (chat) => !chat.pinned && chatMatchesSearch(chat, sidebarSearchQuery)

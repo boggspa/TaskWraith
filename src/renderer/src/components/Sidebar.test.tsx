@@ -1716,6 +1716,259 @@ describe('Sidebar ensembles section', () => {
       ensemblesSection.indexOf('Older active ensemble')
     )
   })
+
+  it('keeps ensemble order stable when updatedAt races on active runs', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('ensembles')
+    })
+
+    const olderActive = makeChat({
+      appChatId: 'older-active',
+      chatKind: 'ensemble',
+      title: 'Older active ensemble',
+      provider: 'codex',
+      createdAt: 100,
+      updatedAt: 500,
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'prompt one',
+          timestamp: '2026-08-10T10:00:00.000Z'
+        }
+      ]
+    })
+    const newerQuiet = makeChat({
+      appChatId: 'newer-quiet',
+      chatKind: 'ensemble',
+      title: 'Newer quiet ensemble',
+      provider: 'claude',
+      createdAt: 300,
+      updatedAt: 100,
+      messages: [
+        {
+          id: 'm2',
+          role: 'user',
+          content: 'prompt two',
+          timestamp: '2026-08-10T12:00:00.000Z'
+        }
+      ]
+    })
+
+    // Pass the chats in updatedAt-descending order (mimicking AppStore/getChats
+    // and mergeChatRecord), then flip updatedAt on a second render to simulate
+    // the quieter ensemble getting a write stamp while the active one streams.
+    const htmlFirst = renderSidebar([olderActive, newerQuiet], {
+      ensembleModeEnabled: true
+    })
+    const htmlSecond = renderSidebar(
+      [
+        { ...olderActive, updatedAt: 500 },
+        { ...newerQuiet, updatedAt: 700 }
+      ],
+      { ensembleModeEnabled: true }
+    )
+
+    const sectionFirst = htmlFirst.slice(
+      htmlFirst.indexOf('sidebar-ensembles-section'),
+      htmlFirst.indexOf('sidebar-workspace-list')
+    )
+    const sectionSecond = htmlSecond.slice(
+      htmlSecond.indexOf('sidebar-ensembles-section'),
+      htmlSecond.indexOf('sidebar-workspace-list')
+    )
+
+    // The newer-quiet ensemble has the later user message, so it should stay
+    // first even after its updatedAt jumps past the older active ensemble.
+    expect(sectionFirst.indexOf('Newer quiet ensemble')).toBeLessThan(
+      sectionFirst.indexOf('Older active ensemble')
+    )
+    expect(sectionSecond.indexOf('Newer quiet ensemble')).toBeLessThan(
+      sectionSecond.indexOf('Older active ensemble')
+    )
+  })
+
+  it('does not thrash ensemble order across many updatedAt stamps', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('ensembles')
+    })
+
+    const baseChats: ChatRecord[] = [
+      makeChat({
+        appChatId: 'ensemble-a',
+        chatKind: 'ensemble',
+        title: 'Ensemble A',
+        provider: 'codex',
+        createdAt: 100,
+        updatedAt: 100,
+        messages: [
+          {
+            id: 'm-a',
+            role: 'user',
+            content: 'a',
+            timestamp: '2026-08-10T09:00:00.000Z'
+          }
+        ]
+      }),
+      makeChat({
+        appChatId: 'ensemble-b',
+        chatKind: 'ensemble',
+        title: 'Ensemble B',
+        provider: 'claude',
+        createdAt: 200,
+        updatedAt: 200,
+        messages: [
+          {
+            id: 'm-b',
+            role: 'user',
+            content: 'b',
+            timestamp: '2026-08-10T10:00:00.000Z'
+          }
+        ]
+      }),
+      makeChat({
+        appChatId: 'ensemble-c',
+        chatKind: 'ensemble',
+        title: 'Ensemble C',
+        provider: 'gemini',
+        createdAt: 300,
+        updatedAt: 300,
+        messages: [
+          {
+            id: 'm-c',
+            role: 'user',
+            content: 'c',
+            timestamp: '2026-08-10T08:00:00.000Z'
+          }
+        ]
+      })
+    ]
+
+    let order: string | null = null
+    for (let i = 0; i < 20; i++) {
+      const chats = baseChats.map((chat) => ({
+        ...chat,
+        updatedAt: Math.floor(Math.random() * 10000)
+      }))
+      const html = renderSidebar(chats, { ensembleModeEnabled: true })
+      const section = html.slice(
+        html.indexOf('sidebar-ensembles-section'),
+        html.indexOf('sidebar-workspace-list')
+      )
+      const currentOrder = ['Ensemble A', 'Ensemble B', 'Ensemble C']
+        .map((title) => section.indexOf(title))
+        .join(',')
+      if (order === null) {
+        order = currentOrder
+      } else {
+        expect(currentOrder).toBe(order)
+      }
+    }
+  })
+
+  it('keeps pinned ensembles stable in the Pinned section when updatedAt races', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('pinned')
+    })
+
+    const olderActive = makeChat({
+      appChatId: 'pinned-older-active',
+      chatKind: 'ensemble',
+      title: 'Pinned older active ensemble',
+      provider: 'codex',
+      pinned: true,
+      createdAt: 100,
+      updatedAt: 500,
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'prompt one',
+          timestamp: '2026-08-10T10:00:00.000Z'
+        }
+      ]
+    })
+    const newerQuiet = makeChat({
+      appChatId: 'pinned-newer-quiet',
+      chatKind: 'ensemble',
+      title: 'Pinned newer quiet ensemble',
+      provider: 'claude',
+      pinned: true,
+      createdAt: 300,
+      updatedAt: 100,
+      messages: [
+        {
+          id: 'm2',
+          role: 'user',
+          content: 'prompt two',
+          timestamp: '2026-08-10T12:00:00.000Z'
+        }
+      ]
+    })
+
+    const html = renderSidebar([olderActive, newerQuiet], {
+      ensembleModeEnabled: true
+    })
+
+    const pinnedSection = html.slice(
+      html.indexOf('sidebar-pinned-section'),
+      html.indexOf('sidebar-recents-section')
+    )
+
+    expect(pinnedSection.indexOf('Pinned newer quiet ensemble')).toBeLessThan(
+      pinnedSection.indexOf('Pinned older active ensemble')
+    )
+  })
+
+  it('keeps workspace ensembles stable in their workspace group when updatedAt races', () => {
+    stubSidebarStorage({
+      [SIDEBAR_ACTIVE_TAB_STORAGE_KEY]: 'threads',
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+
+    const olderActive = makeChat({
+      appChatId: 'ws-older-active',
+      chatKind: 'ensemble',
+      title: 'Workspace older active ensemble',
+      provider: 'codex',
+      createdAt: 100,
+      updatedAt: 500,
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'prompt one',
+          timestamp: '2026-08-10T10:00:00.000Z'
+        }
+      ]
+    })
+    const newerQuiet = makeChat({
+      appChatId: 'ws-newer-quiet',
+      chatKind: 'ensemble',
+      title: 'Workspace newer quiet ensemble',
+      provider: 'claude',
+      createdAt: 300,
+      updatedAt: 100,
+      messages: [
+        {
+          id: 'm2',
+          role: 'user',
+          content: 'prompt two',
+          timestamp: '2026-08-10T12:00:00.000Z'
+        }
+      ]
+    })
+
+    const html = renderSidebar([olderActive, newerQuiet], {
+      ensembleModeEnabled: true
+    })
+
+    const workspacesSection = html.slice(html.indexOf('sidebar-workspace-list'))
+
+    expect(workspacesSection.indexOf('Workspace newer quiet ensemble')).toBeLessThan(
+      workspacesSection.indexOf('Workspace older active ensemble')
+    )
+  })
 })
 
 describe('Sidebar Chats section', () => {
