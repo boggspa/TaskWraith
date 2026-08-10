@@ -100,6 +100,35 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(runtimeProfile).toContain('applied.taskWraithMcpProfileId = providerSeat.profileId')
   })
 
+  it('settles ephemeral fleet worktrees before archive, including empty done', () => {
+    const producer = sourceBetween(
+      'async function maybePropagateLinkedChildResult(',
+      'const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT'
+    )
+    const helper = sourceBetween(
+      'async function settleEphemeralFleetWriterIfNeeded(input: {',
+      'async function maybePropagateLinkedChildResult('
+    )
+    const emptyGate = producer.indexOf("terminal.outcome === 'done'")
+    const afterEmpty = producer.indexOf(
+      'const { sourceAssistantMessageId, sourceRunId, resultContent } = decision'
+    )
+    expect(emptyGate).toBeGreaterThanOrEqual(0)
+    expect(afterEmpty).toBeGreaterThan(emptyGate)
+    const emptyRegion = producer.slice(emptyGate, afterEmpty)
+    expect(emptyRegion).toContain('settleEphemeralFleetWriterIfNeeded')
+    expect(emptyRegion).toContain('shouldArchiveEphemeralFleetChild')
+    expect(helper).toContain('await settleEphemeralFleetWriterWorktreeOnReturn')
+    expect(indexSource).not.toContain('void settleEphemeralFleetWriterWorktreeOnReturn')
+    expect(producer).toContain('shouldArchiveEphemeralFleetAfterSettle')
+    expect(producer).toContain('archiveEphemeral:')
+    // Repair + primary return paths: settle completes before mark/archive.
+    const repairSettle = producer.indexOf('settleEphemeralFleetWriterIfNeeded(', afterEmpty)
+    const repairMark = producer.indexOf('markLinkedChildResultReturned(', afterEmpty)
+    expect(repairSettle).toBeGreaterThan(afterEmpty)
+    expect(repairMark).toBeGreaterThan(repairSettle)
+  })
+
   it('gates automatic wake by durable join readiness and preserves worker trust caps', () => {
     const drain = sourceBetween(
       'async function maybeDrainParentSubThreadMailbox(',

@@ -2001,6 +2001,7 @@ import {
 import {
   buildEphemeralFleetRoleFrame,
   resolveEphemeralFleetIsolationForWave,
+  shouldArchiveEphemeralFleetAfterSettle,
   shouldArchiveEphemeralFleetChild
 } from './SubThreadEphemeralFleet'
 import {
@@ -8719,6 +8720,46 @@ runManager.onChange((event) => {
 })
 
 /**
+ * Promote/discard an ephemeral fleet sole-writer worktree on return.
+ * Returns null when settle does not apply (not ephemeral / no workspace).
+ */
+async function settleEphemeralFleetWriterIfNeeded(input: {
+  linkedChild: ChatRecord
+  parent: ChatRecord
+  relation: 'subThread' | 'sideChat'
+  outcome: 'done' | 'requires_action' | 'failed' | 'cancelled'
+}): Promise<{ ok: boolean; action: 'promoted' | 'discarded' | 'noop'; error?: string } | null> {
+  if (input.relation !== 'subThread' || !shouldArchiveEphemeralFleetChild(input.linkedChild)) {
+    return null
+  }
+  const baseWorkspacePath =
+    (typeof input.linkedChild.workspacePath === 'string' &&
+      input.linkedChild.workspacePath.trim()) ||
+    (typeof input.parent.workspacePath === 'string' && input.parent.workspacePath.trim()) ||
+    ''
+  if (!baseWorkspacePath || !input.linkedChild.parentChatId) {
+    return null
+  }
+  try {
+    return await settleEphemeralFleetWriterWorktreeOnReturn({
+      parentChatId: input.linkedChild.parentChatId,
+      workerChatId: input.linkedChild.appChatId,
+      label:
+        typeof input.linkedChild.delegationContext?.label === 'string'
+          ? input.linkedChild.delegationContext.label
+          : input.linkedChild.delegationContext?.role,
+      baseWorkspacePath,
+      outcome: input.outcome,
+      git: new GitService()
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn('[ephemeral-fleet] worktree settle failed:', message)
+    return { ok: false, action: 'promoted', error: message }
+  }
+}
+
+/**
  * Durable linked-child result back-propagation.
  *
  * Delegated sub-threads retain their existing return flag. Isolated side chats
@@ -8769,6 +8810,36 @@ async function maybePropagateLinkedChildResult(
     terminal.outcome === 'done' &&
     (!lastAssistant || (!lastAssistant.content.trim() && returnedMediaRefs.length === 0))
   ) {
+    // Tool-only / empty assistant still settles sole-writer fleet worktrees and
+    // archives on success; otherwise the fleet-* tree is orphaned forever.
+    if (decision.relation === 'subThread' && shouldArchiveEphemeralFleetChild(linkedChild)) {
+      const parentForSettle = AppStore.getChat(decision.parentChatId)
+      if (parentForSettle) {
+        const settle = await settleEphemeralFleetWriterIfNeeded({
+          linkedChild,
+          parent: parentForSettle,
+          relation: decision.relation,
+          outcome: terminal.outcome
+        })
+        if (shouldArchiveEphemeralFleetAfterSettle(settle)) {
+          const emptyReturnedAt = Date.now()
+          const archivedChild = markLinkedChildResultReturned(
+            linkedChild,
+            decision.relation,
+            emptyReturnedAt,
+            decision.sourceAssistantMessageId,
+            { archiveEphemeral: true }
+          )
+          AppStore.saveChat(archivedChild)
+          broadcastChatUpdated(archivedChild)
+        } else if (settle && !settle.ok) {
+          console.warn(
+            '[ephemeral-fleet] worktree settle failed:',
+            settle.error || 'unknown settle failure'
+          )
+        }
+      }
+    }
     return
   }
   const { sourceAssistantMessageId, sourceRunId, resultContent } = decision
@@ -8865,42 +8936,29 @@ async function maybePropagateLinkedChildResult(
       AppStore.saveChat(projectedParent)
       broadcastChatUpdated(projectedParent)
     }
+    const repairSettle = await settleEphemeralFleetWriterIfNeeded({
+      linkedChild,
+      parent,
+      relation: decision.relation,
+      outcome: terminal.outcome
+    })
+    if (repairSettle && !repairSettle.ok) {
+      console.warn(
+        '[ephemeral-fleet] worktree settle failed:',
+        repairSettle.error || 'unknown settle failure'
+      )
+    }
     const repairedLinkedChild = markLinkedChildResultReturned(
       linkedChild,
       decision.relation,
       returnedAt,
-      sourceAssistantMessageId
+      sourceAssistantMessageId,
+      {
+        archiveEphemeral: shouldArchiveEphemeralFleetAfterSettle(repairSettle)
+      }
     )
     AppStore.saveChat(repairedLinkedChild)
     broadcastChatUpdated(repairedLinkedChild)
-    if (
-      decision.relation === 'subThread' &&
-      shouldArchiveEphemeralFleetChild(repairedLinkedChild)
-    ) {
-      const baseWorkspacePath =
-        (typeof repairedLinkedChild.workspacePath === 'string' &&
-          repairedLinkedChild.workspacePath.trim()) ||
-        (typeof parent.workspacePath === 'string' && parent.workspacePath.trim()) ||
-        ''
-      if (baseWorkspacePath && repairedLinkedChild.parentChatId) {
-        void settleEphemeralFleetWriterWorktreeOnReturn({
-          parentChatId: repairedLinkedChild.parentChatId,
-          workerChatId: repairedLinkedChild.appChatId,
-          label:
-            typeof repairedLinkedChild.delegationContext?.label === 'string'
-              ? repairedLinkedChild.delegationContext.label
-              : repairedLinkedChild.delegationContext?.role,
-          baseWorkspacePath,
-          outcome: terminal.outcome,
-          git: new GitService()
-        }).catch((error) => {
-          console.warn(
-            '[ephemeral-fleet] worktree settle failed:',
-            error instanceof Error ? error.message : String(error)
-          )
-        })
-      }
-    }
     await maybeDrainParentSubThreadMailbox(parent.appChatId)
     return
   }
@@ -8955,43 +9013,28 @@ async function maybePropagateLinkedChildResult(
     updatedAt: Date.now()
   }
   AppStore.saveChat(updatedParent)
+  const primarySettle = await settleEphemeralFleetWriterIfNeeded({
+    linkedChild,
+    parent,
+    relation: decision.relation,
+    outcome: terminal.outcome
+  })
+  if (primarySettle && !primarySettle.ok) {
+    console.warn(
+      '[ephemeral-fleet] worktree settle failed:',
+      primarySettle.error || 'unknown settle failure'
+    )
+  }
   const updatedLinkedChild = markLinkedChildResultReturned(
     linkedChild,
     decision.relation,
     returnedAt,
-    sourceAssistantMessageId
+    sourceAssistantMessageId,
+    {
+      archiveEphemeral: shouldArchiveEphemeralFleetAfterSettle(primarySettle)
+    }
   )
   AppStore.saveChat(updatedLinkedChild)
-  // Ephemeral fleet sole-writer worktrees: promote on done, discard otherwise,
-  // then remove so die-on-return cannot orphan fleet-* under .taskwraith-worktrees.
-  if (
-    decision.relation === 'subThread' &&
-    shouldArchiveEphemeralFleetChild(updatedLinkedChild)
-  ) {
-    const baseWorkspacePath =
-      (typeof updatedLinkedChild.workspacePath === 'string' &&
-        updatedLinkedChild.workspacePath.trim()) ||
-      (typeof parent.workspacePath === 'string' && parent.workspacePath.trim()) ||
-      ''
-    if (baseWorkspacePath && updatedLinkedChild.parentChatId) {
-      void settleEphemeralFleetWriterWorktreeOnReturn({
-        parentChatId: updatedLinkedChild.parentChatId,
-        workerChatId: updatedLinkedChild.appChatId,
-        label:
-          typeof updatedLinkedChild.delegationContext?.label === 'string'
-            ? updatedLinkedChild.delegationContext.label
-            : updatedLinkedChild.delegationContext?.role,
-        baseWorkspacePath,
-        outcome: terminal.outcome,
-        git: new GitService()
-      }).catch((error) => {
-        console.warn(
-          '[ephemeral-fleet] worktree settle failed:',
-          error instanceof Error ? error.message : String(error)
-        )
-      })
-    }
-  }
   // Audit: durable run-event on the PARENT chat so the audit log
   // shows the propagation happened.
   try {

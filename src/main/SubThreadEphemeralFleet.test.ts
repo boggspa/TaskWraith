@@ -5,6 +5,7 @@ import {
   parseFleetWaveRole,
   resolveEphemeralFleetIsolation,
   resolveEphemeralFleetIsolationForWave,
+  shouldArchiveEphemeralFleetAfterSettle,
   shouldArchiveEphemeralFleetChild
 } from './SubThreadEphemeralFleet'
 
@@ -195,5 +196,11 @@ describe('SubThreadEphemeralFleet', () => {
         }
       })
     ).toBe(false)
+  })
+
+  it('archives after settle only when settle succeeded or was unnecessary', () => {
+    expect(shouldArchiveEphemeralFleetAfterSettle(null)).toBe(true)
+    expect(shouldArchiveEphemeralFleetAfterSettle({ ok: true })).toBe(true)
+    expect(shouldArchiveEphemeralFleetAfterSettle({ ok: false })).toBe(false)
   })
 })

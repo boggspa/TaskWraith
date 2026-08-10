@@ -411,6 +411,38 @@ describe('opt-in side-chat authority return', () => {
     expect(durable.archived).toBe(false)
   })
 
+  it('can stamp resultReturnedAt without archiving when promote settle failed', () => {
+    const kept = markLinkedChildResultReturned(
+      {
+        appChatId: 'child-e',
+        scope: 'workspace',
+        chatKind: 'single',
+        provider: 'codex',
+        title: 'worker',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        messages: [],
+        runs: [],
+        parentChatId: 'parent',
+        parentChatRelation: 'subThread',
+        delegationContext: {
+          createdAt: 1,
+          parentProvider: 'codex',
+          delegationPrompt: 'go',
+          returnResultToParent: true,
+          lifecycle: 'ephemeral'
+        }
+      },
+      'subThread',
+      Date.parse('2026-01-01T00:02:00Z'),
+      'asst-1',
+      { archiveEphemeral: false }
+    )
+    expect(kept.archived).toBe(false)
+    expect(kept.delegationContext?.resultReturnedAt).toBe(Date.parse('2026-01-01T00:02:00Z'))
+  })
+
   it('uses a distinct untrusted side-chat envelope', () => {
     const content = buildLinkedChildReturnContent({
       relation: 'sideChat',

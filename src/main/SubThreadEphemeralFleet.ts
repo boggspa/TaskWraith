@@ -135,3 +135,15 @@ export function shouldArchiveEphemeralFleetChild(
     (chat.parentChatRelation === undefined || chat.parentChatRelation === 'subThread')
   return isSubThread && chat.delegationContext?.lifecycle === 'ephemeral'
 }
+
+/**
+ * Die-on-return archive after worktree settle.
+ * `null` means settle was unnecessary (no fleet worktree / not ephemeral path).
+ * Promote/discard failure keeps the child visible for recovery.
+ */
+export function shouldArchiveEphemeralFleetAfterSettle(
+  settle: { ok: boolean } | null
+): boolean {
+  if (settle == null) return true
+  return settle.ok
+}
