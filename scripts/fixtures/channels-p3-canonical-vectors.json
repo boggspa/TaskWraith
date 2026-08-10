@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "ownerPublicKeyB64": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "agentPublicKeyB64": "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=",
+  "vectors": [
+    {
+      "label": "delegation-unicode-maximums",
+      "kind": "delegation",
+      "domain": "taskwraith.channel.agent-delegation.v1",
+      "signer": "owner",
+      "value": {
+        "schemaVersion": 1,
+        "delegationId": "delegation-🧪-\"-\\",
+        "channelId": "channel-café-café",
+        "ownerMemberId": "owner-α",
+        "agentMemberId": "agent-東京",
+        "agentSeatId": "seat-🚀",
+        "agentPublicKeyB64": "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=",
+        "keyGeneration": 9007199254740991,
+        "scopes": ["channel.dispatch", "channel.post"],
+        "issuedAt": 0,
+        "notBefore": 9007199254740989,
+        "expiresAt": 9007199254740991,
+        "maxPostBytes": 8000
+      },
+      "expectedCanonicalJson": "{\"agentMemberId\":\"agent-東京\",\"agentPublicKeyB64\":\"PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\",\"agentSeatId\":\"seat-🚀\",\"channelId\":\"channel-café-café\",\"delegationId\":\"delegation-🧪-\\\"-\\\\\",\"expiresAt\":9007199254740991,\"issuedAt\":0,\"keyGeneration\":9007199254740991,\"maxPostBytes\":8000,\"notBefore\":9007199254740989,\"ownerMemberId\":\"owner-α\",\"schemaVersion\":1,\"scopes\":[\"channel.dispatch\",\"channel.post\"]}",
+      "expectedSha256": "5b90442e0db0778301687fbc001395d3548dcb1a36ec1a991a70861affde0c5f",
+      "signatureB64": "ZFVPtUt3DGxQm+YVjqo2vVy/itOMXQLI0CRlHjn5b9nK14KXIN/DazH2rR3qGUqDG+B60dYECbC/m7UMFm3NBA=="
+    },
+    {
+      "label": "dispatch-grant-arrays-maximums",
+      "kind": "dispatchGrant",
+      "domain": "taskwraith.channel.agent-dispatch-grant.v1",
+      "signer": "owner",
+      "value": {
+        "schemaVersion": 1,
+        "grantId": "grant-\"-\\-🧪",
+        "channelId": "channel-café-café",
+        "ownerMemberId": "owner-α",
+        "agentMemberId": "agent-東京",
+        "agentSeatId": "seat-🚀",
+        "agentPublicKeyB64": "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=",
+        "keyGeneration": 9007199254740991,
+        "delegationId": "delegation-🧪-\"-\\",
+        "trigger": "mention",
+        "allowedMentionerMemberIds": ["human-a", "owner-α"],
+        "workspaceIdentityHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissionPostureHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "issuedAt": 0,
+        "notBefore": 9007199254740989,
+        "expiresAt": 9007199254740991,
+        "maxDispatches": 10000
+      },
+      "expectedCanonicalJson": "{\"agentMemberId\":\"agent-東京\",\"agentPublicKeyB64\":\"PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\",\"agentSeatId\":\"seat-🚀\",\"allowedMentionerMemberIds\":[\"human-a\",\"owner-α\"],\"channelId\":\"channel-café-café\",\"delegationId\":\"delegation-🧪-\\\"-\\\\\",\"expiresAt\":9007199254740991,\"grantId\":\"grant-\\\"-\\\\-🧪\",\"issuedAt\":0,\"keyGeneration\":9007199254740991,\"maxDispatches\":10000,\"notBefore\":9007199254740989,\"ownerMemberId\":\"owner-α\",\"permissionPostureHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"schemaVersion\":1,\"trigger\":\"mention\",\"workspaceIdentityHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+      "expectedSha256": "24007d496afb834aac260db2eb06baeaf64ffbcd45345ea9f27b5bcd20206d6e",
+      "signatureB64": "MTmENQgPDMPcY4tQtrX1XL3wKhICruOe1X00haK2nE374ayq1/gZ2V8SbwMpCQ+JR8quhH+HdcyFjIHmIDOeAg=="
+    },
+    {
+      "label": "agent-post-unicode-escapes",
+      "kind": "post",
+      "domain": "taskwraith.channel.agent-post.v1",
+      "signer": "agent",
+      "value": {
+        "schemaVersion": 1,
+        "channelId": "channel-café-café",
+        "agentMemberId": "agent-東京",
+        "agentSeatId": "seat-🚀",
+        "agentPublicKeyB64": "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=",
+        "keyGeneration": 9007199254740991,
+        "delegationId": "delegation-🧪-\"-\\",
+        "dispatchGrantId": "grant-\"-\\-🧪",
+        "triggerMessageId": "message-東京-🧪",
+        "runId": "run-\"-\\-🚀",
+        "runAuthorityHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "clientMessageId": "client-café-α",
+        "kind": "agent.text",
+        "content": "Line 1\n\"quoted\" \\ slash / café café 🧪\tseparator",
+        "contentHash": "5582390e03ad234c2fef2559026ac8470b5a58f8678174b1bd694787b3e1cd82",
+        "createdAt": 9007199254740990
+      },
+      "expectedCanonicalJson": "{\"agentMemberId\":\"agent-東京\",\"agentPublicKeyB64\":\"PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\",\"agentSeatId\":\"seat-🚀\",\"channelId\":\"channel-café-café\",\"clientMessageId\":\"client-café-α\",\"content\":\"Line 1\\n\\\"quoted\\\" \\\\ slash / café café 🧪\\tseparator\",\"contentHash\":\"5582390e03ad234c2fef2559026ac8470b5a58f8678174b1bd694787b3e1cd82\",\"createdAt\":9007199254740990,\"delegationId\":\"delegation-🧪-\\\"-\\\\\",\"dispatchGrantId\":\"grant-\\\"-\\\\-🧪\",\"keyGeneration\":9007199254740991,\"kind\":\"agent.text\",\"runAuthorityHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"runId\":\"run-\\\"-\\\\-🚀\",\"schemaVersion\":1,\"triggerMessageId\":\"message-東京-🧪\"}",
+      "expectedSha256": "8452f5cd6c138a13c6a7e47b193f9ff399872452ef6595e4b1c72a2ece4b05ab",
+      "signatureB64": "gCzxtNLebG4M0enb9J9x+IYKSe+uifFCatWq9P306hhjnXW1kNTRB59cPubPAbYk3a8ORr9IR6PbHLWdP6bsDg=="
+    },
+    {
+      "label": "revocation-maximums",
+      "kind": "revocation",
+      "domain": "taskwraith.channel.agent-revocation.v1",
+      "signer": "owner",
+      "value": {
+        "schemaVersion": 1,
+        "revocationId": "revocation-🧪",
+        "channelId": "channel-café-café",
+        "ownerMemberId": "owner-α",
+        "agentSeatId": "seat-🚀",
+        "keyGeneration": 9007199254740991,
+        "targetKind": "dispatch_grant",
+        "targetId": "grant-\"-\\-🧪",
+        "revokedAt": 9007199254740991,
+        "reason": "owner_revoked"
+      },
+      "expectedCanonicalJson": "{\"agentSeatId\":\"seat-🚀\",\"channelId\":\"channel-café-café\",\"keyGeneration\":9007199254740991,\"ownerMemberId\":\"owner-α\",\"reason\":\"owner_revoked\",\"revocationId\":\"revocation-🧪\",\"revokedAt\":9007199254740991,\"schemaVersion\":1,\"targetId\":\"grant-\\\"-\\\\-🧪\",\"targetKind\":\"dispatch_grant\"}",
+      "expectedSha256": "9de94eb4bba9893af212ec05108a39741ca51428240e5336d5ebc0f3796dcdb6",
+      "signatureB64": "sBZ8IyZTYJGRlgJlmLD3pb7TdVa0DaDu9sO2jL3OS9W5uIzG9/blpHOlkY5NWJ03/Et830x8/xTF9kgfU07VAw=="
+    }
+  ],
+  "objectOrderWirePair": {
+    "domain": "taskwraith.channel.agent-delegation.v1",
+    "first": "{\"schemaVersion\":1,\"delegationId\":\"delegation-🧪-\\\"-\\\\\",\"channelId\":\"channel-café-café\",\"ownerMemberId\":\"owner-α\",\"agentMemberId\":\"agent-東京\",\"agentSeatId\":\"seat-🚀\",\"agentPublicKeyB64\":\"PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\",\"keyGeneration\":9007199254740991,\"scopes\":[\"channel.dispatch\",\"channel.post\"],\"issuedAt\":0,\"notBefore\":9007199254740989,\"expiresAt\":9007199254740991,\"maxPostBytes\":8000}",
+    "second": "{\"maxPostBytes\":8000,\"expiresAt\":9007199254740991,\"notBefore\":9007199254740989,\"issuedAt\":0,\"scopes\":[\"channel.dispatch\",\"channel.post\"],\"keyGeneration\":9007199254740991,\"agentPublicKeyB64\":\"PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\",\"agentSeatId\":\"seat-🚀\",\"agentMemberId\":\"agent-東京\",\"ownerMemberId\":\"owner-α\",\"channelId\":\"channel-café-café\",\"delegationId\":\"delegation-🧪-\\\"-\\\\\",\"schemaVersion\":1}",
+    "expectedSha256": "5b90442e0db0778301687fbc001395d3548dcb1a36ec1a991a70861affde0c5f"
+  },
+  "arrayOrderMutation": {
+    "domain": "taskwraith.channel.agent-delegation.v1",
+    "value": {
+      "schemaVersion": 1,
+      "delegationId": "delegation-🧪-\"-\\",
+      "channelId": "channel-café-café",
+      "ownerMemberId": "owner-α",
+      "agentMemberId": "agent-東京",
+      "agentSeatId": "seat-🚀",
+      "agentPublicKeyB64": "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=",
+      "keyGeneration": 9007199254740991,
+      "scopes": ["channel.post", "channel.dispatch"],
+      "issuedAt": 0,
+      "notBefore": 9007199254740989,
+      "expiresAt": 9007199254740991,
+      "maxPostBytes": 8000
+    },
+    "expectedSha256": "aef3f5f0230bd47b53789c20cf8883375b08fee3dd31d57ada082b4c56955a88"
+  },
+  "invalidBase64": [
+    "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw==",
+    "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw",
+    "PUAXw-hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=",
+    "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==",
+    "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
+    " PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=",
+    "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\n",
+    "not+base64!"
+  ]
+}
