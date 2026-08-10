@@ -3,12 +3,19 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  CHANNEL_SCHEMA_VERSION,
   ChannelError,
   ChannelStore,
   MAX_CHANNEL_MEMBERS,
   type TaskWraithReference
 } from './ChannelStore'
 import { ChannelMessageLog } from './ChannelMessageLog'
+import {
+  CHANNEL_AGENT_PROTOCOL_VERSION,
+  signChannelAgentDelegation,
+  type ChannelAgentDelegation
+} from '../../shared/collaboration/ChannelAgentProtocol'
+import { exportRawEd25519PublicKey, generateIdentityKeyPair } from '../../shared/e2ee/keys'
 
 const temporaryPaths: string[] = []
 
@@ -37,6 +44,50 @@ function channelFixture() {
   return { directory, storePath, store, log, ...created }
 }
 
+function agentChannelFixture() {
+  const directory = temporaryDirectory()
+  const storePath = join(directory, 'channels.json')
+  const ownerKeys = generateIdentityKeyPair()
+  const agentKeys = generateIdentityKeyPair()
+  const store = new ChannelStore(storePath)
+  const created = store.createChannel({
+    chatId: 'agent-chat',
+    owner: {
+      displayName: 'Host',
+      identityPublicKey: exportRawEd25519PublicKey(ownerKeys.publicKey).toString('base64')
+    },
+    title: 'Agent room',
+    now: 1_000
+  })
+  const baseDelegation: ChannelAgentDelegation = {
+    schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+    delegationId: 'delegation-agent-1',
+    channelId: created.channel.channelId,
+    ownerMemberId: created.owner.memberId,
+    agentMemberId: 'agent-member-1',
+    agentSeatId: 'pooled-agent-1',
+    agentPublicKeyB64: exportRawEd25519PublicKey(agentKeys.publicKey).toString('base64'),
+    keyGeneration: 1,
+    scopes: ['channel.dispatch', 'channel.post'],
+    issuedAt: 1_000,
+    notBefore: 1_000,
+    expiresAt: 100_000,
+    maxPostBytes: 8_000
+  }
+  const signDelegation = (overrides: Partial<ChannelAgentDelegation> = {}) =>
+    signChannelAgentDelegation(ownerKeys.privateKey, { ...baseDelegation, ...overrides })
+  return {
+    directory,
+    storePath,
+    store,
+    ownerKeys,
+    agentKeys,
+    baseDelegation,
+    signDelegation,
+    ...created
+  }
+}
+
 function expectCode(action: () => unknown, code: ChannelError['code']) {
   expect(action).toThrowError(ChannelError)
   try {
@@ -47,7 +98,7 @@ function expectCode(action: () => unknown, code: ChannelError['code']) {
 }
 
 describe('ChannelStore', () => {
-  it('persists human-only metadata and its immutable display envelope', () => {
+  it('persists human metadata and its immutable display envelope', () => {
     const { store, storePath, channel, owner } = channelFixture()
     const invited = store.admitMember({
       channelId: channel.channelId,
@@ -77,7 +128,202 @@ describe('ChannelStore', () => {
     })
   })
 
-  it('enforces the eight-person ceiling, pins identities, and scopes revocation', () => {
+  it('migrates v2 human snapshots exactly before the next durable mutation', () => {
+    const { storePath, channel, owner } = channelFixture()
+    const v2 = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      schemaVersion: number
+      members: unknown[]
+    }
+    v2.schemaVersion = 2
+    writeFileSync(storePath, JSON.stringify(v2), 'utf8')
+
+    const reloaded = new ChannelStore(storePath)
+    expect(reloaded.getMember(channel.channelId, owner.memberId)).toEqual(v2.members[0])
+    reloaded.createInvite({ channelId: channel.channelId, now: 2_000 })
+
+    const migrated = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      schemaVersion: number
+      members: unknown[]
+    }
+    expect(migrated.schemaVersion).toBe(CHANNEL_SCHEMA_VERSION)
+    expect(migrated.members).toEqual(v2.members)
+  })
+
+  it('persists owner-signed agent membership while keeping relay sessions human-only', () => {
+    const { store, storePath, channel, signDelegation } = agentChannelFixture()
+    const signedDelegation = signDelegation()
+    const admitted = store.registerAgentMember({
+      channelId: channel.channelId,
+      displayName: 'Build Agent',
+      signedDelegation,
+      now: 2_000
+    })
+
+    expect(admitted).toEqual({
+      memberId: 'agent-member-1',
+      channelId: channel.channelId,
+      kind: 'agent',
+      displayName: 'Build Agent',
+      identityPublicKey: signedDelegation.delegation.agentPublicKeyB64,
+      status: 'active',
+      agentSeatId: 'pooled-agent-1',
+      keyGeneration: 1,
+      joinedAt: 2_000
+    })
+    expect(
+      store.registerAgentMember({
+        channelId: channel.channelId,
+        displayName: 'Mutable label is ignored',
+        signedDelegation,
+        now: 200_000
+      })
+    ).toEqual(admitted)
+    expect(store.getDisplayEnvelope(channel.channelId).memberCount).toBe(2)
+    expect(store.getChannel(channel.channelId)?.membershipRevision).toBe(2)
+    expect(new ChannelStore(storePath).getMember(channel.channelId, admitted.memberId)).toEqual(
+      admitted
+    )
+    expectCode(
+      () =>
+        store.validateMemberSession({
+          channelId: channel.channelId,
+          memberId: admitted.memberId,
+          identityPublicKey: admitted.identityPublicKey
+        }),
+      'human_only'
+    )
+  })
+
+  it('rejects forged, rootless, postless, and non-contiguous agent memberships', () => {
+    const { store, channel, baseDelegation, signDelegation } = agentChannelFixture()
+    const foreignOwner = generateIdentityKeyPair()
+    const forged = signChannelAgentDelegation(foreignOwner.privateKey, baseDelegation)
+    expectCode(
+      () =>
+        store.registerAgentMember({
+          channelId: channel.channelId,
+          displayName: 'Forged',
+          signedDelegation: forged,
+          now: 2_000
+        }),
+      'identity_mismatch'
+    )
+    expectCode(
+      () =>
+        store.registerAgentMember({
+          channelId: channel.channelId,
+          displayName: 'Wrong root',
+          signedDelegation: signDelegation({ channelId: 'other-channel' }),
+          now: 2_000
+        }),
+      'identity_mismatch'
+    )
+    expectCode(
+      () =>
+        store.registerAgentMember({
+          channelId: channel.channelId,
+          displayName: 'Dispatch only',
+          signedDelegation: signDelegation({ scopes: ['channel.dispatch'] }),
+          now: 2_000
+        }),
+      'protocol_unsupported'
+    )
+    expectCode(
+      () =>
+        store.registerAgentMember({
+          channelId: channel.channelId,
+          displayName: 'Generation two',
+          signedDelegation: signDelegation({ keyGeneration: 2 }),
+          now: 2_000
+        }),
+      'identity_mismatch'
+    )
+    expect(store.listMembers(channel.channelId)).toHaveLength(1)
+  })
+
+  it('retains revoked agent generations and counts active agents against the shared ceiling', () => {
+    const { store, channel, signDelegation } = agentChannelFixture()
+    const first = store.registerAgentMember({
+      channelId: channel.channelId,
+      displayName: 'Build Agent',
+      signedDelegation: signDelegation(),
+      now: 2_000
+    })
+    store.revokeMember({ channelId: channel.channelId, memberId: first.memberId, now: 3_000 })
+
+    const rotatedKeys = generateIdentityKeyPair()
+    const rotated = store.registerAgentMember({
+      channelId: channel.channelId,
+      displayName: 'Build Agent',
+      signedDelegation: signDelegation({
+        delegationId: 'delegation-agent-2',
+        agentMemberId: 'agent-member-2',
+        agentPublicKeyB64: exportRawEd25519PublicKey(rotatedKeys.publicKey).toString('base64'),
+        keyGeneration: 2,
+        issuedAt: 4_000,
+        notBefore: 4_000
+      }),
+      now: 4_000
+    })
+    expect(store.getMember(channel.channelId, first.memberId)).toMatchObject({
+      status: 'revoked',
+      revokedAt: 3_000,
+      keyGeneration: 1
+    })
+    expect(rotated).toMatchObject({ status: 'active', keyGeneration: 2 })
+
+    for (let index = 0; index < MAX_CHANNEL_MEMBERS - 2; index += 1) {
+      store.admitMember({
+        channelId: channel.channelId,
+        displayName: `Human ${index}`,
+        identityPublicKey: `human-key-${index}`,
+        roomId: `human-room-${index}`,
+        now: 5_000 + index
+      })
+    }
+    const anotherKeys = generateIdentityKeyPair()
+    expectCode(
+      () =>
+        store.registerAgentMember({
+          channelId: channel.channelId,
+          displayName: 'Ninth active member',
+          signedDelegation: signDelegation({
+            delegationId: 'delegation-other-seat',
+            agentMemberId: 'agent-member-other-seat',
+            agentSeatId: 'pooled-agent-2',
+            agentPublicKeyB64: exportRawEd25519PublicKey(anotherKeys.publicKey).toString('base64'),
+            keyGeneration: 1
+          }),
+          now: 6_000
+        }),
+      'quota_exceeded'
+    )
+  })
+
+  it('blocks legacy or malformed snapshots from smuggling agent membership', () => {
+    const { store, storePath, channel, signDelegation } = agentChannelFixture()
+    store.registerAgentMember({
+      channelId: channel.channelId,
+      displayName: 'Build Agent',
+      signedDelegation: signDelegation(),
+      now: 2_000
+    })
+    const valid = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      schemaVersion: number
+      members: Array<Record<string, unknown>>
+    }
+
+    writeFileSync(storePath, JSON.stringify({ ...valid, schemaVersion: 2 }), 'utf8')
+    expectCode(() => new ChannelStore(storePath).listChannels(), 'recovery_blocked')
+
+    const malformed = structuredClone(valid)
+    const agent = malformed.members.find((member) => member.kind === 'agent')!
+    agent.roomId = 'relay-room'
+    writeFileSync(storePath, JSON.stringify(malformed), 'utf8')
+    expectCode(() => new ChannelStore(storePath).listChannels(), 'recovery_blocked')
+  })
+
+  it('enforces the eight-member ceiling, pins identities, and scopes revocation', () => {
     const { store, channel } = channelFixture()
     const members = Array.from({ length: MAX_CHANNEL_MEMBERS - 1 }, (_, index) =>
       store.admitMember({

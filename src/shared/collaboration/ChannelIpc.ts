@@ -59,7 +59,7 @@ export interface ChannelIpcChannel {
 export interface ChannelIpcMember {
   memberId: string
   channelId: string
-  kind: 'human'
+  kind: 'human' | 'agent'
   displayName: string
   status: ChannelIpcMemberStatus
   joinedAt: number

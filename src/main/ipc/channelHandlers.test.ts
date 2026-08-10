@@ -73,6 +73,17 @@ function fixture(
           joinedAt: 1,
           identityPublicKey: 'must-not-cross-ipc',
           roomId: 'must-not-cross-ipc'
+        },
+        {
+          memberId: `agent-${input.channelId}`,
+          channelId: input.channelId,
+          kind: 'agent' as const,
+          displayName: 'Build Agent',
+          status: 'active' as const,
+          joinedAt: 2,
+          identityPublicKey: 'must-not-cross-ipc',
+          agentSeatId: 'must-not-cross-ipc',
+          keyGeneration: 1
         }
       ],
       pendingAdmissions: [
@@ -229,6 +240,10 @@ describe('registerChannelHandlers', () => {
     expect(read.ok).toBe(true)
     expect(read).toMatchObject({
       value: {
+        members: [
+          { memberId: 'owner-channel-a', kind: 'human' },
+          { memberId: 'agent-channel-a', kind: 'agent' }
+        ],
         pendingAdmissions: [
           {
             memberId: 'joining-channel-a',
@@ -245,7 +260,9 @@ describe('registerChannelHandlers', () => {
       maxRecords: 32,
       maxBytes: 4_096
     })
-    expect(JSON.stringify(read)).not.toMatch(/identityPublicKey|roomId|tokenHash|handshakeId/)
+    expect(JSON.stringify(read)).not.toMatch(
+      /identityPublicKey|roomId|tokenHash|handshakeId|agentSeatId|keyGeneration/
+    )
 
     const audit = await own.invoke(CHANNEL_IPC_CHANNELS.audit, { limit: 12 })
     expect(audit.ok).toBe(true)

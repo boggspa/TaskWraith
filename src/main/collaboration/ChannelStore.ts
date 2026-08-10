@@ -13,7 +13,14 @@ import {
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import { basename, dirname, join } from 'path'
 
-export const CHANNEL_SCHEMA_VERSION = 2
+import {
+  parseSignedChannelAgentDelegation,
+  verifyChannelAgentDelegation,
+  type SignedChannelAgentDelegation
+} from '../../shared/collaboration/ChannelAgentProtocol'
+import { importRawEd25519PublicKey } from '../../shared/e2ee/keys'
+
+export const CHANNEL_SCHEMA_VERSION = 3
 export const MAX_CHANNEL_MEMBERS = 8
 export const DEFAULT_CHANNEL_INVITE_TTL_MS = 10 * 60 * 1000
 
@@ -43,7 +50,7 @@ export class ChannelError extends Error {
 
 export type ChannelStatus = 'active' | 'closed'
 export type ChannelMemberStatus = 'pending' | 'active' | 'revoked'
-export type ChannelMemberKind = 'human'
+export type ChannelMemberKind = 'human' | 'agent'
 export type ChannelMessageKind = 'human.text'
 
 /**
@@ -77,7 +84,7 @@ export interface Channel {
   display: ChannelDisplayEnvelope
 }
 
-export interface ChannelMember {
+interface ChannelMemberBase {
   memberId: string
   channelId: string
   kind: ChannelMemberKind
@@ -88,6 +95,24 @@ export interface ChannelMember {
   joinedAt: number
   revokedAt?: number
 }
+
+export interface HumanChannelMember extends ChannelMemberBase {
+  kind: 'human'
+  roomId?: string
+  agentSeatId?: never
+  keyGeneration?: never
+}
+
+export interface AgentChannelMember extends ChannelMemberBase {
+  kind: 'agent'
+  roomId?: never
+  /** Stable TaskWraith seat identity; never a provider session or run id. */
+  agentSeatId: string
+  /** Owner-delegated credential generation for this immutable membership. */
+  keyGeneration: number
+}
+
+export type ChannelMember = HumanChannelMember | AgentChannelMember
 
 export interface ChannelInvite {
   inviteId: string
@@ -165,6 +190,34 @@ function validTimestamp(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+function validBoundedIdentifier(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > MAX_IDENTIFIER_LENGTH ||
+    value.trim() !== value
+  ) {
+    return false
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code === 0x7f) return false
+  }
+  return true
+}
+
+function validAgentPublicKey(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false
+  try {
+    const raw = Buffer.from(value, 'base64')
+    if (raw.length !== 32 || raw.toString('base64') !== value) return false
+    importRawEd25519PublicKey(raw)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function buildEnvelope(
   channel: Pick<Channel, 'display' | 'status' | 'messageCount'>,
   memberCount: number
@@ -212,7 +265,7 @@ export class ChannelStore {
     title: string
     reference?: TaskWraithReference
     now?: number
-  }): { channel: Channel; owner: ChannelMember } {
+  }): { channel: Channel; owner: HumanChannelMember } {
     this.assertHealthy()
     const chatId = nonBlank(args.chatId, 'chat id')
     if (this.snapshot.channels.some((channel) => channel.chatId === chatId)) {
@@ -225,7 +278,7 @@ export class ChannelStore {
     }
 
     const channelId = randomUUID()
-    const owner: ChannelMember = {
+    const owner: HumanChannelMember = {
       memberId: randomUUID(),
       channelId,
       kind: 'human',
@@ -332,7 +385,7 @@ export class ChannelStore {
     displayName: string
     identityPublicKey: string
     now?: number
-  }): { invite: ChannelInvite; member: ChannelMember } {
+  }): { invite: ChannelInvite; member: HumanChannelMember } {
     const channel = this.requireActiveChannel(args.channelId)
     const now = nowOr(args)
     this.expirePendingAdmissions(channel, now)
@@ -371,7 +424,7 @@ export class ChannelStore {
       throw new ChannelError('quota_exceeded', 'Channel member limit reached')
     }
 
-    const member: ChannelMember = {
+    const member: HumanChannelMember = {
       memberId: randomUUID(),
       channelId: channel.channelId,
       kind: 'human',
@@ -393,10 +446,10 @@ export class ChannelStore {
     inviteId: string
     memberId: string
     now?: number
-  }): ChannelMember {
+  }): HumanChannelMember {
     const channel = this.requireActiveChannel(args.channelId)
     const invite = this.requireInvite(channel.channelId, args.inviteId)
-    const member = this.requireMember(channel.channelId, args.memberId)
+    const member = this.requireHumanMember(channel.channelId, args.memberId)
     if (invite.memberId !== member.memberId || !member.roomId || member.roomId !== invite.roomId) {
       throw new ChannelError('identity_mismatch', 'Admission is not bound to this invite room')
     }
@@ -431,10 +484,10 @@ export class ChannelStore {
     inviteId: string
     memberId: string
     now?: number
-  }): ChannelMember {
+  }): HumanChannelMember {
     const channel = this.requireActiveChannel(args.channelId)
     const invite = this.requireInvite(channel.channelId, args.inviteId)
-    const member = this.requireMember(channel.channelId, args.memberId)
+    const member = this.requireHumanMember(channel.channelId, args.memberId)
     if (invite.memberId !== member.memberId) {
       throw new ChannelError('identity_mismatch', 'Admission is not bound to this invite')
     }
@@ -458,7 +511,7 @@ export class ChannelStore {
     identityPublicKey: string
     roomId: string
     now?: number
-  }): ChannelMember {
+  }): HumanChannelMember {
     const channel = this.requireActiveChannel(args.channelId)
     const identityPublicKey = nonBlank(args.identityPublicKey, 'identity public key')
     const existing = this.snapshot.members.find(
@@ -466,6 +519,9 @@ export class ChannelStore {
         member.channelId === channel.channelId && member.identityPublicKey === identityPublicKey
     )
     if (existing) {
+      if (existing.kind !== 'human') {
+        throw new ChannelError('identity_mismatch', 'This identity belongs to an agent member')
+      }
       if (existing.status === 'revoked') {
         throw new ChannelError('revoked', 'This pinned identity has been revoked')
       }
@@ -482,7 +538,7 @@ export class ChannelStore {
       throw new ChannelError('identity_mismatch', 'Relay room is already bound')
     }
 
-    const admitted: ChannelMember = {
+    const admitted: HumanChannelMember = {
       memberId: randomUUID(),
       channelId: channel.channelId,
       kind: 'human',
@@ -494,6 +550,122 @@ export class ChannelStore {
     }
     this.snapshot.members.push(admitted)
     this.bumpMembership(channel, admitted.joinedAt)
+    this.persist()
+    return clone(admitted)
+  }
+
+  /**
+   * Main-only membership transition for a delegation already committed to the
+   * Channel agent authority store. Relay and renderer inputs never reach this
+   * method. The immutable member binds a stable seat to one key generation;
+   * later delegations may reuse that exact binding without rewriting it.
+   */
+  registerAgentMember(args: {
+    channelId: string
+    displayName: string
+    signedDelegation: SignedChannelAgentDelegation
+    now?: number
+  }): AgentChannelMember {
+    const channel = this.requireActiveChannel(args.channelId)
+    const signed = parseSignedChannelAgentDelegation(args.signedDelegation)
+    if (!signed || !signed.delegation.scopes.includes('channel.post')) {
+      throw new ChannelError('protocol_unsupported', 'Agent membership delegation is invalid')
+    }
+    const delegation = signed.delegation
+    if (
+      delegation.channelId !== channel.channelId ||
+      delegation.ownerMemberId !== channel.ownerMemberId
+    ) {
+      throw new ChannelError('identity_mismatch', 'Agent delegation has the wrong Channel root')
+    }
+    const owner = this.requireHumanMember(channel.channelId, channel.ownerMemberId)
+    let verified: ReturnType<typeof verifyChannelAgentDelegation>
+    try {
+      const ownerPublicKey = importRawEd25519PublicKey(
+        Buffer.from(owner.identityPublicKey, 'base64')
+      )
+      verified = verifyChannelAgentDelegation(ownerPublicKey, signed, delegation.notBefore)
+    } catch {
+      throw new ChannelError('identity_mismatch', 'Pinned Channel owner identity is invalid')
+    }
+    if (!verified.ok) {
+      throw new ChannelError('identity_mismatch', 'Agent delegation signature is invalid')
+    }
+    const existingById = this.snapshot.members.find(
+      (member) => member.memberId === delegation.agentMemberId
+    )
+    if (existingById) {
+      if (
+        existingById.channelId !== channel.channelId ||
+        existingById.kind !== 'agent' ||
+        existingById.agentSeatId !== delegation.agentSeatId ||
+        existingById.identityPublicKey !== delegation.agentPublicKeyB64 ||
+        existingById.keyGeneration !== delegation.keyGeneration
+      ) {
+        throw new ChannelError('identity_mismatch', 'Agent member id has another binding')
+      }
+      if (existingById.status === 'revoked') {
+        throw new ChannelError('revoked', 'Agent membership has been revoked')
+      }
+      return clone(existingById)
+    }
+
+    const joinedAt = nowOr(args)
+    if (
+      !validTimestamp(joinedAt) ||
+      !Number.isSafeInteger(joinedAt) ||
+      joinedAt < delegation.issuedAt
+    ) {
+      throw new ChannelError('protocol_unsupported', 'Agent membership timestamp is invalid')
+    }
+    if (joinedAt >= delegation.expiresAt) {
+      throw new ChannelError('revoked', 'Agent membership delegation has expired')
+    }
+
+    const sameSeat = this.snapshot.members.filter(
+      (member): member is AgentChannelMember =>
+        member.channelId === channel.channelId &&
+        member.kind === 'agent' &&
+        member.agentSeatId === delegation.agentSeatId
+    )
+    if (sameSeat.some((member) => member.status !== 'revoked')) {
+      throw new ChannelError('identity_mismatch', 'Agent seat already has an active membership')
+    }
+    if (sameSeat.length === 0 && delegation.keyGeneration !== 1) {
+      throw new ChannelError('identity_mismatch', 'First agent membership generation must be one')
+    }
+    if (sameSeat.length > 0) {
+      const maximumGeneration = Math.max(...sameSeat.map((member) => member.keyGeneration))
+      if (delegation.keyGeneration !== maximumGeneration + 1) {
+        throw new ChannelError('identity_mismatch', 'Agent membership generation is not contiguous')
+      }
+    }
+    if (
+      this.snapshot.members.some(
+        (member) =>
+          member.channelId === channel.channelId &&
+          member.identityPublicKey === delegation.agentPublicKeyB64
+      )
+    ) {
+      throw new ChannelError('identity_mismatch', 'Agent key is already pinned to a member')
+    }
+    if (this.seatHoldingMembers(channel.channelId).length >= MAX_CHANNEL_MEMBERS) {
+      throw new ChannelError('quota_exceeded', 'Channel member limit reached')
+    }
+
+    const admitted: AgentChannelMember = {
+      memberId: delegation.agentMemberId,
+      channelId: channel.channelId,
+      kind: 'agent',
+      displayName: nonBlank(args.displayName, 'display name', MAX_DISPLAY_NAME_LENGTH),
+      identityPublicKey: delegation.agentPublicKeyB64,
+      status: 'active',
+      agentSeatId: delegation.agentSeatId,
+      keyGeneration: delegation.keyGeneration,
+      joinedAt
+    }
+    this.snapshot.members.push(admitted)
+    this.bumpMembership(channel, joinedAt)
     this.persist()
     return clone(admitted)
   }
@@ -588,7 +760,7 @@ export class ChannelStore {
     memberId: string
     identityPublicKey: string
     roomId?: string
-  }): ChannelMember {
+  }): HumanChannelMember {
     const channel = this.requireActiveChannel(args.channelId)
     const member = this.requireMember(channel.channelId, args.memberId)
     if (member.status === 'revoked') throw new ChannelError('revoked', 'Member is revoked')
@@ -596,7 +768,7 @@ export class ChannelStore {
       throw new ChannelError('not_member', 'Member admission is not active')
     }
     if (member.kind !== 'human') {
-      throw new ChannelError('human_only', 'Only human members are supported')
+      throw new ChannelError('human_only', 'Relay sessions are human-only')
     }
     if (member.identityPublicKey !== nonBlank(args.identityPublicKey, 'identity public key')) {
       throw new ChannelError('identity_mismatch', 'Pinned identity does not match this member')
@@ -767,6 +939,14 @@ export class ChannelStore {
     return member
   }
 
+  private requireHumanMember(channelId: string, memberId: string): HumanChannelMember {
+    const member = this.requireMember(channelId, memberId)
+    if (member.kind !== 'human') {
+      throw new ChannelError('human_only', 'Relay admissions are human-only')
+    }
+    return member
+  }
+
   private requireInvite(channelId: string, inviteId: string): ChannelInvite {
     const id = nonBlank(inviteId, 'invite id')
     const invite = this.snapshot.invites.find(
@@ -856,16 +1036,41 @@ export class ChannelStore {
   }
 }
 
+function hasInvalidAgentSeatHistory(members: readonly AgentChannelMember[]): boolean {
+  const bySeat = new Map<string, AgentChannelMember[]>()
+  for (const member of members) {
+    const entries = bySeat.get(member.agentSeatId) ?? []
+    entries.push(member)
+    bySeat.set(member.agentSeatId, entries)
+  }
+  for (const entries of bySeat.values()) {
+    entries.sort((left, right) => left.keyGeneration - right.keyGeneration)
+    const publicKeys = new Set<string>()
+    for (let index = 0; index < entries.length; index += 1) {
+      const member = entries[index]!
+      if (member.keyGeneration !== index + 1 || publicKeys.has(member.identityPublicKey)) {
+        return true
+      }
+      publicKeys.add(member.identityPublicKey)
+      const next = entries[index + 1]
+      if (next && (member.status !== 'revoked' || member.revokedAt! > next.joinedAt)) return true
+    }
+    if (entries.slice(0, -1).some((member) => member.status !== 'revoked')) return true
+  }
+  return false
+}
+
 function normalizeSnapshot(
   value: unknown
 ): { snapshot: ChannelStoreSnapshot; driftedChannelIds: string[] } | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
+  const schemaVersion = raw.schemaVersion
   if (
-    (raw.schemaVersion !== 1 && raw.schemaVersion !== CHANNEL_SCHEMA_VERSION) ||
+    (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== CHANNEL_SCHEMA_VERSION) ||
     !Array.isArray(raw.channels) ||
     !Array.isArray(raw.members) ||
-    (raw.schemaVersion === CHANNEL_SCHEMA_VERSION && !Array.isArray(raw.invites))
+    (schemaVersion !== 1 && !Array.isArray(raw.invites))
   ) {
     return null
   }
@@ -949,7 +1154,6 @@ function normalizeSnapshot(
       memberIds.has(member.memberId) ||
       typeof member.channelId !== 'string' ||
       !channelIds.has(member.channelId) ||
-      member.kind !== 'human' ||
       typeof member.displayName !== 'string' ||
       !member.displayName ||
       member.displayName.length > MAX_DISPLAY_NAME_LENGTH ||
@@ -962,26 +1166,59 @@ function normalizeSnapshot(
     ) {
       return null
     }
-    if (member.roomId && memberRoomIds.has(member.roomId)) return null
+    let normalized: ChannelMember
+    if (member.kind === 'human') {
+      if (member.agentSeatId !== undefined || member.keyGeneration !== undefined) return null
+      normalized = {
+        memberId: member.memberId,
+        channelId: member.channelId,
+        kind: 'human',
+        displayName: member.displayName,
+        identityPublicKey: member.identityPublicKey,
+        status: member.status,
+        ...(member.roomId ? { roomId: member.roomId } : {}),
+        joinedAt: member.joinedAt,
+        ...(member.revokedAt !== undefined ? { revokedAt: member.revokedAt } : {})
+      }
+    } else if (
+      member.kind === 'agent' &&
+      schemaVersion === CHANNEL_SCHEMA_VERSION &&
+      validBoundedIdentifier(member.memberId) &&
+      member.status !== 'pending' &&
+      member.roomId === undefined &&
+      validBoundedIdentifier(member.agentSeatId) &&
+      validAgentPublicKey(member.identityPublicKey) &&
+      Number.isSafeInteger(member.keyGeneration) &&
+      (member.keyGeneration as number) >= 1 &&
+      Number.isSafeInteger(member.joinedAt) &&
+      (member.revokedAt === undefined || Number.isSafeInteger(member.revokedAt)) &&
+      (member.status === 'revoked') === (member.revokedAt !== undefined)
+    ) {
+      normalized = {
+        memberId: member.memberId,
+        channelId: member.channelId,
+        kind: 'agent',
+        displayName: member.displayName,
+        identityPublicKey: member.identityPublicKey,
+        status: member.status,
+        agentSeatId: member.agentSeatId,
+        keyGeneration: member.keyGeneration as number,
+        joinedAt: member.joinedAt,
+        ...(member.revokedAt !== undefined ? { revokedAt: member.revokedAt } : {})
+      }
+    } else {
+      return null
+    }
+    if (normalized.roomId && memberRoomIds.has(normalized.roomId)) return null
     memberIds.add(member.memberId)
-    if (member.roomId) memberRoomIds.add(member.roomId)
-    members.push({
-      memberId: member.memberId,
-      channelId: member.channelId,
-      kind: 'human',
-      displayName: member.displayName,
-      identityPublicKey: member.identityPublicKey,
-      status: member.status,
-      ...(member.roomId ? { roomId: member.roomId } : {}),
-      joinedAt: member.joinedAt,
-      ...(member.revokedAt !== undefined ? { revokedAt: member.revokedAt } : {})
-    })
+    if (normalized.roomId) memberRoomIds.add(normalized.roomId)
+    members.push(normalized)
   }
 
   const invites: ChannelInvite[] = []
   const inviteIds = new Set<string>()
   const inviteRoomIds = new Set<string>()
-  const rawInvites = raw.schemaVersion === CHANNEL_SCHEMA_VERSION ? (raw.invites as unknown[]) : []
+  const rawInvites = schemaVersion === 1 ? [] : (raw.invites as unknown[])
   for (const candidate of rawInvites) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
     const invite = candidate as Record<string, unknown>
@@ -1012,7 +1249,7 @@ function normalizeSnapshot(
       const member = members.find(
         (entry) => entry.channelId === invite.channelId && entry.memberId === invite.memberId
       )
-      if (!member || member.roomId !== invite.roomId) return null
+      if (!member || member.kind !== 'human' || member.roomId !== invite.roomId) return null
     } else if (memberRoomIds.has(invite.roomId)) {
       return null
     }
@@ -1033,9 +1270,13 @@ function normalizeSnapshot(
 
   for (const channel of channels) {
     const channelMembers = members.filter((member) => member.channelId === channel.channelId)
+    const agentMembers = channelMembers.filter(
+      (member): member is AgentChannelMember => member.kind === 'agent'
+    )
     const owners = channelMembers.filter((member) => member.memberId === channel.ownerMemberId)
     const activeCount = channelMembers.filter((member) => member.status === 'active').length
     const seatCount = channelMembers.filter((member) => member.status !== 'revoked').length
+    const identityCount = new Set(channelMembers.map((member) => member.identityPublicKey)).size
     const owner = owners[0]
     if (
       owners.length !== 1 ||
@@ -1045,8 +1286,15 @@ function normalizeSnapshot(
       owner.roomId !== undefined ||
       activeCount > MAX_CHANNEL_MEMBERS ||
       seatCount > MAX_CHANNEL_MEMBERS ||
+      identityCount !== channelMembers.length ||
       channel.display.memberCount !== activeCount ||
-      channelMembers.some((member) => member.memberId !== channel.ownerMemberId && !member.roomId)
+      channelMembers.some(
+        (member) =>
+          member.memberId !== channel.ownerMemberId &&
+          ((member.kind === 'human' && !member.roomId) ||
+            (member.kind === 'agent' && member.roomId !== undefined))
+      ) ||
+      hasInvalidAgentSeatHistory(agentMembers)
     ) {
       driftedSet.add(channel.channelId)
       driftedChannelIds.push(channel.channelId)
