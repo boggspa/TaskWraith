@@ -187,7 +187,15 @@ export class TaskWraithTui {
             displayName: 'TaskWraith TUI'
           },
           // One authenticated v2 socket owns snapshots, live deltas and commands.
-          capabilities: ['bootstrap', 'snapshot', 'deltas', 'health', 'commands', 'receipts'],
+          capabilities: [
+            'bootstrap',
+            'snapshot',
+            'deltas',
+            'model-offers',
+            'health',
+            'commands',
+            'receipts'
+          ],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
   }

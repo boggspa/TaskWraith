@@ -12,6 +12,7 @@ import {
   createEmptyHostSnapshot,
   type HostApprovalProjection,
   type HostBootstrapWelcome,
+  type HostCapability,
   type HostCommand,
   type HostCommandReceipt,
   type HostDeltaEnvelope,
@@ -113,6 +114,7 @@ class FakeHostV2 {
   private cursor = 9
   private eventSequence = 0
   snapshotRequests = 0
+  helloCapabilities: HostCapability[] = []
   readonly commands: HostCommand[] = []
 
   constructor(userDataPath: string, handlers: FakeHostHandlers) {
@@ -235,6 +237,21 @@ class FakeHostV2 {
         socket.destroy()
         return
       }
+      const hello = message.hello as { capabilities?: unknown } | undefined
+      this.helloCapabilities = Array.isArray(hello?.capabilities)
+        ? hello.capabilities.filter(
+            (capability): capability is HostCapability => typeof capability === 'string'
+          )
+        : []
+      const hostCapabilities: HostCapability[] = [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'model-offers',
+        'health',
+        'commands',
+        'receipts'
+      ]
       const welcome: HostBootstrapWelcome = {
         type: 'host.welcome',
         protocolVersion: HOST_PROTOCOL_VERSION,
@@ -250,15 +267,9 @@ class FakeHostV2 {
           clientClass: 'tui',
           clientVersion: '0.1.0-test'
         },
-        capabilities: [
-          'bootstrap',
-          'snapshot',
-          'deltas',
-          'model-offers',
-          'health',
-          'commands',
-          'receipts'
-        ],
+        capabilities: hostCapabilities.filter((capability) =>
+          this.helloCapabilities.includes(capability)
+        ),
         freshness: 'live'
       }
       this.write(socket, {
@@ -773,6 +784,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
 
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    expect(host.helloCapabilities).toContain('model-offers')
     feed(input, '\u0007')
     await waitFor(
       () => output.lastFrame.includes('Model (preview)') && output.lastFrame.includes('Opus 5'),
