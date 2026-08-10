@@ -22,6 +22,7 @@ import {
 import { TASKWRAITH_RUNTIME_PREAMBLE_VERSION } from '../PromptComposition'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   resetAntigravityGeminiApiKeyConfiguredProbeForTests,
   setAntigravityGeminiApiKeyConfiguredProbe
@@ -237,6 +238,80 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Secret prior-thread instruction.')
     expect(payload.ollamaRunProfile).toBeUndefined()
     expect(payload.composer.providerMetadataPatch).toBeUndefined()
+  })
+
+  it('composes a main-owned Channel agent turn with exact posture and no chat inheritance', async () => {
+    const chat = makeChat({
+      provider: 'codex',
+      linkedProviderSessionId: 'thread-must-not-resume',
+      contextCompactionSummary: {
+        text: 'Prior compacted secret.',
+        createdAt: '2026-01-01T00:00:02.000Z',
+        provider: 'codex'
+      },
+      providerMetadata: {
+        approvalMode: 'plan',
+        selectedModelType: 'old-chat-model'
+      }
+    })
+    const appSettings = makeSettings()
+    const effectivePermissions = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      model: 'gpt-5.6-terra',
+      settings: appSettings,
+      presetId: 'full_access'
+    })
+    const { deps } = makeDeps(chat)
+    deps.signRunPermissionPosture = vi.fn(() => 'signed-channel-agent-posture')
+    deps.isTrustedSessionGranted = vi.fn(() => true)
+    const service = new ComposerService(deps)
+    const input = {
+      chatId: chat.appChatId,
+      appRunId: 'channel-agent-run-1',
+      provider: 'codex' as const,
+      scope: 'workspace' as const,
+      workspace: '/repo',
+      userInput: 'One isolated Channel contribution.',
+      overrideModel: 'gpt-5.6-terra',
+      approvalMode: effectivePermissions.approvalMode,
+      permissionPresetId: 'full_access' as const,
+      workflowMode: 'normal' as const,
+      contextIsolation: 'channel_agent' as const
+    }
+    const authority = {
+      kind: 'channel_agent' as const,
+      appRunId: 'channel-agent-run-1',
+      chatId: chat.appChatId,
+      provider: 'codex' as const,
+      scope: 'workspace' as const,
+      workspacePath: '/repo',
+      approvalMode: effectivePermissions.approvalMode,
+      workflowMode: 'normal' as const,
+      permissionPresetId: 'full_access' as const,
+      effectivePermissions
+    }
+
+    const payload = await service.composeMainOwnedChannelAgentRun(input, authority)
+
+    expect(payload.providerSessionId).toBeNull()
+    expect(payload.composer.providerSessionId).toBeNull()
+    expect(payload.composer.contextTurnsApplied).toBe(0)
+    expect(payload.approvalMode).toBe(effectivePermissions.approvalMode)
+    expect(payload.effectivePermissions).toEqual(effectivePermissions)
+    expect(payload.effectivePermissionsSignature).toBe('signed-channel-agent-posture')
+    expect(payload.prompt).toContain('One isolated Channel contribution.')
+    expect(payload.prompt).not.toContain('Previous question')
+    expect(payload.prompt).not.toContain('Prior compacted secret.')
+    expect(payload.model).toBe('gpt-5.6-terra')
+    expect(deps.isTrustedSessionGranted).not.toHaveBeenCalled()
+
+    await expect(
+      service.composeMainOwnedChannelAgentRun(
+        { ...input, imageAttachments: [{ path: '/tmp/renderer-injected.png' }] },
+        authority
+      )
+    ).rejects.toThrow('Channel agent composer authority is invalid.')
   })
 
   it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', async () => {

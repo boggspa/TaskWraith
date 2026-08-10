@@ -137,7 +137,7 @@ export interface ComposerInput {
   discordContextSnapshots?: DiscordContextSnapshot[]
   chatSnapshot?: ChatRecord
   /** Main-only graph lane: no transcript, goal, compaction, or native-session inheritance. */
-  contextIsolation?: 'execution_graph'
+  contextIsolation?: 'execution_graph' | 'channel_agent'
   /** Send the prompt to the provider verbatim (no context/preamble blocks) —
    * provider-native slash dispatches only (see ComposeRunPromptInput). */
   verbatimPrompt?: boolean
@@ -259,18 +259,52 @@ export interface ComposerServiceDeps {
   ) => string | null | undefined | Promise<string | null | undefined>
 }
 
+/**
+ * Main-only authority for a fresh Channel-agent turn. This is a second method
+ * argument, never part of renderer IPC, so renderer-authored payloads cannot
+ * claim the already owner-signed permission posture.
+ */
+export interface ChannelAgentComposerAuthority {
+  readonly kind: 'channel_agent'
+  readonly appRunId: string
+  readonly chatId: string
+  readonly provider: ProviderId
+  readonly scope: ChatScope
+  readonly workspacePath?: string
+  readonly approvalMode: string
+  readonly workflowMode: ChatWorkflowMode
+  readonly permissionPresetId: PermissionPresetId
+  readonly effectivePermissions: EffectiveRunPermissions
+}
+
 export class ComposerService {
   constructor(private deps: ComposerServiceDeps) {}
 
   async composeRun(input: ComposerInput): Promise<ComposerRunPayload> {
+    return this.composeRunInternal(input, null)
+  }
+
+  async composeMainOwnedChannelAgentRun(
+    input: ComposerInput,
+    authority: ChannelAgentComposerAuthority
+  ): Promise<ComposerRunPayload> {
+    assertChannelAgentComposerAuthority(input, authority)
+    return this.composeRunInternal(input, authority)
+  }
+
+  private async composeRunInternal(
+    input: ComposerInput,
+    channelAgentAuthority: ChannelAgentComposerAuthority | null
+  ): Promise<ComposerRunPayload> {
     const chatId = requireNonEmptyString(input?.chatId, 'Chat id')
     const storedChat = this.deps.appStore.getChat(chatId)
     const sourceChat = input.chatSnapshot || storedChat
     if (!sourceChat) {
       throw new Error(`Chat was not found: ${chatId}`)
     }
-    const graphContextIsolated = input.contextIsolation === 'execution_graph'
-    const chat: ChatRecord = graphContextIsolated
+    const contextIsolated =
+      input.contextIsolation === 'execution_graph' || input.contextIsolation === 'channel_agent'
+    const chat: ChatRecord = contextIsolated
       ? {
           ...sourceChat,
           messages: [],
@@ -299,10 +333,28 @@ export class ComposerService {
     )
     const scope: ChatScope =
       input.scope === 'global' || chat.scope === 'global' ? 'global' : 'workspace'
+    if (
+      channelAgentAuthority &&
+      (chatId !== channelAgentAuthority.chatId ||
+        scope !== channelAgentAuthority.scope ||
+        (scope === 'workspace'
+          ? input.workspace !== channelAgentAuthority.workspacePath
+          : Boolean(input.workspace)))
+    ) {
+      throw new Error('Channel agent chat or workspace authority changed before composition.')
+    }
     const settings = this.deps.getSettings()
     const dispatchResolution = resolveProviderDispatch(settings, requestedProvider)
     const provider = dispatchResolution.provider
     const effectiveProviderReroute = input.providerReroute || dispatchResolution.reroute
+    if (
+      channelAgentAuthority &&
+      (requestedProvider !== channelAgentAuthority.provider ||
+        provider !== channelAgentAuthority.provider ||
+        effectiveProviderReroute)
+    ) {
+      throw new Error('Channel agent provider routing changed before composition.')
+    }
     const crossProviderReroute = Boolean(
       effectiveProviderReroute && effectiveProviderReroute.from !== effectiveProviderReroute.to
     )
@@ -407,7 +459,7 @@ export class ComposerService {
     }
     const runtimeProfileId = optionalString(effectiveInput.runtimeProfileId)
     const frozenPermissionPosture =
-      appRunId && !unattended
+      !channelAgentAuthority && appRunId && !unattended
         ? (this.deps.resolveFrozenPermissionPosture?.({
             appRunId,
             provider,
@@ -432,7 +484,12 @@ export class ComposerService {
       approvalMode = frozenPermissionPosture.approvalMode
       workflowMode = frozenPermissionPosture.workflowMode
     }
+    if (channelAgentAuthority) {
+      approvalMode = channelAgentAuthority.approvalMode
+      workflowMode = channelAgentAuthority.workflowMode
+    }
     const requestedTrustedSession =
+      !channelAgentAuthority &&
       !frozenPermissionPosture &&
       effectiveInput.permissionPresetId === 'full_access' &&
       scope !== 'global'
@@ -482,10 +539,12 @@ export class ComposerService {
     const contextualFinalPrompt = `${finalPrompt}${formatDiscordContextPromptAppendix(discordContextSnapshots)}`
     const geminiAuthProfileId =
       provider === 'gemini'
-        ? optionalStringOrNull(effectiveInput.geminiAuthProfileId) ||
-          metadataString(chat, 'geminiAuthProfileId') ||
-          optionalStringOrNull(settings.defaultGeminiAuthProfileId) ||
-          null
+        ? channelAgentAuthority
+          ? optionalStringOrNull(effectiveInput.geminiAuthProfileId)
+          : optionalStringOrNull(effectiveInput.geminiAuthProfileId) ||
+            metadataString(chat, 'geminiAuthProfileId') ||
+            optionalStringOrNull(settings.defaultGeminiAuthProfileId) ||
+            null
         : null
 
     const resumeDecision = resolveResumeDecision(
@@ -516,7 +575,7 @@ export class ComposerService {
     const chatOllamaRunProfile = isOllamaRunProfileId(rawChatOllamaRunProfile)
       ? rawChatOllamaRunProfile
       : undefined
-    const mcpProfileOwner = graphContextIsolated ? chat : storedChat || chat
+    const mcpProfileOwner = contextIsolated ? chat : storedChat || chat
     const claudePinnedMcpReceipt =
       provider === 'claude' &&
       isTaskWraithMcpProfileReceiptForSession(mcpProfileOwner.taskWraithMcpProfileReceipt, {
@@ -568,7 +627,7 @@ export class ComposerService {
       | readonly { id: string; name: string; description: string }[]
       | undefined
     let sessionStartContext: string | null | undefined
-    if (!graphContextIsolated && workspacePathForSkills) {
+    if (!contextIsolated && workspacePathForSkills) {
       if (this.deps.resolveSkillDiscoverySkills || this.deps.resolveSessionStartContext) {
         skillDiscoverySkills = this.deps.resolveSkillDiscoverySkills?.(
           workspacePathForSkills,
@@ -593,7 +652,7 @@ export class ComposerService {
       contextCompactionSummary: chat.contextCompactionSummary || null,
       finalPrompt: contextualFinalPrompt,
       messages: filterMessagesExcludingIds(chat.messages || [], input.excludeMessageIds),
-      chatContextTurns: graphContextIsolated ? 0 : settings.chatContextTurns,
+      chatContextTurns: contextIsolated ? 0 : settings.chatContextTurns,
       resumeSessionId: resumeDecision.sessionId || undefined,
       lastCompletedCodexModel,
       nextModel: requestedModel,
@@ -674,75 +733,79 @@ export class ComposerService {
       unattended && unattendedElevation && approvalMode !== 'plan'
         ? unattendedElevationPresetId(unattendedElevation.ack.level)
         : undefined
-    const resolvedRunPermissions = frozenPermissionPosture
-      ? frozenPermissionPosture.effectivePermissions
-      : approvalMode === 'plan'
-        ? resolveEffectiveRunPermissions({
-            provider,
-            workspacePath:
-              scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
-            model: requestedModel,
-            settings,
-            // Posture split: the solo composer's two `approvalMode: 'plan'` rows
-            // are distinguished ONLY by workflowMode (the renderer derives the
-            // same 'read_only' vs 'plan' label from it). The Plan row
-            // (workflowMode 'plan') resolves the `plan` instrument tier; the
-            // Ask row (workflowMode 'normal') the attended Ask posture. Both
-            // keep readOnly:true so the signed posture still clears the clamp.
-            // Unattended (scheduled) safe runs use Plan: standard-service asks
-            // remain promptable and fail closed through approval timeout.
-            presetId: workflowMode === 'plan' || unattended ? 'plan' : 'read_only'
-          })
-        : elevatedPresetId
+    const resolvedRunPermissions = channelAgentAuthority
+      ? (JSON.parse(
+          JSON.stringify(channelAgentAuthority.effectivePermissions)
+        ) as EffectiveRunPermissions)
+      : frozenPermissionPosture
+        ? frozenPermissionPosture.effectivePermissions
+        : approvalMode === 'plan'
           ? resolveEffectiveRunPermissions({
               provider,
               workspacePath:
                 scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
               model: requestedModel,
               settings,
-              presetId: elevatedPresetId,
-              // Unattended elevation NEVER gets network egress (exfiltration risk on
-              // an unattended loop). workspace_write/default don't set networkAccess
-              // (→ settings default 'allow'), so force-deny it here.
-              overrides: {
-                networkAccess: 'deny'
-              }
+              // Posture split: the solo composer's two `approvalMode: 'plan'` rows
+              // are distinguished ONLY by workflowMode (the renderer derives the
+              // same 'read_only' vs 'plan' label from it). The Plan row
+              // (workflowMode 'plan') resolves the `plan` instrument tier; the
+              // Ask row (workflowMode 'normal') the attended Ask posture. Both
+              // keep readOnly:true so the signed posture still clears the clamp.
+              // Unattended (scheduled) safe runs use Plan: standard-service asks
+              // remain promptable and fail closed through approval timeout.
+              presetId: workflowMode === 'plan' || unattended ? 'plan' : 'read_only'
             })
-          : previewRiskModel
+          : elevatedPresetId
             ? resolveEffectiveRunPermissions({
                 provider,
                 workspacePath:
                   scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
                 model: requestedModel,
                 settings,
-                presetId: 'default'
+                presetId: elevatedPresetId,
+                // Unattended elevation NEVER gets network egress (exfiltration risk on
+                // an unattended loop). workspace_write/default don't set networkAccess
+                // (→ settings default 'allow'), so force-deny it here.
+                overrides: {
+                  networkAccess: 'deny'
+                }
               })
-            : resolveEffectiveRunPermissions({
-                provider,
-                workspacePath:
-                  scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
-                model: requestedModel,
-                settings,
-                presetId:
-                  scope === 'global' ? 'default' : interactivePermissionPresetId || 'default',
-                ...(scope === 'global'
-                  ? {
-                      overrides: {
-                        agenticServices: {
-                          // Global runs historically inherit settings rather
-                          // than Accept Edits' workspace-oriented presets.
-                          // Preserve that for every service except chat-local
-                          // Mesh authoring, which follows the explicit ladder.
-                          fileChanges: settings.agenticServices?.fileChanges ?? 'ask',
-                          subThreadDelegation:
-                            settings.agenticServices?.subThreadDelegation ?? 'ask',
-                          simulatorCanvas: settings.agenticServices?.simulatorCanvas ?? 'ask',
-                          meshCanvas: 'allow'
+            : previewRiskModel
+              ? resolveEffectiveRunPermissions({
+                  provider,
+                  workspacePath:
+                    scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+                  model: requestedModel,
+                  settings,
+                  presetId: 'default'
+                })
+              : resolveEffectiveRunPermissions({
+                  provider,
+                  workspacePath:
+                    scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+                  model: requestedModel,
+                  settings,
+                  presetId:
+                    scope === 'global' ? 'default' : interactivePermissionPresetId || 'default',
+                  ...(scope === 'global'
+                    ? {
+                        overrides: {
+                          agenticServices: {
+                            // Global runs historically inherit settings rather
+                            // than Accept Edits' workspace-oriented presets.
+                            // Preserve that for every service except chat-local
+                            // Mesh authoring, which follows the explicit ladder.
+                            fileChanges: settings.agenticServices?.fileChanges ?? 'ask',
+                            subThreadDelegation:
+                              settings.agenticServices?.subThreadDelegation ?? 'ask',
+                            simulatorCanvas: settings.agenticServices?.simulatorCanvas ?? 'ask',
+                            meshCanvas: 'allow'
+                          }
                         }
                       }
-                    }
-                  : {})
-              })
+                    : {})
+                })
     const effectiveRunPermissions = resolvedRunPermissions
     const payload: ComposerRunPayload = {
       provider,
@@ -874,6 +937,63 @@ export class ComposerService {
     }
 
     return payload
+  }
+}
+
+function assertChannelAgentComposerAuthority(
+  input: ComposerInput,
+  authority: ChannelAgentComposerAuthority
+): void {
+  const authorityKeys = [
+    'kind',
+    'appRunId',
+    'chatId',
+    'provider',
+    'scope',
+    ...(authority?.scope === 'workspace' ? ['workspacePath'] : []),
+    'approvalMode',
+    'workflowMode',
+    'permissionPresetId',
+    'effectivePermissions'
+  ]
+  const actualAuthorityKeys =
+    authority && typeof authority === 'object' ? Object.keys(authority) : []
+  const forbiddenInput = Boolean(
+    input.scheduledTaskId ||
+    input.providerReroute ||
+    input.chatSnapshot ||
+    input.verbatimPrompt ||
+    input.handoffSourceRunId ||
+    input.projectReferenceContextSelection ||
+    input.geminiWorktree ||
+    input.sessionTrust ||
+    (input.attachments?.length ?? 0) > 0 ||
+    (input.imageAttachments?.length ?? 0) > 0 ||
+    (input.externalPathGrants?.length ?? 0) > 0 ||
+    (input.discordContextSnapshots?.length ?? 0) > 0 ||
+    (input.excludeMessageIds?.length ?? 0) > 0
+  )
+  if (
+    !authority ||
+    authority.kind !== 'channel_agent' ||
+    actualAuthorityKeys.length !== authorityKeys.length ||
+    actualAuthorityKeys.some((key) => !authorityKeys.includes(key)) ||
+    input.contextIsolation !== 'channel_agent' ||
+    input.appRunId !== authority.appRunId ||
+    input.chatId !== authority.chatId ||
+    input.provider !== authority.provider ||
+    input.scope !== authority.scope ||
+    input.approvalMode !== authority.approvalMode ||
+    input.workflowMode !== authority.workflowMode ||
+    input.permissionPresetId !== authority.permissionPresetId ||
+    authority.effectivePermissions?.presetId !== authority.permissionPresetId ||
+    authority.effectivePermissions?.approvalMode !== authority.approvalMode ||
+    (authority.scope === 'workspace'
+      ? !authority.workspacePath || input.workspace !== authority.workspacePath
+      : Boolean(authority.workspacePath) || Boolean(input.workspace)) ||
+    forbiddenInput
+  ) {
+    throw new Error('Channel agent composer authority is invalid.')
   }
 }
 
