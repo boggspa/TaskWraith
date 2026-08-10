@@ -49,6 +49,8 @@ export type MuseExecNormalizedType =
   | 'task'
   | 'content'
   | 'terminal'
+  | 'tool_use'
+  | 'tool_result'
   | 'unknown'
 
 export interface MuseExecNormalizedEvent {
@@ -62,6 +64,12 @@ export interface MuseExecNormalizedEvent {
   reason?: string
   sequence?: number
   envelopeId?: string
+  /** Stable Muse tool call id (`call_…`) for ActivityStack pairing. */
+  toolId?: string
+  toolName?: string
+  toolInput?: Record<string, unknown>
+  toolOutput?: string
+  toolStatus?: 'success' | 'error'
   raw: unknown
 }
 

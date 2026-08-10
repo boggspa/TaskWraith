@@ -11,6 +11,7 @@
 
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import {
   buildMuseExecArgv,
   museWriteCapable,
@@ -22,20 +23,24 @@ import { assertMuseCronJobsEmpty, type MuseCronAssertResult } from './MuseCronAs
 import {
   museExecLineToEvents,
   parseMuseExecJsonChunk,
+  type MuseEnvelope,
   type MuseExecNormalizedEvent
 } from './MuseExecJson'
 import { createMuseIsolatedHome, type MuseIsolatedHomeLease } from './MuseIsolatedHome'
 import {
   createMuseSessionLogTailer,
   resolveMuseSessionLogPath,
-  type MuseSessionLogResolveResult
+  type MuseSessionLogResolveResult,
+  type MuseSessionLogTailer
 } from './MuseSessionLog'
+import { museLinkedSubagentSessionLogPath, projectMuseEnvelopeTools } from './MuseToolProjection'
 import {
   createMuseUsageReducer,
   museMeterSnapshotToProviderStats,
   unavailableMuseMeterSnapshot,
   type MuseMeterSnapshot,
-  type MuseProviderStats
+  type MuseProviderStats,
+  type MuseUsageReducer
 } from './MuseUsage'
 import { MUSE_FORBIDDEN_ARGV_FLAGS, MUSE_METERING_EXCLUSIVE_ARGV_FLAGS } from './MuseTypes'
 
@@ -86,6 +91,8 @@ export interface MuseRunInput {
   }) => MuseCronAssertResult
   /** Bound session-log index lag wait (default 250ms for unit safety). */
   readonly sessionLogResolveTimeoutMs?: number
+  /** Poll interval for live session.jsonl tool/usage projection while Muse runs. */
+  readonly sessionLogPollIntervalMs?: number
   readonly createHome?: (input: {
     readonly temporaryRoot: string
     readonly runId: string
@@ -184,6 +191,104 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   let meter: MuseMeterSnapshot = unavailableMuseMeterSnapshot(sessionId)
   let handle: MuseRunSpawnHandle | null = null
   let stdoutCarry = ''
+  let usageReducer: MuseUsageReducer | null = null
+  const sessionTailers = new Map<string, MuseSessionLogTailer>()
+  const pendingSubagentPaths = new Set<string>()
+
+  const emitEvent = (event: MuseExecNormalizedEvent): void => {
+    events.push(event)
+    if (event.type === 'content' && event.text) assistantText += event.text
+    if (event.type === 'terminal') {
+      if (event.text) assistantText = event.text
+      const terminal = (event.terminal || '').toLowerCase()
+      status =
+        terminal === 'failed' || terminal === 'error' || terminal === 'cancelled'
+          ? terminal === 'cancelled'
+            ? 'cancelled'
+            : 'failed'
+          : 'success'
+    }
+    input.onEvent?.(event)
+  }
+
+  const ingestSessionEnvelope = (envelope: MuseEnvelope, forUsage: boolean): void => {
+    if (forUsage && usageReducer) usageReducer.ingestEnvelope(envelope)
+    for (const toolEvent of projectMuseEnvelopeTools(envelope)) {
+      emitEvent(toolEvent)
+    }
+    const linked = museLinkedSubagentSessionLogPath(envelope)
+    if (linked) pendingSubagentPaths.add(linked)
+  }
+
+  const attachSessionLogTailer = (
+    absolutePath: string,
+    forUsage: boolean
+  ): MuseSessionLogTailer | null => {
+    if (sessionTailers.has(absolutePath)) return sessionTailers.get(absolutePath) || null
+    try {
+      const tailer = createMuseSessionLogTailer({
+        sessionLogPath: absolutePath,
+        onEnvelope: (envelope) => ingestSessionEnvelope(envelope, forUsage)
+      })
+      sessionTailers.set(absolutePath, tailer)
+      return tailer
+    } catch (error) {
+      warnings.push(
+        `Muse session-log tailer open failed for ${absolutePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+      return null
+    }
+  }
+
+  const openPendingSubagentTailers = (mainSessionLogPath: string): void => {
+    if (pendingSubagentPaths.size === 0) return
+    const sessionDir = dirname(mainSessionLogPath)
+    for (const relative of [...pendingSubagentPaths]) {
+      pendingSubagentPaths.delete(relative)
+      const absolute = join(sessionDir, relative)
+      attachSessionLogTailer(absolute, false)
+    }
+  }
+
+  const pollSessionLogs = async (mainSessionLogPath: string | null): Promise<void> => {
+    for (const tailer of sessionTailers.values()) {
+      await tailer.poll()
+    }
+    if (mainSessionLogPath) openPendingSubagentTailers(mainSessionLogPath)
+    // Newly attached subagent tailers need an immediate poll.
+    for (const tailer of sessionTailers.values()) {
+      await tailer.poll()
+    }
+  }
+
+  const flushSessionLogs = async (mainSessionLogPath: string | null): Promise<void> => {
+    for (const tailer of sessionTailers.values()) {
+      await tailer.flushFinal()
+    }
+    if (mainSessionLogPath) openPendingSubagentTailers(mainSessionLogPath)
+    for (const tailer of sessionTailers.values()) {
+      await tailer.flushFinal()
+    }
+  }
+
+  const handleStdoutEvents = (chunk: string): void => {
+    const parsed = parseMuseExecJsonChunk(chunk, stdoutCarry)
+    stdoutCarry = parsed.carry
+    for (const line of parsed.lines) {
+      for (const event of museExecLineToEvents(line)) {
+        emitEvent(event)
+      }
+      // Defensive: if Muse ever emits runtime.session tool commits on stdout,
+      // project them the same way as the durable session log.
+      if (line.envelope) {
+        for (const toolEvent of projectMuseEnvelopeTools(line.envelope)) {
+          emitEvent(toolEvent)
+        }
+      }
+    }
+  }
 
   const argv = buildMuseExecArgv({
     prompt: input.prompt,
@@ -198,28 +303,6 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
   const env = stringEnv(lease.env)
   const museDataHome = lease.museDataDir
-
-  const handleStdoutEvents = (chunk: string): void => {
-    const parsed = parseMuseExecJsonChunk(chunk, stdoutCarry)
-    stdoutCarry = parsed.carry
-    for (const line of parsed.lines) {
-      for (const event of museExecLineToEvents(line)) {
-        events.push(event)
-        if (event.type === 'content' && event.text) assistantText += event.text
-        if (event.type === 'terminal') {
-          if (event.text) assistantText = event.text
-          const terminal = (event.terminal || '').toLowerCase()
-          status =
-            terminal === 'failed' || terminal === 'error' || terminal === 'cancelled'
-              ? terminal === 'cancelled'
-                ? 'cancelled'
-                : 'failed'
-              : 'success'
-        }
-        input.onEvent?.(event)
-      }
-    }
-  }
 
   try {
     if (input.shouldCancel?.()) {
@@ -282,9 +365,53 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       handle.kill('SIGTERM')
     }
 
+    let mainSessionLogPath: string | null = null
+    const pollMs = Math.max(10, input.sessionLogPollIntervalMs ?? 50)
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+
+    const attachMainSessionLog = (sessionLogPath: string): void => {
+      if (mainSessionLogPath) return
+      mainSessionLogPath = sessionLogPath
+      usageReducer = createMuseUsageReducer({
+        museSessionId: sessionId,
+        logPath: sessionLogPath
+      })
+      attachSessionLogTailer(sessionLogPath, true)
+    }
+
+    // Attach as soon as the path resolves so mid-run tool commits stream live.
+    const attachPromise = sessionLogPromise.then((result) => {
+      if (result.sessionLogPath) attachMainSessionLog(result.sessionLogPath)
+      return result
+    })
+
+    pollTimer = setInterval(() => {
+      void pollSessionLogs(mainSessionLogPath)
+    }, pollMs)
+
     const waited = await handle.wait()
     exitCode = waited.code
     if (stdoutCarry.trim()) handleStdoutEvents('\n')
+
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+
+    const sessionLog = await attachPromise
+    if (sessionLog.sessionLogPath) {
+      attachMainSessionLog(sessionLog.sessionLogPath)
+      await flushSessionLogs(sessionLog.sessionLogPath)
+      meter = usageReducer?.snapshot() ?? unavailableMuseMeterSnapshot(sessionId)
+    } else if (sessionLog.source === 'missing') {
+      warnings.push('Muse session.jsonl was not resolved for metering; usage marked unavailable')
+      meter = unavailableMuseMeterSnapshot(sessionId)
+    }
+
+    for (const tailer of sessionTailers.values()) {
+      await tailer.close()
+    }
+    sessionTailers.clear()
 
     // Callbacks mutate `status` but CFA still sees the initial `'failed'`
     // literal — cast widens before the terminal reconcile.
@@ -295,27 +422,6 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       status = exitCode === 0 ? 'success' : 'failed'
     } else if (exitCode !== 0 && observedStatus === 'success') {
       status = 'failed'
-    }
-
-    const sessionLog = await sessionLogPromise
-    if (sessionLog.sessionLogPath) {
-      const reducer = createMuseUsageReducer({
-        museSessionId: sessionId,
-        logPath: sessionLog.sessionLogPath
-      })
-      const tailer = createMuseSessionLogTailer({
-        sessionLogPath: sessionLog.sessionLogPath,
-        onEnvelope: (envelope) => reducer.ingestEnvelope(envelope)
-      })
-      try {
-        await tailer.flushFinal()
-      } finally {
-        await tailer.close()
-      }
-      meter = reducer.snapshot()
-    } else if (sessionLog.source === 'missing') {
-      warnings.push('Muse session.jsonl was not resolved for metering; usage marked unavailable')
-      meter = unavailableMuseMeterSnapshot(sessionId)
     }
 
     const assertCron =

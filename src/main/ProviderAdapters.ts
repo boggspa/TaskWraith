@@ -446,7 +446,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
           capability: 'approvalModes',
           title: 'Muse is an opaque CLI seat',
           message:
-            'Muse runs via `muse exec --json` under an isolated home. TaskWraith does not attach an MCP broker in v1; native tools stay Muse-owned behind sandbox/approval argv. Host per-tool approval cards are not available for native effects.'
+            'Muse runs via `muse exec --json` under an isolated home. Native tool calls are projected into the transcript ActivityStack from durable session.jsonl for display. TaskWraith does not attach an MCP broker in v1 and does not show host per-tool approval cards for Muse-native effects — containment remains argv/sandbox + isolated home.'
         }
       ]
     }

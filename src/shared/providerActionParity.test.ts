@@ -168,7 +168,10 @@ describe('provider action parity (orchestration)', () => {
             continue
           }
 
-          if (declaration.nativeSurface === 'unobservable-native') {
+          if (
+            declaration.nativeSurface === 'unobservable-native' ||
+            declaration.nativeSurface === 'observed-native'
+          ) {
             expect(resolved, `${provider}:${spelling}`).toMatchObject({
               ok: false,
               denied: true,

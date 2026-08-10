@@ -120,7 +120,12 @@ function tool(
   return { toolClass, service, operation, dispatchOwner, mutation, lock, networkEgress }
 }
 
-export type ProviderNativeSurface = 'catalog-only' | 'closed-native' | 'unobservable-native'
+export type ProviderNativeSurface =
+  | 'catalog-only'
+  | 'closed-native'
+  | 'unobservable-native'
+  /** Native tools are display-projected (e.g. Muse session.jsonl) but not TW-mediated. */
+  | 'observed-native'
 
 export type ProviderMcpAttachmentPosture = 'required' | 'conditional' | 'none' | 'route-dependent'
 
@@ -679,9 +684,11 @@ export const PROVIDER_ACTION_ADAPTERS = {
     }
   }),
   muse: adapter({
-    // Opaque muse exec --json seat: native tools under argv/sandbox containment;
-    // no TaskWraith MCP broker in v1 (COORDINATION / wave1-F).
-    nativeSurface: 'unobservable-native',
+    // Muse exec --json: native tools are projected into ActivityStack from
+    // durable session.jsonl (observed-native), still not TW-mediated — argv +
+    // isolated-home + sandbox containment remain the execution boundary.
+    // No TaskWraith MCP broker in v1 (COORDINATION / wave1-F).
+    nativeSurface: 'observed-native',
     mcpAttachment: 'none',
     nativeMediation: 'provider-runtime-containment',
     structuredKindMappings: {},
@@ -2880,6 +2887,15 @@ export function resolveProviderNativeActionStrict(
       rawAction,
       'native_surface_unobservable',
       `Provider ${provider} native action "${rawAction}" is display-observable but not a TaskWraith-mediated execution boundary.`
+    )
+  }
+  if (declaration.nativeSurface === 'observed-native') {
+    return unmapped(
+      provider,
+      'provider-native',
+      rawAction,
+      'native_surface_unobservable',
+      `Provider ${provider} native action "${rawAction}" is session-log projected for display but not a TaskWraith-mediated execution boundary.`
     )
   }
   return {

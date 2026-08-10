@@ -285,4 +285,205 @@ describe('runMuseProvider', () => {
     })
     expect(outcome.status).toBe('cancelled')
   })
+
+  it('projects session.jsonl tool commits into onEvent before terminal', async () => {
+    const temporaryRoot = tempDir('muse-run-tools-')
+    const workspacePath = tempDir('muse-ws-tools-')
+    const sessionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    const sessionDir = join(temporaryRoot, 'session-dir')
+    mkdirSync(sessionDir, { recursive: true })
+    const sessionLogPath = join(sessionDir, 'session.jsonl')
+    const toolCallLine = JSON.stringify({
+      schema_version: 1,
+      id: 'tool-call-env',
+      stream: { kind: 'session', id: sessionId },
+      sequence: 10,
+      recorded_at: 1786360204007521,
+      record_type: 'event',
+      durability: 'durable',
+      payload_type: 'runtime.session',
+      payload_schema_version: 1,
+      payload: {
+        kind: 'run',
+        run_id: 'run-tools',
+        event: {
+          kind: 'assistant_tool_calls_committed',
+          tool_calls: [
+            {
+              id: 'fc_1',
+              call_id: 'call_write',
+              name: 'write_file',
+              args: '{"path":"a.py","content":"x"}'
+            }
+          ]
+        }
+      }
+    })
+    const toolResultLine = JSON.stringify({
+      schema_version: 1,
+      id: 'tool-result-env',
+      stream: { kind: 'session', id: sessionId },
+      sequence: 11,
+      recorded_at: 1786360204058920,
+      record_type: 'event',
+      durability: 'durable',
+      payload_type: 'runtime.session',
+      payload_schema_version: 1,
+      payload: {
+        kind: 'run',
+        run_id: 'run-tools',
+        event: {
+          kind: 'tool_result_batch_committed',
+          results: [{ tool_call_id: 'call_write', text: 'wrote a.py' }]
+        }
+      }
+    })
+    writeFileSync(sessionLogPath, `${toolCallLine}\n${toolResultLine}\n`, 'utf8')
+
+    const seen: string[] = []
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'write a file',
+      runId: 'run-tools',
+      sessionId,
+      temporaryRoot,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath,
+        source: 'fs-fallback'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId,
+        sessionDir,
+        cronDbPath: join(sessionDir, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: '1'
+      }),
+      onEvent: (event) => {
+        if (event.type === 'tool_use' || event.type === 'tool_result') {
+          seen.push(`${event.type}:${event.toolId}:${event.toolName || event.toolOutput || ''}`)
+        }
+      },
+      spawn: () =>
+        fakeSpawn([
+          stdoutEnvelope({
+            stream: { kind: 'session', id: sessionId },
+            payload_type: 'run.terminal.completed',
+            payload: {
+              kind: 'run_terminal_completed',
+              terminal: 'completed',
+              text: 'done'
+            }
+          })
+        ])
+    })
+
+    expect(outcome.status).toBe('success')
+    expect(seen).toEqual(['tool_use:call_write:write_file', 'tool_result:call_write:wrote a.py'])
+  })
+
+  it('follows task_stream_linked subagent session.jsonl for tool commits', async () => {
+    const temporaryRoot = tempDir('muse-run-subagent-tools-')
+    const workspacePath = tempDir('muse-ws-subagent-tools-')
+    const sessionId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    const sessionDir = join(temporaryRoot, 'session-dir')
+    const subDir = join(sessionDir, 'subagent', 'e9ab8acd-e7d8-4939-af5c-7dc38b23d2ab')
+    mkdirSync(subDir, { recursive: true })
+    const sessionLogPath = join(sessionDir, 'session.jsonl')
+    const subLogPath = join(subDir, 'session.jsonl')
+
+    const linkLine = JSON.stringify({
+      schema_version: 1,
+      id: 'link-env',
+      stream: { kind: 'session', id: sessionId },
+      sequence: 5,
+      recorded_at: 1786360200910283,
+      record_type: 'event',
+      durability: 'durable',
+      payload_type: 'runtime.session',
+      payload_schema_version: 1,
+      payload: {
+        kind: 'run',
+        run_id: 'run-main',
+        event: {
+          kind: 'task_stream_linked',
+          task_id: 'task-1',
+          execution_mode: 'background',
+          display: {
+            path: 'subagent/e9ab8acd-e7d8-4939-af5c-7dc38b23d2ab/session.jsonl'
+          }
+        }
+      }
+    })
+    writeFileSync(sessionLogPath, `${linkLine}\n`, 'utf8')
+    writeFileSync(
+      subLogPath,
+      `${JSON.stringify({
+        schema_version: 1,
+        id: 'sub-tool',
+        stream: { kind: 'session', id: 'e9ab8acd-e7d8-4939-af5c-7dc38b23d2ab' },
+        sequence: 18,
+        recorded_at: 1786360204007521,
+        record_type: 'event',
+        durability: 'durable',
+        payload_type: 'runtime.session',
+        payload_schema_version: 1,
+        payload: {
+          kind: 'run',
+          run_id: 'run-sub',
+          event: {
+            kind: 'assistant_tool_calls_committed',
+            tool_calls: [
+              {
+                call_id: 'call_bash',
+                name: 'bash',
+                args: '{"command":"python3 -m unittest"}'
+              }
+            ]
+          }
+        }
+      })}\n`,
+      'utf8'
+    )
+
+    const seen: string[] = []
+    await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'run tests',
+      runId: 'run-subagent-tools',
+      sessionId,
+      temporaryRoot,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath,
+        source: 'fs-fallback'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId,
+        sessionDir,
+        cronDbPath: join(sessionDir, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: '1'
+      }),
+      onEvent: (event) => {
+        if (event.type === 'tool_use') {
+          seen.push(`${event.toolName}:${event.toolId}`)
+        }
+      },
+      spawn: () =>
+        fakeSpawn([
+          stdoutEnvelope({
+            stream: { kind: 'session', id: sessionId },
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'ok' }
+          })
+        ])
+    })
+
+    expect(seen).toEqual(['bash:call_bash'])
+  })
 })

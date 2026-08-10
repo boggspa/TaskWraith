@@ -83,6 +83,14 @@ describe('provider action taxonomy', () => {
     })
   })
 
+  it('marks Muse as observed-native for session-log tool projection without TW mediation', () => {
+    expect(PROVIDER_ACTION_ADAPTERS.muse).toMatchObject({
+      nativeSurface: 'observed-native',
+      mcpAttachment: 'none',
+      nativeMediation: 'provider-runtime-containment'
+    })
+  })
+
   it('keeps Cursor broker attachment route-dependent while Pi remains none', () => {
     expect(PROVIDER_ACTION_ADAPTERS.cursor).toMatchObject({
       nativeSurface: 'unobservable-native',
@@ -736,13 +744,14 @@ describe('provider action taxonomy', () => {
       'TaskWraith__Read_File',
       'MCP_TaskWraith_read_file'
     ]) {
-      expect(resolveCatalogActionStrict(untrustedPresentation), untrustedPresentation).toMatchObject(
-        {
-          ok: false,
-          denied: true,
-          code: 'unmapped_catalog_action'
-        }
-      )
+      expect(
+        resolveCatalogActionStrict(untrustedPresentation),
+        untrustedPresentation
+      ).toMatchObject({
+        ok: false,
+        denied: true,
+        code: 'unmapped_catalog_action'
+      })
     }
     for (const trustedPrefix of [
       'mcp__taskwraith__',

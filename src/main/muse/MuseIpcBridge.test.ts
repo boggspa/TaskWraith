@@ -147,6 +147,44 @@ describe('museExecEventToCompatPayload', () => {
       model: 'muse-spark-1.2'
     })
   })
+
+  it('maps tool_use and tool_result onto Claude/Codex-shaped compat lines', () => {
+    expect(
+      museExecEventToCompatPayload({
+        type: 'tool_use',
+        payloadType: 'runtime.session',
+        toolId: 'call_write',
+        toolName: 'write_file',
+        toolInput: { path: 'a.py', content: 'x' },
+        raw: {}
+      })
+    ).toEqual({
+      type: 'tool_use',
+      provider: 'muse',
+      tool_name: 'write_file',
+      tool_id: 'call_write',
+      id: 'call_write',
+      parameters: { path: 'a.py', content: 'x' }
+    })
+
+    expect(
+      museExecEventToCompatPayload({
+        type: 'tool_result',
+        payloadType: 'runtime.session',
+        toolId: 'call_write',
+        toolOutput: 'wrote a.py',
+        toolStatus: 'success',
+        raw: {}
+      })
+    ).toEqual({
+      type: 'tool_result',
+      provider: 'muse',
+      tool_id: 'call_write',
+      id: 'call_write',
+      output: 'wrote a.py',
+      content: 'wrote a.py'
+    })
+  })
 })
 
 describe('runMuseProviderFromIpc', () => {

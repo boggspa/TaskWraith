@@ -166,6 +166,26 @@ function mapMuseExecEventToNormalized(event: MuseExecNormalizedEvent): Normalize
       raw: event.raw
     }
   }
+  if (event.type === 'tool_use') {
+    return {
+      type: 'tool_use',
+      sessionId: event.sessionId,
+      toolId: event.toolId,
+      toolName: event.toolName,
+      toolInput: event.toolInput,
+      raw: event.raw
+    }
+  }
+  if (event.type === 'tool_result') {
+    return {
+      type: 'tool_result',
+      sessionId: event.sessionId,
+      toolId: event.toolId,
+      toolOutput: event.toolOutput,
+      toolStatus: event.toolStatus,
+      raw: event.raw
+    }
+  }
   if (event.type === 'terminal') {
     const failed =
       event.terminal === 'failed' || event.terminal === 'error' || event.terminal === 'cancelled'
@@ -234,7 +254,7 @@ export function museProviderAdapterDescriptor(): MuseProviderAdapterDescriptor {
         capability: 'approvalModes',
         title: 'Muse containment is argv + isolated home',
         message:
-          'Muse runs as an opaque `muse exec --json` seat. TaskWraith contains via hard-pinned argv (no --yolo / --disable-sandbox), relocated XDG/HOME, skill pin, and cron empty-at-teardown. Native tool effects are not individually mediated by TaskWraith approval cards in v1.'
+          'Muse runs as an opaque `muse exec --json` seat. TaskWraith contains via hard-pinned argv (no --yolo / --disable-sandbox), relocated XDG/HOME, skill pin, and cron empty-at-teardown. Native tool calls are projected into ActivityStack from session.jsonl for display; they are not individually mediated by TaskWraith approval cards in v1.'
       },
       {
         id: 'muse-no-taskwraith-mcp-broker',

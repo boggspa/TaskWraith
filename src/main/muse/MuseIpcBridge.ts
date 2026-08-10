@@ -164,6 +164,28 @@ export function museExecEventToCompatPayload(
       ...(model ? { model } : {})
     }
   }
+  if (event.type === 'tool_use' && event.toolId && event.toolName) {
+    return {
+      type: 'tool_use',
+      provider: 'muse',
+      tool_name: event.toolName,
+      tool_id: event.toolId,
+      id: event.toolId,
+      parameters: event.toolInput || {}
+    }
+  }
+  if (event.type === 'tool_result' && event.toolId) {
+    const output = typeof event.toolOutput === 'string' ? event.toolOutput : ''
+    return {
+      type: 'tool_result',
+      provider: 'muse',
+      tool_id: event.toolId,
+      id: event.toolId,
+      output,
+      content: output,
+      ...(event.toolStatus === 'error' ? { is_error: true } : {})
+    }
+  }
   return null
 }
 
