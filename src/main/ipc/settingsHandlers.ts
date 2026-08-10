@@ -229,6 +229,9 @@ function rendererChatSettings(
           antigravityGeminiApiMonthlySpendCapUsd: settings.antigravityGeminiApiMonthlySpendCapUsd
         }
       : {}),
+    ...(settings.museMonthlySpendCapUsd !== undefined
+      ? { museMonthlySpendCapUsd: settings.museMonthlySpendCapUsd }
+      : {}),
     ...(providerRunPauses ? { providerRunPauses } : {}),
     ...(settings.ollamaDefaultModel ? { ollamaDefaultModel: settings.ollamaDefaultModel } : {}),
     ensembleModeEnabled: settings.ensembleModeEnabled,

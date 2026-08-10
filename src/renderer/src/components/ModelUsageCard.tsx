@@ -111,6 +111,12 @@ export interface ModelUsageApiSpendOptions extends ApiSpendCurrencyOptions {
    * calendar-month spend meter on the Antigravity block — advisory only.
    */
   antigravityMonthlyCapUsd?: number | null
+  /**
+   * Soft monthly budget (USD) for Muse Code projected spend
+   * (`settings.museMonthlySpendCapUsd`). Defaults to $15 when unset; calendar
+   * month resets on the 1st. Advisory only — never blocks a run.
+   */
+  museMonthlyCapUsd?: number | null
 }
 
 interface ModelUsageCardProps {
@@ -158,7 +164,8 @@ export const API_SPEND_RENDER_ORDER: ProviderId[] = [
   // apiSpendAggregation.ts — a provider present there but missing here never
   // renders its spend section (Mistral shipped in exactly that state, the same
   // way Pi once did in the other direction).
-  'mistral'
+  'mistral',
+  'muse'
 ]
 const SIDEBAR_USAGE_HEIGHT_STORAGE_KEY = 'taskwraith-sidebar-model-usage-height'
 const SIDEBAR_USAGE_DEFAULT_HEIGHT = 520
@@ -184,6 +191,7 @@ export const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId,
   grok: 'Grok',
   antigravity: 'AGY',
   mistral: 'Mistral',
+  muse: 'Muse',
   deepseek: 'DeepSeek',
   cerebras: 'Cerebras'
 }
@@ -425,7 +433,9 @@ function compactCellsForEntry(
   return cells
 }
 
-function compactGrokCell(grokUsage: GrokCreditsMeterViewProps | undefined): CompactQuotaCell | null {
+function compactGrokCell(
+  grokUsage: GrokCreditsMeterViewProps | undefined
+): CompactQuotaCell | null {
   if (!grokUsage) return null
   const snapshot = grokUsage.snapshot
   if (snapshot?.confidence !== 'observed') {
@@ -450,9 +460,7 @@ function compactGrokCell(grokUsage: GrokCreditsMeterViewProps | undefined): Comp
   return {
     value: snapshot.creditsUsedDisplay,
     fraction,
-    title: `Grok ${kindText}: ${snapshot.creditsUsedDisplay}${
-      grokUsage.stale ? ' · stale' : ''
-    }`
+    title: `Grok ${kindText}: ${snapshot.creditsUsedDisplay}${grokUsage.stale ? ' · stale' : ''}`
   }
 }
 
@@ -546,10 +554,7 @@ export function CompactModelUsageGrid({
   // The AGY column appears once the credential-free snapshot hook has produced
   // quota data, OR when a caller has an explicit reason to report an empty
   // lane. A non-configured lane contributes no entry and stays absent.
-  const antigravityCells = compactCellsForEntry(
-    'antigravity',
-    entriesByProvider.get('antigravity')
-  )
+  const antigravityCells = compactCellsForEntry('antigravity', entriesByProvider.get('antigravity'))
   const hasAntigravityCells = Object.keys(antigravityCells).length > 0
   const antigravityReason = quotaReasonOnlyText(entriesByProvider.get('antigravity'))
   const providers: ModelUsageProviderId[] = [
@@ -841,29 +846,31 @@ function ApiSpendRow({
  * from the rolling 30d row above it: a budget resets with the billing month,
  * so this counts from the 1st and says when it resets. Exported for SSR tests.
  */
-export function ApiSpendCapMeterRow({ meter }: { meter: CalendarMonthSpendMeter }) {
+export function ApiSpendCapMeterRow({
+  meter,
+  accent = 'var(--provider-antigravity-color, var(--accent))',
+  testId = 'antigravity-cap-meter-label',
+  title = 'Estimated month-to-date spend vs your soft budget — advisory only, never blocks a run. Set a hard limit in your billing console.'
+}: {
+  meter: CalendarMonthSpendMeter
+  accent?: string
+  testId?: string
+  title?: string
+}) {
   const spent = meter.spentDisplay ? `~${meter.spentDisplay}` : '—'
   const label =
     meter.capUsd === null
       ? `${spent} this month`
       : `${spent} of ${meter.capDisplay} · resets ${meter.resetLabel}`
   return (
-    <div
-      className="model-usage-spend-cap-meter"
-      title="Estimated month-to-date spend vs your soft budget — advisory only, never blocks a run. Set a hard limit in your Google Cloud billing console."
-    >
+    <div className="model-usage-spend-cap-meter" title={title}>
       <div className="model-usage-spend-row">
         <span className="model-usage-spend-window">Budget</span>
-        <span className="model-usage-spend-cost" data-testid="antigravity-cap-meter-label">
+        <span className="model-usage-spend-cost" data-testid={testId}>
           {label}
         </span>
       </div>
-      {meter.capUsd !== null && (
-        <QuotaProgressBar
-          fraction={meter.fraction}
-          accent="var(--provider-antigravity-color, var(--accent))"
-        />
-      )}
+      {meter.capUsd !== null && <QuotaProgressBar fraction={meter.fraction} accent={accent} />}
     </div>
   )
 }
@@ -875,9 +882,19 @@ export function ApiSpendProviderBlock({
   capMeter
 }: {
   entry: ApiSpendProviderTotals
-  /** Present only on the Antigravity block when a spend/budget exists. */
+  /** Present when a calendar-month soft budget is configured (AGY / Muse). */
   capMeter?: CalendarMonthSpendMeter | null
 }) {
+  const capAccent =
+    entry.provider === 'muse'
+      ? 'var(--provider-muse-color, var(--provider-meta-color, var(--accent)))'
+      : 'var(--provider-antigravity-color, var(--accent))'
+  const capTestId =
+    entry.provider === 'muse' ? 'muse-cap-meter-label' : 'antigravity-cap-meter-label'
+  const capTitle =
+    entry.provider === 'muse'
+      ? 'Estimated month-to-date Muse spend vs your soft budget — advisory only, never blocks a run. Set a hard limit in Meta / Model API billing if you need one.'
+      : 'Estimated month-to-date spend vs your soft budget — advisory only, never blocks a run. Set a hard limit in your Google Cloud billing console.'
   return (
     <div className={`model-usage-item provider-${entry.provider} spend-only`}>
       <div className="model-usage-provider-heading">
@@ -890,7 +907,14 @@ export function ApiSpendProviderBlock({
         {API_SPEND_WINDOW_ORDER.map((windowKey) => (
           <ApiSpendRow key={windowKey} windowKey={windowKey} totals={entry[windowKey]} />
         ))}
-        {capMeter ? <ApiSpendCapMeterRow meter={capMeter} /> : null}
+        {capMeter ? (
+          <ApiSpendCapMeterRow
+            meter={capMeter}
+            accent={capAccent}
+            testId={capTestId}
+            title={capTitle}
+          />
+        ) : null}
       </div>
     </div>
   )
@@ -962,7 +986,10 @@ export function ContextLengthsView() {
   return (
     <div className="model-usage-list model-usage-context-list">
       {groups.map((group) => (
-        <div key={group.provider} className={`model-usage-item provider-${group.provider} context-only`}>
+        <div
+          key={group.provider}
+          className={`model-usage-item provider-${group.provider} context-only`}
+        >
           <div className="model-usage-provider-heading">
             <span className={`sidebar-provider-label provider-${group.provider}`}>
               <ProviderLogoTile provider={group.provider} />
@@ -972,7 +999,9 @@ export function ContextLengthsView() {
           <div className="model-usage-context-rows">
             {group.models.map((m) => (
               <div key={m.modelId} className="model-usage-context-row">
-                <span className="model-usage-context-model" title={m.modelId}>{humaniseModelIdCompact(group.provider, m.modelId) || m.label}</span>
+                <span className="model-usage-context-model" title={m.modelId}>
+                  {humaniseModelIdCompact(group.provider, m.modelId) || m.label}
+                </span>
                 <span
                   className="model-usage-context-window"
                   title={
@@ -1052,9 +1081,9 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
     [records, chats]
   )
 
-  // Calendar month-to-date budget meter for the AntiGravity key lane. Only
-  // materialised when a cap is configured — without one the rolling rows
-  // already tell the whole story.
+  // Calendar month-to-date budget meters for soft-cap lanes (AGY key + Muse).
+  // Only materialised when a positive cap is configured — without one the
+  // rolling rows already tell the whole story.
   const antigravityCapMeter = useMemo<CalendarMonthSpendMeter | null>(() => {
     const capUsd = options?.antigravityMonthlyCapUsd
     if (!Number.isFinite(capUsd) || (capUsd as number) <= 0) return null
@@ -1078,6 +1107,23 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
     options?.locale
   ])
 
+  const museCapMeter = useMemo<CalendarMonthSpendMeter | null>(() => {
+    const capUsd = options?.museMonthlyCapUsd
+    if (!Number.isFinite(capUsd) || (capUsd as number) <= 0) return null
+    return buildProviderCalendarMonthSpend(records, options?.providerRates ?? {}, 'muse', capUsd, {
+      currency: options?.currency,
+      overestimatePercent: options?.overestimatePercent,
+      locale: options?.locale
+    })
+  }, [
+    records,
+    options?.providerRates,
+    options?.museMonthlyCapUsd,
+    options?.currency,
+    options?.overestimatePercent,
+    options?.locale
+  ])
+
   if (spend.length === 0 && !ollamaMemory) {
     return (
       <div className="model-usage-spend-empty">
@@ -1091,19 +1137,20 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
   // widest), so the footnote can't claim runs from excluded providers or older
   // than the view shows.
   const shownRuns =
-    spend.reduce((total, entry) => total + entry.month.runs, 0) +
-    (ollamaMemory?.month.runs ?? 0)
+    spend.reduce((total, entry) => total + entry.month.runs, 0) + (ollamaMemory?.month.runs ?? 0)
   const spendByProvider = new Map(spend.map((entry) => [entry.provider, entry]))
   return (
     <div className="model-usage-list model-usage-spend-list">
       {API_SPEND_RENDER_ORDER.map((provider) => {
         const entry = spendByProvider.get(provider)
+        const capMeter =
+          provider === 'antigravity'
+            ? antigravityCapMeter
+            : provider === 'muse'
+              ? museCapMeter
+              : null
         return entry ? (
-          <ApiSpendProviderBlock
-            key={provider}
-            entry={entry}
-            capMeter={provider === 'antigravity' ? antigravityCapMeter : null}
-          />
+          <ApiSpendProviderBlock key={provider} entry={entry} capMeter={capMeter} />
         ) : null
       })}
       {ollamaMemory ? <OllamaMemorySpendBlock entry={ollamaMemory} /> : null}
@@ -1184,7 +1231,8 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
   const quotaEntries = sortByProvider(usageSummary).filter(
     (entry) =>
       entry.model === 'usage limits' &&
-      ((entry.windows?.length || 0) > 0 || (entry.quotaConfigured === true && Boolean(entry.quotaError)))
+      ((entry.windows?.length || 0) > 0 ||
+        (entry.quotaConfigured === true && Boolean(entry.quotaError)))
   )
   // The API-spend view is offered whenever the caller wired it (sidebar).
   const apiSpendEnabled = Boolean(apiSpend)
@@ -1203,7 +1251,11 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
     Number(planViewAvailable) + Number(apiSpendEnabled) + Number(contextViewAvailable)
   const showViewToggle = availableViewCount >= 2
   const viewIsAvailable = (candidate: ModelUsagePanelView): boolean =>
-    candidate === 'plan' ? planViewAvailable : candidate === 'spend' ? apiSpendEnabled : contextViewAvailable
+    candidate === 'plan'
+      ? planViewAvailable
+      : candidate === 'spend'
+        ? apiSpendEnabled
+        : contextViewAvailable
   const effectiveView: ModelUsagePanelView = viewIsAvailable(view)
     ? view
     : planViewAvailable
@@ -1426,7 +1478,11 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
             locale={apiSpend?.locale}
           />
         )}
-        <div id={quotaContentId} className="model-usage-collapsible" aria-hidden={!showQuotaEntries}>
+        <div
+          id={quotaContentId}
+          className="model-usage-collapsible"
+          aria-hidden={!showQuotaEntries}
+        >
           <div className="model-usage-collapsible-inner">
             {effectiveView === 'spend' ? (
               <ApiSpendView options={apiSpend} />

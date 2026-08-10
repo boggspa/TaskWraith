@@ -1,4 +1,5 @@
 import type { AppSettings, ProviderId, UsageRecord } from './store/types'
+import { DEFAULT_MUSE_MONTHLY_SPEND_CAP_USD } from '../shared/museSpendBudget'
 
 type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
 type SpendWindowId = 'day' | 'week' | 'month'
@@ -33,18 +34,30 @@ export interface RemoteAntigravityBudget {
   resetAt: string
 }
 
+export interface RemoteMuseBudget {
+  provider: 'muse'
+  spentText?: string
+  capText: string
+  usedPercent: number
+  resetAt: string
+}
+
 export interface RemoteModelUsageExtras {
   spend?: {
     providers: RemoteUsageSpendProvider[]
   }
   antigravityBudget?: RemoteAntigravityBudget
+  museBudget?: RemoteMuseBudget
 }
 
 export interface RemoteModelUsageProjectionInput {
   records: readonly UsageRecord[]
   settings: Pick<
     AppSettings,
-    'currency' | 'currencyOverestimatePercent' | 'antigravityGeminiApiMonthlySpendCapUsd'
+    | 'currency'
+    | 'currencyOverestimatePercent'
+    | 'antigravityGeminiApiMonthlySpendCapUsd'
+    | 'museMonthlySpendCapUsd'
   >
   providerRates: unknown
   fxRates: unknown
@@ -63,7 +76,8 @@ const SPEND_PROVIDER_ORDER: ProviderId[] = [
   // projected API-equivalent like claude/codex/grok/cursor rather than a real
   // billing basis. Omitting it dropped Mistral spend from the iOS/remote view
   // while the desktop card showed it.
-  'mistral'
+  'mistral',
+  'muse'
 ]
 
 const SPEND_WINDOWS: ReadonlyArray<{ id: SpendWindowId; label: string; durationMs: number }> = [
@@ -91,7 +105,8 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
   kimi: 'kimi-k2.7-code',
   grok: 'grok-4.5',
   cursor: 'composer-2.5-fast',
-  antigravity: 'gemini-api:gemini-2.5-flash'
+  antigravity: 'gemini-api:gemini-2.5-flash',
+  muse: 'muse-spark-1.2'
 }
 
 const DEFAULT_MODEL_SENTINELS = new Set(['', 'default', 'cli-default', 'custom', 'best'])
@@ -177,7 +192,11 @@ function canonicalRateModelId(provider: ProviderId, model: string | undefined): 
   return trimmed
 }
 
-function resolveRate(rates: ProviderRates, provider: ProviderId, model: string | undefined): ModelRate | null {
+function resolveRate(
+  rates: ProviderRates,
+  provider: ProviderId,
+  model: string | undefined
+): ModelRate | null {
   const table = rates[provider]
   if (!table || table.length === 0) return null
   const wanted = canonicalRateModelId(provider, model).toLowerCase()
@@ -259,13 +278,20 @@ export function projectRemoteModelUsageExtras(
   const fxRates = normaliseFxRates(input.fxRates)
   const overestimatePercent = positiveNumber(input.settings.currencyOverestimatePercent)
   const allowedProviders = new Set<ProviderId>(SPEND_PROVIDER_ORDER)
-  const buckets = new Map<ProviderId, Map<SpendWindowId, { tokens: number; runs: number; costUsd: number }>>()
+  const buckets = new Map<
+    ProviderId,
+    Map<SpendWindowId, { tokens: number; runs: number; costUsd: number }>
+  >()
 
   for (const record of input.records) {
     if (!record || record.usageKind === 'reset_hint' || !record.provider) continue
     if (!allowedProviders.has(record.provider)) continue
     const timestamp = Number(record.timestamp)
-    if (!Number.isFinite(timestamp) || timestamp > now || timestamp < now - SPEND_WINDOWS[2].durationMs) {
+    if (
+      !Number.isFinite(timestamp) ||
+      timestamp > now ||
+      timestamp < now - SPEND_WINDOWS[2].durationMs
+    ) {
       continue
     }
     let providerBuckets = buckets.get(record.provider)
@@ -309,31 +335,78 @@ export function projectRemoteModelUsageExtras(
   })
 
   const extras: RemoteModelUsageExtras = providers.length > 0 ? { spend: { providers } } : {}
-  const capUsd = positiveNumber(input.settings.antigravityGeminiApiMonthlySpendCapUsd)
-  if (capUsd === 0) return extras
-
+  const antigravityCapUsd = positiveNumber(input.settings.antigravityGeminiApiMonthlySpendCapUsd)
   const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime()
-  const antigravitySpentUsd = input.records.reduce((total, record) => {
-    if (
-      !record ||
-      record.usageKind === 'reset_hint' ||
-      record.provider !== 'antigravity' ||
-      !Number.isFinite(record.timestamp) ||
-      record.timestamp < monthStart ||
-      record.timestamp > now
-    ) {
-      return total
-    }
-    return total + recordCostUsd(record, rates)
-  }, 0)
   const nextMonth = new Date(new Date(now).getFullYear(), new Date(now).getMonth() + 1, 1)
-  const spentText = formatCost(antigravitySpentUsd, currency, fxRates, overestimatePercent)
-  extras.antigravityBudget = {
-    provider: 'antigravity',
-    ...(spentText ? { spentText } : {}),
-    capText: formatCost(capUsd, currency, fxRates, 0),
-    usedPercent: Math.round(Math.max(0, Math.min(100, (antigravitySpentUsd / capUsd) * 100))),
-    resetAt: nextMonth.toISOString()
+  const hasMuseMonthSpend = input.records.some(
+    (record) =>
+      record &&
+      record.usageKind !== 'reset_hint' &&
+      record.provider === 'muse' &&
+      Number.isFinite(record.timestamp) &&
+      record.timestamp >= monthStart &&
+      record.timestamp <= now
+  )
+  // Desktop resolves an unset Muse cap to $15. Remote only projects that
+  // default once Muse has calendar-month spend (or the user explicitly set a
+  // cap) so idle accounts do not grow a permanent empty Muse budget row.
+  const museCapUsd = positiveNumber(
+    input.settings.museMonthlySpendCapUsd === undefined
+      ? hasMuseMonthSpend
+        ? DEFAULT_MUSE_MONTHLY_SPEND_CAP_USD
+        : 0
+      : input.settings.museMonthlySpendCapUsd
+  )
+
+  if (antigravityCapUsd > 0) {
+    const antigravitySpentUsd = input.records.reduce((total, record) => {
+      if (
+        !record ||
+        record.usageKind === 'reset_hint' ||
+        record.provider !== 'antigravity' ||
+        !Number.isFinite(record.timestamp) ||
+        record.timestamp < monthStart ||
+        record.timestamp > now
+      ) {
+        return total
+      }
+      return total + recordCostUsd(record, rates)
+    }, 0)
+    const spentText = formatCost(antigravitySpentUsd, currency, fxRates, overestimatePercent)
+    extras.antigravityBudget = {
+      provider: 'antigravity',
+      ...(spentText ? { spentText } : {}),
+      capText: formatCost(antigravityCapUsd, currency, fxRates, 0),
+      usedPercent: Math.round(
+        Math.max(0, Math.min(100, (antigravitySpentUsd / antigravityCapUsd) * 100))
+      ),
+      resetAt: nextMonth.toISOString()
+    }
   }
+
+  if (museCapUsd > 0) {
+    const museSpentUsd = input.records.reduce((total, record) => {
+      if (
+        !record ||
+        record.usageKind === 'reset_hint' ||
+        record.provider !== 'muse' ||
+        !Number.isFinite(record.timestamp) ||
+        record.timestamp < monthStart ||
+        record.timestamp > now
+      ) {
+        return total
+      }
+      return total + recordCostUsd(record, rates)
+    }, 0)
+    const spentText = formatCost(museSpentUsd, currency, fxRates, overestimatePercent)
+    extras.museBudget = {
+      provider: 'muse',
+      ...(spentText ? { spentText } : {}),
+      capText: formatCost(museCapUsd, currency, fxRates, 0),
+      usedPercent: Math.round(Math.max(0, Math.min(100, (museSpentUsd / museCapUsd) * 100))),
+      resetAt: nextMonth.toISOString()
+    }
+  }
+
   return extras
 }

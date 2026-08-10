@@ -1172,6 +1172,20 @@ describe('MainSanitizers settings patches', () => {
     }
   })
 
+  it('clamps the Muse monthly spend cap to a bounded positive USD amount', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ museMonthlySpendCapUsd: 15 }).museMonthlySpendCapUsd).toBe(15)
+    expect(sanitizeSettingsPatch({ museMonthlySpendCapUsd: null }).museMonthlySpendCapUsd).toBe(
+      null
+    )
+    for (const value of [0, -5, Infinity, NaN, 'lots', 1_000_001] as unknown[]) {
+      expect(
+        sanitizeSettingsPatch({ museMonthlySpendCapUsd: value as number }).museMonthlySpendCapUsd
+      ).toBe(null)
+    }
+  })
+
   it('accepts a boolean modelUsageExternalUsage and drops non-boolean values', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

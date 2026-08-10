@@ -76,4 +76,46 @@ describe('projectRemoteModelUsageExtras', () => {
       })
     ).toEqual({})
   })
+
+  it('projects Muse spend and the default $15 calendar-month budget once Muse has month spend', () => {
+    const museRates = {
+      baseline: {
+        muse: {
+          models: [
+            {
+              modelId: 'muse-spark-1.2',
+              inputUsdPerMillion: 1.25,
+              outputUsdPerMillion: 4.25,
+              cachedInputUsdPerMillion: 0.15
+            }
+          ]
+        }
+      }
+    }
+    const extras = projectRemoteModelUsageExtras({
+      records: [
+        record({
+          id: 'muse-1',
+          provider: 'muse',
+          model: 'muse-spark-1.2',
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+          totalTokens: 1_000_000,
+          cacheReadInputTokens: 0
+        })
+      ],
+      settings: { currency: 'USD' },
+      providerRates: museRates,
+      fxRates: { rates: { USD: 1 } },
+      now: NOW
+    })
+    expect(extras.spend?.providers.some((entry) => entry.provider === 'muse')).toBe(true)
+    expect(extras.museBudget).toMatchObject({
+      provider: 'muse',
+      spentText: '$1.25',
+      capText: '$15.00',
+      usedPercent: 8,
+      resetAt: new Date(2026, 7, 1).toISOString()
+    })
+  })
 })

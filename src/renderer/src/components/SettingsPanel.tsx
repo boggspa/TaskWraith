@@ -45,6 +45,7 @@ import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
   summariseMistralVibeStatus,
+  summariseMuseCodeStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
@@ -103,6 +104,7 @@ import { PairingPage } from './PairingPage'
 import { PillButton } from './PillButton'
 import { PiProviderKeysCard } from './PiProviderKeysCard'
 import { MistralQuotaCard } from './MistralQuotaCard'
+import { MuseSpendBudgetCard } from './MuseSpendBudgetCard'
 import { SegmentedControl } from './SegmentedControl'
 import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
@@ -333,6 +335,7 @@ interface SettingsPanelProps {
   antigravityOptInAcceptedAt?: number | null
   antigravityGeminiApiDisclosureAcceptedAt?: number | null
   antigravityGeminiApiMonthlySpendCapUsd?: number | null
+  museMonthlySpendCapUsd?: number | null
   userName?: string
   claudeBinaryPath: string
   kimiBinaryPath: string
@@ -470,6 +473,7 @@ interface SettingsPanelProps {
     antigravityOptInAcceptedAt?: number | null
     antigravityGeminiApiDisclosureAcceptedAt?: number | null
     antigravityGeminiApiMonthlySpendCapUsd?: number | null
+    museMonthlySpendCapUsd?: number | null
     userName?: string
     claudeBinaryPath?: string
     kimiBinaryPath?: string
@@ -703,7 +707,8 @@ const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'grok',
   'ollama',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ]
 
 const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -716,7 +721,8 @@ const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
   ollama: 'Ollama',
   antigravity: 'Antigravity',
   pi: 'Pi',
-  mistral: 'Mistral'
+  mistral: 'Mistral',
+  muse: 'Muse'
 }
 
 export type UserMcpServerFormState = {
@@ -3879,6 +3885,7 @@ export function SettingsPanel({
   antigravityOptInAcceptedAt = null,
   antigravityGeminiApiDisclosureAcceptedAt = null,
   antigravityGeminiApiMonthlySpendCapUsd = null,
+  museMonthlySpendCapUsd,
   userName = '',
   claudeBinaryPath,
   kimiBinaryPath,
@@ -4903,6 +4910,7 @@ export function SettingsPanel({
         hint: 'Install Ollama and pull a model, or sign in to ollama.com to use cloud models.'
       }
   const mistralAuthSummary = summariseMistralVibeStatus(providerStatusByProvider?.mistral)
+  const museAuthSummary = summariseMuseCodeStatus(providerStatusByProvider?.muse)
   const providerUpgradeState = (provider: ProviderId): ProviderCliUpgradeState =>
     providerCliUpgradeState[provider] || 'idle'
   const renderProviderUpgradeButton = (provider: ProviderId) => {
@@ -4987,7 +4995,8 @@ export function SettingsPanel({
     // Pi and Mistral are both live TaskWraith seats. Their broker attachment
     // can be conditional per run, but that must not turn their static runtime
     // status into a misleading "delegated" or policy "gated" label.
-    const firstClassRuntimeProvider = provider === 'pi' || provider === 'mistral'
+    const firstClassRuntimeProvider =
+      provider === 'pi' || provider === 'mistral' || provider === 'muse'
     // AntiGravity's capability contract hard-codes an `unsupported` MCP block —
     // honest for the agy print-mode transport, which really does get no bridge —
     // but running the card off that block would pin an admitted provider to a
@@ -7402,6 +7411,43 @@ export function SettingsPanel({
                       {renderProviderUpgradeHint('mistral')}
                     </p>
                     {renderProviderPauseControls('mistral')}
+                  </SettingsProviderAuthCard>
+                  <SettingsProviderAuthCard
+                    provider="muse"
+                    label="Muse"
+                    summary={museAuthSummary}
+                    description="Muse Code CLI over Meta Model API. Opaque CLI seat — install `muse`, complete Meta login / key setup, then launch from TaskWraith. Projected spend tracks like Mistral/DeepSeek with an optional soft monthly budget."
+                    optional
+                  >
+                    <div className="settings-provider-auth-command">
+                      <code>muse</code>
+                      <span>
+                        Install the Muse Code CLI and finish Meta Model API login in Terminal.
+                        TaskWraith probes binary + credential fail-closed and does not store the Meta
+                        key in this card.
+                      </span>
+                    </div>
+                    <div className="settings-provider-auth-action-row">
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={() => onProviderLogin?.('muse')}
+                        disabled={!onProviderLogin}
+                      >
+                        Open Terminal to sign in
+                      </PillButton>
+                      {renderProviderUpgradeButton('muse')}
+                    </div>
+                    <p className="settings-provider-auth-footnote">
+                      TaskWraith does not store Muse / Meta credentials here. Fail-closed probe
+                      admission requires a resolvable binary and a credential the probe can see.
+                      {renderProviderUpgradeHint('muse')}
+                    </p>
+                    <MuseSpendBudgetCard
+                      monthlySpendCapUsd={museMonthlySpendCapUsd}
+                      onChange={onChange}
+                    />
+                    {renderProviderPauseControls('muse')}
                   </SettingsProviderAuthCard>
                   <PiProviderKeysCard />
                   <MistralQuotaCard />
@@ -11144,6 +11190,7 @@ export function SettingsPanel({
               if (provider === 'antigravity') return 'AntiGravity'
               if (provider === 'pi') return 'Pi'
               if (provider === 'mistral') return 'Mistral'
+              if (provider === 'muse') return 'Muse'
               if (provider === 'deepseek') return 'DeepSeek'
               if (provider === 'cerebras') return 'Cerebras'
               return 'Gemini'

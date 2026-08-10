@@ -39,6 +39,9 @@ public struct ModelUsageMessage: Codable, Sendable {
         public let spend: Spend?
         /// Optional soft, advisory budget for the AntiGravity Gemini API lane.
         public let antigravityBudget: AntigravityBudget?
+        /// Optional soft, advisory budget for Muse Code projected spend
+        /// (defaults to $15 / calendar month on desktop when unset).
+        public let museBudget: AntigravityBudget?
     }
 
     public struct ProviderUsage: Codable, Sendable, Identifiable {

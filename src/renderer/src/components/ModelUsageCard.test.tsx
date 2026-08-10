@@ -770,6 +770,56 @@ describe('AntiGravity budget meter (spend view)', () => {
   })
 })
 
+describe('Muse budget meter (spend view)', () => {
+  const rates: RendererProviderRates = {
+    muse: [
+      {
+        modelId: 'muse-spark-1.2',
+        inputUsdPerMillion: 1.25,
+        outputUsdPerMillion: 4.25,
+        cachedInputUsdPerMillion: 0.15
+      }
+    ]
+  }
+  const now = new Date('2026-06-13T12:00:00.000Z').getTime()
+  const records: UsageRecord[] = [
+    {
+      id: 'muse-1',
+      workspaceId: 'ws-1',
+      chatId: 'chat-1',
+      runId: 'run-1',
+      provider: 'muse',
+      model: 'muse-spark-1.2',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      totalTokens: 1_000_000,
+      durationMs: 1000,
+      timestamp: now - 60_000
+    } as UsageRecord
+  ]
+
+  it('renders the $15 default-style cap with calendar-month reset and Muse accent', () => {
+    const [entry] = buildApiSpendByProvider(records, rates, { currency: 'USD' }, now)
+    const meter = buildProviderCalendarMonthSpend(
+      records,
+      rates,
+      'muse',
+      15,
+      { currency: 'USD' },
+      now
+    )
+    const html = renderToStaticMarkup(<ApiSpendProviderBlock entry={entry} capMeter={meter} />)
+    expect(html).toContain('Muse')
+    expect(html).toContain('Budget')
+    expect(html).toContain('$1.25')
+    expect(html).toContain('$15.00')
+    expect(html).toContain('resets')
+    expect(html).toContain('muse-cap-meter-label')
+    expect(html).toContain('quota-progress-bar')
+    expect(html).toContain('--provider-muse-color')
+  })
+})
+
 // The two spend rosters must move in lockstep. buildApiSpendAggregation gates on
 // API_SPEND_PROVIDER_ORDER, so a provider rendered without being aggregated shows
 // a row that can only ever read zero — Pi shipped in exactly that state, and a
