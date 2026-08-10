@@ -599,6 +599,10 @@ import {
   createChannelProductionRelayPort,
   type ChannelProductionAgentRuntimeOptions
 } from './collaboration/ChannelProductionBootstrap'
+import {
+  ChannelAgentRunIsolationRegistry,
+  redactChannelAgentUsageContent
+} from './collaboration/ChannelAgentRunIsolationRegistry'
 import { reconcileChannelAgentProductionRun } from './collaboration/ChannelAgentProductionRunReconciler'
 import { createChannelMemberProductionBootstrap } from './collaboration/ChannelMemberProductionBootstrap'
 import { CHANNEL_IPC_CHANGED_EVENT } from '../shared/collaboration/ChannelIpc'
@@ -3689,6 +3693,7 @@ function maybeTriggerProviderAutoFailover(
   const snapshot = failoverSnapshotByRun.get(appRunId)
   quotaWallSignalByRun.delete(appRunId)
   failoverSnapshotByRun.delete(appRunId)
+  if (channelAgentRunIsolationRegistry.isRunIsolated(appRunId)) return
   if (!failed) return
   if (
     scheduledOccurrenceOwners.isAppRunIdLiveOwned(appRunId) ||
@@ -5748,6 +5753,7 @@ const backgroundSubThreadTranscripts = new Map<string, BackgroundSubThreadTransc
 // session back onto the source owner.
 const MAX_PROVIDER_SESSION_PERSISTENCE_DECISIONS = 512
 const providerSessionPersistenceSuppressedRunIds = new Map<string, true>()
+const channelAgentRunIsolationRegistry = new ChannelAgentRunIsolationRegistry()
 
 function suppressProviderSessionPersistenceForRun(runId: string): void {
   providerSessionPersistenceSuppressedRunIds.delete(runId)
@@ -5762,7 +5768,18 @@ function suppressProviderSessionPersistenceForRun(runId: string): void {
 }
 
 function shouldPersistProviderSessionForRun(runId: string): boolean {
-  return !providerSessionPersistenceSuppressedRunIds.has(runId)
+  return (
+    !channelAgentRunIsolationRegistry.isRunIsolated(runId) &&
+    !providerSessionPersistenceSuppressedRunIds.has(runId)
+  )
+}
+
+function recordProviderRunUsage(entry: Omit<UsageRecord, 'id' | 'timestamp'>): void {
+  if (!channelAgentRunIsolationRegistry.isRunIsolated(entry.runId)) {
+    AppStore.recordUsage(entry)
+    return
+  }
+  AppStore.recordUsage(redactChannelAgentUsageContent(entry))
 }
 
 function releaseProviderSessionPersistenceDecision(runId: string): void {
@@ -8103,6 +8120,13 @@ function isExecutionGraphIsolatedPayload(payload: AgentRunPayload): boolean {
     admission.attemptId === job.executionGraph.attemptId &&
     admission.payload.provider === payload.provider &&
     admission.payload.appChatId === payload.appChatId
+  )
+}
+
+function isMainOwnedContextIsolatedPayload(payload: AgentRunPayload): boolean {
+  return (
+    isExecutionGraphIsolatedPayload(payload) ||
+    channelAgentRunIsolationRegistry.isPayloadIsolated(payload)
   )
 }
 
@@ -12887,6 +12911,7 @@ function emitRunEventsChanged(record: {
 }
 
 function appendDurableRunEvent(input: RunEventInput): void {
+  if (channelAgentRunIsolationRegistry.isRunIsolated(input.runId)) return
   getRunRepository().appendRunEvent(input)
 }
 
@@ -16390,11 +16415,11 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
   missingEnsembleParticipant: boolean
   routeProviderMismatch: boolean
   ephemeralProviderReroute: boolean
-  executionGraphIsolated: boolean
+  mainOwnedContextIsolated: boolean
   storeWritable: boolean
 } {
   const chat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
-  if (isExecutionGraphIsolatedPayload(payload)) {
+  if (isMainOwnedContextIsolatedPayload(payload)) {
     return {
       storeSessionId: null,
       storeReceipt: undefined,
@@ -16402,7 +16427,7 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
       missingEnsembleParticipant: false,
       routeProviderMismatch: false,
       ephemeralProviderReroute: false,
-      executionGraphIsolated: true,
+      mainOwnedContextIsolated: true,
       storeWritable: false
     }
   }
@@ -16452,7 +16477,7 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
     missingEnsembleParticipant,
     routeProviderMismatch,
     ephemeralProviderReroute,
-    executionGraphIsolated: false,
+    mainOwnedContextIsolated: false,
     storeWritable
   }
 }
@@ -16997,7 +17022,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   // A cross-provider solo reroute has no target-provider store lane. Never
   // resume the source provider's handle as Claude, and never birth core because
   // its receipt could not be persisted authoritatively.
-  if (storeState.ephemeralProviderReroute || storeState.executionGraphIsolated) {
+  if (storeState.ephemeralProviderReroute || storeState.mainOwnedContextIsolated) {
     applied.providerSessionId = null
   }
   if (
@@ -17061,7 +17086,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
     coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
     profileReceiptCanPersist:
       applied.provider !== 'claude' ||
-      storeState.executionGraphIsolated ||
+      storeState.mainOwnedContextIsolated ||
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined,
     meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
@@ -17076,7 +17101,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
     receipt: undefined,
     profileReceiptCanPersist:
       applied.provider !== 'claude' ||
-      storeState.executionGraphIsolated ||
+      storeState.mainOwnedContextIsolated ||
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised:
       applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined,
@@ -17096,7 +17121,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   applied.taskWraithMcpAdvertised = providerSeat.advertised
   refreshTaskWraithMcpProfileFenceStoreIdentity(applied)
   if (applied.appRunId) {
-    if (storeState.ephemeralProviderReroute || storeState.executionGraphIsolated) {
+    if (storeState.ephemeralProviderReroute || storeState.mainOwnedContextIsolated) {
       suppressProviderSessionPersistenceForRun(applied.appRunId)
     } else {
       releaseProviderSessionPersistenceDecision(applied.appRunId)
@@ -23583,7 +23608,7 @@ function kimiAcpSeatHomeDirForIdentity(chatId: string, participantId = 'solo'): 
 }
 
 function kimiAcpSeatHomeDir(payload: AgentRunPayload): string {
-  if (isExecutionGraphIsolatedPayload(payload)) {
+  if (isMainOwnedContextIsolatedPayload(payload)) {
     return kimiIsolatedHomeDirForRun(payload.appRunId || 'unknown')
   }
   if (!payload.appChatId) return kimiIsolatedHomeDirForRun(payload.appRunId || 'unknown')
@@ -23757,7 +23782,7 @@ async function runKimiAcpProvider(
   }
 
   try {
-    const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
+    const mainOwnedContextIsolated = isMainOwnedContextIsolatedPayload(payload)
 
     const model = normalizeCliProviderModel('kimi', payload.model)
     const kimiThinkingConfig = kimiAcpThinkingConfigValue(model, payload.reasoningEffort)
@@ -23771,7 +23796,7 @@ async function runKimiAcpProvider(
     // Build the isolated home BEFORE registering the run so a fail-closed
     // not-authenticated / build error surfaces as setup-required without a
     // half-started run.
-    const preserveKimiSessionState = !graphContextIsolated && Boolean(payload.appChatId)
+    const preserveKimiSessionState = !mainOwnedContextIsolated && Boolean(payload.appChatId)
     const kimiHomeDir = kimiAcpSeatHomeDir(payload)
     const home = await prepareKimiIsolatedHome({
       runId: route.appRunId || 'unknown',
@@ -24222,7 +24247,7 @@ async function runKimiAcpProvider(
                       const chat = AppStore.getChat(route.appChatId)
                       if (chat) {
                         try {
-                          AppStore.recordUsage({
+                          recordProviderRunUsage({
                             provider: 'kimi',
                             workspaceId:
                               chat.workspaceId ||
@@ -26710,7 +26735,7 @@ function handleCodexManualCompactionNotification(message: any): void {
         model: pending.model,
         stats: codexUsageToStats(pending.tokenUsage, durationMs),
         fallbackDurationMs: durationMs,
-        recordUsage: (entry) => AppStore.recordUsage(entry)
+        recordUsage: recordProviderRunUsage
       })
       pending.usageRecorded = recordedStats._taskwraith_usage_recorded === true
     }
@@ -29225,7 +29250,7 @@ function handleCodexNotification(message: any) {
         fallbackDurationMs: durationMs || Math.max(0, Date.now() - state.startedAt),
         promptText: state.usagePromptText,
         responseText: codexUsageResponseText(state.assistantTextByItemId.values()),
-        recordUsage: (entry) => AppStore.recordUsage(entry)
+        recordUsage: recordProviderRunUsage
       })
     }
     // Seal main's own AppStore copy of a SOLO Codex run before we notify the
@@ -29333,7 +29358,7 @@ function handleCodexNotification(message: any) {
         fallbackDurationMs: durationMs,
         promptText: state.usagePromptText,
         responseText: codexUsageResponseText(state.assistantTextByItemId.values()),
-        recordUsage: (entry) => AppStore.recordUsage(entry)
+        recordUsage: recordProviderRunUsage
       })
     }
     if (!state.ensembleRun && !state.reviewActivityId) {
@@ -30870,7 +30895,7 @@ async function runCodexAppServerWithClient(
   client: CodexAppServerClient,
   bindSpawnedProcess?: (process: CodexAppServerSpawnedProcess) => Promise<void>
 ) {
-  const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
+  const mainOwnedContextIsolated = isMainOwnedContextIsolatedPayload(payload)
   const route = routeWithRunId('codex', payload)
   client.setNotificationHandler((message) => handleCodexNotificationFromClient(message, client))
   client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client))
@@ -30971,7 +30996,7 @@ async function runCodexAppServerWithClient(
     }
     throw error
   }
-  if (!graphContextIsolated) {
+  if (!mainOwnedContextIsolated) {
     syncCodexGoalCapabilityMetadata(payload.appChatId, client.supportsNativeGoalControl())
   }
 
@@ -31081,7 +31106,7 @@ async function runCodexAppServerWithClient(
     )
   }
 
-  if (!graphContextIsolated) {
+  if (!mainOwnedContextIsolated) {
     try {
       await syncCodexNativeGoalForRun(
         client,
@@ -31406,7 +31431,7 @@ async function runCodexExecFallback(
             stats: terminalStats,
             fallbackDurationMs: durationMs,
             promptText: payload.usagePromptText,
-            recordUsage: (entry) => AppStore.recordUsage(entry)
+            recordUsage: recordProviderRunUsage
           })
         } catch (error) {
           try {
@@ -32253,8 +32278,16 @@ function geminiApiProviderDeps() {
         }
       )
     },
-    getChat: (chatId: string) => AppStore.getChat(chatId),
-    saveChatLinkedSessionId: (chatId: string, sessionId: string) => {
+    getChat: (chatId: string, route: AgentRunRoute) =>
+      channelAgentRunIsolationRegistry.isRunIsolated(route.appRunId)
+        ? null
+        : AppStore.getChat(chatId),
+    saveChatLinkedSessionId: (
+      chatId: string,
+      sessionId: string,
+      route: AgentRunRoute
+    ) => {
+      if (channelAgentRunIsolationRegistry.isRunIsolated(route.appRunId)) return
       const existing = AppStore.getChat(chatId)
       if (!existing) return
       const current = existing.linkedProviderSessionId || ''
@@ -32265,10 +32298,13 @@ function geminiApiProviderDeps() {
       existing.linkedProviderSessionId = sessionId
       AppStore.saveChat(existing)
     },
-    recordUsage: (entry: Omit<UsageRecord, 'id' | 'timestamp'>) => {
-      AppStore.recordUsage(entry)
-    },
-    appendChatSystemMessage: (chatId: string, message: ChatMessage) => {
+    recordUsage: recordProviderRunUsage,
+    appendChatSystemMessage: (
+      chatId: string,
+      message: ChatMessage,
+      route: AgentRunRoute
+    ) => {
+      if (channelAgentRunIsolationRegistry.isRunIsolated(route.appRunId)) return
       const existing = AppStore.getChat(chatId)
       if (!existing) return
       const updated: ChatRecord = {
@@ -54341,17 +54377,24 @@ if (isGeminiMcpBridgeProcess) {
     // Stage 0b-dispatch: expose the composer + dispatcher to the module-scope
     // scheduler so a windowless app can compose + fire a due SOLO run itself.
     composerServiceRef = composerService
-    channelAgentDispatchRef = (payload, hooks) => {
-      const sender =
-        mainWindow?.webContents && !mainWindow.webContents.isDestroyed()
-          ? mainWindow.webContents
-          : createHeadlessRunSender()
-      return baseDispatchRunWithProviderPause(
-        payload,
-        { sender },
-        hooks.observer,
-        hooks.finalAuthorization
-      )
+    channelAgentDispatchRef = async (payload, hooks) => {
+      const isolationLease = channelAgentRunIsolationRegistry.register(payload)
+      try {
+        const sender =
+          mainWindow?.webContents && !mainWindow.webContents.isDestroyed()
+            ? mainWindow.webContents
+            : createHeadlessRunSender()
+        return await baseDispatchRunWithProviderPause(
+          payload,
+          { sender },
+          hooks.observer,
+          hooks.finalAuthorization
+        )
+      } finally {
+        quotaWallSignalByRun.delete(isolationLease.binding.runId)
+        failoverSnapshotByRun.delete(isolationLease.binding.runId)
+        isolationLease.settle()
+      }
     }
     try {
       channelProductionBootstrap?.startAgentExecution()

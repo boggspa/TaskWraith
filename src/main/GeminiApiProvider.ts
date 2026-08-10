@@ -308,7 +308,7 @@ export interface GeminiApiProviderDeps {
    *  `Content[]` (see `GeminiApiHistoryAdapter.ts`). Returns `null`
    *  for non-existent chats — that just collapses to a first-turn
    *  request. Tests can stub this trivially with a closure. */
-  getChat?: (chatId: string) => ChatRecord | null | undefined
+  getChat?: (chatId: string, route: AgentRunRoute) => ChatRecord | null | undefined
   /** Phase M1 Step 5: persist the synthetic `api://<appChatId>` session
    *  id back onto the chat record after the first successful API run.
    *  The renderer's continuity UI keys off `linkedProviderSessionId`
@@ -324,7 +324,7 @@ export interface GeminiApiProviderDeps {
    *
    *  Optional so existing tests that don't exercise persistence can
    *  omit it without churn. */
-  saveChatLinkedSessionId?: (chatId: string, sessionId: string) => void
+  saveChatLinkedSessionId?: (chatId: string, sessionId: string, route: AgentRunRoute) => void
   /** Phase M1 Step 7: read an image file at the host. Defaults to
    *  `fs.promises.readFile` if absent. Tests inject a stub so they can
    *  simulate arbitrary file sizes without touching the disk. Returns
@@ -346,7 +346,7 @@ export interface GeminiApiProviderDeps {
    *  so the renderer picks up the new entry without a manual refresh.
    *  Optional so older tests can omit it; when absent, no notice is
    *  emitted (the run still completes normally). */
-  appendChatSystemMessage?: (chatId: string, message: ChatMessage) => void
+  appendChatSystemMessage?: (chatId: string, message: ChatMessage, route: AgentRunRoute) => void
   /** Optional SDK loader override; defaults to `loadOptionalGeminiSdk`.
    *  Tests pass a synthetic SDK to avoid real network calls. */
   loadSdk?: () => Promise<any | null>
@@ -1069,7 +1069,7 @@ export async function tryRunGeminiApi(
     const isEnsembleSeatTurn = Boolean(payload.ensembleRun)
     const priorChat =
       deps.getChat && payload.appChatId && !isEnsembleSeatTurn
-        ? deps.getChat(payload.appChatId)
+        ? deps.getChat(payload.appChatId, normalizedRoute)
         : null
     const contents: any[] = buildGeminiTurnContents(priorChat, payload.prompt)
 
@@ -1378,7 +1378,7 @@ export async function tryRunGeminiApi(
     // EnsembleParticipant.linkedProviderSessionId via the orchestrator).
     if (deps.saveChatLinkedSessionId && normalizedRoute.appChatId && !isEnsembleSeatTurn) {
       try {
-        deps.saveChatLinkedSessionId(normalizedRoute.appChatId, sessionId)
+        deps.saveChatLinkedSessionId(normalizedRoute.appChatId, sessionId, normalizedRoute)
       } catch {
         // Best-effort: a save failure shouldn't crash the run after the
         // model already streamed a successful answer. The next turn will
@@ -1460,15 +1460,19 @@ export async function tryRunGeminiApi(
     ) {
       try {
         const noticeRunId = normalizedRoute.appRunId || 'unknown'
-        deps.appendChatSystemMessage(normalizedRoute.appChatId, {
-          id: `gemini-api-migration-${noticeRunId}`,
-          role: 'system',
-          content:
-            'This chat is now running via the Gemini API runtime. Its CLI session id is preserved for fallback.',
-          timestamp: new Date().toISOString(),
-          runId: normalizedRoute.appRunId,
-          metadata: { kind: 'geminiApiMigrationNotice' }
-        })
+        deps.appendChatSystemMessage(
+          normalizedRoute.appChatId,
+          {
+            id: `gemini-api-migration-${noticeRunId}`,
+            role: 'system',
+            content:
+              'This chat is now running via the Gemini API runtime. Its CLI session id is preserved for fallback.',
+            timestamp: new Date().toISOString(),
+            runId: normalizedRoute.appRunId,
+            metadata: { kind: 'geminiApiMigrationNotice' }
+          },
+          normalizedRoute
+        )
       } catch {
         // Best-effort: notice append failure shouldn't fail the run.
       }

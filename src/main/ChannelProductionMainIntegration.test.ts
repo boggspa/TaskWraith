@@ -53,7 +53,7 @@ describe('Channels production main integration', () => {
     const start = source.indexOf('channelProductionBootstrap.start()')
     const recovery = source.indexOf('await recoverPendingHistoryDeletionBeforeRunQueue()')
     const composer = source.indexOf('composerServiceRef = composerService')
-    const dispatch = source.indexOf('channelAgentDispatchRef = (payload, hooks) => {')
+    const dispatch = source.indexOf('channelAgentDispatchRef = async (payload, hooks) => {')
     const activation = source.indexOf('channelProductionBootstrap?.startAgentExecution()')
     expect(constructed).toBeGreaterThanOrEqual(0)
     expect(start).toBeGreaterThan(constructed)
@@ -65,6 +65,77 @@ describe('Channels production main integration', () => {
     expect(dispatchComposition).toContain('baseDispatchRunWithProviderPause(')
     expect(dispatchComposition).toContain('hooks.observer')
     expect(dispatchComposition).toContain('hooks.finalAuthorization')
+  })
+
+  it('isolates exact Channel runs from parent sessions, raw history, and ordinary failover', () => {
+    const dispatch = between(
+      'channelAgentDispatchRef = async (payload, hooks) => {',
+      'channelProductionBootstrap?.startAgentExecution()'
+    )
+    const registered = dispatch.indexOf('channelAgentRunIsolationRegistry.register(payload)')
+    const provider = dispatch.indexOf('baseDispatchRunWithProviderPause(')
+    const settled = dispatch.indexOf('isolationLease.settle()')
+    expect(registered).toBeGreaterThanOrEqual(0)
+    expect(provider).toBeGreaterThan(registered)
+    expect(settled).toBeGreaterThan(provider)
+    expect(dispatch).toContain('hooks.finalAuthorization')
+    expect(dispatch).toContain('quotaWallSignalByRun.delete(isolationLease.binding.runId)')
+    expect(dispatch).toContain('failoverSnapshotByRun.delete(isolationLease.binding.runId)')
+
+    const isolation = between(
+      'function isMainOwnedContextIsolatedPayload',
+      'function getActiveTaskWraithThreadCount'
+    )
+    expect(isolation).toContain('isExecutionGraphIsolatedPayload(payload)')
+    expect(isolation).toContain('channelAgentRunIsolationRegistry.isPayloadIsolated(payload)')
+
+    const profileStore = between(
+      'function taskWraithMcpProfileStoreStateForPayload',
+      'interface ProviderSeatStoreTarget'
+    )
+    expect(profileStore).toContain('isMainOwnedContextIsolatedPayload(payload)')
+    expect(profileStore).toContain('storeSessionId: null')
+    expect(profileStore).toContain('storeWritable: false')
+
+    const sessionPersistence = between(
+      'function shouldPersistProviderSessionForRun',
+      'function releaseProviderSessionPersistenceDecision'
+    )
+    expect(sessionPersistence).toContain('!channelAgentRunIsolationRegistry.isRunIsolated(runId)')
+    expect(sessionPersistence).toContain('redactChannelAgentUsageContent(entry)')
+
+    const durableHistory = between(
+      'function appendDurableRunEvent(input: RunEventInput): void {',
+      'const runItemEventCompatMapper'
+    )
+    expect(durableHistory).toContain(
+      'if (channelAgentRunIsolationRegistry.isRunIsolated(input.runId)) return'
+    )
+
+    const failover = between(
+      'function maybeTriggerProviderAutoFailover',
+      '/** Wire the failover orchestrator to live main-process dependencies. */'
+    )
+    expect(failover).toContain(
+      'if (channelAgentRunIsolationRegistry.isRunIsolated(appRunId)) return'
+    )
+
+    expect(source).toContain(
+      'function kimiAcpSeatHomeDir(payload: AgentRunPayload): string {\n  if (isMainOwnedContextIsolatedPayload(payload)) {'
+    )
+    expect(
+      source.match(/const mainOwnedContextIsolated = isMainOwnedContextIsolatedPayload/g)
+    ).toHaveLength(2)
+
+    const geminiApi = between(
+      'function geminiApiProviderDeps()',
+      'async function runGeminiProvider'
+    )
+    expect(geminiApi).toContain('getChat: (chatId: string, route: AgentRunRoute) =>')
+    expect(
+      geminiApi.match(/channelAgentRunIsolationRegistry\.isRunIsolated\(route\.appRunId\)/g)
+    ).toHaveLength(3)
+    expect(geminiApi).toContain('recordUsage: recordProviderRunUsage')
   })
 
   it('gives broad and scoped deletion their own durable Channels target before commit', () => {
