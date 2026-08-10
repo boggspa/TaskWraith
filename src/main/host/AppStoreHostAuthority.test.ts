@@ -243,6 +243,10 @@ describe('AppStoreHostAuthority', () => {
       ok: false,
       error: 'invalid_lookup'
     })
+    expect(await authority.threadOffers(mismatched, 'thread-1')).toEqual({
+      ok: false,
+      error: 'invalid_lookup'
+    })
     expect(
       await authority.command(
         mismatched,
@@ -450,6 +454,72 @@ describe('AppStoreHostAuthority', () => {
     expect(resnapshot.value).toMatchObject({
       kind: 'full_resnapshot_required',
       reason: 'generation_reset'
+    })
+  })
+
+  it('returns only canonical thread offers from its injected read port', async () => {
+    const threadOffersProvider = vi.fn(() => ({
+      threadId: 'thread-1',
+      provider: {
+        runtimeProvider: 'mistral',
+        displayProvider: 'Mistral',
+        hueKey: 'mistral',
+        accent: '#D44404',
+        model: 'devstral-small',
+        modelLabel: 'Devstral Small',
+        shortCode: 'MST'
+      },
+      currentModel: 'devstral-small',
+      models: [
+        {
+          id: 'devstral-small',
+          label: 'Devstral Small',
+          current: true,
+          reasoningEfforts: []
+        }
+      ],
+      source: 'curated' as const
+    }))
+    const authority = open({ ports: { threadOffersProvider } })
+    const result = await authority.threadOffers(contextFor(ACTOR_A, CLIENT_A), 'thread-1')
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { threadId: 'thread-1', currentModel: 'devstral-small' }
+    })
+    expect(threadOffersProvider).toHaveBeenCalledWith('thread-1')
+    expect(await authority.threadOffers(contextFor(ACTOR_A, CLIENT_A), 'x'.repeat(513))).toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    expect(threadOffersProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails thread offers closed when its optional provider is absent or mismatched', async () => {
+    const ctx = contextFor(ACTOR_A, CLIENT_A)
+    expect(await open().threadOffers(ctx, 'thread-1')).toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    const mismatched = open({
+      ports: {
+        threadOffersProvider: () => ({
+          threadId: 'another-thread',
+          provider: {
+            runtimeProvider: 'codex',
+            displayProvider: 'Codex',
+            hueKey: 'codex',
+            accent: '#705AFF',
+            shortCode: 'CDX'
+          },
+          models: [],
+          source: 'curated'
+        })
+      }
+    })
+    expect(await mismatched.threadOffers(ctx, 'thread-1')).toEqual({
+      ok: false,
+      error: 'host_unavailable'
     })
   })
 

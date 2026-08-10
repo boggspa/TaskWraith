@@ -42,7 +42,8 @@ import {
   type AppStoreHostAuthorityExecutor,
   type AppStoreHostAuthorityHealthProvider,
   type AppStoreHostAuthorityShutdownCallback,
-  type AppStoreHostAuthoritySnapshotDonor
+  type AppStoreHostAuthoritySnapshotDonor,
+  type AppStoreHostAuthorityThreadOffersProvider
 } from './AppStoreHostAuthority'
 import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
 import type { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
@@ -126,6 +127,7 @@ export interface HostMainCompositionInput {
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
+  readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
   readonly host: HostSessionHostIdentity
   readonly hostCapabilityOffer: readonly HostCapability[]
   /** Extra durable-state flush performed after the Host's own flush. */
@@ -274,6 +276,9 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
   requireFunction(input.snapshotDonor, 'snapshotDonor')
   requireFunction(input.authorityEvaluator, 'authorityEvaluator')
   requireFunction(input.healthProvider, 'healthProvider')
+  if (input.threadOffersProvider !== undefined) {
+    requireFunction(input.threadOffersProvider, 'threadOffersProvider')
+  }
   if (
     !input.host ||
     typeof input.host.hostId !== 'string' ||
@@ -380,6 +385,7 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
       authorityEvaluator: input.authorityEvaluator,
       commandExecutor: input.commandExecutor,
       healthProvider: input.healthProvider,
+      ...(input.threadOffersProvider ? { threadOffersProvider: input.threadOffersProvider } : {}),
       onShutdown: flushDurableState,
       deferredAsk: {
         envelopeStorePut: (put) => runtime.envelopeStore.put(put),

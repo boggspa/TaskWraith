@@ -46,6 +46,7 @@ export type HostCapability =
   | 'bootstrap'
   | 'snapshot'
   | 'deltas'
+  | 'model-offers'
   | 'commands'
   | 'receipts'
   | 'health'
@@ -731,6 +732,7 @@ export const HOST_CAPABILITY_ORDER: readonly HostCapability[] = [
   'bootstrap',
   'snapshot',
   'deltas',
+  'model-offers',
   'commands',
   'receipts',
   'health',

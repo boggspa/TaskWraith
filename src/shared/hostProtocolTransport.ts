@@ -25,6 +25,7 @@ import type {
   HostHealthFrame,
   HostSnapshotFrame
 } from './hostProtocol'
+import type { TaskWraithControlThreadOffers } from './taskWraithControlProtocol'
 
 /** Local Host transport envelope version — distinct from HOST_PROTOCOL_VERSION. */
 export const HOST_LOCAL_TRANSPORT_VERSION = 1 as const
@@ -63,6 +64,7 @@ export interface HostLocalTransportError {
 export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'snapshot.get',
   'deltas.since',
+  'thread.offers',
   'receipt.lookup',
   'health.get',
   'command.submit',
@@ -106,6 +108,13 @@ export type HostLocalTransportRequest =
       type: 'request'
       transportVersion: HostLocalTransportVersion
       id: string
+      kind: 'thread.offers'
+      params: { threadId: string }
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
       kind: 'receipt.lookup'
       params: HostLocalTransportReceiptLookupParams
     }
@@ -143,6 +152,7 @@ export interface HostLocalTransportWelcome {
 export type HostLocalTransportSuccessResult =
   | { kind: 'snapshot.get'; frame: HostSnapshotFrame }
   | { kind: 'deltas.since'; frame: HostDeltasFrame }
+  | { kind: 'thread.offers'; offers: TaskWraithControlThreadOffers }
   | { kind: 'receipt.lookup'; receipt: HostCommandReceipt }
   | { kind: 'health.get'; frame: HostHealthFrame }
   | { kind: 'command.submit'; receipt: HostCommandReceipt }
@@ -251,6 +261,57 @@ function isEmptyParams(value: unknown): value is Record<string, never> {
   return isRecord(value) && Object.keys(value).length === 0
 }
 
+function isOptionalBoundedString(value: unknown, max: number): boolean {
+  return (
+    value === undefined || (typeof value === 'string' && value.length > 0 && value.length <= max)
+  )
+}
+
+function hasThreadOffersShape(value: unknown): value is TaskWraithControlThreadOffers {
+  if (!isRecord(value)) return false
+  if (!isBoundedId(value.threadId) || value.source !== 'curated') return false
+  if (!isOptionalBoundedString(value.currentModel, 200)) return false
+  if (!isOptionalBoundedString(value.currentReasoningEffort, 80)) return false
+  if (!isOptionalBoundedString(value.locked, 1_000)) return false
+  if (!isRecord(value.provider)) return false
+  for (const key of [
+    'runtimeProvider',
+    'displayProvider',
+    'hueKey',
+    'accent',
+    'shortCode'
+  ] as const) {
+    if (!isOptionalBoundedString(value.provider[key], 200) || value.provider[key] === undefined) {
+      return false
+    }
+  }
+  if (!isOptionalBoundedString(value.provider.model, 200)) return false
+  if (!isOptionalBoundedString(value.provider.modelLabel, 200)) return false
+  if (!Array.isArray(value.models) || value.models.length > 40) return false
+  return value.models.every((model) => {
+    if (!isRecord(model) || !isOptionalBoundedString(model.id, 200) || model.id === undefined) {
+      return false
+    }
+    for (const key of ['label', 'disabledReason', 'retiresAt', 'defaultReasoningEffort'] as const) {
+      if (!isOptionalBoundedString(model[key], 1_000)) return false
+    }
+    for (const key of ['isDefault', 'current', 'disabled'] as const) {
+      if (model[key] !== undefined && typeof model[key] !== 'boolean') return false
+    }
+    if (!Array.isArray(model.reasoningEfforts) || model.reasoningEfforts.length > 12) return false
+    return model.reasoningEfforts.every((effort) => {
+      if (!isRecord(effort) || !isOptionalBoundedString(effort.id, 80) || effort.id === undefined) {
+        return false
+      }
+      if (!isOptionalBoundedString(effort.disabledReason, 1_000)) return false
+      return (
+        (effort.isDefault === undefined || typeof effort.isDefault === 'boolean') &&
+        (effort.disabled === undefined || typeof effort.disabled === 'boolean')
+      )
+    })
+  })
+}
+
 function isErrorCode(value: unknown): value is HostLocalTransportErrorCode {
   return (
     typeof value === 'string' &&
@@ -327,6 +388,15 @@ function decodeReceiptLookupParams(
   return { ok: true, value: { idempotencyKey: value.idempotencyKey as string } }
 }
 
+function decodeThreadOffersParams(
+  value: unknown
+): HostLocalTransportDecodeResult<{ threadId: string }> {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || !isBoundedId(value.threadId)) {
+    return fail('invalid_payload')
+  }
+  return { ok: true, value: { threadId: value.threadId } }
+}
+
 function decodeSuccessResult(
   value: unknown
 ): HostLocalTransportDecodeResult<HostLocalTransportSuccessResult> {
@@ -338,6 +408,9 @@ function decodeSuccessResult(
     case 'deltas.since':
       if (!hasDeltasFrameShape(value.frame)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'deltas.since', frame: value.frame } }
+    case 'thread.offers':
+      if (!hasThreadOffersShape(value.offers)) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'thread.offers', offers: value.offers } }
     case 'receipt.lookup':
       if (!hasHostReceiptShape(value.receipt)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'receipt.lookup', receipt: value.receipt } }
@@ -418,6 +491,20 @@ export function decodeHostLocalTransportClientFrame(
             transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
             id: id.value,
             kind: 'deltas.since',
+            params: params.value
+          }
+        }
+      }
+      case 'thread.offers': {
+        const params = decodeThreadOffersParams(value.params)
+        if (!params.ok) return params
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.offers',
             params: params.value
           }
         }

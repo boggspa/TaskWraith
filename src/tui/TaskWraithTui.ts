@@ -44,10 +44,6 @@ import {
 } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 
-/** Offers / tune catalogue still has no Host command surface. */
-const OFFERS_UNAVAILABLE_NOTICE =
-  'Host model offers are not on the command wire yet · tune staging is local only'
-
 interface Keypress {
   name?: string
   ctrl?: boolean
@@ -836,17 +832,36 @@ export class TaskWraithTui {
     this.state.offersLoading = true
     this.render()
     try {
-      // No Host command yet for model offers — local staging only.
+      if (!this.client.welcome?.capabilities.includes('model-offers')) {
+        const locked = 'Connected Host does not advertise model offers · update TaskWraith'
+        this.state.offers = {
+          threadId,
+          provider: this.state.thread!.thread.provider,
+          models: [],
+          source: 'curated',
+          locked
+        }
+        this.setNotice(locked, 'warning', 3_000)
+        return
+      }
+      const offers = await this.client.getThreadOffers(threadId)
+      // A quick thread switch must not paint the previous thread's catalogue.
+      if (this.state.selectedThreadId !== threadId) return
+      this.state.offers = offers
+      const currentIndex = offers.models.findIndex((model) => model.current)
+      this.state.overlayIndex = Math.max(0, currentIndex)
+      this.state.tuneEffortIndex = this.effortIndexFor(offers, this.state.overlayIndex)
+    } catch {
+      if (this.state.selectedThreadId !== threadId) return
+      const locked = 'Unable to load model offers from the Host.'
       this.state.offers = {
         threadId,
         provider: this.state.thread!.thread.provider,
         models: [],
         source: 'curated',
-        locked: OFFERS_UNAVAILABLE_NOTICE
+        locked
       }
-      this.state.overlayIndex = 0
-      this.state.tuneEffortIndex = 0
-      this.setNotice(OFFERS_UNAVAILABLE_NOTICE, 'warning', 3_000)
+      this.setNotice(locked, 'warning', 3_000)
     } finally {
       this.state.offersLoading = false
       this.render()

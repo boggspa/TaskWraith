@@ -226,6 +226,7 @@ function hostProductionCapabilityOffer(
     'bootstrap',
     'snapshot',
     'deltas',
+    'model-offers',
     'commands',
     'receipts',
     'health'
@@ -390,6 +391,11 @@ export function createHostProductionBootstrap(
   })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
   const contextResolvers = createHostProductionContextResolvers(options.contextSources)
+  const threadOffersProvider = async (threadId: string) => {
+    const resolved = await contextResolvers.resolveThreadOffers(threadId)
+    if (!resolved.ok) throw new Error(resolved.error)
+    return resolved.value
+  }
 
   const bridgeExecutor = new HostBridgeCommandExecutor({
     bridge: options.bridge,
@@ -479,6 +485,7 @@ export function createHostProductionBootstrap(
     snapshotDonor,
     authorityEvaluator,
     healthProvider,
+    threadOffersProvider,
     host: options.host,
     hostCapabilityOffer: hostProductionCapabilityOffer(options),
     pipelineFactory,

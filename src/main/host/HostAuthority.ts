@@ -18,6 +18,7 @@ import type {
   HostHealthProjection,
   HostSnapshot
 } from '../../shared/hostProtocol'
+import type { TaskWraithControlThreadOffers } from '../../shared/taskWraithControlProtocol'
 
 /** Authenticated call context required on every Authority operation. */
 export interface HostAuthorityCallContext {
@@ -88,6 +89,12 @@ export interface HostAuthority {
     context: HostAuthorityCallContext,
     since: HostCursorPosition
   ): Promise<HostAuthorityResult<HostDeltasSinceResult>>
+
+  /** Capability-gated read added during the Host-v2 control migration. */
+  threadOffers?(
+    context: HostAuthorityCallContext,
+    threadId: string
+  ): Promise<HostAuthorityResult<TaskWraithControlThreadOffers>>
 
   command(
     context: HostAuthorityCallContext,

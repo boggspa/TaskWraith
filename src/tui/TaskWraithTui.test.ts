@@ -24,6 +24,7 @@ import {
   HOST_LOCAL_TRANSPORT_VERSION,
   type HostLocalTransportHostFrame
 } from '../shared/hostProtocolTransport'
+import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import { stripAnsi } from './ansi'
 import { TaskWraithTui } from './TaskWraithTui'
 
@@ -93,6 +94,7 @@ type MutationMode = 'allow' | 'defer'
 
 interface FakeHostHandlers {
   snapshot: () => HostSnapshot
+  offers?: (threadId: string) => TaskWraithControlThreadOffers
   /** allow = immediate succeeded; defer = pending ask until approval.decide */
   mutationMode?: MutationMode
 }
@@ -111,6 +113,7 @@ class FakeHostV2 {
   private cursor = 9
   private eventSequence = 0
   snapshotRequests = 0
+  readonly commands: HostCommand[] = []
 
   constructor(userDataPath: string, handlers: FakeHostHandlers) {
     this.userDataPath = userDataPath
@@ -247,7 +250,15 @@ class FakeHostV2 {
           clientClass: 'tui',
           clientVersion: '0.1.0-test'
         },
-        capabilities: ['bootstrap', 'snapshot', 'deltas', 'health', 'commands', 'receipts'],
+        capabilities: [
+          'bootstrap',
+          'snapshot',
+          'deltas',
+          'model-offers',
+          'health',
+          'commands',
+          'receipts'
+        ],
         freshness: 'live'
       }
       this.write(socket, {
@@ -296,6 +307,20 @@ class FakeHostV2 {
       })
       return
     }
+    if (kind === 'thread.offers') {
+      const threadId = String((message.params as { threadId?: unknown }).threadId ?? '')
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: {
+          kind: 'thread.offers',
+          offers: this.handlers.offers?.(threadId) ?? makeThreadOffers(threadId)
+        }
+      })
+      return
+    }
     if (kind === 'receipt.lookup') {
       const params = message.params as { commandId?: string; idempotencyKey?: string }
       const found = params.commandId
@@ -330,6 +355,7 @@ class FakeHostV2 {
   }
 
   private handleCommand(command: HostCommand): HostCommandReceipt {
+    this.commands.push(command)
     if (command.name === 'approval.decide') {
       return this.handleApprovalDecide(command)
     }
@@ -423,6 +449,39 @@ class FakeHostV2 {
   private write(socket: Socket, frame: HostLocalTransportHostFrame): void {
     if (socket.destroyed) return
     socket.write(`${JSON.stringify(frame)}\n`)
+  }
+}
+
+function makeThreadOffers(threadId = 'thread-1'): TaskWraithControlThreadOffers {
+  return {
+    threadId,
+    provider: {
+      runtimeProvider: 'claude',
+      displayProvider: 'Claude',
+      hueKey: 'claude',
+      accent: '#B16105',
+      model: 'claude-sonnet-5',
+      modelLabel: 'Sonnet 5',
+      shortCode: 'CLA'
+    },
+    currentModel: 'claude-sonnet-5',
+    currentReasoningEffort: 'high',
+    models: [
+      {
+        id: 'claude-sonnet-5',
+        label: 'Sonnet 5',
+        current: true,
+        reasoningEfforts: [{ id: 'high', isDefault: true }],
+        defaultReasoningEffort: 'high'
+      },
+      {
+        id: 'claude-opus-5',
+        label: 'Opus 5',
+        reasoningEfforts: [{ id: 'medium' }, { id: 'high', isDefault: true }],
+        defaultReasoningEffort: 'high'
+      }
+    ],
+    source: 'curated'
   }
 }
 
@@ -706,6 +765,39 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       'reconnected to the revived Host',
       5_000
     )
+  }, 12_000)
+
+  it('loads Host-v2 model offers, stages a choice, and sends only that offered selection', async () => {
+    const { host, userDataPath } = await setupHost()
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+    feed(input, '\u0007')
+    await waitFor(
+      () => output.lastFrame.includes('Model (preview)') && output.lastFrame.includes('Opus 5'),
+      'Host offers rendered'
+    )
+
+    feed(input, '\u001b[B')
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Next send uses Opus 5'), 'offer staged')
+
+    feed(input, 'run with the staged offer')
+    feed(input, '\r')
+    await waitFor(
+      () => output.lastFrame.includes('Host accepted composer.send'),
+      'tuned composer accepted',
+      5_000
+    )
+    const composer = [...host.commands]
+      .reverse()
+      .find((command) => command.name === 'composer.send')
+    expect(composer?.arguments).toMatchObject({
+      text: 'run with the staged offer',
+      model: 'claude-opus-5',
+      reasoningEffort: 'high'
+    })
   }, 12_000)
 
   it('surfaces deferred Host asks and never treats pending as success until y accepts', async () => {

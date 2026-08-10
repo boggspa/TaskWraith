@@ -377,6 +377,7 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
       'bootstrap',
       'snapshot',
       'deltas',
+      'model-offers',
       'commands',
       'receipts',
       'health',
@@ -389,6 +390,37 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
       'compact-export',
       'recovery'
     ])
+  })
+
+  it('wires canonical thread offers from the same live context source as composer validation', async () => {
+    const getChat = vi.fn((threadId: string) =>
+      threadId === 'thread-1'
+        ? {
+            appChatId: 'thread-1',
+            scope: 'workspace',
+            workspaceId: 'workspace-1',
+            provider: 'codex',
+            requestedModel: 'gpt-5.6-sol',
+            providerMetadata: { codexReasoningEffort: 'high' },
+            runs: []
+          }
+        : null
+    )
+    const { compositionInput } = captureSupervisorInput({
+      contextSources: {
+        getChat,
+        getApproval: () => null,
+        getQuestion: () => null
+      }
+    })
+
+    await expect(compositionInput.threadOffersProvider?.('thread-1')).resolves.toMatchObject({
+      threadId: 'thread-1',
+      currentModel: 'gpt-5.6-sol',
+      currentReasoningEffort: 'high',
+      source: 'curated'
+    })
+    expect(getChat).toHaveBeenCalledWith('thread-1')
   })
 
   it('builds live production context resolvers instead of an unwired refusal', async () => {
@@ -451,6 +483,7 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
       'bootstrap',
       'snapshot',
       'deltas',
+      'model-offers',
       'commands',
       'receipts',
       'health',

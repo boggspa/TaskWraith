@@ -10,6 +10,7 @@
 import {
   decodeHostCommand,
   decodeHostCommandReceipt,
+  HOST_PROTOCOL_MAX_ID,
   type HostActorIdentity,
   type HostCommand,
   type HostCommandReceipt,
@@ -18,6 +19,7 @@ import {
   type HostHealthProjection,
   type HostSnapshot
 } from '../../shared/hostProtocol'
+import type { TaskWraithControlThreadOffers } from '../../shared/taskWraithControlProtocol'
 import {
   hostAuthorityCommandActorMatchesContext,
   isExactHostActorIdentity,
@@ -117,6 +119,10 @@ export type AppStoreHostAuthorityHealthProvider = () =>
   | HostHealthProjection
   | Promise<HostHealthProjection>
 
+export type AppStoreHostAuthorityThreadOffersProvider = (
+  threadId: string
+) => TaskWraithControlThreadOffers | Promise<TaskWraithControlThreadOffers>
+
 export type AppStoreHostAuthorityShutdownCallback = () => void | Promise<void>
 
 /**
@@ -156,6 +162,7 @@ export interface AppStoreHostAuthorityPorts {
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly commandExecutor: AppStoreHostAuthorityExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
+  readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
   readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   /** Optional only for pre-cutover compatibility; present enables S2–S5. */
   readonly deferredAsk?: HostDeferredAskPorts
@@ -282,6 +289,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   private readonly commandExecutor: AppStoreHostAuthorityExecutor
   private readonly healthProvider: AppStoreHostAuthorityHealthProvider
+  private readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
   private readonly domainPublisher: HostDomainDeltaPublisher
@@ -311,6 +319,8 @@ export class AppStoreHostAuthority implements HostAuthority {
       typeof ports.authorityEvaluator !== 'function' ||
       typeof ports.commandExecutor !== 'function' ||
       typeof ports.healthProvider !== 'function' ||
+      (ports.threadOffersProvider !== undefined &&
+        typeof ports.threadOffersProvider !== 'function') ||
       typeof ports.onShutdown !== 'function' ||
       (ports.deferredAsk !== undefined && !isValidDeferredAskPorts(ports.deferredAsk))
     ) {
@@ -321,6 +331,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.authorityEvaluator = ports.authorityEvaluator
     this.commandExecutor = ports.commandExecutor
     this.healthProvider = ports.healthProvider
+    this.threadOffersProvider = ports.threadOffersProvider
     this.onShutdown = ports.onShutdown
     this.deferredAsk = ports.deferredAsk
     this.now = options.now ?? (() => new Date().toISOString())
@@ -387,6 +398,36 @@ export class AppStoreHostAuthority implements HostAuthority {
     try {
       const result = this.runtime.deltaStore.since(since)
       return { ok: true, value: result }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async threadOffers(
+    context: HostAuthorityCallContext,
+    threadId: string
+  ): Promise<HostAuthorityResult<TaskWraithControlThreadOffers>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    if (
+      typeof threadId !== 'string' ||
+      threadId.length === 0 ||
+      threadId.length > HOST_PROTOCOL_MAX_ID ||
+      !this.threadOffersProvider
+    ) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    try {
+      const offers = await this.threadOffersProvider(threadId)
+      if (
+        !offers ||
+        offers.threadId !== threadId ||
+        offers.source !== 'curated' ||
+        !Array.isArray(offers.models)
+      ) {
+        return { ok: false, error: 'host_unavailable' }
+      }
+      return { ok: true, value: offers }
     } catch {
       return { ok: false, error: 'host_unavailable' }
     }

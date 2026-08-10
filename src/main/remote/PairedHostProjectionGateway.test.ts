@@ -39,7 +39,15 @@ function welcome(cursor = 4): HostBootstrapWelcome {
       clientVersion: '1.9.4',
       subjectId: DEVICE_KEY
     },
-    capabilities: ['bootstrap', 'snapshot', 'deltas', 'commands', 'receipts', 'health'],
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'model-offers',
+      'commands',
+      'receipts',
+      'health'
+    ],
     freshness: 'live'
   }
 }
@@ -99,6 +107,18 @@ class FakeHostClient extends EventEmitter {
     }
   }))
   readonly lookupReceipt = vi.fn(async () => receipt())
+  readonly getThreadOffers = vi.fn(async (threadId: string) => ({
+    threadId,
+    provider: {
+      runtimeProvider: 'mistral',
+      displayProvider: 'Mistral',
+      hueKey: 'mistral',
+      accent: '#D44404',
+      shortCode: 'MST'
+    },
+    models: [],
+    source: 'curated' as const
+  }))
   readonly getHealth = vi.fn(async () => ({
     type: 'host.health',
     protocolVersion: 2,
@@ -209,6 +229,12 @@ describe('PairedHostProjectionGateway', () => {
     })
     expect(deltas).toMatchObject({ kind: 'deltas.since' })
     expect(h.fake.getDeltasSince).toHaveBeenCalledWith({ generation: 3, cursor: 4 })
+    const offers = await h.gateway.request(DEVICE_KEY, {
+      kind: 'thread.offers',
+      params: { threadId: 'thread-1' }
+    })
+    expect(offers).toMatchObject({ kind: 'thread.offers', offers: { threadId: 'thread-1' } })
+    expect(h.fake.getThreadOffers).toHaveBeenCalledWith('thread-1')
     await expect(
       h.gateway.request(DEVICE_KEY, {
         kind: 'deltas.since',

@@ -97,7 +97,13 @@ function mockHostSession(
   bind.mockImplementation(
     (request: { clientCapabilityRequest?: readonly HostCapability[] } | undefined) => {
       const sid = randomUUID()
-      const offered: readonly HostCapability[] = ['bootstrap', 'snapshot', 'deltas', 'health']
+      const offered: readonly HostCapability[] = [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'model-offers',
+        'health'
+      ]
       const capabilities = (request?.clientCapabilityRequest ?? []).filter((capability) =>
         offered.includes(capability)
       )
@@ -145,6 +151,7 @@ function mockHostSession(
 function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & {
   snapshot: ReturnType<typeof vi.fn>
   deltas: ReturnType<typeof vi.fn>
+  threadOffers: ReturnType<typeof vi.fn>
   command: ReturnType<typeof vi.fn>
   receipt: ReturnType<typeof vi.fn>
   health: ReturnType<typeof vi.fn>
@@ -165,6 +172,31 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
     ok: true,
     value: makePendingReceipt('test-cmd', 'test-key')
   })
+  const threadOffers = vi.fn().mockResolvedValue({
+    ok: true,
+    value: {
+      threadId: 'thread-1',
+      provider: {
+        runtimeProvider: 'mistral',
+        displayProvider: 'Mistral',
+        hueKey: 'mistral',
+        accent: '#D44404',
+        model: 'devstral-small',
+        modelLabel: 'Devstral Small',
+        shortCode: 'MST'
+      },
+      currentModel: 'devstral-small',
+      models: [
+        {
+          id: 'devstral-small',
+          label: 'Devstral Small',
+          current: true,
+          reasoningEfforts: []
+        }
+      ],
+      source: 'curated'
+    }
+  })
   const receipt = vi.fn().mockResolvedValue({
     ok: true,
     outcome: 'not_found'
@@ -179,6 +211,7 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
   return {
     snapshot,
     deltas,
+    threadOffers,
     command,
     receipt,
     health,
@@ -187,6 +220,7 @@ function mockHostAuthority(overrides?: Partial<HostAuthority>): HostAuthority & 
   } as unknown as HostAuthority & {
     snapshot: ReturnType<typeof vi.fn>
     deltas: ReturnType<typeof vi.fn>
+    threadOffers: ReturnType<typeof vi.fn>
     command: ReturnType<typeof vi.fn>
     receipt: ReturnType<typeof vi.fn>
     health: ReturnType<typeof vi.fn>
@@ -563,13 +597,13 @@ describe('HostLocalServer', () => {
       token = readFileSync(server.tokenPath, 'utf8').trim()
     })
 
-    async function authAndConnect(): Promise<{
+    async function authAndConnect(capabilities?: readonly HostCapability[]): Promise<{
       writeLine: (line: string) => void
       readFrame: () => Promise<HostLocalTransportHostFrame>
       close: () => void
     }> {
       const client = await connectClient(server.socketPath)
-      client.writeLine(JSON.stringify(makeClientHello(token)))
+      client.writeLine(JSON.stringify(makeClientHello(token, capabilities)))
       const welcome = await client.readFrame()
       expect(welcome.type).toBe('welcome')
       return client
@@ -616,6 +650,40 @@ describe('HostLocalServer', () => {
       const sinceArg = authority.deltas.mock.calls[0][1] as HostCursorPosition
       expect(sinceArg.generation).toBe(0)
       expect(sinceArg.cursor).toBe(0)
+    })
+
+    it('thread.offers is capability-gated and routes to Authority with exact thread id', async () => {
+      const client = await authAndConnect(['bootstrap', 'snapshot', 'model-offers', 'health'])
+      client.writeLine(
+        JSON.stringify(makeRequest('thread.offers' as never, 'r-offers', { threadId: 'thread-1' }))
+      )
+      const frame = await client.readFrame()
+      expect(frame.type).toBe('response')
+      if (frame.type === 'response') {
+        expect(frame.ok).toBe(true)
+        if (frame.ok) {
+          expect(frame.result).toMatchObject({
+            kind: 'thread.offers',
+            offers: { threadId: 'thread-1', currentModel: 'devstral-small' }
+          })
+        }
+      }
+      client.close()
+      expect(authority.threadOffers).toHaveBeenCalledTimes(1)
+      expect(authority.threadOffers.mock.calls[0][1]).toBe('thread-1')
+    })
+
+    it('thread.offers refuses clients that did not negotiate model-offers', async () => {
+      const client = await authAndConnect()
+      client.writeLine(
+        JSON.stringify(
+          makeRequest('thread.offers' as never, 'r-no-offers', { threadId: 'thread-1' })
+        )
+      )
+      const frame = await client.readFrame()
+      expect(frame).toMatchObject({ ok: false, error: { code: 'unauthorized' } })
+      expect(authority.threadOffers).not.toHaveBeenCalled()
+      client.close()
     })
 
     it('receipt.lookup routes to authority.receipt with commandId', async () => {

@@ -38,6 +38,7 @@ import {
   type HostLocalTransportRequest,
   type HostLocalTransportResponse
 } from './hostProtocolTransport'
+import type { TaskWraithControlThreadOffers } from './taskWraithControlProtocol'
 
 const client = {
   clientId: 'client-desktop-1',
@@ -182,6 +183,33 @@ function sampleHealthFrame(): HostHealthFrame {
   return decoded.value
 }
 
+function sampleThreadOffers(): TaskWraithControlThreadOffers {
+  return {
+    threadId: 'thread-1',
+    provider: {
+      runtimeProvider: 'codex',
+      displayProvider: 'Codex',
+      hueKey: 'codex',
+      accent: '#705AFF',
+      model: 'gpt-5.6-sol',
+      modelLabel: 'GPT-5.6-Sol',
+      shortCode: 'CDX'
+    },
+    currentModel: 'gpt-5.6-sol',
+    currentReasoningEffort: 'high',
+    models: [
+      {
+        id: 'gpt-5.6-sol',
+        label: 'GPT-5.6-Sol',
+        current: true,
+        reasoningEfforts: [{ id: 'high', isDefault: true }],
+        defaultReasoningEffort: 'high'
+      }
+    ],
+    source: 'curated'
+  }
+}
+
 function expectClientRoundTrip(frame: HostLocalTransportClientFrame): void {
   const encoded = encodeHostLocalTransportClientFrame(frame)
   expect(encoded.ok).toBe(true)
@@ -222,6 +250,9 @@ describe('hostProtocolTransport Wave 3.2', () => {
           break
         case 'deltas.since':
           frame = { ...base, kind, params: { generation: 3, cursor: 10 } }
+          break
+        case 'thread.offers':
+          frame = { ...base, kind, params: { threadId: 'thread-1' } }
           break
         case 'receipt.lookup':
           frame = { ...base, kind, params: { commandId: 'cmd-1' } }
@@ -267,6 +298,13 @@ describe('hostProtocolTransport Wave 3.2', () => {
           id: 'r-deltas',
           ok: true,
           result: { kind: 'deltas.since', frame: sampleDeltasFrame() }
+        },
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'r-offers',
+          ok: true,
+          result: { kind: 'thread.offers', offers: sampleThreadOffers() }
         },
         {
           type: 'response',
@@ -422,6 +460,31 @@ describe('hostProtocolTransport Wave 3.2', () => {
           params: {}
         })
       ).toEqual({ ok: false, error: { code: 'unknown_request_kind' } })
+    })
+
+    it('rejects malformed thread.offers params and response catalogues', () => {
+      expect(
+        decodeHostLocalTransportClientFrame({
+          type: 'request',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'offers-bad',
+          kind: 'thread.offers',
+          params: { threadId: '', extra: true }
+        })
+      ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+
+      expect(
+        decodeHostLocalTransportHostFrame({
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'offers-bad-result',
+          ok: true,
+          result: {
+            kind: 'thread.offers',
+            offers: { ...sampleThreadOffers(), models: [{ id: 'invented' }] }
+          }
+        })
+      ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
     })
 
     it('skips unknown event kinds (forward compat) without rejecting', () => {

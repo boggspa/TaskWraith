@@ -264,6 +264,11 @@ export class PairedHostProjectionGateway {
           kind: 'deltas.since',
           frame: await session.client.getDeltasSince(request.params)
         }
+      case 'thread.offers':
+        return {
+          kind: 'thread.offers',
+          offers: await session.client.getThreadOffers(request.params.threadId)
+        }
       case 'receipt.lookup':
         return {
           kind: 'receipt.lookup',

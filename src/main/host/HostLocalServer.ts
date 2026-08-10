@@ -630,6 +630,11 @@ export class HostLocalServer {
       client: binding.authenticatedClient
     }
 
+    if (frame.kind === 'thread.offers' && !binding.welcome.capabilities.includes('model-offers')) {
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
+      return
+    }
+
     try {
       const result = await this.executeRequest(context, frame)
       if (result === null) {
@@ -651,6 +656,8 @@ export class HostLocalServer {
         return this.handleSnapshot(context, frame.id)
       case 'deltas.since':
         return this.handleDeltas(context, frame.id, frame.params)
+      case 'thread.offers':
+        return this.handleThreadOffers(context, frame.id, frame.params.threadId)
       case 'receipt.lookup':
         return this.handleReceiptLookup(context, frame.id, frame.params)
       case 'health.get':
@@ -743,6 +750,32 @@ export class HostLocalServer {
     }
     // not_found / actor_mismatch / incomplete → body-free error
     return errorFrame(id, { code: authorityErrorToTransportCode('invalid_lookup') })
+  }
+
+  private async handleThreadOffers(
+    context: HostAuthorityCallContext,
+    id: string,
+    threadId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadOffers
+    if (typeof provider !== 'function') {
+      return errorFrame(id, { code: 'host_unavailable' })
+    }
+    const result = await provider.call(this.options.authority, context, threadId)
+    if (!result.ok) {
+      return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'thread.offers',
+      offers: result.value
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
   }
 
   private async handleHealth(

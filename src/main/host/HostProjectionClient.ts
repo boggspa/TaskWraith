@@ -35,6 +35,7 @@ import {
   type HostSnapshot,
   type HostSnapshotFrame
 } from '../../shared/hostProtocol'
+import type { TaskWraithControlThreadOffers } from '../../shared/taskWraithControlProtocol'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
   decodeHostLocalTransportHostFrame,
@@ -64,6 +65,7 @@ const DEFAULT_CLIENT_CAPABILITIES: readonly HostCapability[] = [
   'bootstrap',
   'snapshot',
   'deltas',
+  'model-offers',
   'commands',
   'receipts',
   'health',
@@ -310,6 +312,14 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       throw new Error('TaskWraith Host returned an unexpected deltas result kind.')
     }
     return result.frame
+  }
+
+  async getThreadOffers(threadId: string): Promise<TaskWraithControlThreadOffers> {
+    const result = await this.request('thread.offers', { threadId })
+    if (result.kind !== 'thread.offers') {
+      throw new Error('TaskWraith Host returned an unexpected thread offers result kind.')
+    }
+    return result.offers
   }
 
   async lookupReceipt(params: HostLocalTransportReceiptLookupParams): Promise<HostCommandReceipt> {

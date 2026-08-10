@@ -251,6 +251,9 @@ describe('HostMainComposition', () => {
       expect(() => open({ snapshotDonor: undefined as never })).toThrow(/snapshotDonor/)
       expect(() => open({ authorityEvaluator: undefined as never })).toThrow(/authorityEvaluator/)
       expect(() => open({ healthProvider: undefined as never })).toThrow(/healthProvider/)
+      expect(() => open({ threadOffersProvider: 'invalid' as never })).toThrow(
+        /threadOffersProvider/
+      )
     })
 
     it('rejects an incomplete host identity or capability offer', () => {
@@ -265,6 +268,29 @@ describe('HostMainComposition', () => {
 
     it('rejects a pipeline without execute (S4c)', () => {
       expect(() => open({ pipeline: {} as never })).toThrow(/pipeline\.execute/)
+    })
+  })
+
+  describe('thread offers read port', () => {
+    it('wires the injected canonical offer provider through Authority', async () => {
+      const threadOffersProvider = vi.fn(() => ({
+        threadId: 'thread-1',
+        provider: {
+          runtimeProvider: 'codex',
+          displayProvider: 'Codex',
+          hueKey: 'codex',
+          accent: '#705AFF',
+          shortCode: 'CDX'
+        },
+        models: [],
+        source: 'curated' as const
+      }))
+      composition = open({ threadOffersProvider })
+
+      await expect(
+        composition.authority.threadOffers?.(contextFor(ACTOR_A), 'thread-1')
+      ).resolves.toMatchObject({ ok: true, value: { threadId: 'thread-1' } })
+      expect(threadOffersProvider).toHaveBeenCalledWith('thread-1')
     })
   })
 

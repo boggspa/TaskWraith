@@ -245,6 +245,7 @@ describe('HostProjectionClient', () => {
     expect(hello.token).toBe(host.token)
     expect((hello.hello as { type: string }).type).toBe('host.hello')
     expect((hello.hello as { protocolVersion: number }).protocolVersion).toBe(HOST_PROTOCOL_VERSION)
+    expect((hello.hello as { capabilities: string[] }).capabilities).toContain('model-offers')
     sendWelcome(socket)
     const welcome = await connectPromise
     expect(welcome.hostId).toBe('test-host')
@@ -320,7 +321,7 @@ describe('HostProjectionClient', () => {
     await expect(pending).rejects.toMatchObject({ code: 'host_unavailable' })
   })
 
-  it('routes deltas.since / receipt.lookup / health.get / command.submit', async () => {
+  it('routes deltas.since / thread.offers / receipt.lookup / health.get / command.submit', async () => {
     const { hostSocket, client } = await connectedPair()
 
     const deltasPending = client.getDeltasSince({ generation: 3, cursor: 10 })
@@ -349,6 +350,40 @@ describe('HostProjectionClient', () => {
     if (deltasGot.result.kind === 'deltas') {
       expect(deltasGot.result.toCursor).toBe(12)
     }
+
+    const offersPending = client.getThreadOffers('thread-1')
+    const offersReq = await readLine(hostSocket)
+    expect(offersReq).toMatchObject({ kind: 'thread.offers', params: { threadId: 'thread-1' } })
+    const offers = {
+      threadId: 'thread-1',
+      provider: {
+        runtimeProvider: 'mistral',
+        displayProvider: 'Mistral',
+        hueKey: 'mistral',
+        accent: '#D44404',
+        model: 'devstral-small',
+        modelLabel: 'Devstral Small',
+        shortCode: 'MST'
+      },
+      currentModel: 'devstral-small',
+      models: [
+        {
+          id: 'devstral-small',
+          label: 'Devstral Small',
+          current: true,
+          reasoningEfforts: []
+        }
+      ],
+      source: 'curated' as const
+    }
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(offersReq.id),
+      ok: true,
+      result: { kind: 'thread.offers', offers }
+    })
+    await expect(offersPending).resolves.toEqual(offers)
 
     const receiptPending = client.lookupReceipt({ commandId: 'cmd-1' })
     const receiptReq = await readLine(hostSocket)
