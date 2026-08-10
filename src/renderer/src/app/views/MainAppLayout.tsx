@@ -2292,6 +2292,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 fileChangeDisplayDels={fileChangeDisplayDels}
                 chats={chats}
                 runningChatIds={runningChatIdsArray}
+                pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+                pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+                onRespondAgentApproval={handleAgentApprovalAction}
                 onPlanChoiceSubmit={handlePlanChoiceSubmit}
                 pendingProposedPlan={pendingProposedPlan}
                 onProposedPlanApprove={handleProposedPlanApprove}
@@ -2649,6 +2652,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               fileChangeDisplayDels={0}
               chats={chats}
               runningChatIds={runningChatIdsArray}
+              pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+              pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+              onRespondAgentApproval={handleAgentApprovalAction}
               onPlanChoiceSubmit={NOOP_PLAN_CHOICE_SUBMIT}
               pendingProposedPlan={null}
               onProposedPlanApprove={NOOP_MESSAGE_ACTION}

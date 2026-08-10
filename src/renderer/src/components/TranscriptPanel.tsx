@@ -193,6 +193,11 @@ import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
 import { FleetWaveCard } from './FleetWaveCard'
 import { isFleetWaveMessage } from './FleetWaveCardModel'
+import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import {
+  approvalIdsForAllowAllSameScope,
+  collectFleetWavePendingApprovals
+} from '../lib/fleetWavePendingApprovals'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
@@ -596,6 +601,12 @@ export type TranscriptPanelProps = {
   /** Phase I3.2 — chat ids currently running on the run-queue so the
    * delegation card and the chat-header ticker can show live state. */
   runningChatIds: string[]
+  /** Live head approval per chat — used by fleet wave elevation. */
+  pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
+  /** Live queued approvals per chat — used by fleet wave elevation. */
+  pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  /** Respond to an elevated fleet-wave approval (Allow / Deny / Allow-all). */
+  onRespondAgentApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
   onPlanChoiceSubmit: (messageId: string, option: string) => void
   onProposedPlanApprove: (messageId: string, planBody: string) => void
   onProposedPlanDismiss: (messageId: string) => void
@@ -2283,6 +2294,9 @@ export const TranscriptPanel = memo(
     fileChangeDisplayDels,
     chats,
     runningChatIds,
+    pendingAgentApprovalByChatId,
+    pendingApprovalQueueByChatId,
+    onRespondAgentApproval,
     onPlanChoiceSubmit,
     onProposedPlanApprove,
     onProposedPlanDismiss,
@@ -4706,7 +4720,30 @@ export const TranscriptPanel = memo(
                     message={msg}
                     onSetExpanded={setParallelResultViewportExpanded}
                   />
-                ) : isFleetWaveCard ? (
+                ) : isFleetWaveCard ? (() => {
+                  const workers = Array.isArray(msg.metadata?.workers) ? msg.metadata.workers : []
+                  const workerChatIds = workers.map((worker: any, index: number) =>
+                    typeof worker?.subThreadId === 'string' ? worker.subThreadId : `w${index}`
+                  )
+                  const approvalByChatId = pendingAgentApprovalByChatId || {}
+                  const approvalQueueByChatId = pendingApprovalQueueByChatId || {}
+                  const pendingApprovals = collectFleetWavePendingApprovals(
+                    workerChatIds,
+                    approvalByChatId,
+                    approvalQueueByChatId
+                  )
+                  const pendingApprovalIds = new Set(
+                    pendingApprovals.map((row) => row.approvalId)
+                  )
+                  const metaStatus =
+                    msg.metadata?.status === 'pending' ||
+                    msg.metadata?.status === 'running' ||
+                    msg.metadata?.status === 'needs_approval' ||
+                    msg.metadata?.status === 'completed' ||
+                    msg.metadata?.status === 'failed'
+                      ? msg.metadata.status
+                      : 'running'
+                  return (
                   <div key={msg.id} className="message-group fleet-wave-message">
                     <FleetWaveCard
                       provider={
@@ -4716,26 +4753,45 @@ export const TranscriptPanel = memo(
                       }
                       onOpenSubThread={onOpenSubThread}
                       onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                      onAllowOnce={
+                        onRespondAgentApproval
+                          ? (id) => {
+                              void onRespondAgentApproval(id, 'accept')
+                            }
+                          : undefined
+                      }
+                      onDeny={
+                        onRespondAgentApproval
+                          ? (id) => {
+                              void onRespondAgentApproval(id, 'decline')
+                            }
+                          : undefined
+                      }
+                      onAllowAllSameScope={
+                        onRespondAgentApproval
+                          ? async (scopeKey) => {
+                              for (const id of approvalIdsForAllowAllSameScope(
+                                pendingApprovals,
+                                scopeKey
+                              )) {
+                                await onRespondAgentApproval(id, 'accept')
+                              }
+                            }
+                          : undefined
+                      }
                       telemetry={{
                         waveId:
                           typeof msg.metadata?.waveId === 'string' ? msg.metadata.waveId : undefined,
                         status:
-                          msg.metadata?.status === 'pending' ||
-                          msg.metadata?.status === 'running' ||
-                          msg.metadata?.status === 'needs_approval' ||
-                          msg.metadata?.status === 'completed' ||
-                          msg.metadata?.status === 'failed'
-                            ? msg.metadata.status
-                            : 'running',
+                          pendingApprovals.length > 0 ? 'needs_approval' : metaStatus,
                         parentProvider:
                           typeof msg.metadata?.parentProvider === 'string'
                             ? msg.metadata.parentProvider
                             : undefined,
                         allowMultiProvider: Boolean(msg.metadata?.allowMultiProvider),
-                        agents: Array.isArray(msg.metadata?.workers)
-                          ? msg.metadata.workers.map((worker: any, index: number) => {
-                              const subThreadId =
-                                typeof worker?.subThreadId === 'string' ? worker.subThreadId : `w${index}`
+                        pendingApprovals,
+                        agents: workers.map((worker: any, index: number) => {
+                              const subThreadId = workerChatIds[index]
                               const child = chats.find((c) => c.appChatId === subThreadId)
                               const running = runningChatIds.includes(subThreadId)
                               const failed =
@@ -4748,13 +4804,21 @@ export const TranscriptPanel = memo(
                                   ))
                               const returned = Boolean(child?.delegationContext?.resultReturnedAt)
                               const archived = Boolean(child?.archived)
+                              const head = approvalByChatId[subThreadId]
+                              const queue = approvalQueueByChatId[subThreadId]
+                              const hasPendingApproval =
+                                (head != null && pendingApprovalIds.has(head.id)) ||
+                                (Array.isArray(queue) &&
+                                  queue.some((row) => pendingApprovalIds.has(row.id)))
                               const status = failed
                                 ? 'failed'
                                 : returned || archived
                                   ? 'completed'
-                                  : running
-                                    ? 'working'
-                                    : 'pending'
+                                  : hasPendingApproval
+                                    ? 'needs_approval'
+                                    : running
+                                      ? 'working'
+                                      : 'pending'
                               return {
                                 id: subThreadId,
                                 label:
@@ -4768,11 +4832,11 @@ export const TranscriptPanel = memo(
                                   typeof worker?.provider === 'string' ? worker.provider : undefined
                               }
                             })
-                          : []
                       }}
                     />
                   </div>
-                ) : isDelegationCard || isReturnCard ? (
+                  )
+                })() : isDelegationCard || isReturnCard ? (
                   <div
                     key={msg.id}
                     className={`message-group ${
