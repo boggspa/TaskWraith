@@ -37,6 +37,14 @@ Commit `a79bff720819fd4ae39888b0803c78c34ef741a6` made all Channel provider-reco
 
 That review exposed one non-Channel completeness omission in the application settings default. Commit `63d5985665a21c89c28cabd6bc37432e4ca9918e` added Muse's existing 120-second completeness timeout to the closed `Record<ProviderId, number>` and restored the full Node typecheck.
 
+## Follow-up Muse effort delta
+
+Commit `c22f159432f8e380fe9ad4b6c66e8140415c72fd` fixed Muse effort propagation after the first exact-package acceptance. Its only change inside the P3 protected source boundary is `src/main/services/ComposerService.ts`: the service now recognizes the already-live `muse` identity and carries the selected `museReasoningEffort` into the ordinary run payload. The existing shared live-provider assertion remains the final admission decision; the change does not bypass availability, signed grants, final authorization, or adapter-receipt verification.
+
+The same commit carries a Muse participant's effort through `src/main/services/EnsembleOrchestrator.ts`. Later persistence and renderer commits also touched `src/main/index.ts` and `src/renderer/src/App.tsx`. An exact zero-context diff from the original reviewed candidate found no added or removed Channel-bearing line in any of the three composition roots, so the accepted Channel wiring is unchanged.
+
+Focused acceptance passed 620 `ComposerService` and `EnsembleOrchestrator` tests plus the full Node typecheck. The proof harness must pin the reviewed `ComposerService.ts` blob from `c22f159432f8e380fe9ad4b6c66e8140415c72fd` before accepting the final P3 candidate.
+
 ## Evidence
 
 - Focused review: 6 files, 52 tests passed.
