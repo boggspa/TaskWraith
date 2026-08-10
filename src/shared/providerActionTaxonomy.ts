@@ -1677,6 +1677,18 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'application-resource'
   ),
+  // Dock chart render: orchestration (not workspace_write) so the read-only
+  // mcpTools→shellCommands remapping never fires. Service stays mcpTools —
+  // Ask/Plan already resolve mcpTools to per-invocation ASK (grant-held);
+  // Accept Edits / Full WS / Full Access follow normal mcpTools allow.
+  canvas_render_chart: tool(
+    'orchestration',
+    'mcpTools',
+    'application.mutate',
+    'canvas',
+    'host-state',
+    'application-resource'
+  ),
   canvas_open_attachment: tool(
     'workspace_write',
     'mcpTools',
@@ -1784,18 +1796,6 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'application-resource',
     'url-argument'
-  ),
-  // Dock chart render: orchestration (not workspace_write) so the read-only
-  // mcpTools→shellCommands remapping never fires. Service stays mcpTools —
-  // Ask/Plan already resolve mcpTools to per-invocation ASK (grant-held);
-  // Accept Edits / Full WS / Full Access follow normal mcpTools allow.
-  canvas_render_chart: tool(
-    'orchestration',
-    'mcpTools',
-    'application.mutate',
-    'canvas',
-    'host-state',
-    'application-resource'
   ),
   canvas_close: tool(
     'orchestration',

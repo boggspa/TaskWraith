@@ -2413,6 +2413,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'launch_status',
     'canvas_open',
     'canvas_render_html',
+    'canvas_render_chart',
     'canvas_open_attachment',
     'canvas_open_launch',
     'canvas_sketch_open',
