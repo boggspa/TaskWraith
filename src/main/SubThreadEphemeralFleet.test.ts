@@ -4,6 +4,7 @@ import {
   normalizeFleetLifecycle,
   parseFleetWaveRole,
   resolveEphemeralFleetIsolation,
+  resolveEphemeralFleetIsolationForWave,
   shouldArchiveEphemeralFleetChild
 } from './SubThreadEphemeralFleet'
 
@@ -28,6 +29,46 @@ describe('SubThreadEphemeralFleet', () => {
     expect(resolveEphemeralFleetIsolation('reviewer')).toEqual({ kind: 'read_only' })
     expect(resolveEphemeralFleetIsolation(undefined)).toEqual({ kind: 'read_only' })
     expect(resolveEphemeralFleetIsolation('worker')).toEqual({ kind: 'capped_inherit' })
+  })
+
+  it('wave-aware: sole worker keeps capped_inherit; parallel workers fail closed to read_only', () => {
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['worker']
+      })
+    ).toEqual({ kind: 'capped_inherit' })
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['scout', 'worker', 'reviewer']
+      })
+    ).toEqual({ kind: 'capped_inherit' })
+    // Two+ role=worker seats share the parent checkout — never capped_inherit.
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['worker', 'worker']
+      })
+    ).toEqual({ kind: 'read_only' })
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['scout', 'worker', 'worker', 'reviewer']
+      })
+    ).toEqual({ kind: 'read_only' })
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'scout',
+        workerRoles: ['worker', 'worker', 'scout']
+      })
+    ).toEqual({ kind: 'read_only' })
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: undefined,
+        workerRoles: ['worker']
+      })
+    ).toEqual({ kind: 'read_only' })
   })
 
   it('builds short role frames', () => {

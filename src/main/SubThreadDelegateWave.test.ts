@@ -4,6 +4,7 @@ import {
   DELEGATE_WAVE_EPHEMERAL_MIN_WORKERS,
   DELEGATE_WAVE_MAX_WORKERS,
   DELEGATE_WAVE_MIN_WORKERS,
+  buildDelegateWaveApprovalCopy,
   clampMaxWaveAgents,
   createDelegateWaveId,
   executeDelegateWaveTool,
@@ -32,16 +33,6 @@ function twoWorkers(overrides: Record<string, unknown> = {}) {
     workers: [
       { provider: 'codex', prompt: 'Scout A' },
       { provider: 'claude', prompt: 'Scout B' }
-    ],
-    ...overrides
-  }
-}
-
-function sameProviderWorkers(overrides: Record<string, unknown> = {}) {
-  return {
-    workers: [
-      { provider: 'codex', prompt: 'Scout A' },
-      { provider: 'codex', prompt: 'Scout B' }
     ],
     ...overrides
   }
@@ -829,5 +820,150 @@ describe('SubThreadDelegateWave pure helpers', () => {
     ]
     const next = stripParentWaveDelegationCard(messages, 'sub-a')
     expect(next.map((message) => message.id)).toEqual(['keep-user', 'wave-card-b', 'return-a'])
+  })
+
+  it('approval copy discloses ephemeral lifecycle, roles/labels, postures, and multi-provider', () => {
+    const joinPolicy = resolveDelegateWaveJoinPolicy({ required: true, quorum: 2 }, 'wave-copy', nowMs)
+    const { body } = buildDelegateWaveApprovalCopy({
+      parentProviderLabel: 'Codex',
+      waveId: 'wave-copy',
+      workers: [
+        {
+          provider: 'codex',
+          prompt: 'Map the auth surface',
+          role: 'scout',
+          label: 'Auth scout'
+        },
+        {
+          provider: 'claude',
+          prompt: 'Implement the fix',
+          role: 'worker',
+          label: 'Fixer'
+        },
+        {
+          provider: 'codex',
+          prompt: 'Review the diff',
+          role: 'reviewer'
+        },
+        {
+          provider: 'codex',
+          prompt: 'Default role omitted'
+        }
+      ],
+      joinPolicy,
+      providerLabel: (provider) => provider,
+      lifecycle: 'ephemeral',
+      allowMultiProvider: true
+    })
+    expect(body).toMatch(/Lifecycle:\s*ephemeral \(die-on-return\)/i)
+    expect(body).toMatch(/Multi-provider:\s*allowed/i)
+    expect(body).toMatch(/role=scout/i)
+    expect(body).toMatch(/label=Auth scout/)
+    expect(body).toMatch(/role=worker/i)
+    expect(body).toMatch(/label=Fixer/)
+    expect(body).toMatch(/role=reviewer/i)
+    expect(body).toMatch(/posture=read_only/)
+    expect(body).toMatch(/posture=capped inherit \(never Full Access; same-checkout\)/)
+    // Default / scout / reviewer are read_only; only the worker line carries capped inherit.
+    const workerLine = body
+      .split('\n')
+      .find((line) => /role=worker/i.test(line) && /label=Fixer/.test(line))
+    expect(workerLine).toBeTruthy()
+    expect(workerLine).toMatch(/posture=capped inherit \(never Full Access; same-checkout\)/)
+    expect(workerLine).not.toMatch(/posture=read_only/)
+  })
+
+  it('approval copy discloses durable lifecycle and omits multi-provider unless requested', () => {
+    const joinPolicy = resolveDelegateWaveJoinPolicy(undefined, 'wave-durable', nowMs)
+    const { body } = buildDelegateWaveApprovalCopy({
+      parentProviderLabel: 'Claude',
+      waveId: 'wave-durable',
+      workers: [
+        { provider: 'claude', prompt: 'A' },
+        { provider: 'claude', prompt: 'B', role: 'scout', label: 'S1' }
+      ],
+      joinPolicy,
+      providerLabel: (provider) => provider,
+      lifecycle: 'durable',
+      allowMultiProvider: false
+    })
+    expect(body).toMatch(/Lifecycle:\s*durable\b/i)
+    expect(body).not.toMatch(/die-on-return/i)
+    expect(body).not.toMatch(/Multi-provider:/i)
+    expect(body).toMatch(/role=scout/i)
+    expect(body).toMatch(/label=S1/)
+    expect(body).toMatch(/posture=read_only/)
+  })
+
+  it('executeDelegateWaveTool threads lifecycle + allowMultiProvider into the approval card', async () => {
+    let approvalBody = ''
+    const budget = trackingBudgetPorts()
+    const outcome = await executeDelegateWaveTool({
+      args: {
+        lifecycle: 'ephemeral',
+        allowMultiProvider: true,
+        workers: [
+          {
+            provider: 'codex',
+            prompt: 'Scout the tree',
+            role: 'scout',
+            label: 'Tree scout'
+          },
+          {
+            provider: 'claude',
+            prompt: 'Apply the patch',
+            role: 'worker',
+            label: 'Patcher'
+          }
+        ]
+      },
+      parentChatId,
+      parentAppRunId,
+      parentProvider: 'codex',
+      parentProviderLabel: 'Codex',
+      maxWorkers: 8,
+      isAllowedProvider,
+      isBossOrCaptain: false,
+      permissionPresetId: 'default',
+      budgetRemaining: 5,
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
+      budgetCap: 20,
+      subThreadDelegationPolicy: 'ask',
+      requestApproval: async (preview) => {
+        approvalBody = preview.body
+        return false
+      },
+      assertParentStillValid: () => undefined,
+      resolveWorkerSettings: () => ({
+        ok: true,
+        value: {
+          requestedModel: 'cli-default',
+          runPayload: {},
+          providerMetadataPatch: {}
+        }
+      }),
+      spawnWorker: async ({ worker }) => ({
+        subThreadId: `sub-${worker.provider}`,
+        provider: worker.provider,
+        title: `Sub-thread (${worker.provider})`,
+        runId: `run-${worker.provider}`
+      }),
+      rollbackWorker: () => undefined,
+      providerLabel: (provider) => provider,
+      createWaveId: () => 'wave-approval-thread',
+      nowMs
+    })
+    expect(outcome.ok).toBe(false)
+    expect(approvalBody).toMatch(/Lifecycle:\s*ephemeral \(die-on-return\)/i)
+    expect(approvalBody).toMatch(/Multi-provider:\s*allowed/i)
+    expect(approvalBody).toMatch(/role=scout/i)
+    expect(approvalBody).toMatch(/label=Tree scout/)
+    expect(approvalBody).toMatch(/role=worker/i)
+    expect(approvalBody).toMatch(/label=Patcher/)
+    expect(approvalBody).toMatch(/posture=capped inherit \(never Full Access; same-checkout\)/)
+    // Decline still refunds — preserve budget invariant.
+    expect(budget.consumed).toBe(2)
+    expect(budget.netConsumed).toBe(0)
   })
 })

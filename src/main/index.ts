@@ -1999,7 +1999,7 @@ import {
 } from './SubThreadDelegateWave'
 import {
   buildEphemeralFleetRoleFrame,
-  resolveEphemeralFleetIsolation
+  resolveEphemeralFleetIsolationForWave
 } from './SubThreadEphemeralFleet'
 import { newProjectReferenceId } from '../shared/projects'
 import {
@@ -39177,7 +39177,14 @@ async function executeGeminiMcpTool(
             }
           }
         },
-        spawnWorker: async ({ worker, settings: workerSettings, joinPolicy, waveId, lifecycle }) => {
+        spawnWorker: async ({
+          worker,
+          settings: workerSettings,
+          joinPolicy,
+          waveId,
+          lifecycle,
+          peerWorkerRoles
+        }) => {
           const title =
             (typeof worker.label === 'string' && worker.label.trim()) ||
             (typeof worker.role === 'string' && worker.role.trim()) ||
@@ -39200,7 +39207,10 @@ async function executeGeminiMcpTool(
             settings: AppStore.getSettings(),
             presetId: 'read_only'
           })
-          const isolation = resolveEphemeralFleetIsolation(worker.role)
+          const isolation = resolveEphemeralFleetIsolationForWave({
+            role: worker.role,
+            workerRoles: peerWorkerRoles
+          })
           const workerPermissions = resolveSubThreadWorkerPermissions({
             parentPermissions: context.effectivePermissions,
             readOnlyPermissions,

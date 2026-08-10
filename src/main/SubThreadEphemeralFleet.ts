@@ -34,17 +34,53 @@ export function parseFleetWaveRole(raw: unknown): FleetWaveRole | undefined {
   return undefined
 }
 
-/** Map fleet role → sub-thread worker isolation (posture). */
+/**
+ * Map a single fleet role → sub-thread worker isolation (posture).
+ *
+ * Role-only: ignores wave peers. Prefer
+ * {@link resolveEphemeralFleetIsolationForWave} at spawn time — parallel
+ * `role=worker` seats share the parent checkout, so `capped_inherit` is only
+ * safe for a sole worker in the wave (see that helper).
+ *
+ * - scout / reviewer / undefined → `read_only`
+ * - worker → `capped_inherit` (Full Access demoted; same-checkout writes)
+ */
 export function resolveEphemeralFleetIsolation(
   role: FleetWaveRole | undefined
 ): SubThreadWorkerIsolationRequest {
-  // Reviewers investigate/critique only — never same-checkout writes.
-  // Workers may inherit a capped writer posture (Full Access demoted).
-  // Default / scout → read_only.
   if (role === 'worker') {
     return { kind: 'capped_inherit' }
   }
   return { kind: 'read_only' }
+}
+
+/**
+ * Wave-aware isolation for ephemeral fleet seats.
+ *
+ * Residual: parallel `role=worker` seats would otherwise all get
+ * `capped_inherit` and race on the shared parent checkout. Until worktree
+ * isolation exists, fail closed: when two or more seats in the wave have
+ * `role === 'worker'`, every worker seat is `read_only`. A sole worker still
+ * gets `capped_inherit`. Scout / reviewer / undefined remain `read_only`.
+ *
+ * `workerRoles` is the role list for all seats in the wave (same order as
+ * spawn is fine; only the count of `'worker'` matters).
+ */
+export function resolveEphemeralFleetIsolationForWave(input: {
+  role: FleetWaveRole | undefined
+  workerIndex?: number
+  workerRoles: ReadonlyArray<FleetWaveRole | undefined>
+}): SubThreadWorkerIsolationRequest {
+  if (input.role !== 'worker') {
+    return { kind: 'read_only' }
+  }
+  // Prefer ALL read_only when count(worker) > 1 — shared-checkout races are
+  // not product-safe under capped_inherit (no FanoutCandidate / worktrees here).
+  const workerSeatCount = input.workerRoles.filter((role) => role === 'worker').length
+  if (workerSeatCount > 1) {
+    return { kind: 'read_only' }
+  }
+  return { kind: 'capped_inherit' }
 }
 
 /** Host-injected ≤2-sentence role frame prepended to the parent’s task prompt. */

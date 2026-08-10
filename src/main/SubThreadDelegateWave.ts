@@ -406,6 +406,22 @@ export function releaseDelegateWaveBudgetSlots(input: {
   input.release(count)
 }
 
+function describeDelegateWaveWorkerPosture(
+  role: FleetWaveRole | undefined,
+  workerRoles: ReadonlyArray<FleetWaveRole | undefined>
+): string {
+  // Mirror resolveEphemeralFleetIsolationForWave: sole worker → capped inherit;
+  // 2+ role=worker seats → all read_only (shared-checkout fail-closed).
+  if (role === 'worker') {
+    const workerSeatCount = workerRoles.filter((entry) => entry === 'worker').length
+    if (workerSeatCount > 1) {
+      return 'read_only (parallel workers; shared checkout)'
+    }
+    return 'capped inherit (never Full Access; same-checkout)'
+  }
+  return 'read_only'
+}
+
 export function buildDelegateWaveApprovalCopy(input: {
   parentProviderLabel: string
   waveId: string
@@ -415,12 +431,17 @@ export function buildDelegateWaveApprovalCopy(input: {
     model?: string
     reasoningEffort?: string
     kimiThinking?: boolean
+    role?: FleetWaveRole
+    label?: string
   }>
   joinPolicy: SubThreadJoinPolicy
   providerLabel: (provider: ProviderId) => string
+  lifecycle: FleetWaveLifecycle
+  allowMultiProvider: boolean
 }): { title: string; body: string } {
   const n = input.workers.length
   const title = `${input.parentProviderLabel} wants to delegate a wave of ${n} sub-threads`
+  const waveRoles = input.workers.map((worker) => worker.role)
   const workerLines = input.workers.map((worker, index) => {
     const promptPreview =
       worker.prompt.length > 160
@@ -433,18 +454,35 @@ export function buildDelegateWaveApprovalCopy(input: {
     ]
       .filter((value): value is string => Boolean(value))
       .join(', ')
+    const roleBits = [
+      worker.role ? `role=${worker.role}` : null,
+      worker.label ? `label=${worker.label}` : null,
+      `posture=${describeDelegateWaveWorkerPosture(worker.role, waveRoles)}`
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(', ')
     return (
       `${index + 1}. ${input.providerLabel(worker.provider)}` +
       (controls ? ` (${controls})` : '') +
+      ` — ${roleBits}` +
       `\n   ${promptPreview}`
     )
   })
+  const lifecycleLine =
+    input.lifecycle === 'ephemeral'
+      ? 'Lifecycle: ephemeral (die-on-return)'
+      : 'Lifecycle: durable'
+  const multiProviderLine = input.allowMultiProvider
+    ? 'Multi-provider: allowed\n'
+    : ''
   const joinLine =
     `join=${input.joinPolicy.required ? 'required' : 'optional'}, ` +
     `quorum=${input.joinPolicy.quorum ?? 'all-required'}, ` +
     `deadline=${input.joinPolicy.deadlineAt}, debounceMs=${input.joinPolicy.debounceMs}`
   const body =
     `Wave id: ${input.waveId}\n` +
+    `${lifecycleLine}\n` +
+    multiProviderLine +
     `${joinLine}\n` +
     `Results always return to this parent (returnResultToParent=true).\n\n` +
     `Workers:\n${workerLines.join('\n')}\n\n` +
@@ -545,6 +583,8 @@ export async function executeDelegateWaveTool(input: {
     joinPolicy: SubThreadJoinPolicy
     waveId: string
     lifecycle: FleetWaveLifecycle
+    /** Roles of every seat in this wave (for wave-aware isolation). */
+    peerWorkerRoles: Array<FleetWaveRole | undefined>
   }) => Promise<DelegateWaveSpawnedChild>
   /** Cancel the seeded run + strip the parent card + delete the child chat. */
   rollbackWorker: (child: DelegateWaveSpawnedChild) => void
@@ -617,14 +657,18 @@ export async function executeDelegateWaveTool(input: {
     prompt: worker.prompt,
     model: resolvedSettings[index]?.requestedModel,
     reasoningEffort: resolvedSettings[index]?.reasoningEffort,
-    kimiThinking: resolvedSettings[index]?.kimiThinking
+    kimiThinking: resolvedSettings[index]?.kimiThinking,
+    ...(worker.role ? { role: worker.role } : {}),
+    ...(worker.label ? { label: worker.label } : {})
   }))
   const copy = buildDelegateWaveApprovalCopy({
     parentProviderLabel: input.parentProviderLabel,
     waveId,
     workers: workersForApproval,
     joinPolicy,
-    providerLabel: input.providerLabel
+    providerLabel: input.providerLabel,
+    lifecycle,
+    allowMultiProvider
   })
   const declineText =
     `Sub-thread wave delegation was declined by TaskWraith policy. ` +
@@ -662,13 +706,15 @@ export async function executeDelegateWaveTool(input: {
 
   const children: DelegateWaveSpawnedChild[] = []
   try {
+    const peerWorkerRoles = workers.map((worker) => worker.role)
     for (let i = 0; i < workers.length; i++) {
       const child = await input.spawnWorker({
         worker: workers[i]!,
         settings: resolvedSettings[i]!,
         joinPolicy,
         waveId,
-        lifecycle
+        lifecycle,
+        peerWorkerRoles
       })
       children.push(child)
     }
