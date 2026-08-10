@@ -19,6 +19,7 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import { HighlightedCodeBlock } from './HighlightedCodeBlock'
+import { MarkdownChartBlock } from './MarkdownChartBlock'
 import { AgentMention } from './AgentMention'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { ParticipantMention } from './ParticipantMention'
@@ -564,7 +565,14 @@ const MARKDOWN_COMPONENTS: Components = {
     if (!isBlock) {
       return <code className={className}>{children}</code>
     }
-    return <MarkdownCodeBlock content={rawContent} language={languageMatch?.[1]} />
+    const language = languageMatch?.[1]
+    // ```chart``` fences are assistant-markdown presentation (all permission
+    // tiers). Closed fences parse to SVG; invalid/incomplete bodies fall back
+    // inside MarkdownChartBlock so streaming tails stay non-throwing.
+    if ((language || '').toLowerCase() === 'chart') {
+      return <MarkdownChartBlock content={rawContent} />
+    }
+    return <MarkdownCodeBlock content={rawContent} language={language} />
   },
   input({ checked, disabled, type }) {
     return <input type={type} checked={checked} disabled={disabled ?? true} readOnly />
