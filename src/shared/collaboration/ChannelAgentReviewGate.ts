@@ -34,7 +34,7 @@ export const CHANNEL_AGENT_REVIEW_REQUIRED_CODE = 'channel_agent_review_required
 
 /** Compile-time and runtime constant: callers cannot inject an override. */
 export function channelAgentParticipationEnabled(): true {
-  return true
+  return CHANNEL_AGENT_PARTICIPATION_REVIEW_GATE.participationEnabled
 }
 
 /** Stable assertion boundary for callers that require the accepted review. */

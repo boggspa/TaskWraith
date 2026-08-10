@@ -39,6 +39,7 @@ describe('ChannelAgentReviewGate', () => {
     expect(source).not.toMatch(
       /process\.env|import\.meta\.env|localStorage|from ['"][^'"]*settings|ipc(Main|Renderer)\b/
     )
+    expect(source).toContain('return CHANNEL_AGENT_PARTICIPATION_REVIEW_GATE.participationEnabled')
     expect(channelAgentParticipationEnabled.length).toBe(0)
     expect(assertChannelAgentParticipationReviewed.length).toBe(0)
   })
