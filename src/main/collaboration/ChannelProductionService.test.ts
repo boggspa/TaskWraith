@@ -4,9 +4,11 @@ import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { generateIdentityKeyPair, type KeyPair } from '../../shared/e2ee/keys'
 import type {
+  TransportSocket,
   TransportSocketFactory,
   TransportSocketHandlers
 } from '../remote/RemoteTransportClient'
+import { ChannelMemberClient } from './ChannelMemberClient'
 import { ChannelError, type ChannelErrorCode } from './ChannelStore'
 import {
   channelProductionDataPaths,
@@ -21,6 +23,48 @@ interface CapturedSocket {
   handlers: TransportSocketHandlers
   sent: string[]
   closed: boolean
+}
+
+interface RelayEndpoint {
+  role: 'mac' | 'iphone'
+  handlers: TransportSocketHandlers
+  closed: boolean
+}
+
+class BlindTestRelay {
+  private readonly rooms = new Map<string, Partial<Record<'mac' | 'iphone', RelayEndpoint>>>()
+
+  readonly socketFactory: TransportSocketFactory = (url, headers, handlers) => {
+    const roomId = new URL(url).pathname.split('/').at(-1)!
+    const role = headers['x-taskwraith-role'] as 'mac' | 'iphone'
+    if (role !== 'mac' && role !== 'iphone') throw new Error('invalid relay role')
+    const room = this.rooms.get(roomId) ?? {}
+    const endpoint: RelayEndpoint = { role, handlers, closed: false }
+    room[role] = endpoint
+    this.rooms.set(roomId, room)
+    queueMicrotask(() => {
+      if (!endpoint.closed) handlers.onOpen()
+    })
+
+    const socket: TransportSocket = {
+      send: (data) => {
+        if (endpoint.closed) throw new Error('relay endpoint is closed')
+        const peer = room[role === 'mac' ? 'iphone' : 'mac']
+        if (peer && !peer.closed) {
+          queueMicrotask(() => {
+            if (!peer.closed) peer.handlers.onMessage(data)
+          })
+        }
+      },
+      close: () => {
+        if (endpoint.closed) return
+        endpoint.closed = true
+        if (room[role] === endpoint) delete room[role]
+        queueMicrotask(() => handlers.onClose(1000))
+      }
+    }
+    return socket
+  }
 }
 
 function socketHarness(): {
@@ -63,6 +107,7 @@ function createService(
     userDataPath?: string
     identity?: KeyPair
     sockets?: ReturnType<typeof socketHarness>
+    socketFactory?: TransportSocketFactory
     hostRelayUrl?: () => string
     inviteRelayUrls?: () => readonly string[]
     now?: () => number
@@ -89,7 +134,7 @@ function createService(
       inviteRelayUrls:
         args.inviteRelayUrls ?? (() => ['wss://relay.example', 'wss://relay.example/'])
     },
-    socketFactory: sockets.factory,
+    socketFactory: args.socketFactory ?? sockets.factory,
     ...(args.now ? { now: args.now } : {}),
     ...(args.logger ? { logger: args.logger } : {}),
     ...(args.onChange ? { onChange: args.onChange } : {})
@@ -269,6 +314,102 @@ describe('ChannelProductionService', () => {
       'chat-general',
       'chat-general'
     ])
+  })
+
+  it('projects the matching host SAS transiently and removes it after confirmation or expiry', async () => {
+    const relay = new BlindTestRelay()
+    const now = 1_700_000_000_000
+    const onChange = vi.fn()
+    const fixture = createService({
+      now: () => now,
+      onChange,
+      socketFactory: relay.socketFactory,
+      hostRelayUrl: () => 'ws://relay.test',
+      inviteRelayUrls: () => ['ws://relay.test']
+    })
+    fixture.service.start()
+    const channel = fixture.service.createChannel({
+      chatId: 'chat-sas',
+      title: 'SAS proof',
+      ownerDisplayName: 'Host'
+    })
+    const invite = fixture.service.issueInvite({ channelId: channel.channelId, ttlMs: 60_000 })
+    const client = new ChannelMemberClient({
+      socketFactory: relay.socketFactory,
+      identity: generateIdentityKeyPair(),
+      requestTimeoutMs: 2_000
+    })
+    let expiringClient: ChannelMemberClient | null = null
+
+    try {
+      client.connect('ws://relay.test', invite.roomId)
+      await client.whenConnected(2_000)
+      const member = await client.beginAdmission({
+        channelId: channel.channelId,
+        inviteId: invite.inviteId,
+        inviteToken: invite.inviteToken,
+        displayName: 'Alex',
+        expectedHostIdentityPubKeyB64: fixture.service.hostIdentityPublicKey()
+      })
+      const pending = fixture.service.readChannel({
+        channelId: channel.channelId,
+        resumeAfter: 0
+      }).pendingAdmissions
+      expect(pending).toEqual([
+        {
+          channelId: channel.channelId,
+          memberId: expect.any(String),
+          displayName: 'Alex',
+          confirmCode: member.confirmCode,
+          expiresAt: now + 60_000
+        }
+      ])
+      expect(JSON.stringify(pending)).not.toMatch(/handshakeId|roomId|identity|inviteToken/)
+      expect(onChange).toHaveBeenCalledWith({
+        channelId: channel.channelId,
+        chatId: 'chat-sas',
+        reason: 'membership'
+      })
+
+      await client.confirmAdmission()
+      expect(
+        fixture.service.readChannel({ channelId: channel.channelId, resumeAfter: 0 })
+          .pendingAdmissions
+      ).toEqual([])
+
+      vi.useFakeTimers()
+      const expiringInvite = fixture.service.issueInvite({
+        channelId: channel.channelId,
+        ttlMs: 1_000
+      })
+      expiringClient = new ChannelMemberClient({
+        socketFactory: relay.socketFactory,
+        identity: generateIdentityKeyPair(),
+        requestTimeoutMs: 2_000
+      })
+      expiringClient.connect('ws://relay.test', expiringInvite.roomId)
+      await expiringClient.whenConnected(2_000)
+      await expiringClient.beginAdmission({
+        channelId: channel.channelId,
+        inviteId: expiringInvite.inviteId,
+        inviteToken: expiringInvite.inviteToken,
+        displayName: 'Blair',
+        expectedHostIdentityPubKeyB64: fixture.service.hostIdentityPublicKey()
+      })
+      expect(
+        fixture.service.readChannel({ channelId: channel.channelId, resumeAfter: 0 })
+          .pendingAdmissions
+      ).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(
+        fixture.service.readChannel({ channelId: channel.channelId, resumeAfter: 0 })
+          .pendingAdmissions
+      ).toEqual([])
+    } finally {
+      vi.useRealTimers()
+      expiringClient?.dispose()
+      client.dispose()
+    }
   })
 
   it('waits for in-flight durable work and restores identity, history, audit, and rooms', async () => {

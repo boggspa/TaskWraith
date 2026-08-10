@@ -75,6 +75,17 @@ function fixture(
           roomId: 'must-not-cross-ipc'
         }
       ],
+      pendingAdmissions: [
+        {
+          channelId: input.channelId,
+          memberId: `joining-${input.channelId}`,
+          displayName: 'Alex',
+          confirmCode: '123456',
+          expiresAt: 120_000,
+          handshakeId: 'must-not-cross-ipc',
+          roomId: 'must-not-cross-ipc'
+        }
+      ],
       records: [
         {
           channelId: input.channelId,
@@ -216,13 +227,25 @@ describe('registerChannelHandlers', () => {
       maxBytes: 4_096
     })
     expect(read.ok).toBe(true)
+    expect(read).toMatchObject({
+      value: {
+        pendingAdmissions: [
+          {
+            memberId: 'joining-channel-a',
+            displayName: 'Alex',
+            confirmCode: '123456',
+            expiresAt: 120_000
+          }
+        ]
+      }
+    })
     expect(own.service.readChannel).toHaveBeenCalledWith({
       channelId: 'channel-a',
       resumeAfter: 0,
       maxRecords: 32,
       maxBytes: 4_096
     })
-    expect(JSON.stringify(read)).not.toMatch(/identityPublicKey|roomId|tokenHash/)
+    expect(JSON.stringify(read)).not.toMatch(/identityPublicKey|roomId|tokenHash|handshakeId/)
 
     const audit = await own.invoke(CHANNEL_IPC_CHANNELS.audit, { limit: 12 })
     expect(audit.ok).toBe(true)

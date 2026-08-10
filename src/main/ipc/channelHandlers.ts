@@ -32,6 +32,7 @@ import type {
   ChannelProductionChannelView,
   ChannelProductionInviteResult,
   ChannelProductionMemberView,
+  ChannelProductionPendingAdmissionView,
   ChannelProductionReadResult,
   ChannelProductionService
 } from '../collaboration/ChannelProductionService'
@@ -293,6 +294,17 @@ function projectMember(member: ChannelProductionMemberView): ChannelIpcMember {
   }
 }
 
+function projectPendingAdmission(
+  admission: ChannelProductionPendingAdmissionView
+): ChannelIpcReadResult['pendingAdmissions'][number] {
+  return {
+    memberId: admission.memberId,
+    displayName: admission.displayName,
+    confirmCode: admission.confirmCode,
+    expiresAt: admission.expiresAt
+  }
+}
+
 function projectMessage(message: ChannelMessage): ChannelIpcMessage {
   return {
     channelId: message.channelId,
@@ -311,6 +323,7 @@ function projectRead(result: ChannelProductionReadResult): ChannelIpcReadResult 
   return {
     channel: projectChannel(result.channel),
     members: result.members.map(projectMember),
+    pendingAdmissions: result.pendingAdmissions.map(projectPendingAdmission),
     records: result.records.map(projectMessage),
     highWaterSequence: result.highWaterSequence
   }

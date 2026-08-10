@@ -64,6 +64,7 @@ function props(overrides: Partial<ChannelHostPanelViewProps> = {}): ChannelHostP
       busy: null,
       channel: null,
       members: [],
+      pendingAdmissions: [],
       records: [],
       highWaterSequence: 0,
       invite: null,
@@ -121,6 +122,7 @@ describe('ChannelHostPanelView', () => {
         busy: null,
         channel: room,
         members: [member(), member({ memberId: 'member-alex', displayName: 'Alex', joinedAt: 2 })],
+        pendingAdmissions: [],
         records: [
           message(),
           message({
@@ -150,6 +152,40 @@ describe('ChannelHostPanelView', () => {
     expect(html).toContain('Post')
   })
 
+  it('shows the host SAS and a scoped removal action for a pending join', () => {
+    const html = render({
+      state: {
+        loading: false,
+        busy: null,
+        channel: channel(),
+        members: [
+          member(),
+          member({ memberId: 'member-alex', displayName: 'Alex', status: 'pending' })
+        ],
+        pendingAdmissions: [
+          {
+            memberId: 'member-alex',
+            displayName: 'Alex',
+            confirmCode: '123456',
+            expiresAt: 120_000
+          }
+        ],
+        records: [],
+        highWaterSequence: 0,
+        invite: null,
+        notice: null,
+        error: null
+      }
+    })
+
+    expect(html).toContain('Confirm joins')
+    expect(html).toContain('Compare each code out of band')
+    expect(html).toContain('aria-label="Security code 123456"')
+    expect(html).toContain('>123456<')
+    expect(html).toContain('Reject Alex&#x27;s Channel join')
+    expect(html).toContain('Codes differ — remove')
+  })
+
   it('keeps the one-shot invite visible, discloses SAS, and warns on a closed relay room', () => {
     const html = render({
       state: {
@@ -157,6 +193,7 @@ describe('ChannelHostPanelView', () => {
         busy: null,
         channel: channel(),
         members: [member()],
+        pendingAdmissions: [],
         records: [],
         highWaterSequence: 0,
         invite: {
@@ -184,6 +221,7 @@ describe('ChannelHostPanelView', () => {
         busy: null,
         channel: channel({ messageCount: 400 }),
         members: [member()],
+        pendingAdmissions: [],
         records: [message({ sequence: 256 })],
         highWaterSequence: 400,
         invite: null,
@@ -207,6 +245,7 @@ describe('ChannelHostPanelView', () => {
         busy: null,
         channel: closed,
         members: [member()],
+        pendingAdmissions: [],
         records: [message()],
         highWaterSequence: 1,
         invite: null,
@@ -230,6 +269,7 @@ describe('ChannelHostPanelView', () => {
         busy: null,
         channel: channel(),
         members: [member()],
+        pendingAdmissions: [],
         records: [],
         highWaterSequence: 0,
         invite: null,
@@ -250,6 +290,7 @@ describe('ChannelHostPanelView', () => {
         busy: null,
         channel: channel({ availability: 'recovery_blocked' }),
         members: [],
+        pendingAdmissions: [],
         records: [],
         highWaterSequence: 0,
         invite: null,

@@ -214,6 +214,44 @@ export function ChannelHostPanelView({
                 <span>{channel.display.messageCount} messages</span>
               </div>
 
+              {active && ready && state.pendingAdmissions.length > 0 && (
+                <section
+                  className="channel-host-admissions"
+                  aria-labelledby={`${panelId}-admissions`}
+                >
+                  <div className="channel-host-section-heading">
+                    <div>
+                      <h3 id={`${panelId}-admissions`}>Confirm joins</h3>
+                      <span>Compare each code out of band before the member confirms.</span>
+                    </div>
+                  </div>
+                  <div className="channel-host-admission-list">
+                    {state.pendingAdmissions.map((admission) => (
+                      <div key={admission.memberId} className="channel-host-admission">
+                        <div>
+                          <strong>{admission.displayName}</strong>
+                          <span>Security code</span>
+                        </div>
+                        <output
+                          className="channel-host-admission-code"
+                          aria-label={`Security code ${admission.confirmCode}`}
+                        >
+                          {admission.confirmCode}
+                        </output>
+                        <button
+                          type="button"
+                          onClick={() => onRevokeMember(admission.memberId)}
+                          disabled={busy}
+                          aria-label={`Reject ${admission.displayName}'s Channel join`}
+                        >
+                          Codes differ — remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               <section className="channel-host-section" aria-labelledby={`${panelId}-members`}>
                 <div className="channel-host-section-heading">
                   <h3 id={`${panelId}-members`}>Members</h3>

@@ -4,7 +4,8 @@ import type {
   ChannelIpcError,
   ChannelIpcInviteResult,
   ChannelIpcMember,
-  ChannelIpcMessage
+  ChannelIpcMessage,
+  ChannelIpcPendingAdmission
 } from '../../../shared/collaboration/ChannelIpc'
 import { CHANNEL_WIRE_PROTOCOL } from '../../../shared/collaboration/ChannelWireProtocol'
 
@@ -27,6 +28,7 @@ export interface ChannelHostPanelState {
   busy: ChannelHostPanelAction | null
   channel: ChannelIpcChannel | null
   members: ChannelIpcMember[]
+  pendingAdmissions: ChannelIpcPendingAdmission[]
   records: ChannelIpcMessage[]
   highWaterSequence: number
   invite: ChannelHostInviteProjection | null
@@ -64,6 +66,7 @@ export function createChannelHostPanelInitialState(): ChannelHostPanelState {
     busy: null,
     channel: null,
     members: [],
+    pendingAdmissions: [],
     records: [],
     highWaterSequence: 0,
     invite: null,
@@ -456,6 +459,7 @@ export class ChannelHostPanelController {
           loading: false,
           channel: null,
           members: [],
+          pendingAdmissions: [],
           records: [],
           highWaterSequence: 0,
           invite: null,
@@ -501,6 +505,7 @@ export class ChannelHostPanelController {
         loading: false,
         channel: read.value.channel,
         members: read.value.members,
+        pendingAdmissions: read.value.pendingAdmissions,
         records: mergeRecords(previousRecords, read.value.records),
         highWaterSequence: read.value.highWaterSequence,
         error: null

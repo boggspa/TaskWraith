@@ -66,6 +66,13 @@ export interface ChannelIpcMember {
   revokedAt?: number
 }
 
+export interface ChannelIpcPendingAdmission {
+  memberId: string
+  displayName: string
+  confirmCode: string
+  expiresAt: number
+}
+
 export interface ChannelIpcMessage {
   channelId: string
   sequence: number
@@ -81,6 +88,7 @@ export interface ChannelIpcMessage {
 export interface ChannelIpcReadResult {
   channel: ChannelIpcChannel
   members: ChannelIpcMember[]
+  pendingAdmissions: ChannelIpcPendingAdmission[]
   records: ChannelIpcMessage[]
   highWaterSequence: number
 }

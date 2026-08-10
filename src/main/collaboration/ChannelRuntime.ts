@@ -80,6 +80,7 @@ export interface ChannelRuntimeOptions {
     memberId: string
     displayName: string
     confirmCode: string
+    expiresAt: number
     mode: ChannelHandshakeMode
   }) => void
   /** Fault-injection seam: the record is already fsynced when this runs. */
@@ -584,6 +585,7 @@ export class ChannelRuntime {
       memberId: pending.memberId,
       displayName: pending.displayName,
       confirmCode,
+      expiresAt,
       mode: pending.mode
     })
     return {

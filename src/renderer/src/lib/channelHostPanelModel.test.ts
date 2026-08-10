@@ -6,6 +6,7 @@ import type {
   ChannelIpcInviteResult,
   ChannelIpcMember,
   ChannelIpcMessage,
+  ChannelIpcPendingAdmission,
   ChannelIpcReadInput,
   ChannelIpcResult
 } from '../../../shared/collaboration/ChannelIpc'
@@ -63,6 +64,18 @@ function message(sequence: number, overrides: Partial<ChannelIpcMessage> = {}): 
   }
 }
 
+function pendingAdmission(
+  overrides: Partial<ChannelIpcPendingAdmission> = {}
+): ChannelIpcPendingAdmission {
+  return {
+    memberId: 'member-alex',
+    displayName: 'Alex',
+    confirmCode: '123456',
+    expiresAt: 120_000,
+    ...overrides
+  }
+}
+
 function ok<T>(value: T): ChannelIpcResult<T> {
   return { ok: true, value }
 }
@@ -71,7 +84,14 @@ function createApi(overrides: Partial<ChannelIpcApi> = {}): ChannelIpcApi {
   const room = channel()
   return {
     list: async () => ok([room]),
-    read: async () => ok({ channel: room, members: [member()], records: [], highWaterSequence: 0 }),
+    read: async () =>
+      ok({
+        channel: room,
+        members: [member()],
+        pendingAdmissions: [],
+        records: [],
+        highWaterSequence: 0
+      }),
     audit: async () => ok([]),
     create: async () => ok(room),
     issueInvite: async () =>
@@ -160,6 +180,7 @@ describe('ChannelHostPanelController', () => {
             display: { title: 'Design room', status: 'active', memberCount: 1, messageCount: 2 }
           }),
           members: [member()],
+          pendingAdmissions: [],
           records,
           highWaterSequence: 2
         })
@@ -183,6 +204,33 @@ describe('ChannelHostPanelController', () => {
 
     controller.dispose()
     expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('projects the transient host SAS and removes it on the canonical refresh', async () => {
+    let pending = [pendingAdmission()]
+    const controller = new ChannelHostPanelController({
+      api: createApi({
+        read: async () =>
+          ok({
+            channel: channel(),
+            members: [
+              member(),
+              member({ memberId: 'member-alex', displayName: 'Alex', status: 'pending' })
+            ],
+            pendingAdmissions: pending,
+            records: [],
+            highWaterSequence: 0
+          })
+      }),
+      chatId: 'chat-1'
+    })
+
+    await controller.start()
+    expect(controller.snapshot().pendingAdmissions).toEqual([pendingAdmission()])
+
+    pending = []
+    await controller.retry()
+    expect(controller.snapshot().pendingAdmissions).toEqual([])
   })
 
   it('creates only on an explicit owner name and refreshes the canonical projection', async () => {
@@ -248,6 +296,7 @@ describe('ChannelHostPanelController', () => {
         ok({
           channel: channel({ messageCount: committed ? 1 : 0 }),
           members: [member()],
+          pendingAdmissions: [],
           records: committed
             ? [message(1, { clientMessageId: attempts[0], content: 'Hello' })]
             : [],
@@ -328,6 +377,7 @@ describe('ChannelHostPanelController', () => {
               : { messageCount: 1 }
           ),
           members: [member(), member({ memberId: 'member-alex', displayName: 'Alex' })],
+          pendingAdmissions: [],
           records: [message(1)],
           highWaterSequence: 1
         }),

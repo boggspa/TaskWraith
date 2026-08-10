@@ -64,9 +64,18 @@ export type ChannelProductionMemberView = Pick<
   'memberId' | 'channelId' | 'kind' | 'displayName' | 'status' | 'joinedAt' | 'revokedAt'
 >
 
+export interface ChannelProductionPendingAdmissionView {
+  channelId: string
+  memberId: string
+  displayName: string
+  confirmCode: string
+  expiresAt: number
+}
+
 export interface ChannelProductionReadResult {
   channel: ChannelProductionChannelView
   members: ChannelProductionMemberView[]
+  pendingAdmissions: ChannelProductionPendingAdmissionView[]
   records: ChannelMessage[]
   highWaterSequence: number
 }
@@ -247,6 +256,8 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
   private readonly inFlight = new Set<Promise<unknown>>()
   private readonly channelTails = new Map<string, Promise<void>>()
   private readonly closingChannelIds = new Set<string>()
+  private readonly pendingAdmissions = new Map<string, ChannelProductionPendingAdmissionView>()
+  private readonly pendingAdmissionTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(
     private readonly options: ChannelProductionServiceOptions,
@@ -282,6 +293,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const auditSink: ChannelAuditLike = {
       append: (event) => {
         audit.append(event)
+        this.reconcilePendingAdmission(event, store)
         this.notifyAuditChange(event, store)
       }
     }
@@ -292,7 +304,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       audit: auditSink,
       now: this.now,
       ...(this.options.logger ? { logger: this.options.logger } : {}),
-      ...(this.options.onAdmissionBegan ? { onAdmissionBegan: this.options.onAdmissionBegan } : {})
+      onAdmissionBegan: (info) => this.recordPendingAdmission(info, store)
     })
     const transport = new ChannelHostTransport({
       socketFactory: this.options.socketFactory ?? wsTransportSocketFactory,
@@ -394,6 +406,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     return {
       channel: this.channelView(channel, state),
       members: state.store.listMembers(channel.channelId).map(memberView),
+      pendingAdmissions: this.listPendingAdmissions(channel.channelId),
       records: replay.records,
       highWaterSequence: replay.highWaterSequence
     }
@@ -496,6 +509,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       this.enqueueChannel(channelId, async () => {
         await state.runtime.quiesceChannel(channelId)
         const closed = state.store.closeChannel({ channelId, now: this.now() })
+        this.clearPendingAdmissions(channelId)
         this.closingChannelIds.delete(channelId)
         this.notifyChange({ channelId, chatId: closed.chatId, reason: 'channel' })
         return this.channelView(closed, state)
@@ -558,6 +572,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       }
       for (const channelId of channelIds) {
         const chatId = chatIdByChannelId.get(channelId)
+        this.clearPendingAdmissions(channelId)
         state.recoveryBlockedChannelIds.delete(channelId)
         this.closingChannelIds.delete(channelId)
         if (chatId) this.notifyChange({ channelId, chatId, reason: 'channel' })
@@ -584,6 +599,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         }
       }
     } finally {
+      this.clearPendingAdmissions()
       this.stopping = false
       this.stopped = true
       this.releaseRegistry()
@@ -689,6 +705,97 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     }
     if (event.kind === 'message.accepted') {
       this.notifyChange({ channelId: event.channelId, chatId, reason: 'message' })
+    }
+  }
+
+  private pendingAdmissionKey(channelId: string, memberId: string): string {
+    return `${channelId}\u0000${memberId}`
+  }
+
+  private recordPendingAdmission(
+    info: Parameters<NonNullable<ChannelRuntimeOptions['onAdmissionBegan']>>[0],
+    store: ChannelStore
+  ): void {
+    try {
+      this.options.onAdmissionBegan?.(info)
+    } catch {
+      this.options.logger?.('[channels] admission observer failed')
+    }
+    if (info.mode !== 'admission') return
+    const channel = store.getChannel(info.channelId)
+    if (!channel) return
+    const admission: ChannelProductionPendingAdmissionView = {
+      channelId: info.channelId,
+      memberId: info.memberId,
+      displayName: info.displayName,
+      confirmCode: info.confirmCode,
+      expiresAt: info.expiresAt
+    }
+    const key = this.pendingAdmissionKey(info.channelId, info.memberId)
+    this.clearPendingAdmission(key)
+    this.pendingAdmissions.set(key, admission)
+    const timer = setTimeout(
+      () => {
+        if (this.pendingAdmissions.get(key)?.expiresAt !== admission.expiresAt) return
+        this.clearPendingAdmission(key)
+        this.notifyChange({
+          channelId: admission.channelId,
+          chatId: channel.chatId,
+          reason: 'membership'
+        })
+      },
+      Math.max(0, admission.expiresAt - this.now())
+    )
+    timer.unref?.()
+    this.pendingAdmissionTimers.set(key, timer)
+    this.notifyChange({
+      channelId: admission.channelId,
+      chatId: channel.chatId,
+      reason: 'membership'
+    })
+  }
+
+  private listPendingAdmissions(channelId: string): ChannelProductionPendingAdmissionView[] {
+    const now = this.now()
+    for (const [key, admission] of this.pendingAdmissions) {
+      if (admission.expiresAt <= now) this.clearPendingAdmission(key)
+    }
+    return [...this.pendingAdmissions.values()]
+      .filter((admission) => admission.channelId === channelId)
+      .sort((left, right) => left.expiresAt - right.expiresAt)
+  }
+
+  private reconcilePendingAdmission(event: ChannelAuditInput, store: ChannelStore): void {
+    if (!event.channelId || !event.memberId) return
+    if (
+      event.kind !== 'admission.confirmed' &&
+      event.kind !== 'admission.failed' &&
+      event.kind !== 'member.revoked'
+    ) {
+      return
+    }
+    const key = this.pendingAdmissionKey(event.channelId, event.memberId)
+    if (!this.pendingAdmissions.has(key)) return
+    this.clearPendingAdmission(key)
+    const chatId =
+      event.kind === 'admission.failed' ? store.getChannel(event.channelId)?.chatId : null
+    if (chatId) {
+      this.notifyChange({ channelId: event.channelId, chatId, reason: 'membership' })
+    }
+  }
+
+  private clearPendingAdmission(key: string): void {
+    this.pendingAdmissions.delete(key)
+    const timer = this.pendingAdmissionTimers.get(key)
+    if (timer) clearTimeout(timer)
+    this.pendingAdmissionTimers.delete(key)
+  }
+
+  private clearPendingAdmissions(channelId?: string): void {
+    for (const [key, admission] of this.pendingAdmissions) {
+      if (channelId === undefined || admission.channelId === channelId) {
+        this.clearPendingAdmission(key)
+      }
     }
   }
 
