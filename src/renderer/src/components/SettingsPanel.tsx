@@ -4807,7 +4807,7 @@ export function SettingsPanel({
   const safeMaxWaveAgents = (() => {
     const n = Number(maxWaveAgents)
     if (!Number.isFinite(n)) return 8
-    return Math.max(2, Math.min(20, Math.floor(n)))
+    return Math.max(2, Math.min(64, Math.floor(n)))
   })()
   const transcriptFontOptions = [...TRANSCRIPT_FONT_OPTIONS, ...installedFontOptions]
   const composerFontOptions = [...COMPOSER_FONT_OPTIONS, ...installedFontOptions]
@@ -6379,25 +6379,25 @@ export function SettingsPanel({
                   type="range"
                   className="composer-ensemble-context-slider"
                   min={2}
-                  max={20}
+                  max={64}
                   step={1}
                   value={safeMaxWaveAgents}
                   onChange={(e) =>
                     onChange({
                       maxWaveAgents: Math.max(
                         2,
-                        Math.min(20, Math.floor(Number(e.target.value) || 8))
+                        Math.min(64, Math.floor(Number(e.target.value) || 8))
                       )
                     })
                   }
                   style={{
                     width: '100%',
-                    ...rangeFillStyle(safeMaxWaveAgents, 2, 20)
+                    ...rangeFillStyle(safeMaxWaveAgents, 2, 64)
                   }}
                 />
                 <p className="settings-hint">
-                  Caps how many workers a single <code>delegate_wave</code> batch may spawn (2–20).
-                  Default is 8. Structural join quorum still cannot exceed 20.
+                  Caps how many workers a single <code>delegate_wave</code> batch may spawn (2–64).
+                  Default is 8. Structural wave + join ceilings are 64.
                 </p>
               </div>
 

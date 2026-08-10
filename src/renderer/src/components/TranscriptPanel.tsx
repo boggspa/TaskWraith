@@ -191,6 +191,8 @@ import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
+import { FleetWaveCard } from './FleetWaveCard'
+import { isFleetWaveMessage } from './FleetWaveCardModel'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
@@ -920,6 +922,7 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // entirely behind "System · 2 system notices".
     !isDeliveredExternalContribution(msg) &&
     !isSubThreadDelegationMessage(msg) &&
+    !isFleetWaveMessage(msg) &&
     !isSubThreadReturnMessage(msg) &&
     !isEnsembleFanoutResultMessage(msg) &&
     msg.metadata?.kind !== 'ensembleParticipantHealth' &&
@@ -4151,6 +4154,7 @@ export const TranscriptPanel = memo(
           )}
           {renderedRows.map(({ msg, rowKey }) => {
             const isDelegationCard = isSubThreadDelegationMessage(msg)
+            const isFleetWaveCard = isFleetWaveMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
             const isThreadMessageCard = isThreadMessageTranscriptMessage(msg)
             const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
@@ -4458,7 +4462,7 @@ export const TranscriptPanel = memo(
               return agentQuestionHeaderLineFor(asker, Array.isArray(options) && options.length > 0)
             })()
             const auxiliaryKey =
-              isDelegationCard || isReturnCard
+              isDelegationCard || isReturnCard || isFleetWaveCard
                 ? `${runningChatIdsSignature}|${auxiliaryChatsSignature}`
                 : ''
             const pendingProposedPlanKey = pendingProposedPlan?.messageId === msg.id
@@ -4702,6 +4706,72 @@ export const TranscriptPanel = memo(
                     message={msg}
                     onSetExpanded={setParallelResultViewportExpanded}
                   />
+                ) : isFleetWaveCard ? (
+                  <div key={msg.id} className="message-group fleet-wave-message">
+                    <FleetWaveCard
+                      provider={
+                        typeof msg.metadata?.parentProvider === 'string'
+                          ? (msg.metadata.parentProvider as ProviderId)
+                          : undefined
+                      }
+                      telemetry={{
+                        waveId:
+                          typeof msg.metadata?.waveId === 'string' ? msg.metadata.waveId : undefined,
+                        status:
+                          msg.metadata?.status === 'pending' ||
+                          msg.metadata?.status === 'running' ||
+                          msg.metadata?.status === 'needs_approval' ||
+                          msg.metadata?.status === 'completed' ||
+                          msg.metadata?.status === 'failed'
+                            ? msg.metadata.status
+                            : 'running',
+                        parentProvider:
+                          typeof msg.metadata?.parentProvider === 'string'
+                            ? msg.metadata.parentProvider
+                            : undefined,
+                        allowMultiProvider: Boolean(msg.metadata?.allowMultiProvider),
+                        agents: Array.isArray(msg.metadata?.workers)
+                          ? msg.metadata.workers.map((worker: any, index: number) => {
+                              const subThreadId =
+                                typeof worker?.subThreadId === 'string' ? worker.subThreadId : `w${index}`
+                              const child = chats.find((c) => c.appChatId === subThreadId)
+                              const running = Array.isArray(runningChatIds)
+                                ? runningChatIds.includes(subThreadId)
+                                : Boolean(runningChatIds?.has?.(subThreadId))
+                              const failed =
+                                Boolean(child?.delegationContext?.dispatchError) ||
+                                (typeof child?.delegationContext?.resultReturnedAt === 'number' &&
+                                  Array.isArray(child?.runs) &&
+                                  child.runs.some(
+                                    (run: { status?: string }) =>
+                                      run.status === 'failed' || run.status === 'cancelled'
+                                  ))
+                              const returned = Boolean(child?.delegationContext?.resultReturnedAt)
+                              const archived = Boolean(child?.archived)
+                              const status = failed
+                                ? 'failed'
+                                : returned || archived
+                                  ? 'completed'
+                                  : running
+                                    ? 'working'
+                                    : 'pending'
+                              return {
+                                id: subThreadId,
+                                label:
+                                  (typeof worker?.label === 'string' && worker.label) ||
+                                  (typeof worker?.role === 'string' && worker.role) ||
+                                  (typeof worker?.title === 'string' && worker.title) ||
+                                  `agent-${index + 1}`,
+                                role: worker?.role || 'worker',
+                                status,
+                                provider:
+                                  typeof worker?.provider === 'string' ? worker.provider : undefined
+                              }
+                            })
+                          : []
+                      }}
+                    />
+                  </div>
                 ) : isDelegationCard || isReturnCard ? (
                   <div
                     key={msg.id}
