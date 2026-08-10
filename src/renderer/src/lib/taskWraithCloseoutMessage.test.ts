@@ -2560,3 +2560,76 @@ Next action:
     expect(rows[0]?.status).toBe('running')
   })
 })
+
+  it('captures run commits from single-provider tool rows when runId is missing but timestamp is within run', () => {
+    const run: ChatRun = {
+      runId: 'run-single-provider',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success'
+    }
+
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('tool-1', 'tool', ''),
+            runId: run.runId,
+            timestamp: '2026-07-07T12:00:10.000Z',
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main abc12345] First commit with runId\n 5 files changed'
+              })
+            ]
+          },
+          {
+            ...message('tool-2', 'tool', ''),
+            runId: run.runId,
+            timestamp: '2026-07-07T12:00:20.000Z',
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main def67890] Second commit with runId\n 3 files changed'
+              })
+            ]
+          },
+          {
+            ...message('tool-3', 'tool', ''),
+            timestamp: '2026-07-07T12:00:25.000Z',
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main 18003ca96] Commit without runId but in window\n 2 files changed'
+              })
+            ]
+          },
+          {
+            ...message('tool-4', 'tool', ''),
+            timestamp: '2026-07-07T12:01:20.000Z',
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main deadbeef0] Commit outside run window\n 1 file changed'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:39.000Z',
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits?.map((c) => c.hash)).toEqual([
+      'abc12345',
+      'def67890',
+      '18003ca96'
+    ])
+  })

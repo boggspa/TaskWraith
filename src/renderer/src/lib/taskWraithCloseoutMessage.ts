@@ -66,6 +66,19 @@ export type CloseoutFileChange = {
   owners?: DiffFileSummaryOwner[]
 }
 
+function isMessageInRunWindow(
+  message: ChatMessage,
+  run: Pick<ChatRun, 'runId' | 'startedAt' | 'endedAt'>
+): boolean {
+  if (message.runId) return false
+  if (!message.timestamp) return false
+  const t = Date.parse(message.timestamp)
+  const start = Date.parse(run.startedAt)
+  const end = run.endedAt ? Date.parse(run.endedAt) : Number.POSITIVE_INFINITY
+  if (!Number.isFinite(t) || !Number.isFinite(start) || !Number.isFinite(end)) return false
+  return t >= start && t <= end
+}
+
 export function buildTaskWraithRunCloseoutMessage(input: {
   chat: ChatRecord
   run: ChatRun
@@ -101,15 +114,13 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     lines,
     goalSummarySentence(resolveCloseoutGoal(chat.activeGoal, run.activeGoalId), input.now)
   )
-  const closeoutCommits = collectCloseoutCommits(
-    chat.messages,
-    (message) => message.runId === run.runId,
-    { chat }
-  )
+  const includeRunMessage = (message: ChatMessage): boolean =>
+    message.runId === run.runId || isMessageInRunWindow(message, run)
+  const closeoutCommits = collectCloseoutCommits(chat.messages, includeRunMessage, { chat })
   const closeoutFileChanges =
     input.fileChanges !== undefined
       ? normalizeCloseoutFileChanges(input.fileChanges)
-      : collectCloseoutFileChanges(chat.messages, (message) => message.runId === run.runId)
+      : collectCloseoutFileChanges(chat.messages, includeRunMessage)
   const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
     messages: chat.messages,
     parentRunIds: runIds,
