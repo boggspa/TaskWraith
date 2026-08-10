@@ -10,6 +10,8 @@ import {
   type ChannelAuditLike
 } from './ChannelAuditLog'
 import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
+import { validateChannelAgentDispatchJournalSnapshot } from './ChannelAgentDispatchJournalAuthority'
+import { ChannelAgentDispatchJournalStore } from './ChannelAgentDispatchJournalStore'
 import type {
   ChannelAgentManagementMembershipInspection,
   ChannelAgentManagementSeatInspection
@@ -26,6 +28,11 @@ import {
   type ChannelAgentIdentitySafeStorage
 } from './ChannelAgentIdentityStore'
 import { admitAcceptedChannelAgentMentions } from './ChannelAgentMentionAdmission'
+import {
+  createChannelAgentProductionComposition,
+  type ChannelAgentProductionCompositionOptions
+} from './ChannelAgentProductionComposition'
+import type { ChannelAgentProductionService } from './ChannelAgentProductionService'
 import type { ChannelAgentSeatCandidate } from './ChannelAgentSeatAuthority'
 import { ChannelHostTransport } from './ChannelHostTransport'
 import {
@@ -50,12 +57,27 @@ export interface ChannelProductionDataPaths {
   audit: string
   agentIdentities: string
   agentAuthority: string
+  agentDispatchJournal: string
 }
 
 export interface ChannelProductionRelayPort {
   hostRelayUrl: () => string
   inviteRelayUrls: () => readonly string[]
 }
+
+export type ChannelProductionAgentExecutionOptions = Pick<
+  ChannelAgentProductionCompositionOptions,
+  | 'getChat'
+  | 'resolveWorkspacePrincipal'
+  | 'getSettings'
+  | 'providerAllowed'
+  | 'composeMainOwnedChannelAgentRun'
+  | 'dispatch'
+  | 'subscribeRunEvents'
+  | 'subscribeRunSessions'
+  | 'claimRunAudience'
+  | 'reconcileRun'
+>
 
 export interface ChannelProductionServiceOptions {
   userDataPath: string
@@ -67,6 +89,7 @@ export interface ChannelProductionServiceOptions {
   now?: () => number
   onAdmissionBegan?: ChannelRuntimeOptions['onAdmissionBegan']
   onChange?: (event: ChannelProductionChangeEvent) => void
+  agentExecution?: ChannelProductionAgentExecutionOptions
 }
 
 export interface ChannelProductionChangeEvent {
@@ -132,6 +155,7 @@ export interface ChannelProductionHistoryDeletionResult {
 
 export interface ChannelProductionService {
   start(): ChannelProductionStatus
+  startAgentExecution(): void
   stop(): Promise<void>
   status(): ChannelProductionStatus
   hostIdentityPublicKey(): string
@@ -196,7 +220,9 @@ interface RunningState {
   audit: ChannelAuditLog
   agentIdentities: ChannelAgentIdentityStore
   agentAuthority: ChannelAgentAuthorityStore
+  agentDispatchJournal: ChannelAgentDispatchJournalStore
   agentManagement: ChannelAgentManagementService
+  agentProduction: ChannelAgentProductionService | null
   runtime: ChannelRuntime
   transport: ChannelHostTransport
   recoveryBlockedChannelIds: Set<string>
@@ -219,7 +245,8 @@ export function channelProductionDataPaths(userDataPath: string): ChannelProduct
     logs: join(root, 'logs'),
     audit: join(root, 'audit.json'),
     agentIdentities: join(root, 'agent-identities'),
-    agentAuthority: join(root, 'agent-authority')
+    agentAuthority: join(root, 'agent-authority'),
+    agentDispatchJournal: join(root, 'agent-dispatch-journal')
   }
 }
 
@@ -273,6 +300,25 @@ function validateOptions(options: ChannelProductionServiceOptions): void {
   }
   if (options.onChange !== undefined && typeof options.onChange !== 'function') {
     throw new Error('ChannelProductionService onChange must be a function')
+  }
+  if (options.agentExecution !== undefined) {
+    const execution = options.agentExecution
+    if (
+      !execution ||
+      typeof execution !== 'object' ||
+      typeof execution.getChat !== 'function' ||
+      typeof execution.resolveWorkspacePrincipal !== 'function' ||
+      typeof execution.getSettings !== 'function' ||
+      typeof execution.providerAllowed !== 'function' ||
+      typeof execution.composeMainOwnedChannelAgentRun !== 'function' ||
+      typeof execution.dispatch !== 'function' ||
+      typeof execution.subscribeRunEvents !== 'function' ||
+      typeof execution.subscribeRunSessions !== 'function' ||
+      typeof execution.claimRunAudience !== 'function' ||
+      typeof execution.reconcileRun !== 'function'
+    ) {
+      throw new Error('ChannelProductionService agent execution ports are unavailable')
+    }
   }
 }
 
@@ -387,6 +433,16 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       now: this.now,
       ...(this.options.logger ? { logger: this.options.logger } : {})
     })
+    const agentDispatchJournal = new ChannelAgentDispatchJournalStore({
+      storageDirectory: this.paths.agentDispatchJournal,
+      validateSnapshot: (snapshot) =>
+        validateChannelAgentDispatchJournalSnapshot(
+          { channels: store, authority: agentAuthority },
+          snapshot
+        ),
+      now: this.now,
+      ...(this.options.logger ? { logger: this.options.logger } : {})
+    })
     const log = new ChannelMessageLog(this.paths.logs, store, undefined, agentAuthority)
     const audit = new ChannelAuditLog(this.paths.audit)
     const agentManagement = new ChannelAgentManagementService({
@@ -417,6 +473,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         this.notifyAuditChange(event, store)
       }
     }
+    let agentProduction: ChannelAgentProductionService | null = null
     const runtime = new ChannelRuntime({
       identityKeyPair: this.options.loadIdentity(),
       store,
@@ -425,27 +482,74 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       now: this.now,
       ...(this.options.logger ? { logger: this.options.logger } : {}),
       onAdmissionBegan: (info) => this.recordPendingAdmission(info, store),
-      afterDurableCommit: (result) =>
+      afterDurableCommit: (result) => {
+        if (agentProduction) {
+          this.scheduleAcceptedAgentAppend(agentProduction, result)
+          return
+        }
         this.recordAcceptedAgentMentionAdmission(result, store, auditSink)
+      }
     })
     const transport = new ChannelHostTransport({
       socketFactory: this.options.socketFactory ?? wsTransportSocketFactory,
       runtime,
       ...(this.options.logger ? { logger: this.options.logger } : {})
     })
+    if (this.options.agentExecution) {
+      try {
+        agentProduction = createChannelAgentProductionComposition({
+          journal: agentDispatchJournal,
+          authority: agentAuthority,
+          identities: agentIdentities,
+          channels: store,
+          messages: log,
+          runtime,
+          audit: auditSink,
+          ...this.options.agentExecution,
+          now: this.now,
+          ...(this.options.logger ? { logger: this.options.logger } : {})
+        })
+      } catch {
+        void agentProduction?.stop().catch(() => undefined)
+        try {
+          transport.dispose()
+        } finally {
+          runtime.dispose()
+        }
+        throw new ChannelError(
+          'host_unavailable',
+          'Channel agent production service could not start'
+        )
+      }
+    }
     this.state = {
       store,
       log,
       audit,
       agentIdentities,
       agentAuthority,
+      agentDispatchJournal,
       agentManagement,
+      agentProduction,
       runtime,
       transport,
       recoveryBlockedChannelIds
     }
     this.refreshRelayRooms()
     return this.status()
+  }
+
+  startAgentExecution(): void {
+    const state = this.requireRunning()
+    state.agentProduction?.start(
+      state.store
+        .listChannels()
+        .filter(
+          (channel) =>
+            channel.status === 'active' && !state.recoveryBlockedChannelIds.has(channel.channelId)
+        )
+        .map((channel) => channel.channelId)
+    )
   }
 
   stop(): Promise<void> {
@@ -643,15 +747,20 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
   }): Promise<ChannelProductionMemberView> {
     const state = this.requireReadyChannel(args.channelId)
     return this.track(
-      this.enqueueChannel(args.channelId, () =>
-        Promise.resolve().then(() => {
+      this.enqueueAgentManagement(() =>
+        this.enqueueChannel(args.channelId, async () => {
+          await state.agentProduction?.drainChannel(args.channelId)
           const member = state.store.getMember(args.channelId, args.memberId)
           if (member?.kind === 'agent') {
             throw new ChannelError('human_only', 'Agent removal requires signed owner revocation')
           }
-          return state.runtime
-            .revokeMember({ channelId: args.channelId, memberId: args.memberId, now: this.now() })
-            .then(memberView)
+          return memberView(
+            await state.runtime.revokeMember({
+              channelId: args.channelId,
+              memberId: args.memberId,
+              now: this.now()
+            })
+          )
         })
       )
     )
@@ -665,7 +774,8 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const state = this.requireReadyChannel(args.channelId)
     return this.track(
       this.enqueueAgentManagement(() =>
-        this.enqueueChannel(args.channelId, () => {
+        this.enqueueChannel(args.channelId, async () => {
+          await state.agentProduction?.drainChannel(args.channelId)
           const result = state.agentManagement.enrollAgent(args)
           this.appendAgentManagementAudit(state, {
             kind: 'agent.enrolled',
@@ -699,7 +809,8 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const state = this.requireReadyChannel(args.channelId)
     return this.track(
       this.enqueueAgentManagement(() =>
-        this.enqueueChannel(args.channelId, () => {
+        this.enqueueChannel(args.channelId, async () => {
+          await state.agentProduction?.drainChannel(args.channelId)
           const result = state.agentManagement.grantDispatch(args)
           this.appendAgentManagementAudit(state, {
             kind: 'agent.grant.issued',
@@ -728,7 +839,8 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const state = this.requireReadyChannel(args.channelId)
     return this.track(
       this.enqueueAgentManagement(() =>
-        this.enqueueChannel(args.channelId, () => {
+        this.enqueueChannel(args.channelId, async () => {
+          await state.agentProduction?.drainChannel(args.channelId)
           const result = state.agentManagement.revokeAgent(args)
           this.appendAgentManagementAudit(state, {
             kind: 'agent.revoked',
@@ -772,7 +884,11 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
           )
         }
         await Promise.all(
-          channels.map((channel) => this.enqueueChannel(channel.channelId, () => undefined))
+          channels.map((channel) =>
+            this.enqueueChannel(channel.channelId, () =>
+              state.agentProduction?.drainChannel(channel.channelId)
+            )
+          )
         )
         const result = state.agentManagement.rotateAgentKey(args)
         for (const enrollment of result.channels) {
@@ -798,10 +914,18 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
   closeChannel(channelId: string): Promise<ChannelProductionChannelView> {
     const state = this.requireReadyChannel(channelId)
     this.closingChannelIds.add(channelId)
+    let agentQuiescence: Promise<void>
+    try {
+      agentQuiescence = state.agentProduction?.quiesceChannel(channelId) ?? Promise.resolve()
+    } catch (error) {
+      this.closingChannelIds.delete(channelId)
+      throw error
+    }
     return this.track(
       this.enqueueAgentManagement(() =>
         this.enqueueChannel(channelId, async () => {
           try {
+            await agentQuiescence
             await state.runtime.quiesceChannel(channelId)
             const agents = state.store
               .listMembers(channelId)
@@ -882,22 +1006,35 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     }
 
     for (const channelId of channelIds) this.closingChannelIds.add(channelId)
-    const quiesced = Promise.all(
-      channelIds.map((channelId) =>
-        this.enqueueChannel(channelId, () => state.runtime.quiesceChannel(channelId))
-      )
+    const agentQuiescence = new Map(
+      channelIds.map((channelId) => [
+        channelId,
+        state.agentProduction?.quiesceChannel(channelId) ?? Promise.resolve()
+      ])
     )
-    const operation = quiesced.then(() => {
+    const operation = this.enqueueAgentManagement(async () => {
+      await Promise.all(
+        channelIds.map((channelId) =>
+          this.enqueueChannel(channelId, async () => {
+            await agentQuiescence.get(channelId)
+            await state.runtime.quiesceChannel(channelId)
+          })
+        )
+      )
       if (scope.kind === 'global') {
         state.log.purgeAll()
         state.audit.purgeAll()
+        state.agentDispatchJournal.purgeAll()
         state.agentAuthority.purgeAll()
         state.agentIdentities.purgeAll()
         state.store.purgeAllChannels()
       } else {
         state.log.purgeChannels(channelIds)
         state.audit.purgeChannels(channelIds)
-        for (const channelId of channelIds) state.agentAuthority.eraseChannel(channelId)
+        for (const channelId of channelIds) {
+          state.agentDispatchJournal.eraseChannel(channelId)
+          state.agentAuthority.eraseChannel(channelId)
+        }
         state.store.purgeChannels(channelIds)
       }
       for (const channelId of channelIds) {
@@ -918,14 +1055,20 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
 
   private async stopInternal(): Promise<void> {
     try {
-      await Promise.allSettled([...this.inFlight])
+      while (this.inFlight.size > 0) {
+        await Promise.allSettled([...this.inFlight])
+      }
       const state = this.state
       this.state = null
       if (state) {
         try {
-          state.transport.dispose()
+          await state.agentProduction?.stop()
         } finally {
-          state.runtime.dispose()
+          try {
+            state.transport.dispose()
+          } finally {
+            state.runtime.dispose()
+          }
         }
       }
     } finally {
@@ -1001,6 +1144,31 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       () => this.inFlight.delete(operation)
     )
     return operation
+  }
+
+  private scheduleAcceptedAgentAppend(
+    agentProduction: ChannelAgentProductionService,
+    result: ChannelAppendResult
+  ): void {
+    try {
+      const operation = this.enqueueAgentManagement(() =>
+        this.enqueueChannel(result.record.channelId, () =>
+          agentProduction.handleDurableAppend(result)
+        )
+      )
+      this.inFlight.add(operation)
+      void operation.then(
+        () => this.inFlight.delete(operation),
+        () => {
+          this.inFlight.delete(operation)
+          this.options.logger?.('[channels] durable agent mention handling failed')
+        }
+      )
+    } catch {
+      // The human record is already durable. Never reject the accepted append
+      // or expose execution details if the asynchronous handoff is unavailable.
+      this.options.logger?.('[channels] durable agent mention handling failed')
+    }
   }
 
   private agentSeatInspection(

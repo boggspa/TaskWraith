@@ -62,8 +62,8 @@ function makeDeps(overrides: {
   // Phase M1 Step 5 deps (optional — defaults to no chat / no save so
   // existing tests that don't care about history get a clean single-turn
   // request).
-  getChat?: (chatId: string) => ChatRecord | null | undefined
-  saveChatLinkedSessionId?: (chatId: string, sessionId: string) => void
+  getChat?: (chatId: string, route: AgentRunRoute) => ChatRecord | null | undefined
+  saveChatLinkedSessionId?: (chatId: string, sessionId: string, route: AgentRunRoute) => void
   // Phase M1 Step 7 deps (optional — default omitted so existing tests
   // skip the image-mounting branch entirely; a test that wants to drive
   // image handling supplies its own reader).
@@ -75,7 +75,7 @@ function makeDeps(overrides: {
   // Phase M1 Step 9 deps (optional — default captures invocations into
   // `migrationNotices` so tests can assert presence/absence by reading
   // that array directly).
-  appendChatSystemMessage?: (chatId: string, message: ChatMessage) => void
+  appendChatSystemMessage?: (chatId: string, message: ChatMessage, route: AgentRunRoute) => void
   runAdmitted?: (runId: string | undefined) => boolean
   runPersistenceAuthorized?: (provider: string, route: AgentRunRoute) => boolean
   beginTransportOperation?: GeminiApiProviderDeps['beginTransportOperation']
@@ -92,8 +92,11 @@ function makeDeps(overrides: {
     sessionId: string
   }>
   sessionSaves: Array<{ chatId: string; sessionId: string }>
+  historyReadRoutes: AgentRunRoute[]
+  sessionSaveRoutes: AgentRunRoute[]
   usageRecords: Array<Omit<UsageRecord, 'id' | 'timestamp'>>
   migrationNotices: Array<{ chatId: string; message: ChatMessage }>
+  migrationNoticeRoutes: AgentRunRoute[]
 } {
   const lines: SendLineCall[] = []
   const errors: SendErrorCall[] = []
@@ -106,8 +109,11 @@ function makeDeps(overrides: {
     sessionId: string
   }> = []
   const sessionSaves: Array<{ chatId: string; sessionId: string }> = []
+  const historyReadRoutes: AgentRunRoute[] = []
+  const sessionSaveRoutes: AgentRunRoute[] = []
   const usageRecords: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
   const migrationNotices: Array<{ chatId: string; message: ChatMessage }> = []
+  const migrationNoticeRoutes: AgentRunRoute[] = []
   const baseSettings: AppSettings = {
     geminiApiRuntime: 'auto',
     geminiAuthProfiles: overrides.profiles || [],
@@ -197,14 +203,21 @@ function makeDeps(overrides: {
           return overrides.prepareToolContext!(sender, payload, route, sessionId)
         }
       : undefined,
-    getChat: overrides.getChat,
-    saveChatLinkedSessionId: overrides.saveChatLinkedSessionId
-      ? (chatId, sessionId) => {
-          sessionSaves.push({ chatId, sessionId })
-          overrides.saveChatLinkedSessionId!(chatId, sessionId)
+    getChat: overrides.getChat
+      ? (chatId, route) => {
+          historyReadRoutes.push(route)
+          return overrides.getChat!(chatId, route)
         }
-      : (chatId, sessionId) => {
+      : undefined,
+    saveChatLinkedSessionId: overrides.saveChatLinkedSessionId
+      ? (chatId, sessionId, route) => {
           sessionSaves.push({ chatId, sessionId })
+          sessionSaveRoutes.push(route)
+          overrides.saveChatLinkedSessionId!(chatId, sessionId, route)
+        }
+      : (chatId, sessionId, route) => {
+          sessionSaves.push({ chatId, sessionId })
+          sessionSaveRoutes.push(route)
         },
     readImageFile: overrides.readImageFile,
     recordUsage: overrides.recordUsage
@@ -216,12 +229,14 @@ function makeDeps(overrides: {
           usageRecords.push(entry)
         },
     appendChatSystemMessage: overrides.appendChatSystemMessage
-      ? (chatId, message) => {
+      ? (chatId, message, route) => {
           migrationNotices.push({ chatId, message })
-          overrides.appendChatSystemMessage!(chatId, message)
+          migrationNoticeRoutes.push(route)
+          overrides.appendChatSystemMessage!(chatId, message, route)
         }
-      : (chatId, message) => {
+      : (chatId, message, route) => {
           migrationNotices.push({ chatId, message })
+          migrationNoticeRoutes.push(route)
         },
     loadSdk: overrides.loadSdk
   }
@@ -234,8 +249,11 @@ function makeDeps(overrides: {
     toolCalls,
     toolContextPreparations,
     sessionSaves,
+    historyReadRoutes,
+    sessionSaveRoutes,
     usageRecords,
-    migrationNotices
+    migrationNotices,
+    migrationNoticeRoutes
   }
 }
 
@@ -1470,6 +1488,26 @@ describe('GeminiApiProvider (Phase M1 Step 5 — history replay & session pinnin
     await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
     expect(finishes).toEqual([{ runId: 'run-1', status: 'completed' }])
     expect(saves).toEqual([{ chatId: 'chat-1', sessionId: 'api://chat-1' }])
+  })
+
+  it('passes the exact run route to every history read and chat write callback', async () => {
+    const chat = makeChat({
+      linkedGeminiSessionId: '12345678-1234-1234-1234-123456789abc',
+      linkedProviderSessionId: undefined,
+      messages: []
+    })
+    const { deps, historyReadRoutes, sessionSaveRoutes, migrationNoticeRoutes } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: fakeSdk([{ text: 'ok' }]),
+      getChat: () => chat
+    })
+
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+
+    expect(historyReadRoutes).toEqual([baseRoute])
+    expect(sessionSaveRoutes).toEqual([baseRoute])
+    expect(migrationNoticeRoutes).toEqual([baseRoute])
   })
 
   it('does NOT persist linkedProviderSessionId on an aborted run', async () => {
