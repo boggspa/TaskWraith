@@ -8018,7 +8018,10 @@ public struct AppSettingsSheet: View {
             // Preserve the existing standalone context reference for older Macs.
             // Newer broadcasts advertise Spend (and optional AntiGravity budget),
             // which unlocks UsagePanel's compact Plan / Spend / Context switch.
-            if model.modelUsage?.spend == nil && model.modelUsage?.antigravityBudget == nil {
+            if model.modelUsage?.spend == nil
+                && model.modelUsage?.antigravityBudget == nil
+                && model.modelUsage?.museBudget == nil
+            {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Model Context Lengths", systemImage: "ruler")
                         .font(.headline.weight(.semibold))
@@ -11210,8 +11213,8 @@ struct UsagePanel: View {
     @State private var selectedView: UsagePanelView = .plan
 
     private static let providerOrder = [
-        "gemini", "codex", "claude", "kimi", "cursor", "grok", "pi", "antigravity", "ollama",
-        "deepseek", "cerebras",
+        "gemini", "codex", "claude", "kimi", "cursor", "grok", "pi", "mistral", "muse",
+        "antigravity", "ollama", "deepseek", "cerebras",
     ]
 
     private enum UsagePanelView: String, CaseIterable, Identifiable {
@@ -11246,7 +11249,9 @@ struct UsagePanel: View {
     }
 
     private var hasSpendView: Bool {
-        !spendProviders.isEmpty || model.modelUsage?.antigravityBudget != nil
+        !spendProviders.isEmpty
+            || model.modelUsage?.antigravityBudget != nil
+            || model.modelUsage?.museBudget != nil
     }
 
     private var asOfText: String? {
@@ -11378,7 +11383,7 @@ struct UsagePanel: View {
 
     @ViewBuilder
     private var spendView: some View {
-        if spendProviders.isEmpty && model.modelUsage?.antigravityBudget == nil {
+        if spendProviders.isEmpty && model.modelUsage?.antigravityBudget == nil && model.modelUsage?.museBudget == nil {
             Text("No API spend tracked in the last 30 days.")
                 .font(.footnote)
                 .foregroundStyle(TWTheme.textSecondary)
@@ -11387,7 +11392,10 @@ struct UsagePanel: View {
                 spendProviderSection(entry)
             }
             if let budget = model.modelUsage?.antigravityBudget {
-                antigravityBudgetSection(budget)
+                softBudgetSection(budget, title: "AntiGravity budget")
+            }
+            if let budget = model.modelUsage?.museBudget {
+                softBudgetSection(budget, title: "Muse budget")
             }
             Text("Projected API-equivalent spend — estimated, not billed.")
                 .font(.caption2)
@@ -11429,14 +11437,17 @@ struct UsagePanel: View {
     }
 
     @ViewBuilder
-    private func antigravityBudgetSection(_ budget: ModelUsageMessage.AntigravityBudget) -> some View {
+    private func softBudgetSection(
+        _ budget: ModelUsageMessage.AntigravityBudget,
+        title: String
+    ) -> some View {
         let accent = TWTheme.providerAccent(budget.provider)
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
                 Image(systemName: "gauge.with.dots.needle.67percent")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(accent)
-                Text("AntiGravity budget")
+                Text(title)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(TWTheme.textPrimary)
                 Spacer()

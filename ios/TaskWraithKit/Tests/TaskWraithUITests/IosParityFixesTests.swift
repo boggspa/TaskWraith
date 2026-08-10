@@ -97,16 +97,19 @@ struct IosParityFixesTests {
             """)
         #expect(legacy.usage.spend == nil)
         #expect(legacy.usage.antigravityBudget == nil)
+        #expect(legacy.usage.museBudget == nil)
         #expect(legacy.usage.providers.first?.windows.first?.usedPercent == 25)
 
         let current = try decode(
             ModelUsageMessage.self,
             """
-            {"usage":{"providers":[{"provider":"codex","windows":[{"id":"five-hour","label":"5h","usedPercent":25,"limitLabel":"75% remaining","resetAt":null}]}],"generatedAt":"2026-07-24T12:00:00Z","spend":{"providers":[{"provider":"antigravity","windows":[{"id":"month","label":"30d","totalTokens":42000,"runs":3,"costText":"$0.42"}]}]},"antigravityBudget":{"provider":"antigravity","spentText":"$0.42","capText":"$10.00","usedPercent":4,"resetAt":"2026-08-01T00:00:00Z"}}}
+            {"usage":{"providers":[{"provider":"codex","windows":[{"id":"five-hour","label":"5h","usedPercent":25,"limitLabel":"75% remaining","resetAt":null}]}],"generatedAt":"2026-07-24T12:00:00Z","spend":{"providers":[{"provider":"antigravity","windows":[{"id":"month","label":"30d","totalTokens":42000,"runs":3,"costText":"$0.42"}]}]},"antigravityBudget":{"provider":"antigravity","spentText":"$0.42","capText":"$10.00","usedPercent":4,"resetAt":"2026-08-01T00:00:00Z"},"museBudget":{"provider":"muse","spentText":"$1.25","capText":"$15.00","usedPercent":8,"resetAt":"2026-08-01T00:00:00Z"}}}
             """)
         #expect(current.usage.spend?.providers.first?.windows.first?.totalTokens == 42_000)
         #expect(current.usage.spend?.providers.first?.windows.first?.costText == "$0.42")
         #expect(current.usage.antigravityBudget?.usedPercent == 4)
+        #expect(current.usage.museBudget?.capText == "$15.00")
+        #expect(current.usage.museBudget?.usedPercent == 8)
     }
 
     @MainActor

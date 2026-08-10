@@ -102,7 +102,8 @@ export const MODEL_USAGE_PROVIDER_ORDER: ProviderId[] = [
   'cursor',
   'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ]
 
 /** Aggregated token + cost totals for one (provider, model) over one window. */

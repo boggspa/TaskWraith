@@ -924,7 +924,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         cachedInputUsdPerMillion: 0.0028,
         sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids.'
+        notes:
+          'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids.'
       },
       {
         modelId: 'deepseek/deepseek-v4-pro',
@@ -1175,7 +1176,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 7.5,
         sourceUrl: 'https://mistral.ai/pricing',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Wire id alias for mistral-medium-3.5 — some Vibe CLI events report this id instead of the display name.'
+        notes:
+          'Wire id alias for mistral-medium-3.5 — some Vibe CLI events report this id instead of the display name.'
       },
       {
         modelId: 'devstral-small',
@@ -1196,6 +1198,36 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
       // here). A model the picker never offers cannot be run, so it cannot be
       // mispriced. If the seat ever does surface it, give it a real lane rather
       // than a zero row.
+    ]
+  },
+  // Muse Code CLI — Meta Model API / subscription lane. Rates are PROJECTED
+  // API-equivalent from the Muse CLI model catalog ($/Mtok) until Meta publishes
+  // a stable public pricing page TaskWraith can cite as the billing source of
+  // truth. First row is the unknown-id fallback.
+  muse: {
+    provider: 'muse',
+    pricingUrl: 'https://www.meta.com/',
+    models: [
+      {
+        modelId: 'muse-spark-1.2',
+        inputUsdPerMillion: 1.25,
+        outputUsdPerMillion: 4.25,
+        cachedInputUsdPerMillion: 0.15,
+        sourceUrl: 'https://www.meta.com/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'PROJECTED API-equivalent from the Muse Code CLI catalog for muse-spark-1.2 ($1.25/$4.25/$0.15 per Mtok input/output/cached). Not Meta-billed invoice line items — subscription / plan spend may differ.'
+      },
+      {
+        modelId: 'muse-default',
+        inputUsdPerMillion: 1.25,
+        outputUsdPerMillion: 4.25,
+        cachedInputUsdPerMillion: 0.15,
+        sourceUrl: 'https://www.meta.com/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Wire-id alias for muse-spark-1.2 when a run records the seat default sentinel instead of the catalog id.'
+      }
     ]
   }
 }
@@ -1352,7 +1384,8 @@ const providerIds = new Set<ProviderId>([
   // returns null for the ENTIRE cache on any unknown provider id.
   'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ])
 
 function isProviderId(value: unknown): value is ProviderId {

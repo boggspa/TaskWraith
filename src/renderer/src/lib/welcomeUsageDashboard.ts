@@ -127,7 +127,8 @@ const WELCOME_USAGE_PROVIDER_MEMBERSHIP: Readonly<Record<ProviderId, true>> = {
   ollama: true,
   antigravity: true,
   pi: true,
-  mistral: true
+  mistral: true,
+  muse: true
 }
 
 export const WELCOME_USAGE_PROVIDER_IDS: readonly ProviderId[] = Object.freeze(
@@ -151,7 +152,8 @@ const PROVIDER_DISPLAY_NAMES: Readonly<Record<ProviderId, string>> = {
   ollama: 'Ollama',
   antigravity: 'AntiGravity',
   pi: 'Pi',
-  mistral: 'Mistral'
+  mistral: 'Mistral',
+  muse: 'Muse'
 }
 
 export interface WelcomeUsageDayCell {

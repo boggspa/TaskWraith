@@ -17,6 +17,7 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   ollama: '#1A8562',
   antigravity: '#308713',
   pi: '#68768C',
+  muse: '#1671EA',
   ensemble: '#986781',
   mistral: '#D44404',
   alibaba: '#8C52EF',
@@ -53,6 +54,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: 'Ollama',
   antigravity: 'AntiGravity',
   pi: 'Pi',
+  muse: 'Muse',
   mistral: 'Mistral',
   ensemble: 'Ensemble',
   meta: 'Meta',
@@ -70,6 +72,7 @@ const PROVIDER_SHORT_CODES: Record<string, string> = {
   ollama: 'OLL',
   antigravity: 'AGY',
   pi: 'PI',
+  muse: 'MUS',
   mistral: 'MST',
   ensemble: 'ENS',
   alibaba: 'QWN',
@@ -120,6 +123,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'composer-2.5-fast': 'Composer 2.5 Fast',
   'mistral-medium-3.5': 'Mistral Medium 3.5',
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
+  'muse-spark-1.2': 'Muse Spark 1.2',
   'devstral-small': 'Devstral Small'
 }
 

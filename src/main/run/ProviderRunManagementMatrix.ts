@@ -20,7 +20,8 @@ export const PROVIDER_RUN_MANAGEMENT_IDS = [
   // Tail-appended to stay element-for-element equal to RUN_MANAGER_PROVIDERS
   // (index.constants.ts), which ProviderRunManagementBinding.test compares
   // directly. Inserting mid-list silently breaks that equality.
-  'mistral'
+  'mistral',
+  'muse'
 ] as const satisfies readonly ProviderId[]
 
 export type ProviderRunManagementId = (typeof PROVIDER_RUN_MANAGEMENT_IDS)[number]
@@ -29,6 +30,12 @@ export type ProviderOfferState =
   | 'live-selectable'
   | 'conditionally-offered'
   | 'retired-history-only'
+  /**
+   * Decode + run-management identity registered, but not yet offered via
+   * LIVE_SELECTABLE / conditionallyOffered intent. Used while an adapter boots
+   * before the user-approved offer commit (Muse Phase 2).
+   */
+  | 'decode-ready-not-offered'
 
 export type ProviderToolMediationMode =
   | 'taskwraith-approval-gateway'
@@ -139,6 +146,15 @@ export const PROVIDER_RUN_MANAGEMENT_DECLARATIONS = {
     // The seat resolves a real `vibe-acp` executable path and can read its
     // `--version`; there is no descriptor-bound admission step (Kimi) and no
     // HTTP-server probe (Ollama).
+    binaryRuntimeProvenance: 'observed-cli-path-and-version'
+  },
+  muse: {
+    // Flipped with W2F live / intent / iOS mirrors (COORDINATION.md).
+    offerState: 'live-selectable',
+    // Opaque muse exec --json; no TaskWraith MCP broker in v1 (wave1-F).
+    toolMediationMode: 'provider-native-launch-allowlist',
+    // stdout lifecycle + session.jsonl tooling events once the reducer lands.
+    brokerObservability: 'none',
     binaryRuntimeProvenance: 'observed-cli-path-and-version'
   }
 } as const satisfies Record<ProviderRunManagementId, ProviderRunManagementDeclaration>

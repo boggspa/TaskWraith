@@ -29,6 +29,7 @@ const EDITABLE_PROVIDERS: readonly HarnessProviderId[] = [
   'grok',
   'ollama',
   'mistral',
+  'muse',
   'antigravity'
 ]
 

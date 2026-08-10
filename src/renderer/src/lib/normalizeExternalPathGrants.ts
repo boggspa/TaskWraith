@@ -21,7 +21,8 @@ const normalizeExternalPathGrants = (value: unknown): ExternalPathGrant[] => {
     'ollama',
     'antigravity',
     'pi',
-    'mistral'
+    'mistral',
+    'muse'
   ])
   for (const item of value) {
     if (!item || typeof item !== 'object') continue

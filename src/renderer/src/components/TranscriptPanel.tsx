@@ -350,6 +350,7 @@ function providerIdFromUnknown(value: unknown): ProviderId | undefined {
     case 'antigravity':
     case 'pi':
     case 'mistral':
+    case 'muse':
       return value
     default:
       return undefined

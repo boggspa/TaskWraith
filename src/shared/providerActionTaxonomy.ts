@@ -677,6 +677,50 @@ export const PROVIDER_ACTION_ADAPTERS = {
         action: 'network.read'
       }
     }
+  }),
+  muse: adapter({
+    // Opaque muse exec --json seat: native tools under argv/sandbox containment;
+    // no TaskWraith MCP broker in v1 (COORDINATION / wave1-F).
+    nativeSurface: 'unobservable-native',
+    mcpAttachment: 'none',
+    nativeMediation: 'provider-runtime-containment',
+    structuredKindMappings: {},
+    declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
+    deniedNativeActionMappings: {},
+    declaredNativeActions: [
+      'read',
+      'write',
+      'shell',
+      'web-search',
+      'web-fetch'
+    ] as const,
+    nativeActionMappings: {
+      read: {
+        aliases: ['read_file', 'Read', 'Read file'],
+        catalogTool: 'read_file',
+        action: 'workspace.read'
+      },
+      write: {
+        aliases: ['write_file', 'Write', 'Write file'],
+        catalogTool: 'write_file',
+        action: 'workspace.mutate'
+      },
+      shell: {
+        aliases: ['bash', 'Bash', 'shell', 'Shell'],
+        catalogTool: 'run_shell_command',
+        action: 'shell.execute'
+      },
+      'web-search': {
+        aliases: ['web_search', 'WebSearch', 'Search web'],
+        catalogTool: 'web_search',
+        action: 'network.read'
+      },
+      'web-fetch': {
+        aliases: ['web_fetch', 'WebFetch', 'Fetch'],
+        catalogTool: 'web_fetch',
+        action: 'network.read'
+      }
+    }
   })
 } as const satisfies Record<ProviderId, ProviderActionAdapterDeclaration>
 

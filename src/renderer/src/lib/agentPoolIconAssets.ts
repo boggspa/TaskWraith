@@ -96,7 +96,8 @@ const OFFICIAL_PROVIDER_POOL_ASSETS: readonly {
   { providerLogo: 'ollama', label: 'Ollama', accent: '#1A8562' },
   { providerLogo: 'antigravity', label: 'Antigravity', accent: '#308713' },
   { providerLogo: 'pi', label: 'Pi', accent: '#68768C' },
-  { providerLogo: 'mistral', label: 'Mistral', accent: '#D44404' }
+  { providerLogo: 'mistral', label: 'Mistral', accent: '#D44404' },
+  { providerLogo: 'muse', label: 'Muse', accent: '#1671EA' }
 ]
 const ACTION_RAW = globRaw(
   import.meta.glob('../../../../design-assets/workflows/icons/*.svg', {

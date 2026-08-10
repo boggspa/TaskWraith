@@ -36,6 +36,7 @@ import {
 import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
 import { resolveMainPaneWorkspaceLabel } from '../../lib/mainPaneWorkspaceHeader'
+import { resolveMuseMonthlySpendCapUsd } from '../../../../shared/museSpendBudget'
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { ProjectHomeHeader } from '../../components/ProjectHomeHeader'
 import { DigitOdometer } from '../../components/DigitOdometer'
@@ -1369,7 +1370,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   onRefreshUsage: handleManualUsageRefresh,
                   refreshing: manualUsageRefreshInFlight,
                   antigravityMonthlyCapUsd:
-                    settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null
+                    settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null,
+                  museMonthlyCapUsd: resolveMuseMonthlySpendCapUsd(
+                    settings?.museMonthlySpendCapUsd
+                  )
                 }}
                 runningChatIds={runningChatIdsArray}
                 pluginWorkflowTemplates={pluginWorkflowTemplates}
@@ -1565,6 +1569,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               antigravityGeminiApiMonthlySpendCapUsd={
                 settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null
               }
+              museMonthlySpendCapUsd={settings?.museMonthlySpendCapUsd}
               userName={settings?.userName ?? ''}
               claudeBinaryPath={claudeBinaryPath}
               kimiBinaryPath={kimiBinaryPath}

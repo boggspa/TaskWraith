@@ -1245,7 +1245,8 @@ export function CombinedModelPicker({
         grokReasoningEffort,
         cursorReasoningEffort,
         kimiThinkingEnabled,
-        kimiReasoningEffort
+        kimiReasoningEffort,
+        museReasoningEffort: provider === 'muse' ? selectedReasoning : undefined
       }),
     [
       provider,

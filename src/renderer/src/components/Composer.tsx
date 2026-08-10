@@ -3937,11 +3937,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             }
                           } else if (
                             effectiveProvider === 'mistral' ||
-                            effectiveProvider === 'pi'
+                            effectiveProvider === 'pi' ||
+                            effectiveProvider === 'muse'
                           ) {
                             // Mistral Medium 3.5 → locked High (vibe schema /
                             // known Pi upstream default). Devstral and other
                             // Pi models stay option-free (inert — rail).
+                            // Muse Spark → minimal…ultra ladder (never none).
                             combinedReasoningOptions = getEnsembleReasoningOptions(
                               effectiveProvider,
                               effectiveSelectedModel
@@ -3949,7 +3951,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             combinedSelectedReasoning =
                               (ensembleResolved &&
                               (ensembleResolved.provider === 'mistral' ||
-                                ensembleResolved.provider === 'pi')
+                                ensembleResolved.provider === 'pi' ||
+                                ensembleResolved.provider === 'muse')
                                 ? ensembleResolved.reasoningEffort
                                 : '') ||
                               combinedReasoningOptions[0]?.value ||

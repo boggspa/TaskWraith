@@ -22,6 +22,7 @@ export type ChannelAgentIpcProviderId =
   | 'antigravity'
   | 'pi'
   | 'mistral'
+  | 'muse'
 
 export type ChannelAgentIpcPermissionPresetId =
   | 'read_only'

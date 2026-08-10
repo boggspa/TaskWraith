@@ -293,6 +293,16 @@ const MISTRAL_DEFAULT_MODELS = [
     description: '256K context - flagship'
   }
 ] satisfies CodexModelOption[]
+// Muse Code CLI seat catalog (opaque exec). Decode-ready; not live-selectable yet.
+const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
+const MUSE_DEFAULT_MODELS = [
+  {
+    id: MUSE_DEFAULT_MODEL,
+    label: 'Muse Spark 1.2',
+    description: 'Muse Code CLI default model',
+    isDefault: true
+  }
+] satisfies CodexModelOption[]
 // Cursor model catalog — backs live Path-B Cursor selection and decodes
 // stored historical selections.
 const CURSOR_DEFAULT_MODEL = 'composer-2.5-fast'
@@ -542,6 +552,8 @@ function getStaticProviderModelOptions(provider: StaticCatalogueProviderId): Cod
       return CURSOR_DEFAULT_MODELS
     case 'mistral':
       return MISTRAL_DEFAULT_MODELS
+    case 'muse':
+      return MUSE_DEFAULT_MODELS
     default:
       // NOTE the semantics: `[]` here means "this provider has no catalogue at
       // all", which is NOT the claim Pi's `[]` makes in App.tsx ("no upstream
@@ -567,6 +579,8 @@ function getStaticProviderDefaultModel(provider: StaticCatalogueProviderId): str
       return CURSOR_DEFAULT_MODEL
     case 'mistral':
       return MISTRAL_DEFAULT_MODEL
+    case 'muse':
+      return MUSE_DEFAULT_MODEL
     default:
       // '' — never another provider's id, which is the precise damage this
       // whole block exists to prevent. An empty string is falsy at every

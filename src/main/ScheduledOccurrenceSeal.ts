@@ -74,7 +74,8 @@ const PROVIDER_IDS = {
   ollama: true,
   antigravity: true,
   pi: true,
-  mistral: true
+  mistral: true,
+  muse: true
 } as const satisfies Record<ProviderId, true>
 
 const AGENTIC_SERVICE_AUTHORITY_FIELDS = {

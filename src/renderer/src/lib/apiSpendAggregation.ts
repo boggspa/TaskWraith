@@ -81,7 +81,8 @@ export const API_SPEND_PROVIDER_ORDER: ProviderId[] = [
   // per-model (the seat's two models are 25x apart on output), so a Mistral row
   // reading zero here means the model-aware estimator in MistralUsage.ts is not
   // reaching the usage record, not that the seat is free.
-  'mistral'
+  'mistral',
+  'muse'
 ]
 
 /** Aggregated token + cost totals for one provider over one window. */

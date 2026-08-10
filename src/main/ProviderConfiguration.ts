@@ -31,6 +31,11 @@ export interface DetectConfiguredProvidersDependencies {
   ) => Promise<{ available: boolean; modelCount: number }>
   /** Count of Pi upstreams with a stored BYOK key; 0 keeps pi unconfigured. */
   getPiConfiguredUpstreamCount?: () => number
+  /**
+   * True when a Muse Meta Model API / CLI credential is present for picker
+   * admission. Binary alone must not admit an unauthenticated seat.
+   */
+  getMuseConfiguredCredentialPresent?: () => boolean
   /** Official `agy models` probe; only called after opt-in or API-key admission. */
   getAntigravityConfiguredModels?: (settings: AppSettings) => Promise<ConfiguredProviderModel[]>
   /** Combined authenticated agy + Gemini API catalog; called only after lane admission. */
@@ -205,6 +210,20 @@ function configuredProviderProbes(
         configured:
           Boolean(resolved.binaryPath) &&
           (dependencies.getPiConfiguredUpstreamCount?.() ?? 0) > 0
+      }))
+  })
+  probes.push({
+    provider: 'muse',
+    // Configured = muse binary resolvable AND a Meta Model API / CLI credential
+    // present. Binary alone would surface a picker entry that cannot run;
+    // fail-closed on unresolved probes (includeWhenUnknown: false), modelled
+    // on pi — not an AntiGravity consent wall.
+    includeWhenUnknown: false,
+    run: () =>
+      resolveProviderBinary('muse').then((resolved) => ({
+        configured:
+          Boolean(resolved.binaryPath) &&
+          Boolean(dependencies.getMuseConfiguredCredentialPresent?.())
       }))
   })
   let apiKeyConfigured = false

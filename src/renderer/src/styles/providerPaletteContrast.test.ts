@@ -63,6 +63,7 @@ const STATIC_PROVIDER_COLORS = {
   zai: '#177DAA',
   minimax: '#C044A4',
   mistral: '#D44404',
+  muse: '#1671EA',
   cerebras: '#BB584A',
   groq: '#088482'
 } as const
@@ -220,6 +221,7 @@ describe('provider palette contrast', () => {
       'antigravity',
       'pi',
       'mistral',
+      'muse',
       'deepseek'
     ]) {
       expect(transcriptCss).toContain(`.participant-health-chip.provider-${provider}`)

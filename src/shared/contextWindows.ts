@@ -14,6 +14,7 @@ export type ContextWindowProviderId =
   | 'antigravity'
   | 'pi'
   | 'mistral'
+  | 'muse'
 
 const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini
@@ -55,6 +56,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'mistral-medium-3.5': 262_144,
   'mistral-vibe-cli-latest': 262_144,
   'devstral-small': 262_144,
+  // Muse Code CLI default model (opaque exec seat).
+  'muse-spark-1.2': 200_000,
   'groq/openai/gpt-oss-120b': 131_072,
   'groq/qwen/qwen3-32b': 131_072,
   'cerebras/zai-glm-4.7': 131_072,
@@ -188,7 +191,9 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   pi: 1_000_000,
   // Mistral Vibe CLI seat — both its models sit at 262_144; see the
   // `mistral-medium-3.5` / `devstral-small` rows above.
-  mistral: 262_144
+  mistral: 262_144,
+  // Muse opaque CLI seat — conservative fallback until a measured window lands.
+  muse: 200_000
 }
 
 const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(

@@ -2287,7 +2287,8 @@ function App(): React.JSX.Element {
       ollama: 120_000,
       antigravity: 120_000,
       pi: 120_000,
-      mistral: 60_000
+      mistral: 60_000,
+      muse: 120_000
     },
     mainAuthorityMs: 60_000
   })
@@ -2581,7 +2582,8 @@ function App(): React.JSX.Element {
     ollama: [],
     antigravity: [],
     pi: [],
-    mistral: []
+    mistral: [],
+    muse: []
   })
   // Last-known Limit Counter hook snapshots (antigravity/deepseek/cerebras).
   // The hook lane's counterpart to `lastUsageWindowsByProviderRef` above: one
@@ -6269,6 +6271,9 @@ function App(): React.JSX.Element {
     if (provider === 'mistral') {
       return getProviderModelOptions('mistral').some((model) => model.id === modelId)
     }
+    if (provider === 'muse') {
+      return getProviderModelOptions('muse').some((model) => model.id === modelId)
+    }
     if (provider === 'antigravity') {
       return configuredAntigravityModels.some((model) => model.id === modelId)
     }
@@ -7592,6 +7597,9 @@ function App(): React.JSX.Element {
     if (next.antigravityGeminiApiMonthlySpendCapUsd !== undefined) {
       settingsPatch.antigravityGeminiApiMonthlySpendCapUsd =
         next.antigravityGeminiApiMonthlySpendCapUsd
+    }
+    if (next.museMonthlySpendCapUsd !== undefined) {
+      settingsPatch.museMonthlySpendCapUsd = next.museMonthlySpendCapUsd
     }
 
     if (next.mode !== undefined) {

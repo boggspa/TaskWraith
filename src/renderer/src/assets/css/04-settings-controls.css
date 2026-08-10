@@ -737,9 +737,16 @@
 }
 
 .settings-model-comparison-dot.provider-mistral,
+    .provider-muse,
 .settings-model-comparison-fill.provider-mistral {
   color: var(--provider-mistral-color);
 }
+
+.settings-model-comparison-dot.provider-muse,
+.settings-model-comparison-fill.provider-muse {
+  color: var(--provider-muse-color);
+}
+
 
 .settings-model-comparison-dot.provider-groq,
 .settings-model-comparison-fill.provider-groq {
@@ -4415,6 +4422,10 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider.provider-mistral {
   --run-card-provider-tint: var(--provider-mistral-color);
 }
+.run-card-provider.provider-muse {
+  --run-card-provider-tint: var(--provider-muse-color);
+}
+
 .run-card-provider.provider-groq {
   --run-card-provider-tint: var(--provider-groq-color);
 }
@@ -4430,6 +4441,7 @@ input:disabled, select:disabled, textarea:disabled {
     .provider-zai,
     .provider-minimax,
     .provider-mistral,
+    .provider-muse,
     .provider-groq,
     .provider-cerebras
   ) {
@@ -4440,6 +4452,26 @@ input:disabled, select:disabled, textarea:disabled {
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 0 10px color-mix(in srgb, var(--run-card-provider-tint) 14%, transparent);
 }
+.run-card-provider:is(
+    .provider-pi,
+    .provider-meta,
+    .provider-cohere,
+    .provider-essential,
+    .provider-deepseek,
+    .provider-zai,
+    .provider-minimax,
+    .provider-muse,
+    .provider-groq,
+    .provider-cerebras
+  ) {
+  color: var(--run-card-provider-tint);
+  border-color: color-mix(in srgb, var(--run-card-provider-tint) 32%, transparent);
+  background: color-mix(in srgb, var(--run-card-provider-tint) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--run-card-provider-tint) 14%, transparent);
+}
+
 
 /* Status chip — same rim-shine pattern per tone. Each tone
  * keeps its semantic color (success / warning / danger /

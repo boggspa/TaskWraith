@@ -22,5 +22,6 @@ export function getProviderLabel(provider: ProviderId): string {
   if (provider === 'antigravity') return 'AntiGravity'
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
+  if (provider === 'muse') return 'Muse'
   return 'Gemini'
 }

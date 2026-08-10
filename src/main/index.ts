@@ -1535,6 +1535,7 @@ import {
 } from './mistral/MistralCliArgs'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
+import { runMuseProviderFromIpc } from './muse/MuseRun'
 import {
   clearMistralQuotaAnchor,
   configureMistralQuotaStore,
@@ -33845,6 +33846,35 @@ const mistralAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEv
   }
 ]
 
+
+// Muse Code: opaque `muse exec --json` seat. Phase-2 registers a reachable
+// adapter so PROVIDER_RUN_MANAGEMENT_IDS stays boot-complete. Lifecycle lives
+// in src/main/muse/MuseRun.ts (`runMuseProvider`); registry calls
+// `runMuseProviderFromIpc` until composition-root supplies spawn/binary.
+// Keep this array in index.ts so ProviderAdapterRegistrationSite can
+// statically resolve ...defaultProviderDescriptor('muse').
+const museAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
+  {
+    ...defaultProviderDescriptor('muse'),
+    run: ({ event, payload }) => runMuseProviderFromIpc(event, payload),
+    cancel: (runId) => cancelProviderRun('muse', runId),
+    getStatus: () => getCliProviderStatus('muse'),
+    getMcpStatus: async () => ({
+      provider: 'muse' as const,
+      available: false,
+      enabled: false,
+      source: 'none',
+      serverName: null,
+      tools: [] as string[],
+      sections: [] as unknown[],
+      message:
+        'Muse v1 is opaque CLI (muse exec --json); TaskWraith does not attach an MCP broker.'
+    }),
+    getCapabilityContract: (request = {}) =>
+      getProviderCapabilityContractDirect('muse', request.workspacePath, request.approvalMode)
+  }
+]
+
 const antigravityAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
     ...defaultProviderDescriptor('antigravity'),
@@ -33943,7 +33973,8 @@ const providerAdapters = createProviderAdapterRegistry<
     ...grokAdapters,
     ...cursorAdapters,
     ...piAdapters,
-    ...mistralAdapters
+    ...mistralAdapters,
+    ...museAdapters
   ],
   { requireCompleteProviderSet: true }
 )

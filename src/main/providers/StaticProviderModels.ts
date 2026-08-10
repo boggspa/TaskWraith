@@ -803,6 +803,25 @@ const MISTRAL_STATIC_MODELS = [
     description: '256K context - flagship, $1.50/$7.50 per Mtok'
   }
 ]
+// Muse Code CLI seat. Exactly one row on purpose: Meta withdrew Muse Spark 1.1
+// when 1.2 shipped, and the CLI's own catalogue
+// (~/.local/share/muse/model-catalog/<provider>__p<profile>.json) carries
+// `is_current` + `visibility`, so lifecycle is PROVIDER-PUBLISHED — do not add
+// a hand-kept retirement table like PI_MODEL_RETIREMENTS. Metadata comes from
+// that catalogue, never the web: the true context limit is 1,007,997, not the
+// widely-quoted 1,048,576.
+//
+// The id must stay byte-identical to MUSE_DEFAULT_MODELS in the renderer's
+// providerModelDefaults.ts — providerFallthroughGuards compares the two sides
+// and a divergence means the picker and the run disagree.
+const MUSE_STATIC_MODELS = [
+  {
+    id: 'muse-spark-1.2',
+    label: 'Muse Spark 1.2',
+    description: '1M context - $1.25/$4.25 per Mtok',
+    isDefault: true
+  }
+]
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },
@@ -900,37 +919,71 @@ export function kimiAcpThinkingConfigValue(
   return normalizeKimiReasoningEffort(model, effort) || 'on'
 }
 
+/**
+ * Terminal arm for the static catalogue switch. Unreachable through a typed
+ * caller — that is what the `never` parameter buys — so arriving here at
+ * runtime means an untyped seam (IPC, a persisted settings string) handed us a
+ * provider this catalogue has never heard of.
+ *
+ * This replaced a ternary chain whose terminal arm was `GEMINI_STATIC_MODELS`.
+ * That shape does not fail typecheck, so three separate seats (Pi, Mistral,
+ * Muse) each silently resolved GEMINI model ids on their own runs, and only
+ * `providerFallthroughGuards` ever caught it. Do not reintroduce a defaulting
+ * arm here: a wrong-but-plausible model id is exactly the failure this guard
+ * exists to stop.
+ */
+function reportUnhandledStaticProviderCatalogue(provider: never): never[] {
+  const message =
+    `[StaticProviderModels] No static catalogue for provider "${String(provider)}". ` +
+    'Add a case to the switch in StaticProviderModels.ts — do NOT add a ' +
+    'defaulting arm.'
+  // Dev and test: fail loudly. The bug class is defined by looking correct, so
+  // the guard must be impossible to read past.
+  if (process.env.NODE_ENV !== 'production') throw new Error(message)
+  // Production: an empty catalogue is honest ("we have no rows for this") and
+  // recoverable. Returning another provider's rows is neither.
+  console.error(message)
+  return []
+}
+
+function staticRowsForProvider(provider: ProviderId, options: StaticProviderModelOptions) {
+  switch (provider) {
+    case 'codex':
+      return activeCodexModelRows(CODEX_STATIC_MODELS, options.now)
+    case 'claude':
+      return CLAUDE_STATIC_MODELS
+    case 'kimi':
+      return KIMI_STATIC_MODELS
+    case 'ollama':
+      return OLLAMA_STATIC_MODELS
+    case 'gemini':
+      return GEMINI_STATIC_MODELS
+    case 'grok':
+      return GROK_STATIC_MODELS
+    case 'cursor':
+      return CURSOR_STATIC_MODELS
+    case 'mistral':
+      return MISTRAL_STATIC_MODELS
+    case 'muse':
+      return MUSE_STATIC_MODELS
+    case 'pi':
+      return piStaticModelRows(options.now)
+    case 'antigravity':
+      // Official agy-CLI rows stay discovery-owned (S4), but the BYO-key
+      // gemini-api sub-lane gets a deterministic static floor so ensemble
+      // catalogs and fallbacks are never model-less. The `gemini-api:` prefix
+      // is load-bearing — dispatch routes on it.
+      return ANTIGRAVITY_GEMINI_API_STATIC_MODELS
+    default:
+      return reportUnhandledStaticProviderCatalogue(provider)
+  }
+}
+
 export function getStaticProviderModels(
   provider: ProviderId,
   options: StaticProviderModelOptions = {}
 ) {
-  const models =
-    provider === 'codex'
-      ? activeCodexModelRows(CODEX_STATIC_MODELS, options.now)
-      : provider === 'claude'
-        ? CLAUDE_STATIC_MODELS
-        : provider === 'kimi'
-          ? KIMI_STATIC_MODELS
-          : provider === 'ollama'
-            ? OLLAMA_STATIC_MODELS
-            : provider === 'gemini'
-              ? GEMINI_STATIC_MODELS
-              : provider === 'grok'
-                ? GROK_STATIC_MODELS
-                : provider === 'cursor'
-                  ? CURSOR_STATIC_MODELS
-                  : provider === 'mistral'
-                    ? MISTRAL_STATIC_MODELS
-                    : provider === 'pi'
-                    ? piStaticModelRows(options.now)
-                    : provider === 'antigravity'
-                    // Official agy-CLI rows stay discovery-owned (S4), but the
-                    // BYO-key gemini-api sub-lane gets a deterministic static
-                    // floor so ensemble catalogs and fallbacks are never
-                    // model-less. The `gemini-api:` prefix is load-bearing —
-                    // dispatch routes on it.
-                    ? ANTIGRAVITY_GEMINI_API_STATIC_MODELS
-                    : GEMINI_STATIC_MODELS
+  const models = staticRowsForProvider(provider, options)
   if (!options.includePreviewModels) return models
   const previews = previewModelsForProvider(provider)
   if (previews.length === 0) return models

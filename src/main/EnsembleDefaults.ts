@@ -259,6 +259,7 @@ function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3.5:9b'
   if (provider === 'mistral') return 'devstral-small'
+  if (provider === 'muse') return 'muse-spark-1.2'
   return 'flash-lite'
 }
 

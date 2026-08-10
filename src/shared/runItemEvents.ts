@@ -18,6 +18,7 @@ export type RunItemEventProvider =
   | 'antigravity'
   | 'pi'
   | 'mistral'
+  | 'muse'
 
 export type RunItemEventKind =
   | 'run/started'

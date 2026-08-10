@@ -59,6 +59,46 @@ export function summariseMistralVibeStatus(status: unknown): ProviderAuthSummary
   }
 }
 
+/**
+ * Muse Code opaque CLI status. Binary presence is knowable; Meta Model API
+ * credential state is owned by Muse's relocated auth path — do not treat a
+ * resolvable binary alone as "signed in".
+ */
+export function summariseMuseCodeStatus(status: unknown): ProviderAuthSummary {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  if (!record) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Muse setup not checked yet',
+      hint:
+        'Install the Muse Code CLI and complete Meta Model API login / key setup. TaskWraith probes the binary fail-closed and does not invent auth state.'
+    }
+  }
+  if (record.available === false) {
+    return {
+      variant: 'not-available',
+      statusText: 'Muse Code CLI not found',
+      hint: 'Install `muse`, then return here after Meta Model API login / key setup.'
+    }
+  }
+
+  const authState = String(record.authState || '').trim().toLowerCase()
+  if (['authenticated', 'api-key', 'oauth'].includes(authState)) {
+    return {
+      variant: 'signed-in',
+      statusText: 'Muse Code configured',
+      hint: 'You can launch Muse runs from TaskWraith.'
+    }
+  }
+
+  return {
+    variant: 'partial',
+    statusText: 'Muse CLI ready · setup unverified',
+    hint:
+      'Complete Muse / Meta Model API login so the fail-closed probe can admit the seat. TaskWraith does not store the Meta API key in this card.'
+  }
+}
+
 /** Maps a Claude/Kimi auth status to the shared onboarding/settings summary. */
 export function summariseProviderApiKeyStatus(
   status: ProviderApiKeyStatus | null,

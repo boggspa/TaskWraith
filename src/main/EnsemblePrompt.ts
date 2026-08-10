@@ -22,7 +22,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   ollama: 'Ollama',
   antigravity: 'Antigravity',
   pi: 'Pi',
-  mistral: 'Mistral'
+  mistral: 'Mistral',
+  muse: 'Muse'
 }
 
 const MAX_MESSAGE_CHARS = 4000

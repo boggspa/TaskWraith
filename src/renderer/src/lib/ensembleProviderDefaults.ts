@@ -134,6 +134,23 @@ const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   }
 ]
 
+/** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
+ *  (`muse-spark-1.2`). Opaque CLI seat — keep the catalogue small until the
+ *  live probe widens it. */
+const MUSE_MODELS: CombinedModelPickerModelOption[] = [
+  { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' }
+]
+
+// Muse Spark effort ladder (HANDOFF #4): minimal→ultra, never `none`.
+const MUSE_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'minimal', label: 'Minimal' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'ultra', label: 'Ultra' }
+]
+
+
 const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
@@ -378,6 +395,8 @@ export function getEnsembleReasoningOptions(
       // known: mistral's own schema pins medium-3.5 at high. Every other Pi
       // model runs its upstream default and stays honestly option-free.
       return modelId === 'mistral/mistral-medium-3.5' ? MISTRAL_THINKING_REASONING : []
+    case 'muse':
+      return MUSE_REASONING
     default:
       return []
   }
@@ -499,6 +518,14 @@ export function getDefaultEnsembleParticipantConfig(
         model: 'devstral-small',
         permissionPresetId: 'default'
       }
+    case 'muse':
+      // Must stay in lockstep with getDefaultEnsembleModel in
+      // src/main/EnsembleDefaults.ts.
+      return {
+        model: 'muse-spark-1.2',
+        permissionPresetId: 'default',
+        reasoningEffort: 'medium'
+      }
     default:
       return {
         model: 'gpt-5.5',
@@ -534,6 +561,8 @@ export function getDefaultEnsembleRoleName(provider: ProviderId): string {
       return 'Pi'
     case 'mistral':
       return 'Mistral'
+    case 'muse':
+      return 'Muse'
     default:
       return 'Gemini'
   }
@@ -1107,6 +1136,14 @@ export function getEnsembleModelDefaults(
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'devstral-small'
+      }
+    case 'muse':
+      return {
+        modelOptions: MUSE_MODELS,
+        reasoningOptions: MUSE_REASONING,
+        defaultReasoning: 'medium',
+        fastModeCapableModelIds: new Set<string>(),
+        defaultModelId: 'muse-spark-1.2'
       }
     default:
       return {

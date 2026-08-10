@@ -19,6 +19,7 @@ import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
 import { resolveOllamaMeasuredContextTokens } from '../ollama/OllamaContextBudget'
 import { isOllamaRunProfileId } from '../ollama/OllamaRunProfiles'
 import { MISTRAL_DEFAULT_MODEL } from '../mistral/MistralCliArgs'
+import { MUSE_DEFAULT_MODEL } from '../muse/MuseCliArgs'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   approvalModeRank,
@@ -1391,6 +1392,8 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
     // different provider that happens to share the brand word.
     case 'mistral':
       return MISTRAL_DEFAULT_MODEL
+    case 'muse':
+      return MUSE_DEFAULT_MODEL
     case 'gemini':
       return 'flash-lite'
     default: {

@@ -82,5 +82,6 @@ export const RUN_MANAGER_PROVIDERS: ProviderId[] = [
   // is element-for-element equal to PROVIDER_RUN_MANAGEMENT_IDS, so the two
   // orderings are one fact stored twice. Keep new identities at the tail of
   // BOTH.
-  'mistral'
+  'mistral',
+  'muse'
 ]

@@ -85,7 +85,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   // here only lets persisted records with provider 'antigravity' decode.
   'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ])
 const AGENTIC_WORKSPACE_GRANT_PROVIDER_IDS = new Set<AgenticWorkspaceGrantProviderId>([
   ...PROVIDER_IDS,
@@ -142,6 +143,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'antigravityOptInAcceptedAt',
   'antigravityGeminiApiDisclosureAcceptedAt',
   'antigravityGeminiApiMonthlySpendCapUsd',
+  'museMonthlySpendCapUsd',
   'codexUsageCredential',
   'storeLocalChatHistory',
   'storeRawEvents',
@@ -282,7 +284,8 @@ export function availableProviderIds(): ProviderId[] {
     'ollama',
     'antigravity',
     'pi',
-    'mistral'
+    'mistral',
+    'muse'
   ]
 }
 
@@ -771,7 +774,8 @@ const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
   'ollama',
   'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ])
 
 /** Sanitize the audit orchestration policy: drop unknown providers, clamp the
@@ -2169,6 +2173,16 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       // produce a meter that never fills; anything else clears the cap.
       const value = sanitized.antigravityGeminiApiMonthlySpendCapUsd
       sanitized.antigravityGeminiApiMonthlySpendCapUsd =
+        typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1_000_000
+          ? value
+          : null
+    }
+    if ('museMonthlySpendCapUsd' in sanitized) {
+      // Same soft-budget clamp as the AntiGravity Gemini API cap. Explicit null
+      // clears the Muse meter; omitting the key leaves the shared $15 default
+      // at read sites (see resolveMuseMonthlySpendCapUsd).
+      const value = sanitized.museMonthlySpendCapUsd
+      sanitized.museMonthlySpendCapUsd =
         typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1_000_000
           ? value
           : null

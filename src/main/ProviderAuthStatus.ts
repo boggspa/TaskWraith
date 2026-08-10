@@ -40,7 +40,9 @@ const TRANSPORT_BY_PROVIDER: Record<ProviderId, ProviderAuthTransport> = {
   pi: 'cli',
   // Mistral's Vibe CLI (`vibe-acp`) is a spawned local CLI, same family as
   // Grok/Kimi/Cursor — plan-backed sign-in happens in the CLI itself.
-  mistral: 'cli'
+  mistral: 'cli',
+  // Muse Code CLI (`muse exec`); credential via muse login / Meta Model API key.
+  muse: 'cli'
 }
 
 const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -62,7 +64,9 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // Mistral's Vibe CLI is write-capable in its 'default' approval mode (unlike
   // Grok's still-read-only G3 posture), so its tool calls genuinely route
   // through TaskWraith's main approval gate — same as Kimi.
-  mistral: true
+  mistral: true,
+  // Native Muse tools are provider-owned; no host per-tool approval cards in v1.
+  muse: false
 }
 
 const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -86,7 +90,9 @@ const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   pi: false,
   // Mistral's Vibe CLI talks ACP directly (like Grok/Cursor); it has no
   // TaskWraith-managed authenticated HTTP MCP gateway the way Kimi does.
-  mistral: false
+  mistral: false,
+  // No TaskWraith MCP broker for Muse in v1.
+  muse: false
 }
 
 export function buildProviderAuthStatusV2(input: ProviderAuthStatusV2Input): ProviderAuthStatusV2 {

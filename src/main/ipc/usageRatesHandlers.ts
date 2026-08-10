@@ -84,6 +84,7 @@ export interface UsageRatesHandlerDeps {
       generatedAt: string
       spend?: unknown
       antigravityBudget?: unknown
+      museBudget?: unknown
     }
   }) => void
   broadcastFirstLaunchState: (payload: { state: unknown }) => void
@@ -271,10 +272,7 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
                 .map((window) => ({
                   id: String(window?.id || ''),
                   label: String(window?.label || ''),
-                  usedPercent: Math.max(
-                    0,
-                    Math.min(100, Math.round(window.usedPercent as number))
-                  ),
+                  usedPercent: Math.max(0, Math.min(100, Math.round(window.usedPercent as number))),
                   limitLabel: window?.limitLabel,
                   ...(window?.resetAt ? { resetAt: window.resetAt } : {})
                 }))
@@ -317,7 +315,13 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
         providerRates: deps.getCurrentProviderRates(),
         fxRates: deps.getCurrentFxRates()
       })
-      if (providers.length === 0 && !extras.spend && !extras.antigravityBudget) return
+      if (
+        providers.length === 0 &&
+        !extras.spend &&
+        !extras.antigravityBudget &&
+        !extras.museBudget
+      )
+        return
       deps.broadcastModelUsage({
         usage: { providers, generatedAt: new Date().toISOString(), ...extras }
       })
@@ -369,7 +373,9 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
         }
       })
     )
-    return Object.fromEntries(entries) as Partial<Record<ProviderId, ProviderCapabilityContract | null>>
+    return Object.fromEntries(entries) as Partial<
+      Record<ProviderId, ProviderCapabilityContract | null>
+    >
   }
 
   const FIRST_LAUNCH_USAGE_FETCHERS: Partial<Record<ProviderId, NormalizedUsageSnapshotFetcher>> = {
@@ -431,14 +437,17 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   setTimeout(() => {
     void deps.getExternalUsageCached().then(() => broadcastUsageRollupToRemote())
   }, 45_000).unref?.()
-  setInterval(() => {
-    // Bounded, NON-forced refresh: rescan only when the cache is older than
-    // 90 minutes, so every 2h tick refreshes (same ≤2h freshness as before)
-    // but through the incremental per-file cache. The old maxAgeMs:0 forced
-    // a full multi-GB reparse AND reset the Cursor incremental cache every
-    // 2h, forever, even with no remote device paired.
-    void deps
-      .getExternalUsageCached({ maxAgeMs: 90 * 60 * 1000 })
-      .then(() => broadcastUsageRollupToRemote())
-  }, 2 * 60 * 60 * 1000).unref?.()
+  setInterval(
+    () => {
+      // Bounded, NON-forced refresh: rescan only when the cache is older than
+      // 90 minutes, so every 2h tick refreshes (same ≤2h freshness as before)
+      // but through the incremental per-file cache. The old maxAgeMs:0 forced
+      // a full multi-GB reparse AND reset the Cursor incremental cache every
+      // 2h, forever, even with no remote device paired.
+      void deps
+        .getExternalUsageCached({ maxAgeMs: 90 * 60 * 1000 })
+        .then(() => broadcastUsageRollupToRemote())
+    },
+    2 * 60 * 60 * 1000
+  ).unref?.()
 }

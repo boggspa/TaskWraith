@@ -732,7 +732,8 @@ export class ApprovalService {
         ollama: userSettings.perProviderMs.ollama,
         antigravity: userSettings.perProviderMs.antigravity,
         pi: userSettings.perProviderMs.pi,
-        mistral: userSettings.perProviderMs.mistral
+        mistral: userSettings.perProviderMs.mistral,
+        muse: userSettings.perProviderMs.muse
       },
       mainTimeoutMs: userSettings.mainAuthorityMs
     })

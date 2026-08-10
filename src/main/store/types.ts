@@ -221,6 +221,12 @@ export type ComposerStyle =
 // guidance rather than being removed from the picker.
 // `mistral` is the Mistral Vibe seat: a CLI agent lane driving `vibe-acp` over
 // ACP, plan-backed by the user's Mistral sign-in. It is live-selectable.
+// `muse` is the Muse Code CLI seat (`muse exec --json`): opaque CLI transport,
+// Meta Model API / muse login credentials, fail-closed binary+credential probe
+// (pi-shaped). Decode/run-management identity lands before picker offer; live
+// membership is a separate, intent-guarded product commit. No Muse-specific
+// fields on ProviderReroutePlan — same pattern as pi/mistral (effort lives on
+// chat/composer state and launch controls, not the pause-reroute plan).
 //
 // READ THIS BEFORE TOUCHING ANYTHING SPELLED 'mistral'. There are TWO distinct
 // identities sharing that one runtime string:
@@ -249,6 +255,7 @@ export type ProviderId =
   | 'antigravity'
   | 'pi'
   | 'mistral'
+  | 'muse'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
   from: ProviderId
@@ -2061,6 +2068,7 @@ export type ProviderAdapterTransport =
   | 'antigravity-cli'
   | 'pi-cli'
   | 'mistral-vibe-acp'
+  | 'muse-exec-json'
 
 export type ProviderAdapterRunChannel = 'run-agent'
 
@@ -2403,6 +2411,13 @@ export interface AppSettings {
    * and never blocks a run — TaskWraith cannot see actual billing, so the hard
    * cap belongs in the user's Google Cloud billing budget. null/absent = no cap. */
   antigravityGeminiApiMonthlySpendCapUsd?: number | null
+  /**
+   * Soft calendar-month budget (USD) for Muse Code projected API-equivalent
+   * spend. Advisory only — fills the Model Usage meter from the 1st and never
+   * blocks a run. `undefined` resolves to the shared default ($15); explicit
+   * `null` clears the meter.
+   */
+  museMonthlySpendCapUsd?: number | null
   defaultGeminiAuthProfileId?: string | null
   geminiAuthProfiles?: GeminiAuthProfile[]
   /** Phase M1 — Gemini API runtime selection. See {@link GeminiApiRuntimeMode}

@@ -117,7 +117,8 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   ollama: 'Local Ollama HTTP',
   antigravity: 'Antigravity CLI',
   pi: 'Pi CLI (BYOK)',
-  mistral: 'Mistral Vibe CLI'
+  mistral: 'Mistral Vibe CLI',
+  muse: 'Muse Code CLI'
 }
 
 /** User-facing offer-policy reason for a retired or not-yet-configured provider. */
