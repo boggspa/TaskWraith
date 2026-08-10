@@ -12,7 +12,7 @@ function between(start: string, end: string): string {
 }
 
 describe('Channels production main integration', () => {
-  it('starts the extracted bootstrap with the shared encrypted identity before recovery', () => {
+  it('starts shared storage early and activates agents only after main run ports are live', () => {
     const composition = between(
       'let channelProductionBootstrap:',
       'type BroadHistoryStrictAttempt = {'
@@ -35,14 +35,36 @@ describe('Channels production main integration', () => {
     expect(composition).toContain(
       'getOwnerWindow: (event) => BrowserWindow.fromWebContents(event.sender)'
     )
+    expect(composition).toContain('agentExecution: {')
+    expect(composition).toContain('composer.composeMainOwnedChannelAgentRun(input, authority)')
+    expect(composition).toContain('subscribeRunEvents: (sink) => runEventBus.subscribe(sink)')
+    expect(composition).toContain(
+      'subscribeRunSessions: (listener) => runManager.onChange(listener)'
+    )
+    expect(composition).toContain(
+      'claimRunAudience: (runId, sinkIds) => runEventBus.claimRunAudience(runId, sinkIds)'
+    )
+    expect(composition).toContain('reconcileChannelAgentProductionRun(')
     expect(composition).not.toContain('confirm:')
     expect(composition).toContain('win.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)')
     expect(composition).toContain('historyClearAdmissionGate.isAuthorityBlocked({')
 
+    const constructed = source.indexOf('createChannelProductionBootstrap({')
     const start = source.indexOf('channelProductionBootstrap.start()')
     const recovery = source.indexOf('await recoverPendingHistoryDeletionBeforeRunQueue()')
-    expect(start).toBeGreaterThanOrEqual(0)
+    const composer = source.indexOf('composerServiceRef = composerService')
+    const dispatch = source.indexOf('channelAgentDispatchRef = (payload, hooks) => {')
+    const activation = source.indexOf('channelProductionBootstrap?.startAgentExecution()')
+    expect(constructed).toBeGreaterThanOrEqual(0)
+    expect(start).toBeGreaterThan(constructed)
     expect(recovery).toBeGreaterThan(start)
+    expect(composer).toBeGreaterThan(recovery)
+    expect(dispatch).toBeGreaterThan(composer)
+    expect(activation).toBeGreaterThan(dispatch)
+    const dispatchComposition = source.slice(dispatch, activation)
+    expect(dispatchComposition).toContain('baseDispatchRunWithProviderPause(')
+    expect(dispatchComposition).toContain('hooks.observer')
+    expect(dispatchComposition).toContain('hooks.finalAuthorization')
   })
 
   it('gives broad and scoped deletion their own durable Channels target before commit', () => {

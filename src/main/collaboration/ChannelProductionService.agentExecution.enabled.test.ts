@@ -155,6 +155,8 @@ describe('ChannelProductionService enabled agent execution attachment', () => {
       agentExecution: executionPorts()
     })
     service.start()
+    expect(doubles.start).not.toHaveBeenCalled()
+    service.startAgentExecution()
     expect(doubles.start).toHaveBeenCalledWith([active.channelId])
     const composition = doubles.compositionOptions as ChannelAgentProductionCompositionOptions
     expect(composition.journal).toBeInstanceOf(ChannelAgentDispatchJournalStore)
@@ -199,6 +201,7 @@ describe('ChannelProductionService enabled agent execution attachment', () => {
       agentExecution: executionPorts()
     })
     service.start()
+    service.startAgentExecution()
     const composition = doubles.compositionOptions as ChannelAgentProductionCompositionOptions
     const journal = composition.journal as ChannelAgentDispatchJournalStore
     const eraseChannel = vi.spyOn(journal, 'eraseChannel')

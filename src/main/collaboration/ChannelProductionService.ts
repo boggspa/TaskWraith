@@ -155,6 +155,7 @@ export interface ChannelProductionHistoryDeletionResult {
 
 export interface ChannelProductionService {
   start(): ChannelProductionStatus
+  startAgentExecution(): void
   stop(): Promise<void>
   status(): ChannelProductionStatus
   hostIdentityPublicKey(): string
@@ -508,15 +509,6 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
           now: this.now,
           ...(this.options.logger ? { logger: this.options.logger } : {})
         })
-        agentProduction.start(
-          store
-            .listChannels()
-            .filter(
-              (channel) =>
-                channel.status === 'active' && !recoveryBlockedChannelIds.has(channel.channelId)
-            )
-            .map((channel) => channel.channelId)
-        )
       } catch {
         void agentProduction?.stop().catch(() => undefined)
         try {
@@ -545,6 +537,19 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     }
     this.refreshRelayRooms()
     return this.status()
+  }
+
+  startAgentExecution(): void {
+    const state = this.requireRunning()
+    state.agentProduction?.start(
+      state.store
+        .listChannels()
+        .filter(
+          (channel) =>
+            channel.status === 'active' && !state.recoveryBlockedChannelIds.has(channel.channelId)
+        )
+        .map((channel) => channel.channelId)
+    )
   }
 
   stop(): Promise<void> {

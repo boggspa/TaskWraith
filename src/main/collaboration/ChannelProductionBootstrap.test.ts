@@ -25,6 +25,7 @@ import {
   createChannelProductionBootstrap,
   createChannelProductionRelayPort,
   type ChannelProductionAgentManagementOptions,
+  type ChannelProductionAgentRuntimeOptions,
   type ChannelProductionBootstrapOptions
 } from './ChannelProductionBootstrap'
 import type { ChannelAgentIdentitySafeStorage } from './ChannelAgentIdentityStore'
@@ -121,6 +122,17 @@ function agentManagement() {
   return { options, confirm, getOwnerWindow }
 }
 
+function agentExecution(): ChannelProductionAgentRuntimeOptions {
+  return {
+    composeMainOwnedChannelAgentRun: vi.fn(),
+    dispatch: vi.fn(),
+    subscribeRunEvents: vi.fn(),
+    subscribeRunSessions: vi.fn(),
+    claimRunAudience: vi.fn(),
+    reconcileRun: vi.fn()
+  } as unknown as ChannelProductionAgentRuntimeOptions
+}
+
 function channel(channelId: string, chatId: string): ChannelIpcChannel {
   return {
     channelId,
@@ -139,6 +151,7 @@ function channel(channelId: string, chatId: string): ChannelIpcChannel {
 function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channel-b', 'chat-b')]): {
   service: ChannelProductionService
   start: ReturnType<typeof vi.fn>
+  startAgentExecution: ReturnType<typeof vi.fn>
   stop: ReturnType<typeof vi.fn>
 } {
   const start = vi.fn(() => ({
@@ -147,12 +160,15 @@ function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channe
     recoveryBlockedChannelCount: 0,
     openRoomCount: 0
   }))
+  const startAgentExecution = vi.fn(() => undefined)
   const stop = vi.fn(async () => undefined)
   return {
     start,
+    startAgentExecution,
     stop,
     service: {
       start,
+      startAgentExecution,
       stop,
       status: start,
       hostIdentityPublicKey: vi.fn(() => 'public-key'),
@@ -211,6 +227,7 @@ function harness(overrides: Partial<ChannelProductionBootstrapOptions> = {}): {
     publishToMain,
     publishToChat,
     agentManagement: defaultAgentManagement,
+    agentExecution: agentExecution(),
     logger,
     ...optionOverrides,
     createService: (options) => {
@@ -237,7 +254,28 @@ describe('ChannelProductionBootstrap', () => {
 
     expect(fixture.handlers.size).toBe(0)
     expect(fixture.serviceOptions.safeStorage).toBe(safeStorage)
+    expect(fixture.serviceOptions.agentExecution).toMatchObject({
+      composeMainOwnedChannelAgentRun: expect.any(Function),
+      dispatch: expect.any(Function),
+      subscribeRunEvents: expect.any(Function),
+      subscribeRunSessions: expect.any(Function),
+      claimRunAudience: expect.any(Function),
+      reconcileRun: expect.any(Function)
+    })
+    expect(fixture.serviceOptions.agentExecution?.getChat('chat-a')).toMatchObject({
+      appChatId: 'chat-a'
+    })
+    expect(fixture.serviceOptions.agentExecution?.resolveWorkspacePrincipal(agentChat())).toEqual({
+      kind: 'workspace',
+      workspaceId: 'workspace-a'
+    })
+    expect(fixture.serviceOptions.agentExecution?.getSettings()).toEqual(agentSettings())
+    expect(fixture.serviceOptions.agentExecution?.providerAllowed('codex')).toBe(true)
+    expect(fixture.serviceOptions.agentExecution?.providerAllowed('gemini')).toBe(false)
     expect(fixture.bootstrap.start()).toMatchObject({ state: 'running', channelCount: 2 })
+    expect(fixture.service.startAgentExecution).not.toHaveBeenCalled()
+    fixture.bootstrap.startAgentExecution()
+    expect(fixture.service.startAgentExecution).toHaveBeenCalledOnce()
     expect([...fixture.handlers.keys()].sort()).toEqual(
       [
         'channels:append',
@@ -473,6 +511,17 @@ describe('ChannelProductionBootstrap', () => {
         agentManagement: { ...management.options, getOwnerWindow: undefined as never }
       })
     ).toThrow('agent management requires main-owned authority')
+  })
+
+  it('rejects partial agent execution before constructing the service', () => {
+    expect(() =>
+      harness({
+        agentExecution: {
+          ...agentExecution(),
+          reconcileRun: undefined as never
+        }
+      })
+    ).toThrow('agent execution requires main-owned runtime ports')
   })
 })
 

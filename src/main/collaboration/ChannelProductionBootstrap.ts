@@ -21,6 +21,7 @@ import {
 } from './ChannelAgentManagementController'
 import {
   createChannelProductionService,
+  type ChannelProductionAgentExecutionOptions,
   type ChannelProductionRelayPort,
   type ChannelProductionService,
   type ChannelProductionServiceOptions,
@@ -42,6 +43,11 @@ export interface ChannelProductionAgentManagementOptions extends Omit<
   getOwnerWindow: (event: IpcMainInvokeEvent) => BrowserWindow | null
 }
 
+export type ChannelProductionAgentRuntimeOptions = Omit<
+  ChannelProductionAgentExecutionOptions,
+  'getChat' | 'resolveWorkspacePrincipal' | 'getSettings' | 'providerAllowed'
+>
+
 export interface ChannelProductionBootstrapOptions {
   userDataPath: string
   loadIdentity: () => KeyPair
@@ -54,6 +60,7 @@ export interface ChannelProductionBootstrapOptions {
   publishToMain: (event: ChannelIpcChangeEvent) => void
   publishToChat: (chatId: string, event: ChannelIpcChangeEvent) => void
   agentManagement: ChannelProductionAgentManagementOptions
+  agentExecution: ChannelProductionAgentRuntimeOptions
   socketFactory?: TransportSocketFactory
   logger?: (line: string) => void
   createService?: (options: ChannelProductionServiceOptions) => ChannelProductionService
@@ -62,6 +69,7 @@ export interface ChannelProductionBootstrapOptions {
 export interface ChannelProductionBootstrap {
   readonly service: ChannelProductionService
   start(): ChannelProductionStatus
+  startAgentExecution(): void
   refreshRelayRooms(): number
   stop(): Promise<void>
 }
@@ -185,6 +193,17 @@ export function createChannelProductionBootstrap(
   ) {
     throw new Error('ChannelProductionBootstrap agent management requires main-owned authority')
   }
+  if (
+    !options.agentExecution ||
+    typeof options.agentExecution.composeMainOwnedChannelAgentRun !== 'function' ||
+    typeof options.agentExecution.dispatch !== 'function' ||
+    typeof options.agentExecution.subscribeRunEvents !== 'function' ||
+    typeof options.agentExecution.subscribeRunSessions !== 'function' ||
+    typeof options.agentExecution.claimRunAudience !== 'function' ||
+    typeof options.agentExecution.reconcileRun !== 'function'
+  ) {
+    throw new Error('ChannelProductionBootstrap agent execution requires main-owned runtime ports')
+  }
   if (options.createService !== undefined && typeof options.createService !== 'function') {
     throw new Error('ChannelProductionBootstrap createService must be a function')
   }
@@ -222,6 +241,15 @@ export function createChannelProductionBootstrap(
     loadIdentity: options.loadIdentity,
     safeStorage: options.safeStorage,
     relay: options.relay,
+    agentExecution: {
+      ...options.agentExecution,
+      getChat: options.getChat,
+      resolveWorkspacePrincipal: (chat) =>
+        resolveAgentWorkspace(chat, options.agentManagement)?.principal ?? null,
+      getSettings: options.agentManagement.getSettings,
+      providerAllowed: (provider) =>
+        options.agentManagement.providerAllowed(provider, options.agentManagement.getSettings())
+    },
     ...(options.socketFactory ? { socketFactory: options.socketFactory } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     onChange: publishChange
@@ -267,6 +295,11 @@ export function createChannelProductionBootstrap(
         void service.stop().catch(() => undefined)
         throw error
       }
+    },
+    startAgentExecution: () => {
+      if (stopped) throw new Error('ChannelProductionBootstrap has stopped')
+      if (!registration) throw new Error('ChannelProductionBootstrap has not started')
+      service.startAgentExecution()
     },
     refreshRelayRooms: () => service.refreshRelayRooms(),
     stop: () => {

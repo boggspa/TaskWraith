@@ -596,8 +596,10 @@ import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAu
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import {
   createChannelProductionBootstrap,
-  createChannelProductionRelayPort
+  createChannelProductionRelayPort,
+  type ChannelProductionAgentRuntimeOptions
 } from './collaboration/ChannelProductionBootstrap'
+import { reconcileChannelAgentProductionRun } from './collaboration/ChannelAgentProductionRunReconciler'
 import { createChannelMemberProductionBootstrap } from './collaboration/ChannelMemberProductionBootstrap'
 import { CHANNEL_IPC_CHANGED_EVENT } from '../shared/collaboration/ChannelIpc'
 import { CHANNEL_MEMBER_IPC_CHANGED_EVENT } from '../shared/collaboration/ChannelMemberIpc'
@@ -47628,6 +47630,7 @@ if (isGeminiMcpBridgeProcess) {
 
     let channelProductionBootstrap: ReturnType<typeof createChannelProductionBootstrap> | null =
       null
+    let channelAgentDispatchRef: ChannelProductionAgentRuntimeOptions['dispatch'] | null = null
     try {
       const channelIdentityStore = new HumanCollaborationIdentityStore(
         join(app.getPath('userData'), 'human-collaboration-identity.json'),
@@ -47665,6 +47668,30 @@ if (isGeminiMcpBridgeProcess) {
           getWorkspaces: () => AppStore.getWorkspaces(),
           canonicalizePath: canonicalPath,
           getOwnerWindow: (event) => BrowserWindow.fromWebContents(event.sender)
+        },
+        agentExecution: {
+          composeMainOwnedChannelAgentRun: (input, authority) => {
+            const composer = composerServiceRef
+            if (!composer) {
+              return Promise.reject(new Error('Channel agent composer is unavailable.'))
+            }
+            return composer.composeMainOwnedChannelAgentRun(input, authority)
+          },
+          dispatch: (payload, hooks) => {
+            const dispatch = channelAgentDispatchRef
+            if (!dispatch) {
+              return Promise.reject(new Error('Channel agent dispatcher is unavailable.'))
+            }
+            return dispatch(payload, hooks)
+          },
+          subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
+          subscribeRunSessions: (listener) => runManager.onChange(listener),
+          claimRunAudience: (runId, sinkIds) => runEventBus.claimRunAudience(runId, sinkIds),
+          reconcileRun: (snapshot) =>
+            reconcileChannelAgentProductionRun(
+              { getRun: (runId) => runManager.get(runId) },
+              snapshot
+            )
         },
         publishToMain: (event) => {
           if (!mainWindow || mainWindow.isDestroyed()) return
@@ -54314,6 +54341,27 @@ if (isGeminiMcpBridgeProcess) {
     // Stage 0b-dispatch: expose the composer + dispatcher to the module-scope
     // scheduler so a windowless app can compose + fire a due SOLO run itself.
     composerServiceRef = composerService
+    channelAgentDispatchRef = (payload, hooks) => {
+      const sender =
+        mainWindow?.webContents && !mainWindow.webContents.isDestroyed()
+          ? mainWindow.webContents
+          : createHeadlessRunSender()
+      return baseDispatchRunWithProviderPause(
+        payload,
+        { sender },
+        hooks.observer,
+        hooks.finalAuthorization
+      )
+    }
+    try {
+      channelProductionBootstrap?.startAgentExecution()
+    } catch (error) {
+      const failedBootstrap = channelProductionBootstrap
+      channelProductionBootstrap = null
+      channelAgentDispatchRef = null
+      void failedBootstrap?.stop().catch(() => undefined)
+      console.error('[channels] production bootstrap failed', error)
+    }
     wakeupTimerServiceRef = new WakeupTimerService({
       onFire: handleEnsembleWakeupTimerFired
     })

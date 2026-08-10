@@ -106,6 +106,7 @@ describe('ChannelProductionService agent execution review gate', () => {
     })
     services.add(service)
     service.start()
+    service.startAgentExecution()
     const channel = service.createChannel({
       chatId: 'chat-agent-production-gate',
       title: 'Agent production gate',
