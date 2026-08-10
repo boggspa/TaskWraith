@@ -98,6 +98,25 @@ describe('DelegationApprovalBudgetGuard — delegation-loop anti-spam', () => {
     expect(guard.tryConsume('run-1')).toBe('allowed')
   })
 
+  it('release refunds reserved slots so a denied wave can be retried', () => {
+    const guard = new DelegationApprovalBudgetGuard(4)
+    expect(guard.tryConsume('run-wave')).toBe('allowed')
+    expect(guard.tryConsume('run-wave')).toBe('allowed')
+    expect(guard.remaining('run-wave')).toBe(2)
+    guard.release('run-wave', 2)
+    expect(guard.remaining('run-wave')).toBe(4)
+    expect(guard.tryConsume('run-wave')).toBe('allowed')
+  })
+
+  it('release clamps at zero and ignores empty keys', () => {
+    const guard = new DelegationApprovalBudgetGuard(1)
+    guard.release('never-consumed', 3)
+    expect(guard.remaining('never-consumed')).toBe(1)
+    guard.tryConsume('')
+    guard.release('', 1)
+    expect(guard.tryConsume('')).toBe('allowed')
+  })
+
   it('treats an empty parent-run key as unscoped (never blocks)', () => {
     const guard = new DelegationApprovalBudgetGuard(1)
     expect(guard.tryConsume('')).toBe('allowed')

@@ -74,6 +74,19 @@ export class DelegationApprovalBudgetGuard {
     return this.tracker.tryConsume(parentRunKey, this.budget)
   }
 
+  /**
+   * Refund previously consumed slots for the parent run. Used when a
+   * wave reserved N slots and then did not spawn (user deny, policy
+   * deny, parent cancelled, or all-or-nothing spawn rollback). Clamped
+   * at 0 per underlying `releaseOne` — never goes negative.
+   */
+  release(parentRunKey: string, count: number = 1): void {
+    const n = Math.max(0, Math.floor(count))
+    for (let i = 0; i < n; i++) {
+      this.tracker.releaseOne(parentRunKey)
+    }
+  }
+
   /** Remaining slots for the parent run (`Infinity` if uncapped). */
   remaining(parentRunKey: string): number {
     return this.tracker.getRemaining(parentRunKey, this.budget)
