@@ -672,32 +672,34 @@ function mutationsFor(args: {
   if (metadataByChannel.size !== args.history.metadataMutations.length) {
     blocked('People migration admission metadata target is duplicated')
   }
-  const channelIds = [...new Set(args.invitations.map((invitation) => invitation.channelId))].sort(
-    compareText
-  )
-  return channelIds.map((channelId) => {
-    const metadata = metadataByChannel.get(channelId)
-    if (!metadata) blocked('People migration admission target metadata is missing')
-    const invitations = args.invitations
-      .filter((invitation) => invitation.channelId === channelId)
-      .map(
-        (invitation): ChannelInvite => ({
-          inviteId: invitation.inviteId,
-          channelId,
-          roomId: invitation.roomId,
-          tokenHash: hashChannelInviteToken(invitation.inviteToken),
-          createdAt: invitation.createdAt,
-          expiresAt: invitation.expiresAt
-        })
-      )
-    return {
-      mode: 'merge',
-      beforeDigest: channelStoreSubsetDigest(metadata.channel, metadata.members, metadata.invites),
-      channel: clone(metadata.channel),
-      members: metadata.members.map(clone),
-      invites: [...metadata.invites.map(clone), ...invitations]
-    }
-  })
+  const invitationChannelIds = new Set(args.invitations.map((invitation) => invitation.channelId))
+  if ([...invitationChannelIds].some((channelId) => !metadataByChannel.has(channelId))) {
+    blocked('People migration admission target metadata is missing')
+  }
+  return [...args.history.metadataMutations]
+    .sort((left, right) => compareText(left.channel.channelId, right.channel.channelId))
+    .map((metadata) => {
+      const channelId = metadata.channel.channelId
+      const invitations = args.invitations
+        .filter((invitation) => invitation.channelId === channelId)
+        .map(
+          (invitation): ChannelInvite => ({
+            inviteId: invitation.inviteId,
+            channelId,
+            roomId: invitation.roomId,
+            tokenHash: hashChannelInviteToken(invitation.inviteToken),
+            createdAt: invitation.createdAt,
+            expiresAt: invitation.expiresAt
+          })
+        )
+      return {
+        mode: metadata.mode,
+        beforeDigest: metadata.beforeDigest,
+        channel: clone(metadata.channel),
+        members: metadata.members.map(clone),
+        invites: [...metadata.invites.map(clone), ...invitations]
+      }
+    })
 }
 
 function preflightBeforeState(
@@ -729,19 +731,19 @@ function preflightBeforeState(
   )
   for (const mutation of mutations) {
     const current = channels.getChannel(mutation.channel.channelId)
-    if (
-      !current ||
-      channelStoreSubsetDigest(
-        current,
-        channels.listMembers(current.channelId),
-        channels.listInvites(current.channelId)
-      ) !== mutation.beforeDigest
-    ) {
+    const currentInvites = current ? channels.listInvites(current.channelId) : []
+    const beforeMatches = current
+      ? mutation.mode === 'merge' &&
+        channelStoreSubsetDigest(
+          current,
+          channels.listMembers(current.channelId),
+          currentInvites
+        ) === mutation.beforeDigest
+      : mutation.mode === 'create' && mutation.beforeDigest === null
+    if (!beforeMatches) {
       blocked('People migration admission target changed before reissue')
     }
-    const newInvites = mutation.invites.slice(
-      channels.listInvites(mutation.channel.channelId).length
-    )
+    const newInvites = mutation.invites.slice(currentInvites.length)
     for (const invite of newInvites) {
       if (
         allInviteIds.has(invite.inviteId) ||

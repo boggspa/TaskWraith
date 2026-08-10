@@ -98,25 +98,47 @@ function fixture(
   args: {
     pendingCollaboratorIds?: string[]
     openInviteCount?: number
+    mode?: 'create' | 'merge'
+    extraChannel?: boolean
   } = {}
 ) {
   const directory = temporaryDirectory()
   const escrowPath = join(directory, 'migration', 'admission-escrow.json')
   const store = new ChannelStore(join(directory, 'channels.json'))
-  const { channel } = store.createChannel({
+  const mode = args.mode ?? 'merge'
+  const primaryPlanner = mode === 'create' ? new ChannelStore() : store
+  const { channel } = primaryPlanner.createChannel({
     chatId: 'chat_one',
     owner: { displayName: 'Host', identityPublicKey: 'host_key' },
     title: 'Migrated Channel',
     now: 1_000
   })
-  const members = store.listMembers(channel.channelId)
-  const invites = store.listInvites(channel.channelId)
+  const members = primaryPlanner.listMembers(channel.channelId)
+  const invites = primaryPlanner.listInvites(channel.channelId)
   const metadataMutation = {
-    mode: 'merge' as const,
-    beforeDigest: channelStoreSubsetDigest(channel, members, invites),
+    mode,
+    beforeDigest: mode === 'merge' ? channelStoreSubsetDigest(channel, members, invites) : null,
     channel,
     members,
     invites
+  }
+  let extraChannel: typeof channel | null = null
+  const metadataMutations = [metadataMutation]
+  if (args.extraChannel) {
+    const extraPlanner = new ChannelStore()
+    extraChannel = extraPlanner.createChannel({
+      chatId: 'chat_two',
+      owner: { displayName: 'Host', identityPublicKey: 'host_key' },
+      title: 'General Channel',
+      now: 1_000
+    }).channel
+    metadataMutations.push({
+      mode: 'create',
+      beforeDigest: null,
+      channel: extraChannel,
+      members: extraPlanner.listMembers(extraChannel.channelId),
+      invites: []
+    })
   }
   const pendingCollaboratorIds = args.pendingCollaboratorIds ?? ['collaborator_one']
   const openInviteCount = args.openInviteCount ?? 1
@@ -125,7 +147,7 @@ function fixture(
     planId: 'a'.repeat(64),
     sourceDigest: 'b'.repeat(64),
     migrationAt: 1_000,
-    mutations: [clone(metadataMutation)],
+    mutations: metadataMutations.map(clone),
     policies: [],
     pendingAdmissionReissues:
       pendingCollaboratorIds.length > 0 || openInviteCount > 0
@@ -146,8 +168,8 @@ function fixture(
         : [],
     migratedShareIds: ['share_one'],
     retainedShareIds: [],
-    generalChatIds: ['chat_one'],
-    backfilledGeneralChatIds: [],
+    generalChatIds: args.extraChannel ? ['chat_one', 'chat_two'] : ['chat_one'],
+    backfilledGeneralChatIds: args.extraChannel ? ['chat_two'] : [],
     existingGeneralChatIds: [],
     requirements:
       pendingCollaboratorIds.length > 0 || openInviteCount > 0 ? ['pending_admission_reissue'] : []
@@ -158,11 +180,11 @@ function fixture(
     sourceDigest: base.sourceDigest,
     baseMaterializationDigest: base.materializationDigest,
     migrationAt: base.migrationAt,
-    metadataMutations: [clone(metadataMutation)],
+    metadataMutations: metadataMutations.map(clone),
     logMutations: [],
     importedContributionCount: 0
   })
-  return { directory, escrowPath, store, channel, base, history }
+  return { directory, escrowPath, store, channel, extraChannel, base, history }
 }
 
 function deterministicRandomness() {
@@ -287,8 +309,38 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     expect(built.store.listInvites(built.channel.channelId)).toHaveLength(2)
   })
 
+  it('enriches a fresh create and commits every unrelated metadata target atomically', () => {
+    const built = fixture({ mode: 'create', extraChannel: true })
+    expect(built.store.listChannels()).toEqual([])
+
+    const first = service(built).apply({ base: built.base, history: built.history })
+    expect(first.metadataApplied).toBe(true)
+    expect(first.channelIds).toEqual(
+      [built.channel.channelId, built.extraChannel!.channelId].sort(compareText)
+    )
+    expect(
+      built.store
+        .listChannels()
+        .map((channel) => channel.channelId)
+        .sort(compareText)
+    ).toEqual(first.channelIds)
+    expect(built.store.listInvites(built.channel.channelId)).toHaveLength(2)
+    expect(built.store.listInvites(built.extraChannel!.channelId)).toEqual([])
+
+    const rerun = service(built, {
+      randomId: () => {
+        throw new Error('must reuse full-batch escrow ids')
+      },
+      randomToken: () => {
+        throw new Error('must reuse full-batch escrow tokens')
+      }
+    }).apply({ base: built.base, history: built.history })
+    expect(rerun).toEqual({ ...first, metadataApplied: false })
+    expect(built.store.listChannels()).toHaveLength(2)
+  })
+
   it('resumes after encrypted escrow is durable but before Channel metadata', () => {
-    const built = fixture()
+    const built = fixture({ mode: 'create', extraChannel: true })
     expect(() =>
       service(built, {
         afterEscrowDurable: () => {
@@ -297,6 +349,7 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
       }).apply({ base: built.base, history: built.history })
     ).toThrow('injected crash after escrow')
     expect(existsSync(built.escrowPath)).toBe(true)
+    expect(built.store.listChannels()).toEqual([])
     expect(built.store.listInvites(built.channel.channelId)).toEqual([])
 
     const recovered = service(built, {
@@ -309,10 +362,11 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     }).apply({ base: built.base, history: built.history })
     expect(recovered.metadataApplied).toBe(true)
     expect(recovered.invitations).toHaveLength(2)
+    expect(built.store.listChannels()).toHaveLength(2)
   })
 
   it('resumes after Channel metadata is durable but before the caller records completion', () => {
-    const built = fixture()
+    const built = fixture({ mode: 'create', extraChannel: true })
     expect(() =>
       service(built, {
         afterChannelApplied: () => {
@@ -320,12 +374,14 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
         }
       }).apply({ base: built.base, history: built.history })
     ).toThrow('injected crash after Channel apply')
+    expect(built.store.listChannels()).toHaveLength(2)
     expect(built.store.listInvites(built.channel.channelId)).toHaveLength(2)
 
     const recovered = service(built).apply({ base: built.base, history: built.history })
     expect(recovered.metadataApplied).toBe(false)
     expect(recovered.invitations).toHaveLength(2)
     expect(built.store.listInvites(built.channel.channelId)).toHaveLength(2)
+    expect(built.store.listChannels()).toHaveLength(2)
   })
 
   it('blocks a stale Channel target before persisting any new secret authority', () => {
