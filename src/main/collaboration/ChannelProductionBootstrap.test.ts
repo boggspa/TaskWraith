@@ -1,6 +1,12 @@
-import type { IpcMain } from 'electron'
+import type { BrowserWindow, IpcMain } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 import { generateIdentityKeyPair } from '../../shared/e2ee/keys'
+import {
+  CHANNEL_AGENT_IPC_CHANNELS,
+  type ChannelAgentIpcOutcome,
+  type ChannelAgentIpcOverview,
+  type ChannelAgentIpcResult
+} from '../../shared/collaboration/ChannelAgentIpc'
 import type {
   ChannelIpcChangeEvent,
   ChannelIpcChannel,
@@ -10,9 +16,15 @@ import type {
   ChannelProductionService,
   ChannelProductionServiceOptions
 } from './ChannelProductionService'
+import type { AppSettings, ChatRecord } from '../store/types'
+import {
+  hashChannelAgentNativeConfirmation,
+  type ChannelAgentNativeConfirmationRequest
+} from './ChannelAgentNativeConfirmation'
 import {
   createChannelProductionBootstrap,
   createChannelProductionRelayPort,
+  type ChannelProductionAgentManagementOptions,
   type ChannelProductionBootstrapOptions
 } from './ChannelProductionBootstrap'
 import type { ChannelAgentIdentitySafeStorage } from './ChannelAgentIdentityStore'
@@ -23,6 +35,87 @@ const safeStorage: ChannelAgentIdentitySafeStorage = {
   isEncryptionAvailable: () => true,
   encryptString: (value) => Buffer.from(value, 'utf8'),
   decryptString: (value) => value.toString('utf8')
+}
+
+const AGENT_SEAT_ID = 'pooled-agent-bootstrap-proof'
+const OWNER_WINDOW = { isDestroyed: () => false } as BrowserWindow
+
+function agentChat(): ChatRecord {
+  return {
+    appChatId: 'chat-a',
+    title: 'Chat A',
+    workspaceId: 'workspace-a',
+    workspacePath: '/workspaces/a',
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    ensemble: {
+      enabled: true,
+      maxParticipants: 8,
+      participants: [
+        {
+          id: 'participant-bootstrap-proof',
+          provider: 'codex',
+          enabled: true,
+          role: 'Review changes',
+          instructions: 'PRIVATE BOOTSTRAP INSTRUCTIONS MUST STAY IN MAIN',
+          order: 1,
+          model: 'gpt-5.6-terra',
+          permissionPresetId: 'read_only',
+          pooledAgentId: AGENT_SEAT_ID,
+          pooledAgentIdentity: {
+            schemaVersion: 1,
+            agentId: AGENT_SEAT_ID,
+            nickname: 'Build Agent',
+            iconKind: 'seed',
+            hue: 120
+          }
+        }
+      ]
+    },
+    messages: [],
+    runs: []
+  } as ChatRecord
+}
+
+function agentSettings(): AppSettings {
+  return {
+    agenticServices: {
+      shellCommands: 'ask',
+      fileChanges: 'ask',
+      mcpTools: 'ask',
+      subThreadDelegation: 'ask',
+      canvasInteraction: 'ask',
+      canvasEval: 'ask',
+      networkAccess: 'allow'
+    },
+    agenticWorkspaceGrants: []
+  } as unknown as AppSettings
+}
+
+function agentManagement() {
+  const confirm = vi.fn(
+    async (_owner: BrowserWindow | null, request: ChannelAgentNativeConfirmationRequest) => ({
+      confirmed: true as const,
+      confirmationDigest: hashChannelAgentNativeConfirmation(request)
+    })
+  )
+  const getOwnerWindow = vi.fn(() => OWNER_WINDOW)
+  const options: ChannelProductionAgentManagementOptions = {
+    getChat: (chatId) => (chatId === 'chat-a' ? agentChat() : null),
+    getSettings: agentSettings,
+    providerAllowed: (provider) => provider === 'codex',
+    resolveWorkspace: (chat) =>
+      chat.workspaceId
+        ? {
+            principal: { kind: 'workspace', workspaceId: chat.workspaceId },
+            label: 'Workspace A'
+          }
+        : null,
+    getOwnerWindow,
+    confirm
+  }
+  return { options, confirm, getOwnerWindow }
 }
 
 function channel(channelId: string, chatId: string): ChannelIpcChannel {
@@ -164,6 +257,137 @@ describe('ChannelProductionBootstrap', () => {
     expect(denied).toMatchObject({ ok: false, error: { code: 'not_authorized' } })
   })
 
+  it('composes the canonical agent controller, native owner, and closed IPC lifecycle', async () => {
+    const management = agentManagement()
+    const fixture = harness({ agentManagement: management.options })
+    const readyChannel = channel('channel-a', 'chat-a')
+    vi.mocked(fixture.service.service.readChannel).mockReturnValue({
+      channel: readyChannel,
+      members: [
+        {
+          channelId: 'channel-a',
+          memberId: readyChannel.ownerMemberId,
+          kind: 'human',
+          displayName: 'Owner',
+          status: 'active',
+          joinedAt: 1
+        }
+      ],
+      pendingAdmissions: [],
+      records: [],
+      highWaterSequence: 0
+    } as never)
+    vi.mocked(fixture.service.service.inspectAgentSeat).mockImplementation((agentSeatId) => ({
+      agentSeatId,
+      currentKeyGeneration: null,
+      memberships: []
+    }))
+    vi.mocked(fixture.service.service.inspectChannelAgentSeats).mockReturnValue([])
+    vi.mocked(fixture.service.service.enrollAgent).mockResolvedValue({
+      member: {
+        channelId: 'channel-a',
+        memberId: 'agent-member-1',
+        kind: 'agent',
+        displayName: 'Build Agent',
+        identityPublicKey: 'must-not-cross-ipc',
+        status: 'active',
+        joinedAt: 2,
+        agentSeatId: AGENT_SEAT_ID,
+        keyGeneration: 1
+      },
+      identity: {
+        agentSeatId: AGENT_SEAT_ID,
+        keyGeneration: 1,
+        publicKeyB64: 'must-not-cross-ipc',
+        createdAt: 2
+      },
+      signedDelegation: { mustNotCrossIpc: true }
+    } as never)
+
+    fixture.bootstrap.start()
+
+    expect([...fixture.handlers.keys()].sort()).toEqual(
+      [
+        'channels:append',
+        'channels:audit',
+        'channels:close',
+        'channels:create',
+        'channels:issue-invite',
+        'channels:list',
+        'channels:read',
+        'channels:revoke-member',
+        ...Object.values(CHANNEL_AGENT_IPC_CHANNELS)
+      ].sort()
+    )
+    const overviewHandler = fixture.handlers.get(CHANNEL_AGENT_IPC_CHANNELS.overview)
+    const enrollHandler = fixture.handlers.get(CHANNEL_AGENT_IPC_CHANNELS.enroll)
+    if (!overviewHandler || !enrollHandler) throw new Error('agent handlers were not registered')
+
+    const overview = (await overviewHandler(
+      { sender: { id: 1 } },
+      { channelId: 'channel-a' }
+    )) as ChannelAgentIpcResult<ChannelAgentIpcOverview>
+    expect(overview).toMatchObject({
+      ok: true,
+      value: {
+        channelId: 'channel-a',
+        seats: [
+          {
+            seat: {
+              agentSeatId: AGENT_SEAT_ID,
+              displayName: 'Build Agent',
+              provider: 'codex',
+              model: 'gpt-5.6-terra',
+              role: 'Review changes'
+            },
+            currentKeyGeneration: null
+          }
+        ]
+      }
+    })
+    expect(JSON.stringify(overview)).not.toMatch(/PRIVATE BOOTSTRAP|workspaceIdentityHash/i)
+
+    const enrolled = (await enrollHandler(
+      { sender: { id: 1 } },
+      {
+        requestId: 'bootstrap-request-1',
+        channelId: 'channel-a',
+        agentSeatId: AGENT_SEAT_ID
+      }
+    )) as ChannelAgentIpcResult<ChannelAgentIpcOutcome>
+    expect(enrolled).toMatchObject({
+      ok: true,
+      value: {
+        status: 'applied',
+        value: {
+          kind: 'enroll',
+          agentSeatId: AGENT_SEAT_ID,
+          member: { memberId: 'agent-member-1', keyGeneration: 1 }
+        }
+      }
+    })
+    expect(management.getOwnerWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ sender: { id: 1 } })
+    )
+    expect(management.confirm).toHaveBeenCalledWith(
+      OWNER_WINDOW,
+      expect.objectContaining({
+        kind: 'enroll',
+        seat: expect.objectContaining({ agentSeatId: AGENT_SEAT_ID })
+      })
+    )
+    expect(fixture.service.service.enrollAgent).toHaveBeenCalledWith({
+      channelId: 'channel-a',
+      seat: { agentSeatId: AGENT_SEAT_ID, displayName: 'Build Agent' },
+      operationId: expect.stringMatching(/^channel-agent-enroll-[a-f0-9]{64}$/)
+    })
+    expect(JSON.stringify(enrolled)).not.toMatch(/must-not-cross-ipc|signature/i)
+
+    await fixture.bootstrap.stop()
+    expect(fixture.handlers.size).toBe(0)
+    expect(fixture.removeHandler).toHaveBeenCalledTimes(26)
+  })
+
   it('projects safe changes to main and only the exact owning chat popout', async () => {
     const publishToMain = vi.fn((_event: ChannelIpcChangeEvent) => {
       throw new Error('main window closed')
@@ -221,6 +445,7 @@ describe('ChannelProductionBootstrap', () => {
       throw new Error('identity unavailable')
     })
     const fixture = harness({
+      agentManagement: agentManagement().options,
       createService: () => service.service
     })
 
@@ -233,6 +458,15 @@ describe('ChannelProductionBootstrap', () => {
     expect(() => harness({ safeStorage: undefined as never })).toThrow(
       'requires injected safeStorage'
     )
+  })
+
+  it('rejects partial agent authority before constructing the service', () => {
+    const management = agentManagement()
+    expect(() =>
+      harness({
+        agentManagement: { ...management.options, getOwnerWindow: undefined as never }
+      })
+    ).toThrow('agent management requires main-owned authority')
   })
 })
 

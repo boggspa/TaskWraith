@@ -1,13 +1,21 @@
-import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { KeyPair } from '../../shared/e2ee/keys'
 import type { ChannelIpcChangeEvent } from '../../shared/collaboration/ChannelIpc'
 import type { TransportSocketFactory } from '../remote/RemoteTransportClient'
+import {
+  registerChannelAgentHandlers,
+  type ChannelAgentHandlersRegistration
+} from '../ipc/channelAgentHandlers'
 import {
   registerChannelHandlers,
   type ChannelHandlersDeps,
   type ChannelHandlersRegistration,
   type ChannelIpcSenderScope
 } from '../ipc/channelHandlers'
+import {
+  ChannelAgentManagementController,
+  type ChannelAgentManagementControllerDependencies
+} from './ChannelAgentManagementController'
 import {
   createChannelProductionService,
   type ChannelProductionRelayPort,
@@ -22,6 +30,13 @@ export interface ChannelProductionRelaySources {
   getAdvertisedRelayUrls: () => readonly string[]
 }
 
+export interface ChannelProductionAgentManagementOptions extends Omit<
+  ChannelAgentManagementControllerDependencies,
+  'service'
+> {
+  getOwnerWindow: (event: IpcMainInvokeEvent) => BrowserWindow | null
+}
+
 export interface ChannelProductionBootstrapOptions {
   userDataPath: string
   loadIdentity: () => KeyPair
@@ -33,6 +48,8 @@ export interface ChannelProductionBootstrapOptions {
   getOwnedChatId: (senderId: number) => string | null | undefined
   publishToMain: (event: ChannelIpcChangeEvent) => void
   publishToChat: (chatId: string, event: ChannelIpcChangeEvent) => void
+  /** Omitted until the composition root supplies every main-owned authority port. */
+  agentManagement?: ChannelProductionAgentManagementOptions
   socketFactory?: TransportSocketFactory
   logger?: (line: string) => void
   createService?: (options: ChannelProductionServiceOptions) => ChannelProductionService
@@ -128,12 +145,26 @@ export function createChannelProductionBootstrap(
   if (typeof options.publishToMain !== 'function' || typeof options.publishToChat !== 'function') {
     throw new Error('ChannelProductionBootstrap requires renderer publication ports')
   }
+  if (
+    options.agentManagement !== undefined &&
+    (!options.agentManagement ||
+      typeof options.agentManagement.getChat !== 'function' ||
+      typeof options.agentManagement.getSettings !== 'function' ||
+      typeof options.agentManagement.providerAllowed !== 'function' ||
+      typeof options.agentManagement.resolveWorkspace !== 'function' ||
+      typeof options.agentManagement.getOwnerWindow !== 'function' ||
+      (options.agentManagement.confirm !== undefined &&
+        typeof options.agentManagement.confirm !== 'function'))
+  ) {
+    throw new Error('ChannelProductionBootstrap agent management requires main-owned authority')
+  }
   if (options.createService !== undefined && typeof options.createService !== 'function') {
     throw new Error('ChannelProductionBootstrap createService must be a function')
   }
 
   let stopped = false
   let registration: ChannelHandlersRegistration | null = null
+  let agentRegistration: ChannelAgentHandlersRegistration | null = null
   let stopPromise: Promise<void> | null = null
 
   const publishChange = (event: {
@@ -168,6 +199,16 @@ export function createChannelProductionBootstrap(
     ...(options.logger ? { logger: options.logger } : {}),
     onChange: publishChange
   })
+  const agentController = options.agentManagement
+    ? new ChannelAgentManagementController({
+        service,
+        getChat: options.agentManagement.getChat,
+        getSettings: options.agentManagement.getSettings,
+        providerAllowed: options.agentManagement.providerAllowed,
+        resolveWorkspace: options.agentManagement.resolveWorkspace,
+        ...(options.agentManagement.confirm ? { confirm: options.agentManagement.confirm } : {})
+      })
+    : null
 
   const resolveSenderScope = (event: IpcMainInvokeEvent): ChannelIpcSenderScope => {
     if (options.isMainSender(event)) return { kind: 'main' }
@@ -181,15 +222,24 @@ export function createChannelProductionBootstrap(
     start: () => {
       if (stopped) throw new Error('ChannelProductionBootstrap has stopped')
       if (registration) return service.start()
-      registration = registerChannelHandlers(options.ipc, {
-        service,
-        getChat: options.getChat,
-        resolveSenderScope
-      })
       try {
+        registration = registerChannelHandlers(options.ipc, {
+          service,
+          getChat: options.getChat,
+          resolveSenderScope
+        })
+        if (agentController && options.agentManagement) {
+          agentRegistration = registerChannelAgentHandlers(options.ipc, {
+            controller: agentController,
+            isMainSender: options.isMainSender,
+            getOwnerWindow: options.agentManagement.getOwnerWindow
+          })
+        }
         return service.start()
       } catch (error) {
-        registration.dispose()
+        agentRegistration?.dispose()
+        agentRegistration = null
+        registration?.dispose()
         registration = null
         void service.stop().catch(() => undefined)
         throw error
@@ -199,6 +249,8 @@ export function createChannelProductionBootstrap(
     stop: () => {
       if (stopPromise) return stopPromise
       stopped = true
+      agentRegistration?.dispose()
+      agentRegistration = null
       registration?.dispose()
       registration = null
       stopPromise = service.stop()
