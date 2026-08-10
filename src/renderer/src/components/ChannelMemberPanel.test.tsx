@@ -157,6 +157,8 @@ describe('ChannelMemberPanelView', () => {
     expect(html).toContain('Member B · Revoked')
     expect(html).toContain('Forget Design room Channel membership')
     expect(html).toContain('Forget Old room Channel membership')
+    expect(html).toContain('Open history')
+    expect(html).toContain('Open retained history for Old room Channel')
     expect(html).not.toContain('Open &amp; reconnect')
   })
 

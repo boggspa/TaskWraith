@@ -1,5 +1,13 @@
 import { createHash } from 'crypto'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -411,7 +419,7 @@ describe('ChannelMemberProductionService', () => {
     expect(new ChannelMemberReplicaStore(root).readActive()?.highWaterSequence).toBe(0)
   })
 
-  it('retains readable history after revocation and refuses silent reconnect', async () => {
+  it('retains readable history after revocation without silently reconnecting', async () => {
     const root = directory()
     const host = fakeHost([record(1)])
     const member = service(root, host)
@@ -427,8 +435,63 @@ describe('ChannelMemberProductionService', () => {
       error: { code: 'revoked' }
     })
     const restarted = service(root, host)
-    await expect(restarted.reconnect()).rejects.toMatchObject({ code: 'revoked' })
+    await expect(restarted.reconnect()).resolves.toMatchObject({
+      phase: 'revoked',
+      connected: false,
+      channel: { status: 'revoked' },
+      records: [{ sequence: 1 }],
+      error: { code: 'revoked' }
+    })
     expect(host.clients).toHaveLength(1)
+  })
+
+  it('selects a non-active revoked replica without opening a socket or loading identity', async () => {
+    const root = directory()
+    const store = new ChannelMemberReplicaStore(root)
+    store.activate({
+      channelId: 'channel-a',
+      hostChatId: 'host-chat-a',
+      memberId: 'member-b',
+      displayName: 'Member B',
+      title: 'Old room',
+      relayUrls: ['wss://relay-a.example'],
+      roomId: 'room-a',
+      hostIdentityPubKeyB64,
+      now: 1_000
+    })
+    store.appendRecords('channel-a', [record(1, 'retained after revoke')])
+    store.markRevoked('channel-a', 1_500)
+    store.activate({
+      channelId: 'channel-b',
+      hostChatId: 'host-chat-b',
+      memberId: 'member-c',
+      displayName: 'Member C',
+      title: 'Live room',
+      relayUrls: ['wss://relay-b.example'],
+      roomId: 'room-b',
+      hostIdentityPubKeyB64,
+      now: 2_000
+    })
+
+    const host = fakeHost()
+    const member = service(root, host)
+    expect(member.snapshot().channel?.channelId).toBe('channel-b')
+
+    await expect(member.reconnect('channel-a')).resolves.toMatchObject({
+      phase: 'revoked',
+      connected: false,
+      channel: { channelId: 'channel-a', status: 'revoked' },
+      records: [{ sequence: 1, content: 'retained after revoke' }],
+      highWaterSequence: 1
+    })
+    expect(member.listMemberships()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ channelId: 'channel-a', active: true, status: 'revoked' }),
+        expect.objectContaining({ channelId: 'channel-b', active: false, status: 'active' })
+      ])
+    )
+    expect(host.clients).toHaveLength(0)
+    expect(existsSync(channelMemberReplicaPaths(root).identity)).toBe(false)
   })
 
   it('fails closed without replacing a missing identity or accepting a host-key change', async () => {

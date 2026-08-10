@@ -238,9 +238,15 @@ export class ChannelMemberPanelController {
     try {
       const result = await this.options.api.reconnect(channelId ? { channelId } : {})
       if (!result.ok) return this.failAction(result.error)
+      const openedReadOnly =
+        result.value.phase === 'revoked' || result.value.channel?.status === 'revoked'
       this.applySnapshot(result.value)
       await this.enqueueSync(false)
-      this.finishSynchronizedAction('Channel reconnected and caught up from durable history.')
+      this.finishSynchronizedAction(
+        openedReadOnly
+          ? 'Opened the retained read-only history for this revoked membership.'
+          : 'Channel reconnected and caught up from durable history.'
+      )
       return true
     } catch (error) {
       return this.failThrown(error)

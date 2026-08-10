@@ -570,7 +570,16 @@ class ChannelMemberProductionServiceImpl implements ChannelMemberProductionServi
       const replica = channelId ? this.store.setActive(channelId) : this.store.readActive()
       if (!replica) throw productionError('not_joined', 'No saved Channel membership is available.')
       if (replica.session.status === 'revoked') {
-        throw productionError('revoked', 'This Channel membership is no longer active.')
+        this.detachClient()
+        this.pendingJoin = null
+        this.replica = replica
+        this.phase = 'revoked'
+        this.publicError = {
+          code: 'revoked',
+          message: 'This Channel membership is no longer active.'
+        }
+        this.publish()
+        return this.snapshot()
       }
       this.replica = replica
       const identity = this.loadIdentity(false)

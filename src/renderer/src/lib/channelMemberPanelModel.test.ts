@@ -275,6 +275,65 @@ describe('ChannelMemberPanelController', () => {
     expect(controller.snapshot().error).not.toContain('raw transport')
   })
 
+  it('opens a non-active revoked membership as retained read-only history', async () => {
+    let current = snapshot({ phase: 'disconnected', connected: false })
+    let memberships = [
+      summary(),
+      summary({
+        channelId: 'channel-revoked',
+        title: 'Old room',
+        status: 'revoked',
+        active: false
+      })
+    ]
+    const reconnect = vi.fn(async () => {
+      current = snapshot({
+        phase: 'revoked',
+        connected: false,
+        channel: channel({
+          channelId: 'channel-revoked',
+          title: 'Old room',
+          status: 'revoked'
+        }),
+        records: [
+          message(1, {
+            channelId: 'channel-revoked',
+            content: 'Retained after revoke'
+          })
+        ],
+        error: { code: 'revoked', message: 'This Channel membership is no longer active.' }
+      })
+      memberships = [
+        summary({ active: false }),
+        summary({
+          channelId: 'channel-revoked',
+          title: 'Old room',
+          status: 'revoked',
+          active: true
+        })
+      ]
+      return ok(current)
+    })
+    const controller = new ChannelMemberPanelController({
+      api: createApi({
+        list: async () => ok(memberships),
+        snapshot: async () => ok(current),
+        reconnect
+      })
+    })
+    await controller.start()
+
+    expect(await controller.reconnect('channel-revoked')).toBe(true)
+    expect(reconnect).toHaveBeenCalledWith({ channelId: 'channel-revoked' })
+    expect(controller.snapshot()).toMatchObject({
+      phase: 'revoked',
+      connected: false,
+      channel: { channelId: 'channel-revoked', status: 'revoked' },
+      records: [{ content: 'Retained after revoke' }]
+    })
+    expect(controller.snapshot().notice).toContain('retained read-only history')
+  })
+
   it('reuses the exact append id after an ambiguous local response failure', async () => {
     const ids: string[] = []
     let current = snapshot({ records: [], highWaterSequence: 0 })

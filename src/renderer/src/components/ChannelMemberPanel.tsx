@@ -211,6 +211,8 @@ export function ChannelMemberPanelView({
                       const current =
                         membership.active && channel?.channelId === membership.channelId
                       const canReconnect = membership.status === 'active' && !state.confirmCode
+                      const canOpenHistory =
+                        membership.status === 'revoked' && !current && !state.confirmCode
                       return (
                         <article
                           key={membership.channelId}
@@ -239,6 +241,16 @@ export function ChannelMemberPanelView({
                                   'reconnect',
                                   current ? 'Reconnect' : 'Open & reconnect'
                                 )}
+                              </button>
+                            )}
+                            {canOpenHistory && (
+                              <button
+                                type="button"
+                                onClick={() => onReconnect(membership.channelId)}
+                                disabled={busy}
+                                aria-label={`Open retained history for ${membership.title} Channel`}
+                              >
+                                {actionLabel(state, 'reconnect', 'Open history')}
                               </button>
                             )}
                             <button
