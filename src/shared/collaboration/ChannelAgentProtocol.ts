@@ -202,11 +202,11 @@ function isCanonicalBase64(value: unknown, expectedBytes: number): value is stri
   }
 }
 
-function isSortedUniqueStrings(
+function isSortedUniqueStrings<T extends string>(
   value: unknown,
   maximumItems: number,
-  validate: (entry: unknown) => entry is string
-): value is string[] {
+  validate: (entry: unknown) => entry is T
+): value is T[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > maximumItems) return false
   for (let index = 0; index < value.length; index += 1) {
     if (!validate(value[index])) return false
