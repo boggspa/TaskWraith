@@ -1129,6 +1129,12 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         })
         return
       }
+      if (admission.kind === 'admitted') {
+        // The immutable review gate is still false in this slice. The next
+        // production-composition slice replaces this fail-closed exhaustiveness
+        // branch with the separately proven ChannelAgentProductionService.
+        throw new Error('Channel agent production execution is not attached')
+      }
       for (const target of admission.targets) {
         audit.append({
           kind: 'agent.dispatch.blocked',

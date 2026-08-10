@@ -48,6 +48,11 @@ export type AcceptedChannelAgentMentionAdmission =
       readonly targets: readonly ChannelAgentMentionTarget[]
       readonly ambiguities: readonly ChannelAgentMentionAmbiguity[]
     }
+  | {
+      readonly kind: 'admitted'
+      readonly targets: readonly ChannelAgentMentionTarget[]
+      readonly ambiguities: readonly ChannelAgentMentionAmbiguity[]
+    }
 
 interface StructuredRange {
   readonly start: number
@@ -222,14 +227,18 @@ export function admitAcceptedChannelAgentMentions(args: {
         }
       : { kind: 'ignored', reason: 'no_agent_mention', ambiguities: [] }
   }
-  if (!channelAgentParticipationEnabled()) {
+  if (channelAgentParticipationEnabled()) {
     return {
-      kind: 'review_required',
-      code: CHANNEL_AGENT_REVIEW_REQUIRED_CODE,
-      reviewId: CHANNEL_AGENT_REVIEW_ID,
+      kind: 'admitted',
       targets: resolution.targets,
       ambiguities: resolution.ambiguities
     }
   }
-  throw new Error('Channel agent participation review gate is inconsistent')
+  return {
+    kind: 'review_required',
+    code: CHANNEL_AGENT_REVIEW_REQUIRED_CODE,
+    reviewId: CHANNEL_AGENT_REVIEW_ID,
+    targets: resolution.targets,
+    ambiguities: resolution.ambiguities
+  }
 }
