@@ -114,7 +114,7 @@ export function ChannelHostPanelView({
         aria-expanded={open}
         aria-controls={panelId}
         onClick={onToggleOpen}
-        title="Open this chat’s durable human Channel"
+        title="Open this chat’s durable Channel"
       >
         Channel
         {active && ready && <span className="channel-host-live-dot" aria-label="Channel active" />}
@@ -137,7 +137,7 @@ export function ChannelHostPanelView({
         >
           <header className="channel-host-panel-header">
             <div>
-              <span className="channel-host-eyebrow">Human Channel</span>
+              <span className="channel-host-eyebrow">Channel</span>
               <h2>{channel?.display.title || chatTitle}</h2>
             </div>
             <button
@@ -151,7 +151,8 @@ export function ChannelHostPanelView({
           </header>
 
           <p className="channel-host-safety-note">
-            Human messages only. Channel posts notify people; they never start an agent run.
+            Human posts stay manual. Signed agent participants and replies are labelled; automatic
+            mention dispatch remains disabled pending security review.
           </p>
 
           {state.error && (
@@ -272,7 +273,8 @@ export function ChannelHostPanelView({
                         <div>
                           <strong>{member.displayName}</strong>
                           <span>
-                            {owner ? 'Owner' : 'Human'} · {memberStatusLabel(member.status)}
+                            {owner ? 'Owner' : member.kind === 'agent' ? 'Agent' : 'Human'} ·{' '}
+                            {memberStatusLabel(member.status)}
                           </span>
                         </div>
                         {!owner && member.status !== 'revoked' && active && ready && (
@@ -340,10 +342,14 @@ export function ChannelHostPanelView({
                     return (
                       <article
                         key={record.messageId}
-                        className={`channel-host-message${own ? ' is-own' : ''}`}
+                        className={`channel-host-message${own ? ' is-own' : ''}${record.kind === 'agent.text' ? ' is-agent' : ''}`}
                       >
                         <div className="channel-host-message-meta">
-                          <strong>{member?.displayName || 'Former member'}</strong>
+                          <strong>
+                            {member?.displayName ||
+                              (record.kind === 'agent.text' ? 'Former agent' : 'Former member')}
+                          </strong>
+                          {record.kind === 'agent.text' && <span>Agent</span>}
                           <span>#{record.sequence}</span>
                           <time dateTime={isoTime(record.acceptedAt)}>
                             {isoTime(record.acceptedAt)}

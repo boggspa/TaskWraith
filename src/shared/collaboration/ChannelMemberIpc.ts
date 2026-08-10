@@ -69,7 +69,7 @@ export interface ChannelMemberIpcMembershipSummary extends ChannelMemberIpcChann
 
 export interface ChannelMemberIpcMember {
   memberId: string
-  kind: 'human'
+  kind: 'human' | 'agent'
   displayName: string
   status: 'active'
   joinedAt: number
@@ -81,7 +81,7 @@ export interface ChannelMemberIpcMessage {
   messageId: string
   authorMemberId: string
   clientMessageId: string
-  kind: 'human.text'
+  kind: 'human.text' | 'agent.text'
   content: string
   acceptedAt: number
   contentHash: string

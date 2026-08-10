@@ -45,6 +45,16 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         status: 'active' as const,
         joinedAt: 900,
         identityPublicKey: 'must-not-cross-ipc'
+      },
+      {
+        memberId: 'agent-a',
+        kind: 'agent' as const,
+        displayName: 'Build Agent',
+        status: 'active' as const,
+        joinedAt: 1_000,
+        agentSeatId: 'must-not-cross-ipc',
+        keyGeneration: 1,
+        identityPublicKey: 'must-not-cross-ipc'
       }
     ],
     records: [
@@ -59,9 +69,27 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         acceptedAt: 1_050,
         contentHash: 'a'.repeat(64),
         tokenHash: 'must-not-cross-ipc'
+      },
+      {
+        channelId: 'channel-a',
+        sequence: 2,
+        messageId: 'message-2',
+        authorMemberId: 'agent-a',
+        clientMessageId: 'agent-client-2',
+        kind: 'agent.text' as const,
+        content: 'verified agent result',
+        acceptedAt: 1_060,
+        contentHash: 'b'.repeat(64),
+        agentProof: {
+          signedDelegation: 'must-not-cross-ipc',
+          signedDispatchGrant: 'must-not-cross-ipc',
+          consumption: 'must-not-cross-ipc',
+          signedPost: 'must-not-cross-ipc',
+          runAuthorityHash: 'must-not-cross-ipc'
+        }
       }
     ],
-    highWaterSequence: 1,
+    highWaterSequence: 2,
     error: null,
     inviteToken: 'must-not-cross-ipc',
     sessionId: 'must-not-cross-ipc',
@@ -189,15 +217,21 @@ describe('registerChannelMemberHandlers', () => {
         phase: 'connected',
         connected: true,
         channel: { channelId: 'channel-a', memberId: 'member-b' },
-        members: [{ memberId: 'owner-a', kind: 'human' }],
-        records: [{ sequence: 1, kind: 'human.text', content: 'hello' }],
-        highWaterSequence: 1,
+        members: [
+          { memberId: 'owner-a', kind: 'human' },
+          { memberId: 'agent-a', kind: 'agent' }
+        ],
+        records: [
+          { sequence: 1, kind: 'human.text', content: 'hello' },
+          { sequence: 2, kind: 'agent.text', content: 'verified agent result' }
+        ],
+        highWaterSequence: 2,
         error: null
       }
     })
     for (const result of [list, state]) {
       expect(JSON.stringify(result)).not.toMatch(
-        /must-not-cross-ipc|relayUrls|roomId|hostIdentityPubKeyB64|inviteToken|sessionId|identityPublicKey|tokenHash/
+        /must-not-cross-ipc|relayUrls|roomId|hostIdentityPubKeyB64|inviteToken|sessionId|identityPublicKey|tokenHash|agentSeatId|keyGeneration|agentProof|signedDelegation|signedDispatchGrant|consumption|signedPost|runAuthorityHash/
       )
     }
   })
@@ -289,7 +323,7 @@ describe('registerChannelMemberHandlers', () => {
     ).resolves.toMatchObject({ ok: true, value: { phase: 'connected' } })
     await expect(target.invoke(CHANNEL_MEMBER_IPC_CHANNELS.resume)).resolves.toMatchObject({
       ok: true,
-      value: { highWaterSequence: 1 }
+      value: { highWaterSequence: 2 }
     })
     await expect(target.invoke(CHANNEL_MEMBER_IPC_CHANNELS.disconnect)).resolves.toMatchObject({
       ok: true,

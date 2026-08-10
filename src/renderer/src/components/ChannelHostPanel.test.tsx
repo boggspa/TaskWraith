@@ -113,7 +113,7 @@ describe('ChannelHostPanelView', () => {
     expect(html).not.toContain('Channel invite payload')
   })
 
-  it('renders durable human history, attribution, membership, and host actions', () => {
+  it('renders durable human and signed-agent history with explicit participant labels', () => {
     const room = channel()
     const html = render({
       draft: 'A host update',
@@ -121,7 +121,16 @@ describe('ChannelHostPanelView', () => {
         loading: false,
         busy: null,
         channel: room,
-        members: [member(), member({ memberId: 'member-alex', displayName: 'Alex', joinedAt: 2 })],
+        members: [
+          member(),
+          member({ memberId: 'member-alex', displayName: 'Alex', joinedAt: 2 }),
+          member({
+            memberId: 'agent-build',
+            kind: 'agent',
+            displayName: 'Build Agent',
+            joinedAt: 3
+          })
+        ],
         pendingAdmissions: [],
         records: [
           message(),
@@ -130,24 +139,36 @@ describe('ChannelHostPanelView', () => {
             messageId: 'message-2',
             authorMemberId: 'member-alex',
             content: 'I can see the durable history.'
+          }),
+          message({
+            sequence: 3,
+            messageId: 'message-3',
+            authorMemberId: 'agent-build',
+            clientMessageId: 'agent-client-3',
+            kind: 'agent.text',
+            content: 'Signed agent result.'
           })
         ],
-        highWaterSequence: 2,
+        highWaterSequence: 3,
         invite: null,
         notice: null,
         error: null
       }
     })
 
-    expect(html).toContain('Human messages only')
-    expect(html).toContain('never start an agent run')
+    expect(html).toContain('Human posts stay manual')
+    expect(html).toContain('mention dispatch remains disabled pending security review')
     expect(html).toContain('Chris')
     expect(html).toContain('Owner · Active')
     expect(html).toContain('Alex')
+    expect(html).toContain('Build Agent')
+    expect(html).toContain('Agent · Active')
     expect(html).toContain('Remove Alex from Channel')
     expect(html).not.toContain('Remove Chris from Channel')
     expect(html).toContain('Welcome to the Channel.')
     expect(html).toContain('I can see the durable history.')
+    expect(html).toContain('Signed agent result.')
+    expect(html).toContain('channel-host-message is-agent')
     expect(html).toContain('Copy fresh invite')
     expect(html).toContain('Post')
   })

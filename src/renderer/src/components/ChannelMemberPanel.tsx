@@ -159,7 +159,7 @@ export function ChannelMemberPanelView({
         >
           <header className="channel-member-panel-header">
             <div>
-              <span className="channel-member-eyebrow">Human memberships</span>
+              <span className="channel-member-eyebrow">Channel memberships</span>
               <h2>Joined Channels</h2>
             </div>
             <div className="channel-member-inline-actions">
@@ -178,7 +178,8 @@ export function ChannelMemberPanelView({
           </header>
 
           <p className="channel-member-safety-note">
-            Human messages only. Joining, reading, or posting never starts an agent run.
+            Human posting stays manual. Signed agent participants and replies are labelled;
+            automatic mention dispatch remains disabled pending security review.
           </p>
 
           {state.error && (
@@ -406,7 +407,7 @@ export function ChannelMemberPanelView({
 
                   <section className="channel-member-section" aria-labelledby={`${panelId}-people`}>
                     <div className="channel-member-section-heading">
-                      <h4 id={`${panelId}-people`}>People</h4>
+                      <h4 id={`${panelId}-people`}>Participants</h4>
                       <span>{state.members.length}</span>
                     </div>
                     <div className="channel-member-people">
@@ -417,6 +418,7 @@ export function ChannelMemberPanelView({
                         >
                           {person.displayName}
                           {person.memberId === channel.memberId ? ' (you)' : ''}
+                          {person.kind === 'agent' ? ' · Agent' : ''}
                         </span>
                       ))}
                     </div>
@@ -439,10 +441,14 @@ export function ChannelMemberPanelView({
                         return (
                           <article
                             key={record.messageId}
-                            className={`channel-member-message${own ? ' is-own' : ''}`}
+                            className={`channel-member-message${own ? ' is-own' : ''}${record.kind === 'agent.text' ? ' is-agent' : ''}`}
                           >
                             <div className="channel-member-message-meta">
-                              <strong>{author?.displayName || 'Former member'}</strong>
+                              <strong>
+                                {author?.displayName ||
+                                  (record.kind === 'agent.text' ? 'Former agent' : 'Former member')}
+                              </strong>
+                              {record.kind === 'agent.text' && <span>Agent</span>}
                               <span>#{record.sequence}</span>
                               <time dateTime={isoTime(record.acceptedAt)}>
                                 {isoTime(record.acceptedAt)}

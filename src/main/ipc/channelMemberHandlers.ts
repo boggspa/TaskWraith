@@ -292,7 +292,7 @@ function projectChannel(channel: ChannelMemberProductionChannelView): ChannelMem
 function projectMember(member: ChannelMemberReplicaMember): ChannelMemberIpcMember {
   return {
     memberId: member.memberId,
-    kind: 'human',
+    kind: member.kind,
     displayName: member.displayName,
     status: 'active',
     joinedAt: member.joinedAt
@@ -306,7 +306,7 @@ function projectMessage(message: ChannelMessage): ChannelMemberIpcMessage {
     messageId: message.messageId,
     authorMemberId: message.authorMemberId,
     clientMessageId: message.clientMessageId,
-    kind: 'human.text',
+    kind: message.kind,
     content: message.content,
     acceptedAt: message.acceptedAt,
     contentHash: message.contentHash

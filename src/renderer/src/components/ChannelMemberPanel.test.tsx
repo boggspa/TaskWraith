@@ -101,14 +101,14 @@ describe('ChannelMemberPanelView', () => {
     expect(html).not.toContain('role="dialog"')
   })
 
-  it('offers an explicit human-only invite flow without agent dispatch', () => {
+  it('offers an explicit human-only invite flow with reviewed dispatch disabled', () => {
     const html = render({ inviteText: '{"type":"taskwraith-channel-invite"}' })
 
     expect(html).toContain('Join a Channel')
     expect(html).toContain('Your human display name')
     expect(html).toContain('TaskWraith Channel invite')
     expect(html).toContain('Begin secure join')
-    expect(html).toContain('never starts an agent run')
+    expect(html).toContain('mention dispatch remains disabled pending security review')
     expect(html).not.toContain('Run agent')
     expect(html).not.toContain('provider')
   })
@@ -219,6 +219,39 @@ describe('ChannelMemberPanelView', () => {
     expect(html).toContain('Disconnect')
     expect(html).toContain('aria-label="Joined Channel message"')
     expect(html).toContain('Post')
+  })
+
+  it('labels signed agent participants and replies without exposing an agent action', () => {
+    const html = render({
+      state: {
+        ...createChannelMemberPanelInitialState(),
+        loading: false,
+        memberships: [summary()],
+        phase: 'connected',
+        connected: true,
+        channel: channel(),
+        members: [
+          member({ memberId: 'owner-a', displayName: 'Host' }),
+          member(),
+          member({ memberId: 'agent-a', kind: 'agent', displayName: 'Build Agent' })
+        ],
+        records: [
+          message(1, {
+            authorMemberId: 'agent-a',
+            clientMessageId: 'agent-client-1',
+            kind: 'agent.text',
+            content: 'Signed agent result'
+          })
+        ],
+        highWaterSequence: 1
+      }
+    })
+
+    expect(html).toContain('Participants')
+    expect(html).toContain('Build Agent · Agent')
+    expect(html).toContain('Signed agent result')
+    expect(html).toContain('channel-member-message is-agent')
+    expect(html).not.toContain('Run agent')
   })
 
   it('fails revoked and recovery-blocked memberships closed while retaining history', () => {
