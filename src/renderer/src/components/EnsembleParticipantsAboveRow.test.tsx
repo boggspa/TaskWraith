@@ -497,7 +497,7 @@ describe('EnsembleParticipantsAboveRow', () => {
         buildEnsembleAddProviderGroups(false, false, {
           snapshot: { ready: true, providerIds: ['codex', 'claude', 'kimi', 'ollama'] }
         }).map((group) => group.provider)
-      ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
+      ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
       const expanded = buildEnsembleAddProviderGroups(true, true, {
         snapshot: {
           ready: true,
@@ -512,7 +512,8 @@ describe('EnsembleParticipantsAboveRow', () => {
         'grok',
         'ollama',
         'pi',
-        'mistral'
+        'mistral',
+        'muse'
       ])
       expect(
         expanded.every((group) => group.modelOptions.every((model) => model.id !== 'custom'))

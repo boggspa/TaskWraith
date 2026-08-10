@@ -133,7 +133,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['claude', 'cursor'] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
   })
 
   it('uses authenticated AntiGravity models only from the configured snapshot', () => {
@@ -164,7 +164,8 @@ describe('ParticipantPickerCluster', () => {
       },
       { provider: 'ollama' },
       { provider: 'pi' },
-      { provider: 'mistral' }
+      { provider: 'mistral' },
+      { provider: 'muse' }
     ])
   })
 
@@ -176,13 +177,13 @@ describe('ParticipantPickerCluster', () => {
         { ready: false, providerIds: [] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
   })
 
   it('never leaks retired or flag-gated providers through the configured snapshot', () => {
     // gemini (retired) cannot be smuggled in via the snapshot. Grok and Cursor
     // are no longer flag-gated — every statically live provider (including Pi
-    // and Mistral) shows regardless of what the snapshot lists; only
+    // Mistral, and Muse) shows regardless of what the snapshot lists; only
     // antigravity stays conditional on the snapshot admitting it, and this
     // snapshot never does.
     expect(
@@ -192,7 +193,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['gemini', 'grok', 'codex'] },
         'claude'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
   })
 
   it('keeps an existing disconnected participant visible and editable', () => {

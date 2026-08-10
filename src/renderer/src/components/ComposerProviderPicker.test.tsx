@@ -163,7 +163,8 @@ describe('resolveProviderRows (additive visibility + option order)', () => {
       'antigravity',
       'ollama',
       'pi',
-      'mistral'
+      'mistral',
+      'muse'
     ])
 
     expect(
@@ -215,13 +216,19 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('data-provider-value="ollama"')
     expect(html).toContain('data-provider-value="pi"')
     expect(html).toContain('data-provider-value="mistral"')
+    expect(html).toContain('data-provider-value="muse"')
     // ...each with the shared rich-popover row chrome + a provider icon.
     expect(html).toContain('composer-plus-picker-row')
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
-      expect(html).toContain(`data-provider-logo="${provider}"`)
-      expect(html).not.toContain(`provider-glyph-${provider}`)
+      if (provider === 'muse') {
+        expect(html).toContain('provider-glyph-muse')
+        expect(html).not.toContain('data-provider-logo="muse"')
+      } else {
+        expect(html).toContain(`data-provider-logo="${provider}"`)
+        expect(html).not.toContain(`provider-glyph-${provider}`)
+      }
     }
     expect(html).toContain('<img class="provider-brand-logo-image')
     expect(html).toContain('Claude')
