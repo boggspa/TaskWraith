@@ -184,7 +184,7 @@ describe('PeopleToChannelMigrationPlan', () => {
         memberMappings: [
           {
             sourceCollaboratorId: 'collaborator_one',
-            targetMemberId: 'collaborator_one',
+            targetMemberId: expect.stringMatching(/^member_[a-f0-9]{32}$/),
             sourceStatus: 'active',
             targetStatus: 'active',
             reusedExistingMember: false
@@ -512,6 +512,56 @@ describe('PeopleToChannelMigrationPlan', () => {
       'target_identity_revoked',
       'target_owner_identity_mismatch'
     ])
+  })
+
+  it('scopes new member ids to the Channel and blocks global id or room collisions', () => {
+    const baseline = createPeopleToChannelMigrationPlan(input())
+    const derivedMemberId = baseline.entries[0].target!.memberMappings[0].targetMemberId
+    const unrelatedChannel = channel({
+      channelId: 'channel_other',
+      chatId: 'chat_other',
+      ownerMemberId: 'owner_other'
+    })
+    const unrelatedOwner = channelMember({
+      channelId: 'channel_other',
+      memberId: 'owner_other',
+      identityPublicKey: 'other-owner-key'
+    })
+
+    const idCollision = createPeopleToChannelMigrationPlan(
+      input({
+        channels: channelSnapshot(
+          [unrelatedChannel],
+          [
+            unrelatedOwner,
+            channelMember({
+              channelId: 'channel_other',
+              memberId: derivedMemberId,
+              identityPublicKey: 'unrelated-member-key'
+            })
+          ]
+        )
+      })
+    )
+    expect(idCollision.entries[0].blockers).toContain('target_member_id_conflict')
+
+    const roomCollision = createPeopleToChannelMigrationPlan(
+      input({
+        channels: channelSnapshot(
+          [unrelatedChannel],
+          [
+            unrelatedOwner,
+            channelMember({
+              channelId: 'channel_other',
+              memberId: 'other_member',
+              identityPublicKey: 'unrelated-member-key',
+              roomId: 'private-room-id'
+            })
+          ]
+        )
+      })
+    )
+    expect(roomCollision.entries[0].blockers).toContain('target_room_conflict')
   })
 
   it('blocks a merge that would exceed the eight-member ceiling', () => {

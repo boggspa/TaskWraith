@@ -88,6 +88,7 @@ export type PeopleToChannelMigrationBlocker =
   | 'target_member_id_conflict'
   | 'target_owner_identity_mismatch'
   | 'target_owner_missing'
+  | 'target_room_conflict'
   | 'target_revocation_conflict'
 
 export type PeopleToChannelMigrationRequirement =
@@ -222,6 +223,17 @@ function boundedIdentifier(value: string): boolean {
 
 function derivedOwnerMemberId(channelId: string, hostIdentityPublicKey: string): string {
   return `owner_${fingerprint('people-to-channel-owner', `${channelId}\u0000${hostIdentityPublicKey}`).slice(0, 32)}`
+}
+
+function derivedHumanMemberId(
+  channelId: string,
+  collaboratorId: string,
+  identityPublicKey: string
+): string {
+  return `member_${fingerprint(
+    'people-to-channel-human-member',
+    `${channelId}\u0000${collaboratorId}\u0000${identityPublicKey}`
+  ).slice(0, 32)}`
 }
 
 function sortedPeopleSnapshot(snapshot: HumanCollaborationSnapshot): unknown {
@@ -388,11 +400,15 @@ function matchingMembers(
 
 function buildMemberMappings(args: {
   share: HumanCollaborationShare
+  channelId: string
   existingChannel: Channel | undefined
   existingMembers: readonly ChannelMember[]
+  allMembers: readonly ChannelMember[]
+  allInvites: ChannelStoreSnapshot['invites']
   blockers: PeopleToChannelMigrationBlocker[]
 }): PeopleToChannelMemberMapping[] {
-  const { share, existingChannel, existingMembers, blockers } = args
+  const { share, channelId, existingChannel, existingMembers, allMembers, allInvites, blockers } =
+    args
   const participantIds = new Set<string>()
   const participantIdentities = new Set<string>()
   const mappings: PeopleToChannelMemberMapping[] = []
@@ -422,18 +438,34 @@ function buildMemberMappings(args: {
       blockers.push('target_admission_conflict')
     }
 
-    const targetMemberId = existing?.memberId ?? participant.collaboratorId
+    const targetMemberId =
+      existing?.memberId ??
+      derivedHumanMemberId(channelId, participant.collaboratorId, participant.publicKeyId)
     const idCollision = existingMembers.find(
       (member) =>
         member.memberId === targetMemberId && member.identityPublicKey !== participant.publicKeyId
     )
-    if (idCollision) blockers.push('target_member_id_conflict')
+    const globalIdCollision = allMembers.find(
+      (member) =>
+        member.memberId === targetMemberId &&
+        (member.channelId !== channelId || member.identityPublicKey !== participant.publicKeyId)
+    )
+    if (idCollision || globalIdCollision) blockers.push('target_member_id_conflict')
 
     const room = latestParticipantRoom(share, participant.collaboratorId)
     if (room.ambiguous) blockers.push('ambiguous_active_member_room')
     const roomId = room.roomId
     if (participant.status === 'active' && !roomId && !existing?.roomId) {
       blockers.push('missing_active_member_room')
+    }
+    if (
+      participant.status === 'active' &&
+      !existing?.roomId &&
+      roomId &&
+      (allMembers.some((member) => member.roomId === roomId) ||
+        allInvites.some((invite) => invite.roomId === roomId))
+    ) {
+      blockers.push('target_room_conflict')
     }
     mappings.push({
       sourceCollaboratorId: participant.collaboratorId,
@@ -575,12 +607,17 @@ function entryForShare(args: {
     ) {
       blockers.push('target_owner_identity_mismatch')
     }
+  } else if (input.channels.members.some((member) => member.memberId === ownerMemberId)) {
+    blockers.push('target_member_id_conflict')
   }
 
   const memberMappings = buildMemberMappings({
     share,
+    channelId,
     existingChannel,
     existingMembers,
+    allMembers: input.channels.members,
+    allInvites: input.channels.invites,
     blockers
   })
   const requirements = requirementsFor(share, source, existingChannel)
