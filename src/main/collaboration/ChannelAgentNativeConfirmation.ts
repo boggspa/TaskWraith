@@ -35,9 +35,10 @@ const PROVIDERS: ReadonlySet<string> = new Set([
 export interface ChannelAgentNativeSeatSummary {
   readonly agentSeatId: string
   readonly displayName: string
-  readonly provider: ProviderId
+  /** Mutable descriptor only. Null keeps destructive cleanup available after roster removal. */
+  readonly provider: ProviderId | null
   readonly model: string | null
-  readonly role: string
+  readonly role: string | null
 }
 
 export interface ChannelAgentNativeMentionerSummary {
@@ -175,13 +176,28 @@ function positiveInteger(value: unknown, maximum = Number.MAX_SAFE_INTEGER): val
   return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= maximum
 }
 
-function validateSeat(value: unknown): value is ChannelAgentNativeSeatSummary {
+function validateSeat(
+  value: unknown,
+  requireAvailableDescriptor: boolean
+): value is ChannelAgentNativeSeatSummary {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, ['agentSeatId', 'displayName', 'provider', 'model', 'role']) ||
+    !safeIdentifier(value.agentSeatId) ||
+    !value.agentSeatId.startsWith('pooled-agent-') ||
+    !safeLabel(value.displayName)
+  ) {
+    return false
+  }
+  if (value.provider === null || value.role === null) {
+    return (
+      !requireAvailableDescriptor &&
+      value.provider === null &&
+      value.model === null &&
+      value.role === null
+    )
+  }
   return (
-    isPlainObject(value) &&
-    hasExactKeys(value, ['agentSeatId', 'displayName', 'provider', 'model', 'role']) &&
-    safeIdentifier(value.agentSeatId) &&
-    value.agentSeatId.startsWith('pooled-agent-') &&
-    safeLabel(value.displayName) &&
     typeof value.provider === 'string' &&
     PROVIDERS.has(value.provider) &&
     (value.model === null || safeLabel(value.model)) &&
@@ -298,12 +314,15 @@ function validateAuthority(value: unknown): value is ChannelAgentNativeGrantAuth
   return true
 }
 
-function validateBase(value: Record<string, unknown>): boolean {
+function validateBase(
+  value: Record<string, unknown>,
+  requireAvailableDescriptor: boolean
+): boolean {
   return (
     safeIdentifier(value.operationId) &&
     safeIdentifier(value.channelId) &&
     safeLabel(value.channelTitle) &&
-    validateSeat(value.seat)
+    validateSeat(value.seat, requireAvailableDescriptor)
   )
 }
 
@@ -339,7 +358,7 @@ function validateRequest(value: unknown): value is ChannelAgentNativeConfirmatio
         'seat',
         'existingKeyGeneration'
       ]) &&
-      validateBase(value) &&
+      validateBase(value, true) &&
       (value.existingKeyGeneration === null || positiveInteger(value.existingKeyGeneration))
     )
   }
@@ -358,7 +377,7 @@ function validateRequest(value: unknown): value is ChannelAgentNativeConfirmatio
         'ttlMs',
         'maxDispatches'
       ]) &&
-      validateBase(value) &&
+      validateBase(value, true) &&
       safeIdentifier(value.agentMemberId) &&
       positiveInteger(value.keyGeneration) &&
       validateMentioners(value.allowedMentioners) &&
@@ -379,7 +398,7 @@ function validateRequest(value: unknown): value is ChannelAgentNativeConfirmatio
         'agentMemberId',
         'keyGeneration'
       ]) &&
-      validateBase(value) &&
+      validateBase(value, false) &&
       safeIdentifier(value.agentMemberId) &&
       positiveInteger(value.keyGeneration)
     )
@@ -395,7 +414,7 @@ function validateRequest(value: unknown): value is ChannelAgentNativeConfirmatio
         'channels'
       ]) &&
       safeIdentifier(value.operationId) &&
-      validateSeat(value.seat) &&
+      validateSeat(value.seat, false) &&
       positiveInteger(value.fromKeyGeneration) &&
       positiveInteger(value.toKeyGeneration) &&
       value.toKeyGeneration === value.fromKeyGeneration + 1 &&
@@ -446,11 +465,18 @@ function compact(value: string, maximum = MAX_LABEL_LENGTH): string {
 }
 
 function seatLines(seat: ChannelAgentNativeSeatSummary): string[] {
+  if (seat.provider === null) {
+    return [
+      `Agent: ${compact(seat.displayName)}`,
+      `Stable seat: ${compact(seat.agentSeatId)}`,
+      'Provider/model/role: unavailable (cleanup uses the durable signed seat binding)'
+    ]
+  }
   return [
     `Agent: ${compact(seat.displayName)}`,
     `Stable seat: ${compact(seat.agentSeatId)}`,
     `Provider/model: ${seat.provider} / ${compact(seat.model ?? 'provider default')}`,
-    `Role: ${compact(seat.role)}`
+    `Role: ${compact(seat.role ?? 'unavailable')}`
   ]
 }
 

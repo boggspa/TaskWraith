@@ -316,7 +316,11 @@ function assertPrincipalMatchesChat(
     }
     return
   }
-  if (!chat.workspaceId || principal.kind !== 'workspace') {
+  if (
+    !chat.workspaceId ||
+    principal.kind !== 'workspace' ||
+    principal.workspaceId !== chat.workspaceId
+  ) {
     throw new TypeError('Channel agent workspace principal is unavailable')
   }
 }

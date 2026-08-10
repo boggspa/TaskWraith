@@ -148,6 +148,51 @@ describe('ChannelAgentNativeConfirmation', () => {
     expect(rotate.detail).toContain('old mention grants remain revoked')
   })
 
+  it('keeps destructive cleanup confirmable after mutable seat descriptors disappear', () => {
+    const unavailableSeat = {
+      agentSeatId: 'pooled-agent-native-proof',
+      displayName: 'Build Agent',
+      provider: null,
+      model: null,
+      role: null
+    } as const
+    const revoke = buildChannelAgentNativeConfirmationOptions({
+      kind: 'revoke',
+      operationId: 'revoke-unavailable-1',
+      channelId: 'channel-1',
+      channelTitle: 'Release room',
+      seat: unavailableSeat,
+      agentMemberId: 'agent-member-1',
+      keyGeneration: 1
+    })
+    const rotate = buildChannelAgentNativeConfirmationOptions({
+      kind: 'rotate',
+      operationId: 'rotate-unavailable-1',
+      seat: unavailableSeat,
+      fromKeyGeneration: 1,
+      toKeyGeneration: 2,
+      channels: [{ channelId: 'channel-1', channelTitle: 'Release room' }]
+    })
+
+    expect(revoke.detail).toContain(
+      'Provider/model/role: unavailable (cleanup uses the durable signed seat binding)'
+    )
+    expect(rotate.detail).toContain('Key generation: 1 → 2')
+    expect(() =>
+      buildChannelAgentNativeConfirmationOptions(grant({ seat: unavailableSeat }))
+    ).toThrow(/request is invalid/)
+    expect(() =>
+      buildChannelAgentNativeConfirmationOptions({
+        kind: 'enroll',
+        operationId: 'enroll-unavailable-1',
+        channelId: 'channel-1',
+        channelTitle: 'Release room',
+        seat: unavailableSeat,
+        existingKeyGeneration: null
+      })
+    ).toThrow(/request is invalid/)
+  })
+
   it('strips control and bidi spoofing from every renderer-visible label', () => {
     const request = grant({
       channelTitle: 'Release\n\u202eFull Access',

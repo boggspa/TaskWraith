@@ -206,7 +206,9 @@ describe('ChannelAgentSeatAuthority', () => {
 
   it('changes authority hashes when the main-resolved principal or effective posture changes', () => {
     const seat = 'pooled-agent-hash-binding'
-    const canonical = chat([participant('participant-hash', seat)])
+    const canonical = chat([participant('participant-hash', seat)], {
+      workspaceId: 'workspace-a'
+    })
     const base = resolveChannelAgentGrantAuthority({
       chat: canonical,
       agentSeatId: seat,
@@ -216,7 +218,7 @@ describe('ChannelAgentSeatAuthority', () => {
       providerAllowed: allowAll
     })
     const anotherWorkspace = resolveChannelAgentGrantAuthority({
-      chat: canonical,
+      chat: { ...canonical, workspaceId: 'workspace-b' },
       agentSeatId: seat,
       permissionPresetId: 'read_only',
       workspacePrincipal: { kind: 'workspace', workspaceId: 'workspace-b' },
@@ -265,5 +267,17 @@ describe('ChannelAgentSeatAuthority', () => {
         providerAllowed: allowAll
       }).workspaceIdentityHash
     ).toMatch(/^[a-f0-9]{64}$/)
+
+    const workspaceChat = chat([participant('participant-workspace', seat)])
+    expect(() =>
+      resolveChannelAgentGrantAuthority({
+        chat: workspaceChat,
+        agentSeatId: seat,
+        permissionPresetId: 'read_only',
+        workspacePrincipal: { kind: 'workspace', workspaceId: 'workspace-swapped' },
+        settings,
+        providerAllowed: allowAll
+      })
+    ).toThrow(/workspace principal is unavailable/)
   })
 })
