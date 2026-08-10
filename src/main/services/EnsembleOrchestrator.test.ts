@@ -15410,6 +15410,34 @@ Next action:
       kimiThinking: true,
       serviceTier: 'standard'
     })
+
+    const runId = harness.dispatched[0].appRunId!
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'K3 review complete.' }
+    )
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.find(
+          (message) =>
+            message.runId === runId &&
+            message.role === 'assistant' &&
+            message.metadata?.kind === 'ensembleParticipant'
+        )?.metadata
+      ).toMatchObject({
+        ensembleModel: 'kimi-k3',
+        ensembleReasoningEffort: 'high'
+      })
+    )
+    expect(
+      harness.chat.messages.find(
+        (message) =>
+          message.runId === runId &&
+          message.role === 'assistant' &&
+          message.metadata?.kind === 'ensembleParticipant'
+      )?.metadata?.ensembleThinkingEnabled
+    ).toBeUndefined()
   })
 
   // A2 (1.0.3) — `dmTargetParticipantId` scopes the round to a

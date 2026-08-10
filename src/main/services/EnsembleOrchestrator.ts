@@ -20628,7 +20628,8 @@ function ensembleRunIdentity(
  *
  * Only the field that applies to this participant's provider is set:
  *   codex / claude  → `ensembleReasoningEffort` (token: low/medium/high/xhigh/off)
- *   kimi            → `ensembleThinkingEnabled` (boolean)
+ *   Kimi K3         → `ensembleReasoningEffort` (token: low/high/max)
+ *   other Kimi rows  → `ensembleThinkingEnabled` (boolean)
  *   gemini          → nothing (no reasoning axis)
  *
  * Returning an object that gets spread keeps the call-sites compact and
@@ -20642,6 +20643,11 @@ function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<str
     (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
     (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
   ) {
+    return participant.reasoningEffort
+      ? { ensembleReasoningEffort: participant.reasoningEffort }
+      : {}
+  }
+  if (participant.provider === 'kimi' && participant.model === 'kimi-k3') {
     return participant.reasoningEffort
       ? { ensembleReasoningEffort: participant.reasoningEffort }
       : {}
