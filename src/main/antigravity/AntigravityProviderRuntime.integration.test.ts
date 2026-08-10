@@ -65,19 +65,32 @@ describe('AntiGravity S3 runtime integration', () => {
     // instead of pinning the mechanism.
     const agy = probe.fn('runAntigravityAgyProvider')
     const settle = probe.callsTo(agy, 'settleVisibleProviderSetupFailure')
-    // Two settle sites, and EVERY one must settle the run — an unsettled path
-    // is a run Stop can never finish, which is the guarantee this pins:
+    // Three settle sites, and EVERY one must settle the run — an unsettled
+    // path is a run Stop can never finish, which is the guarantee this pins:
     //   1. launch preparation threw (setup required: binary/consent/argv);
     //   2. the approval bridge could not be installed for a run whose write
     //      capability depended on it, so proceeding would mean an unarbitrated
-    //      writer in a shared checkout. Not a setup problem — retryable.
-    expect(settle).toHaveLength(2)
+    //      writer in a shared checkout. Not a setup problem — retryable;
+    //   3. the permission lease could not be written into agy's settings, so
+    //      launching would doom the turn to headless auto-denial with no
+    //      assistant output. Aborting is the only honest outcome.
+    expect(settle).toHaveLength(3)
     for (const call of settle) {
       expect(probe.propText(call, 0, 'provider')).toBe("'antigravity'")
       expect(probe.propText(call, 0, 'fallback')).toBe('false')
     }
     expect(probe.propText(settle[0], 0, 'setupRequired')).toBe('true')
     expect(probe.propText(settle[1], 0, 'setupRequired')).toBe('false')
+    expect(probe.propText(settle[2], 0, 'setupRequired')).toBe('false')
+    expect(probe.propText(settle[2], 0, 'message')).toContain(
+      'signed in-workspace permissions into official agy settings'
+    )
+    // The lease-failure site must return after settling — continuing past it
+    // is what let agy launch with no allow rules and die silently.
+    const leaseSettleIdx = probe.text(agy).indexOf('signed in-workspace permissions')
+    expect(leaseSettleIdx).toBeGreaterThan(-1)
+    const afterLeaseSettle = probe.text(agy).slice(leaseSettleIdx, leaseSettleIdx + 1200)
+    expect(afterLeaseSettle).toContain('return')
 
     // And the helper it delegates to still does both halves: project the
     // failure to the renderer, and finish the run as failed. Without the
