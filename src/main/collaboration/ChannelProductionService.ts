@@ -10,6 +10,10 @@ import {
   type ChannelAuditLike
 } from './ChannelAuditLog'
 import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
+import type {
+  ChannelAgentManagementMembershipInspection,
+  ChannelAgentManagementSeatInspection
+} from './ChannelAgentManagementController'
 import {
   ChannelAgentManagementService,
   type ChannelAgentDispatchGrantResult,
@@ -139,6 +143,8 @@ export interface ChannelProductionService {
     maxRecords?: number
     maxBytes?: number
   }): ChannelProductionReadResult
+  inspectAgentSeat(agentSeatId: string): ChannelAgentManagementSeatInspection
+  inspectChannelAgentSeats(channelId: string): readonly ChannelAgentManagementSeatInspection[]
   listAudit(args?: { channelId?: string; limit?: number }): ChannelAuditEvent[]
   createChannel(args: {
     chatId: string
@@ -281,6 +287,25 @@ function normalizeRelayUrl(value: unknown): string | null {
   } catch {
     return null
   }
+}
+
+function requireAgentSeatId(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith('pooled-agent-') ||
+    value.length <= 'pooled-agent-'.length ||
+    value.length > 512 ||
+    value.trim() !== value
+  ) {
+    throw new ChannelError('protocol_unsupported', 'Channel agent seat id is invalid')
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code === 0x7f) {
+      throw new ChannelError('protocol_unsupported', 'Channel agent seat id is invalid')
+    }
+  }
+  return value
 }
 
 function memberView(member: ChannelMember): ChannelProductionMemberView {
@@ -510,6 +535,23 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       records: replay.records,
       highWaterSequence: replay.highWaterSequence
     }
+  }
+
+  inspectAgentSeat(agentSeatId: string): ChannelAgentManagementSeatInspection {
+    return this.agentSeatInspection(this.requireRunning(), requireAgentSeatId(agentSeatId))
+  }
+
+  inspectChannelAgentSeats(channelId: string): readonly ChannelAgentManagementSeatInspection[] {
+    const state = this.requireReadyChannel(channelId)
+    const seatIds = [
+      ...new Set(
+        state.store
+          .listMembers(channelId)
+          .filter((member): member is AgentChannelMember => member.kind === 'agent')
+          .map((member) => member.agentSeatId)
+      )
+    ].sort()
+    return seatIds.map((agentSeatId) => this.agentSeatInspection(state, agentSeatId))
   }
 
   listAudit(args?: { channelId?: string; limit?: number }): ChannelAuditEvent[] {
@@ -892,6 +934,43 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       () => this.inFlight.delete(operation)
     )
     return operation
+  }
+
+  private agentSeatInspection(
+    state: RunningState,
+    agentSeatId: string
+  ): ChannelAgentManagementSeatInspection {
+    const history = state.agentIdentities.publicHistory(agentSeatId)
+    const memberships: ChannelAgentManagementMembershipInspection[] = []
+    for (const channel of state.store.listChannels()) {
+      for (const member of state.store.listMembers(channel.channelId)) {
+        if (member.kind !== 'agent' || member.agentSeatId !== agentSeatId) continue
+        if (member.status !== 'active' && member.status !== 'revoked') {
+          throw new ChannelError(
+            'recovery_blocked',
+            'Channel agent membership has an invalid inspection status'
+          )
+        }
+        memberships.push({
+          channelId: channel.channelId,
+          memberId: member.memberId,
+          displayName: member.displayName,
+          keyGeneration: member.keyGeneration,
+          status: member.status
+        })
+      }
+    }
+    memberships.sort(
+      (left, right) =>
+        left.channelId.localeCompare(right.channelId) ||
+        left.keyGeneration - right.keyGeneration ||
+        left.memberId.localeCompare(right.memberId)
+    )
+    return {
+      agentSeatId,
+      currentKeyGeneration: history?.current.keyGeneration ?? null,
+      memberships
+    }
   }
 
   private enqueueAgentManagement<T>(operation: () => Promise<T> | T): Promise<T> {

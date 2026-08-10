@@ -674,6 +674,16 @@ describe('ChannelProductionService', () => {
     const agentSeatId = 'pooled-agent-production-management'
     const seat = { agentSeatId, displayName: 'Build Agent' }
 
+    expect(fixture.service.inspectAgentSeat(agentSeatId)).toEqual({
+      agentSeatId,
+      currentKeyGeneration: null,
+      memberships: []
+    })
+    expect(fixture.service.inspectChannelAgentSeats(first.channelId)).toEqual([])
+    expect(() => fixture.service.inspectAgentSeat('renderer-chosen-seat')).toThrow(
+      /seat id is invalid/
+    )
+
     const firstEnrollment = await fixture.service.enrollAgent({
       channelId: first.channelId,
       seat,
@@ -703,6 +713,33 @@ describe('ChannelProductionService', () => {
       maxDispatches: 1,
       allowedMentionerMemberIds: [owner.memberId]
     })
+    const beforeRotation = fixture.service.inspectAgentSeat(agentSeatId)
+    expect(beforeRotation).toMatchObject({
+      agentSeatId,
+      currentKeyGeneration: 1
+    })
+    expect(beforeRotation.memberships).toHaveLength(2)
+    expect(beforeRotation.memberships).toEqual(
+      expect.arrayContaining([
+        {
+          channelId: first.channelId,
+          memberId: firstEnrollment.member.memberId,
+          displayName: 'Build Agent',
+          keyGeneration: 1,
+          status: 'active'
+        },
+        expect.objectContaining({
+          channelId: second.channelId,
+          displayName: 'Build Agent',
+          keyGeneration: 1,
+          status: 'active'
+        })
+      ])
+    )
+    expect(fixture.service.inspectChannelAgentSeats(first.channelId)).toEqual([beforeRotation])
+    expect(JSON.stringify(beforeRotation)).not.toMatch(
+      /publicKey|privateKey|signature|delegation|grant/i
+    )
     await expect(
       fixture.service.revokeMember({
         channelId: first.channelId,
@@ -733,6 +770,36 @@ describe('ChannelProductionService', () => {
       operationId: 'production-remove'
     })
     expect(removed.member).toMatchObject({ status: 'revoked', keyGeneration: 2 })
+    const afterRemoval = fixture.service.inspectAgentSeat(agentSeatId)
+    expect(afterRemoval).toMatchObject({
+      agentSeatId,
+      currentKeyGeneration: 2
+    })
+    expect(afterRemoval.memberships).toHaveLength(4)
+    expect(afterRemoval.memberships).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: first.channelId,
+          keyGeneration: 1,
+          status: 'revoked'
+        }),
+        expect.objectContaining({
+          channelId: first.channelId,
+          keyGeneration: 2,
+          status: 'revoked'
+        }),
+        expect.objectContaining({
+          channelId: second.channelId,
+          keyGeneration: 1,
+          status: 'revoked'
+        }),
+        expect.objectContaining({
+          channelId: second.channelId,
+          keyGeneration: 2,
+          status: 'active'
+        })
+      ])
+    )
     expect(
       onChange.mock.calls.some(
         ([event]) => event.channelId === first.channelId && event.reason === 'membership'

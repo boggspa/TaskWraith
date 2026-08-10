@@ -63,6 +63,8 @@ function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channe
       refreshRelayRooms: vi.fn(() => 0),
       listChannels: vi.fn(() => channels as never),
       readChannel: vi.fn(),
+      inspectAgentSeat: vi.fn(),
+      inspectChannelAgentSeats: vi.fn(() => []),
       listAudit: vi.fn(() => []),
       createChannel: vi.fn(),
       issueInvite: vi.fn(),
