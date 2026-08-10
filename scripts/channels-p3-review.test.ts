@@ -24,7 +24,15 @@ interface ReviewModule {
   }
   verifyPackagedGroups(
     groups: Record<string, Array<{ path: string; contents: string | Buffer }>>
-  ): Record<string, { fileCount: number; requiredMarkers: string[] }>
+  ): Record<
+    string,
+    {
+      fileCount: number
+      requiredMarkers: string[]
+      forbiddenMarkerCount: number
+      forbiddenMarkersSha256: string
+    }
+  >
   verifySourceBoundary(overrides?: Record<string, string>): {
     reviewId: string
     participationEnabled: boolean
@@ -67,6 +75,9 @@ describe('Channels P3 adversarial review harness', () => {
     )
     const accepted = review.verifyPackagedGroups(groups)
     expect(accepted.main.requiredMarkers).toContain('channel_agent_review_required')
+    expect(accepted.preload.forbiddenMarkerCount).toBeGreaterThan(0)
+    expect(accepted.preload.forbiddenMarkersSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(JSON.stringify(accepted)).not.toContain('privateKeyDerB64')
 
     for (const group of Object.keys(review.PACKAGED_REQUIRED_MARKERS)) {
       const stale = structuredClone(groups)

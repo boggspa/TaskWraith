@@ -573,10 +573,11 @@ function verifyPackagedGroups(groups) {
     const required = PACKAGED_REQUIRED_MARKERS[group]
     const missing = required.filter((marker) => !combined.includes(marker))
     assertReview(missing.length === 0, `packaged ${group} is stale: ${missing.join(', ')}`)
-    const forbidden = [
+    const forbiddenMarkers = [
       ...PACKAGED_FORBIDDEN_MARKERS.all,
       ...(PACKAGED_FORBIDDEN_MARKERS[group] || [])
-    ].filter((marker) => combined.includes(marker))
+    ]
+    const forbidden = forbiddenMarkers.filter((marker) => combined.includes(marker))
     assertReview(
       forbidden.length === 0,
       `packaged ${group} exposes forbidden markers: ${forbidden.join(', ')}`
@@ -593,10 +594,8 @@ function verifyPackagedGroups(groups) {
       bytes: entries.reduce((total, entry) => total + entry.bytes, 0),
       digest: sha256(entries.map((entry) => `${entry.path}:${entry.sha256}`).join('\n')),
       requiredMarkers: [...required],
-      forbiddenMarkersAbsent: [
-        ...PACKAGED_FORBIDDEN_MARKERS.all,
-        ...(PACKAGED_FORBIDDEN_MARKERS[group] || [])
-      ]
+      forbiddenMarkerCount: forbiddenMarkers.length,
+      forbiddenMarkersSha256: sha256(forbiddenMarkers.join('\n'))
     }
   }
   return summary
