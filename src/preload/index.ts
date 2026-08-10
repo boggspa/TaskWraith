@@ -1230,6 +1230,12 @@ const api = {
     // returns canvases this renderer opened itself.
     listForChat: (chatId: string): Promise<unknown[]> =>
       ipcRenderer.invoke('canvas:list-chat', chatId),
+    /**
+     * Structured chart document for a chat-owned chart canvas (TelemetryPane).
+     * Returns null when missing / not a chart / not owned. No pixels.
+     */
+    chartDocument: (chatId: string, canvasId: string): Promise<unknown | null> =>
+      ipcRenderer.invoke('canvas:chart-document', chatId, canvasId),
     closeForChat: (chatId: string, canvasId: string): Promise<void> =>
       ipcRenderer.invoke('canvas:close-chat', chatId, canvasId),
     // Human-only app-wide profile reset. This is intentionally not represented

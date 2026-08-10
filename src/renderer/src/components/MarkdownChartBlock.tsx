@@ -72,7 +72,7 @@ function ChartFigure({ document }: { document: CanvasChartDocument }): ReactElem
       <div
         className="markdown-chart-viewport"
         style={{ maxHeight: MARKDOWN_CHART_MAX_HEIGHT_PX }}
-        // SVG is Seat 7's escaped builder over validated chart documents only.
+        // SVG comes from the shared escaped builder over validated chart documents only.
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     </figure>

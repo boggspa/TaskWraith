@@ -53,10 +53,7 @@ export function registerCanvasEmbedIpc(
   ipcMain: IpcMain,
   deps: CanvasEmbedIpcDeps
 ): CanvasEmbedIpcAuthority {
-  const owned = new Map<
-    string,
-    { context: CanvasCallContext; senderId: number | undefined }
-  >()
+  const owned = new Map<string, { context: CanvasCallContext; senderId: number | undefined }>()
   const senderId = (event: IpcMainInvokeEvent): number | undefined => event.sender?.id
   const sameAuthority = (a: CanvasCallContext, b: CanvasCallContext): boolean =>
     a.chatId === b.chatId && a.workspacePath === b.workspacePath
@@ -136,10 +133,7 @@ export function registerCanvasEmbedIpc(
     let openedCanvasId: string | undefined
     try {
       context = deps.resolveContext(event, requiredChatId(args?.chatId))
-      const opened = await deps.controller.open(
-        { driver: 'sketch', embed },
-        context
-      )
+      const opened = await deps.controller.open({ driver: 'sketch', embed }, context)
       openedCanvasId = opened.canvasId
       const current = deps.resolveContext(event, context.chatId || '')
       if (!sameAuthority(current, context)) throw new Error('Canvas chat authority changed.')
@@ -166,9 +160,7 @@ export function registerCanvasEmbedIpc(
   }
 
   ipcMain.handle('canvas:open-window', (event, args: OpenArgs) => openCanvas(event, args, false))
-  ipcMain.handle('canvas:open-embedded', (event, args: OpenArgs) =>
-    openCanvas(event, args, true)
-  )
+  ipcMain.handle('canvas:open-embedded', (event, args: OpenArgs) => openCanvas(event, args, true))
   ipcMain.handle('canvas:open-sketch-window', (event, args: OpenSketchArgs) =>
     openSketchCanvas(event, args, false)
   )
@@ -239,6 +231,15 @@ export function registerCanvasEmbedIpc(
   ipcMain.handle('canvas:list-chat', (event, chatId: unknown) => {
     const context = deps.resolveContext(event, requiredChatId(chatId))
     return deps.controller.list(context)
+  })
+
+  // Structured chart payload for a chat-owned chart canvas. Used by the dock
+  // TelemetryPane when list/status did not already carry `chartDocument`
+  // (or to refresh without re-listing). Redacted JSON only — no pixels.
+  ipcMain.handle('canvas:chart-document', (event, chatId: unknown, canvasId: unknown) => {
+    if (typeof canvasId !== 'string' || !canvasId) return null
+    const context = deps.resolveContext(event, requiredChatId(chatId))
+    return deps.controller.getChartDocument(canvasId, context)
   })
 
   // Close ANY canvas in the sender's chat (the human closing an agent's canvas

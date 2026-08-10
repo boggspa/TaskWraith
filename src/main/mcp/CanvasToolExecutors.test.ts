@@ -26,6 +26,7 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
     }),
     list: () => [],
     status: () => null,
+    getChartDocument: () => null,
     snapshot: async () => ({
       url: 'u',
       title: 'T',

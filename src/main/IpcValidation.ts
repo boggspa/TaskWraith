@@ -425,6 +425,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'canvas:navigate-chat': ['nonEmptyString', 'nonEmptyString', 'object'],
   'canvas:list': [],
   'canvas:list-chat': ['nonEmptyString'],
+  'canvas:chart-document': ['nonEmptyString', 'nonEmptyString'],
   // Mesh Canvas is a main-window dock. Native pickers supply external model or
   // scene-package paths in main; the renderer passes only its canonical chat/
   // scene identity.

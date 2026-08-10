@@ -625,6 +625,11 @@ export interface CanvasController {
   ): Promise<{ canvasId: string } & CanvasSessionHandle>
   list(ctx: CanvasCallContext): CanvasSessionSummary[]
   status(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary | null
+  /**
+   * Structured chart payload for a live chart session (Canvas dock TelemetryPane).
+   * Returns null when the canvas is missing, not owned, or not a chart driver.
+   */
+  getChartDocument(canvasId: string, ctx: CanvasCallContext): CanvasChartDocument | null
   snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree>
   screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame>
   inspect(
@@ -642,14 +647,14 @@ export interface CanvasController {
     args: { level?: 'all' | 'warn' | 'error'; lines?: number },
     ctx: CanvasCallContext
   ): Promise<CanvasConsoleEntry[]>
-  resize(canvasId: string, viewport: CanvasViewport, ctx: CanvasCallContext): Promise<CanvasViewport>
+  resize(
+    canvasId: string,
+    viewport: CanvasViewport,
+    ctx: CanvasCallContext
+  ): Promise<CanvasViewport>
   click(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
   fill(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
-  annotate(
-    canvasId: string,
-    marks: CanvasMark[],
-    ctx: CanvasCallContext
-  ): Promise<CanvasAnnotation>
+  annotate(canvasId: string, marks: CanvasMark[], ctx: CanvasCallContext): Promise<CanvasAnnotation>
   sketchDocument(canvasId: string, ctx: CanvasCallContext): Promise<CanvasSketchDocument>
   sketchUpdate(
     canvasId: string,
@@ -769,11 +774,7 @@ function classifyIPv4(host: string): CanvasHostClass {
  * loading and before each request.
  */
 export function classifyCanvasHost(rawHost: string): CanvasHostClass {
-  const host = rawHost
-    .toLowerCase()
-    .replace(/^\[/, '')
-    .replace(/\]$/, '')
-    .replace(/\.$/, '')
+  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '')
   if (!host) return 'invalid'
   if (METADATA_HOSTNAMES.has(host)) return 'linklocal'
   // IPv4-mapped / NAT64, dotted form.
@@ -923,7 +924,9 @@ export function redactUrlQuery(rawUrl: string): string {
  * start a segment with '-'.
  */
 export function isValidBundleId(value: string): boolean {
-  return value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value)
+  return (
+    value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value)
+  )
 }
 
 /** A simulator UDID (uppercase or lowercase UUID) or the literal 'booted'. */
@@ -989,10 +992,7 @@ export interface CanvasMediaRefValidation {
  * shape check — the asset store's own mime→ext whitelist + realpath jail is the
  * authoritative gate (and is what actually resolves the bytes).
  */
-export function validateCanvasImageRef(
-  sha256: string,
-  mimeType: string
-): CanvasMediaRefValidation {
+export function validateCanvasImageRef(sha256: string, mimeType: string): CanvasMediaRefValidation {
   const sha = typeof sha256 === 'string' ? sha256.trim() : ''
   const mime = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : ''
   if (!CANVAS_MEDIA_SHA_RE.test(sha)) {

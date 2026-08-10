@@ -1,12 +1,11 @@
 /**
  * TelemetryCanvasPanel — native chart body for Canvas Dock `kind: 'chart'`
- * session tabs. Renders a validated CanvasChartDocument as SVG via Seat 7's
+ * session tabs. Renders a validated CanvasChartDocument as SVG via the shared
  * canvasChartSvg helper. No WebContentsView, no browser chrome, no pop-out.
  *
  * Document sources (first hit wins):
  * 1. `document` prop (parent decoded from list/status `chartDocument`)
- * 2. Optional preload bridge `canvas.chartDocument(chatId, canvasId)` when Seat
- *    5/6 exposes it (duck-typed — missing bridge is not an error)
+ * 2. Preload `canvas.chartDocument(chatId, canvasId)` when the prop is absent
  * 3. Title-only empty state until a document arrives
  */
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
@@ -28,8 +27,7 @@ export interface TelemetryCanvasPanelProps {
 }
 
 type ChartBridge = {
-  chartDocument?: (chatId: string, canvasId: string) => Promise<unknown>
-  getChartDocument?: (chatId: string, canvasId: string) => Promise<unknown>
+  chartDocument?: (chatId: string, canvasId: string) => Promise<unknown | null>
 }
 
 function seriesColor(index: number): string {
@@ -41,11 +39,9 @@ async function fetchChartDocument(
   canvasId: string
 ): Promise<CanvasChartDocument | null> {
   const api = window.api?.canvas as (typeof window.api.canvas & ChartBridge) | undefined
-  if (!api) return null
-  const loader = api.chartDocument ?? api.getChartDocument
-  if (typeof loader !== 'function') return null
+  if (!api || typeof api.chartDocument !== 'function') return null
   try {
-    const raw = await loader(chatId, canvasId)
+    const raw = await api.chartDocument(chatId, canvasId)
     const verdict = validateCanvasChart(raw)
     return verdict.ok ? verdict.document : null
   } catch {
@@ -79,7 +75,7 @@ export function TelemetryCanvasPanel({
       if (cancelled || chatIdRef.current !== chatId) return
       setDocument(next)
       setLoading(false)
-      setIssue(next ? null : 'Chart document is not available in this build yet.')
+      setIssue(next ? null : 'Chart document is not available for this canvas.')
     })
     return () => {
       cancelled = true
