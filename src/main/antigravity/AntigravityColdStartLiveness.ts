@@ -27,18 +27,28 @@ export function emitAntigravityColdStartInit(
   route: unknown
 ): void {
   const initToolId = `agy-init-${Date.now()}`
-  sendAgentCompatLine(sender, 'antigravity', {
-    type: 'tool_use',
-    tool_id: initToolId,
-    tool_name: 'antigravity_init',
-    parameters: {}
-  }, route)
-  sendAgentCompatLine(sender, 'antigravity', {
-    type: 'tool_result',
-    tool_id: initToolId,
-    tool_name: 'antigravity_init',
-    status: 'success',
-    output:
-      'Initializing AntiGravity project — this may take a few seconds for the first turn in a new chat.'
-  }, route)
+  sendAgentCompatLine(
+    sender,
+    'antigravity',
+    {
+      type: 'tool_use',
+      tool_id: initToolId,
+      tool_name: 'antigravity_init',
+      parameters: {}
+    },
+    route
+  )
+  sendAgentCompatLine(
+    sender,
+    'antigravity',
+    {
+      type: 'tool_result',
+      tool_id: initToolId,
+      tool_name: 'antigravity_init',
+      status: 'success',
+      output:
+        'Initializing AntiGravity project — this may take a few seconds for the first turn in a new chat.'
+    },
+    route
+  )
 }
