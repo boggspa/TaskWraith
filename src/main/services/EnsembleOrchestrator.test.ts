@@ -197,7 +197,8 @@ function makeSettings(): AppSettings {
         ollama: 120000,
         antigravity: 120000,
         pi: 120000,
-        mistral: 120000
+        mistral: 120000,
+        muse: 120000
       },
       mainAuthorityMs: 120000
     }

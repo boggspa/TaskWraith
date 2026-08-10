@@ -9,10 +9,12 @@
     "grok",
     "ollama",
     "pi",
-    "mistral"
+    "mistral",
+    "muse"
   ],
   "liveSelectionNotes": {
-    "mistral": "Approved in-session 2026-07-26: the user asked for Mistral as a first-class provider with 'equal parity to other providers', chose the seat id/label ('mistral' → 'Mistral') and chose full parity in one pass. The seat is the Mistral Vibe CLI over ACP on the user's plan subscription. It is NOT the same identity as Pi's `mistral/<model>` BYOK upstream, which remains a separate provider reached through Pi and is unaffected by this entry — the two share a brand word and a hue, nothing else."
+    "mistral": "Approved in-session 2026-07-26: the user asked for Mistral as a first-class provider with 'equal parity to other providers', chose the seat id/label ('mistral' → 'Mistral') and chose full parity in one pass. The seat is the Mistral Vibe CLI over ACP on the user's plan subscription. It is NOT the same identity as Pi's `mistral/<model>` BYOK upstream, which remains a separate provider reached through Pi and is unaffected by this entry — the two share a brand word and a hue, nothing else.",
+    "muse": "Approved in-session 2026-08-10: the user chose full live-selectable parity with the other CLI seats — admission by the standard binary/credential probe (Meta Model API key + muse CLI login), explicitly NOT an AntiGravity-style consent wall. Muse Code carries no equivalent ToS risk: the Meta Model API standard tier is an ordinary paid API and does not train on prompts or completions. The seat is the Muse Code CLI (muse exec --json) on the user's own key. Admission is fail-closed (includeWhenUnknown: false, modelled on pi): binary resolvable AND a credential present, so an unresolved probe leaves Muse out of the strict picker snapshot rather than surfacing a seat that cannot run."
   },
   "conditionallyOfferedProviderIds": ["antigravity"],
   "conditionalOfferNotes": {

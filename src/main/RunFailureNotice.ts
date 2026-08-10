@@ -50,7 +50,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   ollama: 'Ollama',
   antigravity: 'Antigravity',
   pi: 'Pi',
-  mistral: 'Mistral'
+  mistral: 'Mistral',
+  muse: 'Muse'
 }
 
 export interface RunFailureNoticeLine {

@@ -68,7 +68,8 @@ function makeDeps(): {
           ollama: 120_000,
           antigravity: 120_000,
           pi: 120_000,
-          mistral: 120_000
+          mistral: 120_000,
+          muse: 120_000
         },
         mainAuthorityMs: 60_000
       })),

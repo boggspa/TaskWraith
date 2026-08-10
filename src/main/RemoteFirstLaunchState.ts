@@ -149,7 +149,9 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   pi:
     'Pi coding agent with bring-your-own-key access to DeepSeek, GLM, Qwen, MiniMax, Mistral, Groq and Cerebras models.',
   mistral:
-    "Mistral's Vibe CLI agent over ACP. Use your Mistral plan on the Mac through Vibe; its optional Vibe API-key setup remains separate from Pi's metered Mistral upstream."
+    "Mistral's Vibe CLI agent over ACP. Use your Mistral plan on the Mac through Vibe; its optional Vibe API-key setup remains separate from Pi's metered Mistral upstream.",
+  muse:
+    'Muse Code CLI (`muse exec --json`) on a Meta Model API key / muse login. Not offered in the picker until the live-selectable intent commit.'
 }
 
 const SETUP_HINTS: Record<ProviderId, string> = {
@@ -167,7 +169,9 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   antigravity: '',
   pi: 'On your Mac, install the Pi CLI, then add at least one upstream API key in TaskWraith Settings.',
   mistral:
-    'On your Mac, install Mistral Vibe if needed, then run `vibe --setup` to sign in with your Mistral plan or finish Vibe’s own API-key setup. This is separate from Pi’s Mistral upstream key.'
+    'On your Mac, install Mistral Vibe if needed, then run `vibe --setup` to sign in with your Mistral plan or finish Vibe’s own API-key setup. This is separate from Pi’s Mistral upstream key.',
+  muse:
+    'On your Mac, install the Muse Code CLI and finish muse login / Meta Model API key setup. Muse is decode-ready but not offered until the approved live-selectable commit.'
 }
 
 export function buildRemoteFirstLaunchState(
@@ -449,5 +453,7 @@ function providerLabel(provider: ProviderId): string {
       return 'Antigravity'
     case 'mistral':
       return 'Mistral'
+    case 'muse':
+      return 'Muse'
   }
 }

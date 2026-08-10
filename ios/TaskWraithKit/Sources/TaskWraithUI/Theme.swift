@@ -166,6 +166,7 @@ public enum TWTheme {
         case "ollama": return 0x1A8562
         case "antigravity", "google": return 0x308713
         case "pi": return 0x68768C
+        case "muse": return 0x1671EA
         case "ensemble": return 0x986781
         case "grok": return 0x757575
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
@@ -235,7 +236,7 @@ public enum TWTheme {
     /// test fails.
     public static let providerAccentKeys: [String] = [
         "gemini", "codex", "openai", "claude", "kimi", "cursor", "ollama", "antigravity",
-        "google", "pi", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
+        "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq"
     ]
@@ -262,6 +263,7 @@ public enum TWTheme {
         case "ollama": return "Ollama"
         case "antigravity": return "AntiGravity"
         case "pi": return "Pi"
+        case "muse": return "Muse"
         case "ensemble": return "Ensemble"
         case "alibaba": return "Alibaba"
         case "deep-reinforce": return "Deep Reinforce"
@@ -327,7 +329,7 @@ public enum TWTheme {
     /// change must be mirrored here or iOS ships with a stale roster (build 81
     /// shipped a Cursor lockout exactly this way).
     public static let liveSelectableProviderIds: Set<String> = [
-        "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral",
+        "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse",
     ]
 
     public static func isLiveSelectableProvider(_ provider: String?) -> Bool {

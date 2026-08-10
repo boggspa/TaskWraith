@@ -77,7 +77,10 @@ export const DEFAULT_APPROVAL_TIMEOUT_POLICY: ApprovalTimeoutPolicy = {
     // (unlike Grok's still-read-only G3 posture), so approvals genuinely fire.
     // Mirror Kimi's real mid-tier window rather than the Claude/Gemini
     // "record completeness" placeholder used by providers with no live flow yet.
-    mistral: 60_000
+    mistral: 60_000,
+    // Muse native tools are provider-owned (no host approval cards in v1);
+    // keep the Record complete with the Claude/Gemini completeness window.
+    muse: 120_000
   },
   mainTimeoutMs: 60_000,
   perKindOverridesMs: {

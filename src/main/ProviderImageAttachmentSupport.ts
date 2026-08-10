@@ -33,6 +33,7 @@ const PROVIDER_IMAGE_ATTACHMENT_DELIVERY: Record<ProviderId, boolean> = {
   grok: false,
   pi: false,
   mistral: false,
+  muse: false,
   antigravity: false
 }
 

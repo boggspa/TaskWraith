@@ -57,6 +57,14 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     platforms: ['darwin', 'linux']
   },
   {
+    id: 'muse',
+    label: 'Muse',
+    command: 'curl -fsSL https://api.meta.ai/muse-launcher.sh | bash',
+    source: 'Meta',
+    platform: 'macOS / Linux',
+    platforms: ['darwin', 'linux']
+  },
+  {
     id: 'pi',
     label: 'Pi',
     command: 'npm i -g @earendil-works/pi-coding-agent',

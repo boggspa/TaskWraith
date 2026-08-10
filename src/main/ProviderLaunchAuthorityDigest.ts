@@ -21,12 +21,17 @@ const MAX_TEXT_LENGTH = 4_096
 /**
  * The production seal-wired union consumed by SealEvidenceCommon and the
  * scheduling service — originally six providers, seven since the Mistral seat
- * joined ProviderId (codex/claude/kimi/grok/cursor/ollama/mistral). Keep it
- * narrow: Pi and conditional AntiGravity now have strict evidence schemas, but
- * neither is allowed to become production seal-wired merely because the
- * central digest can validate its provider-local authority.
+ * joined ProviderId (codex/claude/kimi/grok/cursor/ollama/mistral). Muse joins
+ * ProviderId as decode/run-management identity but stays excluded here until a
+ * real SealEvidenceMuse producer exists. Keep it narrow: Pi and conditional
+ * AntiGravity now have strict evidence schemas, but neither is allowed to
+ * become production seal-wired merely because the central digest can validate
+ * its provider-local authority. Live-selectable ≠ launch-sealed.
  */
-export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi'>
+export type LiveProviderLaunchId = Exclude<
+  ProviderId,
+  'gemini' | 'antigravity' | 'pi' | 'muse'
+>
 
 /** Every provider with a strict central launch-authority schema/producer. */
 export type LaunchAuthorityProviderId = LiveProviderLaunchId | 'pi' | 'antigravity'

@@ -113,7 +113,8 @@ describe('canvas_eval persisted approval and execution receipts', () => {
           ollama: 1,
           antigravity: 1,
           pi: 1,
-          mistral: 1
+          mistral: 1,
+          muse: 1
         },
         mainAuthorityMs: 1
       }),

@@ -152,6 +152,7 @@ export function providerLabel(provider: ProviderId): string {
   if (provider === 'antigravity') return 'AntiGravity'
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
+  if (provider === 'muse') return 'Muse'
   return 'Gemini'
 }
 
@@ -405,6 +406,47 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
           title: 'Pi writes use exact TaskWraith transactions',
           message:
             'Pi always runs with read-only built-ins (read, grep, find, ls). A write-approved seat gets only write_file, replace and apply_patch through a fixed per-run TaskWraith extension with app approvals, exact path claims and immediate release; native bash, edit and write stay disabled.'
+        }
+      ]
+    }
+  }
+  if (provider === 'muse') {
+    // Opaque muse exec --json seat. No TaskWraith MCP broker in v1; containment
+    // is argv + isolated HOME/XDG + skill pin (src/main/muse/*). Keep this
+    // branch honest — falling through to the Claude default mis-labels transport.
+    return {
+      provider,
+      label: providerLabel(provider),
+      transport: 'muse-exec-json',
+      runChannel: 'run-agent',
+      capabilitySource: 'provider',
+      features: {
+        persistentSessions: true,
+        appManagedApprovals: false,
+        workspaceGrants: false,
+        agentBenchMcpBridge: false,
+        providerManagedMcp: false,
+        nativeThreadTools: true,
+        hostCommandFallback: false
+      },
+      capabilities: {
+        approvalModes: ['plan', 'default'],
+        reasoningEffort: true,
+        speedTiers: [],
+        imageAttachments: false,
+        contextInjection: true,
+        sessionResumption: true,
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
+      },
+      capabilityCaveats: [
+        {
+          id: 'muse-opaque-cli-no-tw-mcp',
+          severity: 'info',
+          capability: 'approvalModes',
+          title: 'Muse is an opaque CLI seat',
+          message:
+            'Muse runs via `muse exec --json` under an isolated home. TaskWraith does not attach an MCP broker in v1; native tools stay Muse-owned behind sandbox/approval argv. Host per-tool approval cards are not available for native effects.'
         }
       ]
     }

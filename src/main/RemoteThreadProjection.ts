@@ -115,7 +115,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   ollama: 'Ollama',
   antigravity: 'Antigravity',
   pi: 'Pi',
-  mistral: 'Mistral'
+  mistral: 'Mistral',
+  muse: 'Muse'
 }
 
 const FALLBACK_FX_RATES_PER_USD: Record<RemoteDisplayCurrency, number> = {

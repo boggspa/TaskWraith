@@ -158,6 +158,7 @@ describe('ApprovalTimeoutScheduler', () => {
         antigravity: 120_000,
         pi: 120_000,
         mistral: 120_000,
+        muse: 120_000,
       },
       mainTimeoutMs: 60_000,
       perKindOverridesMs: { 'hostCommand/rerun': 90_000 }
