@@ -39,7 +39,7 @@ describe('agent pool icon assets', () => {
     expect(diffNice?.raw).toContain('-420')
   })
 
-  it('offers every official provider mark plus TaskWraith-owned Ensemble artwork', () => {
+  it('offers every provider identity plus TaskWraith-owned Ensemble artwork', () => {
     const providerIds = [
       'gemini',
       'codex',
@@ -51,6 +51,7 @@ describe('agent pool icon assets', () => {
       'antigravity',
       'pi',
       'mistral',
+      'muse',
       'ensemble'
     ] as const
     const providerAssets = POOL_ICON_ASSETS.filter((asset) => asset.group === 'Providers')
@@ -67,6 +68,10 @@ describe('agent pool icon assets', () => {
       if (provider === 'ensemble') {
         expect(asset?.raw).toContain('<svg')
         expect(asset?.providerLogo).toBeUndefined()
+      } else if (provider === 'muse') {
+        expect(asset?.providerLogo).toBe(provider)
+        expect(asset?.raw).toBeUndefined()
+        expect(resolveProviderBrandLogoSource(provider)).toBeUndefined()
       } else {
         expect(asset?.providerLogo).toBe(provider)
         expect(asset?.raw).toBeUndefined()

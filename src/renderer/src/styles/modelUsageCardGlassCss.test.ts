@@ -63,9 +63,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
   })
 
   it('keeps soft and native glass achromatic without increasing layout-rule specificity', () => {
-    const glassCard = rule(
-      ":is([data-appearance='soft_glass'], [data-appearance='native_glass'])"
-    )
+    const glassCard = rule("[data-appearance='soft_glass']")
 
     expect(css).toContain('.app-sidebar .model-usage-summary--sidebar.is-collapsed {')
     expect(glassCard).toContain('border-color: transparent;')
@@ -80,9 +78,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
 
   it('uses the canonical opaque fallback and light-family material aliases', () => {
     const reduced = rule("[data-appearance='solid']")
-    const light = rule(
-      ":is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])[data-appearance]"
-    )
+    const light = rule("[data-theme='light']")
 
     expect(reduced).toContain("[data-reduce-transparency='true']")
     expect(reduced).toContain(

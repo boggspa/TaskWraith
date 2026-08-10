@@ -19,6 +19,7 @@ const modelComparisonHueClasses = [
   'antigravity',
   'pi',
   'mistral',
+  'muse',
   ...OLLAMA_DISPLAY_BRANDS.map((brand) => brand.providerClass),
   ...Object.values(PI_UPSTREAM_BRANDS).map((brand) => brand.hueClass)
 ]
@@ -72,7 +73,7 @@ describe('WelcomeUsageDashboard', () => {
     }
   )
 
-  it.each(['antigravity', 'pi', 'mistral'] as const)(
+  it.each(['antigravity', 'pi', 'mistral', 'muse'] as const)(
     '%s paints its Providers-tab dot and meter fill with its provider hue',
     (provider) => {
       expect(modelComparisonCss).toMatch(
@@ -99,7 +100,7 @@ describe('WelcomeUsageDashboard', () => {
     expect(nextWelcomeUsageTab('providers', [...visible])).toBe('overview')
   })
 
-  it('renders all ten stable provider identities in reporting cards and mix segments', () => {
+  it('renders all eleven stable provider identities in reporting cards and mix segments', () => {
     const now = Date.parse('2026-07-11T03:30:00.000Z')
     const record = (provider: ProviderId, index: number): UsageRecord => ({
       id: `usage-${provider}`,
@@ -134,10 +135,11 @@ describe('WelcomeUsageDashboard', () => {
       )
       expect(providersHtml).toContain(`welcome-usage-provider-card provider-${provider}`)
     }
-    expect(providersHtml.match(/role="listitem"/g)).toHaveLength(10)
+    expect(providersHtml.match(/role="listitem"/g)).toHaveLength(11)
     expect(providersHtml).toContain('AntiGravity')
     expect(providersHtml).toContain('Pi')
     expect(providersHtml).toContain('Mistral')
+    expect(providersHtml).toContain('Muse')
     expect(providersHtml).toContain('Gemini')
   })
 })

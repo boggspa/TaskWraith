@@ -1446,9 +1446,9 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
   const HOUR = 60 * 60 * 1000
   const DAY = 24 * HOUR
 
-  it('always emits all 10 stable provider identities, even with no records', () => {
+  it('always emits all 11 stable provider identities, even with no records', () => {
     const data = buildWelcomeUsageDashboardData([], [], '30d', NOW)
-    expect(data.providerCostBreakdown).toHaveLength(10)
+    expect(data.providerCostBreakdown).toHaveLength(11)
     const providers = data.providerCostBreakdown.map((entry) => entry.provider).sort()
     expect(providers).toEqual([
       'antigravity',
@@ -1459,6 +1459,7 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
       'grok',
       'kimi',
       'mistral',
+      'muse',
       'ollama',
       'pi'
     ])
@@ -1473,7 +1474,8 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
       'ollama',
       'antigravity',
       'pi',
-      'mistral'
+      'mistral',
+      'muse'
     ])
     // Zero-token / zero-cost providers still appear with the canonical
     // display name and 0 share so the card list is a stable roster.

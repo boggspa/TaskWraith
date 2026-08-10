@@ -3127,9 +3127,7 @@
 .welcome-usage-model-meter-fill.provider-minimax,
 .welcome-usage-bar-segment.provider-minimax { color: var(--provider-minimax-color); }
 .welcome-usage-model-dot.provider-mistral,
-    .provider-muse,
 .welcome-usage-model-meter-fill.provider-mistral,
-    .provider-muse,
 .welcome-usage-bar-segment.provider-mistral { color: var(--provider-mistral-color); }
 .welcome-usage-model-dot.provider-muse,
 .welcome-usage-model-meter-fill.provider-muse,
