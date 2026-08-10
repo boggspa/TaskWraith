@@ -440,12 +440,22 @@ describe('PeopleToChannelMigrationPlan', () => {
     })
   })
 
-  it('blocks non-General sources and invalid legacy evidence', () => {
+  it('migrates every active Chat-surface share but blocks workflows and invalid evidence', () => {
+    for (const eligibleChat of [
+      chat({ chatKind: 'ensemble' }),
+      chat({ parentChatId: 'parent_chat', parentChatRelation: 'linked' }),
+      chat({ sideChat: true })
+    ]) {
+      const eligible = createPeopleToChannelMigrationPlan(input({ chats: [eligibleChat] }))
+      expect(eligible.entries[0].disposition).toBe('create')
+      expect(eligible.entries[0].blockers).not.toContain('source_chat_not_channel_eligible')
+    }
+
     const plan = createPeopleToChannelMigrationPlan(
       input({
         chats: [
           chat({
-            chatKind: 'ensemble',
+            workflowOwned: true,
             legacyContributions: [
               {
                 ...(chat().legacyContributions ?? [])[0],
@@ -468,6 +478,11 @@ describe('PeopleToChannelMigrationPlan', () => {
 
     const untitled = createPeopleToChannelMigrationPlan(input({ chats: [chat({ title: '   ' })] }))
     expect(untitled.entries[0].blockers).toContain('invalid_source_title')
+
+    const staleSequence = createPeopleToChannelMigrationPlan(
+      input({ people: { shares: [share({ nextSequence: 2 })] } })
+    )
+    expect(staleSequence.entries[0].blockers).toContain('legacy_sequence_conflict')
   })
 
   it('blocks target authority conflicts and a closed Channel', () => {
@@ -523,7 +538,7 @@ describe('PeopleToChannelMigrationPlan', () => {
     expect(plan.entries[0].disposition).toBe('blocked')
   })
 
-  it('retains disabled People records without proposing a target', () => {
+  it('retains disabled People records without requiring a current chat or Channel authority', () => {
     const disabled = share({
       enabled: false,
       participants: [
@@ -534,7 +549,17 @@ describe('PeopleToChannelMigrationPlan', () => {
         }
       ]
     })
-    const plan = createPeopleToChannelMigrationPlan(input({ people: { shares: [disabled] } }))
+    const plan = createPeopleToChannelMigrationPlan(
+      input({
+        hostIdentityPublicKey: '',
+        people: { shares: [disabled] },
+        channels: {
+          ...channelSnapshot(),
+          schemaVersion: (CHANNEL_SCHEMA_VERSION + 1) as typeof CHANNEL_SCHEMA_VERSION
+        },
+        chats: []
+      })
+    )
 
     expect(plan.entries[0]).toMatchObject({
       disposition: 'retain_legacy',

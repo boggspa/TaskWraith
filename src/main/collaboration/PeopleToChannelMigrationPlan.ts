@@ -74,6 +74,7 @@ export type PeopleToChannelMigrationBlocker =
   | 'host_identity_missing'
   | 'invalid_channel_schema'
   | 'invalid_legacy_evidence'
+  | 'legacy_sequence_conflict'
   | 'invalid_source_identifier'
   | 'invalid_source_title'
   | 'invalid_target_identifier'
@@ -113,6 +114,7 @@ export interface PeopleToChannelMigrationSourceSummary {
   inviteCount: number
   pendingInviteCount: number
   idempotencyEntryCount: number
+  nextSequence: number
   policy: HumanContributionRules
   requiresHostApproval: boolean
   fullHistory: boolean
@@ -340,6 +342,7 @@ function sourceSummary(
     inviteCount: share.invites.length,
     pendingInviteCount: share.invites.filter((invite) => invite.consumedAt === undefined).length,
     idempotencyEntryCount: Object.keys(share.idempotency).length,
+    nextSequence: share.nextSequence,
     policy,
     requiresHostApproval: share.requiresHostApproval === true,
     fullHistory: share.fullHistory === true,
@@ -347,14 +350,13 @@ function sourceSummary(
   }
 }
 
-function isEligibleSourceChat(chat: PeopleToChannelMigrationChat): boolean {
-  return (
-    chat.chatKind !== 'ensemble' &&
-    !chat.parentChatId &&
-    !chat.parentChatRelation &&
-    chat.sideChat !== true &&
-    chat.workflowOwned !== true
-  )
+function isEligibleSharedSourceChat(chat: PeopleToChannelMigrationChat): boolean {
+  // P4 has two independent scopes: every ACTIVE People share migrates, while
+  // the separate solo backfill decision applies to General chats. People can
+  // already be attached to an Ensemble or linked child, and rejecting those
+  // would strand the exact live capability P4 is meant to preserve. Workflows
+  // remain outside the Chat-surface Channels scope.
+  return chat.workflowOwned !== true
 }
 
 function latestParticipantRoom(
@@ -511,25 +513,15 @@ function entryForShare(args: {
   const blockers: PeopleToChannelMigrationBlocker[] = []
   const chatMatches = chatsById.get(share.chatId) ?? []
   const chat = chatMatches[0]
-  if (chatMatches.length > 1) blockers.push('duplicate_chat_inventory')
-  if (!chat) blockers.push('missing_source_chat')
-  else {
-    if (!isEligibleSourceChat(chat)) blockers.push('source_chat_not_channel_eligible')
-    if (!chat.title.trim() || chat.title.length > 200) blockers.push('invalid_source_title')
-  }
   if (!pathIdentifier(share.shareId) || !boundedIdentifier(share.chatId)) {
     blockers.push('invalid_source_identifier')
   }
   if ((shareIdCount.get(share.shareId) ?? 0) > 1) blockers.push('duplicate_share_id')
-  if (input.channels.schemaVersion !== CHANNEL_SCHEMA_VERSION) {
-    blockers.push('invalid_channel_schema')
-  }
-  if (!input.hostIdentityPublicKey.trim()) blockers.push('host_identity_missing')
-  if (share.enabled && (activeShareCountByChatId.get(share.chatId) ?? 0) > 1) {
-    blockers.push('duplicate_active_share_for_chat')
-  }
 
   const source = sourceSummary(share, chat, blockers)
+  if (source.history.highestSequence >= source.nextSequence) {
+    blockers.push('legacy_sequence_conflict')
+  }
   if (!share.enabled) {
     return {
       source,
@@ -539,6 +531,20 @@ function entryForShare(args: {
       blockers: uniqueSorted(blockers),
       requirements: []
     }
+  }
+
+  if (chatMatches.length > 1) blockers.push('duplicate_chat_inventory')
+  if (!chat) blockers.push('missing_source_chat')
+  else {
+    if (!isEligibleSharedSourceChat(chat)) blockers.push('source_chat_not_channel_eligible')
+    if (!chat.title.trim() || chat.title.length > 200) blockers.push('invalid_source_title')
+  }
+  if (input.channels.schemaVersion !== CHANNEL_SCHEMA_VERSION) {
+    blockers.push('invalid_channel_schema')
+  }
+  if (!input.hostIdentityPublicKey.trim()) blockers.push('host_identity_missing')
+  if ((activeShareCountByChatId.get(share.chatId) ?? 0) > 1) {
+    blockers.push('duplicate_active_share_for_chat')
   }
 
   const channelMatches = channelsByChatId.get(share.chatId) ?? []

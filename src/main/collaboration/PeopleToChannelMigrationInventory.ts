@@ -121,8 +121,12 @@ function legacyEvidence(
   for (const message of messages) {
     const entry = contributionEvidence(message)
     if (!entry) continue
-    const sequenceKey = `${entry.shareId}\u0000${entry.sequence}`
-    const clientKey = `${entry.shareId}\u0000${entry.collaboratorId}\u0000${entry.clientMessageId}`
+    // A reviewed contribution can legitimately appear once as a queued
+    // comment and once as a delivered external-seat turn with the same source
+    // sequence/client id. Uniqueness is per persisted row kind, not across the
+    // two provenance regimes.
+    const sequenceKey = `${entry.shareId}\u0000${entry.kind}\u0000${entry.sequence}`
+    const clientKey = `${entry.shareId}\u0000${entry.kind}\u0000${entry.collaboratorId}\u0000${entry.clientMessageId}`
     if (messageIds.has(entry.messageId)) {
       throw new PeopleToChannelMigrationInventoryError(
         'Legacy People contribution message ids are duplicated'

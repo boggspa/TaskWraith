@@ -222,14 +222,15 @@ describe('PeopleToChannelMigrationInventory', () => {
     })
   })
 
-  it('marks workflow, ensemble, and linked-child chats as ineligible without guessing', () => {
+  it('keeps all Chat surfaces eligible while marking workflow-owned chats ineligible', () => {
     for (const chats of [
       [chat({ chatKind: 'ensemble' })],
       [chat({ parentChatId: 'parent', parentChatRelation: 'subThread' })],
       [chat({ sideChatContext: { createdAt: 100 } })]
     ]) {
       const plan = inventoryPeopleToChannelMigration(inventoryInput({ chats }))
-      expect(plan.entries[0].blockers).toContain('source_chat_not_channel_eligible')
+      expect(plan.entries[0].disposition).toBe('create')
+      expect(plan.entries[0].blockers).not.toContain('source_chat_not_channel_eligible')
     }
 
     const workflow = inventoryPeopleToChannelMigration(
@@ -247,7 +248,11 @@ describe('PeopleToChannelMigrationInventory', () => {
       )
     ).toThrow(PeopleToChannelMigrationInventoryError)
 
-    const duplicateSequence = contribution(EXTERNAL_SEAT_TURN_KIND, 1, 'different private row')
+    const duplicateSequence = contribution(
+      HUMAN_COLLABORATOR_COMMENT_KIND,
+      1,
+      'different private row'
+    )
     duplicateSequence.id = 'message_duplicate'
     duplicateSequence.metadata!.clientMessageId = 'client_duplicate'
     expect(() =>
@@ -269,6 +274,8 @@ describe('PeopleToChannelMigrationInventory', () => {
   it('ignores unrelated transcript rows and accepts legacy kind-only People evidence', () => {
     const legacy = contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'legacy private row')
     delete legacy.metadata!.sourceTrust
+    const delivered = contribution(EXTERNAL_SEAT_TURN_KIND, 1, 'delivered legacy private row')
+    delivered.id = 'message_delivered'
     const unrelated: ChatMessage = {
       id: 'ordinary',
       role: 'user',
@@ -276,15 +283,16 @@ describe('PeopleToChannelMigrationInventory', () => {
       timestamp: '2026-08-10T00:00:00.000Z'
     }
     const plan = inventoryPeopleToChannelMigration(
-      inventoryInput({ chats: [chat({ messages: [unrelated, legacy] })] })
+      inventoryInput({ chats: [chat({ messages: [unrelated, legacy, delivered] })] })
     )
 
     expect(plan.entries[0].source.history).toMatchObject({
       commentCount: 1,
-      externalSeatTurnCount: 0,
+      externalSeatTurnCount: 1,
       highestSequence: 1
     })
     expect(JSON.stringify(plan)).not.toContain('ordinary host content')
     expect(JSON.stringify(plan)).not.toContain('legacy private row')
+    expect(JSON.stringify(plan)).not.toContain('delivered legacy private row')
   })
 })
