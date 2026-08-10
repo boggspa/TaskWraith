@@ -16,7 +16,7 @@ describe('providerDeliversImageAttachments', () => {
   })
 
   it('refuses every lane without one', () => {
-    for (const provider of ['ollama', 'cursor', 'grok', 'pi', 'mistral', 'antigravity']) {
+    for (const provider of ['ollama', 'cursor', 'grok', 'pi', 'mistral', 'antigravity', 'muse']) {
       expect(providerDeliversImageAttachments(provider)).toBe(false)
     }
   })

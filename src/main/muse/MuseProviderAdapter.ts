@@ -241,7 +241,9 @@ export function museProviderAdapterDescriptor(): MuseProviderAdapterDescriptor {
       approvalModes: ['plan', 'default'],
       reasoningEffort: true,
       speedTiers: [],
-      imageAttachments: true,
+      // No --image flag on `muse exec --json` today; keep false until a
+      // transport exists. Aligns with ProviderAdapters.ts muse branch.
+      imageAttachments: false,
       contextInjection: true,
       sessionResumption: true,
       perThreadMcp: false,
