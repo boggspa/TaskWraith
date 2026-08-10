@@ -31,7 +31,9 @@ const FLEET_WORKTREE_SOURCE_COMMIT = '7a2561c47519036e529308b93fbc425303b3c12a'
 const MUSE_PROVIDER_COMMIT = 'b8556ee603c0f8ac1f715a4ccbe985ba9450ca03'
 const MUSE_CHANNEL_REVIEW_COMMIT = 'a79bff720819fd4ae39888b0803c78c34ef741a6'
 const MUSE_SETTINGS_COMPLETENESS_COMMIT = '63d5985665a21c89c28cabd6bc37432e4ca9918e'
-const MUSE_DELTA_ACCEPTANCE_COMMIT = 'a092cfd83bf1ee6ea698c62343bd0c43e1c5f464'
+const MUSE_ROSTER_REVIEW_COMMIT = 'ac6c7a552a074ebfa76e36af4a4a0d97fc90f834'
+const MUSE_EFFORT_SOURCE_COMMIT = 'c22f159432f8e380fe9ad4b6c66e8140415c72fd'
+const MUSE_DELTA_ACCEPTANCE_COMMIT = 'aa94e20c4a9e8db3010c15748b19776303d47a5e'
 
 const PACKAGED_REQUIRED_MARKERS = {
   main: [
@@ -107,8 +109,9 @@ const POST_ACCEPTANCE_PROTECTED_PINS = new Map([
   ['src/shared/collaboration/ChannelAgentReviewGate.test.ts', PACKAGE_PROVENANCE_COMMIT],
   ['src/shared/collaboration/ChannelAgentReviewGate.ts', PACKAGE_PROVENANCE_COMMIT],
   ['src/main/run/AgentRunTypes.ts', FLEET_WORKTREE_SOURCE_COMMIT],
+  ['scripts/channels-p3-review.test.ts', MUSE_ROSTER_REVIEW_COMMIT],
   ['src/shared/collaboration/ChannelAgentIpc.ts', MUSE_PROVIDER_COMMIT],
-  ['src/main/services/ComposerService.ts', MUSE_PROVIDER_COMMIT],
+  ['src/main/services/ComposerService.ts', MUSE_EFFORT_SOURCE_COMMIT],
   ['src/main/collaboration/ChannelAgentDispatchJournalState.test.ts', MUSE_CHANNEL_REVIEW_COMMIT],
   ['src/main/collaboration/ChannelAgentDispatchJournalState.ts', MUSE_CHANNEL_REVIEW_COMMIT],
   ['src/main/collaboration/ChannelAgentNativeConfirmation.test.ts', MUSE_CHANNEL_REVIEW_COMMIT],
@@ -311,6 +314,8 @@ function verifyProtectedBoundary(candidateCommit) {
     museProviderCommit: MUSE_PROVIDER_COMMIT,
     museChannelReviewCommit: MUSE_CHANNEL_REVIEW_COMMIT,
     museSettingsCompletenessCommit: MUSE_SETTINGS_COMPLETENESS_COMMIT,
+    museRosterReviewCommit: MUSE_ROSTER_REVIEW_COMMIT,
+    museEffortSourceCommit: MUSE_EFFORT_SOURCE_COMMIT,
     museDeltaAcceptanceCommit: MUSE_DELTA_ACCEPTANCE_COMMIT,
     changedFileCount: changedFiles.length,
     changedFilesSha256: sha256(changedFiles.sort().join('\n')),
@@ -526,6 +531,8 @@ async function main() {
         museProviderCommit: MUSE_PROVIDER_COMMIT,
         museChannelReviewCommit: MUSE_CHANNEL_REVIEW_COMMIT,
         museSettingsCompletenessCommit: MUSE_SETTINGS_COMPLETENESS_COMMIT,
+        museRosterReviewCommit: MUSE_ROSTER_REVIEW_COMMIT,
+        museEffortSourceCommit: MUSE_EFFORT_SOURCE_COMMIT,
         museDeltaAcceptanceCommit: MUSE_DELTA_ACCEPTANCE_COMMIT
       },
       boundaryAudit,
@@ -561,7 +568,9 @@ module.exports = {
   FLEET_WORKTREE_SOURCE_COMMIT,
   MUSE_CHANNEL_REVIEW_COMMIT,
   MUSE_DELTA_ACCEPTANCE_COMMIT,
+  MUSE_EFFORT_SOURCE_COMMIT,
   MUSE_PROVIDER_COMMIT,
+  MUSE_ROSTER_REVIEW_COMMIT,
   MUSE_SETTINGS_COMPLETENESS_COMMIT,
   PACKAGED_FORBIDDEN_MARKERS,
   PACKAGED_REQUIRED_MARKERS,

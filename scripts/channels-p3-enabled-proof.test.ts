@@ -13,7 +13,9 @@ interface EnabledProofModule {
   FLEET_WORKTREE_SOURCE_COMMIT: string
   MUSE_CHANNEL_REVIEW_COMMIT: string
   MUSE_DELTA_ACCEPTANCE_COMMIT: string
+  MUSE_EFFORT_SOURCE_COMMIT: string
   MUSE_PROVIDER_COMMIT: string
+  MUSE_ROSTER_REVIEW_COMMIT: string
   MUSE_SETTINGS_COMPLETENESS_COMMIT: string
   PACKAGED_FORBIDDEN_MARKERS: Record<string, string[]>
   PACKAGED_REQUIRED_MARKERS: Record<string, string[]>
@@ -104,10 +106,11 @@ describe('Channels P3 enabled proof harness', () => {
         'src/shared/collaboration/ChannelAgentIpc.ts',
         'src/main/collaboration/ChannelAgentSeatAuthority.ts',
         'src/main/services/ComposerService.ts',
+        'scripts/channels-p3-review.test.ts',
         'docs/channels-p3-muse-delta-review.md',
         'src/main/SubThreadEphemeralFleet.ts'
       ])
-    ).toMatchObject({ protectedChangeCount: 7 })
+    ).toMatchObject({ protectedChangeCount: 8 })
 
     expect(() =>
       proof.verifyProtectedChanges(['src/shared/collaboration/ChannelAgentProtocol.ts'])
@@ -166,7 +169,9 @@ describe('Channels P3 enabled proof harness', () => {
     expect(proof.MUSE_PROVIDER_COMMIT).toBe('b8556ee603c0f8ac1f715a4ccbe985ba9450ca03')
     expect(proof.MUSE_CHANNEL_REVIEW_COMMIT).toBe('a79bff720819fd4ae39888b0803c78c34ef741a6')
     expect(proof.MUSE_SETTINGS_COMPLETENESS_COMMIT).toBe('63d5985665a21c89c28cabd6bc37432e4ca9918e')
-    expect(proof.MUSE_DELTA_ACCEPTANCE_COMMIT).toBe('a092cfd83bf1ee6ea698c62343bd0c43e1c5f464')
+    expect(proof.MUSE_ROSTER_REVIEW_COMMIT).toBe('ac6c7a552a074ebfa76e36af4a4a0d97fc90f834')
+    expect(proof.MUSE_EFFORT_SOURCE_COMMIT).toBe('c22f159432f8e380fe9ad4b6c66e8140415c72fd')
+    expect(proof.MUSE_DELTA_ACCEPTANCE_COMMIT).toBe('aa94e20c4a9e8db3010c15748b19776303d47a5e')
   })
 
   it('runs one real production dispatch and verifies its signed post after restart', () => {
