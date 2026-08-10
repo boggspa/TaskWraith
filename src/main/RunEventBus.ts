@@ -64,8 +64,51 @@ export interface RunEventSink {
   handle(event: RunEvent): void
 }
 
-class RunEventBus {
+export interface RunEventAudienceLease {
+  readonly runId: string
+  readonly sinkIds: readonly string[]
+  /** Idempotent; a stale lease can never release a later owner of the run id. */
+  release(): boolean
+}
+
+const MAX_RUN_EVENT_IDENTIFIER_LENGTH = 512
+const MAX_RUN_EVENT_AUDIENCE_SINKS = 16
+
+interface RunEventAudienceClaim {
+  readonly token: object
+  readonly sinkIds: ReadonlySet<string>
+}
+
+function isBoundedIdentifier(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > MAX_RUN_EVENT_IDENTIFIER_LENGTH ||
+    value.trim() !== value
+  ) {
+    return false
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code === 0x7f) return false
+  }
+  return true
+}
+
+function exactPayloadRunId(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(payload, 'appRunId')
+    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null
+    return isBoundedIdentifier(descriptor.value) ? descriptor.value : null
+  } catch {
+    return null
+  }
+}
+
+export class RunEventBus {
   private sinks: Map<string, RunEventSink> = new Map()
+  private runAudienceClaims: Map<string, RunEventAudienceClaim> = new Map()
 
   /**
    * Register a sink. Returns an unsubscribe function. Throws if a sink with
@@ -82,6 +125,48 @@ class RunEventBus {
   }
 
   /**
+   * Restrict one exact main-owned run to a closed set of sink ids. This is an
+   * additive confidentiality boundary for isolated executions: publication and
+   * lifecycle still occur, but raw provider events cannot reach renderer,
+   * remote, debug, telemetry, or future sinks outside the named audience.
+   */
+  claimRunAudience(runId: string, sinkIds: readonly string[]): RunEventAudienceLease {
+    if (
+      !isBoundedIdentifier(runId) ||
+      !Array.isArray(sinkIds) ||
+      sinkIds.length < 1 ||
+      sinkIds.length > MAX_RUN_EVENT_AUDIENCE_SINKS ||
+      sinkIds.some((sinkId) => !isBoundedIdentifier(sinkId))
+    ) {
+      throw new Error('RunEventBus: run audience claim is invalid')
+    }
+    const uniqueSinkIds = [...new Set(sinkIds)]
+    if (uniqueSinkIds.length !== sinkIds.length) {
+      throw new Error('RunEventBus: run audience sink ids must be unique')
+    }
+    if (this.runAudienceClaims.has(runId)) {
+      throw new Error('RunEventBus: run audience is already claimed')
+    }
+    const token = Object.freeze({})
+    const claim: RunEventAudienceClaim = {
+      token,
+      sinkIds: new Set(uniqueSinkIds)
+    }
+    this.runAudienceClaims.set(runId, claim)
+    let released = false
+    return Object.freeze({
+      runId,
+      sinkIds: Object.freeze([...uniqueSinkIds]),
+      release: () => {
+        if (released || this.runAudienceClaims.get(runId)?.token !== token) return false
+        released = true
+        this.runAudienceClaims.delete(runId)
+        return true
+      }
+    })
+  }
+
+  /**
    * Publish an event to all subscribed sinks. Sink errors are caught + logged;
    * an exception in one sink does not block delivery to the others.
    */
@@ -90,8 +175,10 @@ class RunEventBus {
       ...event,
       publishedAt: event.publishedAt ?? new Date().toISOString()
     }
+    const audience = this.runAudienceClaims.get(exactPayloadRunId(stamped.payload) ?? '')
     for (const sink of this.sinks.values()) {
       try {
+        if (audience && !audience.sinkIds.has(sink.id)) continue
         if (sink.filter && !sink.filter(stamped)) continue
         sink.handle(stamped)
       } catch (err) {
@@ -108,9 +195,14 @@ class RunEventBus {
     return Array.from(this.sinks.keys())
   }
 
+  restrictedRunCount(): number {
+    return this.runAudienceClaims.size
+  }
+
   /** Diagnostics / tests: drop all subscribers. */
   reset(): void {
     this.sinks.clear()
+    this.runAudienceClaims.clear()
   }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeElectronIpcSink } from './RunEventBus'
+import { makeElectronIpcSink, RunEventBus } from './RunEventBus'
 
 /*
  * 1.0.4-AQ1 — regression coverage for the disposed-frame race in
@@ -118,5 +118,90 @@ describe('makeElectronIpcSink', () => {
         })
       })
     ).not.toThrow()
+  })
+})
+
+describe('RunEventBus exact-run audiences', () => {
+  it('delivers a claimed run only to its closed main-owned sink audience', () => {
+    const bus = new RunEventBus()
+    const channelCollector = vi.fn()
+    const renderer = vi.fn()
+    const remoteBridge = vi.fn()
+    bus.subscribe({ id: 'channel-agent-run-terminal', handle: channelCollector })
+    bus.subscribe({ id: 'electron-ipc', handle: renderer })
+    bus.subscribe({ id: 'remote-bridge', handle: remoteBridge })
+    const lease = bus.claimRunAudience('channel-agent-run-1', ['channel-agent-run-terminal'])
+
+    bus.publish({
+      channel: 'agent-output',
+      provider: 'codex',
+      payload: { appRunId: 'channel-agent-run-1', text: 'private provider output' }
+    })
+    bus.publish({
+      channel: 'agent-exit',
+      provider: 'codex',
+      payload: { appRunId: 'channel-agent-run-1', code: 0 }
+    })
+
+    expect(channelCollector).toHaveBeenCalledTimes(2)
+    expect(renderer).not.toHaveBeenCalled()
+    expect(remoteBridge).not.toHaveBeenCalled()
+    expect(lease).toMatchObject({
+      runId: 'channel-agent-run-1',
+      sinkIds: ['channel-agent-run-terminal']
+    })
+    expect(Object.isFrozen(lease)).toBe(true)
+  })
+
+  it('leaves unrelated or non-canonical payloads on the ordinary fan-out path', () => {
+    const bus = new RunEventBus()
+    const first = vi.fn()
+    const second = vi.fn()
+    bus.subscribe({ id: 'first', handle: first })
+    bus.subscribe({ id: 'second', handle: second })
+    bus.claimRunAudience('channel-agent-run-2', ['first'])
+
+    for (const payload of [
+      { appRunId: 'ordinary-run', text: 'ordinary' },
+      { appRunId: ' channel-agent-run-2', text: 'non-canonical' },
+      { text: 'unrouted' },
+      Object.create({ appRunId: 'channel-agent-run-2' })
+    ]) {
+      bus.publish({ channel: 'agent-output', provider: 'codex', payload })
+    }
+
+    expect(first).toHaveBeenCalledTimes(4)
+    expect(second).toHaveBeenCalledTimes(4)
+  })
+
+  it('rejects ambiguous claims and makes lease release stale-owner safe', () => {
+    const bus = new RunEventBus()
+    expect(() => bus.claimRunAudience('', ['collector'])).toThrow('claim is invalid')
+    expect(() => bus.claimRunAudience('run', [])).toThrow('claim is invalid')
+    expect(() => bus.claimRunAudience('run', ['collector', 'collector'])).toThrow('must be unique')
+
+    const first = bus.claimRunAudience('run', ['collector'])
+    expect(bus.restrictedRunCount()).toBe(1)
+    expect(() => bus.claimRunAudience('run', ['collector'])).toThrow('already claimed')
+    expect(first.release()).toBe(true)
+    expect(first.release()).toBe(false)
+
+    const replacement = bus.claimRunAudience('run', ['replacement'])
+    expect(first.release()).toBe(false)
+    expect(bus.restrictedRunCount()).toBe(1)
+    expect(replacement.release()).toBe(true)
+    expect(bus.restrictedRunCount()).toBe(0)
+  })
+
+  it('clears both subscribers and abandoned audience leases during reset', () => {
+    const bus = new RunEventBus()
+    bus.subscribe({ id: 'collector', handle: vi.fn() })
+    const lease = bus.claimRunAudience('run', ['collector'])
+
+    bus.reset()
+
+    expect(bus.listSinks()).toEqual([])
+    expect(bus.restrictedRunCount()).toBe(0)
+    expect(lease.release()).toBe(false)
   })
 })
