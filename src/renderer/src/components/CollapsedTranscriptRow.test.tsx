@@ -75,8 +75,12 @@ describe('CollapsedActivityStackRow diff totals', () => {
     const text = visibleText(html)
     expect(text).toContain('Thought for 12s · Edited 2 files')
     // Success verbs are highlighted like the child-row file target accent.
-    expect(html).toContain('class="activity-summary-verb collapsed-activity-stack-verb">Thought</span>')
-    expect(html).toContain('class="activity-summary-verb collapsed-activity-stack-verb">Edited</span>')
+    expect(html).toContain(
+      'class="activity-summary-verb collapsed-activity-stack-verb">Thought</span>'
+    )
+    expect(html).toContain(
+      'class="activity-summary-verb collapsed-activity-stack-verb">Edited</span>'
+    )
     // 40 + 2 added, 11 + 7 removed — the two folded edits summed, not the
     // last one winning and not a per-file list.
     expect(text).toContain('+42')
@@ -181,20 +185,24 @@ describe('collapsed one-liner diff accents', () => {
 })
 
 describe('CollapsedTranscriptRow metaLabel verb accent', () => {
-  it('accents only System — Fan-Out and other metas stay muted', () => {
+  it('keeps System and Fan-Out metas muted — never provider activity-verb accent', () => {
+    // Regression: System used to share `.activity-summary-verb`, which paints
+    // from var(--accent). Nested under a chat/transcript provider brand that
+    // redefines --accent, the collapsed system one-liner "System" prefix
+    // picked up Claude/Codex/… branding instead of staying chrome-muted.
     const system = renderToStaticMarkup(
       <CollapsedTranscriptRow
         header={null}
         metaLabel="System"
         label="notice text"
+        compact
         expanded={false}
         onToggle={() => {}}
         ariaTargetLabel="system notice"
       />
     )
-    expect(system).toContain(
-      'class="collapsed-activity-stack-meta activity-summary-verb">System</span>'
-    )
+    expect(system).toContain('class="collapsed-activity-stack-meta">System</span>')
+    expect(system).not.toContain('activity-summary-verb')
 
     const fanout = renderToStaticMarkup(
       <CollapsedTranscriptRow

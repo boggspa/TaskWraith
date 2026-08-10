@@ -88,17 +88,7 @@ export function CollapsedTranscriptRow({
           ▸
         </span>
         {icons}
-        {metaLabel ? (
-          <span
-            className={
-              metaLabel === 'System'
-                ? 'collapsed-activity-stack-meta activity-summary-verb'
-                : 'collapsed-activity-stack-meta'
-            }
-          >
-            {metaLabel}
-          </span>
-        ) : null}
+        {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
         <span className="collapsed-activity-stack-label">
           {labelContent ??
             (labelParts

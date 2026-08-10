@@ -5,10 +5,11 @@ import { Fragment } from 'react'
  * Leading / mid-phrase verbs on folded activity summaries (compact groups +
  * collapsed stacks). Highlighted in the youngest-child ActivityRow accent
  * voice so "Edited", "Read", "Thought", … scan like the file target does on
- * a single tool row.
+ * a single tool row. Deliberately excludes "System" — that is transcript
+ * chrome, not an activity verb, and must not inherit provider --accent.
  */
 export const ACTIVITY_SUMMARY_VERB_PATTERN =
-  /\b(Thought|Read|Edited|Ran|Searched|searched|Completed|Used|System|Created|Wrote|Deleted|Moved|Renamed)\b/g
+  /\b(Thought|Read|Edited|Ran|Searched|searched|Completed|Used|Created|Wrote|Deleted|Moved|Renamed)\b/g
 
 /** Wrap known summary verbs in `.activity-summary-verb` spans. */
 export function renderActivitySummaryLabel(label: string): ReactNode {
