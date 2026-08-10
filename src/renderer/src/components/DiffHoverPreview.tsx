@@ -38,7 +38,7 @@ const DIFF_HOVER_PREVIEW_MIN_WIDTH = 520
 const DIFF_HOVER_PREVIEW_MAX_WIDTH = 1040
 const DIFF_HOVER_PREVIEW_HEIGHT = 360
 const DIFF_HOVER_PREVIEW_MARGIN = 12
-const DIFF_HOVER_PREVIEW_CLOSE_DELAY_MS = 140
+const DIFF_HOVER_PREVIEW_CLOSE_DELAY_MS = 1400
 
 type DiffHoverPreviewRect = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top' | 'width'>
 
@@ -220,6 +220,7 @@ export function useDiffHoverPreviewDismiss(
     const closePreviewOnScroll = (event: Event) => {
       const target = event.target
       if (target instanceof Element && target.closest('.diff-hover-preview')) return
+      if (typeof document !== 'undefined' && document.querySelector('.diff-hover-preview:hover')) return
       closePreview()
     }
     window.addEventListener('scroll', closePreviewOnScroll, true)
@@ -431,6 +432,17 @@ export function DiffHoverPreviewOverlay({
       aria-label={`Diff preview for ${preview.summary.path}`}
       tabIndex={0}
     >
+      <div
+        className="diff-hover-preview-bridge"
+        style={{
+          position: 'absolute',
+          top: '-14px',
+          bottom: '-14px',
+          left: '0',
+          right: '0',
+          zIndex: -1
+        }}
+      />
       <div className="diff-hover-preview-header">
         <div className="diff-hover-preview-title">
           <span className="diff-hover-preview-icon" aria-hidden="true">

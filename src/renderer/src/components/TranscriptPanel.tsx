@@ -2537,11 +2537,11 @@ export const TranscriptPanel = memo(
         summary: DiffFileSummary,
         options?: { focusTarget?: DiffHoverPreviewState['focusTarget']; immediate?: boolean }
       ) => {
-        if (!canShowDiffHoverPreview(summary, Boolean(onOpenFileChangeInWorkbench))) return
         const anchorElement = event.currentTarget
         const produce = (): DiffHoverPreviewState | null => {
           if (!anchorElement.isConnected) return null
           const resolved = resolveFileChangeDiffText(summary)
+          if (!resolved.diffText && !onOpenFileChangeInWorkbench) return null
           return {
             anchor: anchorElement.getBoundingClientRect(),
             boundary: diffHoverPreviewBoundaryForElement(anchorElement),
@@ -6144,19 +6144,8 @@ export const TranscriptPanel = memo(
                             )}
                           </span>
                         )
-                        if (!item.diffText && !onOpenFileChangeInWorkbench) {
-                          return (
-                            <Fragment key={rowKey}>
-                              {sectionLead}
-                              <div className="file-change-summary-item">{rowContent}</div>
-                            </Fragment>
-                          )
-                        }
-                        const hasDiffPreview = Boolean(item.diffText)
-                        const canShowHoverPreview = canShowDiffHoverPreview(
-                          item,
-                          Boolean(onOpenFileChangeInWorkbench)
-                        )
+                        const hasDiffPreview = true
+                        const canShowHoverPreview = true
                         const fileChangeActionLabel = onOpenFileChangeInWorkbench
                           ? `Open Workbench diff for ${item.path}`
                           : `Preview diff for ${item.path}`
