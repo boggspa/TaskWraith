@@ -4981,6 +4981,13 @@ export function SettingsPanel({
     onRefreshProviderMcpStatus?.('antigravity')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [antigravitySurfaceAdmitted])
+  // Muse status is fail-closed credential-aware; warm once so the card does not
+  // stay on "setup not checked yet" until some other seat happens to refresh it.
+  useEffect(() => {
+    if (providerStatusByProvider?.muse !== undefined) return
+    onRefreshProviderMcpStatus?.('muse')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const providerMcpSummaries = providerSurfaceOrder.map((provider) => {
     const contract =
       providerCapabilitiesByProvider?.[provider] ??

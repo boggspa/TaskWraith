@@ -1,15 +1,12 @@
 /**
  * Muse opaque-exec run lifecycle.
  *
- * Extracted so composition-root registration stays a one-liner later:
- *   run: () => runMuseProvider(...)
+ * Composition-root wires IPC via `muse/MuseIpcBridge` → `runMuseProvider`.
  *
  * Sequence:
  *   lease home (+ skill-pin seed) → build argv → spawn →
  *   pump stdout (ExecJson) + resolve/tail session.jsonl (Usage) →
  *   cron assert → isolated-home cleanup
- *
- * Not registered in `src/main/index.ts` yet (no ProviderId).
  */
 
 import { createHash } from 'node:crypto'
@@ -368,27 +365,5 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 /** Alias matching wave-1 F naming (`MuseRun` lifecycle entry). */
 export const runMuseOpaqueExecTurn = runMuseProvider
 
-/**
- * IPC / provider-adapter entry for `createProviderAdapterRegistry` in index.ts.
- *
- * The lifecycle export `runMuseProvider(input: MuseRunInput)` above is the real
- * opaque-exec implementation. Composition-root still must supply binaryPath,
- * temporaryRoot, and `spawn` before calling it; until that bridge lands, the
- * registered adapter fails closed here instead of falling through another seat.
- */
-export async function runMuseProviderFromIpc(
-  _event: unknown,
-  payload: {
-    appChatId?: string
-    appRunId?: string
-    prompt?: string
-    workspace?: string
-  }
-): Promise<never> {
-  const chat =
-    typeof payload.appChatId === 'string' && payload.appChatId ? ` chat=${payload.appChatId}` : ''
-  throw new Error(
-    'Muse adapter is registered; IPC→MuseRunInput spawn bridge is not wired yet. ' +
-      `Call runMuseProvider({ binaryPath, workspacePath, prompt, runId, temporaryRoot, spawn, ... }).${chat}`
-  )
-}
+/** IPC bridge entry — implemented in MuseIpcBridge (deps-injected spawn/binary). */
+export { runMuseProviderFromIpc } from './MuseIpcBridge'

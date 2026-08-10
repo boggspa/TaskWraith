@@ -83,7 +83,8 @@ export function summariseMuseCodeStatus(status: unknown): ProviderAuthSummary {
   }
 
   const authState = String(record.authState || '').trim().toLowerCase()
-  if (['authenticated', 'api-key', 'oauth'].includes(authState)) {
+  const credentialPresent = record.credentialPresent === true
+  if (credentialPresent || ['authenticated', 'api-key', 'oauth'].includes(authState)) {
     return {
       variant: 'signed-in',
       statusText: 'Muse Code configured',

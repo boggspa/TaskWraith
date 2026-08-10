@@ -1535,7 +1535,13 @@ import {
 } from './mistral/MistralCliArgs'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
-import { runMuseProviderFromIpc } from './muse/MuseRun'
+import {
+  createChildProcessMuseSpawn,
+  readDefaultMuseAuthJsonText,
+  runMuseProviderFromIpc,
+  type MuseIpcBridgeDeps
+} from './muse/MuseIpcBridge'
+import { isMuseCredentialPresent } from './muse/MuseProbe'
 import {
   clearMistralQuotaAnchor,
   configureMistralQuotaStore,
@@ -33849,31 +33855,103 @@ const mistralAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEv
 ]
 
 
-// Muse Code: opaque `muse exec --json` seat. Phase-2 registers a reachable
-// adapter so PROVIDER_RUN_MANAGEMENT_IDS stays boot-complete. Lifecycle lives
-// in src/main/muse/MuseRun.ts (`runMuseProvider`); registry calls
-// `runMuseProviderFromIpc` until composition-root supplies spawn/binary.
-// Keep this array in index.ts so ProviderAdapterRegistrationSite can
-// statically resolve ...defaultProviderDescriptor('muse').
+// Muse Code: opaque `muse exec --json` seat. Lifecycle in muse/MuseRun.ts;
+// IPC→spawn bridge in muse/MuseIpcBridge.ts. Keep this array in index.ts so
+// ProviderAdapterRegistrationSite can statically resolve the descriptor.
+const museIpcCancels = new Map<string, () => void>()
+const museIpcBridgeDeps: MuseIpcBridgeDeps = {
+  resolveBinary: async () => resolveCliProviderBinary('muse'),
+  getTemporaryRoot: () => app.getPath('temp'),
+  spawn: createChildProcessMuseSpawn(),
+  sendCompatLine: (sender, payload, route) =>
+    sendAgentCompatLine(sender as Electron.WebContents, 'muse', payload, route ?? null),
+  settleSetupFailure: ({ sender, message, setupRequired, appRunId, appChatId }) =>
+    settleVisibleProviderSetupFailure({
+      sender: sender as Electron.WebContents,
+      provider: 'muse',
+      route: { appRunId: appRunId || '', appChatId },
+      message,
+      setupRequired,
+      fallback: false
+    }),
+  finishRun: ({ appRunId, status }) => {
+    runManager.finish(appRunId, status)
+    runManager.confirmTerminalStatus(appRunId, status)
+  },
+  registerCancel: (runId, cancel) => {
+    museIpcCancels.set(runId, cancel)
+  },
+  clearCancel: (runId) => {
+    museIpcCancels.delete(runId)
+  },
+  readAuthJsonText: () => readDefaultMuseAuthJsonText(),
+  readMetaApiKeyEnv: () => process.env.META_API_KEY
+}
+
+async function getMuseProviderStatus() {
+  const base = await getCliProviderStatus('muse')
+  const credentialPresent = await isMuseCredentialPresent({
+    resolveBinary: async () => ({
+      binaryPath: typeof base.binaryPath === 'string' ? base.binaryPath : null
+    }),
+    readAuthJsonText: () => readDefaultMuseAuthJsonText(),
+    readMetaApiKeyEnv: () => process.env.META_API_KEY
+  })
+  return {
+    ...base,
+    credentialPresent,
+    authState: credentialPresent ? 'api-key' : 'unknown',
+    setupRequired: !base.available || !credentialPresent
+  }
+}
+
+function museMcpStatusSnapshot() {
+  return {
+    provider: 'muse' as const,
+    available: false,
+    enabled: false,
+    source: 'none',
+    serverName: null,
+    tools: [] as string[],
+    sections: [] as unknown[],
+    message:
+      'Muse v1 is opaque CLI (muse exec --json); TaskWraith does not attach an MCP broker.'
+  }
+}
+
 const museAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
     ...defaultProviderDescriptor('muse'),
-    run: ({ event, payload }) => runMuseProviderFromIpc(event, payload),
-    cancel: (runId) => cancelProviderRun('muse', runId),
-    getStatus: () => getCliProviderStatus('muse'),
-    getMcpStatus: async () => ({
-      provider: 'muse' as const,
-      available: false,
-      enabled: false,
-      source: 'none',
-      serverName: null,
-      tools: [] as string[],
-      sections: [] as unknown[],
-      message:
-        'Muse v1 is opaque CLI (muse exec --json); TaskWraith does not attach an MCP broker.'
-    }),
-    getCapabilityContract: (request = {}) =>
-      getProviderCapabilityContractDirect('muse', request.workspacePath, request.approvalMode)
+    run: async ({ event, payload }) => {
+      await runMuseProviderFromIpc(event, payload, museIpcBridgeDeps)
+    },
+    cancel: async (runId) => {
+      if (runId && museIpcCancels.has(runId)) {
+        museIpcCancels.get(runId)?.()
+        museIpcCancels.delete(runId)
+      }
+      return cancelProviderRun('muse', runId)
+    },
+    getStatus: () => getMuseProviderStatus(),
+    getMcpStatus: async () => museMcpStatusSnapshot(),
+    getCapabilityContract: async (request = {}) => {
+      const settings = AppStore.getSettings()
+      const status = await getMuseProviderStatus().catch((error) => ({
+        provider: 'muse',
+        available: false,
+        setupRequired: true,
+        credentialPresent: false,
+        error: error instanceof Error ? error.message : String(error)
+      }))
+      return buildProviderCapabilityContract({
+        provider: 'muse',
+        settings,
+        workspacePath: request.workspacePath,
+        approvalMode: request.approvalMode,
+        status,
+        mcpStatus: museMcpStatusSnapshot()
+      })
+    }
   }
 ]
 

@@ -794,10 +794,12 @@ export async function getAgentStatusSnapshotDirect(
     provider === 'kimi' ||
     provider === 'grok' ||
     provider === 'pi' ||
-    provider === 'mistral'
+    provider === 'mistral' ||
+    provider === 'muse'
   ) {
     // Route live local CLIs to generic status instead of the Gemini-shaped
-    // snapshot below.
+    // snapshot below. Muse must be named here: the final else-branch would
+    // otherwise answer with Gemini's binary/version as this seat's status.
     return getCliProviderStatus(provider, deps)
   }
   const geminiStatus = await getCliProviderStatus('gemini', deps)

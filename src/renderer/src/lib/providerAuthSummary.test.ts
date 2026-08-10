@@ -2,8 +2,44 @@ import { describe, expect, it } from 'vitest'
 import {
   summariseCodexStatus,
   summariseMistralVibeStatus,
+  summariseMuseCodeStatus,
   summariseProviderApiKeyStatus
 } from './providerAuthSummary'
+
+describe('summariseMuseCodeStatus', () => {
+  it('stays not-checked when Settings has never received a Muse status snapshot', () => {
+    expect(summariseMuseCodeStatus(null)).toMatchObject({
+      variant: 'not-signed-in',
+      statusText: 'Muse setup not checked yet'
+    })
+  })
+
+  it('treats credentialPresent as configured without inventing Meta secrets', () => {
+    expect(
+      summariseMuseCodeStatus({
+        available: true,
+        authState: 'unknown',
+        credentialPresent: true
+      })
+    ).toMatchObject({
+      variant: 'signed-in',
+      statusText: 'Muse Code configured'
+    })
+  })
+
+  it('keeps binary-only readiness as setup-unverified', () => {
+    expect(
+      summariseMuseCodeStatus({
+        available: true,
+        authState: 'unknown',
+        credentialPresent: false
+      })
+    ).toMatchObject({
+      variant: 'partial',
+      statusText: 'Muse CLI ready · setup unverified'
+    })
+  })
+})
 
 describe('summariseMistralVibeStatus', () => {
   it('does not claim a resolved Vibe binary is signed in', () => {
