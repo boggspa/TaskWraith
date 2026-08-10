@@ -63,6 +63,7 @@ import {
   type McpBridgeRouteEnvironmentVariables
 } from './McpBridgeRoute'
 import { isValidInstanceResourceEpoch } from '../InstanceResourceIdentity'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
 // AuditToolExecutors imports McpToolDefinition from here as `import type` (erased
@@ -446,33 +447,10 @@ export interface GeminiMcpBridgeProcessDeps {
   pid?: () => number
 }
 
-const VALID_BROKER_PARENT_PROVIDERS = new Set<ProviderId>([
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  // Grok reaches the broker through its provider-native MCP registration.
-  'grok',
-  // Cursor ensemble seats stamp taskwraith-broker with parentProvider=cursor.
-  'cursor',
-  // Pi has no general MCP client. Its contained per-run Ensemble extension is
-  // nevertheless a narrow authenticated broker client, so its calls must keep
-  // the Pi run identity rather than being coerced to Gemini.
-  'pi',
-  // AntiGravity's gemini-api lane runs the in-process agentic runtime whose
-  // tool calls resolve their parent from the run session; without this entry
-  // resolveBrokerParentProvider would coerce those calls back to 'gemini'
-  // and the session-keyed context/authority lookups would miss.
-  'antigravity',
-  'mistral',
-  // Ollama's in-main tool loop routes write/shell tools through the MCP
-  // dispatcher with parentProvider='ollama' (OllamaMainRuntime.executeLocalTool)
-  // while its read tools bind the run context directly. Without this entry the
-  // dispatcher coerced those calls to 'gemini', the context lookup missed, and
-  // every mutating/shell tool failed "no active Gemini workspace context"
-  // while reads kept working — the split-brain 2026-07-28 QA reproduced.
-  'ollama'
-])
+// Recognition preserves the exact run identity through the broker; it does not
+// offer a provider or grant a tool. Provider admission and per-run authority are
+// enforced independently before the dispatcher reaches this normalization seam.
+const VALID_BROKER_PARENT_PROVIDERS: ReadonlySet<ProviderId> = new Set(PROVIDER_RUN_MANAGEMENT_IDS)
 const BRIDGE_LOG_MAX_BYTES = 1_048_576
 const BRIDGE_LOG_MAX_LINE_CHARS = 32_768
 const BRIDGE_LOG_DIRECTORY_MODE = 0o700

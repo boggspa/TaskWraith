@@ -3,7 +3,7 @@ import {
   normalizeBrokerParentProvider,
   resolveBrokerParentProvider
 } from './McpBridgeRuntime'
-import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../shared/retiredProviders'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 
 describe('normalizeBrokerParentProvider', () => {
   it('preserves managed provider stamps for broker-routed calls', () => {
@@ -46,13 +46,13 @@ describe('resolveBrokerParentProvider', () => {
     expect(resolveBrokerParentProvider('gemini', 'ollama')).toBe('ollama')
   })
 
-  // LOCKSTEP: every live selectable provider must survive the broker parent
+  // LOCKSTEP: every stable provider identity must survive the broker parent
   // resolution un-coerced, both as a stamp and as a run-session provider. A
   // provider missing from VALID_BROKER_PARENT_PROVIDERS silently loses its
   // MCP-routed tools to a 'gemini' context miss — reads work, writes fail —
   // and no per-provider suite notices because the dispatcher is mocked there.
-  it('never coerces a live selectable provider back to gemini', () => {
-    for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
+  it('never coerces a managed provider identity back to gemini', () => {
+    for (const provider of PROVIDER_RUN_MANAGEMENT_IDS) {
       expect(normalizeBrokerParentProvider(provider)).toBe(provider)
       expect(resolveBrokerParentProvider('gemini', provider)).toBe(provider)
     }
