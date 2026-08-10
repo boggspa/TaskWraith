@@ -13226,6 +13226,33 @@ Next action:
     expect(codexPayload.claudeFastMode).toBeUndefined()
   })
 
+  it('threads Muse participant reasoningEffort through dispatch sharedReasoning', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'muse',
+        provider: 'muse',
+        enabled: true,
+        role: 'Muse',
+        instructions: 'Work.',
+        order: 1,
+        model: 'muse-spark-1.2',
+        permissionPresetId: 'default',
+        reasoningEffort: 'ultra'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Think carefully.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const musePayload = harness.dispatched[0]
+    expect(musePayload.provider).toBe('muse')
+    expect(musePayload.model).toBe('muse-spark-1.2')
+    expect(musePayload.reasoningEffort).toBe('ultra')
+  })
+
   it('threads Ollama participant tier and run profile through dispatch', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [

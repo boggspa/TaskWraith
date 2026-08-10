@@ -15354,6 +15354,7 @@ export class EnsembleOrchestrator {
       const sharedReasoning =
         participant.provider === 'codex' ||
         participant.provider === 'kimi' ||
+        participant.provider === 'muse' ||
         (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
         (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
           ? participant.reasoningEffort
@@ -17479,6 +17480,7 @@ export class EnsembleOrchestrator {
       const sharedReasoning =
         participant.provider === 'codex' ||
         participant.provider === 'kimi' ||
+        participant.provider === 'muse' ||
         (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
         (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
           ? participant.reasoningEffort

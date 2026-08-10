@@ -88,7 +88,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'ollama',
   'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ])
 
 export interface ComposerImageAttachment {
@@ -132,6 +133,7 @@ export interface ComposerInput {
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
+  museReasoningEffort?: string | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
@@ -846,7 +848,11 @@ export class ComposerService {
                     optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
                       optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort'))
                   )
-                : null,
+                : provider === 'muse'
+                  ? optionalStringOrNull(effectiveInput.museReasoningEffort) ||
+                    optionalStringOrNull(metadataString(chat, 'museReasoningEffort')) ||
+                    null
+                  : null,
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null

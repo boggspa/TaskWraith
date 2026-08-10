@@ -671,6 +671,19 @@ describe('ComposerService', () => {
     expect(payload.kimiThinking).toBe(true)
   })
 
+  it('threads Muse Meta /effort onto payload.reasoningEffort', async () => {
+    const payload = await compose(
+      { provider: 'muse' },
+      {
+        selectedModelType: 'muse-spark-1.2',
+        museReasoningEffort: 'xhigh'
+      }
+    )
+    expect(payload.provider).toBe('muse')
+    expect(payload.model).toBe('muse-spark-1.2')
+    expect(payload.reasoningEffort).toBe('xhigh')
+  })
+
   it('defaults K3 effort to Max and ignores unsupported Off', async () => {
     const payload = await compose(
       { provider: 'kimi' },
