@@ -1,10 +1,8 @@
-import { channelAgentPublicKeyFingerprint } from '../../shared/collaboration/ChannelAgentProtocol'
 import type { RunEventAudienceLease, RunEventSink } from '../RunEventBus'
 import type { RunSessionChangeEvent } from '../RunManager'
 import type { ComposerService } from '../services/ComposerService'
 import type { AppSettings, ChatRecord, ProviderId } from '../store/types'
 import type { ChannelAuditLike } from './ChannelAuditLog'
-import type { ChannelAgentAuthoritySnapshot } from './ChannelAgentAuthorityState'
 import type { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
 import {
   resolveChannelAgentDispatchPlan,
@@ -13,10 +11,10 @@ import {
 import type { ChannelAgentDispatchCoordinatorOptions } from './ChannelAgentDispatchCoordinator'
 import {
   ChannelAgentDispatchRecovery,
-  type ChannelAgentConsumptionInspection,
   type ChannelAgentRunReconciliation,
   type ChannelAgentTerminalPostRecovery
 } from './ChannelAgentDispatchRecovery'
+import { inspectChannelAgentDispatchConsumption } from './ChannelAgentDispatchJournalAuthority'
 import {
   ChannelAgentDispatchJournalState,
   type ChannelAgentDispatchJournalBinding,
@@ -162,96 +160,6 @@ function canonicalPlan(
   })
 }
 
-function exactConsumption(
-  authority: ChannelAgentAuthoritySnapshot,
-  snapshot: ChannelAgentDispatchJournalSnapshot
-): ChannelAgentConsumptionInspection {
-  const binding = snapshot.binding
-  const intent = snapshot.events.find((event) => event.kind === 'consumption.intent')
-  const delegations = authority.delegations.filter((record) => {
-    const delegation = record.signedDelegation.delegation
-    let fingerprint = ''
-    try {
-      fingerprint = channelAgentPublicKeyFingerprint(delegation.agentPublicKeyB64)
-    } catch {
-      return false
-    }
-    return (
-      delegation.delegationId === binding.delegationId &&
-      delegation.channelId === binding.channelId &&
-      delegation.ownerMemberId === binding.ownerMemberId &&
-      delegation.agentMemberId === binding.agentMemberId &&
-      delegation.agentSeatId === binding.agentSeatId &&
-      delegation.keyGeneration === binding.keyGeneration &&
-      fingerprint === binding.agentPublicKeyFingerprint &&
-      delegation.notBefore === binding.delegationNotBefore &&
-      delegation.expiresAt === binding.delegationExpiresAt &&
-      delegation.maxPostBytes === binding.maxPostBytes
-    )
-  })
-  const grants = authority.dispatchGrants.filter((record) => {
-    const grant = record.signedDispatchGrant.grant
-    return (
-      grant.grantId === binding.dispatchGrantId &&
-      grant.channelId === binding.channelId &&
-      grant.ownerMemberId === binding.ownerMemberId &&
-      grant.agentMemberId === binding.agentMemberId &&
-      grant.agentSeatId === binding.agentSeatId &&
-      grant.keyGeneration === binding.keyGeneration &&
-      grant.delegationId === binding.delegationId &&
-      grant.notBefore === binding.dispatchGrantNotBefore &&
-      grant.expiresAt === binding.dispatchGrantExpiresAt &&
-      grant.workspaceIdentityHash === binding.workspaceIdentityHash &&
-      grant.permissionPostureHash === binding.permissionPostureHash &&
-      grant.allowedMentionerMemberIds.includes(binding.mentionerMemberId)
-    )
-  })
-  if (
-    !intent ||
-    authority.channelId !== binding.channelId ||
-    authority.ownerMemberId !== binding.ownerMemberId ||
-    delegations.length !== 1 ||
-    grants.length !== 1
-  ) {
-    return { kind: 'unavailable' }
-  }
-  const matches = authority.consumptions.filter(
-    (consumption) =>
-      consumption.grantId === binding.dispatchGrantId &&
-      consumption.triggerMessageId === binding.triggerMessageId
-  )
-  if (matches.length === 0) return { kind: 'absent' }
-  if (matches.length !== 1) return { kind: 'unavailable' }
-  const consumption = matches[0]
-  if (
-    consumption.channelId !== binding.channelId ||
-    consumption.mentionerMemberId !== binding.mentionerMemberId ||
-    consumption.workspaceIdentityHash !== binding.workspaceIdentityHash ||
-    consumption.permissionPostureHash !== binding.permissionPostureHash ||
-    consumption.recordedRevision !== intent.authorityRevision + 1 ||
-    consumption.recordedRevision > authority.revision ||
-    consumption.dispatchOrdinal !== intent.expectedDispatchOrdinal ||
-    consumption.dispatchOrdinal > grants[0].signedDispatchGrant.grant.maxDispatches ||
-    consumption.consumedAt !== intent.at
-  ) {
-    return { kind: 'unavailable' }
-  }
-  return { kind: 'found', consumption }
-}
-
-function inspectConsumption(
-  options: ChannelAgentProductionCompositionOptions,
-  snapshot: ChannelAgentDispatchJournalSnapshot
-): ChannelAgentConsumptionInspection {
-  try {
-    const strict = ChannelAgentDispatchJournalState.restore(snapshot).snapshot()
-    const authority = options.authority.snapshot(strict.binding.channelId)
-    return authority ? exactConsumption(authority, strict) : { kind: 'unavailable' }
-  } catch {
-    return { kind: 'unavailable' }
-  }
-}
-
 function terminalSigning(
   options: ChannelAgentProductionCompositionOptions,
   snapshot: ChannelAgentDispatchJournalSnapshot,
@@ -353,7 +261,8 @@ export function createChannelAgentProductionComposition(
 
   const recovery = new ChannelAgentDispatchRecovery({
     journal: options.journal,
-    inspectConsumption: (snapshot) => inspectConsumption(options, snapshot),
+    inspectConsumption: (snapshot) =>
+      inspectChannelAgentDispatchConsumption(options.authority, snapshot),
     retryReserved: async (snapshot) => {
       let state: ChannelAgentDispatchJournalState
       try {
