@@ -1008,7 +1008,7 @@ describe('MainSanitizers settings patches', () => {
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
     expect(sanitizeSettingsPatch({ maxWaveAgents: 8 }).maxWaveAgents).toBe(8)
     expect(sanitizeSettingsPatch({ maxWaveAgents: 1 }).maxWaveAgents).toBe(2)
-    expect(sanitizeSettingsPatch({ maxWaveAgents: 99 }).maxWaveAgents).toBe(20)
+    expect(sanitizeSettingsPatch({ maxWaveAgents: 99 }).maxWaveAgents).toBe(64)
     expect(sanitizeSettingsPatch({ maxWaveAgents: 8.9 }).maxWaveAgents).toBe(8)
     expect(
       'maxWaveAgents' in sanitizeSettingsPatch({ maxWaveAgents: 'nope' as unknown as number })
