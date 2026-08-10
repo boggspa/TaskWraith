@@ -147,7 +147,10 @@ function coordinatorError(
   return new ChannelAgentDispatchCoordinatorError(code, message)
 }
 
-function auditDedupeKey(kind: ChannelAuditInput['kind'], dispatchId: string): string {
+export function channelAgentDispatchAuditDedupeKey(
+  kind: ChannelAuditInput['kind'],
+  dispatchId: string
+): string {
   return createHash('sha256')
     .update(AUDIT_DEDUPE_DOMAIN)
     .update(kind, 'utf8')
@@ -616,7 +619,7 @@ export class ChannelAgentDispatchCoordinator {
       code: args.code,
       contentHash: args.contentHash,
       ...(args.detail ? { detail: args.detail } : {}),
-      dedupeKey: auditDedupeKey(args.kind, args.binding.dispatchId),
+      dedupeKey: channelAgentDispatchAuditDedupeKey(args.kind, args.binding.dispatchId),
       at: args.at
     })
   }
