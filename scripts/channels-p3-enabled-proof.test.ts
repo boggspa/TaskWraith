@@ -10,8 +10,10 @@ interface EnabledProofModule {
   ACCEPTANCE_COMMIT: string
   ACCEPTED_CANDIDATE: string
   ENABLE_COMMIT: string
+  FLEET_WORKTREE_SOURCE_COMMIT: string
   PACKAGED_FORBIDDEN_MARKERS: Record<string, string[]>
   PACKAGED_REQUIRED_MARKERS: Record<string, string[]>
+  PACKAGE_PROVENANCE_COMMIT: string
   parseArgs(argv: string[]): {
     evidencePath: string
     packageInput: string
@@ -92,9 +94,10 @@ describe('Channels P3 enabled proof harness', () => {
       proof.verifyProtectedChanges([
         'src/shared/collaboration/ChannelAgentReviewGate.ts',
         'src/renderer/src/components/ChannelHostPanel.tsx',
+        'src/main/run/AgentRunTypes.ts',
         'src/main/SubThreadEphemeralFleet.ts'
       ])
-    ).toMatchObject({ protectedChangeCount: 2 })
+    ).toMatchObject({ protectedChangeCount: 3 })
 
     expect(() =>
       proof.verifyProtectedChanges(['src/shared/collaboration/ChannelAgentProtocol.ts'])
@@ -148,6 +151,8 @@ describe('Channels P3 enabled proof harness', () => {
     expect(proof.ACCEPTED_CANDIDATE).toBe('b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4')
     expect(proof.ACCEPTANCE_COMMIT).toBe('92ad1e98259a95377b78c689b586e5e9f8d120d0')
     expect(proof.ENABLE_COMMIT).toBe('191e5e37d6602f8a60e5cf280d416dc342b96492')
+    expect(proof.PACKAGE_PROVENANCE_COMMIT).toBe('e0d7d1be4e4e5af1ad0ab8e91ffe65cf26338828')
+    expect(proof.FLEET_WORKTREE_SOURCE_COMMIT).toBe('7a2561c47519036e529308b93fbc425303b3c12a')
   })
 
   it('runs one real production dispatch and verifies its signed post after restart', () => {

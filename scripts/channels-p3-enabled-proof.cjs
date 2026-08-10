@@ -26,6 +26,8 @@ const REVIEW_ID = 'channels-p3-agent-participation-v1'
 const ACCEPTED_CANDIDATE = 'b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4'
 const ACCEPTANCE_COMMIT = '92ad1e98259a95377b78c689b586e5e9f8d120d0'
 const ENABLE_COMMIT = '191e5e37d6602f8a60e5cf280d416dc342b96492'
+const PACKAGE_PROVENANCE_COMMIT = 'e0d7d1be4e4e5af1ad0ab8e91ffe65cf26338828'
+const FLEET_WORKTREE_SOURCE_COMMIT = '7a2561c47519036e529308b93fbc425303b3c12a'
 
 const PACKAGED_REQUIRED_MARKERS = {
   main: [
@@ -96,8 +98,19 @@ const ENABLE_TRANSITION_FILES = [
   'src/shared/collaboration/ChannelAgentReviewGate.ts'
 ]
 
+const POST_ACCEPTANCE_PROTECTED_PINS = new Map([
+  ['src/shared/collaboration/ChannelAgentReviewGate.test.ts', PACKAGE_PROVENANCE_COMMIT],
+  ['src/shared/collaboration/ChannelAgentReviewGate.ts', PACKAGE_PROVENANCE_COMMIT],
+  ['src/main/run/AgentRunTypes.ts', FLEET_WORKTREE_SOURCE_COMMIT]
+])
+
+const PROTECTED_BLOB_PINS = new Map([
+  ...ENABLE_TRANSITION_FILES.map((file) => [file, ENABLE_COMMIT]),
+  ...POST_ACCEPTANCE_PROTECTED_PINS
+])
+
 const ALLOWED_PROTECTED_CHANGES = new Set([
-  ...ENABLE_TRANSITION_FILES,
+  ...PROTECTED_BLOB_PINS.keys(),
   'docs/channels-p3-adversarial-review.md',
   'docs/channels-p3-security-design.md',
   'scripts/channels-p3-enabled-proof.cjs',
@@ -255,10 +268,10 @@ function verifyProtectedBoundary(candidateCommit) {
     ])
   )
   const summary = verifyProtectedChanges(changedFiles, rootDiffs)
-  for (const file of ENABLE_TRANSITION_FILES) {
+  for (const [file, expectedCommit] of PROTECTED_BLOB_PINS) {
     assertProof(
-      blobId(candidateCommit, file) === blobId(ENABLE_COMMIT, file),
-      `enable transition file changed after ${ENABLE_COMMIT}: ${file}`
+      blobId(candidateCommit, file) === blobId(expectedCommit, file),
+      `protected boundary file changed after ${expectedCommit}: ${file}`
     )
   }
   for (const file of [
@@ -275,9 +288,13 @@ function verifyProtectedBoundary(candidateCommit) {
     reviewedFrom: ACCEPTED_CANDIDATE,
     acceptanceCommit: ACCEPTANCE_COMMIT,
     enableCommit: ENABLE_COMMIT,
+    packageProvenanceCommit: PACKAGE_PROVENANCE_COMMIT,
+    fleetWorktreeSourceCommit: FLEET_WORKTREE_SOURCE_COMMIT,
     changedFileCount: changedFiles.length,
     changedFilesSha256: sha256(changedFiles.sort().join('\n')),
-    pinnedEnableFileCount: ENABLE_TRANSITION_FILES.length
+    pinnedEnableFileCount: ENABLE_TRANSITION_FILES.length,
+    pinnedPostAcceptanceFileCount: POST_ACCEPTANCE_PROTECTED_PINS.size,
+    pinnedProtectedFileCount: PROTECTED_BLOB_PINS.size
   }
 }
 
@@ -480,7 +497,9 @@ async function main() {
         tree: candidate.tree,
         reviewedFrom: ACCEPTED_CANDIDATE,
         acceptanceCommit: ACCEPTANCE_COMMIT,
-        enableCommit: ENABLE_COMMIT
+        enableCommit: ENABLE_COMMIT,
+        packageProvenanceCommit: PACKAGE_PROVENANCE_COMMIT,
+        fleetWorktreeSourceCommit: FLEET_WORKTREE_SOURCE_COMMIT
       },
       boundaryAudit,
       packageSurface,
@@ -512,8 +531,10 @@ module.exports = {
   ACCEPTANCE_COMMIT,
   ACCEPTED_CANDIDATE,
   ENABLE_COMMIT,
+  FLEET_WORKTREE_SOURCE_COMMIT,
   PACKAGED_FORBIDDEN_MARKERS,
   PACKAGED_REQUIRED_MARKERS,
+  PACKAGE_PROVENANCE_COMMIT,
   parseArgs,
   runMission,
   verifyPackagedGroups,
