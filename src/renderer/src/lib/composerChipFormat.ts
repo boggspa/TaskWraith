@@ -18,6 +18,7 @@ import {
   isCursorGrok45ModelId,
   isGrok45ReasoningModelId
 } from '../../../shared/grok45Models'
+import { humaniseModelId } from './modelDisplayName'
 
 export interface ComposerChipContext {
   provider: ProviderId
@@ -258,7 +259,13 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     }
   }
 
-  return label
+  // Keep every known catalogue row readable when this compact formatter is
+  // called with only a wire id (the transcript frequently has no picker label
+  // to hand us). This is especially important for Pi: its `upstream/model`
+  // ids must not escape into assistant headers. Preserve a caller-supplied
+  // custom label when the shared humaniser does not recognise the wire id.
+  const humanLabel = humaniseModelId(provider, modelId)
+  return humanLabel && humanLabel !== modelId ? humanLabel : label
 }
 
 /**

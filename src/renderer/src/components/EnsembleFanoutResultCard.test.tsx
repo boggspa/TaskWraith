@@ -166,6 +166,26 @@ describe('EnsembleFanoutResultCard', () => {
     }
   })
 
+  it('uses the Pi upstream brand and human model label for legacy fan-out cards without a seat snapshot', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage({
+          metadata: {
+            ...fanoutMessage().metadata,
+            ensembleProvider: 'pi',
+            ensembleRole: 'DSeekWork',
+            ensembleModel: 'deepseek/deepseek-v4-pro'
+          }
+        })}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    expect(html).toContain('provider-deepseek')
+    expect(html).toContain('>DeepSeek<')
+    expect(html).toContain('>DeepSeek V4 Pro<')
+  })
+
   it('labels write-intent lanes as writer fan-out', () => {
     const html = renderToStaticMarkup(
       <EnsembleFanoutResultCard

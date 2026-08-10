@@ -11,7 +11,11 @@ import type { ContextCompactionProgressEvent } from '../../../shared/contextComp
 import { LIVE_ENSEMBLE_LANE_STATUSES } from '../../../shared/ensembleRoundLifecycle'
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
-import { resolveOllamaDisplayBrand, resolveProviderHueClass } from './ollamaDisplayBrand'
+import {
+  resolveOllamaDisplayBrand,
+  resolveProviderBrandLabel,
+  resolveProviderHueClass
+} from './ollamaDisplayBrand'
 import { getProviderLabel } from './providerLabels'
 
 export type WorkingIndicatorActivity = 'working' | 'compacting'
@@ -47,9 +51,10 @@ export function resolveWorkingIndicatorProviderPresentation(
     provider === 'ollama' && model
       ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
       : null
+  const upstreamProviderLabel = resolveProviderBrandLabel(provider, model)
   return {
     providerLabel:
-      ollamaBrand?.providerLabel ||
+      upstreamProviderLabel ||
       (provider === 'ollama' && model
         ? humaniseModelId('ollama', model)
         : getProviderLabel(provider)),

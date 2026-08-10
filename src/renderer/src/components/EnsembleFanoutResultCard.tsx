@@ -9,7 +9,11 @@ import type {
 import { shortModelName } from '../lib/composerChipFormat'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { getProviderLabel } from '../lib/providerLabels'
-import { providerAccentVar, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import {
+  providerAccentVar,
+  resolveProviderBrandLabel,
+  resolveProviderHueClass
+} from '../lib/ollamaDisplayBrand'
 import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
 import { LiveActivityViewport } from './LiveActivityViewport'
@@ -178,9 +182,11 @@ export function EnsembleFanoutResultCard({
 }: EnsembleFanoutResultCardProps) {
   const metadata = message.metadata || {}
   const provider = textValue(metadata.ensembleProvider) as ProviderId | undefined
-  const providerLabel = provider ? getProviderLabel(provider) : 'Participant'
-  const role = textValue(metadata.ensembleRole) || providerLabel
   const model = textValue(metadata.ensembleModel)
+  const providerLabel = provider
+    ? resolveProviderBrandLabel(provider, model) || getProviderLabel(provider)
+    : 'Participant'
+  const role = textValue(metadata.ensembleRole) || providerLabel
   // Each fan-out card wears the accent of the participant that produced it,
   // not the pane/host accent. `resolveProviderHueClass` maps (provider, model)
   // to a CSS hue class — the same helper the @-mention chips + above-row use —

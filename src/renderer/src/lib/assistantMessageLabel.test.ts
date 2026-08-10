@@ -139,15 +139,17 @@ describe('formatAssistantMessageLabel', () => {
     })
   })
 
-  it('uses every Pi upstream hue for solo transcript attribution', () => {
+  it('uses every Pi upstream brand and human model name for solo transcript attribution', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(
         formatAssistantMessageLabel(assistant({ providerModel: modelId }), 'Pi', 'pi')
       ).toMatchObject({
+        label: brand.label,
         provider: 'pi',
-        providerClass: brand.hueClass
+        providerClass: brand.hueClass,
+        modelBadge: PI_MODEL_LABELS[modelId!]
       })
     }
   })
@@ -164,9 +166,11 @@ describe('formatAssistantMessageLabel', () => {
         'Codex',
         'codex'
       )
-    ).toMatchObject({
+    ).toEqual({
+      label: 'Qwen / Scout',
       provider: 'pi',
-      providerClass: 'qwen'
+      providerClass: 'qwen',
+      modelBadge: 'Qwen3.7 Max'
     })
   })
 
@@ -221,6 +225,57 @@ describe('formatAssistantMessageLabel', () => {
       provider: 'codex',
       providerClass: 'codex',
       modelBadge: '5.5-Codex'
+    })
+  })
+
+  it('uses every Pi upstream brand and human model name for ensemble assistant bubbles', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      expect(
+        formatAssistantMessageLabel(
+          assistant({
+            ensembleProvider: 'pi',
+            ensembleRole: 'Specialist',
+            ensembleModel: modelId
+          }),
+          'Pi',
+          'pi',
+          { isEnsembleChat: true }
+        )
+      ).toMatchObject({
+        label: `${brand.label} / Specialist`,
+        provider: 'pi',
+        providerClass: brand.hueClass,
+        modelBadge: PI_MODEL_LABELS[modelId!]
+      })
+    }
+  })
+
+  it('recovers K3 effort from a captured seat snapshot for older transcript rows', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'kimi',
+          ensembleRole: 'K3Boss',
+          ensembleModel: 'kimi-k3',
+          ensembleSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'kimi',
+            model: 'kimi-k3',
+            reasoningEffort: 'max',
+            configuredPermissionPresetId: 'read_only'
+          }
+        }),
+        'Kimi',
+        'kimi',
+        { isEnsembleChat: true }
+      )
+    ).toMatchObject({
+      label: 'Kimi / K3Boss',
+      provider: 'kimi',
+      providerClass: 'kimi',
+      modelBadge: 'K3 Max'
     })
   })
 

@@ -1,6 +1,10 @@
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
-import { resolveOllamaDisplayBrand, resolveProviderHueClass } from './ollamaDisplayBrand'
+import {
+  resolveOllamaDisplayBrand,
+  resolveProviderBrandLabel,
+  resolveProviderHueClass
+} from './ollamaDisplayBrand'
 import { getProviderLabel } from './providerLabels'
 import type {
   ChatMessage,
@@ -54,6 +58,17 @@ const ollamaBrandPresentation = (
     }
   }
   return null
+}
+
+function seatSnapshot(message: ChatMessage): Record<string, unknown> | null {
+  const value = message.metadata?.ensembleSeatSnapshot
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function textValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 const pooledAgentIdentityForMessage = (
@@ -136,9 +151,12 @@ const formatAssistantMessageLabel = (
         : 'Guest'
     const guestModel =
       typeof message.metadata?.guestModel === 'string' ? message.metadata.guestModel : ''
+    const guestProviderLabel = guestProvider
+      ? resolveProviderBrandLabel(guestProvider, guestModel) || getProviderLabel(guestProvider)
+      : ''
     return withPooledIdentity({
       label: guestProvider
-        ? `${getProviderLabel(guestProvider)} / ${guestRole}`
+        ? `${guestProviderLabel} / ${guestRole}`
         : `Guest / ${guestRole}`,
       provider: guestProvider,
       providerClass: guestProvider
@@ -147,7 +165,11 @@ const formatAssistantMessageLabel = (
       modelBadge: guestProvider && guestModel ? shortModelName(guestProvider, '', guestModel) : null
     })
   }
-  const provider = (message.metadata?.ensembleProvider as ProviderId | undefined) ?? null
+  const snapshot = seatSnapshot(message)
+  const provider =
+    (textValue(message.metadata?.ensembleProvider) || textValue(snapshot?.provider) || null) as
+      | ProviderId
+      | null
   if (!provider) {
     const allowSoloModel = !options?.isEnsembleChat
     const soloModel =
@@ -171,6 +193,9 @@ const formatAssistantMessageLabel = (
       const branded = ollamaBrandPresentation(soloModel, modelLabel)
       if (branded) return withPooledIdentity(branded)
     }
+    const brandedProviderLabel = fallbackProvider
+      ? resolveProviderBrandLabel(fallbackProvider, soloModel, soloModelLabel)
+      : null
     const soloModelBadge =
       fallbackProvider && (soloModel || soloModelLabel)
         ? shortModelName(fallbackProvider, soloModelLabel, soloModel || soloModelLabel)
@@ -179,7 +204,7 @@ const formatAssistantMessageLabel = (
     // include the run model when one is known, matching the provider/model
     // identity used elsewhere in the transcript.
     return withPooledIdentity({
-      label: fallbackLabel,
+      label: brandedProviderLabel || fallbackLabel,
       provider: fallbackProvider,
       providerClass: fallbackProvider
         ? resolveProviderHueClass(fallbackProvider, soloModel, soloModelLabel)
@@ -196,14 +221,14 @@ const formatAssistantMessageLabel = (
   // Falls back to no badge when the participant doesn't carry a model
   // (legacy ensemble chats from before this metadata existed).
   const ensembleModel =
-    typeof message.metadata?.ensembleModel === 'string' ? message.metadata.ensembleModel : ''
+    textValue(message.metadata?.ensembleModel) || textValue(snapshot?.model)
   const ensembleReasoningEffort =
-    typeof message.metadata?.ensembleReasoningEffort === 'string'
-      ? message.metadata.ensembleReasoningEffort
-      : ''
+    textValue(message.metadata?.ensembleReasoningEffort) || textValue(snapshot?.reasoningEffort)
   const ensembleThinkingEnabled =
     typeof message.metadata?.ensembleThinkingEnabled === 'boolean'
       ? message.metadata.ensembleThinkingEnabled
+      : typeof snapshot?.thinkingEnabled === 'boolean'
+        ? snapshot.thinkingEnabled
       : undefined
   const modelName = ensembleModel ? shortModelName(provider, '', ensembleModel) : null
   // Append a reasoning/thinking suffix when the participant carried one
@@ -243,8 +268,9 @@ const formatAssistantMessageLabel = (
       })
     }
   }
+  const providerLabel = resolveProviderBrandLabel(provider, ensembleModel) || getProviderLabel(provider)
   return withPooledIdentity({
-    label: role ? `${getProviderLabel(provider)} / ${role}` : getProviderLabel(provider),
+    label: role ? `${providerLabel} / ${role}` : providerLabel,
     provider,
     // Resolve the brand-spoof hue rather than tinting by the raw provider id.
     // A Pi run's wire id names the BYOK upstream serving it

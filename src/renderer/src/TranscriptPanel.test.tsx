@@ -337,6 +337,61 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('class="message-meta provider-cursor"')
   })
 
+  it('recovers a K3 assistant header effort from its run seat snapshot', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentProviderLabel: 'Codex',
+          currentProvider: 'codex',
+          currentChat: {
+            appChatId: 'k3-transcript-chat',
+            chatKind: 'ensemble',
+            provider: 'codex',
+            title: 'K3 transcript',
+            createdAt: 0,
+            updatedAt: 0,
+            archived: false,
+            messages: [],
+            runs: [
+              {
+                runId: 'run-k3',
+                provider: 'kimi',
+                requestedModel: 'kimi-k3',
+                startedAt: '2026-08-10T01:00:00.000Z',
+                ensembleSeatSnapshot: {
+                  schemaVersion: 1,
+                  provider: 'kimi',
+                  model: 'kimi-k3',
+                  reasoningEffort: 'max',
+                  configuredPermissionPresetId: 'read_only'
+                }
+              }
+            ]
+          } as ChatRecord,
+          messages: [
+            {
+              id: 'assistant-k3',
+              role: 'assistant',
+              content: 'K3 completed the review.',
+              timestamp: '2026-08-10T01:00:00.000Z',
+              runId: 'run-k3',
+              metadata: {
+                kind: 'ensembleParticipant',
+                ensembleProvider: 'kimi',
+                ensembleRole: 'K3Boss',
+                ensembleModel: 'kimi-k3'
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Kimi / K3Boss')
+    expect(html).toContain('Model: K3 Max')
+  })
+
   it('renders the active Ensemble participant role in the working indicator', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
@@ -398,7 +453,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('provider-alibaba')
   })
 
-  it('uses the Pi upstream hue for an active Ensemble working indicator', () => {
+  it('uses the Pi upstream brand, hue, and human model name for an active Ensemble working indicator', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -423,6 +478,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
 
     expect(html).toContain('provider-deepseek')
     expect(html).toContain('--message-working-accent:var(--provider-deepseek-color, var(--accent))')
+    expect(html).toContain('DeepSeek')
+    expect(html).toContain('DeepSeek V4 Flash')
   })
 
   it('scopes a settled solo tool stack to its Pi upstream brand hue', () => {
@@ -484,6 +541,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('message-meta provider-deepseek')
     expect(html).toContain('--accent:var(--provider-deepseek-color, var(--accent))')
     expect(html).not.toContain('--accent:var(--provider-pi-color, var(--accent))')
+    expect(html).toContain('>DeepSeek</span>')
+    expect(html).toContain('Model: DeepSeek V4 Flash')
   })
 
   it('prepends participant-style headers to live tool-call viewports', () => {
@@ -569,6 +628,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
 
     expect(html).toContain('message-meta provider-mistral')
     expect(html).not.toContain('message-meta provider-pi')
+    expect(html).toContain('Mistral / Scout')
+    expect(html).toContain('Model: Devstral 2512')
   })
 
   it('uses the Pi upstream hue for provider-generated close-out badges', () => {
@@ -845,6 +906,80 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('activity-thinking-trace-viewport')
     expect(html).toContain('live-activity-viewport')
     expect(html).not.toContain('run-card')
+  })
+
+  it('recovers a K3 thought header effort from its captured run seat snapshot', () => {
+    const participant = ensembleParticipant({
+      id: 'kimi-k3-boss',
+      provider: 'kimi',
+      role: 'K3Boss',
+      model: 'kimi-k3',
+      // Deliberately differs from the historical run: transcript attribution
+      // must use the immutable snapshot rather than the live roster setting.
+      reasoningEffort: 'low'
+    })
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          liveActivityViewport: true,
+          currentChat: {
+            ...activeEnsembleChat(participant),
+            runs: [
+              {
+                runId: 'run-kimi-k3-boss',
+                provider: 'kimi',
+                requestedModel: 'kimi-k3',
+                startedAt: '2026-08-10T01:00:00.000Z',
+                ensembleSeatSnapshot: {
+                  schemaVersion: 1,
+                  provider: 'kimi',
+                  model: 'kimi-k3',
+                  reasoningEffort: 'max',
+                  configuredPermissionPresetId: 'read_only'
+                }
+              }
+            ]
+          } as ChatRecord,
+          currentProviderLabel: 'Kimi',
+          currentProvider: 'kimi',
+          messages: [
+            {
+              id: 'thinking-kimi-k3-boss',
+              role: 'tool',
+              content: '',
+              timestamp: '2026-08-10T01:00:00.000Z',
+              runId: 'run-kimi-k3-boss',
+              metadata: {
+                kind: 'ensembleParticipantTools',
+                ensembleRoundId: 'round-1',
+                ensembleParticipantId: participant.id,
+                ensembleProvider: 'kimi'
+              },
+              toolActivities: [
+                {
+                  id: 'tool-thinking-kimi-k3-boss',
+                  toolName: 'kimi_reasoning',
+                  displayName: 'Kimi thinking',
+                  category: 'task',
+                  status: 'success',
+                  resultSummary: 'Thinking through the task.',
+                  metadata: {
+                    provider: 'kimi',
+                    ensembleProvider: 'kimi',
+                    ensembleParticipantId: participant.id
+                  }
+                } as ToolActivity
+              ]
+            } as ChatMessage
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('activity-stack-speaker-header')
+    expect(html).toContain('Kimi / K3Boss')
+    expect(html).toContain('Model: K3 Max')
   })
 
   it('renders fan-out lane assistant output as a fixed-height result card', () => {

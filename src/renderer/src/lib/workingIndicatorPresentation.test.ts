@@ -104,7 +104,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     })
   })
 
-  it('uses the Pi upstream hue class for a working participant', () => {
+  it('uses the Pi upstream brand, hue class, and human model name for a working participant', () => {
     expect(
       deriveActiveEnsembleWorkingPresentation(
         ensembleChat([
@@ -117,22 +117,23 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
         ])
       )
     ).toMatchObject({
-      providerLabel: 'Pi',
+      providerLabel: 'DeepSeek',
       provider: 'pi',
       providerClass: 'deepseek',
       roleLabel: 'Scout',
-      modelBadge: 'deepseek/deepseek-v4-flash',
+      modelBadge: 'DeepSeek V4 Flash',
       activity: 'working'
     })
   })
 
-  it('uses every Pi upstream hue in the shared working-indicator presentation', () => {
+  it('uses every Pi upstream brand and model label in the shared working-indicator presentation', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
       const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(resolveWorkingIndicatorProviderPresentation('pi', model)).toMatchObject({
-        providerLabel: 'Pi',
-        providerClass: brand.hueClass
+        providerLabel: brand.label,
+        providerClass: brand.hueClass,
+        modelBadge: PI_MODEL_LABELS[model!]
       })
     }
   })

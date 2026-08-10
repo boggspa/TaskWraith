@@ -37,7 +37,6 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
 import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
-import { shortModelName } from '../lib/composerChipFormat'
 import type { ProjectReferenceCitationOpenTarget } from '../lib/projectReferenceCitations'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import type { ProjectReferenceCitationExtractResolution } from '../../../shared/projectReferenceCitation'
@@ -354,10 +353,20 @@ function stringFromUnknown(value: unknown): string {
   return typeof value === 'string' && value.trim() ? value.trim() : ''
 }
 
-function activitySpeakerMessage(message: ChatMessage, chat: ChatRecord | null): ChatMessage {
+function activitySpeakerMessage(
+  message: ChatMessage,
+  chat: ChatRecord | null,
+  run?: ChatRun | null
+): ChatMessage {
   const metadata: Record<string, unknown> = { ...(message.metadata || {}) }
   const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
   const activityMetadata = firstActivityWithMetadata?.metadata
+  const seatSnapshot = run?.ensembleSeatSnapshot
+  const snapshotProvider = providerIdFromUnknown(seatSnapshot?.provider)
+  const snapshotModel = stringFromUnknown(seatSnapshot?.model)
+  const snapshotReasoningEffort = stringFromUnknown(seatSnapshot?.reasoningEffort)
+  const snapshotThinkingEnabled =
+    typeof seatSnapshot?.thinkingEnabled === 'boolean' ? seatSnapshot.thinkingEnabled : undefined
   const participantId =
     stringFromUnknown(metadata.ensembleParticipantId) ||
     stringFromUnknown(activityMetadata?.ensembleParticipantId)
@@ -367,15 +376,27 @@ function activitySpeakerMessage(message: ChatMessage, chat: ChatRecord | null): 
   const ensembleProvider =
     providerIdFromUnknown(metadata.ensembleProvider) ||
     providerIdFromUnknown(activityMetadata?.ensembleProvider) ||
+    snapshotProvider ||
     participant?.provider
 
   if (chat?.chatKind === 'ensemble' && ensembleProvider) {
     metadata.ensembleProvider = ensembleProvider
     if (participantId) metadata.ensembleParticipantId = participantId
     if (!metadata.ensembleRole && participant?.role) metadata.ensembleRole = participant.role
+    if (!metadata.ensembleSeatSnapshot && seatSnapshot) metadata.ensembleSeatSnapshot = seatSnapshot
+    if (!metadata.ensembleModel && snapshotModel) metadata.ensembleModel = snapshotModel
     if (!metadata.ensembleModel && participant?.model) metadata.ensembleModel = participant.model
+    if (!metadata.ensembleReasoningEffort && snapshotReasoningEffort) {
+      metadata.ensembleReasoningEffort = snapshotReasoningEffort
+    }
     if (!metadata.ensembleReasoningEffort && participant?.reasoningEffort) {
       metadata.ensembleReasoningEffort = participant.reasoningEffort
+    }
+    if (
+      typeof metadata.ensembleThinkingEnabled !== 'boolean' &&
+      typeof snapshotThinkingEnabled === 'boolean'
+    ) {
+      metadata.ensembleThinkingEnabled = snapshotThinkingEnabled
     }
     if (
       typeof metadata.ensembleThinkingEnabled !== 'boolean' &&
@@ -407,14 +428,17 @@ function activityStackSpeakerPresentation({
 }) {
   const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
   const activityProvider = providerIdFromUnknown(firstActivityWithMetadata?.metadata?.provider)
-  const labelProvider = providerIdFromUnknown(run?.provider) || activityProvider || fallbackProvider
+  const messageRun =
+    run ||
+    (message.runId ? chat?.runs?.find((candidate) => candidate.runId === message.runId) || null : null)
+  const labelProvider = providerIdFromUnknown(messageRun?.provider) || activityProvider || fallbackProvider
   return formatAssistantMessageLabel(
-    activitySpeakerMessage(message, chat),
+    activitySpeakerMessage(message, chat, messageRun),
     labelProvider ? getProviderLabel(labelProvider) : fallbackProviderLabel,
     labelProvider,
     {
       isEnsembleChat: chat?.chatKind === 'ensemble',
-      soloModelId: run?.actualModel || run?.requestedModel || null
+      soloModelId: messageRun?.actualModel || messageRun?.requestedModel || null
     }
   )
 }
@@ -5088,19 +5112,34 @@ export const TranscriptPanel = memo(
                                 ChatMessage['metadata']
                               >['pooledAgentIdentity'])
                             : undefined
-                        const assistantLabelMessage =
+                        const runSeatSnapshot = assistantRun?.ensembleSeatSnapshot
+                        const shouldAddRunSeatSnapshot = Boolean(
+                          runSeatSnapshot && !msg.metadata?.ensembleSeatSnapshot
+                        )
+                        const shouldAddPooledIdentity = Boolean(
                           chatPooledIdentity && !msg.metadata?.pooledAgentIdentity
+                        )
+                        const assistantLabelMessage =
+                          shouldAddPooledIdentity || shouldAddRunSeatSnapshot
                             ? {
                                 ...msg,
                                 metadata: {
                                   ...(msg.metadata || {}),
-                                  ...(typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
-                                    ? {
-                                        pooledAgentId:
-                                          currentChat.providerMetadata.pooledAgentId
-                                      }
+                                  ...(shouldAddRunSeatSnapshot
+                                    ? { ensembleSeatSnapshot: runSeatSnapshot }
                                     : {}),
-                                  pooledAgentIdentity: chatPooledIdentity
+                                  ...(shouldAddPooledIdentity
+                                    ? {
+                                        ...(typeof currentChat?.providerMetadata?.pooledAgentId ===
+                                        'string'
+                                          ? {
+                                              pooledAgentId:
+                                                currentChat.providerMetadata.pooledAgentId
+                                            }
+                                          : {}),
+                                        pooledAgentIdentity: chatPooledIdentity
+                                      }
+                                    : {})
                                 }
                               }
                             : msg
@@ -5176,34 +5215,23 @@ export const TranscriptPanel = memo(
                       // a generic "System" label. Reads more naturally
                       // for users (e.g. the reason text on a yield is
                       // really the participant's voice, not the app's).
-                      const statusMeta =
+                      const statusProvider =
                         msg.metadata?.kind === 'ensembleParticipantStatus'
-                          ? {
-                              provider: msg.metadata?.ensembleProvider as ProviderId | undefined,
-                              role:
-                                typeof msg.metadata?.ensembleRole === 'string'
-                                  ? msg.metadata.ensembleRole
-                                  : '',
-                              model:
-                                typeof msg.metadata?.ensembleModel === 'string'
-                                  ? msg.metadata.ensembleModel
-                                  : ''
-                            }
-                          : null
-                      if (statusMeta?.provider) {
-                        const statusProviderClass = resolveProviderHueClass(
-                          statusMeta.provider,
-                          statusMeta.model
+                          ? (msg.metadata?.ensembleProvider as ProviderId | undefined)
+                          : undefined
+                      if (statusProvider) {
+                        const statusPresentation = formatAssistantMessageLabel(
+                          msg,
+                          getProviderLabel(statusProvider),
+                          statusProvider,
+                          { isEnsembleChat: true }
                         )
-                        const label = statusMeta.role
-                          ? `${getProviderLabel(statusMeta.provider)} / ${statusMeta.role}`
-                          : getProviderLabel(statusMeta.provider)
-                        const statusModelBadge = statusMeta.model
-                          ? shortModelName(statusMeta.provider, '', statusMeta.model)
-                          : ''
+                        const statusProviderClass =
+                          statusPresentation.providerClass || statusProvider
+                        const statusModelBadge = statusPresentation.modelBadge || ''
                         return (
                           <div className={`message-meta provider-${statusProviderClass}`}>
-                            <span className="message-meta-label">{label}</span>
+                            <span className="message-meta-label">{statusPresentation.label}</span>
                             {statusModelBadge && (
                               <span
                                 className="message-meta-model-badge"

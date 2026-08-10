@@ -5,6 +5,7 @@ import {
   reasoningDisplayLabel,
   shortModelName
 } from './composerChipFormat'
+import { PI_MODEL_LABELS } from '../../../shared/piBrandTable'
 
 describe('shortModelName', () => {
   it('extracts Codex version digit + capitalised suffix', () => {
@@ -107,6 +108,12 @@ describe('shortModelName', () => {
       ['gemma3:4b', 'Gemma 3 (4B Param)']
     ]) {
       expect(shortModelName('ollama', '', modelId)).toBe(label)
+    }
+  })
+
+  it('renders every curated Pi wire id as its human model name', () => {
+    for (const [modelId, label] of Object.entries(PI_MODEL_LABELS)) {
+      expect(shortModelName('pi', '', modelId)).toBe(label)
     }
   })
 
