@@ -31,6 +31,8 @@ import type {
 import {
   ChannelError,
   type AgentChannelMember,
+  type Channel,
+  type ChannelMember,
   type ChannelMessageKind,
   type ChannelStore
 } from './ChannelStore'
@@ -104,6 +106,20 @@ export interface ChannelAgentAppendInput {
 export interface ChannelAppendResult {
   record: ChannelMessage
   deduplicated: boolean
+}
+
+export interface ChannelMessageLogMigrationMutation {
+  channel: Channel
+  members: readonly ChannelMember[]
+  beforeDigest: string
+  desiredDigest: string
+  messages: readonly ChannelMessage[]
+  importedCount: number
+}
+
+export interface ChannelMessageLogMigrationResult {
+  writtenChannelIds: string[]
+  alreadyAppliedChannelIds: string[]
 }
 
 export interface ChannelAgentPostAuthorityVerifier {
@@ -186,14 +202,37 @@ function storedMessage(message: ChannelMessage): StoredChannelMessage {
   return { ...withoutChecksum, checksum: messageChecksum(withoutChecksum) }
 }
 
+type HistoricalChannelMembership = Pick<ChannelStore, 'getChannel' | 'getMember'>
+
+function validateHistoricalHumanMember(
+  membership: HistoricalChannelMembership,
+  channelId: string,
+  memberId: string,
+  acceptedAt: number
+): void {
+  const channel = membership.getChannel(channelId)
+  const member = membership.getMember(channelId, memberId)
+  if (
+    !channel ||
+    !member ||
+    member.kind !== 'human' ||
+    member.joinedAt > acceptedAt ||
+    (member.status !== 'active' && member.status !== 'revoked') ||
+    (member.status === 'revoked' &&
+      (member.revokedAt === undefined || acceptedAt >= member.revokedAt))
+  ) {
+    throw new ChannelError('recovery_blocked', 'Human message membership proof is invalid')
+  }
+}
+
 function validateHistoricalAgentMember(
-  channels: ChannelStore,
+  membership: HistoricalChannelMembership,
   signedPost: SignedChannelAgentPost,
   acceptedAt: number
 ): void {
   const post = signedPost.post
-  const channel = channels.getChannel(post.channelId)
-  const member = channels.getMember(post.channelId, post.agentMemberId)
+  const channel = membership.getChannel(post.channelId)
+  const member = membership.getMember(post.channelId, post.agentMemberId)
   if (
     !channel ||
     !member ||
@@ -215,7 +254,7 @@ function validateStoredMessage(
   value: unknown,
   channelId: string,
   expectedSequence: number,
-  channels: ChannelStore,
+  membership: HistoricalChannelMembership,
   redactContent: (content: string) => string,
   agentAuthority?: ChannelAgentPostAuthorityVerifier
 ): ChannelMessage {
@@ -258,6 +297,9 @@ function validateStoredMessage(
     if (raw.agentProof !== undefined) {
       throw new ChannelError('recovery_blocked', 'Human log record contains agent proof')
     }
+    if (redactContent(raw.content).trim() !== raw.content) {
+      throw new ChannelError('recovery_blocked', 'Human log record is not redacted')
+    }
     const message: HumanChannelMessage = {
       channelId: raw.channelId,
       sequence: raw.sequence,
@@ -276,6 +318,12 @@ function validateStoredMessage(
     if (messageChecksum(withoutChecksum) !== raw.checksum) {
       throw new ChannelError('recovery_blocked', 'Channel log checksum does not match')
     }
+    validateHistoricalHumanMember(
+      membership,
+      message.channelId,
+      message.authorMemberId,
+      message.acceptedAt
+    )
     return message
   }
 
@@ -346,7 +394,7 @@ function validateStoredMessage(
   if (!agentAuthority) {
     throw new ChannelError('recovery_blocked', 'Agent message authority is unavailable')
   }
-  validateHistoricalAgentMember(channels, signedPost, raw.acceptedAt)
+  validateHistoricalAgentMember(membership, signedPost, raw.acceptedAt)
   let authority: ChannelAgentPostAuthorityResult
   try {
     authority = agentAuthority.verifyPostAuthority(raw.channelId, {
@@ -372,6 +420,162 @@ function validateStoredMessage(
     throw new ChannelError('recovery_blocked', 'Agent message authority evidence does not match')
   }
   return { ...baseMessage, agentProof: verifiedProof }
+}
+
+interface ValidatedMigrationMutation {
+  channelId: string
+  prefixCount: number
+  desiredMessages: ChannelMessage[]
+  suffixSource: string
+  beforeDigest: string
+  desiredDigest: string
+}
+
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+
+function channelLogDigest(messages: readonly ChannelMessage[]): string {
+  return createHash('sha256').update(JSON.stringify(messages), 'utf8').digest('hex')
+}
+
+function migrationMembership(
+  channel: Channel,
+  members: readonly ChannelMember[]
+): HistoricalChannelMembership {
+  const membersById = new Map<string, ChannelMember>()
+  for (const member of members) {
+    if (member.channelId !== channel.channelId || membersById.has(member.memberId)) {
+      throw new ChannelError('recovery_blocked', 'Migration Channel membership is invalid')
+    }
+    membersById.set(member.memberId, member)
+  }
+  const owner = membersById.get(channel.ownerMemberId)
+  if (!owner || owner.kind !== 'human' || owner.status !== 'active') {
+    throw new ChannelError('recovery_blocked', 'Migration Channel owner is invalid')
+  }
+  return {
+    getChannel: (channelId) => (channelId === channel.channelId ? channel : null),
+    getMember: (channelId, memberId) =>
+      channelId === channel.channelId ? (membersById.get(memberId) ?? null) : null
+  }
+}
+
+function validateMigrationMutation(
+  mutation: ChannelMessageLogMigrationMutation,
+  redactContent: (content: string) => string,
+  agentAuthority?: ChannelAgentPostAuthorityVerifier
+): ValidatedMigrationMutation {
+  const { channel, members, messages } = mutation
+  if (
+    !channel?.channelId ||
+    !Array.isArray(members) ||
+    !Array.isArray(messages) ||
+    !SHA256_PATTERN.test(mutation.beforeDigest) ||
+    !SHA256_PATTERN.test(mutation.desiredDigest) ||
+    !Number.isSafeInteger(mutation.importedCount) ||
+    mutation.importedCount < 1 ||
+    mutation.importedCount > messages.length ||
+    channel.messageCount !== messages.length ||
+    channel.display.messageCount !== messages.length
+  ) {
+    throw new ChannelError('recovery_blocked', 'Migration Channel log mutation is invalid')
+  }
+  const membership = migrationMembership(channel, members)
+  const desiredMessages: ChannelMessage[] = []
+  const messageIds = new Set<string>()
+  const idempotency = new Set<string>()
+  for (let index = 0; index < messages.length; index += 1) {
+    let validated: ChannelMessage
+    try {
+      validated = validateStoredMessage(
+        storedMessage(clone(messages[index])),
+        channel.channelId,
+        index + 1,
+        membership,
+        redactContent,
+        agentAuthority
+      )
+    } catch (error) {
+      throw error instanceof ChannelError
+        ? error
+        : new ChannelError('recovery_blocked', 'Migration Channel message is invalid')
+    }
+    if (!sameJson(validated, messages[index])) {
+      throw new ChannelError('recovery_blocked', 'Migration Channel message is not canonical')
+    }
+    const clientKey = idempotencyKey(validated.authorMemberId, validated.clientMessageId)
+    if (messageIds.has(validated.messageId) || idempotency.has(clientKey)) {
+      throw new ChannelError(
+        'recovery_blocked',
+        'Migration Channel messages contain duplicate idempotency evidence'
+      )
+    }
+    messageIds.add(validated.messageId)
+    idempotency.add(clientKey)
+    desiredMessages.push(validated)
+  }
+  const prefixCount = desiredMessages.length - mutation.importedCount
+  if (desiredMessages.slice(prefixCount).some((message) => message.kind !== 'human.text')) {
+    throw new ChannelError('recovery_blocked', 'Only human history may be imported by P4')
+  }
+  if (
+    channelLogDigest(desiredMessages.slice(0, prefixCount)) !== mutation.beforeDigest ||
+    channelLogDigest(desiredMessages) !== mutation.desiredDigest
+  ) {
+    throw new ChannelError('recovery_blocked', 'Migration Channel log digest does not match')
+  }
+  const suffixSource = `${desiredMessages
+    .slice(prefixCount)
+    .map((message) => JSON.stringify(storedMessage(message)))
+    .join('\n')}\n`
+  return {
+    channelId: channel.channelId,
+    prefixCount,
+    desiredMessages,
+    suffixSource,
+    beforeDigest: mutation.beforeDigest,
+    desiredDigest: mutation.desiredDigest
+  }
+}
+
+function parseStoredLogSource(args: {
+  source: string
+  channelId: string
+  membership: HistoricalChannelMembership
+  redactContent: (content: string) => string
+  agentAuthority?: ChannelAgentPostAuthorityVerifier
+}): ChannelMessage[] {
+  const messages: ChannelMessage[] = []
+  const messageIds = new Set<string>()
+  const idempotency = new Set<string>()
+  for (const line of args.source.split('\n')) {
+    if (!line) continue
+    let message: ChannelMessage
+    try {
+      message = validateStoredMessage(
+        JSON.parse(line),
+        args.channelId,
+        messages.length + 1,
+        args.membership,
+        args.redactContent,
+        args.agentAuthority
+      )
+    } catch (error) {
+      throw error instanceof ChannelError
+        ? error
+        : new ChannelError('recovery_blocked', 'Channel migration log recovery failed')
+    }
+    const clientKey = idempotencyKey(message.authorMemberId, message.clientMessageId)
+    if (messageIds.has(message.messageId) || idempotency.has(clientKey)) {
+      throw new ChannelError(
+        'recovery_blocked',
+        'Channel migration log has duplicate idempotency evidence'
+      )
+    }
+    messageIds.add(message.messageId)
+    idempotency.add(clientKey)
+    messages.push(message)
+  }
+  return messages
 }
 
 /**
@@ -538,6 +742,95 @@ export class ChannelMessageLog {
     loaded.idempotency.set(key, message)
     this.channels.recordCommittedMessage(post.channelId, message.sequence, acceptedAt)
     return { record: clone(message), deduplicated: false }
+  }
+
+  /**
+   * P4 migration-only whole-file convergence. Each Channel is replaced through
+   * a synced sibling temporary, while the already-validated raw prefix is
+   * copied byte-for-byte. A crash can therefore leave earlier Channels at the
+   * desired digest and later Channels at the before digest; rerunning the same
+   * batch recognizes both states and never appends the imported suffix twice.
+   * Channel metadata is deliberately not updated here.
+   */
+  applyMigrationBatch(
+    mutations: readonly ChannelMessageLogMigrationMutation[]
+  ): ChannelMessageLogMigrationResult {
+    const channelIds = new Set<string>()
+    const validated = mutations.map((mutation) => {
+      const entry = validateMigrationMutation(mutation, this.redactContent, this.agentAuthority)
+      this.pathFor(entry.channelId)
+      if (channelIds.has(entry.channelId)) {
+        throw new ChannelError('recovery_blocked', 'Migration Channel log target is duplicated')
+      }
+      channelIds.add(entry.channelId)
+      return entry
+    })
+    validated.sort((left, right) =>
+      left.channelId < right.channelId ? -1 : left.channelId > right.channelId ? 1 : 0
+    )
+
+    const writtenChannelIds: string[] = []
+    const alreadyAppliedChannelIds: string[] = []
+    for (const mutation of validated) {
+      const path = this.pathFor(mutation.channelId)
+      let source = ''
+      if (existsSync(path)) {
+        try {
+          source = readFileSync(path, 'utf8')
+        } catch {
+          throw new ChannelError('recovery_blocked', 'Migration Channel log cannot be read')
+        }
+      }
+      if (Buffer.byteLength(source, 'utf8') > MAX_CHANNEL_LOG_BYTES) {
+        throw new ChannelError('recovery_blocked', 'Migration Channel log exceeds storage limit')
+      }
+
+      if (source.endsWith(mutation.suffixSource)) {
+        const prefixSource = source.slice(0, -mutation.suffixSource.length)
+        const prefix = parseStoredLogSource({
+          source: prefixSource,
+          channelId: mutation.channelId,
+          membership: this.channels,
+          redactContent: this.redactContent,
+          agentAuthority: this.agentAuthority
+        })
+        if (
+          prefix.length === mutation.prefixCount &&
+          channelLogDigest(prefix) === mutation.beforeDigest
+        ) {
+          this.cache.delete(mutation.channelId)
+          this.recoveryBlocked.delete(mutation.channelId)
+          alreadyAppliedChannelIds.push(mutation.channelId)
+          continue
+        }
+      }
+
+      const prefix = parseStoredLogSource({
+        source,
+        channelId: mutation.channelId,
+        membership: this.channels,
+        redactContent: this.redactContent,
+        agentAuthority: this.agentAuthority
+      })
+      if (
+        prefix.length !== mutation.prefixCount ||
+        channelLogDigest(prefix) !== mutation.beforeDigest
+      ) {
+        throw new ChannelError('recovery_blocked', 'Migration Channel log changed after planning')
+      }
+      const desiredSource = `${source}${source && !source.endsWith('\n') ? '\n' : ''}${mutation.suffixSource}`
+      if (
+        Buffer.byteLength(desiredSource, 'utf8') > MAX_CHANNEL_LOG_BYTES ||
+        channelLogDigest(mutation.desiredMessages) !== mutation.desiredDigest
+      ) {
+        throw new ChannelError('recovery_blocked', 'Migration Channel log is not writable')
+      }
+      this.replaceMigrationLog(path, desiredSource)
+      this.cache.delete(mutation.channelId)
+      this.recoveryBlocked.delete(mutation.channelId)
+      writtenChannelIds.push(mutation.channelId)
+    }
+    return { writtenChannelIds, alreadyAppliedChannelIds }
   }
 
   replay(args: {
@@ -750,6 +1043,39 @@ export class ChannelMessageLog {
       fsyncSync(descriptor)
     } finally {
       closeSync(descriptor)
+    }
+  }
+
+  private replaceMigrationLog(path: string, source: string): void {
+    mkdirSync(dirname(path), { recursive: true })
+    const temporary = `${path}.${randomUUID()}.tmp`
+    let descriptor: number | null = null
+    try {
+      descriptor = openSync(temporary, 'wx', 0o600)
+      writeFileSync(descriptor, source, 'utf8')
+      fsyncSync(descriptor)
+      closeSync(descriptor)
+      descriptor = null
+      renameSync(temporary, path)
+      this.syncStorageDirectory()
+    } catch (error) {
+      if (descriptor !== null) {
+        try {
+          closeSync(descriptor)
+        } catch {
+          // Preserve the original write failure.
+        }
+      }
+      if (existsSync(temporary)) {
+        try {
+          unlinkSync(temporary)
+        } catch {
+          // A retained sibling temp is never treated as committed history.
+        }
+      }
+      throw error instanceof ChannelError
+        ? error
+        : new ChannelError('recovery_blocked', 'Migration Channel log could not be replaced')
     }
   }
 
