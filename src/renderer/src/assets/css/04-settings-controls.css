@@ -737,7 +737,6 @@
 }
 
 .settings-model-comparison-dot.provider-mistral,
-    .provider-muse,
 .settings-model-comparison-fill.provider-mistral {
   color: var(--provider-mistral-color);
 }
