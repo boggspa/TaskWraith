@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type {
@@ -6,6 +7,8 @@ import type {
   ChannelIpcMessage
 } from '../../../shared/collaboration/ChannelIpc'
 import { ChannelHostPanelView, type ChannelHostPanelViewProps } from './ChannelHostPanel'
+
+const panelSource = readFileSync(new URL('./ChannelHostPanel.tsx', import.meta.url), 'utf8')
 
 function channel(overrides: Partial<ChannelIpcChannel> = {}): ChannelIpcChannel {
   return {
@@ -165,12 +168,76 @@ describe('ChannelHostPanelView', () => {
     expect(html).toContain('Agent · Active')
     expect(html).toContain('Remove Alex from Channel')
     expect(html).not.toContain('Remove Chris from Channel')
+    expect(html).not.toContain('Remove Build Agent from Channel')
     expect(html).toContain('Welcome to the Channel.')
     expect(html).toContain('I can see the durable history.')
     expect(html).toContain('Signed agent result.')
     expect(html).toContain('channel-host-message is-agent')
     expect(html).toContain('Copy fresh invite')
     expect(html).toContain('Post')
+  })
+
+  it('mounts signed-agent management only inside an active recovery-ready host panel', () => {
+    const agentManagement = <div data-agent-management="true">Signed agent controls</div>
+    const active = render({
+      agentManagement,
+      state: {
+        loading: false,
+        busy: null,
+        channel: channel(),
+        members: [member()],
+        pendingAdmissions: [],
+        records: [],
+        highWaterSequence: 0,
+        invite: null,
+        notice: null,
+        error: null
+      }
+    })
+    const closed = render({
+      agentManagement,
+      state: {
+        loading: false,
+        busy: null,
+        channel: channel({ status: 'closed' }),
+        members: [member()],
+        pendingAdmissions: [],
+        records: [],
+        highWaterSequence: 0,
+        invite: null,
+        notice: null,
+        error: null
+      }
+    })
+    const blocked = render({
+      agentManagement,
+      state: {
+        loading: false,
+        busy: null,
+        channel: channel({ availability: 'recovery_blocked' }),
+        members: [member()],
+        pendingAdmissions: [],
+        records: [],
+        highWaterSequence: 0,
+        invite: null,
+        notice: null,
+        error: null
+      }
+    })
+
+    expect(active).toContain('data-agent-management="true"')
+    expect(active).toContain('Signed agent controls')
+    expect(closed).not.toContain('data-agent-management')
+    expect(blocked).not.toContain('data-agent-management')
+  })
+
+  it('binds the isolated agent panel to the canonical Channel and owner projection', () => {
+    expect(panelSource).toContain(
+      "import { ChannelAgentManagement } from './ChannelAgentManagement'"
+    )
+    expect(panelSource).toContain('channelId={state.channel.channelId}')
+    expect(panelSource).toContain('ownerMemberId={state.channel.ownerMemberId}')
+    expect(panelSource).not.toContain('window.api.channelAgents')
   })
 
   it('shows the host SAS and a scoped removal action for a pending join', () => {

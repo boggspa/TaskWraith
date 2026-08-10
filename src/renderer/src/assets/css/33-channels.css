@@ -1,4 +1,4 @@
-/* Channels P2 — first host-side, human-only Channel surface.
+/* Channels P2/P3 — host-side Channel and signed-agent management surface.
  *
  * The control intentionally lives beside the existing People controls. P4,
  * not this stylesheet, owns any later consolidation or retirement. */
@@ -355,6 +355,154 @@
   opacity: 0.58;
 }
 
+.channel-agent-management {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block-start: 10px;
+  border-block-start: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+}
+
+.channel-agent-seat-list {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-agent-seat {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 64%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+}
+
+.channel-agent-seat.is-revoked {
+  border-color: color-mix(in srgb, var(--warning, #d98b2b) 34%, var(--panel-border));
+}
+
+.channel-agent-seat-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.channel-agent-seat-heading > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.channel-agent-seat-heading strong {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-agent-seat-heading span,
+.channel-agent-seat-note {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.channel-agent-seat-heading > span {
+  flex: none;
+  text-align: end;
+}
+
+.channel-agent-seat-note {
+  margin: 0;
+}
+
+.channel-agent-grant-controls {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.channel-agent-management select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
+  border-radius: 9px;
+  padding: 7px 9px;
+  background: color-mix(in srgb, var(--content-bg) 72%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+
+.channel-agent-management select:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--panel-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.channel-agent-grant-controls > label,
+.channel-agent-grant-bounds label,
+.channel-agent-grant-controls legend {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.channel-agent-grant-controls fieldset {
+  display: grid;
+  gap: 5px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.channel-agent-grant-controls fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 10.5px;
+}
+
+.channel-agent-grant-controls input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.channel-agent-grant-bounds {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.channel-agent-grant-bounds label {
+  display: grid;
+  gap: 4px;
+}
+
+.channel-agent-grant-bounds input[type='number'] {
+  padding-block: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.channel-agent-grant-controls > button {
+  justify-self: start;
+}
+
+.channel-agent-seat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .channel-host-invite {
   display: flex;
   flex-direction: column;
@@ -476,6 +624,10 @@
     inset: 54px 10px 10px;
     width: auto;
     max-height: none;
+  }
+
+  .channel-agent-grant-bounds {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -1,5 +1,15 @@
-import { useEffect, useId, useMemo, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type ReactNode
+} from 'react'
+import type { ChannelAgentIpcApi } from '../../../shared/collaboration/ChannelAgentIpc'
 import type { ChannelIpcApi, ChannelIpcMember } from '../../../shared/collaboration/ChannelIpc'
+import { ChannelAgentManagement } from './ChannelAgentManagement'
 import {
   ChannelHostPanelController,
   createChannelHostPanelInitialState,
@@ -11,8 +21,10 @@ export interface ChannelHostPanelProps {
   chatId: string
   chatTitle: string
   api?: ChannelIpcApi
+  agentApi?: ChannelAgentIpcApi
   defaultOwnerDisplayName?: string
   createClientMessageId?: ChannelHostPanelControllerOptions['createClientMessageId']
+  createAgentRequestId?: () => string
   copyText?: ChannelHostPanelControllerOptions['copyText']
 }
 
@@ -24,6 +36,7 @@ export interface ChannelHostPanelViewProps {
   draft: string
   closeConfirmation: boolean
   state: ChannelHostPanelState
+  agentManagement?: ReactNode
   onToggleOpen: () => void
   onClosePanel: () => void
   onOwnerDisplayNameChange: (value: string) => void
@@ -72,6 +85,7 @@ export function ChannelHostPanelView({
   draft,
   closeConfirmation,
   state,
+  agentManagement,
   onToggleOpen,
   onClosePanel,
   onOwnerDisplayNameChange,
@@ -277,16 +291,20 @@ export function ChannelHostPanelView({
                             {memberStatusLabel(member.status)}
                           </span>
                         </div>
-                        {!owner && member.status !== 'revoked' && active && ready && (
-                          <button
-                            type="button"
-                            onClick={() => onRevokeMember(member.memberId)}
-                            disabled={busy}
-                            aria-label={`Remove ${member.displayName} from Channel`}
-                          >
-                            Remove
-                          </button>
-                        )}
+                        {!owner &&
+                          member.kind === 'human' &&
+                          member.status !== 'revoked' &&
+                          active &&
+                          ready && (
+                            <button
+                              type="button"
+                              onClick={() => onRevokeMember(member.memberId)}
+                              disabled={busy}
+                              aria-label={`Remove ${member.displayName} from Channel`}
+                            >
+                              Remove
+                            </button>
+                          )}
                       </div>
                     )
                   })}
@@ -295,6 +313,8 @@ export function ChannelHostPanelView({
                   )}
                 </div>
               </section>
+
+              {active && ready && agentManagement}
 
               {state.invite && (
                 <section className="channel-host-invite" aria-labelledby={`${panelId}-invite`}>
@@ -443,8 +463,10 @@ function ChannelHostPanelForChat({
   chatId,
   chatTitle,
   api,
+  agentApi,
   defaultOwnerDisplayName = 'Host',
   createClientMessageId,
+  createAgentRequestId,
   copyText
 }: ChannelHostPanelProps) {
   const panelId = `channel-host-panel-${useId().replace(/:/g, '')}`
@@ -506,6 +528,16 @@ function ChannelHostPanelForChat({
       draft={draft}
       closeConfirmation={closeConfirmation}
       state={state}
+      agentManagement={
+        state.channel ? (
+          <ChannelAgentManagement
+            channelId={state.channel.channelId}
+            ownerMemberId={state.channel.ownerMemberId}
+            api={agentApi}
+            createRequestId={createAgentRequestId}
+          />
+        ) : null
+      }
       onToggleOpen={() => setOpen((current) => !current)}
       onClosePanel={() => {
         setOpen(false)
