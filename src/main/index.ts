@@ -33694,20 +33694,17 @@ async function runAntigravityAgyProvider(
         settleDeniedProviderTransportLaunch(route)
         return
       }
-      sendAgentCompatLine(
-        event.sender,
-        'antigravity',
-        {
-          type: 'provider_warning',
-          provider: 'antigravity',
-          severity: 'warning',
-          title: 'AntiGravity native permission handoff unavailable',
-          message: `TaskWraith could not project this run's signed in-workspace permissions into official agy settings. The provider remains available and will continue under its native policy. ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        },
-        route
-      )
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'antigravity',
+        route,
+        message: `TaskWraith could not project this run's signed in-workspace permissions into official agy settings, and agy headless print mode auto-denies every tool without matching allow rules.\n\nTry running \`agy\` manually once so it creates a default settings.json, or verify that ${antigravityCliSettingsPath()} is a writable JSON file.\n\n${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: false,
+        fallback: false
+      })
+      return
     }
   }
 
