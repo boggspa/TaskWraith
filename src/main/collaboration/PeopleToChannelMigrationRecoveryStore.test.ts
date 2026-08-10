@@ -9,20 +9,16 @@ import { createPeopleToChannelMigrationPlan } from './PeopleToChannelMigrationPl
 import {
   PeopleToChannelMigrationRecoveryError,
   PeopleToChannelMigrationRecoveryStore,
-  type PeopleToChannelMigrationCutoverDecisions,
   type PeopleToChannelMigrationRecoveryWriteStage
 } from './PeopleToChannelMigrationRecoveryStore'
+import { RECORDED_PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS } from './PeopleToChannelMigrationRecordedDecisions'
 import { PeopleToChannelMigrationSource } from './PeopleToChannelMigrationSource'
 
 const HOST_KEY = Buffer.alloc(32, 7).toString('base64')
 const MEMBER_KEY = Buffer.alloc(32, 8).toString('base64')
 const CHANNEL_DIGEST = 'a'.repeat(64)
 const CUTOVER_DIGEST = 'b'.repeat(64)
-const DECISIONS: PeopleToChannelMigrationCutoverDecisions = {
-  generalChatScope: 'all-general-chats',
-  legacyProjectionHistory: 'read-only-legacy-view',
-  peopleRetirementTiming: 'staged'
-}
+const DECISIONS = RECORDED_PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS
 
 function donor(): Record<string, unknown> {
   return {
@@ -129,6 +125,11 @@ describe('PeopleToChannelMigrationRecoveryStore', () => {
       expect(intent).not.toContain('Private Migration Chat')
       expect(intent).not.toContain('private-legacy-token-hash')
       expect(intent).not.toContain('private-relay-room')
+      expect(prepared.decisions).toEqual({
+        generalChatScope: 'all-general-chats',
+        legacyProjectionHistory: 'import-then-reset',
+        peopleRetirementTiming: 'after-p4-acceptance'
+      })
       expect(store.load()).toEqual(prepared)
 
       const intentBefore = readFileSync(store.paths.intent)
@@ -147,7 +148,7 @@ describe('PeopleToChannelMigrationRecoveryStore', () => {
           decisions: {
             ...DECISIONS,
             peopleRetirementTiming: undefined
-          } as unknown as PeopleToChannelMigrationCutoverDecisions
+          } as unknown as typeof DECISIONS
         })
       ).toThrow(PeopleToChannelMigrationRecoveryError)
 

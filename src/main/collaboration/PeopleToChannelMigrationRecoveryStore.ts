@@ -35,9 +35,15 @@ export const PEOPLE_TO_CHANNEL_GENERAL_CHAT_SCOPES = [
 export const PEOPLE_TO_CHANNEL_LEGACY_HISTORY_MODES = [
   'read-only-legacy-view',
   'channel-reference-events',
-  'no-legacy-view'
+  'no-legacy-view',
+  'import-then-reset'
 ] as const
-export const PEOPLE_TO_CHANNEL_RETIREMENT_MODES = ['staged', 'immediate', 'keep-adjacent'] as const
+export const PEOPLE_TO_CHANNEL_RETIREMENT_MODES = [
+  'staged',
+  'immediate',
+  'keep-adjacent',
+  'after-p4-acceptance'
+] as const
 
 export type PeopleToChannelGeneralChatScope = (typeof PEOPLE_TO_CHANNEL_GENERAL_CHAT_SCOPES)[number]
 export type PeopleToChannelLegacyHistoryMode =
