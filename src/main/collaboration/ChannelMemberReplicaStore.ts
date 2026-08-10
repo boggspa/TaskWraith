@@ -15,6 +15,7 @@ import {
 } from 'fs'
 import { createHash, randomUUID } from 'crypto'
 import { basename, dirname, join, resolve as resolvePath } from 'path'
+import { verifyChannelAgentMessageProof } from '../../shared/collaboration/ChannelAgentMessageProof'
 import type { ChannelMessage } from './ChannelMessageLog'
 import {
   MAX_CHANNEL_LOG_BYTES,
@@ -22,7 +23,8 @@ import {
   MAX_CLIENT_MESSAGE_ID_LENGTH
 } from './ChannelMessageLog'
 
-export const CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION = 1
+export const CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION = 2
+const LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION = 1
 export const MAX_CHANNEL_MEMBER_REPLICAS = 64
 export const MAX_CHANNEL_MEMBER_RELAY_URLS = 8
 
@@ -33,12 +35,15 @@ export interface ChannelMemberReplicaPaths {
   records: string
 }
 
-export interface ChannelMemberReplicaMember {
+interface ChannelMemberReplicaMemberBase {
   memberId: string
-  kind: 'human'
   displayName: string
   status: 'active'
   joinedAt: number
+}
+
+export type ChannelMemberReplicaMember = ChannelMemberReplicaMemberBase & {
+  kind: 'human' | 'agent'
 }
 
 export interface ChannelMemberReplicaSession {
@@ -73,7 +78,9 @@ export class ChannelMemberReplicaError extends Error {
 }
 
 interface PersistedMembershipIndexPayload {
-  schemaVersion: typeof CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+  schemaVersion:
+    | typeof LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+    | typeof CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
   activeChannelId: string | null
   sessions: ChannelMemberReplicaSession[]
 }
@@ -83,7 +90,9 @@ interface PersistedMembershipIndex extends PersistedMembershipIndexPayload {
 }
 
 interface PersistedReplicaRecordPayload {
-  schemaVersion: typeof CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+  schemaVersion:
+    | typeof LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+    | typeof CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
   record: ChannelMessage
 }
 
@@ -163,24 +172,28 @@ function validateRawPublicKey(value: unknown): string {
   return encoded
 }
 
-function validateMember(value: unknown): ChannelMemberReplicaMember {
+function validateMember(value: unknown, allowAgent = true): ChannelMemberReplicaMember {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw recoveryBlocked('Channel member replica is invalid')
   }
   const raw = value as Record<string, unknown>
-  if (raw.kind !== 'human' || raw.status !== 'active') {
+  if (
+    (raw.kind !== 'human' && raw.kind !== 'agent') ||
+    (!allowAgent && raw.kind !== 'human') ||
+    raw.status !== 'active'
+  ) {
     throw recoveryBlocked('Channel member replica is invalid')
   }
   return {
     memberId: pathIdentifier(raw.memberId, 'Channel member id'),
-    kind: 'human',
+    kind: raw.kind,
     displayName: boundedText(raw.displayName, 'Channel member display name', 120),
     status: 'active',
     joinedAt: timestamp(raw.joinedAt, 'Channel member join time')
   }
 }
 
-function validateSession(value: unknown): ChannelMemberReplicaSession {
+function validateSession(value: unknown, allowAgent = true): ChannelMemberReplicaSession {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw recoveryBlocked('Channel membership replica is invalid')
   }
@@ -201,7 +214,7 @@ function validateSession(value: unknown): ChannelMemberReplicaSession {
   if (relayUrls.length < 1 || relayUrls.length > MAX_CHANNEL_MEMBER_RELAY_URLS) {
     throw recoveryBlocked('Channel membership relay list is invalid')
   }
-  const members = raw.members.map(validateMember)
+  const members = raw.members.map((member) => validateMember(member, allowAgent))
   if (new Set(members.map((member) => member.memberId)).size !== members.length) {
     throw recoveryBlocked('Channel membership contains duplicate members')
   }
@@ -224,7 +237,11 @@ function validateSession(value: unknown): ChannelMemberReplicaSession {
   }
 }
 
-function validateRecord(value: unknown, channelId: string): ChannelMessage {
+function validateRecord(
+  value: unknown,
+  channelId: string,
+  hostIdentityPubKeyB64: string
+): ChannelMessage {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw recoveryBlocked('Channel replica record is invalid')
   }
@@ -233,7 +250,7 @@ function validateRecord(value: unknown, channelId: string): ChannelMessage {
     raw.channelId !== channelId ||
     !Number.isSafeInteger(raw.sequence) ||
     (raw.sequence as number) < 1 ||
-    raw.kind !== 'human.text' ||
+    (raw.kind !== 'human.text' && raw.kind !== 'agent.text') ||
     typeof raw.content !== 'string' ||
     !raw.content ||
     Buffer.byteLength(raw.content, 'utf8') > MAX_CHANNEL_MESSAGE_BYTES ||
@@ -248,17 +265,41 @@ function validateRecord(value: unknown, channelId: string): ChannelMessage {
     'Channel client message id',
     MAX_CLIENT_MESSAGE_ID_LENGTH
   )
-  return {
+  const prefix = {
     channelId,
     sequence: raw.sequence as number,
     messageId: pathIdentifier(raw.messageId, 'Channel message id'),
     authorMemberId: pathIdentifier(raw.authorMemberId, 'Channel author member id'),
-    clientMessageId,
-    kind: 'human.text',
+    clientMessageId
+  }
+  const suffix = {
     content: raw.content,
     acceptedAt: timestamp(raw.acceptedAt, 'Channel message acceptance time'),
     contentHash: raw.contentHash
   }
+  if (raw.kind === 'human.text') {
+    if (raw.agentProof !== undefined) {
+      throw recoveryBlocked('Human Channel replica record contains agent proof')
+    }
+    return { ...prefix, kind: 'human.text', ...suffix }
+  }
+  const verified = verifyChannelAgentMessageProof({
+    ownerPublicKeyB64: hostIdentityPubKeyB64,
+    proof: raw.agentProof,
+    acceptedAt: suffix.acceptedAt
+  })
+  if (!verified.ok) throw recoveryBlocked('Channel agent replica proof is invalid')
+  const post = verified.value.signedPost.post
+  if (
+    post.channelId !== channelId ||
+    post.agentMemberId !== prefix.authorMemberId ||
+    post.clientMessageId !== clientMessageId ||
+    post.content !== suffix.content ||
+    post.contentHash !== suffix.contentHash
+  ) {
+    throw recoveryBlocked('Channel agent replica proof does not match its record')
+  }
+  return { ...prefix, kind: 'agent.text', ...suffix, agentProof: verified.value }
 }
 
 function syncFile(path: string): void {
@@ -314,7 +355,8 @@ export function channelMemberReplicaPaths(userDataPath: string): ChannelMemberRe
  * Durable, local replica of Channels this Mac joined as a human member.
  *
  * The host remains authoritative. Replica logs are append-only and retain only
- * host-redacted human.text records. Invite tokens and live session keys never
+ * host-redacted human.text records and publicly verifiable agent.text proof.
+ * Invite tokens and live session keys never
  * enter this store; the Ed25519 member identity lives in the separate
  * safeStorage-backed identity path.
  */
@@ -349,7 +391,7 @@ export class ChannelMemberReplicaStore {
       (candidate) => candidate.channelId === normalizedChannelId
     )
     if (!session) return null
-    const records = this.loadRecords(normalizedChannelId)
+    const records = this.loadRecords(normalizedChannelId, session.hostIdentityPubKeyB64)
     return {
       session: clone(session),
       records: records.map(clone),
@@ -389,7 +431,7 @@ export class ChannelMemberReplicaStore {
     if (existing && existing.hostIdentityPubKeyB64 !== candidate.hostIdentityPubKeyB64) {
       throw recoveryBlocked('Channel id is already pinned to a different host identity')
     }
-    this.loadRecords(candidate.channelId)
+    this.loadRecords(candidate.channelId, candidate.hostIdentityPubKeyB64)
     const session: ChannelMemberReplicaSession = existing
       ? {
           ...candidate,
@@ -424,10 +466,10 @@ export class ChannelMemberReplicaStore {
     if (!replica) throw recoveryBlocked('Channel membership replica was not found')
     if (incoming.length === 0) return replica
 
-    const current = this.loadRecords(normalized)
+    const current = this.loadRecords(normalized, replica.session.hostIdentityPubKeyB64)
     const accepted: ChannelMessage[] = []
     for (const value of incoming) {
-      const record = validateRecord(value, normalized)
+      const record = validateRecord(value, normalized, replica.session.hostIdentityPubKeyB64)
       const existing =
         current[record.sequence - 1] ?? accepted[record.sequence - current.length - 1]
       if (existing) {
@@ -491,7 +533,7 @@ export class ChannelMemberReplicaStore {
       throw recoveryBlocked('Channel membership revision is invalid')
     }
     if (args.membershipRevision < current.membershipRevision) return this.read(channelId)!
-    const members = args.members.map(validateMember)
+    const members = args.members.map((member) => validateMember(member))
     if (
       members.length > 8 ||
       new Set(members.map((member) => member.memberId)).size !== members.length
@@ -617,7 +659,8 @@ export class ChannelMemberReplicaStore {
         sessions: parsed.sessions
       }
       if (
-        parsed.schemaVersion !== CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION ||
+        (parsed.schemaVersion !== LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION &&
+          parsed.schemaVersion !== CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION) ||
         typeof parsed.checksum !== 'string' ||
         checksum(payload) !== parsed.checksum ||
         !Array.isArray(parsed.sessions) ||
@@ -625,7 +668,9 @@ export class ChannelMemberReplicaStore {
       ) {
         throw new Error('membership index checksum or schema is invalid')
       }
-      const sessions = parsed.sessions.map(validateSession)
+      const sessions = parsed.sessions.map((session) =>
+        validateSession(session, parsed.schemaVersion === CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION)
+      )
       if (new Set(sessions.map((session) => session.channelId)).size !== sessions.length) {
         throw new Error('membership index contains duplicate Channels')
       }
@@ -647,7 +692,7 @@ export class ChannelMemberReplicaStore {
   }
 
   private persistIndex(index: LoadedMembershipIndex): void {
-    const sessions = index.sessions.map(validateSession)
+    const sessions = index.sessions.map((session) => validateSession(session))
     const payload: PersistedMembershipIndexPayload = {
       schemaVersion: CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION,
       activeChannelId: index.activeChannelId,
@@ -664,7 +709,7 @@ export class ChannelMemberReplicaStore {
     this.indexCache = { activeChannelId: index.activeChannelId, sessions: sessions.map(clone) }
   }
 
-  private loadRecords(channelId: string): ChannelMessage[] {
+  private loadRecords(channelId: string, hostIdentityPubKeyB64: string): ChannelMessage[] {
     const cached = this.recordCache.get(channelId)
     if (cached) return cached
     const path = this.recordPath(channelId)
@@ -694,13 +739,20 @@ export class ChannelMemberReplicaStore {
           record: parsed.record
         }
         if (
-          parsed.schemaVersion !== CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION ||
+          (parsed.schemaVersion !== LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION &&
+            parsed.schemaVersion !== CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION) ||
           typeof parsed.checksum !== 'string' ||
           checksum(payload) !== parsed.checksum
         ) {
           throw new Error('replica record checksum or schema is invalid')
         }
-        const record = validateRecord(parsed.record, channelId)
+        if (
+          parsed.schemaVersion === LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION &&
+          parsed.record?.kind !== 'human.text'
+        ) {
+          throw new Error('legacy replica record contains unsupported message kind')
+        }
+        const record = validateRecord(parsed.record, channelId, hostIdentityPubKeyB64)
         if (record.sequence !== records.length + 1) {
           throw new Error('replica record sequence is not contiguous')
         }

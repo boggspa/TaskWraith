@@ -12,6 +12,7 @@ import {
   type KeyPair
 } from '../../shared/e2ee/keys'
 import { openChannelFrame, sealChannelMessage } from '../../shared/collaboration/ChannelCipher'
+import { verifyChannelAgentMessageProof } from '../../shared/collaboration/ChannelAgentMessageProof'
 import {
   channelConfirmCode,
   computeChannelTranscriptHash,
@@ -95,7 +96,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function parseChannelMessage(value: unknown): ChannelMessage | null {
+function parseChannelMessage(value: unknown, ownerPublicKeyB64: string): ChannelMessage | null {
   const message = asObject(value)
   if (
     !message ||
@@ -105,14 +106,45 @@ function parseChannelMessage(value: unknown): ChannelMessage | null {
     typeof message.messageId !== 'string' ||
     typeof message.authorMemberId !== 'string' ||
     typeof message.clientMessageId !== 'string' ||
-    message.kind !== 'human.text' ||
+    (message.kind !== 'human.text' && message.kind !== 'agent.text') ||
     typeof message.content !== 'string' ||
     typeof message.acceptedAt !== 'number' ||
     typeof message.contentHash !== 'string'
   ) {
     return null
   }
-  return message as unknown as ChannelMessage
+  const prefix = {
+    channelId: message.channelId,
+    sequence: message.sequence as number,
+    messageId: message.messageId,
+    authorMemberId: message.authorMemberId,
+    clientMessageId: message.clientMessageId
+  }
+  const suffix = {
+    content: message.content,
+    acceptedAt: message.acceptedAt,
+    contentHash: message.contentHash
+  }
+  if (message.kind === 'human.text') {
+    return message.agentProof === undefined ? { ...prefix, kind: 'human.text', ...suffix } : null
+  }
+  const verified = verifyChannelAgentMessageProof({
+    ownerPublicKeyB64,
+    proof: message.agentProof,
+    acceptedAt: message.acceptedAt
+  })
+  if (!verified.ok) return null
+  const post = verified.value.signedPost.post
+  if (
+    post.channelId !== message.channelId ||
+    post.agentMemberId !== message.authorMemberId ||
+    post.clientMessageId !== message.clientMessageId ||
+    post.content !== message.content ||
+    post.contentHash !== message.contentHash
+  ) {
+    return null
+  }
+  return { ...prefix, kind: 'agent.text', ...suffix, agentProof: verified.value }
 }
 
 export class ChannelMemberClient {
@@ -558,7 +590,7 @@ export class ChannelMemberClient {
     }
     const appliedNow: ChannelMessage[] = []
     for (const value of batch.records) {
-      const record = parseChannelMessage(value)
+      const record = parseChannelMessage(value, this.pinnedHostIdentityPubKeyB64)
       if (!record || record.channelId !== this.channelId) {
         this.opts.onError?.(new Error('Channel replay record is invalid'))
         return

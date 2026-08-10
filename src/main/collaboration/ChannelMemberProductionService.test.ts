@@ -73,7 +73,7 @@ interface FakeHost {
   records: ChannelMessage[]
   members: Array<{
     memberId: string
-    kind: 'human'
+    kind: 'human' | 'agent'
     displayName: string
     status: 'active'
     joinedAt: number
@@ -298,6 +298,13 @@ describe('ChannelMemberProductionService', () => {
   it('joins through relay fallback, waits for SAS, and persists a secret-free offline replica', async () => {
     const root = directory()
     const host = fakeHost([record(1, 'host history')])
+    host.members.push({
+      memberId: 'agent-a',
+      kind: 'agent',
+      displayName: 'Build Agent',
+      status: 'active',
+      joinedAt: 1_200
+    })
     const changes: unknown[] = []
     const member = service(root, host, (snapshot) => changes.push(snapshot))
 
@@ -317,7 +324,11 @@ describe('ChannelMemberProductionService', () => {
       phase: 'connected',
       connected: true,
       channel: { channelId: 'channel-a', title: 'General', status: 'active' },
-      members: [{ displayName: 'Host' }, { displayName: 'Member B' }],
+      members: [
+        { displayName: 'Host', kind: 'human' },
+        { displayName: 'Member B', kind: 'human' },
+        { displayName: 'Build Agent', kind: 'agent' }
+      ],
       records: [{ content: 'host history' }],
       highWaterSequence: 1
     })

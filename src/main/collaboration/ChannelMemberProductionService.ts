@@ -368,7 +368,7 @@ function parseMembersSnapshot(
     }
     const member = value as Record<string, unknown>
     if (
-      member.kind !== 'human' ||
+      (member.kind !== 'human' && member.kind !== 'agent') ||
       member.status !== 'active' ||
       typeof member.memberId !== 'string' ||
       !/^[A-Za-z0-9_-]{1,200}$/.test(member.memberId) ||
@@ -382,7 +382,7 @@ function parseMembersSnapshot(
     }
     return {
       memberId: member.memberId,
-      kind: 'human',
+      kind: member.kind,
       displayName: member.displayName.trim(),
       status: 'active',
       joinedAt: member.joinedAt

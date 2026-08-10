@@ -2,13 +2,28 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { generateIdentityKeyPair, type KeyPair } from '../../shared/e2ee/keys'
+import {
+  CHANNEL_AGENT_PROTOCOL_VERSION,
+  hashChannelAgentContent,
+  signChannelAgentDelegation,
+  signChannelAgentDispatchGrant,
+  signChannelAgentPost,
+  type ChannelAgentDelegation,
+  type ChannelAgentDispatchGrant,
+  type ChannelAgentPost
+} from '../../shared/collaboration/ChannelAgentProtocol'
+import {
+  exportRawEd25519PublicKey,
+  generateIdentityKeyPair,
+  type KeyPair
+} from '../../shared/e2ee/keys'
 import type {
   TransportSocket,
   TransportSocketFactory,
   TransportSocketHandlers
 } from '../remote/RemoteTransportClient'
 import { ChannelHostTransport } from './ChannelHostTransport'
+import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
 import { ChannelMemberClient } from './ChannelMemberClient'
 import { ChannelMessageLog } from './ChannelMessageLog'
 import { ChannelRuntime } from './ChannelRuntime'
@@ -91,6 +106,8 @@ interface Fixture {
   relay: BlindTestRelay
   store: ChannelStore
   log: ChannelMessageLog
+  authority: ChannelAgentAuthorityStore
+  hostIdentity: KeyPair
   runtime: ChannelRuntime
   transport: ChannelHostTransport
   channelId: string
@@ -109,11 +126,22 @@ async function createFixture(): Promise<Fixture> {
   const directory = mkdtempSync(join(tmpdir(), 'taskwraith-channel-runtime-'))
   const relay = new BlindTestRelay()
   const store = new ChannelStore(join(directory, 'channels.json'))
-  const log = new ChannelMessageLog(join(directory, 'logs'), store)
+  const hostIdentity = generateIdentityKeyPair()
+  let authorityChannelId = ''
+  let authorityOwnerMemberId = ''
+  const authority = new ChannelAgentAuthorityStore({
+    storageDirectory: join(directory, 'agent-authority'),
+    resolveOwnerPublicKey: (channelId, ownerMemberId) =>
+      channelId === authorityChannelId && ownerMemberId === authorityOwnerMemberId
+        ? hostIdentity.publicKey
+        : null,
+    platform: 'darwin'
+  })
+  const log = new ChannelMessageLog(join(directory, 'logs'), store, undefined, authority)
   const admissions: Fixture['admissions'] = []
   const replayBatches: Fixture['replayBatches'] = []
   const runtime = new ChannelRuntime({
-    identityKeyPair: generateIdentityKeyPair(),
+    identityKeyPair: hostIdentity,
     store,
     log,
     onAdmissionBegan: (info) =>
@@ -141,6 +169,8 @@ async function createFixture(): Promise<Fixture> {
     title: 'General',
     ownerDisplayName: 'Host'
   })
+  authorityChannelId = created.channel.channelId
+  authorityOwnerMemberId = created.owner.memberId
   cleanup.push(() => {
     transport.dispose()
     runtime.dispose()
@@ -151,6 +181,8 @@ async function createFixture(): Promise<Fixture> {
     relay,
     store,
     log,
+    authority,
+    hostIdentity,
     runtime,
     transport,
     channelId: created.channel.channelId,
@@ -308,6 +340,113 @@ describe('encrypted Channel runtime over blind member rooms', () => {
     expect(retry.deduplicated).toBe(true)
     expect(fixture.log.highWaterSequence(fixture.channelId)).toBe(3)
     expect(memberC.client.records()).toHaveLength(batchCount)
+  })
+
+  it('replays a signed agent post and agent membership over the pinned encrypted session', async () => {
+    const fixture = await createFixture()
+    const member = await addMember(fixture, 'Member B')
+    const agentKeys = generateIdentityKeyPair()
+    const agentPublicKeyB64 = exportRawEd25519PublicKey(agentKeys.publicKey).toString('base64')
+    const delegation: ChannelAgentDelegation = {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      delegationId: 'delegation-wire-agent',
+      channelId: fixture.channelId,
+      ownerMemberId: fixture.ownerMemberId,
+      agentMemberId: 'agent-wire',
+      agentSeatId: 'seat-wire',
+      agentPublicKeyB64,
+      keyGeneration: 1,
+      scopes: ['channel.dispatch', 'channel.post'],
+      issuedAt: 1_000,
+      notBefore: 1_000,
+      expiresAt: 100_000,
+      maxPostBytes: 8_000
+    }
+    const signedDelegation = signChannelAgentDelegation(fixture.hostIdentity.privateKey, delegation)
+    fixture.store.registerAgentMember({
+      channelId: fixture.channelId,
+      displayName: 'Wire Agent',
+      signedDelegation,
+      now: 2_000
+    })
+    const grant: ChannelAgentDispatchGrant = {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      grantId: 'grant-wire-agent',
+      channelId: fixture.channelId,
+      ownerMemberId: fixture.ownerMemberId,
+      agentMemberId: delegation.agentMemberId,
+      agentSeatId: delegation.agentSeatId,
+      agentPublicKeyB64,
+      keyGeneration: 1,
+      delegationId: delegation.delegationId,
+      trigger: 'mention',
+      allowedMentionerMemberIds: [fixture.ownerMemberId],
+      workspaceIdentityHash: 'a'.repeat(64),
+      permissionPostureHash: 'b'.repeat(64),
+      issuedAt: 1_000,
+      notBefore: 1_000,
+      expiresAt: 100_000,
+      maxDispatches: 1
+    }
+    const signedGrant = signChannelAgentDispatchGrant(fixture.hostIdentity.privateKey, grant)
+    fixture.authority.registerDelegation(signedDelegation)
+    fixture.authority.registerDispatchGrant(signedGrant)
+    fixture.authority.consumeDispatch(fixture.channelId, {
+      grantId: grant.grantId,
+      triggerMessageId: 'trigger-wire-agent',
+      mentionerMemberId: fixture.ownerMemberId,
+      workspaceIdentityHash: grant.workspaceIdentityHash,
+      permissionPostureHash: grant.permissionPostureHash,
+      at: 3_000
+    })
+    const content = 'SIGNED_AGENT_MEMBER_REPLAY_OK'
+    const post: ChannelAgentPost = {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      channelId: fixture.channelId,
+      agentMemberId: delegation.agentMemberId,
+      agentSeatId: delegation.agentSeatId,
+      agentPublicKeyB64,
+      keyGeneration: 1,
+      delegationId: delegation.delegationId,
+      dispatchGrantId: grant.grantId,
+      triggerMessageId: 'trigger-wire-agent',
+      runId: 'run-wire-agent',
+      runAuthorityHash: 'c'.repeat(64),
+      clientMessageId: 'client-wire-agent',
+      kind: 'agent.text',
+      content,
+      contentHash: hashChannelAgentContent(content),
+      createdAt: 4_000
+    }
+    const frameStart = fixture.relay.frames.length
+    const appended = fixture.log.appendSignedAgentPost({
+      signedPost: signChannelAgentPost(agentKeys.privateKey, post),
+      now: 5_000
+    })
+    await member.client.resume({ resumeAfter: 0 })
+    await flush()
+
+    expect(member.client.records()).toEqual([appended.record])
+    expect(member.client.digest()).toBe(fixture.log.digest(fixture.channelId))
+    expect(member.client.records()[0]).toMatchObject({
+      kind: 'agent.text',
+      content,
+      agentProof: {
+        authorityRevision: 3,
+        signedDelegation,
+        signedDispatchGrant: signedGrant
+      }
+    })
+    expect(member.snapshots.at(-1)).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({ memberId: delegation.agentMemberId, kind: 'agent' })
+      ])
+    })
+    expect(member.errors).toEqual([])
+    for (const relayed of fixture.relay.frames.slice(frameStart)) {
+      expect(JSON.parse(relayed.data)).toMatchObject({ t: 'channel.enc' })
+      expect(relayed.data).not.toContain(content)
+    }
   })
 
   it('reconnects the same pinned member without allocating a seat and replays the offline gap once', async () => {

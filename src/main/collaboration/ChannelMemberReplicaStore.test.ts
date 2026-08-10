@@ -11,15 +11,32 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  CHANNEL_AGENT_PROTOCOL_VERSION,
+  hashChannelAgentContent,
+  signChannelAgentDelegation,
+  signChannelAgentDispatchGrant,
+  signChannelAgentPost,
+  type ChannelAgentDelegation,
+  type ChannelAgentDispatchGrant,
+  type ChannelAgentPost
+} from '../../shared/collaboration/ChannelAgentProtocol'
+import {
+  CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
+  type ChannelAgentMessageProof
+} from '../../shared/collaboration/ChannelAgentMessageProof'
+import { exportRawEd25519PublicKey, generateIdentityKeyPair } from '../../shared/e2ee/keys'
 import type { ChannelMessage } from './ChannelMessageLog'
 import {
+  CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION,
   ChannelMemberReplicaError,
   ChannelMemberReplicaStore,
   channelMemberReplicaPaths
 } from './ChannelMemberReplicaStore'
 
 const directories: string[] = []
-const hostIdentityPubKeyB64 = Buffer.alloc(32, 7).toString('base64')
+const hostKeys = generateIdentityKeyPair()
+const hostIdentityPubKeyB64 = exportRawEd25519PublicKey(hostKeys.publicKey).toString('base64')
 
 function directory(): string {
   const path = mkdtempSync(join(tmpdir(), 'taskwraith-channel-member-replica-'))
@@ -42,6 +59,95 @@ function message(
     content,
     acceptedAt: 1_000 + sequence,
     contentHash: createHash('sha256').update(content, 'utf8').digest('hex')
+  }
+}
+
+function agentMessage(channelId: string, sequence: number): ChannelMessage {
+  const agentKeys = generateIdentityKeyPair()
+  const agentPublicKeyB64 = exportRawEd25519PublicKey(agentKeys.publicKey).toString('base64')
+  const delegation: ChannelAgentDelegation = {
+    schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+    delegationId: `delegation-${sequence}`,
+    channelId,
+    ownerMemberId: 'owner-a',
+    agentMemberId: 'agent-a',
+    agentSeatId: 'seat-a',
+    agentPublicKeyB64,
+    keyGeneration: 1,
+    scopes: ['channel.dispatch', 'channel.post'],
+    issuedAt: 1_000,
+    notBefore: 1_000,
+    expiresAt: 10_000,
+    maxPostBytes: 8_000
+  }
+  const grant: ChannelAgentDispatchGrant = {
+    schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+    grantId: `grant-${sequence}`,
+    channelId,
+    ownerMemberId: 'owner-a',
+    agentMemberId: 'agent-a',
+    agentSeatId: 'seat-a',
+    agentPublicKeyB64,
+    keyGeneration: 1,
+    delegationId: delegation.delegationId,
+    trigger: 'mention',
+    allowedMentionerMemberIds: ['member-a'],
+    workspaceIdentityHash: 'a'.repeat(64),
+    permissionPostureHash: 'b'.repeat(64),
+    issuedAt: 1_000,
+    notBefore: 1_000,
+    expiresAt: 10_000,
+    maxDispatches: 1
+  }
+  const content = `agent message ${sequence}`
+  const post: ChannelAgentPost = {
+    schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+    channelId,
+    agentMemberId: 'agent-a',
+    agentSeatId: 'seat-a',
+    agentPublicKeyB64,
+    keyGeneration: 1,
+    delegationId: delegation.delegationId,
+    dispatchGrantId: grant.grantId,
+    triggerMessageId: `trigger-${sequence}`,
+    runId: `run-${sequence}`,
+    runAuthorityHash: 'c'.repeat(64),
+    clientMessageId: `agent-client-${sequence}`,
+    kind: 'agent.text',
+    content,
+    contentHash: hashChannelAgentContent(content),
+    createdAt: 2_500
+  }
+  const proof: ChannelAgentMessageProof = {
+    schemaVersion: CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
+    authorityRevision: 3,
+    signedDelegation: signChannelAgentDelegation(hostKeys.privateKey, delegation),
+    signedDispatchGrant: signChannelAgentDispatchGrant(hostKeys.privateKey, grant),
+    consumption: {
+      schemaVersion: CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
+      recordedRevision: 3,
+      channelId,
+      grantId: grant.grantId,
+      triggerMessageId: post.triggerMessageId,
+      mentionerMemberId: 'member-a',
+      workspaceIdentityHash: grant.workspaceIdentityHash,
+      permissionPostureHash: grant.permissionPostureHash,
+      dispatchOrdinal: 1,
+      consumedAt: 2_000
+    },
+    signedPost: signChannelAgentPost(agentKeys.privateKey, post)
+  }
+  return {
+    channelId,
+    sequence,
+    messageId: `agent-message-${sequence}`,
+    authorMemberId: 'agent-a',
+    clientMessageId: post.clientMessageId,
+    kind: 'agent.text',
+    content,
+    acceptedAt: 2_600,
+    contentHash: post.contentHash,
+    agentProof: proof
   }
 }
 
@@ -104,6 +210,113 @@ describe('ChannelMemberReplicaStore', () => {
     expect(restarted.read('channel-b')).toMatchObject({
       highWaterSequence: 1,
       records: [{ content: 'hello B' }]
+    })
+  })
+
+  it('retains verified agent members and self-contained signed posts for offline replay', () => {
+    const root = directory()
+    const store = new ChannelMemberReplicaStore(root)
+    activate(store)
+    const signed = agentMessage('channel-a', 2)
+    store.appendRecords('channel-a', [message('channel-a', 1), signed])
+    store.updateMembers({
+      channelId: 'channel-a',
+      membershipRevision: 3,
+      members: [
+        {
+          memberId: 'member-a',
+          kind: 'human',
+          displayName: 'Host',
+          status: 'active',
+          joinedAt: 900
+        },
+        {
+          memberId: 'agent-a',
+          kind: 'agent',
+          displayName: 'Build Agent',
+          status: 'active',
+          joinedAt: 2_000
+        }
+      ]
+    })
+
+    expect(new ChannelMemberReplicaStore(root).readActive()).toEqual({
+      session: expect.objectContaining({
+        membershipRevision: 3,
+        members: expect.arrayContaining([expect.objectContaining({ kind: 'agent' })])
+      }),
+      records: [message('channel-a', 1), signed],
+      highWaterSequence: 2
+    })
+  })
+
+  it('rejects a forged agent proof even when the local envelope checksum is recomputed', () => {
+    const root = directory()
+    const store = new ChannelMemberReplicaStore(root)
+    activate(store)
+    store.appendRecords('channel-a', [agentMessage('channel-a', 1)])
+    const recordPath = join(store.dataPaths().records, 'channel-a.jsonl')
+    const envelope = JSON.parse(readFileSync(recordPath, 'utf8')) as {
+      schemaVersion: number
+      record: Record<string, unknown>
+      checksum: string
+    }
+    const proof = envelope.record.agentProof as Record<string, unknown>
+    ;(proof.consumption as Record<string, unknown>).mentionerMemberId = 'member-forged'
+    envelope.checksum = createHash('sha256')
+      .update(
+        JSON.stringify({ schemaVersion: envelope.schemaVersion, record: envelope.record }),
+        'utf8'
+      )
+      .digest('hex')
+    writeFileSync(recordPath, `${JSON.stringify(envelope)}\n`, 'utf8')
+
+    expect(() => new ChannelMemberReplicaStore(root).readActive()).toThrow(
+      ChannelMemberReplicaError
+    )
+  })
+
+  it('loads schema-v1 human replicas and migrates metadata on the next mutation', () => {
+    const root = directory()
+    const store = new ChannelMemberReplicaStore(root)
+    activate(store)
+    store.appendRecords('channel-a', [message('channel-a', 1)])
+    const paths = store.dataPaths()
+    const memberships = JSON.parse(readFileSync(paths.memberships, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    memberships.schemaVersion = 1
+    const membershipPayload = {
+      schemaVersion: memberships.schemaVersion,
+      activeChannelId: memberships.activeChannelId,
+      sessions: memberships.sessions
+    }
+    memberships.checksum = createHash('sha256')
+      .update(JSON.stringify(membershipPayload), 'utf8')
+      .digest('hex')
+    writeFileSync(paths.memberships, JSON.stringify(memberships), 'utf8')
+
+    const recordPath = join(paths.records, 'channel-a.jsonl')
+    const recordEnvelope = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>
+    recordEnvelope.schemaVersion = 1
+    const recordPayload = {
+      schemaVersion: recordEnvelope.schemaVersion,
+      record: recordEnvelope.record
+    }
+    recordEnvelope.checksum = createHash('sha256')
+      .update(JSON.stringify(recordPayload), 'utf8')
+      .digest('hex')
+    writeFileSync(recordPath, `${JSON.stringify(recordEnvelope)}\n`, 'utf8')
+
+    const restarted = new ChannelMemberReplicaStore(root)
+    expect(restarted.readActive()).toMatchObject({
+      records: [{ kind: 'human.text' }],
+      highWaterSequence: 1
+    })
+    restarted.markRevoked('channel-a', 3_000)
+    expect(JSON.parse(readFileSync(paths.memberships, 'utf8'))).toMatchObject({
+      schemaVersion: CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
     })
   })
 

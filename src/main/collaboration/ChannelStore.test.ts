@@ -27,6 +27,7 @@ import {
   type ChannelAgentPost,
   type ChannelAgentRevocation
 } from '../../shared/collaboration/ChannelAgentProtocol'
+import { CHANNEL_AGENT_MESSAGE_PROOF_VERSION } from '../../shared/collaboration/ChannelAgentMessageProof'
 import { exportRawEd25519PublicKey, generateIdentityKeyPair } from '../../shared/e2ee/keys'
 import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
 
@@ -829,9 +830,20 @@ describe('ChannelMessageLog', () => {
   })
 
   it('durably appends and restart-verifies signed agent text with its authority prefix', () => {
-    const { directory, storePath, channel, member, signPost, log, makeAuthority } =
-      agentLogFixture()
+    const {
+      directory,
+      storePath,
+      channel,
+      member,
+      signPost,
+      log,
+      makeAuthority,
+      authority,
+      signedDelegation,
+      signedGrant
+    } = agentLogFixture()
     const signedPost = signPost()
+    const consumption = authority.snapshot(channel.channelId)!.consumptions[0]
     const appended = log.appendSignedAgentPost({ signedPost, now: 5_000 })
     expect(appended).toMatchObject({
       deduplicated: false,
@@ -840,7 +852,14 @@ describe('ChannelMessageLog', () => {
         authorMemberId: member.memberId,
         kind: 'agent.text',
         content: 'Agent result',
-        agentProof: { authorityRevision: 3, signedPost }
+        agentProof: {
+          schemaVersion: CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
+          authorityRevision: 3,
+          signedDelegation,
+          signedDispatchGrant: signedGrant,
+          consumption,
+          signedPost
+        }
       }
     })
 
@@ -852,7 +871,14 @@ describe('ChannelMessageLog', () => {
     expect(stored).toMatchObject({
       schemaVersion: CHANNEL_LOG_SCHEMA_VERSION,
       kind: 'agent.text',
-      agentProof: { authorityRevision: 3 }
+      agentProof: {
+        schemaVersion: CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
+        authorityRevision: 3,
+        signedDelegation,
+        signedDispatchGrant: signedGrant,
+        consumption,
+        signedPost
+      }
     })
 
     const restarted = new ChannelMessageLog(
@@ -968,7 +994,7 @@ describe('ChannelMessageLog', () => {
     expect(log.highWaterSequence(channel.channelId)).toBe(0)
   })
 
-  it('loads schema-v1 human records and writes only new records with schema v2', () => {
+  it('loads schema-v1 human records and writes only new records with the current schema', () => {
     const { directory, storePath, channel, owner, log } = channelFixture()
     log.append({
       channelId: channel.channelId,
@@ -1000,6 +1026,40 @@ describe('ChannelMessageLog', () => {
       .split('\n')
       .map((line) => (JSON.parse(line) as { schemaVersion: number }).schemaVersion)
     expect(versions).toEqual([1, CHANNEL_LOG_SCHEMA_VERSION])
+  })
+
+  it('upgrades schema-v2 agent proof to a self-contained chain during torn-tail repair', () => {
+    const { directory, storePath, channel, signPost, log, makeAuthority } = agentLogFixture()
+    const appended = log.appendSignedAgentPost({ signedPost: signPost(), now: 5_000 })
+    const path = join(directory, 'logs', `${channel.channelId}.jsonl`)
+    const legacy = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    const proof = legacy.agentProof as Record<string, unknown>
+    legacy.schemaVersion = 2
+    legacy.agentProof = {
+      authorityRevision: proof.authorityRevision,
+      signedPost: proof.signedPost
+    }
+    const { checksum: _checksum, ...withoutChecksum } = legacy
+    legacy.checksum = createHash('sha256')
+      .update(JSON.stringify(withoutChecksum), 'utf8')
+      .digest('hex')
+    writeFileSync(path, `${JSON.stringify(legacy)}\n{"partial"`, 'utf8')
+
+    const restarted = new ChannelMessageLog(
+      join(directory, 'logs'),
+      new ChannelStore(storePath),
+      redactChannelContent,
+      makeAuthority()
+    )
+    expect(restarted.replay({ channelId: channel.channelId, resumeAfter: 0 })).toEqual({
+      records: [appended.record],
+      highWaterSequence: 1
+    })
+    const repaired = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    expect(repaired).toMatchObject({
+      schemaVersion: CHANNEL_LOG_SCHEMA_VERSION,
+      agentProof: appended.record.kind === 'agent.text' ? appended.record.agentProof : undefined
+    })
   })
 
   it('blocks restart when an agent proof revision is rewritten even with a fresh checksum', () => {

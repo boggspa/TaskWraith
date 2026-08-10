@@ -18,6 +18,11 @@ import {
   parseSignedChannelAgentPost,
   type SignedChannelAgentPost
 } from '../../shared/collaboration/ChannelAgentProtocol'
+import {
+  CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
+  parseChannelAgentMessageProof,
+  type ChannelAgentMessageProof
+} from '../../shared/collaboration/ChannelAgentMessageProof'
 import { redactSecrets } from '../../shared/secretRedaction'
 import type {
   ChannelAgentPostAuthorityResult,
@@ -30,7 +35,8 @@ import {
   type ChannelStore
 } from './ChannelStore'
 
-export const CHANNEL_LOG_SCHEMA_VERSION = 2
+export const CHANNEL_LOG_SCHEMA_VERSION = 3
+const LEGACY_AGENT_LOG_SCHEMA_VERSION = 2
 export const MAX_CHANNEL_MESSAGE_BYTES = 8_000
 export const MAX_CLIENT_MESSAGE_ID_LENGTH = 200
 export const MAX_REPLAY_RECORDS = 256
@@ -54,12 +60,6 @@ export interface HumanChannelMessage extends ChannelMessageBase {
   agentProof?: never
 }
 
-export interface ChannelAgentMessageProof {
-  /** Durable authority prefix used for non-retroactive historical verification. */
-  authorityRevision: number
-  signedPost: SignedChannelAgentPost
-}
-
 export interface AgentChannelMessage extends ChannelMessageBase {
   kind: 'agent.text'
   agentProof: ChannelAgentMessageProof
@@ -68,7 +68,7 @@ export interface AgentChannelMessage extends ChannelMessageBase {
 export type ChannelMessage = HumanChannelMessage | AgentChannelMessage
 
 type StoredChannelMessageWithoutChecksum = ChannelMessage & {
-  schemaVersion: 1 | typeof CHANNEL_LOG_SCHEMA_VERSION
+  schemaVersion: 1 | typeof LEGACY_AGENT_LOG_SCHEMA_VERSION | typeof CHANNEL_LOG_SCHEMA_VERSION
 }
 
 type StoredChannelMessage = StoredChannelMessageWithoutChecksum & {
@@ -121,7 +121,7 @@ function contentHash(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex')
 }
 
-function messageChecksum(message: StoredChannelMessageWithoutChecksum): string {
+function messageChecksum(message: unknown): string {
   return createHash('sha256').update(JSON.stringify(message), 'utf8').digest('hex')
 }
 
@@ -224,7 +224,9 @@ function validateStoredMessage(
   }
   const raw = value as Record<string, unknown>
   if (
-    (raw.schemaVersion !== 1 && raw.schemaVersion !== CHANNEL_LOG_SCHEMA_VERSION) ||
+    (raw.schemaVersion !== 1 &&
+      raw.schemaVersion !== LEGACY_AGENT_LOG_SCHEMA_VERSION &&
+      raw.schemaVersion !== CHANNEL_LOG_SCHEMA_VERSION) ||
     raw.channelId !== channelId ||
     raw.sequence !== expectedSequence ||
     typeof raw.messageId !== 'string' ||
@@ -248,12 +250,15 @@ function validateStoredMessage(
     throw new ChannelError('recovery_blocked', 'Channel log record is invalid')
   }
 
-  let message: ChannelMessage
+  if (contentHash(raw.content) !== raw.contentHash) {
+    throw new ChannelError('recovery_blocked', 'Channel log content hash does not match')
+  }
+
   if (raw.kind === 'human.text') {
     if (raw.agentProof !== undefined) {
       throw new ChannelError('recovery_blocked', 'Human log record contains agent proof')
     }
-    message = {
+    const message: HumanChannelMessage = {
       channelId: raw.channelId,
       sequence: raw.sequence,
       messageId: raw.messageId,
@@ -264,80 +269,109 @@ function validateStoredMessage(
       acceptedAt: raw.acceptedAt,
       contentHash: raw.contentHash
     }
-  } else {
+    const withoutChecksum: StoredChannelMessageWithoutChecksum = {
+      schemaVersion: raw.schemaVersion,
+      ...message
+    }
+    if (messageChecksum(withoutChecksum) !== raw.checksum) {
+      throw new ChannelError('recovery_blocked', 'Channel log checksum does not match')
+    }
+    return message
+  }
+
+  if (
+    raw.schemaVersion === 1 ||
+    !Number.isSafeInteger(raw.acceptedAt) ||
+    !isPlainObject(raw.agentProof)
+  ) {
+    throw new ChannelError('recovery_blocked', 'Agent log proof is malformed')
+  }
+  let authorityRevision: number
+  let signedPost: SignedChannelAgentPost
+  let retainedProof: ChannelAgentMessageProof | null = null
+  if (raw.schemaVersion === LEGACY_AGENT_LOG_SCHEMA_VERSION) {
     if (
-      raw.schemaVersion !== CHANNEL_LOG_SCHEMA_VERSION ||
-      !Number.isSafeInteger(raw.acceptedAt) ||
-      !isPlainObject(raw.agentProof) ||
       !hasExactKeys(raw.agentProof, ['authorityRevision', 'signedPost']) ||
       !Number.isSafeInteger(raw.agentProof.authorityRevision) ||
       (raw.agentProof.authorityRevision as number) < 1
     ) {
+      throw new ChannelError('recovery_blocked', 'Legacy agent log proof is malformed')
+    }
+    const parsedPost = parseSignedChannelAgentPost(raw.agentProof.signedPost)
+    if (!parsedPost) throw new ChannelError('recovery_blocked', 'Agent log post is malformed')
+    authorityRevision = raw.agentProof.authorityRevision as number
+    signedPost = parsedPost
+  } else {
+    retainedProof = parseChannelAgentMessageProof(raw.agentProof)
+    if (!retainedProof) {
       throw new ChannelError('recovery_blocked', 'Agent log proof is malformed')
     }
-    const signedPost = parseSignedChannelAgentPost(raw.agentProof.signedPost)
-    if (
-      !signedPost ||
-      signedPost.post.channelId !== raw.channelId ||
-      signedPost.post.agentMemberId !== raw.authorMemberId ||
-      signedPost.post.clientMessageId !== raw.clientMessageId ||
-      signedPost.post.kind !== raw.kind ||
-      signedPost.post.content !== raw.content ||
-      signedPost.post.contentHash !== raw.contentHash ||
-      redactContent(raw.content).trim() !== raw.content
-    ) {
-      throw new ChannelError('recovery_blocked', 'Agent log proof does not match its record')
-    }
-    message = {
-      channelId: raw.channelId,
-      sequence: raw.sequence,
-      messageId: raw.messageId,
-      authorMemberId: raw.authorMemberId,
-      clientMessageId: raw.clientMessageId,
-      kind: 'agent.text',
-      content: raw.content,
-      acceptedAt: raw.acceptedAt,
-      contentHash: raw.contentHash,
-      agentProof: {
-        authorityRevision: raw.agentProof.authorityRevision as number,
-        signedPost
-      }
-    }
-  }
-  const withoutChecksum: StoredChannelMessageWithoutChecksum = {
-    schemaVersion: raw.schemaVersion,
-    ...message
+    authorityRevision = retainedProof.authorityRevision
+    signedPost = retainedProof.signedPost
   }
   if (
-    contentHash(raw.content) !== raw.contentHash ||
-    messageChecksum(withoutChecksum) !== raw.checksum
+    signedPost.post.channelId !== raw.channelId ||
+    signedPost.post.agentMemberId !== raw.authorMemberId ||
+    signedPost.post.clientMessageId !== raw.clientMessageId ||
+    signedPost.post.kind !== raw.kind ||
+    signedPost.post.content !== raw.content ||
+    signedPost.post.contentHash !== raw.contentHash ||
+    redactContent(raw.content).trim() !== raw.content
   ) {
+    throw new ChannelError('recovery_blocked', 'Agent log proof does not match its record')
+  }
+
+  const baseMessage = {
+    channelId: raw.channelId,
+    sequence: raw.sequence,
+    messageId: raw.messageId,
+    authorMemberId: raw.authorMemberId,
+    clientMessageId: raw.clientMessageId,
+    kind: 'agent.text' as const,
+    content: raw.content,
+    acceptedAt: raw.acceptedAt,
+    contentHash: raw.contentHash
+  }
+  const checksumShape = {
+    schemaVersion: raw.schemaVersion,
+    ...baseMessage,
+    agentProof:
+      raw.schemaVersion === LEGACY_AGENT_LOG_SCHEMA_VERSION
+        ? { authorityRevision, signedPost }
+        : retainedProof!
+  }
+  if (messageChecksum(checksumShape) !== raw.checksum) {
     throw new ChannelError('recovery_blocked', 'Channel log checksum does not match')
   }
-  if (message.kind === 'agent.text') {
-    if (!agentAuthority) {
-      throw new ChannelError('recovery_blocked', 'Agent message authority is unavailable')
-    }
-    validateHistoricalAgentMember(channels, message.agentProof.signedPost, message.acceptedAt)
-    let authority: ChannelAgentPostAuthorityResult
-    try {
-      authority = agentAuthority.verifyPostAuthority(message.channelId, {
-        signedPost: message.agentProof.signedPost,
-        acceptedAt: message.acceptedAt,
-        authorityRevision: message.agentProof.authorityRevision
-      })
-    } catch {
-      throw new ChannelError('recovery_blocked', 'Agent message authority could not be verified')
-    }
-    if (
-      authority.kind !== 'authorized' ||
-      authority.authorityRevision !== message.agentProof.authorityRevision ||
-      !sameJson(authority.signedPost, message.agentProof.signedPost)
-    ) {
-      throw new ChannelError('recovery_blocked', 'Agent message authority proof is invalid')
-    }
+  if (!agentAuthority) {
+    throw new ChannelError('recovery_blocked', 'Agent message authority is unavailable')
   }
-  return message
+  validateHistoricalAgentMember(channels, signedPost, raw.acceptedAt)
+  let authority: ChannelAgentPostAuthorityResult
+  try {
+    authority = agentAuthority.verifyPostAuthority(raw.channelId, {
+      signedPost,
+      acceptedAt: raw.acceptedAt,
+      authorityRevision
+    })
+  } catch {
+    throw new ChannelError('recovery_blocked', 'Agent message authority could not be verified')
+  }
+  if (authority.kind !== 'authorized' || authority.authorityRevision !== authorityRevision) {
+    throw new ChannelError('recovery_blocked', 'Agent message authority proof is invalid')
+  }
+  const verifiedProof: ChannelAgentMessageProof = {
+    schemaVersion: CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
+    authorityRevision: authority.authorityRevision,
+    signedDelegation: authority.delegation,
+    signedDispatchGrant: authority.dispatchGrant,
+    consumption: authority.consumption,
+    signedPost: authority.signedPost
+  }
+  if (retainedProof && !sameJson(retainedProof, verifiedProof)) {
+    throw new ChannelError('recovery_blocked', 'Agent message authority evidence does not match')
+  }
+  return { ...baseMessage, agentProof: verifiedProof }
 }
 
 /**
@@ -490,7 +524,11 @@ export class ChannelMessageLog {
       acceptedAt,
       contentHash: post.contentHash,
       agentProof: {
+        schemaVersion: CHANNEL_AGENT_MESSAGE_PROOF_VERSION,
         authorityRevision: authority.authorityRevision,
+        signedDelegation: authority.delegation,
+        signedDispatchGrant: authority.dispatchGrant,
+        consumption: authority.consumption,
         signedPost: authority.signedPost
       }
     }
