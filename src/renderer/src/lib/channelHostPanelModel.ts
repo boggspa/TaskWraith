@@ -2,6 +2,7 @@ import type {
   ChannelIpcApi,
   ChannelIpcChannel,
   ChannelIpcError,
+  ChannelIpcHumanReview,
   ChannelIpcInviteResult,
   ChannelIpcMember,
   ChannelIpcMessage,
@@ -14,7 +15,14 @@ export const CHANNEL_INVITE_PAYLOAD_VERSION = 1
 export const CHANNEL_HISTORY_PAGE_RECORDS = 256
 export const CHANNEL_HISTORY_PAGE_BYTES = 512 * 1024
 
-export type ChannelHostPanelAction = 'create' | 'invite' | 'append' | 'revoke' | 'close' | 'history'
+export type ChannelHostPanelAction =
+  | 'create'
+  | 'invite'
+  | 'append'
+  | 'revoke'
+  | 'review'
+  | 'close'
+  | 'history'
 
 export interface ChannelHostInviteProjection {
   payload: string
@@ -29,6 +37,7 @@ export interface ChannelHostPanelState {
   channel: ChannelIpcChannel | null
   members: ChannelIpcMember[]
   pendingAdmissions: ChannelIpcPendingAdmission[]
+  humanReviews: ChannelIpcHumanReview[]
   records: ChannelIpcMessage[]
   highWaterSequence: number
   invite: ChannelHostInviteProjection | null
@@ -67,6 +76,7 @@ export function createChannelHostPanelInitialState(): ChannelHostPanelState {
     channel: null,
     members: [],
     pendingAdmissions: [],
+    humanReviews: [],
     records: [],
     highWaterSequence: 0,
     invite: null,
@@ -372,6 +382,44 @@ export class ChannelHostPanelController {
     }
   }
 
+  async approveHumanReview(reviewId: string): Promise<boolean> {
+    const channel = this.requireMutableChannel()
+    if (!channel || !this.beginAction('review')) return false
+    try {
+      const result = await this.options.api.approveHumanReview({
+        channelId: channel.channelId,
+        reviewId
+      })
+      if (!result.ok) return this.failAction(result.error)
+      await this.enqueueSync(false)
+      this.finishSynchronizedAction(
+        result.value.deduplicated
+          ? 'Reviewed message was already posted.'
+          : 'Reviewed message posted.'
+      )
+      return true
+    } catch (error) {
+      return this.failThrown(error)
+    }
+  }
+
+  async denyHumanReview(reviewId: string): Promise<boolean> {
+    const channel = this.requireMutableChannel()
+    if (!channel || !this.beginAction('review')) return false
+    try {
+      const result = await this.options.api.denyHumanReview({
+        channelId: channel.channelId,
+        reviewId
+      })
+      if (!result.ok) return this.failAction(result.error)
+      await this.enqueueSync(false)
+      this.finishSynchronizedAction('Reviewed message declined.')
+      return true
+    } catch (error) {
+      return this.failThrown(error)
+    }
+  }
+
   async close(): Promise<boolean> {
     const channel = this.requireMutableChannel()
     if (!channel || !this.beginAction('close')) return false
@@ -460,6 +508,7 @@ export class ChannelHostPanelController {
           channel: null,
           members: [],
           pendingAdmissions: [],
+          humanReviews: [],
           records: [],
           highWaterSequence: 0,
           invite: null,
@@ -477,6 +526,7 @@ export class ChannelHostPanelController {
           loading: false,
           channel,
           members: previousMembers,
+          humanReviews: [],
           records: previousRecords,
           highWaterSequence: Math.max(this.state.highWaterSequence, channel.messageCount),
           error: 'This Channel is unavailable until its durable history is recovered.'
@@ -501,11 +551,29 @@ export class ChannelHostPanelController {
         })
         return false
       }
+      const humanReviews = await this.options.api.listHumanReviews({
+        channelId: channel.channelId
+      })
+      if (this.disposed) return false
+      if (!humanReviews.ok) {
+        this.patch({
+          loading: false,
+          channel: read.value.channel,
+          members: read.value.members,
+          pendingAdmissions: read.value.pendingAdmissions,
+          records: mergeRecords(previousRecords, read.value.records),
+          highWaterSequence: read.value.highWaterSequence,
+          humanReviews: [],
+          error: describeIpcError(humanReviews.error)
+        })
+        return false
+      }
       this.patch({
         loading: false,
         channel: read.value.channel,
         members: read.value.members,
         pendingAdmissions: read.value.pendingAdmissions,
+        humanReviews: humanReviews.value,
         records: mergeRecords(previousRecords, read.value.records),
         highWaterSequence: read.value.highWaterSequence,
         error: null

@@ -6,6 +6,9 @@ import {
   type ChannelIpcAuditEvent,
   type ChannelIpcChangeEvent,
   type ChannelIpcChannel,
+  type ChannelIpcHumanReview,
+  type ChannelIpcHumanReviewApprovalResult,
+  type ChannelIpcHumanReviewDenialResult,
   type ChannelIpcInviteResult,
   type ChannelIpcMember,
   type ChannelIpcReadResult,
@@ -62,6 +65,12 @@ export function createChannelIpcBridge(ipcRenderer: ChannelIpcRendererPort): Cha
     issueInvite: (input) => invoke<ChannelIpcInviteResult>(CHANNEL_IPC_CHANNELS.issueInvite, input),
     append: (input) => invoke<ChannelIpcAppendResult>(CHANNEL_IPC_CHANNELS.append, input),
     revokeMember: (input) => invoke<ChannelIpcMember>(CHANNEL_IPC_CHANNELS.revokeMember, input),
+    listHumanReviews: (input) =>
+      invoke<ChannelIpcHumanReview[]>(CHANNEL_IPC_CHANNELS.humanReviews, input),
+    approveHumanReview: (input) =>
+      invoke<ChannelIpcHumanReviewApprovalResult>(CHANNEL_IPC_CHANNELS.approveHumanReview, input),
+    denyHumanReview: (input) =>
+      invoke<ChannelIpcHumanReviewDenialResult>(CHANNEL_IPC_CHANNELS.denyHumanReview, input),
     close: (input) => invoke<ChannelIpcChannel>(CHANNEL_IPC_CHANNELS.close, input),
     onChanged: (callback) => {
       if (typeof callback !== 'function') {

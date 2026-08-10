@@ -34,6 +34,9 @@ describe('Channel IPC preload bridge', () => {
       'issueInvite',
       'append',
       'revokeMember',
+      'listHumanReviews',
+      'approveHumanReview',
+      'denyHumanReview',
       'close',
       'onChanged'
     ])
@@ -44,6 +47,8 @@ describe('Channel IPC preload bridge', () => {
     const invite = { channelId: 'channel-a', ttlMs: 60_000 }
     const append = { channelId: 'channel-a', clientMessageId: 'client-a', content: 'hello' }
     const revoke = { channelId: 'channel-a', memberId: 'member-a' }
+    const reviews = { channelId: 'channel-a' }
+    const reviewDecision = { channelId: 'channel-a', reviewId: 'review-a' }
     const close = { channelId: 'channel-a' }
 
     await target.bridge.list()
@@ -54,6 +59,9 @@ describe('Channel IPC preload bridge', () => {
     await target.bridge.issueInvite(invite)
     await target.bridge.append(append)
     await target.bridge.revokeMember(revoke)
+    await target.bridge.listHumanReviews(reviews)
+    await target.bridge.approveHumanReview(reviewDecision)
+    await target.bridge.denyHumanReview(reviewDecision)
     await target.bridge.close(close)
 
     expect(target.invoke.mock.calls).toEqual([
@@ -65,6 +73,9 @@ describe('Channel IPC preload bridge', () => {
       [CHANNEL_IPC_CHANNELS.issueInvite, invite],
       [CHANNEL_IPC_CHANNELS.append, append],
       [CHANNEL_IPC_CHANNELS.revokeMember, revoke],
+      [CHANNEL_IPC_CHANNELS.humanReviews, reviews],
+      [CHANNEL_IPC_CHANNELS.approveHumanReview, reviewDecision],
+      [CHANNEL_IPC_CHANNELS.denyHumanReview, reviewDecision],
       [CHANNEL_IPC_CHANNELS.close, close]
     ])
   })

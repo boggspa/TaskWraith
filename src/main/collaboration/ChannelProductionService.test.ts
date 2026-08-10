@@ -723,6 +723,17 @@ describe('ChannelProductionService', () => {
         expect.objectContaining({ sequence: 1, content: 'review this first' })
       ])
       expect(fixture.service.listHumanReviews({ channelId: fixture.channelId })).toEqual([])
+      expect(
+        fixture.service.listHumanReviews({
+          channelId: fixture.channelId,
+          includeResolved: true
+        })
+      ).toEqual([
+        expect.objectContaining({
+          reviewId: queued.review.reviewId,
+          state: 'materialized'
+        })
+      ])
 
       const deniedQueue = await fixture.client.append('host should decline', 'review-live-2')
       if (deniedQueue.accepted) throw new Error('review-required append bypassed host review')

@@ -29,9 +29,12 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   // Main may operate every Channel; chat renderers are narrowed again by the
   // persisted chat ownership resolved inside registerChannelHandlers.
   'channels:append',
+  'channels:approve-human-review',
   'channels:audit',
   'channels:close',
   'channels:create',
+  'channels:deny-human-review',
+  'channels:human-reviews',
   'channels:issue-invite',
   'channels:list',
   'channels:read',

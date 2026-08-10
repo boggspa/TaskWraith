@@ -317,6 +317,51 @@
   justify-self: start;
 }
 
+.channel-host-reviews {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.channel-host-review-list {
+  display: grid;
+  gap: 7px;
+}
+
+.channel-host-review {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.channel-host-review header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.channel-host-review header strong {
+  color: var(--text-primary);
+  font-size: 11.5px;
+}
+
+.channel-host-review p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .channel-host-members {
   display: grid;
   gap: 5px;

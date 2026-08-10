@@ -59,6 +59,23 @@ function fixture(
     },
     channel('channel-b', 'chat-b')
   ]
+  const humanReview = {
+    reviewId: 'review-a',
+    channelId: 'channel-a',
+    memberId: 'member-a',
+    displayName: 'Alex',
+    clientMessageId: 'must-not-cross-ipc',
+    content: 'Please review this message.',
+    contentBytes: 27,
+    contentHash: 'd'.repeat(64),
+    state: 'queued' as const,
+    enqueuedAt: 6,
+    expiresAt: 60_006,
+    resolvedAt: null,
+    resolutionReason: null,
+    identityPublicKeyB64: 'must-not-cross-ipc',
+    roomId: 'must-not-cross-ipc'
+  }
   const service = {
     listChannels: vi.fn(() => channels),
     readChannel: vi.fn((input: { channelId: string }) => ({
@@ -178,6 +195,33 @@ function fixture(
       joinedAt: 2,
       revokedAt: 5,
       identityPublicKey: 'must-not-cross-ipc'
+    })),
+    listHumanReviews: vi.fn(({ channelId }: { channelId: string }) =>
+      channelId === humanReview.channelId ? [humanReview] : []
+    ),
+    approveHumanReview: vi.fn(async () => ({
+      review: { ...humanReview, state: 'materialized' as const },
+      append: {
+        record: {
+          channelId: 'channel-a',
+          sequence: 3,
+          messageId: 'message-reviewed-3',
+          authorMemberId: 'member-a',
+          clientMessageId: 'must-not-cross-ipc',
+          kind: 'human.text' as const,
+          content: humanReview.content,
+          acceptedAt: 7,
+          contentHash: humanReview.contentHash,
+          roomId: 'must-not-cross-ipc'
+        },
+        deduplicated: false
+      }
+    })),
+    denyHumanReview: vi.fn(async () => ({
+      ...humanReview,
+      state: 'denied' as const,
+      resolvedAt: 7,
+      resolutionReason: 'denied_by_host'
     })),
     closeChannel: vi.fn(async () => channel('channel-a', 'chat-a', { status: 'closed' }))
   }
@@ -385,6 +429,118 @@ describe('registerChannelHandlers', () => {
     expect(closed).toMatchObject({ ok: true, value: { status: 'closed' } })
   })
 
+  it('scopes human review content to its owning chat and projects only decision evidence', async () => {
+    const target = fixture({ scope: { kind: 'chat', chatId: 'chat-a' } })
+    const reviews = await target.invoke(CHANNEL_IPC_CHANNELS.humanReviews, {
+      channelId: 'channel-a'
+    })
+    expect(reviews).toMatchObject({
+      ok: true,
+      value: [
+        {
+          reviewId: 'review-a',
+          channelId: 'channel-a',
+          memberId: 'member-a',
+          displayName: 'Alex',
+          content: 'Please review this message.',
+          state: 'queued'
+        }
+      ]
+    })
+    expect(JSON.stringify(reviews)).not.toMatch(
+      /clientMessageId|contentHash|identityPublicKey|roomId|resolutionReason/
+    )
+
+    const approved = await target.invoke(CHANNEL_IPC_CHANNELS.approveHumanReview, {
+      channelId: 'channel-a',
+      reviewId: 'review-a'
+    })
+    expect(approved).toMatchObject({
+      ok: true,
+      value: {
+        reviewId: 'review-a',
+        deduplicated: false,
+        record: { sequence: 3, content: 'Please review this message.' }
+      }
+    })
+    expect(JSON.stringify(approved)).not.toMatch(/roomId|identityPublicKey/)
+    expect(target.service.approveHumanReview).toHaveBeenCalledWith('review-a')
+
+    const denied = await target.invoke(CHANNEL_IPC_CHANNELS.denyHumanReview, {
+      channelId: 'channel-a',
+      reviewId: 'review-a'
+    })
+    expect(denied).toEqual({
+      ok: true,
+      value: { reviewId: 'review-a', denied: true }
+    })
+    expect(target.service.denyHumanReview).toHaveBeenCalledWith({ reviewId: 'review-a' })
+
+    const crossChat = fixture({ scope: { kind: 'chat', chatId: 'chat-b' } })
+    const crossChatResult = await crossChat.invoke(CHANNEL_IPC_CHANNELS.humanReviews, {
+      channelId: 'channel-a'
+    })
+    expect(crossChatResult).toMatchObject({ ok: false, error: { code: 'not_authorized' } })
+    expect(crossChat.service.listHumanReviews).not.toHaveBeenCalled()
+
+    const forged = await target.invoke(CHANNEL_IPC_CHANNELS.approveHumanReview, {
+      channelId: 'channel-a',
+      reviewId: 'review-forged'
+    })
+    expect(forged).toMatchObject({ ok: false, error: { code: 'not_member' } })
+    expect(target.service.approveHumanReview).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows an exact approval retry after the review has left the visible queue', async () => {
+    const target = fixture({ scope: { kind: 'chat', chatId: 'chat-a' } })
+    const resolvedReview = {
+      reviewId: 'review-resolved',
+      channelId: 'channel-a',
+      memberId: 'member-a',
+      displayName: 'Alex',
+      clientMessageId: 'must-not-cross-ipc',
+      content: 'Already durable.',
+      contentBytes: 16,
+      contentHash: 'e'.repeat(64),
+      state: 'materialized' as const,
+      enqueuedAt: 6,
+      expiresAt: 60_006,
+      resolvedAt: 7,
+      resolutionReason: null
+    }
+    target.service.listHumanReviews.mockReturnValue([resolvedReview] as never)
+    target.service.approveHumanReview.mockResolvedValueOnce({
+      review: resolvedReview,
+      append: {
+        record: {
+          channelId: 'channel-a',
+          sequence: 3,
+          messageId: 'message-reviewed-3',
+          authorMemberId: 'member-a',
+          clientMessageId: 'reviewed-client',
+          kind: 'human.text',
+          content: 'Already durable.',
+          acceptedAt: 7,
+          contentHash: 'e'.repeat(64)
+        },
+        deduplicated: true
+      }
+    } as never)
+
+    const retry = await target.invoke(CHANNEL_IPC_CHANNELS.approveHumanReview, {
+      channelId: 'channel-a',
+      reviewId: 'review-resolved'
+    })
+    expect(retry).toMatchObject({
+      ok: true,
+      value: { reviewId: 'review-resolved', deduplicated: true, record: { sequence: 3 } }
+    })
+    expect(target.service.listHumanReviews).toHaveBeenCalledWith({
+      channelId: 'channel-a',
+      includeResolved: true
+    })
+  })
+
   it('rejects unknown fields, invalid limits, oversized text, and owner revocation before service calls', async () => {
     const target = fixture()
     const invalidPayloads: Array<[string, unknown]> = [
@@ -399,6 +555,12 @@ describe('registerChannelHandlers', () => {
         CHANNEL_IPC_CHANNELS.append,
         { channelId: 'channel-a', clientMessageId: 'client', content: 'ok', kind: 'agent.text' }
       ],
+      [CHANNEL_IPC_CHANNELS.humanReviews, { channelId: 'channel-a', includeResolved: true }],
+      [CHANNEL_IPC_CHANNELS.approveHumanReview, { channelId: 'channel-a' }],
+      [
+        CHANNEL_IPC_CHANNELS.denyHumanReview,
+        { channelId: 'channel-a', reviewId: 'review-a', reason: 'renderer-owned reason' }
+      ],
       [CHANNEL_IPC_CHANNELS.close, { channelId: 'channel-a', force: true }]
     ]
     for (const [name, payload] of invalidPayloads) {
@@ -408,6 +570,9 @@ describe('registerChannelHandlers', () => {
     expect(target.service.readChannel).not.toHaveBeenCalled()
     expect(target.service.issueInvite).not.toHaveBeenCalled()
     expect(target.service.appendHost).not.toHaveBeenCalled()
+    expect(target.service.listHumanReviews).not.toHaveBeenCalled()
+    expect(target.service.approveHumanReview).not.toHaveBeenCalled()
+    expect(target.service.denyHumanReview).not.toHaveBeenCalled()
     expect(target.service.closeChannel).not.toHaveBeenCalled()
 
     const owner = await target.invoke(CHANNEL_IPC_CHANNELS.revokeMember, {

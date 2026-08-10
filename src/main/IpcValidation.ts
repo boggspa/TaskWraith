@@ -218,6 +218,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'channels:issue-invite': ['object'],
   'channels:append': ['object'],
   'channels:revoke-member': ['object'],
+  'channels:human-reviews': ['object'],
+  'channels:approve-human-review': ['object'],
+  'channels:deny-human-review': ['object'],
   'channels:close': ['object'],
   // Channels P3 owner-managed agent surface. The dedicated main-renderer-only
   // handler performs exact-key and bounded-field validation before resolving

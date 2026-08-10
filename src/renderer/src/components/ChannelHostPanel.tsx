@@ -48,6 +48,8 @@ export interface ChannelHostPanelViewProps {
   onAppend: () => void
   onLoadMore: () => void
   onRevokeMember: (memberId: string) => void
+  onApproveHumanReview: (reviewId: string) => void
+  onDenyHumanReview: (reviewId: string) => void
   onRetry: () => void
   onRequestClose: () => void
   onCancelClose: () => void
@@ -97,6 +99,8 @@ export function ChannelHostPanelView({
   onAppend,
   onLoadMore,
   onRevokeMember,
+  onApproveHumanReview,
+  onDenyHumanReview,
   onRetry,
   onRequestClose,
   onCancelClose,
@@ -263,6 +267,52 @@ export function ChannelHostPanelView({
                           Codes differ — remove
                         </button>
                       </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {active && ready && state.humanReviews.length > 0 && (
+                <section
+                  className="channel-host-reviews"
+                  aria-labelledby={`${panelId}-human-reviews`}
+                >
+                  <div className="channel-host-section-heading">
+                    <div>
+                      <h3 id={`${panelId}-human-reviews`}>Review messages</h3>
+                      <span>Nothing enters Channel history until you approve it.</span>
+                    </div>
+                  </div>
+                  <div className="channel-host-review-list">
+                    {state.humanReviews.map((review) => (
+                      <article key={review.reviewId} className="channel-host-review">
+                        <header>
+                          <strong>{review.displayName}</strong>
+                          <time dateTime={isoTime(review.enqueuedAt)}>
+                            {isoTime(review.enqueuedAt)}
+                          </time>
+                        </header>
+                        <p>{review.content}</p>
+                        <div className="channel-host-inline-actions">
+                          <button
+                            type="button"
+                            className="channel-host-primary-button"
+                            onClick={() => onApproveHumanReview(review.reviewId)}
+                            disabled={busy}
+                            aria-label={`Approve message from ${review.displayName}`}
+                          >
+                            {actionLabel(state, 'review') || 'Approve'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDenyHumanReview(review.reviewId)}
+                            disabled={busy}
+                            aria-label={`Decline message from ${review.displayName}`}
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      </article>
                     ))}
                   </div>
                 </section>
@@ -557,6 +607,8 @@ function ChannelHostPanelForChat({
       }}
       onLoadMore={() => void controller?.loadMoreHistory()}
       onRevokeMember={(memberId) => void controller?.revokeMember(memberId)}
+      onApproveHumanReview={(reviewId) => void controller?.approveHumanReview(reviewId)}
+      onDenyHumanReview={(reviewId) => void controller?.denyHumanReview(reviewId)}
       onRetry={() => void controller?.retry()}
       onRequestClose={() => setCloseConfirmation(true)}
       onCancelClose={() => setCloseConfirmation(false)}

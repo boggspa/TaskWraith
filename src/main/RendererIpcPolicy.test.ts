@@ -119,9 +119,12 @@ describe('RendererIpcPolicy', () => {
 
   it.each([
     'channels:append',
+    'channels:approve-human-review',
     'channels:audit',
     'channels:close',
     'channels:create',
+    'channels:deny-human-review',
+    'channels:human-reviews',
     'channels:issue-invite',
     'channels:list',
     'channels:read',

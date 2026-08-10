@@ -252,7 +252,7 @@ function harness(overrides: Partial<ChannelProductionBootstrapOptions> = {}): {
 }
 
 describe('ChannelProductionBootstrap', () => {
-  it('registers the mandatory 13-handler surface and binds popouts to their chat', async () => {
+  it('registers the mandatory 16-handler surface and binds popouts to their chat', async () => {
     const fixture = harness()
 
     expect(fixture.handlers.size).toBe(0)
@@ -285,8 +285,11 @@ describe('ChannelProductionBootstrap', () => {
         'channels:audit',
         'channels:close',
         'channels:create',
+        'channels:deny-human-review',
+        'channels:human-reviews',
         'channels:issue-invite',
         'channels:list',
+        'channels:approve-human-review',
         'channels:read',
         'channels:revoke-member',
         ...Object.values(CHANNEL_AGENT_IPC_CHANNELS)
@@ -359,8 +362,11 @@ describe('ChannelProductionBootstrap', () => {
         'channels:audit',
         'channels:close',
         'channels:create',
+        'channels:deny-human-review',
+        'channels:human-reviews',
         'channels:issue-invite',
         'channels:list',
+        'channels:approve-human-review',
         'channels:read',
         'channels:revoke-member',
         ...Object.values(CHANNEL_AGENT_IPC_CHANNELS)
@@ -432,7 +438,7 @@ describe('ChannelProductionBootstrap', () => {
 
     await fixture.bootstrap.stop()
     expect(fixture.handlers.size).toBe(0)
-    expect(fixture.removeHandler).toHaveBeenCalledTimes(26)
+    expect(fixture.removeHandler).toHaveBeenCalledTimes(32)
   })
 
   it('projects safe changes to main and only the exact owning chat popout', async () => {
@@ -480,7 +486,7 @@ describe('ChannelProductionBootstrap', () => {
     await fixture.bootstrap.stop()
 
     expect(fixture.handlers.size).toBe(0)
-    expect(fixture.removeHandler).toHaveBeenCalledTimes(26)
+    expect(fixture.removeHandler).toHaveBeenCalledTimes(32)
     expect(fixture.service.stop).toHaveBeenCalledOnce()
     await expect(fixture.bootstrap.stop()).resolves.toBeUndefined()
     expect(fixture.service.stop).toHaveBeenCalledOnce()

@@ -3,6 +3,7 @@ import type {
   ChannelIpcApi,
   ChannelIpcChannel,
   ChannelIpcChangeEvent,
+  ChannelIpcHumanReview,
   ChannelIpcInviteResult,
   ChannelIpcMember,
   ChannelIpcMessage,
@@ -76,6 +77,21 @@ function pendingAdmission(
   }
 }
 
+function humanReview(overrides: Partial<ChannelIpcHumanReview> = {}): ChannelIpcHumanReview {
+  return {
+    reviewId: 'review-1',
+    channelId: 'channel-1',
+    memberId: 'member-alex',
+    displayName: 'Alex',
+    content: 'Please review this.',
+    contentBytes: 19,
+    state: 'queued',
+    enqueuedAt: 5_000,
+    expiresAt: 65_000,
+    ...overrides
+  }
+}
+
 function ok<T>(value: T): ChannelIpcResult<T> {
   return { ok: true, value }
 }
@@ -111,6 +127,10 @@ function createApi(overrides: Partial<ChannelIpcApi> = {}): ChannelIpcApi {
       }),
     revokeMember: async ({ memberId }) =>
       ok(member({ memberId, displayName: 'Alex', status: 'revoked', revokedAt: 10 })),
+    listHumanReviews: async () => ok([]),
+    approveHumanReview: async ({ reviewId }) =>
+      ok({ reviewId, record: message(1), deduplicated: false }),
+    denyHumanReview: async ({ reviewId }) => ok({ reviewId, denied: true }),
     close: async () =>
       ok(
         channel({
@@ -395,5 +415,65 @@ describe('ChannelHostPanelController', () => {
     expect(await controller.close()).toBe(true)
     expect(controller.snapshot().channel?.status).toBe('closed')
     expect(controller.snapshot().records.map((record) => record.sequence)).toEqual([1])
+  })
+
+  it('approves or declines only through the scoped review API and refreshes canonical state', async () => {
+    let reviews = [humanReview(), humanReview({ reviewId: 'review-2', content: 'Decline me.' })]
+    let approved = false
+    const approveHumanReview = vi.fn(async ({ reviewId }: { reviewId: string }) => {
+      approved = true
+      reviews = reviews.filter((review) => review.reviewId !== reviewId)
+      return ok({
+        reviewId,
+        record: message(1, { content: 'Please review this.' }),
+        deduplicated: false
+      })
+    })
+    const denyHumanReview = vi.fn(async ({ reviewId }: { reviewId: string }) => {
+      reviews = reviews.filter((review) => review.reviewId !== reviewId)
+      return ok({ reviewId, denied: true as const })
+    })
+    const controller = new ChannelHostPanelController({
+      api: createApi({
+        read: async () =>
+          ok({
+            channel: channel({ messageCount: approved ? 1 : 0 }),
+            members: [member(), member({ memberId: 'member-alex', displayName: 'Alex' })],
+            pendingAdmissions: [],
+            records: approved ? [message(1, { content: 'Please review this.' })] : [],
+            highWaterSequence: approved ? 1 : 0
+          }),
+        listHumanReviews: async () => ok(reviews),
+        approveHumanReview,
+        denyHumanReview
+      }),
+      chatId: 'chat-1'
+    })
+
+    await controller.start()
+    expect(controller.snapshot().humanReviews.map((review) => review.reviewId)).toEqual([
+      'review-1',
+      'review-2'
+    ])
+    expect(await controller.approveHumanReview('review-1')).toBe(true)
+    expect(approveHumanReview).toHaveBeenCalledWith({
+      channelId: 'channel-1',
+      reviewId: 'review-1'
+    })
+    expect(controller.snapshot()).toMatchObject({
+      humanReviews: [{ reviewId: 'review-2' }],
+      records: [{ sequence: 1, content: 'Please review this.' }],
+      notice: 'Reviewed message posted.'
+    })
+
+    expect(await controller.denyHumanReview('review-2')).toBe(true)
+    expect(denyHumanReview).toHaveBeenCalledWith({
+      channelId: 'channel-1',
+      reviewId: 'review-2'
+    })
+    expect(controller.snapshot()).toMatchObject({
+      humanReviews: [],
+      notice: 'Reviewed message declined.'
+    })
   })
 })

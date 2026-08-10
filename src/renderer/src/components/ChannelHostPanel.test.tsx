@@ -68,6 +68,7 @@ function props(overrides: Partial<ChannelHostPanelViewProps> = {}): ChannelHostP
       channel: null,
       members: [],
       pendingAdmissions: [],
+      humanReviews: [],
       records: [],
       highWaterSequence: 0,
       invite: null,
@@ -85,6 +86,8 @@ function props(overrides: Partial<ChannelHostPanelViewProps> = {}): ChannelHostP
     onAppend: () => undefined,
     onLoadMore: () => undefined,
     onRevokeMember: () => undefined,
+    onApproveHumanReview: () => undefined,
+    onDenyHumanReview: () => undefined,
     onRetry: () => undefined,
     onRequestClose: () => undefined,
     onCancelClose: () => undefined,
@@ -135,6 +138,7 @@ describe('ChannelHostPanelView', () => {
           })
         ],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [
           message(),
           message({
@@ -188,6 +192,7 @@ describe('ChannelHostPanelView', () => {
         channel: channel(),
         members: [member()],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [],
         highWaterSequence: 0,
         invite: null,
@@ -203,6 +208,7 @@ describe('ChannelHostPanelView', () => {
         channel: channel({ status: 'closed' }),
         members: [member()],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [],
         highWaterSequence: 0,
         invite: null,
@@ -218,6 +224,7 @@ describe('ChannelHostPanelView', () => {
         channel: channel({ availability: 'recovery_blocked' }),
         members: [member()],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [],
         highWaterSequence: 0,
         invite: null,
@@ -259,6 +266,7 @@ describe('ChannelHostPanelView', () => {
             expiresAt: 120_000
           }
         ],
+        humanReviews: [],
         records: [],
         highWaterSequence: 0,
         invite: null,
@@ -275,6 +283,43 @@ describe('ChannelHostPanelView', () => {
     expect(html).toContain('Codes differ — remove')
   })
 
+  it('shows queued content only in the host review section with explicit decisions', () => {
+    const html = render({
+      state: {
+        loading: false,
+        busy: null,
+        channel: channel(),
+        members: [member(), member({ memberId: 'member-alex', displayName: 'Alex' })],
+        pendingAdmissions: [],
+        humanReviews: [
+          {
+            reviewId: 'review-1',
+            channelId: 'channel-1',
+            memberId: 'member-alex',
+            displayName: 'Alex',
+            content: 'Please approve this contribution.',
+            contentBytes: 33,
+            state: 'queued',
+            enqueuedAt: 1_786_262_400_000,
+            expiresAt: 1_786_348_800_000
+          }
+        ],
+        records: [],
+        highWaterSequence: 0,
+        invite: null,
+        notice: null,
+        error: null
+      }
+    })
+
+    expect(html).toContain('Review messages')
+    expect(html).toContain('Nothing enters Channel history until you approve it')
+    expect(html).toContain('Please approve this contribution.')
+    expect(html).toContain('aria-label="Approve message from Alex"')
+    expect(html).toContain('aria-label="Decline message from Alex"')
+    expect(html).not.toContain('review-1')
+  })
+
   it('keeps the one-shot invite visible, discloses SAS, and warns on a closed relay room', () => {
     const html = render({
       state: {
@@ -283,6 +328,7 @@ describe('ChannelHostPanelView', () => {
         channel: channel(),
         members: [member()],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [],
         highWaterSequence: 0,
         invite: {
@@ -311,6 +357,7 @@ describe('ChannelHostPanelView', () => {
         channel: channel({ messageCount: 400 }),
         members: [member()],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [message({ sequence: 256 })],
         highWaterSequence: 400,
         invite: null,
@@ -335,6 +382,7 @@ describe('ChannelHostPanelView', () => {
         channel: closed,
         members: [member()],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [message()],
         highWaterSequence: 1,
         invite: null,
@@ -359,6 +407,7 @@ describe('ChannelHostPanelView', () => {
         channel: channel(),
         members: [member()],
         pendingAdmissions: [],
+        humanReviews: [],
         records: [],
         highWaterSequence: 0,
         invite: null,
@@ -380,6 +429,19 @@ describe('ChannelHostPanelView', () => {
         channel: channel({ availability: 'recovery_blocked' }),
         members: [],
         pendingAdmissions: [],
+        humanReviews: [
+          {
+            reviewId: 'blocked-review',
+            channelId: 'channel-1',
+            memberId: 'member-alex',
+            displayName: 'Alex',
+            content: 'Must stay hidden while recovery is blocked.',
+            contentBytes: 43,
+            state: 'queued',
+            enqueuedAt: 1,
+            expiresAt: 2
+          }
+        ],
         records: [],
         highWaterSequence: 0,
         invite: null,
@@ -393,5 +455,6 @@ describe('ChannelHostPanelView', () => {
     expect(html).not.toContain('Copy fresh invite')
     expect(html).not.toContain('aria-label="Channel message"')
     expect(html).not.toContain('Close Channel…')
+    expect(html).not.toContain('Must stay hidden while recovery is blocked.')
   })
 })

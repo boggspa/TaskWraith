@@ -199,7 +199,10 @@ export interface ChannelProductionService {
   inspectAgentSeat(agentSeatId: string): ChannelAgentManagementSeatInspection
   inspectChannelAgentSeats(channelId: string): readonly ChannelAgentManagementSeatInspection[]
   listAudit(args?: { channelId?: string; limit?: number }): ChannelAuditEvent[]
-  listHumanReviews(args?: { channelId?: string }): ChannelProductionHumanReviewView[]
+  listHumanReviews(args?: {
+    channelId?: string
+    includeResolved?: boolean
+  }): ChannelProductionHumanReviewView[]
   approveHumanReview(reviewId: string): Promise<{
     review: ChannelProductionHumanReviewView
     append: ChannelAppendResult
@@ -800,13 +803,19 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     return this.requireRunning().audit.list(args)
   }
 
-  listHumanReviews(args?: { channelId?: string }): ChannelProductionHumanReviewView[] {
+  listHumanReviews(args?: {
+    channelId?: string
+    includeResolved?: boolean
+  }): ChannelProductionHumanReviewView[] {
     const state = this.requireRunning()
     state.runtime.sweepHumanReviews(this.now())
     try {
       return state.humanReviews
         .list(args?.channelId)
-        .filter((review) => review.state === 'queued' || review.state === 'approved')
+        .filter(
+          (review) =>
+            args?.includeResolved || review.state === 'queued' || review.state === 'approved'
+        )
         .map((review) => humanReviewView(review, state.store))
     } catch (error) {
       if (error instanceof ChannelHumanReviewError) {

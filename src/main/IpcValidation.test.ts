@@ -120,6 +120,9 @@ describe('IpcValidation', () => {
       'channels:issue-invite',
       'channels:append',
       'channels:revoke-member',
+      'channels:human-reviews',
+      'channels:approve-human-review',
+      'channels:deny-human-review',
       'channels:close'
     ]) {
       expect(() => validateIpcArgs(channel, [{}])).not.toThrow()

@@ -8,6 +8,9 @@ import type {
   ChannelIpcCloseInput,
   ChannelIpcCreateInput,
   ChannelIpcErrorCode,
+  ChannelIpcHumanReview,
+  ChannelIpcHumanReviewDecisionInput,
+  ChannelIpcHumanReviewInput,
   ChannelIpcInviteResult,
   ChannelIpcIssueInviteInput,
   ChannelIpcMember,
@@ -30,6 +33,7 @@ import {
 } from '../collaboration/ChannelMessageLog'
 import type {
   ChannelProductionChannelView,
+  ChannelProductionHumanReviewView,
   ChannelProductionInviteResult,
   ChannelProductionMemberView,
   ChannelProductionPendingAdmissionView,
@@ -55,6 +59,9 @@ const HANDLED_CHANNELS = [
   'channels:issue-invite',
   'channels:append',
   'channels:revoke-member',
+  'channels:human-reviews',
+  'channels:approve-human-review',
+  'channels:deny-human-review',
   'channels:close'
 ] as const
 
@@ -70,6 +77,9 @@ export interface ChannelHandlersDeps {
     | 'issueInvite'
     | 'appendHost'
     | 'revokeMember'
+    | 'listHumanReviews'
+    | 'approveHumanReview'
+    | 'denyHumanReview'
     | 'closeChannel'
   >
   getChat: (chatId: string) => Pick<ChatRecord, 'appChatId' | 'title' | 'archived'> | null
@@ -253,6 +263,21 @@ function parseRevokeMemberInput(value: unknown): ChannelIpcRevokeMemberInput {
   }
 }
 
+function parseHumanReviewInput(value: unknown): ChannelIpcHumanReviewInput {
+  const input = requireRecord(value, 'Channel human review input')
+  requireOnlyKeys(input, ['channelId'], 'Channel human review input')
+  return { channelId: requireIdentifier(input.channelId, 'channel id') }
+}
+
+function parseHumanReviewDecisionInput(value: unknown): ChannelIpcHumanReviewDecisionInput {
+  const input = requireRecord(value, 'Channel human review decision')
+  requireOnlyKeys(input, ['channelId', 'reviewId'], 'Channel human review decision')
+  return {
+    channelId: requireIdentifier(input.channelId, 'channel id'),
+    reviewId: requireIdentifier(input.reviewId, 'human review id')
+  }
+}
+
 function parseCloseInput(value: unknown): ChannelIpcCloseInput {
   const input = requireRecord(value, 'Channel close input')
   requireOnlyKeys(input, ['channelId'], 'Channel close input')
@@ -358,6 +383,23 @@ function projectAppend(result: ChannelAppendResult): ChannelIpcAppendResult {
   return { record: projectMessage(result.record), deduplicated: result.deduplicated }
 }
 
+function projectHumanReview(review: ChannelProductionHumanReviewView): ChannelIpcHumanReview {
+  if (review.state !== 'queued' && review.state !== 'approved') {
+    throw new ChannelError('protocol_unsupported', 'Channel human review is no longer pending')
+  }
+  return {
+    reviewId: review.reviewId,
+    channelId: review.channelId,
+    memberId: review.memberId,
+    displayName: review.displayName,
+    content: review.content,
+    contentBytes: review.contentBytes,
+    state: review.state,
+    enqueuedAt: review.enqueuedAt,
+    expiresAt: review.expiresAt
+  }
+}
+
 function errorMessage(value: string): string {
   return redactSecrets(value)
     .replace(/(?:\/Users\/|\/home\/)[^/\s]+(?:\/[^\s]*)?/g, '[redacted-path]')
@@ -451,6 +493,18 @@ export function registerChannelHandlers(
     return channel
   }
 
+  const requireOwnedHumanReview = (
+    scope: ChannelIpcSenderScope,
+    input: ChannelIpcHumanReviewDecisionInput
+  ): ChannelProductionHumanReviewView => {
+    requireOwnedChannel(scope, input.channelId)
+    const review = deps.service
+      .listHumanReviews({ channelId: input.channelId, includeResolved: true })
+      .find((candidate) => candidate.reviewId === input.reviewId)
+    if (!review) throw new ChannelError('not_member', 'Channel human review was not found')
+    return review
+  }
+
   for (const channel of HANDLED_CHANNELS) ipc.removeHandler?.(channel)
 
   ipc.handle('channels:list', (event) =>
@@ -540,6 +594,35 @@ export function registerChannelHandlers(
         throw new ChannelError('protocol_unsupported', 'The Channel owner cannot be revoked')
       }
       return projectMember(await deps.service.revokeMember(input))
+    })
+  )
+
+  ipc.handle('channels:human-reviews', (event, value: unknown) =>
+    boundary(() => {
+      const scope = senderScope(event)
+      const input = parseHumanReviewInput(value)
+      requireOwnedChannel(scope, input.channelId)
+      return deps.service.listHumanReviews(input).map(projectHumanReview)
+    })
+  )
+
+  ipc.handle('channels:approve-human-review', (event, value: unknown) =>
+    boundary(async () => {
+      const scope = senderScope(event)
+      const input = parseHumanReviewDecisionInput(value)
+      requireOwnedHumanReview(scope, input)
+      const result = await deps.service.approveHumanReview(input.reviewId)
+      return { reviewId: input.reviewId, ...projectAppend(result.append) }
+    })
+  )
+
+  ipc.handle('channels:deny-human-review', (event, value: unknown) =>
+    boundary(async () => {
+      const scope = senderScope(event)
+      const input = parseHumanReviewDecisionInput(value)
+      requireOwnedHumanReview(scope, input)
+      await deps.service.denyHumanReview({ reviewId: input.reviewId })
+      return { reviewId: input.reviewId, denied: true as const }
     })
   )
 

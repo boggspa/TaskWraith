@@ -8,6 +8,9 @@ export const CHANNEL_IPC_CHANNELS = {
   issueInvite: 'channels:issue-invite',
   append: 'channels:append',
   revokeMember: 'channels:revoke-member',
+  humanReviews: 'channels:human-reviews',
+  approveHumanReview: 'channels:approve-human-review',
+  denyHumanReview: 'channels:deny-human-review',
   close: 'channels:close'
 } as const
 
@@ -150,6 +153,35 @@ export interface ChannelIpcAppendResult {
   deduplicated: boolean
 }
 
+export interface ChannelIpcHumanReview {
+  reviewId: string
+  channelId: string
+  memberId: string
+  displayName: string
+  content: string
+  contentBytes: number
+  state: 'queued' | 'approved'
+  enqueuedAt: number
+  expiresAt: number
+}
+
+export interface ChannelIpcHumanReviewInput {
+  channelId: string
+}
+
+export interface ChannelIpcHumanReviewDecisionInput extends ChannelIpcHumanReviewInput {
+  reviewId: string
+}
+
+export interface ChannelIpcHumanReviewApprovalResult extends ChannelIpcAppendResult {
+  reviewId: string
+}
+
+export interface ChannelIpcHumanReviewDenialResult {
+  reviewId: string
+  denied: true
+}
+
 export interface ChannelIpcReadInput {
   channelId: string
   resumeAfter: number
@@ -200,6 +232,15 @@ export interface ChannelIpcApi {
   issueInvite(input: ChannelIpcIssueInviteInput): Promise<ChannelIpcResult<ChannelIpcInviteResult>>
   append(input: ChannelIpcAppendInput): Promise<ChannelIpcResult<ChannelIpcAppendResult>>
   revokeMember(input: ChannelIpcRevokeMemberInput): Promise<ChannelIpcResult<ChannelIpcMember>>
+  listHumanReviews(
+    input: ChannelIpcHumanReviewInput
+  ): Promise<ChannelIpcResult<ChannelIpcHumanReview[]>>
+  approveHumanReview(
+    input: ChannelIpcHumanReviewDecisionInput
+  ): Promise<ChannelIpcResult<ChannelIpcHumanReviewApprovalResult>>
+  denyHumanReview(
+    input: ChannelIpcHumanReviewDecisionInput
+  ): Promise<ChannelIpcResult<ChannelIpcHumanReviewDenialResult>>
   close(input: ChannelIpcCloseInput): Promise<ChannelIpcResult<ChannelIpcChannel>>
   onChanged(callback: (event: ChannelIpcChangeEvent) => void): () => void
 }
