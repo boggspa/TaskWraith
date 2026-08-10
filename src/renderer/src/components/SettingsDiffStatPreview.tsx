@@ -42,18 +42,38 @@ export function SettingsDiffStatPreview({
         ['--settings-diff-stat-deletions' as string]: deletionsColor
       }}
     >
-      <p className="settings-diff-stat-preview-label">A perfectly normal “small cleanup”:</p>
-      <div className="settings-diff-stat-preview-counts">
-        <span className="settings-diff-stat-preview-additions">
-          +{numberFormatter.format(SESSION_DIFF_STAT_PREVIEW.additions)}
-        </span>
-        <span className="settings-diff-stat-preview-deletions">
-          −{numberFormatter.format(SESSION_DIFF_STAT_PREVIEW.deletions)}
-        </span>
+      <div className="settings-diff-stat-preview-primary">
+        <p className="settings-diff-stat-preview-label">A perfectly normal “small cleanup”:</p>
+        <div className="settings-diff-stat-preview-counts">
+          <span className="settings-diff-stat-preview-additions">
+            +{numberFormatter.format(SESSION_DIFF_STAT_PREVIEW.additions)}
+          </span>
+          <span className="settings-diff-stat-preview-deletions">
+            −{numberFormatter.format(SESSION_DIFF_STAT_PREVIEW.deletions)}
+          </span>
+        </div>
+        <p className="settings-diff-stat-preview-note">
+          At this size, the color read is doing real work.
+        </p>
       </div>
-      <p className="settings-diff-stat-preview-note">
-        At this size, the color read is doing real work.
-      </p>
+      <div
+        className="settings-diff-stat-preview-activity"
+        aria-label="Example collapsed tool-call summary: Thought for 4 seconds, used 2 tools, 2 errors, 48 lines added, 12 lines removed."
+        role="note"
+      >
+        <p className="settings-diff-stat-preview-activity-label">Collapsed tool-call summary</p>
+        <div className="settings-diff-stat-preview-activity-row" aria-hidden="true">
+          <span className="settings-diff-stat-preview-activity-chevron">▸</span>
+          <span className="settings-diff-stat-preview-activity-summary">
+            Thought for 4s · Used 2 tools ·{' '}
+            <span className="settings-diff-stat-preview-activity-failed">2 errors</span>
+          </span>
+          <span className="settings-diff-stat-preview-activity-diff">
+            <span className="settings-diff-stat-preview-activity-additions">+48</span>
+            <span className="settings-diff-stat-preview-activity-deletions">−12</span>
+          </span>
+        </div>
+      </div>
     </section>
   )
 }

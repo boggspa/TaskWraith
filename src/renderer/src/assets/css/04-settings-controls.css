@@ -7492,12 +7492,23 @@ input:disabled, select:disabled, textarea:disabled {
 
 .settings-diff-stat-preview {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.94fr);
+  grid-template-areas: 'primary activity';
+  align-items: center;
+  column-gap: 28px;
+  row-gap: 10px;
   margin-top: 10px;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--text-primary) 12%, var(--panel-border));
   border-radius: 8px;
   background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.settings-diff-stat-preview-primary {
+  display: grid;
+  grid-area: primary;
+  gap: 3px;
+  min-width: 0;
 }
 
 .settings-diff-stat-preview-label,
@@ -7534,6 +7545,83 @@ input:disabled, select:disabled, textarea:disabled {
   color: var(--text-tertiary);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.settings-diff-stat-preview-activity {
+  display: grid;
+  grid-area: activity;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 42px;
+  padding-left: 18px;
+  border-left: 1px solid color-mix(in srgb, var(--text-primary) 10%, var(--panel-border));
+}
+
+.settings-diff-stat-preview-activity-label {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.settings-diff-stat-preview-activity-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.settings-diff-stat-preview-activity-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.settings-diff-stat-preview-activity-summary {
+  min-width: 0;
+}
+
+.settings-diff-stat-preview-activity-failed,
+.settings-diff-stat-preview-activity-deletions {
+  color: var(--settings-diff-stat-deletions);
+  font-weight: 700;
+}
+
+.settings-diff-stat-preview-activity-diff {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  margin-left: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.settings-diff-stat-preview-activity-additions {
+  color: var(--settings-diff-stat-additions);
+}
+
+@media (max-width: 660px) {
+  .settings-diff-stat-preview {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'primary'
+      'activity';
+  }
+
+  .settings-diff-stat-preview-activity {
+    padding-top: 9px;
+    padding-left: 0;
+    border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, var(--panel-border));
+    border-left: 0;
+  }
 }
 
 .settings-diff-stat-color-card {
