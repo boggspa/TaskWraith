@@ -31,7 +31,7 @@ describe('fleetWaveApprovalScopeKey', () => {
       }
     })
     expect(fleetWaveApprovalScopeKey(approval)).toBe(
-      'write_file|tool|write_file|src/a.ts,src/b.ts'
+      'write_file|tool|write_file|src/a.ts,src/b.ts|'
     )
   })
 
@@ -43,7 +43,7 @@ describe('fleetWaveApprovalScopeKey', () => {
           preview: { kind: 'diff', toolName: 'apply_patch', path: 'src/solo.ts' }
         })
       )
-    ).toBe('apply_patch|diff|apply_patch|src/solo.ts')
+    ).toBe('apply_patch|diff|apply_patch|src/solo.ts|')
 
     expect(
       fleetWaveApprovalScopeKey(
@@ -52,7 +52,7 @@ describe('fleetWaveApprovalScopeKey', () => {
           preview: { kind: 'command', toolName: 'run_shell_command', files: ['a.sh', 'b.sh'] }
         })
       )
-    ).toBe('shell|command|run_shell_command|a.sh,b.sh')
+    ).toBe('shell|command|run_shell_command|a.sh,b.sh|')
   })
 
   it('returns __unset__ when the fingerprint is empty', () => {
@@ -67,6 +67,39 @@ describe('fleetWaveApprovalScopeKey', () => {
       })
     ).toBe('__unset__')
   })
+
+  it('includes preview.command so distinct shell asks do not share Allow-all scope', () => {
+    const status = makeApproval({
+      id: 's1',
+      method: 'shellCommands',
+      preview: { kind: 'command', command: 'git status' }
+    })
+    const destroy = makeApproval({
+      id: 's2',
+      method: 'shellCommands',
+      preview: { kind: 'command', command: 'rm -rf /' }
+    })
+    expect(fleetWaveApprovalScopeKey(status)).not.toBe(fleetWaveApprovalScopeKey(destroy))
+    expect(fleetWaveApprovalScopeKey(status)).toContain('git status')
+    expect(canAllowAllPendingApprovals([
+      { approvalId: 's1', scopeKey: fleetWaveApprovalScopeKey(status), summary: 'a' },
+      { approvalId: 's2', scopeKey: fleetWaveApprovalScopeKey(destroy), summary: 'b' }
+    ])).toBe(false)
+    expect(canAllowAllPendingApprovals([
+      { approvalId: 's1', scopeKey: fleetWaveApprovalScopeKey(status), summary: 'a' },
+      {
+        approvalId: 's3',
+        scopeKey: fleetWaveApprovalScopeKey(
+          makeApproval({
+            id: 's3',
+            method: 'shellCommands',
+            preview: { kind: 'command', command: 'git status' }
+          })
+        ),
+        summary: 'c'
+      }
+    ])).toBe(true)
+  })
 })
 
 describe('toFleetWavePendingApproval', () => {
@@ -78,7 +111,7 @@ describe('toFleetWavePendingApproval', () => {
     })
     expect(toFleetWavePendingApproval(withTitle)).toEqual({
       approvalId: 'a1',
-      scopeKey: 'write_file|tool|write_file|src/types.ts',
+      scopeKey: 'write_file|tool|write_file|src/types.ts|',
       summary: 'Write types'
     })
 
@@ -173,7 +206,7 @@ describe('collectFleetWavePendingApprovals', () => {
     expect(pending).toEqual([
       {
         approvalId: 'keep-me',
-        scopeKey: 'shell|command|run_shell_command|',
+        scopeKey: 'shell|command|run_shell_command||',
         summary: 'ok'
       }
     ])

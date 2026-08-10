@@ -78,8 +78,12 @@ export function fleetWaveApprovalScopeKey(approval: AgentApprovalRequest): strin
   const kind = preview && typeof preview.kind === 'string' ? preview.kind : ''
   const toolName = preview && typeof preview.toolName === 'string' ? preview.toolName : ''
   const sortedPathsJoined = [...new Set(collectPreviewPaths(preview))].sort().join(',')
-  if (!method && !kind && !toolName && !sortedPathsJoined) return '__unset__'
-  return `${method}|${kind}|${toolName}|${sortedPathsJoined}`
+  // Shell asks use { kind:'command', command } with no paths — command text is
+  // the load-bearing differentiator for Allow-all (omit → every shell collapses).
+  const command =
+    preview && typeof preview.command === 'string' ? preview.command.trim() : ''
+  if (!method && !kind && !toolName && !sortedPathsJoined && !command) return '__unset__'
+  return `${method}|${kind}|${toolName}|${sortedPathsJoined}|${command}`
 }
 
 export function toFleetWavePendingApproval(
