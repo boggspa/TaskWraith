@@ -353,6 +353,30 @@ describe('resolveReasoningEffortForSeatChange', () => {
         previousEffort: 'xhigh'
       })
     ).toBe('xhigh')
+    // Legacy Muse seats may still carry Codex-shaped ultracode from the old
+    // ultra→ultracode rewrite — snap back to Muse wire ultra.
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'ultracode'
+      })
+    ).toBe('ultra')
+    // Off/none floor → Muse minimal (never emit none on Meta argv).
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'none'
+      })
+    ).toBe('minimal')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'off'
+      })
+    ).toBe('minimal')
     // Codex does not list wire `ultra`; shared rank 6 snaps to ultracode.
     expect(
       resolveReasoningEffortForSeatChange({

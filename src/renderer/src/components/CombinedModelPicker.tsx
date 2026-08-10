@@ -585,24 +585,26 @@ function normalizeLadderEffort(effort: string): string {
   const value = effort.trim().toLowerCase()
   if (value === 'extra') return 'xhigh'
   if (value === 'light') return 'low'
-  // Muse Meta /effort (and synonyms): minimal is the floor stop (shared Off),
-  // ultra is the ceiling stop (shared Ultracode). Keep the option's wire
-  // value (`minimal` / `ultra`) in valueByIndex — this only picks the index.
-  if (value === 'minimal') return 'off'
-  if (value === 'ultra') return 'ultracode'
   return value
 }
 
 /**
  * Map a reasoning-option value onto a ladder index, or null when it doesn't
  * belong on the ladder. K2.7 Coding's fixed `on` value rides the first active
- * stop; K3's Low/High/Max values use the ordinary effort ladder.
+ * stop; K3's Low/High/Max values use the ordinary effort ladder. Muse Meta
+ * `/effort` parks `minimal` at Off (0) and `ultra` at Ultracode (6) without
+ * rewriting those wire tokens onto other providers' catalogs.
  */
 export function ladderIndexForOption(provider: ProviderId, value: string): number | null {
   if (provider === 'kimi') {
     const token = value.trim().toLowerCase()
     if (token === 'off') return 0
     if (token === 'on') return 1
+  }
+  if (provider === 'muse') {
+    const token = value.trim().toLowerCase()
+    if (token === 'minimal') return 0
+    if (token === 'ultra') return 6
   }
   const normalized = normalizeLadderEffort(value)
   const stop = LADDER_STOPS.find((entry) => entry.effort === normalized)

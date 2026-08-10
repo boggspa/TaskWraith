@@ -51,6 +51,9 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('muse', 'high')).toBe(3)
     expect(ladderIndexForOption('muse', 'xhigh')).toBe(4)
     expect(ladderIndexForOption('muse', 'ultra')).toBe(6)
+    // Muse-scoped synonyms must not remap a foreign provider's minimal/ultra.
+    expect(ladderIndexForOption('codex', 'minimal')).toBeNull()
+    expect(ladderIndexForOption('pi', 'minimal')).toBeNull()
   })
 })
 
@@ -75,6 +78,10 @@ describe('buildLadderModel', () => {
     })
     expect(ladder.valueByIndex[6]).toBe('ultra')
     expect(ladder.valueByIndex[6]).not.toBe('ultracode')
+    // Intentional Max hole: drag/clamp near index 5 snaps to Ultra (tie→higher).
+    expect(nearestEnabledLadderIndex(5, ladder.enabledIndices)).toBe(6)
+    expect(clampedLadderIndex('muse', 'max', ladder)).toBe(6)
+    expect(clampedLadderIndex('muse', 'ultracode', ladder)).toBe(6)
   })
 
   it('builds an ascending enabled set + provider label map for Sol (ultracode = "Ultra")', () => {

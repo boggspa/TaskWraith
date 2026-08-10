@@ -201,15 +201,25 @@ describe('seat-change chrome strip CSS', () => {
     // gap. Any tier the composer sweeps must therefore be repainted on the
     // CELLS; a tier present in the composer rules but missing here is a
     // silently blank reasoning label (xhigh was exactly that).
-    const sweptTiers = new Set(
-      [
-        ...cssSource.matchAll(
-          /\.composer-combined-picker-trigger\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix[^{]*\{([^}]*)\}/g
-        )
-      ]
-        .filter(([, , body]) => body.includes('background-clip'))
-        .map(([, tier]) => tier)
-    )
+    //
+    // Collect EVERY data-selected-reasoning token that participates in a
+    // comma-grouped selector whose body uses background-clip — a naive
+    // "first selector only" regex would miss Muse `ultra` / `max` siblings.
+    const sweptTiers = new Set<string>()
+    const triggerRule =
+      /\.composer-combined-picker-trigger(?:\.seat-change-chip)?\[data-selected-reasoning="[a-z]+"\][\s\S]*?\{([^}]*)\}/g
+    for (const match of cssSource.matchAll(triggerRule)) {
+      const body = match[1] ?? ''
+      if (!body.includes('background-clip')) continue
+      const block = match[0]
+      // Only the composer-suffix shimmer (not seat-change cell repaint) defines
+      // the swept set; seat-change rules are checked as the repaint set below.
+      if (block.includes('.digit-odometer__cell')) continue
+      if (!block.includes('.composer-combined-picker-trigger-suffix')) continue
+      for (const tier of block.matchAll(/data-selected-reasoning="([a-z]+)"/g)) {
+        sweptTiers.add(tier[1]!)
+      }
+    }
     const repainted = new Set(
       [
         ...cssSource.matchAll(
@@ -218,6 +228,9 @@ describe('seat-change chrome strip CSS', () => {
       ].map(([, tier]) => tier)
     )
     expect(sweptTiers.size).toBeGreaterThan(0)
+    expect(sweptTiers.has('ultra')).toBe(true)
+    expect(sweptTiers.has('ultracode')).toBe(true)
+    expect(sweptTiers.has('max')).toBe(true)
     for (const tier of sweptTiers) expect(repainted).toContain(tier)
   })
 

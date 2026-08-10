@@ -81,6 +81,15 @@ describe('trigger chip reasoning tier CSS', () => {
     expect(xhigh).toContain('var(--chip-accent, #8e6fd8) 78%, #ffffff')
     // Faint sparkle field: dimmer container, smaller dots.
     expect(css).toMatch(/\.composer-combined-picker-trigger-sparkles\.is-faint \{\s*opacity: 0\.4/)
+    // Muse wire `ultra` must shimmer with Codex/Claude `ultracode`.
+    const topTier = css.slice(
+      css.indexOf('.composer-combined-picker-trigger[data-selected-reasoning="ultracode"]'),
+      css.indexOf(
+        '[data-reduce-motion="true"]\n  .composer-combined-picker-trigger[data-selected-reasoning="ultracode"]'
+      )
+    )
+    expect(topTier).toContain('data-selected-reasoning="ultra"')
+    expect(topTier).toContain('text-shimmer-sweep 3.2s linear infinite')
   })
 
   it('gives epic-FX shells (obsidian/alabaster) a static hue instead of a stranded transparent fill', () => {
@@ -95,6 +104,7 @@ describe('trigger chip reasoning tier CSS', () => {
     expect(block).toContain('data-selected-reasoning="xhigh"')
     expect(block).toContain('data-selected-reasoning="max"')
     expect(block).toContain('data-selected-reasoning="ultracode"')
+    expect(block).toContain('data-selected-reasoning="ultra"')
     expect(block).toContain('animation: none !important')
     expect(block).toMatch(/-webkit-text-fill-color: color-mix\([\s\S]*?\) !important/)
   })

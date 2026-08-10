@@ -758,6 +758,7 @@ function defaultReasoningEffortForModel(
 const EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
   off: 0,
   // Muse Meta floor stop (shared Off index); never emit `none` on argv.
+  none: 0,
   minimal: 0,
   low: 1,
   medium: 2,
