@@ -1997,6 +1997,10 @@ import {
   shouldSkipDelegateWaveApproval,
   stripParentWaveDelegationCard
 } from './SubThreadDelegateWave'
+import {
+  buildEphemeralFleetRoleFrame,
+  resolveEphemeralFleetIsolation
+} from './SubThreadEphemeralFleet'
 import { newProjectReferenceId } from '../shared/projects'
 import {
   delegationApprovalBudget,
@@ -39101,6 +39105,7 @@ async function executeGeminiMcpTool(
         args,
         parentChatId,
         parentAppRunId: context.appRunId,
+        parentProvider,
         parentProviderLabel,
         maxWorkers,
         isAllowedProvider: (provider) => waveAllowedProviderSet.has(provider),
@@ -39109,6 +39114,7 @@ async function executeGeminiMcpTool(
         permissionPresetId,
         budgetRemaining: delegationApprovalBudget.remaining(delegationBudgetKey),
         tryConsumeBudgetSlot: () => delegationApprovalBudget.tryConsume(delegationBudgetKey),
+        releaseBudgetSlots: (count) => delegationApprovalBudget.release(delegationBudgetKey, count),
         budgetCap: delegationApprovalBudget.cap(),
         subThreadDelegationPolicy:
           context.effectivePermissions?.agenticServices?.subThreadDelegation,
@@ -39171,13 +39177,21 @@ async function executeGeminiMcpTool(
             }
           }
         },
-        spawnWorker: async ({ worker, settings: workerSettings, joinPolicy, waveId }) => {
+        spawnWorker: async ({ worker, settings: workerSettings, joinPolicy, waveId, lifecycle }) => {
+          const title =
+            (typeof worker.label === 'string' && worker.label.trim()) ||
+            (typeof worker.role === 'string' && worker.role.trim()) ||
+            `Sub-thread (${worker.provider})`
           const subThread = AppStore.createSubThread({
             parentChatId,
             provider: worker.provider,
             delegationPrompt: worker.prompt,
             returnResultToParent: true,
-            joinPolicy
+            joinPolicy,
+            lifecycle,
+            role: worker.role,
+            label: worker.label,
+            title
           })
           const readOnlyPermissions = resolveEffectiveRunPermissions({
             provider: worker.provider,
@@ -39186,9 +39200,11 @@ async function executeGeminiMcpTool(
             settings: AppStore.getSettings(),
             presetId: 'read_only'
           })
+          const isolation = resolveEphemeralFleetIsolation(worker.role)
           const workerPermissions = resolveSubThreadWorkerPermissions({
             parentPermissions: context.effectivePermissions,
-            readOnlyPermissions
+            readOnlyPermissions,
+            isolation
           })
           if (!workerPermissions.ok) {
             AppStore.deleteChat(subThread.appChatId)
@@ -39198,45 +39214,8 @@ async function executeGeminiMcpTool(
           const delegatedApprovalMode = subThreadEffectivePermissions.approvalMode
           const inheritableRuntimeProfileId =
             worker.provider === parentProvider ? context.runtimeProfileId : undefined
-          try {
-            const parentChat = AppStore.getChat(parentChatId)
-            if (parentChat) {
-              const promptCardPreview =
-                worker.prompt.length > 240 ? `${worker.prompt.slice(0, 240)}…` : worker.prompt
-              const cardMessage: ChatMessage = {
-                id: `subthread-delegation-${subThread.appChatId}-${Date.now()}`,
-                role: 'system',
-                content: `↪ Wave ${waveId}: delegated to ${providerLabel(worker.provider)} sub-thread (${subThread.title}).`,
-                timestamp: new Date().toISOString(),
-                metadata: {
-                  kind: 'subThreadDelegation',
-                  subThreadId: subThread.appChatId,
-                  subThreadProvider: worker.provider,
-                  subThreadTitle: subThread.title,
-                  parentProvider,
-                  delegationPrompt: worker.prompt,
-                  delegationPromptPreview: promptCardPreview,
-                  returnResultToParent: true,
-                  joinPolicy,
-                  waveId,
-                  requestedModel: workerSettings.requestedModel,
-                  reasoningEffort: workerSettings.reasoningEffort,
-                  kimiThinking: workerSettings.kimiThinking,
-                  recall: false,
-                  providerContextVisibility: 'projection-only'
-                }
-              }
-              const updatedParent: ChatRecord = {
-                ...parentChat,
-                messages: [...parentChat.messages, cardMessage],
-                updatedAt: Date.now()
-              }
-              AppStore.saveChat(updatedParent)
-              broadcastChatUpdated(updatedParent)
-            }
-          } catch {
-            // Best-effort; missing card is non-fatal vs missing run.
-          }
+          // Per-worker subThreadDelegation cards are suppressed for fleets —
+          // projectFleetWaveCard appends one parent fleetWave card instead.
           try {
             appendDurableRunEventForRoute(
               parentProvider,
@@ -39252,6 +39231,9 @@ async function executeGeminiMcpTool(
                 returnResultToParent: true,
                 joinPolicy,
                 waveId,
+                lifecycle,
+                role: worker.role,
+                label: worker.label,
                 requestedModel: workerSettings.requestedModel,
                 reasoningEffort: workerSettings.reasoningEffort,
                 kimiThinking: workerSettings.kimiThinking,
@@ -39262,10 +39244,12 @@ async function executeGeminiMcpTool(
           } catch {
             // Best-effort.
           }
+          const roleFrame = buildEphemeralFleetRoleFrame(worker.role, worker.label)
+          const framedPrompt = `${roleFrame}\n\n${worker.prompt}`
           const providerPrompts = await composeDelegatedProviderPrompts({
             provider: worker.provider,
             subThread,
-            prompt: worker.prompt,
+            prompt: framedPrompt,
             approvalMode: delegatedApprovalMode,
             model: workerSettings.requestedModel
           })
@@ -39273,7 +39257,7 @@ async function executeGeminiMcpTool(
             subThread,
             parentProvider,
             provider: worker.provider,
-            prompt: worker.prompt,
+            prompt: framedPrompt,
             returnResultToParent: true,
             requestedModel: workerSettings.requestedModel,
             providerMetadataPatch: workerSettings.providerMetadataPatch,
@@ -39395,6 +39379,52 @@ async function executeGeminiMcpTool(
             // Best-effort card cleanup.
           }
           AppStore.deleteChat(child.subThreadId)
+        },
+        projectFleetWaveCard: ({
+          waveId,
+          joinPolicy,
+          lifecycle,
+          allowMultiProvider,
+          workers,
+          children
+        }) => {
+          const parentChat = AppStore.getChat(parentChatId)
+          if (!parentChat) return
+          const cardMessage: ChatMessage = {
+            id: `fleet-wave-${waveId}`,
+            role: 'system',
+            content: `↪ Fleet · ${children.length} agents (${lifecycle})`,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              kind: 'fleetWave',
+              waveId,
+              lifecycle,
+              allowMultiProvider,
+              parentProvider,
+              joinPolicy,
+              expectedCount: children.length,
+              settledCount: 0,
+              failedCount: 0,
+              approvalCount: 0,
+              status: 'running',
+              workers: children.map((child, index) => ({
+                subThreadId: child.subThreadId,
+                provider: child.provider,
+                title: child.title,
+                role: workers[index]?.role,
+                label: workers[index]?.label
+              })),
+              returnResultToParent: true,
+              providerContextVisibility: 'projection-only'
+            }
+          }
+          const updatedParent: ChatRecord = {
+            ...parentChat,
+            messages: [...parentChat.messages, cardMessage],
+            updatedAt: Date.now()
+          }
+          AppStore.saveChat(updatedParent)
+          broadcastChatUpdated(updatedParent)
         },
         providerLabel
       })

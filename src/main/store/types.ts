@@ -2532,7 +2532,8 @@ export interface AppSettings {
   ensembleCollapseOlderRounds?: boolean
   /**
    * Settings → General: max workers accepted by `delegate_wave` (clamped
-   * 2–20; default 8). Structural ceiling is MAX_SUBTHREAD_JOIN_QUORUM.
+   * 2–64; default 8). Structural ceiling is DELEGATE_WAVE_MAX_WORKERS (64),
+   * decoupled from MAX_SUBTHREAD_JOIN_QUORUM (also 64 today — raise both together).
    */
   maxWaveAgents?: number
   /**
@@ -4082,6 +4083,19 @@ export interface ChatRecord {
     /** Durable long-lived worker control lane. Presence means the child is
      * attached to its parent as an async worker, never as an Ensemble seat. */
     workerControl?: SubThreadWorkerControl
+    /**
+     * Ephemeral fleet lifecycle. `'ephemeral'` → archive-on-typed-return
+     * (die-on-return). Omit / `'durable'` keeps recallable sub-threads.
+     */
+    lifecycle?: 'ephemeral' | 'durable'
+    /**
+     * Agent-assigned fleet role for ephemeral/durable wave workers.
+     * Deliberately parallel to EnsembleStageRole string literals — do NOT
+     * unify; fleet has no `background` and does not drive Ensemble dispatch.
+     */
+    role?: 'scout' | 'worker' | 'reviewer' | string
+    /** Optional display label for progress cards (e.g. "repro", "logs"). */
+    label?: string
     /** Last time a sub-thread assistant result was returned to the parent (F2+). */
     resultReturnedAt?: number
     /** Populated when the agent-driven dispatch that should have

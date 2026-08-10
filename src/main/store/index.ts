@@ -4833,7 +4833,7 @@ export class AppStore {
       // Settings → General Max Wave Agents: clamp 2–20; malformed/missing → 8.
       maxWaveAgents:
         typeof stored.maxWaveAgents === 'number' && Number.isFinite(stored.maxWaveAgents)
-          ? Math.max(2, Math.min(20, Math.floor(stored.maxWaveAgents)))
+          ? Math.max(2, Math.min(64, Math.floor(stored.maxWaveAgents)))
           : (defaultSettings.maxWaveAgents ?? 8),
       autoUpdateEnabled:
         typeof stored.autoUpdateEnabled === 'boolean'
@@ -6575,6 +6575,15 @@ export class AppStore {
      * different one. Defaults to inheriting the parent's workspace. */
     workspaceId?: string
     workspacePath?: string
+    /** Ephemeral fleet die-on-return vs durable recallable child. */
+    lifecycle?: 'ephemeral' | 'durable'
+    /**
+     * Agent-assigned fleet role. Parallel to EnsembleStageRole literals —
+     * do not unify types.
+     */
+    role?: 'scout' | 'worker' | 'reviewer' | string
+    label?: string
+    title?: string
   }): ChatRecord {
     const parent = this.getChat(args.parentChatId)
     if (!parent) {
@@ -6602,7 +6611,10 @@ export class AppStore {
       scope: parent.scope ?? 'workspace',
       chatKind: 'single',
       provider: args.provider,
-      title: `Sub-thread (${args.provider})`,
+      title:
+        typeof args.title === 'string' && args.title.trim()
+          ? args.title.trim()
+          : `Sub-thread (${args.provider})`,
       workspaceId,
       workspacePath,
       createdAt: Date.now(),
@@ -6620,7 +6632,16 @@ export class AppStore {
         ),
         delegationPrompt: args.delegationPrompt,
         returnResultToParent: args.returnResultToParent,
-        ...(args.joinPolicy ? { joinPolicy: { ...args.joinPolicy } } : {})
+        ...(args.joinPolicy ? { joinPolicy: { ...args.joinPolicy } } : {}),
+        ...(args.lifecycle === 'ephemeral' || args.lifecycle === 'durable'
+          ? { lifecycle: args.lifecycle }
+          : {}),
+        ...(typeof args.role === 'string' && args.role.trim()
+          ? { role: args.role.trim() }
+          : {}),
+        ...(typeof args.label === 'string' && args.label.trim()
+          ? { label: args.label.trim() }
+          : {})
       }
     }
     if (settings.storeLocalChatHistory) {

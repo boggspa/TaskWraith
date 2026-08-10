@@ -4,7 +4,8 @@ export const DEFAULT_SUBTHREAD_JOIN_DEBOUNCE_MS = 350
 export const MAX_SUBTHREAD_JOIN_DEBOUNCE_MS = 5_000
 export const DEFAULT_SUBTHREAD_JOIN_DEADLINE_MS = 5 * 60_000
 export const MAX_SUBTHREAD_JOIN_DEADLINE_MS = 60 * 60_000
-export const MAX_SUBTHREAD_JOIN_QUORUM = 20
+/** Ceiling for explicit join.quorum (and fleet waves that wait on all workers). Decoupled from DELEGATE_WAVE_MAX_WORKERS by name — keep ≥ wave max when raising either. */
+export const MAX_SUBTHREAD_JOIN_QUORUM = 64
 
 export interface SubThreadJoinPolicyRequest {
   required?: boolean

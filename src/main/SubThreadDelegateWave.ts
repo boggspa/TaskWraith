@@ -8,25 +8,36 @@
  */
 
 import type { PermissionPresetId, ProviderId, SubThreadJoinPolicy } from './store/types'
+import { resolveSubThreadJoinPolicy, type SubThreadJoinPolicyRequest } from './SubThreadJoinPolicy'
 import {
-  MAX_SUBTHREAD_JOIN_QUORUM,
-  resolveSubThreadJoinPolicy,
-  type SubThreadJoinPolicyRequest
-} from './SubThreadJoinPolicy'
+  normalizeFleetLifecycle,
+  parseFleetWaveRole,
+  type FleetWaveLifecycle,
+  type FleetWaveRole
+} from './SubThreadEphemeralFleet'
 
 export const DELEGATE_WAVE_MIN_WORKERS = 2
-export const DELEGATE_WAVE_MAX_WORKERS = MAX_SUBTHREAD_JOIN_QUORUM
+/** Ephemeral fleets may be a singleton scout ("spin up one worker"). */
+export const DELEGATE_WAVE_EPHEMERAL_MIN_WORKERS = 1
+/**
+ * Structural wave size ceiling. Literal — deliberately NOT aliased to
+ * MAX_SUBTHREAD_JOIN_QUORUM (keep both ≥ each other when raising either).
+ */
+export const DELEGATE_WAVE_MAX_WORKERS = 64
 /** Settings → General default for Max Wave Agents. */
 export const DEFAULT_MAX_WAVE_AGENTS = 8
 
 /**
  * Clamp the Settings → General `maxWaveAgents` value into the structural
- * wave range [DELEGATE_WAVE_MIN_WORKERS, MAX_SUBTHREAD_JOIN_QUORUM].
+ * wave range [DELEGATE_WAVE_MIN_WORKERS, DELEGATE_WAVE_MAX_WORKERS].
  * Malformed / missing values fall back to DEFAULT_MAX_WAVE_AGENTS.
  */
 export function clampMaxWaveAgents(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MAX_WAVE_AGENTS
-  return Math.max(DELEGATE_WAVE_MIN_WORKERS, Math.min(MAX_SUBTHREAD_JOIN_QUORUM, Math.floor(value)))
+  return Math.max(
+    DELEGATE_WAVE_MIN_WORKERS,
+    Math.min(DELEGATE_WAVE_MAX_WORKERS, Math.floor(value))
+  )
 }
 
 /**
@@ -51,6 +62,12 @@ export interface DelegateWaveWorkerSpec {
   model?: string
   reasoningEffort?: string
   kimiThinking?: boolean
+  /**
+   * Agent-assigned fleet role. Parallel to EnsembleStageRole — do NOT unify
+   * (no `background`; does not drive Ensemble dispatch).
+   */
+  role?: FleetWaveRole
+  label?: string
 }
 
 export interface ParsedDelegateWaveArgs {
@@ -59,6 +76,8 @@ export interface ParsedDelegateWaveArgs {
   joinPolicy: SubThreadJoinPolicy
   waveId: string
   returnResultToParent: true
+  lifecycle: FleetWaveLifecycle
+  allowMultiProvider: boolean
 }
 
 export type ParseDelegateWaveResult =
@@ -80,13 +99,15 @@ export interface ParseDelegateWaveOptions {
   parentChatId: string
   /** Used only to prove the wave join group is not the parent run. */
   parentAppRunId?: string
+  /** Parent seat provider — used when a worker omits `provider`. */
+  parentProvider?: string
   nowMs?: number
   createWaveId?: () => string
   isAllowedProvider: (provider: string) => boolean
   allowedProvidersLabel?: string
   /**
-   * Cap from Settings → General `maxWaveAgents` (clamped 2–20). When omitted,
-   * defaults to DEFAULT_MAX_WAVE_AGENTS (8), not the absolute join-quorum ceiling.
+   * Cap from Settings → General `maxWaveAgents` (clamped 2–64). When omitted,
+   * defaults to DEFAULT_MAX_WAVE_AGENTS (8), not the absolute wave ceiling.
    */
   maxWorkers?: number
 }
@@ -143,7 +164,9 @@ export function resolveDelegateWaveJoinPolicy(
 function parseWorker(
   raw: unknown,
   index: number,
-  options: ParseDelegateWaveOptions
+  options: ParseDelegateWaveOptions,
+  allowMultiProvider: boolean,
+  parentProvider: string
 ): { ok: true; value: DelegateWaveWorkerSpec } | { ok: false; message: string } {
   if (!isRecord(raw)) {
     return {
@@ -158,11 +181,14 @@ function parseWorker(
         'delegate_wave: workers cannot include subThreadId — waves are spawn-only; use delegate_to_subthread for recall.'
     }
   }
-  const providerRaw = typeof raw.provider === 'string' ? raw.provider.trim() : ''
+  const providerRaw =
+    typeof raw.provider === 'string' && raw.provider.trim()
+      ? raw.provider.trim()
+      : parentProvider.trim()
   if (!providerRaw) {
     return {
       ok: false,
-      message: `delegate_wave: workers[${index}].provider is required.`
+      message: `delegate_wave: workers[${index}].provider is required (omit to inherit the parent provider).`
     }
   }
   if (!options.isAllowedProvider(providerRaw)) {
@@ -173,6 +199,14 @@ function parseWorker(
       message: `delegate_wave: workers[${index}].provider must be ${supported} (got: ${providerRaw}).`
     }
   }
+  if (!allowMultiProvider && parentProvider && providerRaw !== parentProvider) {
+    return {
+      ok: false,
+      message:
+        `delegate_wave: workers[${index}].provider "${providerRaw}" differs from parent "${parentProvider}". ` +
+        `Pass allowMultiProvider=true only when the user explicitly requested a multi-provider fleet.`
+    }
+  }
   const prompt = typeof raw.prompt === 'string' ? raw.prompt.trim() : ''
   if (!prompt) {
     return {
@@ -180,9 +214,20 @@ function parseWorker(
       message: `delegate_wave: workers[${index}].prompt is required.`
     }
   }
+  const role = parseFleetWaveRole(raw.role)
+  if (raw.role !== undefined && role === undefined) {
+    return {
+      ok: false,
+      message: `delegate_wave: workers[${index}].role must be scout, worker, or reviewer when set.`
+    }
+  }
+  const label =
+    typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined
   const worker: DelegateWaveWorkerSpec = {
     provider: providerRaw as ProviderId,
-    prompt
+    prompt,
+    ...(role ? { role } : {}),
+    ...(label ? { label } : {})
   }
   if (typeof raw.model === 'string' && raw.model.trim()) {
     worker.model = raw.model.trim()
@@ -216,12 +261,20 @@ export function parseDelegateWaveArgs(
   if (!Array.isArray(args.workers)) {
     return error('delegate_wave: workers must be an array.')
   }
+  const lifecycle = normalizeFleetLifecycle(args.lifecycle)
+  const allowMultiProvider = args.allowMultiProvider === true
+  const parentProvider =
+    typeof options.parentProvider === 'string' ? options.parentProvider.trim() : ''
+  const minWorkers =
+    lifecycle === 'ephemeral' ? DELEGATE_WAVE_EPHEMERAL_MIN_WORKERS : DELEGATE_WAVE_MIN_WORKERS
   const maxWorkers = clampMaxWaveAgents(
     options.maxWorkers === undefined ? DEFAULT_MAX_WAVE_AGENTS : options.maxWorkers
   )
-  if (args.workers.length < DELEGATE_WAVE_MIN_WORKERS) {
+  if (args.workers.length < minWorkers) {
     return error(
-      `delegate_wave: workers must contain at least ${DELEGATE_WAVE_MIN_WORKERS} entries.`
+      lifecycle === 'ephemeral'
+        ? `delegate_wave: ephemeral workers must contain at least ${minWorkers} entr${minWorkers === 1 ? 'y' : 'ies'}.`
+        : `delegate_wave: durable workers must contain at least ${minWorkers} entries (use lifecycle=ephemeral for a singleton).`
     )
   }
   if (args.workers.length > maxWorkers) {
@@ -230,7 +283,13 @@ export function parseDelegateWaveArgs(
 
   const workers: DelegateWaveWorkerSpec[] = []
   for (let i = 0; i < args.workers.length; i++) {
-    const parsed = parseWorker(args.workers[i], i, options)
+    const parsed = parseWorker(
+      args.workers[i],
+      i,
+      options,
+      allowMultiProvider,
+      parentProvider
+    )
     if (!parsed.ok) return error(parsed.message)
     workers.push(parsed.value)
   }
@@ -267,7 +326,9 @@ export function parseDelegateWaveArgs(
       ...(joinRequest ? { joinRequest } : {}),
       joinPolicy,
       waveId,
-      returnResultToParent: true
+      returnResultToParent: true,
+      lifecycle,
+      allowMultiProvider
     }
   }
 }
@@ -333,6 +394,16 @@ export function reserveDelegateWaveBudgetSlots(input: {
     }
   }
   return { ok: true }
+}
+
+/** Refund exactly `workerCount` previously reserved slots (clamped ≥ 0). */
+export function releaseDelegateWaveBudgetSlots(input: {
+  workerCount: number
+  release: (count: number) => void
+}): void {
+  const count = Math.max(0, Math.floor(input.workerCount))
+  if (count === 0) return
+  input.release(count)
 }
 
 export function buildDelegateWaveApprovalCopy(input: {
@@ -430,6 +501,7 @@ export async function executeDelegateWaveTool(input: {
   args: unknown
   parentChatId: string
   parentAppRunId?: string
+  parentProvider?: string
   parentProviderLabel: string
   maxWorkers: number
   isAllowedProvider: (provider: string) => boolean
@@ -438,6 +510,12 @@ export async function executeDelegateWaveTool(input: {
   permissionPresetId?: PermissionPresetId | string | null
   budgetRemaining: number
   tryConsumeBudgetSlot: () => 'allowed' | 'exhausted'
+  /**
+   * Refund previously reserved slots when the wave does not spawn (deny,
+   * parent cancel, or spawn/rollback failure). Must release exactly the
+   * count reserved for this wave — never a different key's budget.
+   */
+  releaseBudgetSlots: (count: number) => void
   budgetCap: number
   /**
    * Workspace `subThreadDelegation` policy. Authority card-skip must still
@@ -466,9 +544,19 @@ export async function executeDelegateWaveTool(input: {
     settings: DelegateWaveResolvedWorkerSettings
     joinPolicy: SubThreadJoinPolicy
     waveId: string
+    lifecycle: FleetWaveLifecycle
   }) => Promise<DelegateWaveSpawnedChild>
   /** Cancel the seeded run + strip the parent card + delete the child chat. */
   rollbackWorker: (child: DelegateWaveSpawnedChild) => void
+  /** Optional: project one parent fleetWave card after all workers spawn. */
+  projectFleetWaveCard?: (args: {
+    waveId: string
+    joinPolicy: SubThreadJoinPolicy
+    lifecycle: FleetWaveLifecycle
+    allowMultiProvider: boolean
+    workers: DelegateWaveWorkerSpec[]
+    children: DelegateWaveSpawnedChild[]
+  }) => void
   providerLabel: (provider: ProviderId) => string
   nowMs?: number
   createWaveId?: () => string
@@ -476,6 +564,7 @@ export async function executeDelegateWaveTool(input: {
   const parsed = parseDelegateWaveArgs(input.args, {
     parentChatId: input.parentChatId,
     parentAppRunId: input.parentAppRunId,
+    parentProvider: input.parentProvider,
     maxWorkers: input.maxWorkers,
     isAllowedProvider: input.isAllowedProvider,
     allowedProvidersLabel: input.allowedProvidersLabel,
@@ -486,7 +575,7 @@ export async function executeDelegateWaveTool(input: {
     return { ok: false, text: parsed.message }
   }
 
-  const { workers, joinPolicy, waveId } = parsed.value
+  const { workers, joinPolicy, waveId, lifecycle, allowMultiProvider } = parsed.value
   const resolvedSettings: DelegateWaveResolvedWorkerSettings[] = []
   for (const worker of workers) {
     const settings = input.resolveWorkerSettings(worker)
@@ -511,6 +600,12 @@ export async function executeDelegateWaveTool(input: {
         `(cap ${input.budgetCap}). ${input.parentProviderLabel} should stop delegating and continue the ` +
         `parent turn directly; the budget resets on the next turn.`
     }
+  }
+  const refundReservedSlots = () => {
+    releaseDelegateWaveBudgetSlots({
+      workerCount: workers.length,
+      release: input.releaseBudgetSlots
+    })
   }
 
   const skipApproval = shouldSkipDelegateWaveApproval({
@@ -538,6 +633,7 @@ export async function executeDelegateWaveTool(input: {
   if (skipApproval) {
     // Card skip is not immunity: a workspace deny still blocks the wave.
     if (input.subThreadDelegationPolicy === 'deny') {
+      refundReservedSlots()
       return { ok: false, text: declineText }
     }
   } else {
@@ -549,6 +645,7 @@ export async function executeDelegateWaveTool(input: {
       workers: workersForApproval
     })
     if (!approved) {
+      refundReservedSlots()
       return { ok: false, text: declineText }
     }
   }
@@ -556,6 +653,7 @@ export async function executeDelegateWaveTool(input: {
   try {
     input.assertParentStillValid()
   } catch (error) {
+    refundReservedSlots()
     return {
       ok: false,
       text: error instanceof Error ? error.message : String(error)
@@ -569,7 +667,8 @@ export async function executeDelegateWaveTool(input: {
         worker: workers[i]!,
         settings: resolvedSettings[i]!,
         joinPolicy,
-        waveId
+        waveId,
+        lifecycle
       })
       children.push(child)
     }
@@ -581,6 +680,7 @@ export async function executeDelegateWaveTool(input: {
         // Best-effort rollback; surface the original spawn failure below.
       }
     }
+    refundReservedSlots()
     return {
       ok: false,
       text:
@@ -588,6 +688,19 @@ export async function executeDelegateWaveTool(input: {
           ? error.message
           : `delegate_wave: failed while spawning workers (${String(error)}).`
     }
+  }
+
+  try {
+    input.projectFleetWaveCard?.({
+      waveId,
+      joinPolicy,
+      lifecycle,
+      allowMultiProvider,
+      workers,
+      children
+    })
+  } catch {
+    // Best-effort projection card.
   }
 
   const result = shapeDelegateWaveResult({
