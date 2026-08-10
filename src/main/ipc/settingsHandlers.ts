@@ -74,8 +74,7 @@ export function rendererSafeSettings(settings: AppSettings): AppSettings {
     ...(codexUsageCredential
       ? {
           codexUsageCredential: (() => {
-            const { encryptedAccessToken: _encryptedAccessToken, ...status } =
-              codexUsageCredential
+            const { encryptedAccessToken: _encryptedAccessToken, ...status } = codexUsageCredential
             return status
           })()
         }
@@ -85,11 +84,7 @@ export function rendererSafeSettings(settings: AppSettings): AppSettings {
           userMcpServers: userMcpServers.map((server) => {
             const { env, headers, ...safeServer } = server
             const safeEnv = rendererSafeFieldMap(env, server.secretRefs?.env, 'env')
-            const safeHeaders = rendererSafeFieldMap(
-              headers,
-              server.secretRefs?.headers,
-              'header'
-            )
+            const safeHeaders = rendererSafeFieldMap(headers, server.secretRefs?.headers, 'header')
             return {
               ...safeServer,
               ...(safeEnv ? { env: safeEnv } : {}),
@@ -182,8 +177,8 @@ function rendererChatSettings(
     ? Object.fromEntries(
         Object.entries(settings.approvalModeElevationAcknowledgements || {}).filter(([key]) => {
           const separatorIndex = key.lastIndexOf('|')
-          if (separatorIndex <= 0) return false
-          return workspacePathsEqual(key.slice(0, separatorIndex), workspacePath)
+          const keyWorkspacePath = separatorIndex > 0 ? key.slice(0, separatorIndex) : key
+          return workspacePathsEqual(keyWorkspacePath, workspacePath)
         })
       )
     : {}
@@ -255,13 +250,9 @@ function rendererChatSettings(
       ? { ensembleCollapseOlderRounds: settings.ensembleCollapseOlderRounds }
       : {}),
     ...(settings.maxWaveAgents !== undefined ? { maxWaveAgents: settings.maxWaveAgents } : {}),
-    ...(settings.modelUsagePanelView
-      ? { modelUsagePanelView: settings.modelUsagePanelView }
-      : {}),
+    ...(settings.modelUsagePanelView ? { modelUsagePanelView: settings.modelUsagePanelView } : {}),
     ...(settings.dashboardStatPrefs ? { dashboardStatPrefs: settings.dashboardStatPrefs } : {}),
-    ...(settings.welcomeHeatmapPrefs
-      ? { welcomeHeatmapPrefs: settings.welcomeHeatmapPrefs }
-      : {}),
+    ...(settings.welcomeHeatmapPrefs ? { welcomeHeatmapPrefs: settings.welcomeHeatmapPrefs } : {}),
     agenticServices: {
       shellCommands: services.shellCommands,
       fileChanges: services.fileChanges,
@@ -476,7 +467,9 @@ export function registerSettingsHandlers(deps: SettingsHandlerDeps): void {
 
   ipcMain.handle('get-runtime-profiles', (event, provider?: ProviderId) => {
     const detail =
-      deps.resolveSenderSettingsScope(event).kind === 'main' ? ('main' as const) : ('metadata' as const)
+      deps.resolveSenderSettingsScope(event).kind === 'main'
+        ? ('main' as const)
+        : ('metadata' as const)
     return deps
       .getRuntimeProfiles(provider ? deps.assertProviderId(provider) : undefined)
       .map((profile) => rendererSafeRuntimeProfile(profile, detail))
@@ -496,7 +489,10 @@ export function registerSettingsHandlers(deps: SettingsHandlerDeps): void {
   )
   ipcMain.handle('get-extension-secret-status', () => deps.getExtensionSecretStatusSnapshot())
   ipcMain.handle('set-extension-secret', (_event, ref: ExtensionSecretRef, value: unknown) =>
-    deps.setExtensionSecret(ref, deps.requireNonEmptyString(typeof value === 'string' ? value : '', 'Secret value'))
+    deps.setExtensionSecret(
+      ref,
+      deps.requireNonEmptyString(typeof value === 'string' ? value : '', 'Secret value')
+    )
   )
   ipcMain.handle('clear-extension-secret', (_event, ref: ExtensionSecretRef) =>
     deps.clearExtensionSecret(ref)

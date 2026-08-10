@@ -270,7 +270,9 @@ describe('registerSettingsHandlers', () => {
       approvalModeElevationAcknowledgements: {
         '/work/Test 1|codex': true,
         '/work/Test 1/|grok': true,
-        '/work/Test 3|claude': true
+        '/work/Test 1': true,
+        '/work/Test 3|claude': true,
+        '/work/Test 3': true
       },
       userMcpServers: [
         {
@@ -312,8 +314,7 @@ describe('registerSettingsHandlers', () => {
         workspacePath: '/work/Test 1'
       })),
       workspacePathsEqual: vi.fn(
-        (left: string, right: string) =>
-          left.replace(/\/+$/, '') === right.replace(/\/+$/, '')
+        (left: string, right: string) => left.replace(/\/+$/, '') === right.replace(/\/+$/, '')
       )
     })
     registerSettingsHandlers(deps)
@@ -331,7 +332,8 @@ describe('registerSettingsHandlers', () => {
     ])
     expect(result.approvalModeElevationAcknowledgements).toEqual({
       '/work/Test 1|codex': true,
-      '/work/Test 1/|grok': true
+      '/work/Test 1/|grok': true,
+      '/work/Test 1': true
     })
     expect(result).not.toHaveProperty('userMcpServers')
     expect(result).not.toHaveProperty('geminiMcpBridgeLastStatus')
@@ -649,9 +651,9 @@ describe('registerSettingsHandlers', () => {
     expect(deps.sanitizeHandoffCardForSave).toHaveBeenCalledWith(cardInput)
     expect(deps.saveHandoffCard).toHaveBeenCalledWith(cardInput)
 
-    expect(handlerFor('update-handoff-card')({} as any, 'handoff-1', { summary: 'Updated' })).toEqual(
-      handoffCard({ id: 'handoff-1', summary: 'Updated' })
-    )
+    expect(
+      handlerFor('update-handoff-card')({} as any, 'handoff-1', { summary: 'Updated' })
+    ).toEqual(handoffCard({ id: 'handoff-1', summary: 'Updated' }))
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('handoff-1', 'Handoff card id')
     expect(deps.sanitizeHandoffCardPatch).toHaveBeenCalledWith({ summary: 'Updated' })
     expect(deps.updateHandoffCard).toHaveBeenCalledWith('handoff-1', { summary: 'Updated' })
@@ -669,9 +671,7 @@ describe('registerSettingsHandlers', () => {
     })
     registerSettingsHandlers(deps)
 
-    expect(handlerFor('get-handoff-cards')({} as any, { status: 'draft' })).toEqual([
-      handoffCard()
-    ])
+    expect(handlerFor('get-handoff-cards')({} as any, { status: 'draft' })).toEqual([handoffCard()])
     expect(deps.getHandoffCards).toHaveBeenCalledWith({
       status: 'draft',
       sourceChatId: 'chat-1'
@@ -687,9 +687,9 @@ describe('registerSettingsHandlers', () => {
     })
     registerSettingsHandlers(deps)
 
-    expect(() =>
-      handlerFor('get-handoff-cards')({} as any, { sourceChatId: 'chat-3' })
-    ).toThrow('Renderer cannot read handoff cards for another chat.')
+    expect(() => handlerFor('get-handoff-cards')({} as any, { sourceChatId: 'chat-3' })).toThrow(
+      'Renderer cannot read handoff cards for another chat.'
+    )
     expect(deps.getHandoffCards).not.toHaveBeenCalled()
   })
 })
