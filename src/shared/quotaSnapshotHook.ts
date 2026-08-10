@@ -7,7 +7,12 @@
  * schema and are discarded by the main-process parser before IPC.
  */
 
-export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = ['antigravity', 'deepseek', 'cerebras'] as const
+export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = [
+  'antigravity',
+  'deepseek',
+  'cerebras',
+  'meta'
+] as const
 
 export type QuotaSnapshotHookProviderId = (typeof QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS)[number]
 

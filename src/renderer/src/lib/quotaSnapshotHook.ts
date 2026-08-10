@@ -32,7 +32,7 @@ function withRecomputedStaleness(
  * and any one read can come back empty or late — a torn plist write while the
  * helper refetches a provider, a plutil hiccup, or the renderer's 1s UI
  * deadline resolving to null. Without this merge each of those blanked the
- * AntiGravity/DeepSeek/Cerebras meters until the next successful poll.
+ * AntiGravity/DeepSeek/Cerebras/Meta meters until the next successful poll.
  *
  * Semantics: a provider present in `fresh` always wins — measured truth, even
  * when its numbers went down (cycle resets do that). Only a provider absent

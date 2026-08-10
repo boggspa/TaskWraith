@@ -2601,7 +2601,7 @@ function App(): React.JSX.Element {
     mistral: [],
     muse: []
   })
-  // Last-known Limit Counter hook snapshots (antigravity/deepseek/cerebras).
+  // Last-known Limit Counter hook snapshots (antigravity/deepseek/cerebras/meta).
   // The hook lane's counterpart to `lastUsageWindowsByProviderRef` above: one
   // empty or deadline-missed helper read must not blank those meters.
   const lastQuotaSnapshotHookRef = useRef<QuotaSnapshotHookSnapshot[]>([])

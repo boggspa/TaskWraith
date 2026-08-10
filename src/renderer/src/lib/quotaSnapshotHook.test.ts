@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { QuotaSnapshotHookSnapshot } from '../../../shared/quotaSnapshotHook'
+import {
+  QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS,
+  type QuotaSnapshotHookSnapshot
+} from '../../../shared/quotaSnapshotHook'
 import {
   buildQuotaSnapshotHookAggregates,
   mergeQuotaSnapshotHookSnapshots
@@ -62,6 +65,45 @@ describe('buildQuotaSnapshotHookAggregates', () => {
             amount: 9.08,
             unit: 'USD'
           })
+        ]
+      })
+    ])
+  })
+
+  it('admits Limit Counter Meta API Credits into the TaskWraith sidebar lane', () => {
+    // Regression: meta was present in Limit Counter's App Group cache but
+    // filtered out of QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS, so Muse/Meta meters
+    // never reached MODEL USAGE despite a successful grant.
+    expect(QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS).toContain('meta')
+    const aggregates = buildQuotaSnapshotHookAggregates([
+      {
+        provider: 'meta',
+        source: 'limit-counter-sanitized-cache',
+        configured: true,
+        fetchedAt: '2026-08-10T20:00:00.000Z',
+        stale: false,
+        planType: 'API Credits',
+        windows: [
+          {
+            id: 'meta-spend',
+            label: 'Spend this billing period',
+            usedPercent: 2.4,
+            remainingPercent: 97.6,
+            limitLabel: '£0.36 of £15.00',
+            valueText: '£0.36',
+            unit: 'GBP',
+            windowKind: 'custom'
+          }
+        ],
+        balances: []
+      }
+    ])
+    expect(aggregates).toEqual([
+      expect.objectContaining({
+        provider: 'meta',
+        planName: 'API Credits',
+        windows: [
+          expect.objectContaining({ label: 'Spend this billing period', valueText: '£0.36' })
         ]
       })
     ])
