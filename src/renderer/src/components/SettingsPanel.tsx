@@ -5633,8 +5633,8 @@ export function SettingsPanel({
                   onCornerStyleChange={(themeCornerStyle) => onChange({ themeCornerStyle })}
                 />
                 <p className="settings-hint">
-                  One shared color drives the interface accent, your message bubble, and its
-                  “You” label.
+                  One shared color drives the interface accent, your message bubble, and its “You”
+                  label.
                 </p>
               </div>
 
