@@ -62,6 +62,58 @@ describe('projectMuseEnvelopeTools', () => {
     })
   })
 
+  it('projects real Muse coding tool names into tool_use events', () => {
+    const envelope = runtimeSessionEnvelope({
+      kind: 'assistant_tool_calls_committed',
+      message_id: 'msg-coding',
+      response_id: 'resp-coding',
+      tool_calls: [
+        {
+          call_id: 'call_edit',
+          name: 'edit_file',
+          args: { path: 'a.py', old_string: 'x', new_string: 'y' }
+        },
+        {
+          call_id: 'call_patch',
+          name: 'apply_patch',
+          args: { path: 'b.py', patch: '--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n' }
+        },
+        { call_id: 'call_delete', name: 'delete_file', args: { path: 'c.py' } },
+        { call_id: 'call_exec', name: 'exec_command', args: { command: 'npm test' } }
+      ]
+    })
+
+    const events = projectMuseEnvelopeTools(envelope)
+    expect(events).toHaveLength(4)
+    expect(events[0]).toMatchObject({
+      type: 'tool_use',
+      toolId: 'call_edit',
+      toolName: 'edit_file',
+      toolInput: { path: 'a.py', old_string: 'x', new_string: 'y' }
+    })
+    expect(events[1]).toMatchObject({
+      type: 'tool_use',
+      toolId: 'call_patch',
+      toolName: 'apply_patch',
+      toolInput: {
+        path: 'b.py',
+        patch: '--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n'
+      }
+    })
+    expect(events[2]).toMatchObject({
+      type: 'tool_use',
+      toolId: 'call_delete',
+      toolName: 'delete_file',
+      toolInput: { path: 'c.py' }
+    })
+    expect(events[3]).toMatchObject({
+      type: 'tool_use',
+      toolId: 'call_exec',
+      toolName: 'exec_command',
+      toolInput: { command: 'npm test' }
+    })
+  })
+
   it('projects tool_result_batch_committed into tool_result events', () => {
     const envelope = runtimeSessionEnvelope({
       kind: 'tool_result_batch_committed',
