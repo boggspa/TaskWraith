@@ -183,6 +183,7 @@ function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channe
       denyHumanReview: vi.fn(),
       createChannel: vi.fn(),
       issueInvite: vi.fn(),
+      describeExistingInvite: vi.fn(),
       appendHost: vi.fn(),
       revokeMember: vi.fn(),
       enrollAgent: vi.fn(),

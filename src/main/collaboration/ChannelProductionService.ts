@@ -56,6 +56,7 @@ import { ChannelRuntime, type ChannelRuntimeOptions } from './ChannelRuntime'
 import {
   ChannelError,
   ChannelStore,
+  hashChannelInviteToken,
   type AgentChannelMember,
   type Channel,
   type ChannelMember,
@@ -173,6 +174,14 @@ export interface ChannelProductionInviteResult {
   hostRoomOpened: boolean
 }
 
+export interface ChannelProductionExistingInviteCredential {
+  channelId: string
+  inviteId: string
+  inviteToken: string
+  roomId: string
+  expiresAt: number
+}
+
 export interface ChannelProductionStatus {
   state: 'idle' | 'running' | 'stopping' | 'stopped'
   channelCount: number
@@ -226,6 +235,9 @@ export interface ChannelProductionService {
     reference?: TaskWraithReference
   }): ChannelProductionChannelView
   issueInvite(args: { channelId: string; ttlMs?: number }): ChannelProductionInviteResult
+  describeExistingInvite(
+    credential: ChannelProductionExistingInviteCredential
+  ): ChannelProductionInviteResult | null
   appendHost(args: {
     channelId: string
     clientMessageId: string
@@ -917,6 +929,66 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       inviteToken: issued.inviteToken,
       roomId: issued.invite.roomId,
       expiresAt: issued.invite.expiresAt,
+      relayUrls,
+      hostRoomOpened
+    }
+  }
+
+  describeExistingInvite(
+    credential: ChannelProductionExistingInviteCredential
+  ): ChannelProductionInviteResult | null {
+    const state = this.requireRunning()
+    if (
+      !credential ||
+      typeof credential.channelId !== 'string' ||
+      !credential.channelId ||
+      typeof credential.inviteId !== 'string' ||
+      !credential.inviteId ||
+      typeof credential.inviteToken !== 'string' ||
+      !credential.inviteToken ||
+      typeof credential.roomId !== 'string' ||
+      !credential.roomId ||
+      !Number.isSafeInteger(credential.expiresAt) ||
+      credential.expiresAt < 0
+    ) {
+      throw new ChannelError('recovery_blocked', 'Existing Channel invite credential is invalid')
+    }
+    const channel = state.store.getChannel(credential.channelId)
+    const invite = state.store.getInvite(credential.channelId, credential.inviteId)
+    if (
+      !channel ||
+      !invite ||
+      invite.roomId !== credential.roomId ||
+      invite.expiresAt !== credential.expiresAt ||
+      invite.tokenHash !== hashChannelInviteToken(credential.inviteToken)
+    ) {
+      throw new ChannelError(
+        'recovery_blocked',
+        'Existing Channel invite credential does not match durable authority'
+      )
+    }
+    if (state.recoveryBlockedChannelIds.has(channel.channelId)) {
+      throw new ChannelError('recovery_blocked', 'Channel recovery is blocked')
+    }
+    if (
+      channel.status !== 'active' ||
+      invite.consumedAt !== undefined ||
+      invite.revokedAt !== undefined ||
+      invite.expiresAt <= this.now()
+    ) {
+      return null
+    }
+    const hostRelayUrl = this.hostRelayUrl()
+    const relayUrls = hostRelayUrl ? this.inviteRelayUrls(hostRelayUrl) : []
+    const hostRoomOpened = state.transport
+      .listOpenRooms()
+      .some((room) => room.channelId === credential.channelId && room.roomId === credential.roomId)
+    return {
+      channelId: credential.channelId,
+      inviteId: credential.inviteId,
+      inviteToken: credential.inviteToken,
+      roomId: credential.roomId,
+      expiresAt: credential.expiresAt,
       relayUrls,
       hostRoomOpened
     }

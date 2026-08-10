@@ -454,6 +454,10 @@ describe('ChannelProductionService', () => {
         'x-taskwraith-channel-id': channel.channelId
       }
     })
+    expect(fixture.service.describeExistingInvite(invite)).toEqual(invite)
+    expect(() =>
+      fixture.service.describeExistingInvite({ ...invite, inviteToken: 'tampered-token' })
+    ).toThrow(/does not match durable authority/)
 
     now += 1
     const append = await fixture.service.appendHost({
@@ -498,6 +502,7 @@ describe('ChannelProductionService', () => {
       availability: 'ready'
     })
     expect(fixture.service.status().openRoomCount).toBe(0)
+    expect(fixture.service.describeExistingInvite(invite)).toBeNull()
     expect(fixture.sockets.sockets[0].closed).toBe(true)
     expect(onChange.mock.calls.map(([event]) => event.reason)).toEqual([
       'channel',
