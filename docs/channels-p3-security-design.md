@@ -36,12 +36,12 @@ and held by main. Providers receive neither owner nor agent private key bytes.
 
 An agent principal is a TaskWraith-managed seat, not a provider process:
 
-| Source | Stable `agentSeatId` | Lifecycle |
-| --- | --- | --- |
-| Pooled Agent | Existing `pooled-agent-*` id | Survives chats, runs, provider sessions, and model changes. |
+| Source                         | Stable `agentSeatId`                         | Lifecycle                                                                            |
+| ------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Pooled Agent                   | Existing `pooled-agent-*` id                 | Survives chats, runs, provider sessions, and model changes.                          |
 | Persisted non-pooled chat seat | Main-minted id persisted with that chat seat | Survives runs and native-session replacement; does not become a cross-chat identity. |
-| Child/subagent thread | None by default | Must be promoted into a persisted seat before it can receive a key or delegation. |
-| Run/provider session | Never an identity | Appears only as signed post provenance. |
+| Child/subagent thread          | None by default                              | Must be promoted into a persisted seat before it can receive a key or delegation.    |
+| Run/provider session           | Never an identity                            | Appears only as signed post provenance.                                              |
 
 Display name, icon, provider, model, role, and provider session id are mutable
 descriptors. None identifies the cryptographic principal. A seat key has a
@@ -173,14 +173,14 @@ are canonical base64 64-byte values.
 The deterministic test fixture uses RFC 8032 seed/public-key pairs. These
 values are pinned for a second implementation and review tooling:
 
-| Vector | Value |
-| --- | --- |
-| Delegation canonical SHA-256 | `c2665be7fae2e47f389ff761fb8a5243c7b86c45cfbc7979b49c14a2c120fc90` |
-| Agent raw-key SHA-256 | `39f713d0a644253f04529421b9f51b9b08979d08295959c4f3990ee617f5139f` |
-| Owner delegation signature | `XVUDyNKvvjJPXDfAd69gyLsTqHNvJfccb9SZepCK8zyXeIvFWOFpv5kIKJG4fOV8DyE+V1f/IeOw37ooAWhdDQ==` |
+| Vector                         | Value                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| Delegation canonical SHA-256   | `c2665be7fae2e47f389ff761fb8a5243c7b86c45cfbc7979b49c14a2c120fc90`                         |
+| Agent raw-key SHA-256          | `39f713d0a644253f04529421b9f51b9b08979d08295959c4f3990ee617f5139f`                         |
+| Owner delegation signature     | `XVUDyNKvvjJPXDfAd69gyLsTqHNvJfccb9SZepCK8zyXeIvFWOFpv5kIKJG4fOV8DyE+V1f/IeOw37ooAWhdDQ==` |
 | Owner dispatch-grant signature | `uifB5F1MD4qYEQKAFEgZsOzDiXIx+1//Fp79tVTStL/yZbrX4AOF7xo/xnuDPBHwSsYaUcBOh0ZMdgRZIvfWAA==` |
-| Agent post signature | `EZtrTtei4jPelc5U0JrPEnXd1vIbcioFameSFVRLtukEkspgKSPAsfQaP0u2zM1V182s8EFyTU8qISn+xM9aDg==` |
-| Owner revocation signature | `huQl26jdqGz7OIjKbYzMkCT9nceG3kXdKYd69szfKBjcLrgPY39DFH9z+lm69eHWzcIDMp4z8NYXQVPy+IwfCQ==` |
+| Agent post signature           | `EZtrTtei4jPelc5U0JrPEnXd1vIbcioFameSFVRLtukEkspgKSPAsfQaP0u2zM1V182s8EFyTU8qISn+xM9aDg==` |
+| Owner revocation signature     | `huQl26jdqGz7OIjKbYzMkCT9nceG3kXdKYd69szfKBjcLrgPY39DFH9z+lm69eHWzcIDMp4z8NYXQVPy+IwfCQ==` |
 
 ## Auto-dispatch path after review
 

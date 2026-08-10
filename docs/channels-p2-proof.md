@@ -11,18 +11,18 @@ membership, provider dispatch, macOS DOM automation, or a new two-Mac run.
 
 ## Evidence identity
 
-| Item | Recorded value |
-| --- | --- |
-| P0 prerequisite | User attestation: the existing People flow passed between two real Macs on unrelated networks on 2026-08-09. |
-| P1 proof | [`channels-p1-proof.md`](channels-p1-proof.md) |
-| P2 process-harness commit | `fa5a638c4c94ffb5462bde553d7fbcce0f15e458` |
-| Harness | [`scripts/channels-p2-proof.cjs`](../scripts/channels-p2-proof.cjs) |
-| Worker | [`scripts/channels-p2-proof-worker.ts`](../scripts/channels-p2-proof-worker.ts) |
-| Harness tests | [`scripts/channels-p2-proof.test.ts`](../scripts/channels-p2-proof.test.ts) |
-| Packaged artifact | `dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/app.asar` |
-| Package size / SHA-256 | 125,132,538 bytes / `f85a5ef33afdf05c8e918d128cd245af1648f5b9153912ab0bebbce3e8d9c55e` |
-| Worker size / SHA-256 | 415,784 bytes / `8a2d73cc52bd67e00eb94d6037de3639a2679a5c41708bfd13c17b57ae6f3ca4` |
-| Local evidence | `.local-only/channels-p2-proof-evidence.json`, deliberately gitignored and mode `0600` |
+| Item                      | Recorded value                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| P0 prerequisite           | User attestation: the existing People flow passed between two real Macs on unrelated networks on 2026-08-09. |
+| P1 proof                  | [`channels-p1-proof.md`](channels-p1-proof.md)                                                               |
+| P2 process-harness commit | `fa5a638c4c94ffb5462bde553d7fbcce0f15e458`                                                                   |
+| Harness                   | [`scripts/channels-p2-proof.cjs`](../scripts/channels-p2-proof.cjs)                                          |
+| Worker                    | [`scripts/channels-p2-proof-worker.ts`](../scripts/channels-p2-proof-worker.ts)                              |
+| Harness tests             | [`scripts/channels-p2-proof.test.ts`](../scripts/channels-p2-proof.test.ts)                                  |
+| Packaged artifact         | `dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/app.asar`                                      |
+| Package size / SHA-256    | 125,132,538 bytes / `f85a5ef33afdf05c8e918d128cd245af1648f5b9153912ab0bebbce3e8d9c55e`                       |
+| Worker size / SHA-256     | 415,784 bytes / `8a2d73cc52bd67e00eb94d6037de3639a2679a5c41708bfd13c17b57ae6f3ca4`                           |
+| Local evidence            | `.local-only/channels-p2-proof-evidence.json`, deliberately gitignored and mode `0600`                       |
 
 The proof command requires an explicit package path. It rejects a stale package
 before launching a mission if any required main, preload, or renderer marker is
@@ -44,11 +44,11 @@ the independent Channel process mission below still ran in full.
 
 The package scanner recorded these independently hashed groups:
 
-| Group | Files | Bytes | SHA-256 | Required markers |
-| --- | ---: | ---: | --- | --- |
-| Main | 12 | 11,934,959 | `e8ac861790b3623e861315ff885e684c8e6aec4edb4706a5f193b25467e9004d` | host invite, member begin-join, member reset-history IPC |
-| Preload | 1 | 110,091 | `67238e9b9a57f614d6b7cd790e978bf385f824815d785fa2591d3193ae7a71a1` | memberships API, change subscription, member begin-join |
-| Renderer | 2 | 12,624,840 | `f071f66685f158cade4f38674acfdf968339d8ab2c504384aa8a1f65af90018a` | host confirmation, two-sided SAS guidance, revoked retained history, People adjacency, no-agent-run copy |
+| Group    | Files |      Bytes | SHA-256                                                            | Required markers                                                                                         |
+| -------- | ----: | ---------: | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Main     |    12 | 11,934,959 | `e8ac861790b3623e861315ff885e684c8e6aec4edb4706a5f193b25467e9004d` | host invite, member begin-join, member reset-history IPC                                                 |
+| Preload  |     1 |    110,091 | `67238e9b9a57f614d6b7cd790e978bf385f824815d785fa2591d3193ae7a71a1` | memberships API, change subscription, member begin-join                                                  |
+| Renderer |     2 | 12,624,840 | `f071f66685f158cade4f38674acfdf968339d8ab2c504384aa8a1f65af90018a` | host confirmation, two-sided SAS guidance, revoked retained history, People adjacency, no-agent-run copy |
 
 ## What actually ran
 
@@ -99,18 +99,18 @@ node scripts/channels-p2-proof.cjs \
   --runs 2
 ```
 
-| Measurement | Run 1 | Run 2 |
-| --- | ---: | ---: |
-| Duration | 1,052 ms | 1,001 ms |
-| Initial consensus high-water | 2 | 2 |
-| Offline-replay high-water | 3 | 3 |
-| Revoked retained high-water | 4 | 4 |
-| Final closed host high-water | 5 | 5 |
-| Largest observed wire frame | 1,037 bytes | 1,037 bytes |
-| Encrypted application frames | 26 | 26 |
-| Handshake frames | 12 | 12 |
-| Plaintext application frames | 0 | 0 |
-| Final log digest | `84a7889d31329005444b46af575d504d944148a1b35a4977e81d3b5fafd6510c` | `b19156f48f21cf78c608baf69ac294cc6e1722aead13ed19ab0556d6aed4bdec` |
+| Measurement                  |                                                              Run 1 |                                                              Run 2 |
+| ---------------------------- | -----------------------------------------------------------------: | -----------------------------------------------------------------: |
+| Duration                     |                                                           1,052 ms |                                                           1,001 ms |
+| Initial consensus high-water |                                                                  2 |                                                                  2 |
+| Offline-replay high-water    |                                                                  3 |                                                                  3 |
+| Revoked retained high-water  |                                                                  4 |                                                                  4 |
+| Final closed host high-water |                                                                  5 |                                                                  5 |
+| Largest observed wire frame  |                                                        1,037 bytes |                                                        1,037 bytes |
+| Encrypted application frames |                                                                 26 |                                                                 26 |
+| Handshake frames             |                                                                 12 |                                                                 12 |
+| Plaintext application frames |                                                                  0 |                                                                  0 |
+| Final log digest             | `84a7889d31329005444b46af575d504d944148a1b35a4977e81d3b5fafd6510c` | `b19156f48f21cf78c608baf69ac294cc6e1722aead13ed19ab0556d6aed4bdec` |
 
 The final digests intentionally differ because clean runs generate new opaque
 ids and acceptance timestamps. Within each run, every asserted view agreed at
