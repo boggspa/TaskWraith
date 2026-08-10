@@ -1,11 +1,14 @@
 import { generateIdentityKeyPair, exportRawEd25519PublicKey } from '../../shared/e2ee/keys'
 import {
   channelAgentPublicKeyFingerprint,
+  hashChannelAgentContent,
   signChannelAgentDelegation,
   signChannelAgentDispatchGrant,
+  signChannelAgentPost,
   signChannelAgentRevocation,
   type ChannelAgentDelegation,
   type ChannelAgentDispatchGrant,
+  type ChannelAgentPost,
   type ChannelAgentRevocation,
   type SignedChannelAgentDelegation,
   type SignedChannelAgentDispatchGrant,
@@ -157,6 +160,33 @@ function consumeInput(
     at: NOW,
     ...overrides
   }
+}
+
+function postValue(overrides: Partial<ChannelAgentPost> = {}): ChannelAgentPost {
+  const content = overrides.content ?? 'Agent result'
+  return {
+    schemaVersion: 1,
+    channelId: CHANNEL_ID,
+    agentMemberId: AGENT_MEMBER_ID,
+    agentSeatId: AGENT_SEAT_ID,
+    agentPublicKeyB64: firstAgentPublicKeyB64,
+    keyGeneration: 1,
+    delegationId: DELEGATION_ID,
+    dispatchGrantId: GRANT_ID,
+    triggerMessageId: 'message-1',
+    runId: 'run-1',
+    runAuthorityHash: HASH_A,
+    clientMessageId: 'agent-post-1',
+    kind: 'agent.text',
+    content,
+    contentHash: hashChannelAgentContent(content),
+    createdAt: NOW + 100,
+    ...overrides
+  }
+}
+
+function signedPost(overrides: Partial<ChannelAgentPost> = {}) {
+  return signChannelAgentPost(firstAgentKeys.privateKey, postValue(overrides))
 }
 
 function expectStateError(
@@ -339,6 +369,95 @@ describe('ChannelAgentAuthorityState', () => {
     expect(value.getConsumption(GRANT_ID, 'message-1')).toEqual(
       first.kind === 'authorized' ? first.consumption : null
     )
+  })
+
+  it('verifies a signed terminal post against the exact consumed authority prefix read-only', () => {
+    const value = readyState()
+    const consumption = value.consumeDispatch(consumeInput())
+    expect(consumption).toMatchObject({ kind: 'authorized' })
+    const revision = value.snapshot().revision
+    const post = signedPost()
+
+    expect(value.verifyPostAuthority({ signedPost: post, acceptedAt: NOW + 200 })).toEqual({
+      kind: 'authorized',
+      authorityRevision: revision,
+      delegation: signedDelegation(),
+      dispatchGrant: signedGrant(),
+      consumption: consumption.kind === 'authorized' ? consumption.consumption : null,
+      signedPost: post
+    })
+    expect(value.snapshot().revision).toBe(revision)
+  })
+
+  it('denies missing, forged, misbound, expired, and future-revision post authority', () => {
+    const withoutConsumption = readyState()
+    expect(
+      withoutConsumption.verifyPostAuthority({ signedPost: signedPost(), acceptedAt: NOW + 200 })
+    ).toEqual({ kind: 'denied', reason: 'dispatch_consumption_missing' })
+
+    const value = readyState()
+    value.consumeDispatch(consumeInput())
+    expect(
+      value.verifyPostAuthority({
+        signedPost: signChannelAgentPost(secondAgentKeys.privateKey, postValue()),
+        acceptedAt: NOW + 200
+      })
+    ).toEqual({ kind: 'denied', reason: 'agent_signature_invalid' })
+    expect(
+      value.verifyPostAuthority({
+        signedPost: signedPost({ triggerMessageId: 'message-missing' }),
+        acceptedAt: NOW + 200
+      })
+    ).toEqual({ kind: 'denied', reason: 'dispatch_consumption_missing' })
+    expect(
+      value.verifyPostAuthority({
+        signedPost: signedPost(),
+        acceptedAt: EXPIRES_AT
+      })
+    ).toEqual({ kind: 'denied', reason: 'authority_expired' })
+    expect(
+      value.verifyPostAuthority({
+        signedPost: signedPost(),
+        acceptedAt: NOW + 200,
+        authorityRevision: value.snapshot().revision + 1
+      })
+    ).toEqual({ kind: 'denied', reason: 'authority_revision_invalid' })
+    expectStateError(
+      () =>
+        value.verifyPostAuthority({
+          signedPost: signedPost(),
+          acceptedAt: NOW + 200,
+          unexpected: true
+        } as never),
+      'invalid_input'
+    )
+  })
+
+  it('uses the logged authority revision so later revocation cannot rewrite a valid post', () => {
+    const value = readyState()
+    value.consumeDispatch(consumeInput())
+    const acceptedRevision = value.snapshot().revision
+    const post = signedPost()
+
+    expect(value.registerRevocation(signedRevocation({ revokedAt: NOW + 200 }))).toBe('stored')
+    expect(value.verifyPostAuthority({ signedPost: post, acceptedAt: NOW + 200 })).toEqual({
+      kind: 'denied',
+      reason: 'authority_revoked'
+    })
+    expect(
+      value.verifyPostAuthority({
+        signedPost: post,
+        acceptedAt: NOW + 200,
+        authorityRevision: acceptedRevision
+      })
+    ).toMatchObject({ kind: 'authorized', authorityRevision: acceptedRevision })
+    expect(
+      value.verifyPostAuthority({
+        signedPost: post,
+        acceptedAt: NOW + 200,
+        authorityRevision: acceptedRevision - 1
+      })
+    ).toEqual({ kind: 'denied', reason: 'dispatch_consumption_missing' })
   })
 
   it.each([

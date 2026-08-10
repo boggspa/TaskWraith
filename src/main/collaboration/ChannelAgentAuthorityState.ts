@@ -4,12 +4,16 @@ import {
   channelAgentPublicKeyFingerprint,
   parseSignedChannelAgentDelegation,
   parseSignedChannelAgentDispatchGrant,
+  parseSignedChannelAgentPost,
   parseSignedChannelAgentRevocation,
   verifyChannelAgentDelegation,
   verifyChannelAgentDispatchGrant,
+  verifyChannelAgentPost,
   verifyChannelAgentRevocation,
+  type ChannelAgentVerificationError,
   type SignedChannelAgentDelegation,
   type SignedChannelAgentDispatchGrant,
+  type SignedChannelAgentPost,
   type SignedChannelAgentRevocation
 } from '../../shared/collaboration/ChannelAgentProtocol'
 
@@ -123,6 +127,36 @@ export interface ConsumeChannelAgentDispatchInput {
   readonly permissionPostureHash: string
   readonly at: number
 }
+
+export type ChannelAgentPostAuthorityDenialReason =
+  | ChannelAgentVerificationError
+  | 'authority_revision_invalid'
+  | 'authority_revoked'
+  | 'delegation_missing'
+  | 'dispatch_consumption_missing'
+  | 'dispatch_grant_missing'
+
+export interface VerifyChannelAgentPostAuthorityInput {
+  readonly signedPost: unknown
+  /** Host acceptance time used for current authority and clock-skew checks. */
+  readonly acceptedAt: number
+  /** Durable authority prefix recorded beside an already accepted log entry. */
+  readonly authorityRevision?: number
+}
+
+export type ChannelAgentPostAuthorityResult =
+  | {
+      readonly kind: 'authorized'
+      readonly authorityRevision: number
+      readonly delegation: SignedChannelAgentDelegation
+      readonly dispatchGrant: SignedChannelAgentDispatchGrant
+      readonly consumption: ChannelAgentDispatchConsumption
+      readonly signedPost: SignedChannelAgentPost
+    }
+  | {
+      readonly kind: 'denied'
+      readonly reason: ChannelAgentPostAuthorityDenialReason
+    }
 
 type RecordedMutation =
   | { readonly kind: 'delegation'; readonly value: RecordedChannelAgentDelegation }
@@ -708,6 +742,98 @@ export class ChannelAgentAuthorityState {
     }
   }
 
+  /**
+   * Verifies a terminal agent post against one durable authority prefix without
+   * mutating it. Current appends omit authorityRevision; replay supplies the
+   * revision fsynced into the log so later revocations cannot rewrite history.
+   */
+  verifyPostAuthority(
+    input: VerifyChannelAgentPostAuthorityInput
+  ): ChannelAgentPostAuthorityResult {
+    this.assertPostAuthorityInput(input)
+    const signedPost = parseSignedChannelAgentPost(input.signedPost)
+    if (!signedPost) return { kind: 'denied', reason: 'post_invalid' }
+    const post = signedPost.post
+    if (post.channelId !== this.channelId) {
+      return { kind: 'denied', reason: 'authority_binding_mismatch' }
+    }
+    const authorityRevision = input.authorityRevision ?? this.revision
+    if (authorityRevision < 0 || authorityRevision > this.revision) {
+      return { kind: 'denied', reason: 'authority_revision_invalid' }
+    }
+    const delegation = this.delegations.find(
+      (entry) =>
+        entry.recordedRevision <= authorityRevision && delegationId(entry) === post.delegationId
+    )
+    if (!delegation) return { kind: 'denied', reason: 'delegation_missing' }
+    const dispatchGrant = this.dispatchGrants.find(
+      (entry) =>
+        entry.recordedRevision <= authorityRevision && grantId(entry) === post.dispatchGrantId
+    )
+    if (!dispatchGrant) return { kind: 'denied', reason: 'dispatch_grant_missing' }
+    const consumption = this.consumptions.find(
+      (entry) =>
+        entry.recordedRevision <= authorityRevision &&
+        entry.grantId === post.dispatchGrantId &&
+        entry.triggerMessageId === post.triggerMessageId
+    )
+    if (!consumption) return { kind: 'denied', reason: 'dispatch_consumption_missing' }
+    if (
+      consumption.channelId !== this.channelId ||
+      consumption.consumedAt > post.createdAt ||
+      consumption.consumedAt > input.acceptedAt
+    ) {
+      return { kind: 'denied', reason: 'authority_binding_mismatch' }
+    }
+
+    const ownerPublicKey = this.ownerPublicKey()
+    const verifiedDispatch = verifyChannelAgentDispatchGrant({
+      ownerPublicKey,
+      delegation: delegation.signedDelegation,
+      dispatchGrant: dispatchGrant.signedDispatchGrant,
+      mentionerMemberId: consumption.mentionerMemberId,
+      workspaceIdentityHash: consumption.workspaceIdentityHash,
+      permissionPostureHash: consumption.permissionPostureHash,
+      at: consumption.consumedAt
+    })
+    if (!verifiedDispatch.ok) return { kind: 'denied', reason: verifiedDispatch.error }
+    const verifiedPost = verifyChannelAgentPost({
+      ownerPublicKey,
+      delegation: delegation.signedDelegation,
+      post: signedPost,
+      at: input.acceptedAt
+    })
+    if (!verifiedPost.ok) return { kind: 'denied', reason: verifiedPost.error }
+    if (
+      dispatchGrant.signedDispatchGrant.grant.delegationId !== post.delegationId ||
+      dispatchGrant.signedDispatchGrant.grant.agentMemberId !== post.agentMemberId ||
+      dispatchGrant.signedDispatchGrant.grant.agentSeatId !== post.agentSeatId ||
+      dispatchGrant.signedDispatchGrant.grant.agentPublicKeyB64 !== post.agentPublicKeyB64 ||
+      dispatchGrant.signedDispatchGrant.grant.keyGeneration !== post.keyGeneration
+    ) {
+      return { kind: 'denied', reason: 'authority_binding_mismatch' }
+    }
+    if (
+      this.isAuthorityRevoked(
+        delegation.signedDelegation,
+        post.dispatchGrantId,
+        input.acceptedAt,
+        authorityRevision + 1,
+        authorityRevision
+      )
+    ) {
+      return { kind: 'denied', reason: 'authority_revoked' }
+    }
+    return {
+      kind: 'authorized',
+      authorityRevision,
+      delegation: clone(delegation.signedDelegation),
+      dispatchGrant: clone(dispatchGrant.signedDispatchGrant),
+      consumption: clone(consumption),
+      signedPost: clone(signedPost)
+    }
+  }
+
   getDelegation(id: string): SignedChannelAgentDelegation | null {
     if (!isIdentifier(id)) return null
     const value = this.delegations.find((entry) => delegationId(entry) === id)
@@ -904,9 +1030,11 @@ export class ChannelAgentAuthorityState {
     delegation: SignedChannelAgentDelegation,
     dispatchGrantId: string,
     at: number,
-    prospectiveRevision: number
+    prospectiveRevision: number,
+    maximumRecordedRevision = this.revision
   ): boolean {
     return this.revocations.some((entry) => {
+      if (entry.recordedRevision > maximumRecordedRevision) return false
       const revocation = entry.signedRevocation.revocation
       if (!this.revocationMatchesDelegation(entry.signedRevocation, delegation)) return false
       if (revocation.targetKind === 'dispatch_grant' && revocation.targetId !== dispatchGrantId) {
@@ -914,6 +1042,22 @@ export class ChannelAgentAuthorityState {
       }
       return this.revocationEffective(entry, at, prospectiveRevision)
     })
+  }
+
+  private assertPostAuthorityInput(input: VerifyChannelAgentPostAuthorityInput): void {
+    const expectedKeys =
+      input.authorityRevision === undefined
+        ? ['signedPost', 'acceptedAt']
+        : ['signedPost', 'acceptedAt', 'authorityRevision']
+    if (
+      !isPlainObject(input) ||
+      !hasExactKeys(input, expectedKeys) ||
+      !isTimestamp(input.acceptedAt) ||
+      (input.authorityRevision !== undefined &&
+        (!Number.isSafeInteger(input.authorityRevision) || input.authorityRevision < 0))
+    ) {
+      throw stateError('invalid_input', 'Channel agent post authority input is invalid')
+    }
   }
 
   private revocationEffective(

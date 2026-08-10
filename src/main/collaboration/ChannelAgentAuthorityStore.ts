@@ -29,7 +29,9 @@ import {
   type ChannelAgentAuthoritySnapshot,
   type ChannelAgentDispatchConsumptionResult,
   type ChannelAgentOwnerPublicKeyResolver,
-  type ConsumeChannelAgentDispatchInput
+  type ChannelAgentPostAuthorityResult,
+  type ConsumeChannelAgentDispatchInput,
+  type VerifyChannelAgentPostAuthorityInput
 } from './ChannelAgentAuthorityState'
 
 export const CHANNEL_AGENT_AUTHORITY_STORE_VERSION = 1 as const
@@ -257,6 +259,33 @@ export class ChannelAgentAuthorityStore {
       },
       missing
     )
+  }
+
+  verifyPostAuthority(
+    channelId: string,
+    input: VerifyChannelAgentPostAuthorityInput
+  ): ChannelAgentPostAuthorityResult {
+    channelAgentAuthorityFileHash(channelId)
+    for (let attempt = 0; attempt < MAX_MUTATION_ATTEMPTS; attempt += 1) {
+      try {
+        const record = this.readRecord(channelId)
+        return (
+          record?.state.verifyPostAuthority(input) ?? {
+            kind: 'denied',
+            reason: 'delegation_missing'
+          }
+        )
+      } catch (error) {
+        if (
+          error instanceof ChannelAgentAuthorityStoreError &&
+          error.code === 'concurrent_update'
+        ) {
+          continue
+        }
+        throw error
+      }
+    }
+    throw storeError('concurrent_update', 'Channel agent authority changed during every read')
   }
 
   snapshot(channelId: string): ChannelAgentAuthoritySnapshot | null {

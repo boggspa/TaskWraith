@@ -18,11 +18,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   channelAgentPublicKeyFingerprint,
+  hashChannelAgentContent,
   signChannelAgentDelegation,
   signChannelAgentDispatchGrant,
+  signChannelAgentPost,
   signChannelAgentRevocation,
   type ChannelAgentDelegation,
   type ChannelAgentDispatchGrant,
+  type ChannelAgentPost,
   type ChannelAgentRevocation
 } from '../../shared/collaboration/ChannelAgentProtocol'
 import { exportRawEd25519PublicKey, generateIdentityKeyPair } from '../../shared/e2ee/keys'
@@ -210,6 +213,33 @@ function consumeInput(
   }
 }
 
+function postValue(overrides: Partial<ChannelAgentPost> = {}): ChannelAgentPost {
+  const content = overrides.content ?? 'Agent result'
+  return {
+    schemaVersion: 1,
+    channelId: CHANNEL_ID,
+    agentMemberId: AGENT_MEMBER_ID,
+    agentSeatId: AGENT_SEAT_ID,
+    agentPublicKeyB64,
+    keyGeneration: 1,
+    delegationId: DELEGATION_ID,
+    dispatchGrantId: GRANT_ID,
+    triggerMessageId: 'message-1',
+    runId: 'run-1',
+    runAuthorityHash: HASH_A,
+    clientMessageId: 'agent-post-1',
+    kind: 'agent.text',
+    content,
+    contentHash: hashChannelAgentContent(content),
+    createdAt: NOW + 100,
+    ...overrides
+  }
+}
+
+function signedPost(overrides: Partial<ChannelAgentPost> = {}) {
+  return signChannelAgentPost(agentKeys.privateKey, postValue(overrides))
+}
+
 function readyStore(storageDirectory: string): ChannelAgentAuthorityStore {
   const store = makeStore(storageDirectory)
   store.registerDelegation(signedDelegation())
@@ -313,6 +343,48 @@ describe('ChannelAgentAuthorityStore', () => {
       restarted.consumeDispatch(CHANNEL_ID, consumeInput({ triggerMessageId: 'message-3' }))
     ).toEqual({ kind: 'denied', reason: 'dispatch_budget_exhausted' })
     expect(restarted.snapshot(CHANNEL_ID)).toMatchObject({ revision: 4 })
+  })
+
+  it('verifies post authority from the durable file without mutating or trusting stale memory', () => {
+    const storageDirectory = tempStorage()
+    const store = readyStore(storageDirectory)
+    store.consumeDispatch(CHANNEL_ID, consumeInput())
+    const before = readFileSync(authorityPath(storageDirectory), 'utf8')
+    const post = signedPost()
+
+    expect(
+      makeStore(storageDirectory).verifyPostAuthority(CHANNEL_ID, {
+        signedPost: post,
+        acceptedAt: NOW + 200
+      })
+    ).toMatchObject({
+      kind: 'authorized',
+      authorityRevision: 3,
+      consumption: { triggerMessageId: 'message-1' },
+      signedPost: post
+    })
+    expect(readFileSync(authorityPath(storageDirectory), 'utf8')).toBe(before)
+
+    store.registerRevocation(signedRevocation({ revokedAt: NOW + 200 }))
+    expect(
+      makeStore(storageDirectory).verifyPostAuthority(CHANNEL_ID, {
+        signedPost: post,
+        acceptedAt: NOW + 200
+      })
+    ).toEqual({ kind: 'denied', reason: 'authority_revoked' })
+    expect(
+      makeStore(storageDirectory).verifyPostAuthority(CHANNEL_ID, {
+        signedPost: post,
+        acceptedAt: NOW + 200,
+        authorityRevision: 3
+      })
+    ).toMatchObject({ kind: 'authorized', authorityRevision: 3 })
+    expect(
+      makeStore(tempStorage()).verifyPostAuthority(CHANNEL_ID, {
+        signedPost: post,
+        acceptedAt: NOW + 200
+      })
+    ).toEqual({ kind: 'denied', reason: 'delegation_missing' })
   })
 
   it('returns the durable winner when no-clobber creation races re-entrantly', () => {
