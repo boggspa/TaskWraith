@@ -155,6 +155,21 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('shape-gates every main-only Channel agent operation and rejects trailing data', () => {
+    for (const channel of [
+      'channels:agent:overview',
+      'channels:agent:enroll',
+      'channels:agent:grant',
+      'channels:agent:revoke',
+      'channels:agent:rotate'
+    ]) {
+      expect(() => validateIpcArgs(channel, [{}])).not.toThrow()
+      expect(() => validateIpcArgs(channel, [])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, ['invalid'])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, [{}, 'trailing'])).toThrow(/too many arguments/)
+    }
+  })
+
   it('registers Canvas handlers only after the validation wrapper is installed', () => {
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     expect(main.indexOf('installIpcValidation(ipcMain')).toBeGreaterThanOrEqual(0)

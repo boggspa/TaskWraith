@@ -303,6 +303,13 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // the primary app surface. Read-only projection continuity is safe above.
   'host-projection:command-submit',
   'host-projection:receipt-lookup',
+  // Owner-signed agent membership and zero-click mention authority always
+  // require the primary renderer plus a main-owned native confirmation sheet.
+  'channels:agent:overview',
+  'channels:agent:enroll',
+  'channels:agent:grant',
+  'channels:agent:revoke',
+  'channels:agent:rotate',
   // A joined Channel is one process-global external membership. Only the
   // primary app surface may consume its invite, select it, or mutate its
   // replica; popouts receive no independent member authority.

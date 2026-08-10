@@ -218,6 +218,14 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'channels:append': ['object'],
   'channels:revoke-member': ['object'],
   'channels:close': ['object'],
+  // Channels P3 owner-managed agent surface. The dedicated main-renderer-only
+  // handler performs exact-key and bounded-field validation before resolving
+  // native confirmation authority.
+  'channels:agent:overview': ['object'],
+  'channels:agent:enroll': ['object'],
+  'channels:agent:grant': ['object'],
+  'channels:agent:revoke': ['object'],
+  'channels:agent:rotate': ['object'],
   // Channels P2 joined-member surface. The member handler owns the closed-key,
   // bounded invite/message validation; this gate fixes arity and top-level
   // shape before the main-renderer-only handler receives the payload.
