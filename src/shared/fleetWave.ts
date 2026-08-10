@@ -37,6 +37,8 @@ export interface FleetWaveTelemetry {
   waveId?: string
   status?: 'pending' | 'running' | 'needs_approval' | 'completed' | 'failed' | 'unknown'
   agents?: FleetWaveAgentState[]
+  /** Collapsed elevation asks for the wave; optional UI surface on FleetWaveCard. */
+  pendingApprovals?: FleetWavePendingApproval[]
   allowMultiProvider?: boolean
   parentProvider?: string
   startedAtMs?: number
@@ -99,4 +101,27 @@ export function groupPendingApprovalsByScope(
     byScope.set(key, list)
   }
   return [...byScope.entries()].map(([scopeKey, list]) => ({ scopeKey, approvals: list }))
+}
+
+/** Density-strip cells in dispatch order — never re-sorted by status. */
+export function fleetWaveGhostCellStates(
+  agents: readonly FleetWaveAgentState[]
+): Array<{ id: string; status: FleetWaveAgentStatus }> {
+  return agents.map((agent) => ({ id: agent.id, status: agent.status }))
+}
+
+/** Agents that are not failed / needs_approval (exceptions stay named separately). */
+export function fleetWaveHealthyCount(agents: readonly FleetWaveAgentState[]): number {
+  return agents.filter(
+    (agent) => agent.status !== 'failed' && agent.status !== 'needs_approval'
+  ).length
+}
+
+/** Allow-all only when ≥2 pending approvals share one scopeKey. */
+export function canAllowAllPendingApprovals(
+  approvals: readonly FleetWavePendingApproval[]
+): boolean {
+  if (approvals.length < 2) return false
+  const groups = groupPendingApprovalsByScope(approvals)
+  return groups.length === 1
 }

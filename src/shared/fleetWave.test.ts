@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canAllowAllPendingApprovals,
   fleetWaveDensityTier,
   fleetWaveExceptions,
+  fleetWaveGhostCellStates,
+  fleetWaveHealthyCount,
   fleetWaveRoleRollup,
   groupPendingApprovalsByScope,
-  type FleetWaveAgentState
+  type FleetWaveAgentState,
+  type FleetWavePendingApproval
 } from './fleetWave'
 
 describe('fleetWave helpers', () => {
@@ -45,5 +49,49 @@ describe('fleetWave helpers', () => {
     ])
     expect(groups).toHaveLength(2)
     expect(groups.find((g) => g.scopeKey === 'write:types')?.approvals).toHaveLength(2)
+  })
+
+  it('keeps ghost cell order as dispatch order, not status-sorted', () => {
+    const agents: FleetWaveAgentState[] = [
+      { id: 'a', label: 'done', role: 'worker', status: 'completed' },
+      { id: 'b', label: 'fail', role: 'worker', status: 'failed' },
+      { id: 'c', label: 'wait', role: 'worker', status: 'needs_approval' },
+      { id: 'd', label: 'run', role: 'worker', status: 'working' },
+      { id: 'e', label: 'pend', role: 'scout', status: 'pending' }
+    ]
+    expect(fleetWaveGhostCellStates(agents)).toEqual([
+      { id: 'a', status: 'completed' },
+      { id: 'b', status: 'failed' },
+      { id: 'c', status: 'needs_approval' },
+      { id: 'd', status: 'working' },
+      { id: 'e', status: 'pending' }
+    ])
+  })
+
+  it('counts healthy agents excluding failed and needs_approval', () => {
+    const agents: FleetWaveAgentState[] = [
+      { id: '1', label: 'a', role: 'scout', status: 'completed' },
+      { id: '2', label: 'b', role: 'worker', status: 'failed' },
+      { id: '3', label: 'c', role: 'worker', status: 'needs_approval' },
+      { id: '4', label: 'd', role: 'reviewer', status: 'working' },
+      { id: '5', label: 'e', role: 'worker', status: 'pending' }
+    ]
+    expect(fleetWaveHealthyCount(agents)).toBe(3)
+    expect(fleetWaveHealthyCount([])).toBe(0)
+  })
+
+  it('gates allow-all on ≥2 pending approvals sharing one scopeKey', () => {
+    const same: FleetWavePendingApproval[] = [
+      { approvalId: '1', scopeKey: 'write:types', summary: 'a' },
+      { approvalId: '2', scopeKey: 'write:types', summary: 'b' }
+    ]
+    const mixed: FleetWavePendingApproval[] = [
+      { approvalId: '1', scopeKey: 'write:types', summary: 'a' },
+      { approvalId: '2', scopeKey: 'shell', summary: 'b' }
+    ]
+    expect(canAllowAllPendingApprovals(same)).toBe(true)
+    expect(canAllowAllPendingApprovals(mixed)).toBe(false)
+    expect(canAllowAllPendingApprovals(same.slice(0, 1))).toBe(false)
+    expect(canAllowAllPendingApprovals([])).toBe(false)
   })
 })
