@@ -4,6 +4,7 @@ import {
   isKimiBrokerDeferredMeshMcpTool,
   isKimiDeniedNativeTool,
   isKimiSafeMcpTool,
+  resolveKimiTaskWraithMcpToolService,
   unqualifyKimiMcpToolName,
   type KimiToolPolicyRequest
 } from './KimiToolPolicy'
@@ -367,5 +368,54 @@ describe('classifyKimiToolPermission', () => {
         opts({ writeCapable: false, isSafeMcpTool: () => true })
       )
     ).toBe('allow')
+  })
+})
+
+describe('resolveKimiTaskWraithMcpToolService', () => {
+  it('maps git stage/commit to fileChanges', () => {
+    expect(
+      resolveKimiTaskWraithMcpToolService({
+        toolName: 'mcp__taskwraith__git_stage'
+      })
+    ).toBe('fileChanges')
+    expect(
+      resolveKimiTaskWraithMcpToolService({
+        rawToolCall: { rawInput: { tool_name: 'mcp__taskwraith__git_commit' } }
+      })
+    ).toBe('fileChanges')
+  })
+
+  it('maps git push/create_pr to externalPublish', () => {
+    expect(
+      resolveKimiTaskWraithMcpToolService({
+        toolName: 'mcp__taskwraith__git_push'
+      })
+    ).toBe('externalPublish')
+    expect(
+      resolveKimiTaskWraithMcpToolService({
+        toolName: 'mcp__taskwraith__git_create_pr'
+      })
+    ).toBe('externalPublish')
+  })
+
+  it('maps capability_invoke to the wrapped target service', () => {
+    expect(
+      resolveKimiTaskWraithMcpToolService({
+        toolName: 'mcp__taskwraith__capability_invoke',
+        rawToolCall: { rawInput: { name: 'git_stage' } }
+      })
+    ).toBe('fileChanges')
+    expect(
+      resolveKimiTaskWraithMcpToolService({
+        toolName: 'mcp__taskwraith__capability_invoke',
+        rawToolCall: { rawInput: { name: 'git_push' } }
+      })
+    ).toBe('externalPublish')
+  })
+
+  it('returns null for unrecognised or native identities', () => {
+    expect(resolveKimiTaskWraithMcpToolService({ toolName: 'Bash' })).toBeNull()
+    expect(resolveKimiTaskWraithMcpToolService({ toolName: 'mcp__evil__git_stage' })).toBeNull()
+    expect(resolveKimiTaskWraithMcpToolService({ toolKind: 'edit' })).toBeNull()
   })
 })
