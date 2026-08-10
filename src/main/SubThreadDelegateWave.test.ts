@@ -863,13 +863,14 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(body).toMatch(/label=Fixer/)
     expect(body).toMatch(/role=reviewer/i)
     expect(body).toMatch(/posture=read_only/)
-    expect(body).toMatch(/posture=capped inherit \(never Full Access; same-checkout\)/)
+    expect(body).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
     // Default / scout / reviewer are read_only; only the worker line carries capped inherit.
     const workerLine = body
       .split('\n')
       .find((line) => /role=worker/i.test(line) && /label=Fixer/.test(line))
     expect(workerLine).toBeTruthy()
-    expect(workerLine).toMatch(/posture=capped inherit \(never Full Access; same-checkout\)/)
+    expect(workerLine).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
+    expect(workerLine).not.toMatch(/same-checkout/)
     expect(workerLine).not.toMatch(/posture=read_only/)
   })
 
@@ -961,7 +962,8 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(approvalBody).toMatch(/label=Tree scout/)
     expect(approvalBody).toMatch(/role=worker/i)
     expect(approvalBody).toMatch(/label=Patcher/)
-    expect(approvalBody).toMatch(/posture=capped inherit \(never Full Access; same-checkout\)/)
+    expect(approvalBody).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
+    expect(approvalBody).not.toMatch(/same-checkout/)
     // Decline still refunds — preserve budget invariant.
     expect(budget.consumed).toBe(2)
     expect(budget.netConsumed).toBe(0)

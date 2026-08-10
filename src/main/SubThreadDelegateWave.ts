@@ -414,7 +414,9 @@ function describeDelegateWaveWorkerPosture(
     if (base && effective && base !== effective) {
       return 'worktree (never Full Access; isolated checkout)'
     }
-    return 'capped inherit (never Full Access; same-checkout)'
+    // Approval runs before spawn alloc — do not claim same-checkout when
+    // sole-worker spawn may soft-upgrade to a fleet worktree.
+    return 'capped inherit or worktree when available (never Full Access)'
   }
   return 'read_only'
 }
