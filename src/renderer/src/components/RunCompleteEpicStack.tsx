@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useCallback, type ReactNode } from 'react'
 import type { SeatChangeLink } from '../../../shared/seatChange'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -12,6 +12,14 @@ import {
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SeatChangeInlineStrip } from './SeatChangeRow'
+import {
+  DIFF_HOVER_PREVIEW_TOOLTIP_ID,
+  DiffHoverPreviewOverlay,
+  type DiffHoverPreviewState,
+  diffHoverPreviewBoundaryForElement,
+  useDiffHoverPreviewDismiss,
+  useDiffHoverPreviewState
+} from './DiffHoverPreview'
 
 function asSeatLink(value: unknown): SeatChangeLink | null {
   if (!value || typeof value !== 'object') return null
@@ -115,6 +123,38 @@ function subagentRouteLabel(row: CloseoutSubagentDelegation): string {
   return `${getProviderLabel(row.parentProvider)} → ${target}`
 }
 
+/** Build synthetic unified-diff text from a commit's file list so the
+ *  DiffHoverPreviewOverlay can render it as a series of file-name sections. */
+function buildCommitFilesDiffText(commit: CloseoutCommit): string | null {
+  if (!commit.files || commit.files.length === 0) return null
+  return commit.files
+    .map((f) => {
+      let stats = ''
+      if (typeof f.additions === 'number' || typeof f.deletions === 'number') {
+        const parts: string[] = []
+        if (typeof f.additions === 'number') parts.push(`+${f.additions}`)
+        if (typeof f.deletions === 'number') parts.push(`−${f.deletions}`)
+        stats = `  ${parts.join(' ')}`
+      }
+      let body = ''
+      if (f.hunks && f.hunks.trim()) {
+        body = f.hunks
+          .trim()
+          .split('\n')
+          .map((line) => ` ${line}`)
+          .join('\n')
+      } else {
+        body = ' '
+      }
+      return `@@ -0,0 +1,1 @@ ${f.path}${stats}\n${body}`
+    })
+    .join('\n')
+}
+
+/** Commit hover open delay — matches TranscriptPanel's file-change hover delay. */
+const COMMIT_FILES_HOVER_OPEN_DELAY_MS = 900
+const COMMIT_FILES_HOVER_CLOSE_DELAY_MS = 1400
+
 export function RunCompleteEpicStack({
   participantTable,
   subagentDelegations,
@@ -136,6 +176,56 @@ export function RunCompleteEpicStack({
   const hasParticipants = rows.length > 0
   const hasSubagents = subagentRows.length > 0
   const hasCommits = commitRows.length > 0
+
+  // ── Commit-files mouseover pill ──────────────────────────────────────
+  const {
+    closePreview: closeCommitFilesPill,
+    keepPreviewOpen: keepCommitFilesPillOpen,
+    preview: commitFilesPill,
+    scheduleClosePreview: scheduleCloseCommitFilesPill,
+    scheduleShowPreview: scheduleShowCommitFilesPill,
+    showPreview: showCommitFilesPill
+  } = useDiffHoverPreviewState(COMMIT_FILES_HOVER_CLOSE_DELAY_MS, COMMIT_FILES_HOVER_OPEN_DELAY_MS)
+
+  useDiffHoverPreviewDismiss(commitFilesPill, closeCommitFilesPill)
+
+  const openCommitFilesPill = useCallback(
+    (
+      event: { currentTarget: HTMLElement },
+      commit: CloseoutCommit,
+      options?: { focusTarget?: DiffHoverPreviewState['focusTarget']; immediate?: boolean }
+    ) => {
+      const anchorElement = event.currentTarget
+      const produce = (): DiffHoverPreviewState | null => {
+        if (!anchorElement.isConnected) return null
+        const diffText = buildCommitFilesDiffText(commit)
+        if (!diffText) return null
+        return {
+          anchor: anchorElement.getBoundingClientRect(),
+          boundary: diffHoverPreviewBoundaryForElement(anchorElement),
+          summary: {
+            actionLabel: `Commit ${commit.hash.slice(0, 9)}`,
+            path: `Commit ${commit.hash.slice(0, 9)}${commit.subject ? ` — ${commit.subject}` : ''}`,
+            status: commit.stats || 'commit',
+            diffText,
+            source: 'run-summary'
+          },
+          focusTarget: options?.focusTarget
+        }
+      }
+      if (options?.immediate || options?.focusTarget) {
+        const next = produce()
+        if (next) showCommitFilesPill(next)
+        return
+      }
+      scheduleShowCommitFilesPill(produce)
+    },
+    [scheduleShowCommitFilesPill, showCommitFilesPill]
+  )
+
+  const anyCommitHasFiles = commitRows.some((c) => c.files && c.files.length > 0)
+  // ──────────────────────────────────────────────────────────────────────
+
   if (!hasParticipants && !hasSubagents && !fileChanges && !hasCommits) return null
 
   return (
@@ -276,8 +366,37 @@ export function RunCompleteEpicStack({
             </div>
             {commitRows.map((commit) => {
               const seatLink = asSeatLink(commit.seatLink)
+              const hasFiles = commit.files && commit.files.length > 0
               return (
-                <div className="run-complete-epic-row is-commits" role="row" key={commit.hash}>
+                <div
+                  className={`run-complete-epic-row is-commits${hasFiles ? ' has-commit-files' : ''}`}
+                  role="row"
+                  key={commit.hash}
+                  aria-describedby={
+                    hasFiles &&
+                    commitFilesPill?.summary.path ===
+                      `Commit ${commit.hash.slice(0, 9)}${commit.subject ? ` — ${commit.subject}` : ''}`
+                      ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                      : undefined
+                  }
+                  onMouseEnter={
+                    hasFiles
+                      ? (event) => openCommitFilesPill(event, commit)
+                      : undefined
+                  }
+                  onMouseLeave={
+                    hasFiles ? scheduleCloseCommitFilesPill : undefined
+                  }
+                  onFocus={
+                    hasFiles
+                      ? (event) =>
+                          openCommitFilesPill(event, commit, {
+                            focusTarget: 'preview'
+                          })
+                      : undefined
+                  }
+                  onBlur={hasFiles ? scheduleCloseCommitFilesPill : undefined}
+                >
                   <span className="run-complete-epic-seat" role="cell">
                     {seatLink ? (
                       <SeatChangeInlineStrip link={seatLink} />
@@ -306,6 +425,16 @@ export function RunCompleteEpicStack({
             )}
           </div>
         </section>
+      )}
+
+      {anyCommitHasFiles && (
+        <DiffHoverPreviewOverlay
+          onFocus={keepCommitFilesPillOpen}
+          onBlur={scheduleCloseCommitFilesPill}
+          onMouseEnter={keepCommitFilesPillOpen}
+          onMouseLeave={scheduleCloseCommitFilesPill}
+          preview={commitFilesPill}
+        />
       )}
     </div>
   )

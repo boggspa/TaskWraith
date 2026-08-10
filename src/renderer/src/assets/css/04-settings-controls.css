@@ -4720,6 +4720,14 @@ input:disabled, select:disabled, textarea:disabled {
   grid-template-columns: minmax(0, 1.4fr) minmax(5rem, 0.6fr) minmax(0, 1.2fr) 5.5rem;
 }
 
+.run-complete-epic-row.is-commits.has-commit-files {
+  cursor: default;
+}
+
+.run-complete-epic-row.is-commits.has-commit-files:hover {
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+
 .run-complete-epic-row:first-child {
   border-top: none;
 }
