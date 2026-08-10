@@ -829,6 +829,35 @@ describe('ChannelMessageLog', () => {
     )
   })
 
+  it('finds one durable message by exact id after restart without exposing cached bytes', () => {
+    const { directory, storePath, channel, owner, log } = channelFixture()
+    const first = log.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'lookup-first',
+      content: 'first durable trigger'
+    })
+    const second = log.append({
+      channelId: channel.channelId,
+      principalMemberId: owner.memberId,
+      identityPublicKey: 'ed25519:host',
+      clientMessageId: 'lookup-second',
+      content: 'second durable trigger'
+    })
+    const restarted = new ChannelMessageLog(join(directory, 'logs'), new ChannelStore(storePath))
+
+    const found = restarted.getMessageById(channel.channelId, second.messageId)
+    expect(found).toEqual(second)
+    if (found) found.content = 'mutated caller copy'
+    expect(restarted.getMessageById(channel.channelId, second.messageId)).toEqual(second)
+    expect(restarted.getMessageById(channel.channelId, first.messageId)).toEqual(first)
+    expect(restarted.getMessageById(channel.channelId, 'missing-message')).toBeNull()
+    expect(restarted.getMessageById(channel.channelId, '')).toBeNull()
+    expect(restarted.getMessageById(channel.channelId, ' padded-message ')).toBeNull()
+    expect(restarted.getMessageById(channel.channelId, 'control\0message')).toBeNull()
+  })
+
   it('durably appends and restart-verifies signed agent text with its authority prefix', () => {
     const {
       directory,

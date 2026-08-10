@@ -584,6 +584,23 @@ export class ChannelMessageLog {
     return clone(this.load(channelId).messages[sequence - 1] ?? null)
   }
 
+  getMessageById(channelId: string, messageId: string): ChannelMessage | null {
+    if (
+      typeof messageId !== 'string' ||
+      messageId.length === 0 ||
+      messageId.length > 512 ||
+      messageId.trim() !== messageId
+    ) {
+      return null
+    }
+    for (let index = 0; index < messageId.length; index += 1) {
+      const code = messageId.charCodeAt(index)
+      if (code < 0x20 || code === 0x7f) return null
+    }
+    const message = this.load(channelId).messages.find((entry) => entry.messageId === messageId)
+    return clone(message ?? null)
+  }
+
   digest(channelId: string): string {
     return createHash('sha256')
       .update(JSON.stringify(this.load(channelId).messages), 'utf8')
