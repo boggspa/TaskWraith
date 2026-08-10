@@ -83,7 +83,17 @@ function positiveSequence(value: unknown): number {
   return value as number
 }
 
-function contributionEvidence(
+function acceptedAt(value: unknown): number {
+  const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new PeopleToChannelMigrationInventoryError(
+      'A legacy People contribution timestamp is invalid'
+    )
+  }
+  return parsed
+}
+
+export function peopleToChannelLegacyContributionEvidence(
   message: ChatMessage
 ): PeopleToChannelLegacyContributionEvidence | null {
   const metadata = message.metadata
@@ -108,11 +118,12 @@ function contributionEvidence(
       'Legacy People contribution client message id'
     ),
     sequence: positiveSequence(metadata.sequence),
+    acceptedAt: acceptedAt(message.timestamp),
     contentHash: sha256(message.content)
   }
 }
 
-function legacyEvidence(
+export function peopleToChannelLegacyContributionEvidenceList(
   messages: readonly ChatMessage[]
 ): PeopleToChannelLegacyContributionEvidence[] {
   const evidence: PeopleToChannelLegacyContributionEvidence[] = []
@@ -120,7 +131,7 @@ function legacyEvidence(
   const sequences = new Set<string>()
   const clientMessages = new Set<string>()
   for (const message of messages) {
-    const entry = contributionEvidence(message)
+    const entry = peopleToChannelLegacyContributionEvidence(message)
     if (!entry) continue
     // A reviewed contribution can legitimately appear once as a queued
     // comment and once as a delivered external-seat turn with the same source
@@ -164,7 +175,7 @@ function migrationChat(
     ...(chat.parentChatRelation ? { parentChatRelation: chat.parentChatRelation } : {}),
     ...(chat.sideChatContext ? { sideChat: true } : {}),
     ...(workflowChatIds.has(chat.appChatId) ? { workflowOwned: true } : {}),
-    legacyContributions: legacyEvidence(chat.messages ?? [])
+    legacyContributions: peopleToChannelLegacyContributionEvidenceList(chat.messages ?? [])
   }
 }
 

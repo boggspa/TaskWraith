@@ -6,6 +6,7 @@ import { contributionRulesForPreset } from './HumanContributionRules'
 import type { Channel, ChannelInvite, ChannelMember } from './ChannelStore'
 import {
   inventoryPeopleToChannelMigration,
+  peopleToChannelLegacyContributionEvidence,
   PeopleToChannelMigrationInventoryError,
   type PeopleToChannelInventoryChat,
   type PeopleToChannelMigrationInventoryInput
@@ -164,6 +165,9 @@ describe('PeopleToChannelMigrationInventory', () => {
       }
     })
     expect(plan.entries[0].source.history.evidenceDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(peopleToChannelLegacyContributionEvidence(source.chats[0].messages![0])).toMatchObject({
+      acceptedAt: 1786320001000
+    })
     expect(plan.generalChats[0].disposition).toBe('covered_by_people')
 
     const serialized = JSON.stringify(plan)
@@ -297,6 +301,14 @@ describe('PeopleToChannelMigrationInventory', () => {
         })
       )
     ).toThrow(/sequences are duplicated/)
+
+    const invalidTimestamp = contribution(HUMAN_COLLABORATOR_COMMENT_KIND, 1, 'private')
+    invalidTimestamp.timestamp = 'not-a-timestamp'
+    expect(() =>
+      inventoryPeopleToChannelMigration(
+        inventoryInput({ chats: [chat({ messages: [invalidTimestamp] })] })
+      )
+    ).toThrow(/timestamp is invalid/)
   })
 
   it('ignores unrelated transcript rows and accepts legacy kind-only People evidence', () => {

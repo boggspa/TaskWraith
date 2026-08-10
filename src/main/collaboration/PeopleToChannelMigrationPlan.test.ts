@@ -10,6 +10,7 @@ import {
 } from './ChannelStore'
 import {
   PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS,
+  PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION,
   createPeopleToChannelMigrationPlan,
   type PeopleToChannelMigrationChat,
   type PeopleToChannelMigrationPlanInput
@@ -65,6 +66,7 @@ function chat(overrides: Partial<PeopleToChannelMigrationChat> = {}): PeopleToCh
         collaboratorId: 'collaborator_one',
         clientMessageId: 'client_one',
         sequence: 1,
+        acceptedAt: 130,
         contentHash: 'a'.repeat(64)
       },
       {
@@ -74,6 +76,7 @@ function chat(overrides: Partial<PeopleToChannelMigrationChat> = {}): PeopleToCh
         collaboratorId: 'collaborator_one',
         clientMessageId: 'client_two',
         sequence: 2,
+        acceptedAt: 140,
         contentHash: 'b'.repeat(64)
       }
     ],
@@ -148,6 +151,8 @@ describe('PeopleToChannelMigrationPlan', () => {
 
     expect(plan).toEqual(again)
     expect(JSON.stringify(source)).toBe(before)
+    expect(plan.schemaVersion).toBe(PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION)
+    expect(plan.schemaVersion).toBe(3)
     expect(plan.cutoverDecisions).toEqual(PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS)
     expect(plan.summary).toEqual({
       shares: 1,
@@ -364,6 +369,23 @@ describe('PeopleToChannelMigrationPlan', () => {
       })
     )
     expect(evidenceChanged.sourceDigest).not.toBe(first.sourceDigest)
+
+    const timestampChanged = createPeopleToChannelMigrationPlan(
+      input({
+        people: { shares: [firstShare] },
+        chats: [
+          chat({
+            legacyContributions: [
+              {
+                ...(chat().legacyContributions ?? [])[0],
+                acceptedAt: 131
+              }
+            ]
+          })
+        ]
+      })
+    )
+    expect(timestampChanged.sourceDigest).not.toBe(first.sourceDigest)
   })
 
   it('maps a People identity onto an existing Channel member without replacing Channel state', () => {

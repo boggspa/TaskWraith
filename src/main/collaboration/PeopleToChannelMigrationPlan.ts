@@ -14,7 +14,7 @@ import {
   type ChannelStoreSnapshot
 } from './ChannelStore'
 
-export const PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION = 2
+export const PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION = 3
 
 export const PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS = [
   'general_chat_scope',
@@ -31,6 +31,7 @@ export interface PeopleToChannelLegacyContributionEvidence {
   collaboratorId: string
   clientMessageId: string
   sequence: number
+  acceptedAt: number
   contentHash: string
 }
 
@@ -346,6 +347,8 @@ function historySummary(
         !entry.clientMessageId ||
         !Number.isSafeInteger(entry.sequence) ||
         entry.sequence < 1 ||
+        !Number.isSafeInteger(entry.acceptedAt) ||
+        entry.acceptedAt < 0 ||
         !SHA256_PATTERN.test(entry.contentHash)
     )
   ) {

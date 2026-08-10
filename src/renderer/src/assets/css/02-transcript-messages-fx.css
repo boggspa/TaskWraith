@@ -3821,16 +3821,6 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   background: color-mix(in srgb, var(--provider-pi-color) 12%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-mistral[data-active="true"] {
-  color: var(--provider-mistral-color);
-  background: color-mix(in srgb, var(--provider-mistral-color) 12%, transparent);
-}
-
-.usage-heatmap-provider-filter-tab.provider-muse[data-active="true"] {
-  color: var(--provider-muse-color);
-  background: color-mix(in srgb, var(--provider-muse-color) 12%, transparent);
-}
-
 .usage-heatmap-chips {
   display: inline-flex;
   align-items: center;
