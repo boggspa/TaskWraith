@@ -5,6 +5,10 @@ import {
   type ChannelHandshakeConfirmResult,
   type ChannelHumanReviewReceipt
 } from '../../shared/collaboration/ChannelWireProtocol'
+import {
+  channelMemberPublicPresentation,
+  isChannelMemberPresentation
+} from '../../shared/collaboration/ChannelMemberPresentation'
 import type { TransportSocketFactory } from '../remote/RemoteTransportClient'
 import { wsTransportSocketFactory } from '../remote/wsTransportSocket'
 import {
@@ -389,12 +393,20 @@ function parseMembersSnapshot(
     ) {
       throw new ChannelMemberReplicaError('Channel member snapshot is invalid')
     }
+    if (
+      member.presentation !== undefined &&
+      !isChannelMemberPresentation(member.presentation, { allowSeatDisabled: false })
+    ) {
+      throw new ChannelMemberReplicaError('Channel member presentation is invalid')
+    }
+    const presentation = channelMemberPublicPresentation(member.presentation)
     return {
       memberId: member.memberId,
       kind: member.kind,
       displayName: member.displayName.trim(),
       status: 'active',
-      joinedAt: member.joinedAt
+      joinedAt: member.joinedAt,
+      ...(presentation ? { presentation } : {})
     }
   })
   if (new Set(members.map((member) => member.memberId)).size !== members.length) {

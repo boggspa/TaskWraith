@@ -190,6 +190,54 @@ describe('ChannelMemberPanelView', () => {
     expect(html).not.toContain('aria-label="Joined Channel message"')
   })
 
+  it('orders public seats and accents participants/history without accepting host mute', () => {
+    const html = render({
+      state: {
+        ...createChannelMemberPanelInitialState(),
+        loading: false,
+        memberships: [summary()],
+        phase: 'disconnected',
+        connected: false,
+        channel: channel(),
+        members: [
+          member({
+            memberId: 'owner-a',
+            displayName: 'Host',
+            joinedAt: 900,
+            presentation: { seatOrder: 3, colorIndex: 2 }
+          }),
+          member({ presentation: { seatOrder: 2, colorIndex: 5 } }),
+          member({
+            memberId: 'member-c',
+            displayName: 'Casey',
+            joinedAt: 1_100,
+            presentation: { seatOrder: 1, colorIndex: 0 }
+          }),
+          member({
+            memberId: 'member-host-private',
+            displayName: 'Host Private',
+            joinedAt: 4_000,
+            presentation: { colorIndex: 7, seatDisabled: true } as never
+          })
+        ],
+        records: [
+          message(1, {
+            authorMemberId: 'member-b',
+            content: 'Public colour survives offline.'
+          })
+        ],
+        highWaterSequence: 1
+      }
+    })
+
+    expect(html.indexOf('Casey')).toBeLessThan(html.indexOf('Member B (you)'))
+    expect(html.indexOf('Member B (you)')).toBeLessThan(html.indexOf('Host'))
+    expect(html).toContain('channel-member-person is-self is-color-5')
+    expect(html).toContain('channel-member-message is-own is-color-5')
+    expect(html).not.toContain('is-color-7')
+    expect(html).not.toMatch(/seatDisabled|Muted/)
+  })
+
   it('renders connected human posting, catch-up, and disconnect controls', () => {
     const html = render({
       draft: 'A human reply',

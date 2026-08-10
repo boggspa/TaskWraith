@@ -47,6 +47,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         displayName: 'Host',
         status: 'active' as const,
         joinedAt: 900,
+        presentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true },
         identityPublicKey: 'must-not-cross-ipc'
       },
       {
@@ -227,7 +228,11 @@ describe('registerChannelMemberHandlers', () => {
         connected: true,
         channel: { channelId: 'channel-a', memberId: 'member-b' },
         members: [
-          { memberId: 'owner-a', kind: 'human' },
+          {
+            memberId: 'owner-a',
+            kind: 'human',
+            presentation: { seatOrder: 2, colorIndex: 5 }
+          },
           { memberId: 'agent-a', kind: 'agent' }
         ],
         records: [
@@ -240,7 +245,7 @@ describe('registerChannelMemberHandlers', () => {
     })
     for (const result of [list, state]) {
       expect(JSON.stringify(result)).not.toMatch(
-        /must-not-cross-ipc|relayUrls|roomId|hostIdentityPubKeyB64|inviteToken|sessionId|identityPublicKey|tokenHash|agentSeatId|keyGeneration|agentProof|signedDelegation|signedDispatchGrant|consumption|signedPost|runAuthorityHash/
+        /must-not-cross-ipc|relayUrls|roomId|hostIdentityPubKeyB64|inviteToken|sessionId|identityPublicKey|tokenHash|agentSeatId|keyGeneration|agentProof|signedDelegation|signedDispatchGrant|consumption|signedPost|runAuthorityHash|seatDisabled/
       )
     }
   })

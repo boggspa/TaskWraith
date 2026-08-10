@@ -11,6 +11,7 @@ import {
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { ChannelMemberPublicPresentation } from '../../shared/collaboration/ChannelMemberPresentation'
 import { CHANNEL_WIRE_PROTOCOL } from '../../shared/collaboration/ChannelWireProtocol'
 import type { ChannelHandshakeConfirmResult } from '../../shared/collaboration/ChannelWireProtocol'
 import type {
@@ -81,6 +82,7 @@ interface FakeHost {
     displayName: string
     status: 'active'
     joinedAt: number
+    presentation?: ChannelMemberPublicPresentation
   }>
   clients: FakeChannelMemberClient[]
   appendIds: Map<string, ChannelMessage>
@@ -320,6 +322,8 @@ describe('ChannelMemberProductionService', () => {
       status: 'active',
       joinedAt: 1_200
     })
+    host.members[0].presentation = { seatOrder: 2, colorIndex: 5 }
+    host.members[1].presentation = { seatOrder: 1, colorIndex: 0 }
     const changes: unknown[] = []
     const member = service(root, host, (snapshot) => changes.push(snapshot))
 
@@ -340,8 +344,16 @@ describe('ChannelMemberProductionService', () => {
       connected: true,
       channel: { channelId: 'channel-a', title: 'General', status: 'active' },
       members: [
-        { displayName: 'Host', kind: 'human' },
-        { displayName: 'Member B', kind: 'human' },
+        {
+          displayName: 'Host',
+          kind: 'human',
+          presentation: { seatOrder: 2, colorIndex: 5 }
+        },
+        {
+          displayName: 'Member B',
+          kind: 'human',
+          presentation: { seatOrder: 1, colorIndex: 0 }
+        },
         { displayName: 'Build Agent', kind: 'agent' }
       ],
       records: [{ content: 'host history' }],
@@ -354,9 +366,29 @@ describe('ChannelMemberProductionService', () => {
     const persisted = allFileText(join(root, 'channel-memberships'))
     expect(persisted).not.toContain('invite-secret')
     expect(persisted).not.toContain('session-a')
+    expect(persisted).not.toContain('seatDisabled')
     expect(JSON.stringify(member.snapshot())).not.toContain('relay.example')
     expect(JSON.stringify(member.snapshot())).not.toContain(hostIdentityPubKeyB64)
     expect(JSON.stringify(changes)).not.toContain('invite-secret')
+  })
+
+  it('recovery-blocks a member snapshot that tries to expose host-private mute state', async () => {
+    const root = directory()
+    const host = fakeHost()
+    host.members[0].presentation = {
+      colorIndex: 5,
+      seatDisabled: true
+    } as never
+    const member = service(root, host)
+    await member.beginJoin(joinInput({ relayUrls: ['wss://relay.example'] }))
+
+    await expect(member.confirmJoin()).rejects.toMatchObject({ code: 'recovery_blocked' })
+    expect(member.snapshot()).toMatchObject({
+      phase: 'recovery_blocked',
+      connected: false,
+      error: { code: 'recovery_blocked' }
+    })
+    expect(allFileText(join(root, 'channel-memberships'))).not.toContain('seatDisabled')
   })
 
   it('restarts offline, reuses the encrypted identity, pins the host, and resumes only the gap', async () => {

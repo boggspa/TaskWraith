@@ -382,6 +382,38 @@
   font-size: 10px;
 }
 
+/* Fixed public subset of the People/contacts palette. Member data selects a
+   bounded class only; host-private mute never reaches this surface. */
+:is(.channel-member-person, .channel-member-message).is-color-0 {
+  --channel-member-accent: #5a8cff;
+}
+:is(.channel-member-person, .channel-member-message).is-color-1 {
+  --channel-member-accent: #bf7cff;
+}
+:is(.channel-member-person, .channel-member-message).is-color-2 {
+  --channel-member-accent: #ff5fa2;
+}
+:is(.channel-member-person, .channel-member-message).is-color-3 {
+  --channel-member-accent: #ff9b54;
+}
+:is(.channel-member-person, .channel-member-message).is-color-4 {
+  --channel-member-accent: #4cc38a;
+}
+:is(.channel-member-person, .channel-member-message).is-color-5 {
+  --channel-member-accent: #e65b62;
+}
+:is(.channel-member-person, .channel-member-message).is-color-6 {
+  --channel-member-accent: #f2c94c;
+}
+:is(.channel-member-person, .channel-member-message).is-color-7 {
+  --channel-member-accent: #9da6b8;
+}
+
+.channel-member-person[class*=' is-color-'] {
+  box-shadow: inset 0 0 0 1px var(--channel-member-accent);
+  color: var(--channel-member-accent);
+}
+
 .channel-member-people > span.is-self {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--text-primary);
@@ -408,6 +440,15 @@
   align-self: flex-end;
   border-radius: 10px 10px 3px;
   background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.channel-member-message[class*=' is-color-'] {
+  background: color-mix(in srgb, var(--channel-member-accent) 11%, transparent);
+  box-shadow: inset 2px 0 var(--channel-member-accent);
+}
+
+.channel-member-message[class*=' is-color-'] .channel-member-message-meta strong {
+  color: var(--channel-member-accent);
 }
 
 .channel-member-message-meta {

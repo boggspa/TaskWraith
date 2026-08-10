@@ -16,6 +16,7 @@ import {
   type ChannelMemberIpcResult,
   type ChannelMemberIpcSnapshot
 } from '../../shared/collaboration/ChannelMemberIpc'
+import { channelMemberPublicPresentation } from '../../shared/collaboration/ChannelMemberPresentation'
 import { CHANNEL_WIRE_PROTOCOL } from '../../shared/collaboration/ChannelWireProtocol'
 import { redactSecrets } from '../../shared/secretRedaction'
 import {
@@ -290,12 +291,14 @@ function projectChannel(channel: ChannelMemberProductionChannelView): ChannelMem
 }
 
 function projectMember(member: ChannelMemberReplicaMember): ChannelMemberIpcMember {
+  const presentation = channelMemberPublicPresentation(member.presentation)
   return {
     memberId: member.memberId,
     kind: member.kind,
     displayName: member.displayName,
     status: 'active',
-    joinedAt: member.joinedAt
+    joinedAt: member.joinedAt,
+    ...(presentation ? { presentation } : {})
   }
 }
 

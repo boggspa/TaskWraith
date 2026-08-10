@@ -1,5 +1,9 @@
 import { useEffect, useId, useMemo, useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import type { ChannelMemberIpcApi } from '../../../shared/collaboration/ChannelMemberIpc'
+import type {
+  ChannelMemberIpcApi,
+  ChannelMemberIpcMember
+} from '../../../shared/collaboration/ChannelMemberIpc'
+import { isChannelMemberPresentation } from '../../../shared/collaboration/ChannelMemberPresentation'
 import {
   ChannelMemberPanelController,
   createChannelMemberPanelInitialState,
@@ -84,6 +88,29 @@ function actionLabel(
   return state.busy === action ? 'Working…' : idle
 }
 
+function memberPresentation(member: ChannelMemberIpcMember) {
+  return isChannelMemberPresentation(member.presentation, { allowSeatDisabled: false })
+    ? member.presentation
+    : undefined
+}
+
+function memberAccentClass(member: ChannelMemberIpcMember | undefined): string {
+  const colorIndex = member ? memberPresentation(member)?.colorIndex : undefined
+  return colorIndex === undefined ? '' : ` is-color-${colorIndex}`
+}
+
+function orderedMembers(members: readonly ChannelMemberIpcMember[]): ChannelMemberIpcMember[] {
+  return [...members].sort((left, right) => {
+    const leftOrder = memberPresentation(left)?.seatOrder ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = memberPresentation(right)?.seatOrder ?? Number.MAX_SAFE_INTEGER
+    return (
+      leftOrder - rightOrder ||
+      left.joinedAt - right.joinedAt ||
+      (left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0)
+    )
+  })
+}
+
 export function ChannelMemberPanelView({
   panelId,
   open,
@@ -114,6 +141,7 @@ export function ChannelMemberPanelView({
   const postable = Boolean(
     channel && channel.status === 'active' && state.phase === 'connected' && state.connected
   )
+  const members = useMemo(() => orderedMembers(state.members), [state.members])
   const memberById = new Map(state.members.map((member) => [member.memberId, member]))
 
   const submitDraft = (): void => {
@@ -409,13 +437,13 @@ export function ChannelMemberPanelView({
                   <section className="channel-member-section" aria-labelledby={`${panelId}-people`}>
                     <div className="channel-member-section-heading">
                       <h4 id={`${panelId}-people`}>Participants</h4>
-                      <span>{state.members.length}</span>
+                      <span>{members.length}</span>
                     </div>
                     <div className="channel-member-people">
-                      {state.members.map((person) => (
+                      {members.map((person) => (
                         <span
                           key={person.memberId}
-                          className={person.memberId === channel.memberId ? 'is-self' : ''}
+                          className={`channel-member-person${person.memberId === channel.memberId ? ' is-self' : ''}${memberAccentClass(person)}`}
                         >
                           {person.displayName}
                           {person.memberId === channel.memberId ? ' (you)' : ''}
@@ -442,7 +470,7 @@ export function ChannelMemberPanelView({
                         return (
                           <article
                             key={record.messageId}
-                            className={`channel-member-message${own ? ' is-own' : ''}${record.kind === 'agent.text' ? ' is-agent' : ''}`}
+                            className={`channel-member-message${own ? ' is-own' : ''}${record.kind === 'agent.text' ? ' is-agent' : ''}${memberAccentClass(author)}`}
                           >
                             <div className="channel-member-message-meta">
                               <strong>

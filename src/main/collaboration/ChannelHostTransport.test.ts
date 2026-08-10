@@ -28,6 +28,7 @@ import { ChannelMemberClient } from './ChannelMemberClient'
 import { ChannelMessageLog } from './ChannelMessageLog'
 import { ChannelRuntime } from './ChannelRuntime'
 import { ChannelError, ChannelStore } from './ChannelStore'
+import { channelStoreSubsetDigest } from './ChannelStoreSubsetDigest'
 
 interface RelayEndpoint {
   role: 'mac' | 'iphone'
@@ -293,6 +294,42 @@ describe('encrypted Channel runtime over blind member rooms', () => {
       fixture.store.listMembers(fixture.channelId).filter((member) => member.status !== 'revoked')
     ).toHaveLength(1)
     client.dispose()
+  })
+
+  it('projects seat order and palette through encryption without exposing host mute', async () => {
+    const fixture = await createFixture()
+    const channel = fixture.store.getChannel(fixture.channelId)!
+    const members = fixture.store.listMembers(fixture.channelId)
+    const invites = fixture.store.listInvites(fixture.channelId)
+    fixture.store.applyMigrationBatch([
+      {
+        mode: 'merge',
+        beforeDigest: channelStoreSubsetDigest(channel, members, invites),
+        channel,
+        members: members.map((member) =>
+          member.memberId === fixture.ownerMemberId
+            ? {
+                ...member,
+                presentation: { seatOrder: 3, colorIndex: 5, seatDisabled: true }
+              }
+            : member
+        ),
+        invites
+      }
+    ])
+
+    const joined = await addMember(fixture, 'Member B')
+    expect(joined.snapshots.at(-1)).toMatchObject({
+      channelId: fixture.channelId,
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          memberId: fixture.ownerMemberId,
+          presentation: { seatOrder: 3, colorIndex: 5 }
+        })
+      ])
+    })
+    expect(JSON.stringify(joined.snapshots)).not.toContain('seatDisabled')
+    expect(joined.errors).toEqual([])
   })
 
   it('admits two pinned humans, sequences simultaneous appends, and never relays app plaintext', async () => {

@@ -320,6 +320,146 @@ describe('ChannelMemberReplicaStore', () => {
     })
   })
 
+  it('loads schema-v2 agent replicas but rejects presentation smuggled into a legacy schema', () => {
+    const root = directory()
+    const store = new ChannelMemberReplicaStore(root)
+    activate(store)
+    store.updateMembers({
+      channelId: 'channel-a',
+      membershipRevision: 2,
+      members: [
+        {
+          memberId: 'agent-a',
+          kind: 'agent',
+          displayName: 'Build Agent',
+          status: 'active',
+          joinedAt: 900
+        }
+      ]
+    })
+    const paths = store.dataPaths()
+    const metadata = JSON.parse(readFileSync(paths.memberships, 'utf8')) as {
+      schemaVersion: number
+      activeChannelId: string | null
+      sessions: Array<{ members: Array<Record<string, unknown>> }>
+      checksum: string
+    }
+    metadata.schemaVersion = 2
+    metadata.checksum = createHash('sha256')
+      .update(
+        JSON.stringify({
+          schemaVersion: metadata.schemaVersion,
+          activeChannelId: metadata.activeChannelId,
+          sessions: metadata.sessions
+        }),
+        'utf8'
+      )
+      .digest('hex')
+    writeFileSync(paths.memberships, JSON.stringify(metadata), 'utf8')
+
+    const restarted = new ChannelMemberReplicaStore(root)
+    expect(restarted.readActive()).toMatchObject({
+      session: { members: [{ memberId: 'agent-a', kind: 'agent' }] }
+    })
+    restarted.markRevoked('channel-a', 2_000)
+    expect(JSON.parse(readFileSync(paths.memberships, 'utf8')).schemaVersion).toBe(
+      CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+    )
+
+    const smuggledRoot = directory()
+    const smuggled = new ChannelMemberReplicaStore(smuggledRoot)
+    activate(smuggled)
+    const smuggledPaths = smuggled.dataPaths()
+    const smuggledMetadata = JSON.parse(readFileSync(smuggledPaths.memberships, 'utf8')) as {
+      schemaVersion: number
+      activeChannelId: string | null
+      sessions: Array<{ members: Array<Record<string, unknown>> }>
+      checksum: string
+    }
+    smuggledMetadata.sessions[0].members = [
+      {
+        memberId: 'member-a',
+        kind: 'human',
+        displayName: 'Host',
+        status: 'active',
+        joinedAt: 900,
+        presentation: { colorIndex: 2 }
+      }
+    ]
+    smuggledMetadata.schemaVersion = 2
+    smuggledMetadata.checksum = createHash('sha256')
+      .update(
+        JSON.stringify({
+          schemaVersion: smuggledMetadata.schemaVersion,
+          activeChannelId: smuggledMetadata.activeChannelId,
+          sessions: smuggledMetadata.sessions
+        }),
+        'utf8'
+      )
+      .digest('hex')
+    writeFileSync(smuggledPaths.memberships, JSON.stringify(smuggledMetadata), 'utf8')
+    expect(() => new ChannelMemberReplicaStore(smuggledRoot).readActive()).toThrow(
+      ChannelMemberReplicaError
+    )
+  })
+
+  it('persists bounded public presentation and rejects host-private or malformed fields', () => {
+    const root = directory()
+    const store = new ChannelMemberReplicaStore(root)
+    activate(store)
+    store.updateMembers({
+      channelId: 'channel-a',
+      membershipRevision: 2,
+      members: [
+        {
+          memberId: 'member-a',
+          kind: 'human',
+          displayName: 'Host',
+          status: 'active',
+          joinedAt: 900,
+          presentation: { seatOrder: 4_096, colorIndex: 7 }
+        }
+      ]
+    })
+    expect(new ChannelMemberReplicaStore(root).readActive()).toMatchObject({
+      session: {
+        members: [
+          {
+            memberId: 'member-a',
+            presentation: { seatOrder: 4_096, colorIndex: 7 }
+          }
+        ]
+      }
+    })
+
+    const paths = store.dataPaths()
+    const metadata = JSON.parse(readFileSync(paths.memberships, 'utf8')) as {
+      schemaVersion: number
+      activeChannelId: string | null
+      sessions: Array<{ members: Array<Record<string, unknown>> }>
+      checksum: string
+    }
+    metadata.sessions[0].members[0].presentation = {
+      seatOrder: 1,
+      colorIndex: 2,
+      seatDisabled: true
+    }
+    metadata.checksum = createHash('sha256')
+      .update(
+        JSON.stringify({
+          schemaVersion: metadata.schemaVersion,
+          activeChannelId: metadata.activeChannelId,
+          sessions: metadata.sessions
+        }),
+        'utf8'
+      )
+      .digest('hex')
+    writeFileSync(paths.memberships, JSON.stringify(metadata), 'utf8')
+    expect(() => new ChannelMemberReplicaStore(root).readActive()).toThrow(
+      ChannelMemberReplicaError
+    )
+  })
+
   it('pins a Channel id to the first verified host identity', () => {
     const store = new ChannelMemberReplicaStore(directory())
     activate(store)

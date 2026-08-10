@@ -16,6 +16,11 @@ import {
 import { createHash, randomUUID } from 'crypto'
 import { basename, dirname, join, resolve as resolvePath } from 'path'
 import { verifyChannelAgentMessageProof } from '../../shared/collaboration/ChannelAgentMessageProof'
+import {
+  channelMemberPublicPresentation,
+  isChannelMemberPresentation,
+  type ChannelMemberPublicPresentation
+} from '../../shared/collaboration/ChannelMemberPresentation'
 import type { ChannelMessage } from './ChannelMessageLog'
 import {
   MAX_CHANNEL_LOG_BYTES,
@@ -23,7 +28,8 @@ import {
   MAX_CLIENT_MESSAGE_ID_LENGTH
 } from './ChannelMessageLog'
 
-export const CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION = 2
+export const CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION = 3
+const PREVIOUS_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION = 2
 const LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION = 1
 export const MAX_CHANNEL_MEMBER_REPLICAS = 64
 export const MAX_CHANNEL_MEMBER_RELAY_URLS = 8
@@ -40,6 +46,7 @@ interface ChannelMemberReplicaMemberBase {
   displayName: string
   status: 'active'
   joinedAt: number
+  presentation?: ChannelMemberPublicPresentation
 }
 
 export type ChannelMemberReplicaMember = ChannelMemberReplicaMemberBase & {
@@ -80,6 +87,7 @@ export class ChannelMemberReplicaError extends Error {
 interface PersistedMembershipIndexPayload {
   schemaVersion:
     | typeof LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+    | typeof PREVIOUS_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
     | typeof CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
   activeChannelId: string | null
   sessions: ChannelMemberReplicaSession[]
@@ -92,6 +100,7 @@ interface PersistedMembershipIndex extends PersistedMembershipIndexPayload {
 interface PersistedReplicaRecordPayload {
   schemaVersion:
     | typeof LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+    | typeof PREVIOUS_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
     | typeof CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
   record: ChannelMessage
 }
@@ -172,28 +181,49 @@ function validateRawPublicKey(value: unknown): string {
   return encoded
 }
 
-function validateMember(value: unknown, allowAgent = true): ChannelMemberReplicaMember {
+function validateMember(
+  value: unknown,
+  options: { allowAgent: boolean; allowPresentation: boolean } = {
+    allowAgent: true,
+    allowPresentation: true
+  }
+): ChannelMemberReplicaMember {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw recoveryBlocked('Channel member replica is invalid')
   }
   const raw = value as Record<string, unknown>
   if (
     (raw.kind !== 'human' && raw.kind !== 'agent') ||
-    (!allowAgent && raw.kind !== 'human') ||
+    (!options.allowAgent && raw.kind !== 'human') ||
     raw.status !== 'active'
   ) {
     throw recoveryBlocked('Channel member replica is invalid')
   }
+  if (
+    raw.presentation !== undefined &&
+    (!options.allowPresentation ||
+      !isChannelMemberPresentation(raw.presentation, { allowSeatDisabled: false }))
+  ) {
+    throw recoveryBlocked('Channel member presentation is invalid')
+  }
+  const presentation = channelMemberPublicPresentation(raw.presentation)
   return {
     memberId: pathIdentifier(raw.memberId, 'Channel member id'),
     kind: raw.kind,
     displayName: boundedText(raw.displayName, 'Channel member display name', 120),
     status: 'active',
-    joinedAt: timestamp(raw.joinedAt, 'Channel member join time')
+    joinedAt: timestamp(raw.joinedAt, 'Channel member join time'),
+    ...(presentation ? { presentation } : {})
   }
 }
 
-function validateSession(value: unknown, allowAgent = true): ChannelMemberReplicaSession {
+function validateSession(
+  value: unknown,
+  options: { allowAgent: boolean; allowPresentation: boolean } = {
+    allowAgent: true,
+    allowPresentation: true
+  }
+): ChannelMemberReplicaSession {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw recoveryBlocked('Channel membership replica is invalid')
   }
@@ -214,7 +244,7 @@ function validateSession(value: unknown, allowAgent = true): ChannelMemberReplic
   if (relayUrls.length < 1 || relayUrls.length > MAX_CHANNEL_MEMBER_RELAY_URLS) {
     throw recoveryBlocked('Channel membership relay list is invalid')
   }
-  const members = raw.members.map((member) => validateMember(member, allowAgent))
+  const members = raw.members.map((member) => validateMember(member, options))
   if (new Set(members.map((member) => member.memberId)).size !== members.length) {
     throw recoveryBlocked('Channel membership contains duplicate members')
   }
@@ -660,6 +690,7 @@ export class ChannelMemberReplicaStore {
       }
       if (
         (parsed.schemaVersion !== LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION &&
+          parsed.schemaVersion !== PREVIOUS_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION &&
           parsed.schemaVersion !== CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION) ||
         typeof parsed.checksum !== 'string' ||
         checksum(payload) !== parsed.checksum ||
@@ -669,7 +700,10 @@ export class ChannelMemberReplicaStore {
         throw new Error('membership index checksum or schema is invalid')
       }
       const sessions = parsed.sessions.map((session) =>
-        validateSession(session, parsed.schemaVersion === CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION)
+        validateSession(session, {
+          allowAgent: parsed.schemaVersion !== LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION,
+          allowPresentation: parsed.schemaVersion === CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION
+        })
       )
       if (new Set(sessions.map((session) => session.channelId)).size !== sessions.length) {
         throw new Error('membership index contains duplicate Channels')
@@ -740,6 +774,7 @@ export class ChannelMemberReplicaStore {
         }
         if (
           (parsed.schemaVersion !== LEGACY_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION &&
+            parsed.schemaVersion !== PREVIOUS_CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION &&
             parsed.schemaVersion !== CHANNEL_MEMBER_REPLICA_SCHEMA_VERSION) ||
           typeof parsed.checksum !== 'string' ||
           checksum(payload) !== parsed.checksum

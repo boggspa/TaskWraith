@@ -1,4 +1,5 @@
 import { CHANNEL_WIRE_PROTOCOL, type ChannelHumanReviewReceipt } from './ChannelWireProtocol'
+import type { ChannelMemberPublicPresentation } from './ChannelMemberPresentation'
 
 export const CHANNEL_MEMBER_INVITE_PAYLOAD_TYPE = 'taskwraith-channel-invite'
 export const CHANNEL_MEMBER_INVITE_PAYLOAD_VERSION = 1
@@ -73,6 +74,7 @@ export interface ChannelMemberIpcMember {
   displayName: string
   status: 'active'
   joinedAt: number
+  presentation?: ChannelMemberPublicPresentation
 }
 
 export interface ChannelMemberIpcMessage {

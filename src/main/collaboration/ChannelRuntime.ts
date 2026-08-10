@@ -11,6 +11,7 @@ import {
   type KeyPair
 } from '../../shared/e2ee/keys'
 import { openChannelFrame, sealChannelMessage } from '../../shared/collaboration/ChannelCipher'
+import { channelMemberPublicPresentation } from '../../shared/collaboration/ChannelMemberPresentation'
 import {
   channelConfirmCode,
   computeChannelTranscriptHash,
@@ -1142,13 +1143,17 @@ export class ChannelRuntime {
       .listMembers(session.channelId)
       .filter((member) => member.status === 'active')
       .slice(-MAX_SNAPSHOT_MEMBERS)
-      .map((member) => ({
-        memberId: member.memberId,
-        kind: member.kind,
-        displayName: member.displayName,
-        status: member.status,
-        joinedAt: member.joinedAt
-      }))
+      .map((member) => {
+        const presentation = channelMemberPublicPresentation(member.presentation)
+        return {
+          memberId: member.memberId,
+          kind: member.kind,
+          displayName: member.displayName,
+          status: member.status,
+          joinedAt: member.joinedAt,
+          ...(presentation ? { presentation } : {})
+        }
+      })
     return this.sendEvent(session, 'channel.members.snapshot', {
       channelId: session.channelId,
       membershipRevision: channel.membershipRevision,
