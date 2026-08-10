@@ -487,7 +487,7 @@ const LADDER_TRACK_INSET = 11
 
 // Reasoning efforts that carry the provider-hued shimmer sweep + sparkles on
 // the compact trigger chip. The ladder itself uses a separate Low→Ultra taper.
-const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode'])
+const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode', 'ultra'])
 // Extra (xhigh) wears the same treatment at a fraction of the intensity — a
 // gentler sweep (CSS, keyed off data-selected-reasoning) plus a smaller,
 // dimmer sparkle field. Tiers below it are hue-only (pure CSS, no overlay).
@@ -583,6 +583,11 @@ function normalizeLadderEffort(effort: string): string {
   const value = effort.trim().toLowerCase()
   if (value === 'extra') return 'xhigh'
   if (value === 'light') return 'low'
+  // Muse Meta /effort (and synonyms): minimal is the floor stop (shared Off),
+  // ultra is the ceiling stop (shared Ultracode). Keep the option's wire
+  // value (`minimal` / `ultra`) in valueByIndex — this only picks the index.
+  if (value === 'minimal') return 'off'
+  if (value === 'ultra') return 'ultracode'
   return value
 }
 

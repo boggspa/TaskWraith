@@ -141,12 +141,14 @@ const MUSE_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' }
 ]
 
-// Muse Spark effort ladder (HANDOFF #4): minimal→ultra, never `none`.
+// Muse Spark effort ladder (HANDOFF #4 / Meta `/effort`): minimal→ultra,
+// including xhigh. Never `none` — meta rejects it (maps to minimal at argv).
 const MUSE_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'minimal', label: 'Minimal' },
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra High' },
   { value: 'ultra', label: 'Ultra' }
 ]
 
@@ -643,7 +645,9 @@ function normalizeReasoningEffortToken(value?: string | null): string {
     .toLowerCase()
   if (normalized === 'light') return 'low'
   if (normalized === 'extra') return 'xhigh'
-  if (normalized === 'ultra') return 'ultracode'
+  // Keep Muse wire `ultra` (and Codex `ultracode`) distinct as tokens — they
+  // share EFFORT_LADDER_RANK 6 for seat-change snaps. Rewriting ultra→
+  // ultracode here made Muse persist a token its CLI does not accept.
   return normalized
 }
 
@@ -706,6 +710,20 @@ function enabledReasoningEffortsForModel(
   return [...new Set(values.filter(Boolean))]
 }
 
+function resolveEnabledEffortToken(
+  token: string | undefined,
+  enabled: readonly string[]
+): string | undefined {
+  if (!token) return undefined
+  if (enabled.includes(token)) return token
+  // Codex/Claude wire ceiling is `ultracode`; Muse Meta uses `ultra`. Live
+  // model/list defaults may still say `ultra` while the enabled catalog lists
+  // only `ultracode` (or the reverse after a Muse seat change).
+  if (token === 'ultra' && enabled.includes('ultracode')) return 'ultracode'
+  if (token === 'ultracode' && enabled.includes('ultra')) return 'ultra'
+  return undefined
+}
+
 function defaultReasoningEffortForModel(
   provider: ProviderId,
   model: string,
@@ -716,13 +734,17 @@ function defaultReasoningEffortForModel(
   const enabled = enabledReasoningEffortsForModel(provider, model, metadata)
   if (enabled.length === 0) return undefined
 
-  const modelDefault = normalizeReasoningEffortToken(metadata?.defaultReasoningEffort)
-  if (modelDefault && enabled.includes(modelDefault)) return modelDefault
-
-  const providerDefault = normalizeReasoningEffortToken(
-    getDefaultEnsembleParticipantConfig(provider).reasoningEffort
+  const modelDefault = resolveEnabledEffortToken(
+    normalizeReasoningEffortToken(metadata?.defaultReasoningEffort),
+    enabled
   )
-  if (providerDefault && enabled.includes(providerDefault)) return providerDefault
+  if (modelDefault) return modelDefault
+
+  const providerDefault = resolveEnabledEffortToken(
+    normalizeReasoningEffortToken(getDefaultEnsembleParticipantConfig(provider).reasoningEffort),
+    enabled
+  )
+  if (providerDefault) return providerDefault
   if (enabled.includes('medium')) return 'medium'
   return enabled[0]
 }
@@ -734,12 +756,16 @@ function defaultReasoningEffortForModel(
  */
 const EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
   off: 0,
+  // Muse Meta floor stop (shared Off index); never emit `none` on argv.
+  minimal: 0,
   low: 1,
   medium: 2,
   high: 3,
   xhigh: 4,
   max: 5,
   ultracode: 6,
+  // Muse Meta ceiling stop (shared Ultracode index).
+  ultra: 6,
   // Kimi binary thinking rides Light when mapping onto the shared ladder.
   on: 1
 }
@@ -769,9 +795,8 @@ export function resolveReasoningEffortForSeatChange(options: {
   if (enabled.length === 0) return undefined
 
   const normalizedPrevious = normalizeReasoningEffortToken(previousEffort)
-  if (normalizedPrevious && enabled.includes(normalizedPrevious)) {
-    return normalizedPrevious
-  }
+  const exactPrevious = resolveEnabledEffortToken(normalizedPrevious, enabled)
+  if (exactPrevious) return exactPrevious
 
   const previousRank = effortLadderRank(normalizedPrevious)
   if (previousRank != null) {

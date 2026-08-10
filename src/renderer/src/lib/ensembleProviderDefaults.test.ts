@@ -330,6 +330,48 @@ describe('resolveReasoningEffortForSeatChange', () => {
       })
     ).toBe('ultracode')
   })
+
+  it('preserves Muse wire ultra/minimal and rank-snaps Codex ultra→ultracode', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'ultra'
+      })
+    ).toBe('ultra')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'minimal'
+      })
+    ).toBe('minimal')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'xhigh'
+      })
+    ).toBe('xhigh')
+    // Codex does not list wire `ultra`; shared rank 6 snaps to ultracode.
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        previousEffort: 'ultra'
+      })
+    ).toBe('ultracode')
+    // Live model/list may still advertise defaultReasoningEffort: "ultra"
+    // while the enabled catalog lists only ultracode.
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        previousEffort: undefined,
+        modelMetadata: { defaultReasoningEffort: 'ultra' }
+      })
+    ).toBe('ultracode')
+  })
 })
 
 describe('resolveEnsembleParticipantSettings', () => {
@@ -736,6 +778,19 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'llama3.2:3b'
     ])
     expect(ollama.reasoningOptions).toEqual([])
+  })
+})
+
+describe('muse reasoning options', () => {
+  it('includes xhigh between high and ultra (Meta /effort ladder)', () => {
+    expect(getEnsembleReasoningOptions('muse').map((option) => option.value)).toEqual([
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'ultra'
+    ])
   })
 })
 

@@ -40,9 +40,43 @@ describe('reasoning ladder mapping', () => {
   it('returns null for values off the ladder', () => {
     expect(ladderIndexForOption('codex', 'turbo')).toBeNull()
   })
+
+  it('maps Muse Meta /effort onto the shared ladder (minimal→xhigh→ultra)', () => {
+    // Muse's CLI ladder is minimal|low|medium|high|xhigh|ultra. Minimal parks
+    // at Off (0); ultra parks at the Ultracode stop (6) with value "ultra"
+    // (not Codex's "ultracode"); xhigh must not be dropped.
+    expect(ladderIndexForOption('muse', 'minimal')).toBe(0)
+    expect(ladderIndexForOption('muse', 'low')).toBe(1)
+    expect(ladderIndexForOption('muse', 'medium')).toBe(2)
+    expect(ladderIndexForOption('muse', 'high')).toBe(3)
+    expect(ladderIndexForOption('muse', 'xhigh')).toBe(4)
+    expect(ladderIndexForOption('muse', 'ultra')).toBe(6)
+  })
 })
 
 describe('buildLadderModel', () => {
+  it('enables Muse minimal/low/medium/high/xhigh/ultra on stops [0,1,2,3,4,6]', () => {
+    const ladder = buildLadderModel('muse', [
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'xhigh', label: 'Extra High' },
+      { value: 'ultra', label: 'Ultra' }
+    ])
+    expect(ladder.enabledIndices).toEqual([0, 1, 2, 3, 4, 6])
+    expect(ladder.valueByIndex).toEqual({
+      0: 'minimal',
+      1: 'low',
+      2: 'medium',
+      3: 'high',
+      4: 'xhigh',
+      6: 'ultra'
+    })
+    expect(ladder.valueByIndex[6]).toBe('ultra')
+    expect(ladder.valueByIndex[6]).not.toBe('ultracode')
+  })
+
   it('builds an ascending enabled set + provider label map for Sol (ultracode = "Ultra")', () => {
     const ladder = buildLadderModel('codex', [
       { value: 'low', label: 'Light' },
@@ -400,6 +434,7 @@ describe('chipReasoningSparkleTier', () => {
   it('keeps the full sparkle field for Max and Ultra/Ultracode', () => {
     expect(chipReasoningSparkleTier('max')).toBe('full')
     expect(chipReasoningSparkleTier('ultracode')).toBe('full')
+    expect(chipReasoningSparkleTier('ultra')).toBe('full')
     expect(chipReasoningSparkleTier(' Max ')).toBe('full')
   })
 
