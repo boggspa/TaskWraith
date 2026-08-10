@@ -309,6 +309,30 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     expect(built.store.listInvites(built.channel.channelId)).toHaveLength(2)
   })
 
+  it('recovers escrowed credentials read-only after Channel metadata advances', () => {
+    const built = fixture()
+    const first = service(built).apply({ base: built.base, history: built.history })
+    built.store.createInvite({ channelId: built.channel.channelId, now: 2_500 })
+
+    const recovered = service(built, {
+      now: () => {
+        throw new Error('read-only recovery must not consult time')
+      },
+      randomId: () => {
+        throw new Error('read-only recovery must not mint ids')
+      },
+      randomToken: () => {
+        throw new Error('read-only recovery must not mint tokens')
+      }
+    }).recoverEscrow({ base: built.base, history: built.history })
+
+    expect(recovered).toEqual({
+      invitations: first.invitations,
+      escrowDigest: first.escrowDigest
+    })
+    expect(built.store.listInvites(built.channel.channelId)).toHaveLength(3)
+  })
+
   it('enriches a fresh create and commits every unrelated metadata target atomically', () => {
     const built = fixture({ mode: 'create', extraChannel: true })
     expect(built.store.listChannels()).toEqual([])
@@ -460,6 +484,12 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
       invitations: [],
       escrowDigest: null
     })
+    expect(
+      service(built, { safeStorage: safeStorage(false) }).recoverEscrow({
+        base: built.base,
+        history: built.history
+      })
+    ).toEqual({ invitations: [], escrowDigest: null })
     expect(existsSync(built.escrowPath)).toBe(false)
   })
 })

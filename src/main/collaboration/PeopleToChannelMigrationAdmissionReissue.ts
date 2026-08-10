@@ -63,6 +63,11 @@ export interface PeopleToChannelAdmissionReissueResult {
   escrowDigest: string | null
 }
 
+export interface PeopleToChannelAdmissionEscrowResult {
+  invitations: PeopleToChannelReissuedAdmission[]
+  escrowDigest: string | null
+}
+
 export interface PeopleToChannelAdmissionReissueOptions {
   storagePath: string
   safeStorage: HumanCollaborationSafeStorage
@@ -370,6 +375,30 @@ function manifestDigest(args: {
       tasks: args.tasks
     })
   )
+}
+
+function admissionContext(args: {
+  base: PeopleToChannelMigrationMaterialization
+  history: PeopleToChannelMigrationHistoryMaterialization
+}): { tasks: ReissueTask[]; expectedManifestDigest: string } {
+  validateInputs(args)
+  const tasks = reissueTasks(args.base.pendingAdmissionReissues)
+  if (
+    !Array.isArray(args.base.requirements) ||
+    args.base.requirements.filter((requirement) => requirement === 'pending_admission_reissue')
+      .length !== (tasks.length > 0 ? 1 : 0)
+  ) {
+    blocked('People migration admission requirement does not match its manifest')
+  }
+  return { tasks, expectedManifestDigest: manifestDigest({ ...args, tasks }) }
+}
+
+function encryptionAvailable(safeStorage: HumanCollaborationSafeStorage): boolean {
+  try {
+    return safeStorage?.isEncryptionAvailable() === true
+  } catch {
+    return false
+  }
 }
 
 function readEscrow(path: string): Buffer | null {
@@ -775,35 +804,55 @@ export class PeopleToChannelMigrationAdmissionReissue {
     this.randomId = options.randomId ?? randomUUID
   }
 
+  recoverEscrow(args: {
+    base: PeopleToChannelMigrationMaterialization
+    history: PeopleToChannelMigrationHistoryMaterialization
+  }): PeopleToChannelAdmissionEscrowResult {
+    const { tasks, expectedManifestDigest } = admissionContext(args)
+    const escrowBytes = readEscrow(this.options.storagePath)
+    if (tasks.length === 0) {
+      if (escrowBytes) blocked('People migration admission escrow exists without a manifest')
+      return { invitations: [], escrowDigest: null }
+    }
+    if (
+      !this.options.storagePath ||
+      !this.options.storagePath.trim() ||
+      !encryptionAvailable(this.options.safeStorage)
+    ) {
+      blocked('People migration admission escrow encryption is unavailable')
+    }
+    if (!escrowBytes) blocked('People migration admission escrow is missing')
+    const payload = decryptEscrow({
+      bytes: escrowBytes,
+      safeStorage: this.options.safeStorage,
+      planId: args.base.planId,
+      expectedManifestDigest,
+      tasks
+    })
+    return {
+      invitations: payload.invitations.map(clone),
+      escrowDigest: sha256(escrowBytes)
+    }
+  }
+
   apply(args: {
     base: PeopleToChannelMigrationMaterialization
     history: PeopleToChannelMigrationHistoryMaterialization
   }): PeopleToChannelAdmissionReissueResult {
-    validateInputs(args)
-    const tasks = reissueTasks(args.base.pendingAdmissionReissues)
-    if (
-      !Array.isArray(args.base.requirements) ||
-      args.base.requirements.filter((requirement) => requirement === 'pending_admission_reissue')
-        .length !== (tasks.length > 0 ? 1 : 0)
-    ) {
-      blocked('People migration admission requirement does not match its manifest')
-    }
+    const { tasks, expectedManifestDigest } = admissionContext(args)
     if (tasks.length === 0) {
       if (readEscrow(this.options.storagePath)) {
         blocked('People migration admission escrow exists without a manifest')
       }
       return { metadataApplied: false, channelIds: [], invitations: [], escrowDigest: null }
     }
-    let encryptionAvailable = false
-    try {
-      encryptionAvailable = this.options.safeStorage?.isEncryptionAvailable() === true
-    } catch {
-      // Availability probes can fail with a locked or unavailable keychain.
-    }
-    if (!this.options.storagePath || !this.options.storagePath.trim() || !encryptionAvailable) {
+    if (
+      !this.options.storagePath ||
+      !this.options.storagePath.trim() ||
+      !encryptionAvailable(this.options.safeStorage)
+    ) {
       blocked('People migration admission escrow encryption is unavailable')
     }
-    const expectedManifestDigest = manifestDigest({ ...args, tasks })
     let escrowBytes = readEscrow(this.options.storagePath)
     let payload: ReissuePayload
     if (escrowBytes) {
