@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   EphemeralFleetWorktreeAllocator,
   allocateEphemeralFleetWriterWorktree,
+  buildEphemeralFleetRuntimeWorktreeIntent,
   ephemeralFleetWorktreeIdentity,
-  type EphemeralFleetWorktreeGitService
+  promoteEphemeralFleetWriterWorktree,
+  removeEphemeralFleetWriterWorktree,
+  settleEphemeralFleetWriterWorktreeOnReturn,
+  type EphemeralFleetWorktreeGitService,
+  type EphemeralFleetWorktreeLifecycleGitService
 } from './SubThreadEphemeralFleetWorktree'
 
 function git(
@@ -179,5 +184,160 @@ describe('allocateEphemeralFleetWriterWorktree', () => {
     })
     expect(allocation?.branch).toMatch(/^taskwraith\/fleet-solo-/)
     expect(allocation?.effectiveWorkspacePath).toMatch(/^\/worktrees\/fleet-solo-/)
+  })
+})
+
+describe('buildEphemeralFleetRuntimeWorktreeIntent', () => {
+  it('stamps source ephemeralFleet when isolation is worktree with distinct paths', () => {
+    expect(
+      buildEphemeralFleetRuntimeWorktreeIntent({
+        isolation: 'worktree',
+        baseWorkspacePath: '/repo/',
+        effectiveWorkspacePath: '/worktrees/fleet-worker/'
+      })
+    ).toEqual({
+      requested: true,
+      source: 'ephemeralFleet',
+      status: 'selected',
+      baseWorkspacePath: '/repo',
+      effectiveWorkspacePath: '/worktrees/fleet-worker'
+    })
+  })
+
+  it('returns undefined when isolation is not worktree or paths are blank/same', () => {
+    expect(
+      buildEphemeralFleetRuntimeWorktreeIntent({
+        isolation: 'capped_inherit',
+        baseWorkspacePath: '/repo',
+        effectiveWorkspacePath: '/worktrees/fleet-worker'
+      })
+    ).toBeUndefined()
+    expect(
+      buildEphemeralFleetRuntimeWorktreeIntent({
+        isolation: 'worktree',
+        baseWorkspacePath: '/repo',
+        effectiveWorkspacePath: '/repo'
+      })
+    ).toBeUndefined()
+    expect(
+      buildEphemeralFleetRuntimeWorktreeIntent({
+        isolation: 'worktree',
+        baseWorkspacePath: '  ',
+        effectiveWorkspacePath: '/worktrees/fleet-worker'
+      })
+    ).toBeUndefined()
+    expect(
+      buildEphemeralFleetRuntimeWorktreeIntent({
+        isolation: 'worktree',
+        baseWorkspacePath: '/repo'
+      })
+    ).toBeUndefined()
+  })
+})
+
+describe('ephemeral fleet worktree settle lifecycle', () => {
+  function lifecycleGit(overrides: Partial<EphemeralFleetWorktreeLifecycleGitService> = {}) {
+    const allocationPath = '/worktrees/fleet-fixer-aaaaaaaaaa'
+    const branch = ephemeralFleetWorktreeIdentity('parent-a', 'worker-1', 'fixer').branch
+    const base: EphemeralFleetWorktreeLifecycleGitService = {
+      listWorktrees: vi.fn(async () => ({
+        ok: true as const,
+        data: { worktrees: [{ path: allocationPath, branch }] }
+      })),
+      createWorktree: vi.fn(async () => ({
+        ok: true as const,
+        data: { requestedPath: allocationPath, branch }
+      })),
+      captureWorktreePatch: vi.fn(async () => ({
+        ok: true as const,
+        data: { patch: 'diff --git a/x b/x\n', clean: false }
+      })),
+      inspectPatchApplication: vi.fn(async () => ({
+        ok: true as const,
+        data: { state: 'applicable' as const }
+      })),
+      applyPatchToRepository: vi.fn(async () => ({ ok: true as const })),
+      removeWorktree: vi.fn(async () => ({ ok: true as const })),
+      deleteBranch: vi.fn(async () => ({ ok: true as const })),
+      ...overrides
+    }
+    return { git: base, allocationPath, branch }
+  }
+
+  it('promotes dirty worktree onto parent then removes fleet worktree+branch', async () => {
+    const { git } = lifecycleGit()
+    const result = await promoteEphemeralFleetWriterWorktree({
+      parentChatId: 'parent-a',
+      workerChatId: 'worker-1',
+      label: 'fixer',
+      baseWorkspacePath: '/repo',
+      git
+    })
+    expect(result).toEqual({ ok: true, applied: true, removed: true })
+    expect(git.applyPatchToRepository).toHaveBeenCalled()
+    expect(git.removeWorktree).toHaveBeenCalled()
+    expect(git.deleteBranch).toHaveBeenCalled()
+  })
+
+  it('keeps the worktree when apply fails', async () => {
+    const { git } = lifecycleGit({
+      applyPatchToRepository: vi.fn(async () => ({ ok: false as const, error: 'drift' }))
+    })
+    const result = await promoteEphemeralFleetWriterWorktree({
+      parentChatId: 'parent-a',
+      workerChatId: 'worker-1',
+      label: 'fixer',
+      baseWorkspacePath: '/repo',
+      git
+    })
+    expect(result.ok).toBe(false)
+    expect(result.removed).toBe(false)
+    expect(git.removeWorktree).not.toHaveBeenCalled()
+  })
+
+  it('remove is idempotent when the worktree is already gone', async () => {
+    const { git } = lifecycleGit({
+      listWorktrees: vi.fn(async () => ({ ok: true as const, data: { worktrees: [] } }))
+    })
+    await expect(
+      removeEphemeralFleetWriterWorktree({
+        parentChatId: 'parent-a',
+        workerChatId: 'worker-1',
+        label: 'fixer',
+        baseWorkspacePath: '/repo',
+        git
+      })
+    ).resolves.toEqual({ ok: true, removed: false })
+  })
+
+  it('settle promotes on done and discards on failed', async () => {
+    const promoteGit = lifecycleGit()
+    await expect(
+      settleEphemeralFleetWriterWorktreeOnReturn({
+        parentChatId: 'parent-a',
+        workerChatId: 'worker-1',
+        label: 'fixer',
+        baseWorkspacePath: '/repo',
+        outcome: 'done',
+        git: promoteGit.git
+      })
+    ).resolves.toEqual({ ok: true, action: 'promoted' })
+
+    const discardGit = lifecycleGit({
+      captureWorktreePatch: vi.fn(async () => {
+        throw new Error('should not capture on discard')
+      })
+    })
+    await expect(
+      settleEphemeralFleetWriterWorktreeOnReturn({
+        parentChatId: 'parent-a',
+        workerChatId: 'worker-1',
+        label: 'fixer',
+        baseWorkspacePath: '/repo',
+        outcome: 'failed',
+        git: discardGit.git
+      })
+    ).resolves.toEqual({ ok: true, action: 'discarded' })
+    expect(discardGit.git.removeWorktree).toHaveBeenCalled()
   })
 })
