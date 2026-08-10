@@ -12,7 +12,7 @@ export type RunQueueJobInput = Omit<
     >
   >
 
-export const ACTIVE_RUN_QUEUE_STATUSES: RunQueueJobStatus[] = ['starting', 'active', 'cancelling']
+export const ACTIVE_RUN_QUEUE_STATUSES: RunQueueJobStatus[] = ['steer_promoting', 'starting', 'active', 'cancelling']
 export const TERMINAL_RUN_QUEUE_STATUSES: RunQueueJobStatus[] = ['cancelled', 'failed', 'completed']
 
 const RUN_QUEUE_NONTERMINAL_STATUS_SET: Record<RunQueueJobStatus, boolean> = {

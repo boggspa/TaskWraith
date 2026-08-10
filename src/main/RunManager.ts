@@ -15,6 +15,11 @@ export interface AbortableController {
   abort(reason?: unknown): unknown
 }
 
+export interface LiveSteerTransport {
+  sendSteer(text: string): boolean
+  cancel(): void
+}
+
 export interface RunSession<TState = unknown> {
   runId: string
   provider: ProviderId
@@ -31,6 +36,14 @@ export interface RunSession<TState = unknown> {
   updatedAt: number
   approvalIds: Set<string>
   sessionGrants: Set<string>
+  /** Strategy B: pending steering text for broker-injection at next tool boundary. */
+  pendingSteerText?: string | null
+  /** Live steering transport (Pi frame, broker injection). */
+  liveSteerTransport?: LiveSteerTransport
+  /** Strategy A/C: cooperative interrupt requested at. */
+  interruptRequestedAt?: number
+  /** Strategy C: kill after next tool_result boundary. */
+  killAfterToolResult?: boolean
 }
 
 export interface CreateRunSessionInput<TState = unknown> {
@@ -473,6 +486,16 @@ export class RunManager<TState = unknown> {
       }
       session.approvalIds.clear()
       session.sessionGrants.clear()
+      // Clear steering state — never leak pendingSteer or interrupt flags past terminalization.
+      if (session.liveSteerTransport?.cancel) {
+        try {
+          session.liveSteerTransport.cancel()
+        } catch {}
+      }
+      session.liveSteerTransport = undefined
+      session.pendingSteerText = undefined
+      session.interruptRequestedAt = undefined
+      session.killAfterToolResult = undefined
       this.terminalStatusClaims.delete(runId)
       this.clearTerminalJoin(runId)
     }
@@ -508,6 +531,11 @@ export class RunManager<TState = unknown> {
     this.sessionsByRunId.delete(runId)
     this.terminalStatusClaims.delete(runId)
     this.clearTerminalJoin(runId)
+    if (session.liveSteerTransport?.cancel) {
+      try {
+        session.liveSteerTransport.cancel()
+      } catch {}
+    }
     this.runIdsByProvider.get(session.provider)?.delete(runId)
     if (session.providerSessionId) {
       this.runIdByProviderSession.delete(
@@ -525,8 +553,84 @@ export class RunManager<TState = unknown> {
     if (!session) return false
     session.abortController?.abort()
     session.process?.kill()
+    if (session.liveSteerTransport?.cancel) {
+      try {
+        session.liveSteerTransport.cancel()
+      } catch {}
+    }
+    session.liveSteerTransport = undefined
+    session.pendingSteerText = undefined
+    session.interruptRequestedAt = undefined
+    session.killAfterToolResult = undefined
     this.finish(runId, 'cancelled')
     return true
+  }
+
+  // ----- Steering interrupt hooks (SteeringOrchestrator) -----
+
+  requestInterrupt(runId: string): boolean {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session || isTerminalRunSessionStatus(session.status)) return false
+    session.interruptRequestedAt = Date.now()
+    session.updatedAt = Date.now()
+    this.emit({ type: 'updated', session })
+    return true
+  }
+
+  armKillAfterToolResult(runId: string): boolean {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session || isTerminalRunSessionStatus(session.status)) return false
+    session.killAfterToolResult = true
+    session.interruptRequestedAt = Date.now()
+    session.updatedAt = Date.now()
+    this.emit({ type: 'updated', session })
+    return true
+  }
+
+  getInterruptState(runId: string): { interruptRequestedAt?: number; killAfterToolResult?: boolean } {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session) return {}
+    return {
+      interruptRequestedAt: session.interruptRequestedAt,
+      killAfterToolResult: session.killAfterToolResult
+    }
+  }
+
+  /**
+   * Register a transport-specific live-steer handle (ACP `steer()`, broker
+   * injection) against an active session. The orchestrator owns the routing
+   * decision; RunManager only stores the handle and cancels/clears it on
+   * finish/remove/cancel. Registering over an existing handle cancels the old
+   * one so two transports can never race the same run.
+   */
+  registerLiveSteerTransport(runId: string, transport: LiveSteerTransport): boolean {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session || !isActiveRunSessionStatus(session.status)) return false
+    if (session.liveSteerTransport && session.liveSteerTransport !== transport) {
+      try {
+        session.liveSteerTransport.cancel()
+      } catch {}
+    }
+    session.liveSteerTransport = transport
+    session.updatedAt = Date.now()
+    this.emit({ type: 'updated', session })
+    return true
+  }
+
+  unregisterLiveSteerTransport(runId: string): void {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session) return
+    if (session.liveSteerTransport?.cancel) {
+      try {
+        session.liveSteerTransport.cancel()
+      } catch {}
+    }
+    session.liveSteerTransport = undefined
+    session.pendingSteerText = undefined
+    session.interruptRequestedAt = undefined
+    session.killAfterToolResult = undefined
+    session.updatedAt = Date.now()
+    this.emit({ type: 'updated', session })
   }
 
   clear(): void {

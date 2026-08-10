@@ -376,6 +376,12 @@ export interface McpBridgeRuntimeDeps {
     payload: unknown,
     route?: McpBridgeAgentRunRoute | null
   ) => void
+  /**
+   * Strategy B (broker-injection): drain pending mid-turn steering text for a
+   * run so it can be injected into the next tool-call result. Returns null
+   * when no steering is pending — the broker handler continues normally.
+   */
+  drainPendingSteerText?: (appRunId: string) => string | null
 }
 
 /**
@@ -2597,6 +2603,35 @@ export class McpBridgeRuntime {
       parentProvider,
       callerContext
     )
+
+    // ── Strategy B (broker-injection) ──────────────────────────────────
+    // When a user sends a steering message mid-turn, the
+    // SteeringOrchestrator stores it on the RunSession as
+    // `pendingSteerText`. On the NEXT successful `tools/call` through this
+    // broker, we drain it and prepend a `[TaskWraith Steering]` text block
+    // to the tool result's content. The model sees the interjection at its
+    // next tool boundary without a kill/restart cycle.
+    //
+    // We only inject on SUCCESSFUL tool calls (result.isError is falsy).
+    // A failed tool means the provider is already in an error state, and
+    // the ordinary boundary-delivery fallback path will still deliver the
+    // message when the run exits or recovers.
+    //
+    // Content block type `text` is the standard MCP content block type;
+    // the `[TaskWraith Steering]` prefix makes it distinguishable from the
+    // tool's native output regardless of provider transport.
+    if (!result.isError && this.deps.drainPendingSteerText && route.appRunId) {
+      const steerText = this.deps.drainPendingSteerText(route.appRunId)
+      if (steerText) {
+        const steerBlock: McpToolContentBlock = {
+          type: 'text',
+          text: `[TaskWraith Steering] The user sent the following message while you were working:\n\n${steerText}\n\n--- end steering ---`
+        }
+        result.content = [steerBlock, ...(result.content ?? [])]
+        result.text = `${steerBlock.text}\n\n${result.text}`
+      }
+    }
+
     return { ok: !result.isError, ...result }
   }
 

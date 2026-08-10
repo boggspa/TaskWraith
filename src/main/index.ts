@@ -666,6 +666,7 @@ import {
   scheduledSteeringMessageId,
   shouldAppendScheduledSteeringOnBusy
 } from './run/MidRunSteering'
+import { cancelPendingSteer, routeSteerDelivery } from './steering/SteeringOrchestrator'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
 import {
@@ -3119,6 +3120,13 @@ const mcpBridgeRuntime = createMcpBridgeRuntime({
   appendLimitedOutput,
   executeGeminiMcpTool,
   resolveBrokerParentProviderFromRunId: (appRunId) => runManager.get(appRunId)?.provider,
+  drainPendingSteerText: (appRunId: string) => {
+    const session = runManager.get(appRunId)
+    if (!session || !session.pendingSteerText) return null
+    const text = session.pendingSteerText
+    session.pendingSteerText = null
+    return text
+  },
   installGeminiToolContextForRun,
   sendAgentCompatLine
 })
@@ -22774,6 +22782,12 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
     return
   }
   runManager.attachAbortController(route.appRunId!, createGrokTurnAbortController(grokAcpHandle))
+  // First-class mid-turn steering (Strategy A): the ACP handle can interrupt
+  // its in-flight prompt and re-prompt the same session with the steer text.
+  runManager.registerLiveSteerTransport(route.appRunId!, {
+    sendSteer: (text) => grokAcpHandle.steer(text),
+    cancel: () => grokAcpHandle.cancelSteer()
+  })
   // Keep the adapter invocation itself live from dispatch registration through
   // the real child close. History deletion may begin before the transport
   // operation is published above; its adapter join must cover that setup race.
@@ -23701,6 +23715,12 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     route.appRunId!,
     createMistralTurnAbortController(mistralAcpHandle)
   )
+  // First-class mid-turn steering (Strategy A): the ACP handle can interrupt
+  // its in-flight prompt and re-prompt the same session with the steer text.
+  runManager.registerLiveSteerTransport(route.appRunId!, {
+    sendSteer: (text) => mistralAcpHandle.steer(text),
+    cancel: () => mistralAcpHandle.cancelSteer()
+  })
   // Keep the adapter invocation itself live from dispatch registration through
   // the real child close. History deletion may begin before the transport
   // operation is published above; its adapter join must cover that setup race.
@@ -24472,6 +24492,12 @@ async function runKimiAcpProvider(
       })
       handle = launched.handle
       runManager.attachAbortController(route.appRunId!, createAcpTurnAbortController(handle))
+      // First-class mid-turn steering (Strategy A): the ACP handle can
+      // interrupt its in-flight prompt and re-prompt the same session.
+      runManager.registerLiveSteerTransport(route.appRunId!, {
+        sendSteer: (text) => handle.steer(text),
+        cancel: () => handle.cancelSteer()
+      })
       // This adapter invocation and the registered transport operation remain
       // live through child close, gateway/private-cwd/home/OAuth cleanup, usage
       // projection, terminal transcript publication, and RunManager finish.
@@ -55566,6 +55592,104 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
+
+    // ── First-class mid-turn steering (SteeringOrchestrator) ────────────────
+    // steering:inject appends the user's row immediately (durable, canonical
+    // source of truth) and then attempts an in-turn delivery through the
+    // provider's registered live transport: ACP session/cancel + re-prompt for
+    // kimi/mistral/grok, broker injection for cursor, pi stdin frame for pi.
+    // Every failure returns `boundary`, telling the caller to fall back to the
+    // ordinary append-now / deliver-at-boundary queue path — the appended row
+    // is the record either way, so a failed live attempt never loses the steer.
+    //
+    // Opt-in gate, same posture as pi's live-steer flag: with the env flag
+    // unset the orchestrator always plans `boundary`, keeping today's behavior
+    // until each strategy has been exercised end-to-end in the real app.
+    const midTurnSteerEnabled = (env: Record<string, string | undefined> = process.env): boolean => {
+      const value = env.TASKWRAITH_MID_TURN_STEER?.trim().toLowerCase()
+      return value === '1' || value === 'true' || value === 'yes' || value === 'on'
+    }
+
+    ipcMain.handle(
+      'steering:inject',
+      async (
+        event,
+        payload: { chatId?: string; runId?: string; text?: string }
+      ): Promise<import('./steering/SteeringOrchestrator').SteeringAttemptResult> => {
+        const chatId = requireNonEmptyString(payload?.chatId, 'Steering chat id')
+        const runId = requireNonEmptyString(payload?.runId, 'Steering run id')
+        assertRendererChatScope(event, chatId)
+        const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
+        if (!text) throw new Error('Steering text is required.')
+        const chat = AppStore.getChat(chatId)
+        if (!chat) throw new Error('Steering target chat not found.')
+        const session = runManager.get(runId)
+        if (
+          !session ||
+          session.appChatId !== chatId ||
+          !isActiveRunSessionStatus(session.status)
+        ) {
+          return {
+            status: 'boundary',
+            strategy: 'boundary',
+            entryId: '',
+            reason: 'No matching active run; use the queued boundary path.'
+          }
+        }
+        const nowIso = new Date().toISOString()
+        const messageId = `midrun-steer-${randomUUID()}`
+        appendMidRunSteeringMessage(
+          chat,
+          buildMidRunSteeringMessage({
+            id: messageId,
+            content: text,
+            timestampIso: nowIso,
+            author: HOST_MIDRUN_STEERING_AUTHOR
+          })
+        )
+        const entry = midRunSteeringRegistry.register({
+          chatId,
+          messageId,
+          text,
+          source: 'liveSteer',
+          authorKind: 'host',
+          createdAtIso: nowIso
+        })
+        return routeSteerDelivery(
+          {
+            runManager,
+            registry: midRunSteeringRegistry,
+            midTurnSteeringEnabled: midTurnSteerEnabled(),
+            piLiveSteerEnabled: piLiveSteerEnabled()
+          },
+          { chatId, runId, entry, provider: session.provider }
+        )
+      }
+    )
+
+    // Cancel an in-flight mid-turn injection WITHOUT cancelling the run: the
+    // provider turn continues and the appended row delivers at the boundary.
+    ipcMain.handle(
+      'steering:cancel',
+      async (event, payload: { chatId?: string; runId?: string }) => {
+        const chatId = requireNonEmptyString(payload?.chatId, 'Steering chat id')
+        const runId = requireNonEmptyString(payload?.runId, 'Steering run id')
+        assertRendererChatScope(event, chatId)
+        const session = runManager.get(runId)
+        if (!session || session.appChatId !== chatId) {
+          return { cancelled: false, hadPending: false }
+        }
+        return cancelPendingSteer(
+          {
+            runManager,
+            registry: midRunSteeringRegistry,
+            midTurnSteeringEnabled: midTurnSteerEnabled(),
+            piLiveSteerEnabled: false
+          },
+          runId
+        )
+      }
+    )
     ipcMain.handle(
       'steer-queued-ensemble-prompt',
       async (

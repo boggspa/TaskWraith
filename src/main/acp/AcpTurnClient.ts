@@ -232,6 +232,30 @@ export interface AcpTurnHandle {
   /** User-initiated cancel: session/cancel (protocol) then kill. */
   cancel: () => void
   /**
+   * Mid-turn steering (Strategy A, "acp-interrupt"): cooperatively interrupt
+   * the in-flight prompt with `session/cancel` and, when the provider closes
+   * that prompt, re-prompt the SAME ACP session with `text` as the user's next
+   * message. The session id, MCP servers, and provider-native history are all
+   * preserved — unlike `cancel()` the process stays alive and the run keeps
+   * streaming through the original `onEvent` sink.
+   *
+   * Returns false when there is no in-flight prompt to interrupt (startup,
+   * settled, cancelled, closed, or empty text). The caller must then fall back
+   * to boundary delivery — a false return NEVER delivers the text.
+   *
+   * A second call before the first interrupt lands replaces the pending text
+   * (newest steer wins); the provider still receives exactly one follow-up
+   * prompt per closed turn.
+   */
+  steer: (text: string) => boolean
+  /**
+   * Abandon a queued steering follow-up WITHOUT touching the run: the in-flight
+   * prompt is left to finish (or to have finished) naturally and no follow-up
+   * prompt is sent. Used when the user cancels the steer itself, and by
+   * RunManager teardown paths that must not silently deliver a stale steer.
+   */
+  cancelSteer: () => void
+  /**
    * Resolves only after the exact child emits `close` and the provider-owned
    * `onClose` callback has settled. A kill request is not close evidence, and
    * async cleanup/projection performed by `onClose` remains inside this join.
@@ -487,6 +511,15 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     }
   }
   let cancelRequested = false
+  /**
+   * Steering text queued by handle.steer() while a prompt is in flight. Set
+   * when `session/cancel` is written; consumed when the provider closes the
+   * interrupted prompt (result OR RPC error) and the follow-up prompt is sent.
+   * Never survives the turn that owns it — a steer that never earns a prompt
+   * close is left for the boundary-delivery path, exactly like pi's undrained
+   * steering queue (see PiSteerDelivery finding 3).
+   */
+  let pendingSteerText: string | null = null
   // Text of the prompt currently in flight — the recovery prompt, not the
   // original, once recovery has taken over. A transient retry must re-send
   // whatever actually failed.
@@ -805,6 +838,26 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         if (request) answerPermissionRequest(enrichPermissionRequest(request))
         continue
       }
+      // Steering interrupt acknowledgement, error-flavoured: some providers
+      // answer our `session/cancel` with an RPC error on the interrupted
+      // prompt instead of a prompt result. That still closes the prompt — send
+      // the queued steering follow-up rather than failing the whole turn.
+      if (
+        message.error &&
+        typeof message.id === 'number' &&
+        message.id === activePromptRpcId &&
+        pendingSteerText
+      ) {
+        activePromptRpcId = null
+        deniedPromptRpcId = null
+        deniedPermissionRequest = null
+        const steerText = pendingSteerText
+        pendingSteerText = null
+        if (!cancelRequested && !closed && !stdinClosed && sessionId) {
+          sendPrompt(steerText)
+        }
+        continue
+      }
       // A JSON-RPC ERROR response to a lifecycle request must FAIL the turn — the
       // client only advances on `result`, so without this it waits forever.
       if (
@@ -972,7 +1025,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           if (responsePromptRpcId === null) continue
           const status = event.status || terminalStatus
           const recovery = options.deniedToolRecovery
-          if (recovery && !cancelRequested && !deniedToolRecoveryAttempted) {
+          // A steering interrupt owns the follow-up slot: never spend the
+          // denied-tool one-shot recovery on a prompt WE cancelled on purpose.
+          if (
+            recovery &&
+            !cancelRequested &&
+            !deniedToolRecoveryAttempted &&
+            !pendingSteerText
+          ) {
             let deniedCancellation = false
             try {
               deniedCancellation =
@@ -1031,6 +1091,17 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           activePromptRpcId = null
           deniedPromptRpcId = null
           deniedPermissionRequest = null
+          const steerText = pendingSteerText
+          pendingSteerText = null
+          if (steerText && !cancelRequested && !closed && !stdinClosed && sessionId) {
+            // `session/cancel` landed and the provider closed the interrupted
+            // prompt. Re-prompt the SAME session with the steering text as the
+            // user's next message: the turn stays alive, its events keep
+            // streaming through onEvent, and close-out/usage accounting are
+            // unchanged. The per-prompt flags reset inside sendPrompt.
+            sendPrompt(steerText)
+            continue
+          }
           turnComplete = true
           terminalStatus = status
         } else {
@@ -1167,12 +1238,33 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   return {
     closed: closeSettled,
+    steer: (text: string): boolean => {
+      const steerText = typeof text === 'string' ? text.trim() : ''
+      if (!steerText) return false
+      // Only an in-flight prompt can be interrupted. Before dispatch
+      // (activePromptRpcId null), after settle (turnComplete), after a user
+      // cancel, or with a dead stdin there is nothing to steer into — the
+      // caller falls back to boundary delivery.
+      if (cancelRequested || closed || stdinClosed || turnComplete) return false
+      if (!sessionId || activePromptRpcId === null) return false
+      // Newest steer wins if one is already queued for this boundary; the
+      // provider still receives exactly one follow-up prompt per closed turn.
+      pendingSteerText = steerText
+      writeRpc(null, 'session/cancel', { sessionId })
+      return true
+    },
+    cancelSteer: () => {
+      // If session/cancel was already sent, the prompt close still arrives and
+      // simply ends the turn normally — the steer text never becomes a prompt.
+      pendingSteerText = null
+    },
     cancel: () => {
       cancelRequested = true
       clearTransientRetryTimer()
       activePromptRpcId = null
       deniedPromptRpcId = null
       deniedPermissionRequest = null
+      pendingSteerText = null
       // Interrupt an in-progress turn first (protocol), then terminate the
       // process via the provider terminator + SIGKILL backstop.
       if (sessionId && !turnComplete) writeRpc(null, 'session/cancel', { sessionId })

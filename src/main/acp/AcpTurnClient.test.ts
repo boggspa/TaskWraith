@@ -1137,3 +1137,155 @@ describe('runAcpTurn — neutral core', () => {
     expect(closes).toEqual([1])
   })
 })
+
+describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prompt)', () => {
+  const driveToInFlightPrompt = (child: FakeAcpChild): void => {
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1, agentCapabilities: {} } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+  }
+  const promptsSent = (child: FakeAcpChild): Record<string, unknown>[] =>
+    child.sent().filter((message) => message.method === 'session/prompt')
+
+  it('refuses to steer before a prompt is in flight', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    expect(handle.steer('redirect')).toBe(false)
+    expect(child.sent().some((message) => message.method === 'session/cancel')).toBe(false)
+    handle.cancel()
+  })
+
+  it('interrupts the in-flight prompt and re-prompts the same session with the steer text', async () => {
+    const child = new FakeAcpChild()
+    const closes: Array<{ code: number | null; turnComplete: boolean }> = []
+    const { handle } = baseOptions(child, {
+      onClose: (code, turnComplete) => {
+        closes.push({ code, turnComplete })
+      }
+    })
+    driveToInFlightPrompt(child)
+    expect(promptsSent(child)).toHaveLength(1)
+
+    expect(handle.steer('please also update the tests')).toBe(true)
+    // session/cancel rides as a notification against the live session.
+    expect(child.sent().at(-1)).toEqual({
+      jsonrpc: '2.0',
+      method: 'session/cancel',
+      params: { sessionId: 'session-1' }
+    })
+
+    // The provider closes the interrupted prompt; the client re-prompts.
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const prompts = promptsSent(child)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({
+      method: 'session/prompt',
+      params: {
+        sessionId: 'session-1',
+        prompt: [{ type: 'text', text: 'please also update the tests' }]
+      }
+    })
+    // The turn is still alive: no completion, no kill, no close.
+    expect(closes).toEqual([])
+    expect(child.killed).toBe(false)
+
+    // The follow-up prompt completes the turn normally.
+    const followUpId = prompts[1].id as number
+    child.emit({ jsonrpc: '2.0', id: followUpId, result: { stopReason: 'end_turn' } })
+    await handle.closed
+    expect(closes).toEqual([{ code: 0, turnComplete: true }])
+  })
+
+  it('refuses to steer after the turn completed', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    expect(handle.steer('too late')).toBe(false)
+    expect(promptsSent(child)).toHaveLength(1)
+  })
+
+  it('cancelSteer abandons the queued follow-up without touching the turn', async () => {
+    const child = new FakeAcpChild()
+    const closes: Array<{ code: number | null; turnComplete: boolean }> = []
+    const { handle } = baseOptions(child, {
+      onClose: (code, turnComplete) => {
+        closes.push({ code, turnComplete })
+      }
+    })
+    driveToInFlightPrompt(child)
+
+    expect(handle.steer('redirect')).toBe(true)
+    handle.cancelSteer()
+    // The interrupted prompt still closes, but no follow-up prompt is sent and
+    // the turn ends normally — boundary delivery owns the text from here.
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    expect(promptsSent(child)).toHaveLength(1)
+    await handle.closed
+    expect(closes).toEqual([{ code: 0, turnComplete: true }])
+  })
+
+  it('treats an RPC error on the interrupted prompt as the cancel acknowledgement', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+
+    expect(handle.steer('redirect after error')).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, error: { code: -32800, message: 'request cancelled' } })
+    const prompts = promptsSent(child)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({
+      method: 'session/prompt',
+      params: {
+        sessionId: 'session-1',
+        prompt: [{ type: 'text', text: 'redirect after error' }]
+      }
+    })
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('newest steer wins while an interrupt is queued; exactly one follow-up prompt is sent', () => {
+    const child = new FakeAcpChild()
+    const { handle } = baseOptions(child)
+    driveToInFlightPrompt(child)
+
+    expect(handle.steer('first')).toBe(true)
+    expect(handle.steer('second')).toBe(true)
+    const cancels = child.sent().filter((message) => message.method === 'session/cancel')
+    expect(cancels).toHaveLength(2)
+
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    const prompts = promptsSent(child)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({
+      params: { prompt: [{ type: 'text', text: 'second' }] }
+    })
+    handle.cancel()
+  })
+
+  it('does not spend the denied-tool recovery prompt on a steering interrupt', () => {
+    const child = new FakeAcpChild()
+    const recoveryPrompts: string[] = []
+    const { handle } = baseOptions(child, {
+      deniedToolRecovery: {
+        detect: (status) => status === 'cancelled',
+        prompt: (context) => {
+          recoveryPrompts.push(context.terminalStatus || '')
+          return 'recovery follow-up'
+        }
+      }
+    })
+    driveToInFlightPrompt(child)
+
+    expect(handle.steer('user steer')).toBe(true)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    // The follow-up is the steer text, not the recovery prompt.
+    expect(recoveryPrompts).toEqual([])
+    const prompts = promptsSent(child)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({
+      params: { prompt: [{ type: 'text', text: 'user steer' }] }
+    })
+    handle.cancel()
+  })
+})

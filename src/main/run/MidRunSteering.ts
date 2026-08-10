@@ -33,7 +33,7 @@
  */
 import type { ChatMessage, ProviderId, ScheduledTask } from '../store/types'
 
-export type MidRunSteeringSource = 'ensembleSteer' | 'scheduledTask'
+export type MidRunSteeringSource = 'ensembleSteer' | 'scheduledTask' | 'liveSteer'
 
 export interface MidRunSteeringEntry {
   id: string
@@ -528,3 +528,65 @@ export function shouldAppendScheduledSteeringOnBusy(input: {
 // timer already re-polls a `due` task every SCHEDULED_DUE_RETRY_DELAY_MS
 // (1s), so a fire-time-appended message dispatches within ~1s of the chat
 // idling via the existing tick.
+
+// ---------------------------------------------------------------------------
+// Unified mid-turn steering capability matrix (SteeringOrchestrator)
+// ---------------------------------------------------------------------------
+
+export type MidTurnSteeringStrategyKind =
+  | 'pi-live-frame'
+  | 'acp-interrupt'
+  | 'cooperative-cancel-resume'
+  | 'broker-injection'
+  | 'boundary'
+
+export interface MidTurnSteeringCapability {
+  strategy: MidTurnSteeringStrategyKind
+  live: boolean
+}
+
+export function midTurnSteeringCapabilityForProvider(provider: ProviderId): MidTurnSteeringCapability {
+  switch (provider) {
+    case 'pi':
+      return { strategy: 'pi-live-frame', live: true }
+    case 'kimi':
+    case 'mistral':
+    case 'grok':
+      // All three drive the shared AcpTurnClient, whose handle now exposes
+      // steer(): session/cancel closes the in-flight prompt and the same
+      // session is re-prompted with the steering text (AcpTurnClient).
+      return { strategy: 'acp-interrupt', live: true }
+    case 'cursor':
+      return { strategy: 'broker-injection', live: true }
+    case 'claude':
+    case 'codex':
+    case 'antigravity':
+    case 'muse':
+    case 'ollama':
+      return { strategy: 'cooperative-cancel-resume', live: true }
+    default:
+      return { strategy: 'boundary', live: false }
+  }
+}
+
+export function planMidTurnSteeringDelivery(input: {
+  enabled: boolean
+  provider: ProviderId
+  text: string
+  authorKind: MidRunSteeringAuthorKind
+  hasLiveTransport: boolean
+  runSettled: boolean
+}): { kind: MidTurnSteeringStrategyKind } {
+  if (!input.enabled) return { kind: 'boundary' }
+  if (!input.text.trim()) return { kind: 'boundary' }
+  if (input.authorKind !== 'host') return { kind: 'boundary' }
+  if (input.runSettled) return { kind: 'boundary' }
+
+  const cap = midTurnSteeringCapabilityForProvider(input.provider)
+  if (cap.strategy === 'pi-live-frame') {
+    // Pi requires an active stdin transport; others are transport-agnostic.
+    if (!input.hasLiveTransport) return { kind: 'boundary' }
+    return { kind: 'pi-live-frame' }
+  }
+  return { kind: cap.strategy }
+}

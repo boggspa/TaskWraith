@@ -30,7 +30,7 @@ import type { ActiveRunContext } from './runRequestTypes'
  * right composer when several chats are open in the app.
  */
 
-export type SteerPhase = 'idle' | 'cancelling' | 'dispatching' | 'failed'
+export type SteerPhase = 'idle' | 'cancelling' | 'injecting' | 'dispatching' | 'failed'
 
 export interface SteerStateIdle {
   phase: 'idle'
@@ -46,14 +46,33 @@ export interface SteerStateActive {
   message?: string
 }
 
+/**
+ * First-class mid-turn steering phase: the steering text has already been
+ * appended to the transcript and main is actively delivering it into the
+ * running provider turn (ACP session/cancel + re-prompt, broker injection, or
+ * cooperative cancel+resume). The composer shows a bounded-wait indicator
+ * while this is in flight; it does NOT poll for the active run to clear.
+ */
+export interface SteerStateInjecting {
+  phase: 'injecting'
+  chatId: string
+  startedAt: number
+  /** The run the steering message is being delivered into. */
+  runId: string
+  /** Human-readable strategy label for telemetry / indicators. */
+  strategy: string
+  /** Optional human-facing message override. */
+  message?: string
+}
+
 export interface SteerStateFailed {
   phase: 'failed'
   chatId: string
-  reason: 'timeout' | 'no-active-run' | 'cancel-failed'
+  reason: 'timeout' | 'no-active-run' | 'cancel-failed' | 'inject-failed'
   message: string
 }
 
-export type SteerState = SteerStateIdle | SteerStateActive | SteerStateFailed
+export type SteerState = SteerStateIdle | SteerStateActive | SteerStateInjecting | SteerStateFailed
 
 export const IDLE_STEER_STATE: SteerStateIdle = { phase: 'idle' }
 
@@ -152,6 +171,29 @@ export function transitionToDispatching(input: TransitionToDispatchingInput): St
   }
 }
 
+export interface TransitionToInjectingInput {
+  prev: SteerState
+  chatId: string
+  runId: string
+  strategy: string
+  now?: number
+  message?: string
+}
+
+export function transitionToInjecting(input: TransitionToInjectingInput): SteerStateInjecting {
+  return {
+    phase: 'injecting',
+    chatId: input.chatId,
+    startedAt:
+      input.prev.phase === 'cancelling' && input.prev.chatId === input.chatId
+        ? input.prev.startedAt
+        : (input.now ?? Date.now()),
+    runId: input.runId,
+    strategy: input.strategy,
+    message: input.message
+  }
+}
+
 export interface MarkSteerFailedInput {
   chatId: string
   reason: SteerStateFailed['reason']
@@ -244,6 +286,9 @@ export function getSteerIndicatorMessage(input: SteerIndicatorViewInput): string
   if (state.phase === 'cancelling') {
     return state.message || `Steering — interrupting current ${turnLabel}…`
   }
+  if (state.phase === 'injecting') {
+    return state.message || `Steering — delivering into current ${turnLabel}…`
+  }
   if (state.phase === 'dispatching') {
     return state.message || `Steering — dispatching new ${turnLabel}…`
   }
@@ -259,12 +304,18 @@ export interface IsSteerInFlightInput {
 
 /**
  * Convenience predicate for "the Steer button should show the busy
- * spinner for this chat". Returns true while either cancelling or
- * dispatching, false during idle/failed.
+ * spinner for this chat". Returns true while cancelling, injecting,
+ * or dispatching, false during idle/failed.
  */
 export function isSteerInFlight(input: IsSteerInFlightInput): boolean {
   if (!input.chatId) return false
   const { state } = input
-  if (state.phase !== 'cancelling' && state.phase !== 'dispatching') return false
+  if (
+    state.phase !== 'cancelling' &&
+    state.phase !== 'injecting' &&
+    state.phase !== 'dispatching'
+  ) {
+    return false
+  }
   return state.chatId === input.chatId
 }

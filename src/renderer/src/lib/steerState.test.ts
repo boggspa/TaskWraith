@@ -11,7 +11,8 @@ import {
   resolveSteerCancelTargetRunId,
   markSteerFailed,
   resetSteer,
-  transitionToDispatching
+  transitionToDispatching,
+  transitionToInjecting
 } from './steerState'
 
 describe('steerState', () => {
@@ -397,6 +398,87 @@ describe('steerState', () => {
           chatId: 'chat-A'
         })
       ).toBe(false)
+    })
+
+    it('returns true in the injecting phase for the matching chat', () => {
+      expect(
+        isSteerInFlight({
+          state: transitionToInjecting({
+            prev: IDLE_STEER_STATE,
+            chatId: 'chat-A',
+            runId: 'run-1',
+            strategy: 'acp-interrupt',
+            now: 100
+          }),
+          chatId: 'chat-A'
+        })
+      ).toBe(true)
+    })
+  })
+
+  describe('transitionToInjecting', () => {
+    it('produces an injecting state pinned to the chat, run, and strategy', () => {
+      const state = transitionToInjecting({
+        prev: IDLE_STEER_STATE,
+        chatId: 'chat-A',
+        runId: 'run-1',
+        strategy: 'acp-interrupt',
+        now: 500
+      })
+      expect(state).toEqual({
+        phase: 'injecting',
+        chatId: 'chat-A',
+        startedAt: 500,
+        runId: 'run-1',
+        strategy: 'acp-interrupt',
+        message: undefined
+      })
+    })
+
+    it('preserves startedAt when moving from cancelling of the same chat', () => {
+      const prev = beginSteer({ chatId: 'chat-A', now: 300 })
+      const state = transitionToInjecting({
+        prev,
+        chatId: 'chat-A',
+        runId: 'run-9',
+        strategy: 'broker-injection',
+        now: 900
+      })
+      expect(state.startedAt).toBe(300)
+    })
+
+    it('shows the injecting indicator copy for the matching chat', () => {
+      const state = transitionToInjecting({
+        prev: IDLE_STEER_STATE,
+        chatId: 'chat-A',
+        runId: 'run-1',
+        strategy: 'acp-interrupt',
+        now: 0
+      })
+      expect(
+        getSteerIndicatorMessage({
+          state,
+          chatId: 'chat-A',
+          providerLabel: 'Kimi'
+        })
+      ).toBe('Steering — delivering into current Kimi turn…')
+    })
+
+    it('suppresses the injecting indicator when the chat id does not match', () => {
+      const state = transitionToInjecting({
+        prev: IDLE_STEER_STATE,
+        chatId: 'chat-A',
+        runId: 'run-1',
+        strategy: 'acp-interrupt',
+        now: 0
+      })
+      expect(
+        getSteerIndicatorMessage({
+          state,
+          chatId: 'chat-B',
+          providerLabel: 'Kimi'
+        })
+      ).toBeNull()
     })
   })
 })
