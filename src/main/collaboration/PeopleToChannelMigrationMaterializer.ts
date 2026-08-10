@@ -4,6 +4,10 @@ import type { HumanCollaborationInvite, HumanCollaborationShare } from './HumanC
 import type { HumanContributionRules } from './HumanContributionRules'
 import type { ChannelHumanMigrationPolicyInput } from './ChannelHumanPolicyStore'
 import type { Channel, ChannelInvite, ChannelMember, HumanChannelMember } from './ChannelStore'
+import {
+  copyChannelMemberPresentation,
+  type ChannelMemberPresentation
+} from '../../shared/collaboration/ChannelMemberPresentation'
 import { channelStoreSubsetDigest } from './ChannelStoreSubsetDigest'
 import {
   createPeopleToChannelMigrationPlan,
@@ -14,7 +18,7 @@ import {
 
 export { channelStoreSubsetDigest as peopleToChannelChannelSubsetDigest } from './ChannelStoreSubsetDigest'
 
-export const PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION = 2
+export const PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION = 3
 
 export interface PeopleToChannelChannelMutation {
   mode: 'create' | 'merge'
@@ -35,6 +39,10 @@ export interface PeopleToChannelPendingAdmissionReissue {
   sourceShareId: string
   channelId: string
   pendingCollaboratorIds: string[]
+  pendingMemberPresentations: Array<{
+    sourceCollaboratorId: string
+    presentation: ChannelMemberPresentation
+  }>
   openInviteCount: number
   policy: PeopleToChannelPendingAdmissionPolicy
 }
@@ -124,6 +132,37 @@ function latestRoom(
     )[0]?.roomId
 }
 
+function presentationFromSource(
+  participant: HumanCollaborationShare['participants'][number]
+): ChannelMemberPresentation | undefined {
+  const presentation: ChannelMemberPresentation = {
+    ...(participant.seatOrder === undefined ? {} : { seatOrder: participant.seatOrder }),
+    ...(participant.colorIndex === undefined ? {} : { colorIndex: participant.colorIndex }),
+    ...(participant.seatDisabled === true ? { seatDisabled: true } : {})
+  }
+  return Object.keys(presentation).length > 0 ? presentation : undefined
+}
+
+function mergePresentation(
+  current: ChannelMemberPresentation | undefined,
+  source: ChannelMemberPresentation
+): ChannelMemberPresentation {
+  if (
+    (current?.seatOrder !== undefined &&
+      source.seatOrder !== undefined &&
+      current.seatOrder !== source.seatOrder) ||
+    (current?.colorIndex !== undefined &&
+      source.colorIndex !== undefined &&
+      current.colorIndex !== source.colorIndex) ||
+    (current?.seatDisabled !== undefined &&
+      source.seatDisabled !== undefined &&
+      current.seatDisabled !== source.seatDisabled)
+  ) {
+    blocked('Reused Channel member presentation conflicts with People authority')
+  }
+  return copyChannelMemberPresentation({ ...current, ...source })
+}
+
 function memberFromSource(args: {
   share: HumanCollaborationShare
   channelId: string
@@ -150,6 +189,7 @@ function memberFromSource(args: {
   }
   const joinedAt =
     participant.joinedAt ?? Math.min(share.createdAt, participant.revokedAt ?? share.createdAt)
+  const presentation = presentationFromSource(participant)
   return {
     memberId: targetMemberId,
     channelId,
@@ -159,7 +199,8 @@ function memberFromSource(args: {
     status: participant.status,
     ...(roomId ? { roomId } : {}),
     joinedAt,
-    ...(participant.revokedAt === undefined ? {} : { revokedAt: participant.revokedAt })
+    ...(participant.revokedAt === undefined ? {} : { revokedAt: participant.revokedAt }),
+    ...(presentation ? { presentation: copyChannelMemberPresentation(presentation) } : {})
   }
 }
 
@@ -263,6 +304,8 @@ export function materializePeopleToChannels(input: {
     }
 
     const pendingCollaboratorIds: string[] = []
+    const pendingMemberPresentations: PeopleToChannelPendingAdmissionReissue['pendingMemberPresentations'] =
+      []
     let addedMembers = 0
     for (const participant of [...share.participants].sort((left, right) =>
       compareText(left.collaboratorId, right.collaboratorId)
@@ -280,7 +323,16 @@ export function materializePeopleToChannels(input: {
         blocked('Migration member mapping no longer matches source identity')
       }
       if (participant.status === 'pending') {
-        if (!mapping.reusedExistingMember) pendingCollaboratorIds.push(participant.collaboratorId)
+        if (!mapping.reusedExistingMember) {
+          pendingCollaboratorIds.push(participant.collaboratorId)
+          const presentation = presentationFromSource(participant)
+          if (presentation) {
+            pendingMemberPresentations.push({
+              sourceCollaboratorId: participant.collaboratorId,
+              presentation: copyChannelMemberPresentation(presentation)
+            })
+          }
+        }
         continue
       }
       let targetMember = finalMembers.find((member) => member.memberId === mapping.targetMemberId)
@@ -292,6 +344,10 @@ export function materializePeopleToChannels(input: {
           targetMember.status !== mapping.targetStatus
         ) {
           blocked('Reused Channel member no longer matches migration authority')
+        }
+        const presentation = presentationFromSource(participant)
+        if (presentation) {
+          targetMember.presentation = mergePresentation(targetMember.presentation, presentation)
         }
       } else {
         if (
@@ -338,6 +394,7 @@ export function materializePeopleToChannels(input: {
         sourceShareId: share.shareId,
         channelId: target.channelId,
         pendingCollaboratorIds,
+        pendingMemberPresentations,
         openInviteCount,
         policy: {
           sourceDigest: entry.source.sourceDigest,

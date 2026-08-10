@@ -50,7 +50,8 @@ function createMutation(
     identityPublicKey: `former-key-${suffix}`,
     status: 'revoked',
     joinedAt: 1_100,
-    revokedAt: 1_200
+    revokedAt: 1_200,
+    presentation: { seatOrder: 3, colorIndex: 6, seatDisabled: true }
   }
   const channel: Channel = {
     channelId,
@@ -141,7 +142,8 @@ describe('ChannelStore migration batch', () => {
     expect(store.getChannel('migrated-channel')).toEqual(created.channel)
     expect(store.getMember('migrated-channel', 'member_migrated-channel')).toMatchObject({
       status: 'revoked',
-      revokedAt: 1_200
+      revokedAt: 1_200,
+      presentation: { seatOrder: 3, colorIndex: 6, seatDisabled: true }
     })
     expect(store.getMember('migrated-channel', 'member_migrated-channel')).not.toHaveProperty(
       'roomId'

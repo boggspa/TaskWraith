@@ -37,20 +37,28 @@ function share(overrides: Partial<HumanCollaborationShare> = {}): HumanCollabora
         displayName: 'Active Person',
         publicKeyId: ACTIVE_KEY,
         status: 'active',
-        joinedAt: 150
+        joinedAt: 150,
+        seatOrder: 2,
+        colorIndex: 3
       },
       {
         collaboratorId: 'pending_person',
         displayName: 'Pending Person',
         publicKeyId: PENDING_KEY,
-        status: 'pending'
+        status: 'pending',
+        seatOrder: 1,
+        colorIndex: 5,
+        seatDisabled: true
       },
       {
         collaboratorId: 'revoked_person',
         displayName: 'Revoked Person',
         publicKeyId: REVOKED_KEY,
         status: 'revoked',
-        revokedAt: 250
+        revokedAt: 250,
+        seatOrder: 4,
+        colorIndex: 7,
+        seatDisabled: true
       }
     ],
     invites: [
@@ -195,6 +203,12 @@ describe('PeopleToChannelMigrationMaterializer', () => {
           sourceShareId: 'share_one',
           channelId: 'share_one',
           pendingCollaboratorIds: ['pending_person'],
+          pendingMemberPresentations: [
+            {
+              sourceCollaboratorId: 'pending_person',
+              presentation: { seatOrder: 1, colorIndex: 5, seatDisabled: true }
+            }
+          ],
           openInviteCount: 1,
           policy: {
             requiresHostApproval: true,
@@ -216,11 +230,13 @@ describe('PeopleToChannelMigrationMaterializer', () => {
     expect(members.find((entry) => entry.identityPublicKey === ACTIVE_KEY)).toMatchObject({
       status: 'active',
       roomId: 'active_room',
-      joinedAt: 150
+      joinedAt: 150,
+      presentation: { seatOrder: 2, colorIndex: 3 }
     })
     expect(members.find((entry) => entry.identityPublicKey === REVOKED_KEY)).toMatchObject({
       status: 'revoked',
-      revokedAt: 250
+      revokedAt: 250,
+      presentation: { seatOrder: 4, colorIndex: 7, seatDisabled: true }
     })
     expect(members.some((entry) => entry.identityPublicKey === PENDING_KEY)).toBe(false)
     expect(materialized.policies).toHaveLength(1)
@@ -312,13 +328,14 @@ describe('PeopleToChannelMigrationMaterializer', () => {
     })
   })
 
-  it('maps an existing identity without replacing Channel state', () => {
+  it('merges source presentation into an existing identity without dropping host-only state', () => {
     const existingChannel = channel()
     const existingMember = member({
       memberId: 'member_existing',
       displayName: 'Existing Name',
       identityPublicKey: ACTIVE_KEY,
-      roomId: 'existing_room'
+      roomId: 'existing_room',
+      presentation: { seatOrder: 2, seatDisabled: true }
     })
     const people = share({
       participants: [share().participants[0]],
@@ -352,6 +369,31 @@ describe('PeopleToChannelMigrationMaterializer', () => {
         sourceCollaboratorId: 'active_person'
       }
     ])
+    expect(
+      materialized.mutations[0].members.find((entry) => entry.memberId === 'member_existing')
+    ).toMatchObject({
+      presentation: { seatOrder: 2, colorIndex: 3, seatDisabled: true }
+    })
+
+    const conflictingPeople = share({
+      participants: [{ ...share().participants[0], seatOrder: 6 }],
+      invites: [share().invites[0]],
+      contributionRules: contributionRulesForPreset('comments'),
+      requiresHostApproval: undefined,
+      fullHistory: undefined
+    })
+    const conflictingInventory = source({
+      people: { shares: [conflictingPeople] },
+      channels: channelSnapshot([existingChannel], [member(), existingMember])
+    })
+    expect(() =>
+      materializePeopleToChannels({
+        plan: createPeopleToChannelMigrationPlan(conflictingInventory),
+        source: conflictingInventory,
+        hostDisplayName: 'Host Person',
+        migrationAt: 1_000
+      })
+    ).toThrow(/presentation conflicts/)
   })
 
   it('adds a new merge member while preserving existing messages and authority', () => {

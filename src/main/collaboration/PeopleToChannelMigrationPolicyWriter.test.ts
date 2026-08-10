@@ -147,6 +147,7 @@ function fixture(args: { activePolicy?: boolean; pending?: boolean } = {}) {
             sourceShareId: 'share_one',
             channelId: channel.channelId,
             pendingCollaboratorIds: ['collaborator_pending'],
+            pendingMemberPresentations: [],
             openInviteCount: 1,
             policy: clone(authority)
           }

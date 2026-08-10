@@ -156,6 +156,14 @@ function fixture(
               sourceShareId: 'share_one',
               channelId: channel.channelId,
               pendingCollaboratorIds,
+              pendingMemberPresentations: pendingCollaboratorIds.includes('collaborator_one')
+                ? [
+                    {
+                      sourceCollaboratorId: 'collaborator_one',
+                      presentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true }
+                    }
+                  ]
+                : [],
               openInviteCount,
               policy: {
                 sourceDigest: 'c'.repeat(64),
@@ -235,6 +243,7 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
           channelId: built.channel.channelId,
           purpose: 'pending-collaborator',
           sourceCollaboratorId: 'collaborator_one',
+          memberPresentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true },
           createdAt: 2_000,
           expiresAt: 2_000 + DEFAULT_CHANNEL_INVITE_TTL_MS
         },
@@ -250,6 +259,9 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     })
     const storedInvites = built.store.listInvites(built.channel.channelId)
     expect(storedInvites).toHaveLength(2)
+    expect(storedInvites[0]).toMatchObject({
+      memberPresentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true }
+    })
     expect(storedInvites.map((invite) => invite.tokenHash)).toEqual(
       first.invitations.map((invitation) => hashChannelInviteToken(invitation.inviteToken))
     )
@@ -285,6 +297,26 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     }).apply({ base: built.base, history: built.history })
     expect(rerun).toEqual({ ...first, metadataApplied: false })
     expect(readFileSync(built.escrowPath)).toEqual(escrowBytes)
+
+    const pendingInvitation = first.invitations.find(
+      (invitation) => invitation.purpose === 'pending-collaborator'
+    )!
+    const admission = built.store.beginMemberAdmission({
+      channelId: built.channel.channelId,
+      inviteId: pendingInvitation.inviteId,
+      inviteToken: pendingInvitation.inviteToken,
+      roomId: pendingInvitation.roomId,
+      displayName: 'Migrated pending member',
+      identityPublicKey: 'migrated-pending-key',
+      now: 2_100
+    })
+    expect(admission.member).toMatchObject({
+      status: 'pending',
+      presentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true }
+    })
+    expect(
+      built.store.getInvite(built.channel.channelId, pendingInvitation.inviteId)
+    ).not.toHaveProperty('memberPresentation')
   })
 
   it('binds each future admission to the frozen source policy', () => {
@@ -460,6 +492,27 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     )
     expect(existsSync(built.escrowPath)).toBe(false)
     expect(built.store.listInvites(built.channel.channelId)).toEqual([])
+
+    const invalidPresentationBuilt = fixture()
+    const { materializationDigest: _presentationDigest, ...presentationDraft } = clone(
+      invalidPresentationBuilt.base
+    )
+    presentationDraft.pendingAdmissionReissues[0].pendingMemberPresentations[0].presentation = {
+      colorIndex: 99
+    }
+    const invalidPresentation = sealBase(presentationDraft)
+    const { executionDigest: _presentationHistoryDigest, ...presentationHistoryDraft } = clone(
+      invalidPresentationBuilt.history
+    )
+    presentationHistoryDraft.baseMaterializationDigest = invalidPresentation.materializationDigest
+    const invalidPresentationHistory = sealHistory(presentationHistoryDraft)
+    expectRecoveryBlocked(() =>
+      service(invalidPresentationBuilt).apply({
+        base: invalidPresentation,
+        history: invalidPresentationHistory
+      })
+    )
+    expect(existsSync(invalidPresentationBuilt.escrowPath)).toBe(false)
   })
 
   it('rejects a multiply-linked escrow before trusting its credential custody', () => {

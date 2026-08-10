@@ -18,10 +18,15 @@ import {
   verifyChannelAgentDelegation,
   type SignedChannelAgentDelegation
 } from '../../shared/collaboration/ChannelAgentProtocol'
+import {
+  copyChannelMemberPresentation,
+  isChannelMemberPresentation,
+  type ChannelMemberPresentation
+} from '../../shared/collaboration/ChannelMemberPresentation'
 import { importRawEd25519PublicKey } from '../../shared/e2ee/keys'
 import { channelStoreSubsetDigest } from './ChannelStoreSubsetDigest'
 
-export const CHANNEL_SCHEMA_VERSION = 3
+export const CHANNEL_SCHEMA_VERSION = 4
 export const MAX_CHANNEL_MEMBERS = 8
 export const DEFAULT_CHANNEL_INVITE_TTL_MS = 10 * 60 * 1000
 
@@ -96,6 +101,7 @@ interface ChannelMemberBase {
   roomId?: string
   joinedAt: number
   revokedAt?: number
+  presentation?: ChannelMemberPresentation
 }
 
 export interface HumanChannelMember extends ChannelMemberBase {
@@ -126,6 +132,8 @@ export interface ChannelInvite {
   memberId?: string
   consumedAt?: number
   revokedAt?: number
+  /** Presentation to attach when a migration-bound pending collaborator joins. */
+  memberPresentation?: ChannelMemberPresentation
 }
 
 export interface ChannelStoreSnapshot {
@@ -569,9 +577,13 @@ export class ChannelStore {
       identityPublicKey,
       status: 'pending',
       roomId: invite.roomId,
-      joinedAt: now
+      joinedAt: now,
+      ...(invite.memberPresentation
+        ? { presentation: copyChannelMemberPresentation(invite.memberPresentation) }
+        : {})
     }
     invite.memberId = member.memberId
+    delete invite.memberPresentation
     this.snapshot.members.push(member)
     this.bumpMembership(channel, now)
     this.persist()
@@ -1204,7 +1216,10 @@ function normalizeSnapshot(
   const raw = value as Record<string, unknown>
   const schemaVersion = raw.schemaVersion
   if (
-    (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== CHANNEL_SCHEMA_VERSION) ||
+    (schemaVersion !== 1 &&
+      schemaVersion !== 2 &&
+      schemaVersion !== 3 &&
+      schemaVersion !== CHANNEL_SCHEMA_VERSION) ||
     !Array.isArray(raw.channels) ||
     !Array.isArray(raw.members) ||
     (schemaVersion !== 1 && !Array.isArray(raw.invites))
@@ -1307,6 +1322,13 @@ function normalizeSnapshot(
     if (member.kind === 'human') {
       if (member.agentSeatId !== undefined || member.keyGeneration !== undefined) return null
       if ((member.status === 'revoked') !== (member.revokedAt !== undefined)) return null
+      if (
+        member.presentation !== undefined &&
+        (schemaVersion !== CHANNEL_SCHEMA_VERSION ||
+          !isChannelMemberPresentation(member.presentation, { allowSeatDisabled: true }))
+      ) {
+        return null
+      }
       normalized = {
         memberId: member.memberId,
         channelId: member.channelId,
@@ -1316,11 +1338,15 @@ function normalizeSnapshot(
         status: member.status,
         ...(member.roomId ? { roomId: member.roomId } : {}),
         joinedAt: member.joinedAt,
-        ...(member.revokedAt !== undefined ? { revokedAt: member.revokedAt } : {})
+        ...(member.revokedAt !== undefined ? { revokedAt: member.revokedAt } : {}),
+        ...(member.presentation
+          ? { presentation: copyChannelMemberPresentation(member.presentation) }
+          : {})
       }
     } else if (
       member.kind === 'agent' &&
-      schemaVersion === CHANNEL_SCHEMA_VERSION &&
+      (schemaVersion === 3 || schemaVersion === CHANNEL_SCHEMA_VERSION) &&
+      member.presentation === undefined &&
       validBoundedIdentifier(member.memberId) &&
       member.status !== 'pending' &&
       member.roomId === undefined &&
@@ -1382,6 +1408,13 @@ function normalizeSnapshot(
     ) {
       return null
     }
+    if (
+      invite.memberPresentation !== undefined &&
+      (schemaVersion !== CHANNEL_SCHEMA_VERSION ||
+        !isChannelMemberPresentation(invite.memberPresentation, { allowSeatDisabled: true }))
+    ) {
+      return null
+    }
     if (invite.consumedAt !== undefined && invite.memberId === undefined) return null
     if (invite.memberId !== undefined) {
       const member = members.find(
@@ -1402,7 +1435,10 @@ function normalizeSnapshot(
       expiresAt: invite.expiresAt,
       ...(invite.memberId ? { memberId: invite.memberId } : {}),
       ...(invite.consumedAt !== undefined ? { consumedAt: invite.consumedAt } : {}),
-      ...(invite.revokedAt !== undefined ? { revokedAt: invite.revokedAt } : {})
+      ...(invite.revokedAt !== undefined ? { revokedAt: invite.revokedAt } : {}),
+      ...(invite.memberPresentation
+        ? { memberPresentation: copyChannelMemberPresentation(invite.memberPresentation) }
+        : {})
     })
   }
 

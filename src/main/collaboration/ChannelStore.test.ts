@@ -255,6 +255,38 @@ describe('ChannelStore', () => {
     expect(migrated.members).toEqual(v2.members)
   })
 
+  it('persists only bounded schema-v4 human presentation metadata', () => {
+    const { storePath, channel, owner } = channelFixture()
+    const valid = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      schemaVersion: number
+      members: Array<Record<string, unknown>>
+    }
+    valid.members[0].presentation = { seatOrder: 4_096, colorIndex: 7, seatDisabled: true }
+    writeFileSync(storePath, JSON.stringify(valid), 'utf8')
+
+    expect(new ChannelStore(storePath).getMember(channel.channelId, owner.memberId)).toMatchObject({
+      presentation: { seatOrder: 4_096, colorIndex: 7, seatDisabled: true }
+    })
+
+    for (const presentation of [
+      {},
+      { seatOrder: -1 },
+      { seatOrder: 4_097 },
+      { colorIndex: 8 },
+      { seatDisabled: 'yes' },
+      { colorIndex: 2, cssColor: 'red' }
+    ]) {
+      valid.members[0].presentation = presentation
+      writeFileSync(storePath, JSON.stringify(valid), 'utf8')
+      expectCode(() => new ChannelStore(storePath).listChannels(), 'recovery_blocked')
+    }
+
+    valid.members[0].presentation = { colorIndex: 2 }
+    valid.schemaVersion = 3
+    writeFileSync(storePath, JSON.stringify(valid), 'utf8')
+    expectCode(() => new ChannelStore(storePath).listChannels(), 'recovery_blocked')
+  })
+
   it('persists owner-signed agent membership while keeping relay sessions human-only', () => {
     const { store, storePath, channel, signDelegation } = agentChannelFixture()
     const signedDelegation = signDelegation()
@@ -298,6 +330,14 @@ describe('ChannelStore', () => {
         }),
       'human_only'
     )
+
+    const v3 = JSON.parse(readFileSync(storePath, 'utf8')) as { schemaVersion: number }
+    v3.schemaVersion = 3
+    writeFileSync(storePath, JSON.stringify(v3), 'utf8')
+    const legacyAgentStore = new ChannelStore(storePath)
+    expect(legacyAgentStore.getMember(channel.channelId, admitted.memberId)).toEqual(admitted)
+    legacyAgentStore.createInvite({ channelId: channel.channelId, now: 3_000 })
+    expect(JSON.parse(readFileSync(storePath, 'utf8')).schemaVersion).toBe(CHANNEL_SCHEMA_VERSION)
   })
 
   it('rejects forged, rootless, postless, and non-contiguous agent memberships', () => {

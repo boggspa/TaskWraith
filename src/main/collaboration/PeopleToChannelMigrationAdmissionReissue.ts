@@ -17,6 +17,11 @@ import { dirname } from 'path'
 import type { HumanCollaborationSafeStorage } from './HumanCollaborationIdentityStore'
 import { normalizeContributionRules } from './HumanContributionRules'
 import {
+  copyChannelMemberPresentation,
+  isChannelMemberPresentation,
+  type ChannelMemberPresentation
+} from '../../shared/collaboration/ChannelMemberPresentation'
+import {
   DEFAULT_CHANNEL_INVITE_TTL_MS,
   ChannelError,
   ChannelStore,
@@ -48,6 +53,7 @@ export interface PeopleToChannelReissuedAdmission {
   purpose: PeopleToChannelReissuedAdmissionPurpose
   sourceCollaboratorId?: string
   openInviteOrdinal?: number
+  memberPresentation?: ChannelMemberPresentation
   policy: PeopleToChannelPendingAdmissionPolicy
   inviteId: string
   roomId: string
@@ -87,6 +93,7 @@ interface ReissueTask {
   purpose: PeopleToChannelReissuedAdmissionPurpose
   sourceCollaboratorId?: string
   openInviteOrdinal?: number
+  memberPresentation?: ChannelMemberPresentation
   policy: PeopleToChannelPendingAdmissionPolicy
 }
 
@@ -140,6 +147,7 @@ const PENDING_INVITATION_KEYS = new Set([
   'createdAt',
   'expiresAt'
 ])
+const PENDING_PRESENTATION_KEYS = new Set(['sourceCollaboratorId', 'presentation'])
 const OPEN_INVITATION_KEYS = new Set([
   'sourceShareId',
   'channelId',
@@ -287,12 +295,17 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
     sourceShareId: string
     channelId: string
     pendingCollaboratorIds: string[]
+    pendingMemberPresentations: Array<{
+      sourceCollaboratorId: string
+      presentation: ChannelMemberPresentation
+    }>
     openInviteCount: number
     policy: PeopleToChannelPendingAdmissionPolicy
   }> = []
   for (const candidate of reissues as readonly unknown[]) {
     const reissue = objectRecord(candidate)
     const collaborators = reissue?.pendingCollaboratorIds
+    const presentations = reissue?.pendingMemberPresentations
     const policy = strictPendingPolicy(reissue?.policy)
     if (
       !reissue ||
@@ -301,16 +314,34 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
       !Array.isArray(collaborators) ||
       collaborators.length > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
       collaborators.some((collaboratorId) => !safeIdentifier(collaboratorId)) ||
+      !Array.isArray(presentations) ||
+      presentations.length > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
       !safeCount(reissue.openInviteCount) ||
       reissue.openInviteCount > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
       !policy
     ) {
       blocked('People migration admission manifest is invalid')
     }
+    const pendingMemberPresentations = presentations.map((candidate) => {
+      const entry = objectRecord(candidate)
+      if (
+        !entry ||
+        !exactKeys(entry, PENDING_PRESENTATION_KEYS) ||
+        !safeIdentifier(entry.sourceCollaboratorId) ||
+        !isChannelMemberPresentation(entry.presentation, { allowSeatDisabled: true })
+      ) {
+        blocked('People migration pending presentation manifest is invalid')
+      }
+      return {
+        sourceCollaboratorId: entry.sourceCollaboratorId,
+        presentation: copyChannelMemberPresentation(entry.presentation)
+      }
+    })
     validated.push({
       sourceShareId: reissue.sourceShareId,
       channelId: reissue.channelId,
       pendingCollaboratorIds: collaborators as string[],
+      pendingMemberPresentations,
       openInviteCount: reissue.openInviteCount,
       policy
     })
@@ -327,8 +358,17 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
     shareIds.add(reissue.sourceShareId)
     channelIds.add(reissue.channelId)
     const collaborators = [...new Set(reissue.pendingCollaboratorIds)].sort(compareText)
+    const presentationByCollaborator = new Map(
+      reissue.pendingMemberPresentations.map(
+        (entry) => [entry.sourceCollaboratorId, entry] as const
+      )
+    )
     if (
       collaborators.length !== reissue.pendingCollaboratorIds.length ||
+      presentationByCollaborator.size !== reissue.pendingMemberPresentations.length ||
+      reissue.pendingMemberPresentations.some(
+        (entry) => !collaborators.includes(entry.sourceCollaboratorId)
+      ) ||
       (collaborators.length === 0 && reissue.openInviteCount === 0)
     ) {
       blocked('People migration pending collaborator manifest is invalid')
@@ -345,6 +385,13 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
         channelId: reissue.channelId,
         purpose: 'pending-collaborator',
         sourceCollaboratorId,
+        ...(presentationByCollaborator.get(sourceCollaboratorId)
+          ? {
+              memberPresentation: copyChannelMemberPresentation(
+                presentationByCollaborator.get(sourceCollaboratorId)!.presentation
+              )
+            }
+          : {}),
         policy: clone(reissue.policy)
       })
     }
@@ -499,8 +546,10 @@ function invitationMatchesTask(
   task: ReissueTask,
   createdAt: number
 ): boolean {
-  const expectedKeys =
+  const expectedKeys = new Set(
     task.purpose === 'pending-collaborator' ? PENDING_INVITATION_KEYS : OPEN_INVITATION_KEYS
+  )
+  if (task.memberPresentation) expectedKeys.add('memberPresentation')
   if (
     !exactKeys(invitation, expectedKeys) ||
     invitation.sourceShareId !== task.sourceShareId ||
@@ -508,6 +557,7 @@ function invitationMatchesTask(
     invitation.purpose !== task.purpose ||
     invitation.sourceCollaboratorId !== task.sourceCollaboratorId ||
     invitation.openInviteOrdinal !== task.openInviteOrdinal ||
+    canonicalJson(invitation.memberPresentation) !== canonicalJson(task.memberPresentation) ||
     canonicalJson(invitation.policy) !== canonicalJson(task.policy) ||
     !safeIdentifier(invitation.inviteId) ||
     !safeIdentifier(invitation.roomId) ||
@@ -718,7 +768,12 @@ function mutationsFor(args: {
             roomId: invitation.roomId,
             tokenHash: hashChannelInviteToken(invitation.inviteToken),
             createdAt: invitation.createdAt,
-            expiresAt: invitation.expiresAt
+            expiresAt: invitation.expiresAt,
+            ...(invitation.memberPresentation
+              ? {
+                  memberPresentation: copyChannelMemberPresentation(invitation.memberPresentation)
+                }
+              : {})
           })
         )
       return {
