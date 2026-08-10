@@ -395,11 +395,15 @@ describe('ChannelAgentManagementService', () => {
     const recovered = h.service.revokeAgent({
       channelId: channel.channelId,
       agentSeatId: SEAT_ID,
-      operationId: 'revoke-crash-proof'
+      operationId: 'revoke-crash-proof',
+      reason: 'channel_closed'
     })
     expect(recovered.member.status).toBe('revoked')
     expect(recovered.alreadyRevoked).toBe(false)
     expect(h.authority.snapshot(channel.channelId)?.revocations).toHaveLength(1)
+    expect(
+      h.authority.snapshot(channel.channelId)?.revocations[0].signedRevocation.revocation.reason
+    ).toBe('agent_removed')
   })
 
   it('rotates one stable identity across every active Channel exactly once per operation', () => {

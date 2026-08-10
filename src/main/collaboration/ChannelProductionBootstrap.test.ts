@@ -68,6 +68,10 @@ function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channe
       issueInvite: vi.fn(),
       appendHost: vi.fn(),
       revokeMember: vi.fn(),
+      enrollAgent: vi.fn(),
+      grantAgentDispatch: vi.fn(),
+      revokeAgent: vi.fn(),
+      rotateAgentKey: vi.fn(),
       closeChannel: vi.fn(),
       purgeForHistoryDeletionScope: vi.fn()
     }

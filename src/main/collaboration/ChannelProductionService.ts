@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { join, resolve as resolvePath } from 'path'
 import { importRawEd25519PublicKey, type KeyPair } from '../../shared/e2ee/keys'
 import type { TransportSocketFactory } from '../remote/RemoteTransportClient'
@@ -10,10 +11,18 @@ import {
 } from './ChannelAuditLog'
 import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
 import {
+  ChannelAgentManagementService,
+  type ChannelAgentDispatchGrantResult,
+  type ChannelAgentEnrollmentResult,
+  type ChannelAgentRevocationResult,
+  type ChannelAgentRotationResult
+} from './ChannelAgentManagementService'
+import {
   ChannelAgentIdentityStore,
   type ChannelAgentIdentitySafeStorage
 } from './ChannelAgentIdentityStore'
 import { admitAcceptedChannelAgentMentions } from './ChannelAgentMentionAdmission'
+import type { ChannelAgentSeatCandidate } from './ChannelAgentSeatAuthority'
 import { ChannelHostTransport } from './ChannelHostTransport'
 import {
   ChannelMessageLog,
@@ -24,6 +33,7 @@ import { ChannelRuntime, type ChannelRuntimeOptions } from './ChannelRuntime'
 import {
   ChannelError,
   ChannelStore,
+  type AgentChannelMember,
   type Channel,
   type ChannelMember,
   type TaskWraithReference
@@ -143,6 +153,31 @@ export interface ChannelProductionService {
     content: string
   }): Promise<ChannelAppendResult>
   revokeMember(args: { channelId: string; memberId: string }): Promise<ChannelProductionMemberView>
+  enrollAgent(args: {
+    channelId: string
+    seat: Pick<ChannelAgentSeatCandidate, 'agentSeatId' | 'displayName'>
+    operationId: string
+  }): Promise<ChannelAgentEnrollmentResult>
+  grantAgentDispatch(args: {
+    channelId: string
+    agentSeatId: string
+    operationId: string
+    allowedMentionerMemberIds: readonly string[]
+    workspaceIdentityHash: string
+    permissionPostureHash: string
+    ttlMs?: number
+    maxDispatches?: number
+  }): Promise<ChannelAgentDispatchGrantResult>
+  revokeAgent(args: {
+    channelId: string
+    agentSeatId: string
+    operationId: string
+  }): Promise<ChannelAgentRevocationResult>
+  rotateAgentKey(args: {
+    agentSeatId: string
+    operationId: string
+    reEnrollChannelIds?: readonly string[]
+  }): Promise<ChannelAgentRotationResult>
   closeChannel(channelId: string): Promise<ChannelProductionChannelView>
   purgeForHistoryDeletionScope(
     scope: ChannelProductionHistoryDeletionScope
@@ -155,6 +190,7 @@ interface RunningState {
   audit: ChannelAuditLog
   agentIdentities: ChannelAgentIdentityStore
   agentAuthority: ChannelAgentAuthorityStore
+  agentManagement: ChannelAgentManagementService
   runtime: ChannelRuntime
   transport: ChannelHostTransport
   recoveryBlockedChannelIds: Set<string>
@@ -271,6 +307,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
   private stopPromise: Promise<void> | null = null
   private readonly inFlight = new Set<Promise<unknown>>()
   private readonly channelTails = new Map<string, Promise<void>>()
+  private agentManagementTail: Promise<void> = Promise.resolve()
   private readonly closingChannelIds = new Set<string>()
   private readonly pendingAdmissions = new Map<string, ChannelProductionPendingAdmissionView>()
   private readonly pendingAdmissionTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -320,6 +357,13 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     })
     const log = new ChannelMessageLog(this.paths.logs, store, undefined, agentAuthority)
     const audit = new ChannelAuditLog(this.paths.audit)
+    const agentManagement = new ChannelAgentManagementService({
+      channels: store,
+      identities: agentIdentities,
+      authority: agentAuthority,
+      loadOwnerIdentity: this.options.loadIdentity,
+      now: this.now
+    })
     const recoveryBlockedChannelIds = new Set<string>()
     for (const channel of store.listChannels()) {
       try {
@@ -363,6 +407,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       audit,
       agentIdentities,
       agentAuthority,
+      agentManagement,
       runtime,
       transport,
       recoveryBlockedChannelIds
@@ -550,10 +595,106 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const state = this.requireReadyChannel(args.channelId)
     return this.track(
       this.enqueueChannel(args.channelId, () =>
-        state.runtime
-          .revokeMember({ channelId: args.channelId, memberId: args.memberId, now: this.now() })
-          .then(memberView)
+        Promise.resolve().then(() => {
+          const member = state.store.getMember(args.channelId, args.memberId)
+          if (member?.kind === 'agent') {
+            throw new ChannelError('human_only', 'Agent removal requires signed owner revocation')
+          }
+          return state.runtime
+            .revokeMember({ channelId: args.channelId, memberId: args.memberId, now: this.now() })
+            .then(memberView)
+        })
       )
+    )
+  }
+
+  enrollAgent(args: {
+    channelId: string
+    seat: Pick<ChannelAgentSeatCandidate, 'agentSeatId' | 'displayName'>
+    operationId: string
+  }): Promise<ChannelAgentEnrollmentResult> {
+    const state = this.requireReadyChannel(args.channelId)
+    return this.track(
+      this.enqueueAgentManagement(() =>
+        this.enqueueChannel(args.channelId, () => {
+          const result = state.agentManagement.enrollAgent(args)
+          this.notifyMembershipChange(state, args.channelId)
+          return result
+        })
+      )
+    )
+  }
+
+  grantAgentDispatch(args: {
+    channelId: string
+    agentSeatId: string
+    operationId: string
+    allowedMentionerMemberIds: readonly string[]
+    workspaceIdentityHash: string
+    permissionPostureHash: string
+    ttlMs?: number
+    maxDispatches?: number
+  }): Promise<ChannelAgentDispatchGrantResult> {
+    const state = this.requireReadyChannel(args.channelId)
+    return this.track(
+      this.enqueueAgentManagement(() =>
+        this.enqueueChannel(args.channelId, () => {
+          const result = state.agentManagement.grantDispatch(args)
+          this.notifyMembershipChange(state, args.channelId)
+          return result
+        })
+      )
+    )
+  }
+
+  revokeAgent(args: {
+    channelId: string
+    agentSeatId: string
+    operationId: string
+  }): Promise<ChannelAgentRevocationResult> {
+    const state = this.requireReadyChannel(args.channelId)
+    return this.track(
+      this.enqueueAgentManagement(() =>
+        this.enqueueChannel(args.channelId, () => {
+          const result = state.agentManagement.revokeAgent(args)
+          this.notifyMembershipChange(state, args.channelId)
+          return result
+        })
+      )
+    )
+  }
+
+  rotateAgentKey(args: {
+    agentSeatId: string
+    operationId: string
+    reEnrollChannelIds?: readonly string[]
+  }): Promise<ChannelAgentRotationResult> {
+    const state = this.requireRunning()
+    return this.track(
+      this.enqueueAgentManagement(async () => {
+        const channels = state.store.listChannels()
+        const blockedTarget = channels.find(
+          (channel) =>
+            state.recoveryBlockedChannelIds.has(channel.channelId) &&
+            state.store
+              .listMembers(channel.channelId)
+              .some((member) => member.kind === 'agent' && member.agentSeatId === args.agentSeatId)
+        )
+        if (blockedTarget) {
+          throw new ChannelError(
+            'recovery_blocked',
+            'Agent rotation cannot change a recovery-blocked Channel'
+          )
+        }
+        await Promise.all(
+          channels.map((channel) => this.enqueueChannel(channel.channelId, () => undefined))
+        )
+        const result = state.agentManagement.rotateAgentKey(args)
+        for (const enrollment of result.channels) {
+          this.notifyMembershipChange(state, enrollment.member.channelId)
+        }
+        return result
+      })
     )
   }
 
@@ -561,14 +702,36 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const state = this.requireReadyChannel(channelId)
     this.closingChannelIds.add(channelId)
     return this.track(
-      this.enqueueChannel(channelId, async () => {
-        await state.runtime.quiesceChannel(channelId)
-        const closed = state.store.closeChannel({ channelId, now: this.now() })
-        this.clearPendingAdmissions(channelId)
-        this.closingChannelIds.delete(channelId)
-        this.notifyChange({ channelId, chatId: closed.chatId, reason: 'channel' })
-        return this.channelView(closed, state)
-      })
+      this.enqueueAgentManagement(() =>
+        this.enqueueChannel(channelId, async () => {
+          try {
+            await state.runtime.quiesceChannel(channelId)
+            const agents = state.store
+              .listMembers(channelId)
+              .filter(
+                (member): member is AgentChannelMember =>
+                  member.kind === 'agent' && member.status === 'active'
+              )
+            for (const member of agents) {
+              const digest = createHash('sha256')
+                .update(`taskwraith.channel.close-agent.v1\n${channelId}\n${member.memberId}`)
+                .digest('hex')
+              state.agentManagement.revokeAgent({
+                channelId,
+                agentSeatId: member.agentSeatId,
+                operationId: `channel-close-${digest}`,
+                reason: 'channel_closed'
+              })
+            }
+            const closed = state.store.closeChannel({ channelId, now: this.now() })
+            this.clearPendingAdmissions(channelId)
+            this.notifyChange({ channelId, chatId: closed.chatId, reason: 'channel' })
+            return this.channelView(closed, state)
+          } finally {
+            this.closingChannelIds.delete(channelId)
+          }
+        })
+      )
     )
   }
 
@@ -731,6 +894,15 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     return operation
   }
 
+  private enqueueAgentManagement<T>(operation: () => Promise<T> | T): Promise<T> {
+    const result = this.agentManagementTail.catch(() => undefined).then(operation)
+    this.agentManagementTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
   private enqueueChannel<T>(channelId: string, operation: () => Promise<T> | T): Promise<T> {
     const previous = this.channelTails.get(channelId) ?? Promise.resolve()
     const result = previous.catch(() => undefined).then(operation)
@@ -743,6 +915,11 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       if (this.channelTails.get(channelId) === tail) this.channelTails.delete(channelId)
     })
     return result
+  }
+
+  private notifyMembershipChange(state: RunningState, channelId: string): void {
+    const chatId = state.store.getChannel(channelId)?.chatId
+    if (chatId) this.notifyChange({ channelId, chatId, reason: 'membership' })
   }
 
   private notifyAuditChange(event: ChannelAuditInput, store: ChannelStore): void {

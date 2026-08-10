@@ -656,6 +656,136 @@ describe('ChannelProductionService', () => {
     expect(existsSync(identityPath)).toBe(false)
   })
 
+  it('runs signed enrollment, bounded grants, rotation, and revocation through production custody', async () => {
+    let now = 1_700_100_000_000
+    const onChange = vi.fn()
+    const fixture = createService({ now: () => now, onChange })
+    fixture.service.start()
+    const first = fixture.service.createChannel({
+      chatId: 'chat-agent-management-first',
+      title: 'First management room',
+      ownerDisplayName: 'Host'
+    })
+    const second = fixture.service.createChannel({
+      chatId: 'chat-agent-management-second',
+      title: 'Second management room',
+      ownerDisplayName: 'Host'
+    })
+    const agentSeatId = 'pooled-agent-production-management'
+    const seat = { agentSeatId, displayName: 'Build Agent' }
+
+    const firstEnrollment = await fixture.service.enrollAgent({
+      channelId: first.channelId,
+      seat,
+      operationId: 'production-enroll-first'
+    })
+    await fixture.service.enrollAgent({
+      channelId: second.channelId,
+      seat,
+      operationId: 'production-enroll-second'
+    })
+    const owner = fixture.service.readChannel({
+      channelId: first.channelId,
+      resumeAfter: 0
+    }).members[0]
+    const grant = await fixture.service.grantAgentDispatch({
+      channelId: first.channelId,
+      agentSeatId,
+      operationId: 'production-grant',
+      allowedMentionerMemberIds: [owner.memberId],
+      workspaceIdentityHash: 'a'.repeat(64),
+      permissionPostureHash: 'b'.repeat(64)
+    })
+
+    expect(firstEnrollment.identity.keyGeneration).toBe(1)
+    expect(grant.signedDispatchGrant.grant).toMatchObject({
+      agentSeatId,
+      maxDispatches: 1,
+      allowedMentionerMemberIds: [owner.memberId]
+    })
+    await expect(
+      fixture.service.revokeMember({
+        channelId: first.channelId,
+        memberId: firstEnrollment.member.memberId
+      })
+    ).rejects.toMatchObject({ code: 'human_only' })
+
+    now += 1
+    const rotation = await fixture.service.rotateAgentKey({
+      agentSeatId,
+      operationId: 'production-rotate'
+    })
+    expect(rotation.identity.keyGeneration).toBe(2)
+    expect(rotation.channels).toHaveLength(2)
+    for (const channel of [first, second]) {
+      expect(
+        fixture.service
+          .readChannel({ channelId: channel.channelId, resumeAfter: 0 })
+          .members.filter((member) => member.kind === 'agent')
+          .map((member) => member.status)
+      ).toEqual(['revoked', 'active'])
+    }
+
+    now += 1
+    const removed = await fixture.service.revokeAgent({
+      channelId: first.channelId,
+      agentSeatId,
+      operationId: 'production-remove'
+    })
+    expect(removed.member).toMatchObject({ status: 'revoked', keyGeneration: 2 })
+    expect(
+      onChange.mock.calls.some(
+        ([event]) => event.channelId === first.channelId && event.reason === 'membership'
+      )
+    ).toBe(true)
+  })
+
+  it('persists agent-key revocation before closing a Channel', async () => {
+    const now = 1_700_200_000_000
+    const fixture = createService({ now: () => now })
+    fixture.service.start()
+    const channel = fixture.service.createChannel({
+      chatId: 'chat-agent-close',
+      title: 'Agent close proof',
+      ownerDisplayName: 'Host'
+    })
+    const enrolled = await fixture.service.enrollAgent({
+      channelId: channel.channelId,
+      seat: {
+        agentSeatId: 'pooled-agent-production-close',
+        displayName: 'Close Agent'
+      },
+      operationId: 'production-close-enroll'
+    })
+
+    await expect(fixture.service.closeChannel(channel.channelId)).resolves.toMatchObject({
+      status: 'closed'
+    })
+    expect(
+      fixture.service
+        .readChannel({ channelId: channel.channelId, resumeAfter: 0 })
+        .members.find((member) => member.memberId === enrolled.member.memberId)
+    ).toMatchObject({ kind: 'agent', status: 'revoked' })
+
+    const paths = channelProductionDataPaths(fixture.userDataPath)
+    const authority = new ChannelAgentAuthorityStore({
+      storageDirectory: paths.agentAuthority,
+      resolveOwnerPublicKey: (channelId, ownerMemberId) =>
+        channelId === channel.channelId && ownerMemberId === channel.ownerMemberId
+          ? fixture.identity.publicKey
+          : null,
+      now: () => now
+    })
+    const revocations = authority.snapshot(channel.channelId)?.revocations ?? []
+    expect(revocations).toHaveLength(1)
+    expect(revocations[0].signedRevocation.revocation).toMatchObject({
+      targetKind: 'agent_key',
+      reason: 'channel_closed',
+      agentSeatId: enrolled.identity.agentSeatId,
+      keyGeneration: enrolled.identity.keyGeneration
+    })
+  })
+
   it('audits an accepted human mention at the immutable review gate before authority access', async () => {
     const userDataPath = temporaryUserData()
     const identity = generateIdentityKeyPair()

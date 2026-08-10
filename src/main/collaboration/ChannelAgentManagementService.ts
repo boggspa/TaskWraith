@@ -482,10 +482,15 @@ export class ChannelAgentManagementService {
     channelId: string
     agentSeatId: string
     operationId: string
+    reason?: Extract<ChannelAgentRevocationReason, 'agent_removed' | 'channel_closed'>
   }): ChannelAgentRevocationResult {
     const channelId = this.requireIdentifier(args?.channelId, 'Channel id')
     const agentSeatId = this.requireSeat(args?.agentSeatId)
     const requestId = this.requireIdentifier(args?.operationId, 'Operation id')
+    const reason = args.reason ?? 'agent_removed'
+    if (reason !== 'agent_removed' && reason !== 'channel_closed') {
+      throw managementError('invalid_input', 'Channel agent revocation reason is invalid')
+    }
     const now = this.requireNow()
     const owner = this.ownerContext(channelId)
     const members = agentMembers(this.options.channels.listMembers(channelId), agentSeatId)
@@ -499,7 +504,7 @@ export class ChannelAgentManagementService {
     const existing = keyRevocation(snapshot, bindingFromMember(member), now)
     const signedRevocation =
       existing?.signedRevocation ??
-      this.ensureKeyRevocation(owner, delegation, requestId, now, 'agent_removed', true)
+      this.ensureKeyRevocation(owner, delegation, requestId, now, reason, true)
     const alreadyRevoked = member.status === 'revoked'
     const persisted = alreadyRevoked
       ? member
