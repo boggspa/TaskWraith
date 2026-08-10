@@ -80,7 +80,7 @@ day from that installation. The check-in has one fixed schema:
 | Schema                  | `1`          | Interpret the fixed report format              |
 | Event                   | `app_active` | Count an activity check-in                     |
 | UTC day                 | `2026-07-26` | Daily trends without a precise event timestamp |
-| TaskWraith version      | `1.9.0`      | Understand release adoption                    |
+| TaskWraith version      | `1.9.4`      | Understand release adoption                    |
 | Operating-system family | `macos`      | Prioritise supported platforms                 |
 | Processor family        | `arm64`      | Plan compatible builds                         |
 | Release channel         | `stable`     | Separate stable and prerelease health          |

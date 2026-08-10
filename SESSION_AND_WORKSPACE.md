@@ -144,6 +144,16 @@ does not silently remove worktrees that still have uncommitted changes.
 - Removing a worktree does not delete its branch unless you use an explicit
   branch cleanup flow where offered.
 
+## Work Projects
+
+Work Projects expand the basic workspace model into persistent cross-workspace folder trees. A Project creates a dedicated environment for organizing related tasks, without altering the underlying git repos.
+
+- **Discover, Review, and Import**: Seamlessly discover and integrate required context from multiple workspaces.
+- **Consentful Extracts**: Share specific workspace slices without granting full directory access to agents.
+- **Ensemble Use-next**: Pass curated Project state between participants in an Ensemble run.
+- **Studio-lite Keepables**: Promote valuable artifacts, scripts, and logs from temporary threads into durable Project state.
+- **Citations (`⟦pref:…⟧` chips)**: Inline metadata references linking conversation context directly to Project library entries.
+
 ## Related surfaces
 
 - **Sub-threads** — same- or cross-provider isolated delegation; not the same

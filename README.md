@@ -200,8 +200,9 @@ user choices, and the exact data boundary.
   and **Work** for Projects. Projects build cross-workspace folder trees with
   customizable icons and hues, plus drag-and-drop and add-menu organization.
   Each project can designate, open, or start a Project Home thread, and keep a
-  metadata-only library of relevant files, folders, and links. Library entries
-  do not grant agent access or inject content into a run.
+  library of relevant files, folders, and links. Project integration now includes
+  discover→review→import flows, consentful Extracts, Ensemble Use-next integration,
+  Studio-lite keepables, and inline citation `⟦pref:…⟧` chips.
 - **Thread Goals**: Set a persistent objective with `/goal <objective>` or the
   composer goal control. Codex uses native goal state when the installed runtime
   exposes it; qualified tool-capable providers get a TaskWraith-managed fallback

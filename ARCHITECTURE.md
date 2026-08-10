@@ -96,7 +96,7 @@ authority. In the source-ahead
 checkout, the desktop picker writes a structured participant-id link and main
 re-resolves every desktop/remote direct prompt against the canonical roster;
 ambiguous plain aliases and stale structured ids fail before launch. This
-main-authoritative routing hardening is newer than the v1.8.4 release baseline.
+main-authoritative routing hardening is newer than the v1.9.4 release baseline.
 
 ## Evidence Packs and Capability Ledger
 

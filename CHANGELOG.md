@@ -6,6 +6,12 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## 1.9.5 - Unreleased
+
+Source-ahead work toward the next release. See the commits since the
+[v1.9.4](https://github.com/boggspa/TaskWraith/releases/tag/v1.9.4) tag for the
+current boundary; release notes will be compiled when 1.9.5 is tagged.
+
 ## 1.9.4 - 2026-08-08
 
 ### Work Project references

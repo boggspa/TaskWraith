@@ -15,14 +15,22 @@ disclosure, and TW-SEC-2026-014 moved from `Open` to `Remediated` after its
 multi-store completeness pass. Those dated notes are provenance, not the
 current release pointer.
 
-**2026-07-27 v1.9.0 paperwork boundary:** the latest published baseline is
-**v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first reconciled
-1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag), with
-release-paperwork commits following it. The requested first refresh reached
-concurrent-work cutoff `de6dcd264` (**202 commits** past the tag, with three
-refresh-paperwork commits interleaved). This second paperwork pass opened at
-`3bf7bbca3` (**236 commits** past the tag, 31 committed changes after the prior
-paperwork tip `d46229e8a`), after surface-scoped Canvas grants, durable
+**2026-08-10 v1.9.4 public-baseline / v1.9.5 source-ahead boundary:** the
+latest published baseline is now **v1.9.4**
+(`ec967526f3cea0c46fade17ee1c392bbbf457c9b`). This checkout contains
+source-ahead work toward the **v1.9.5** release boundary; the exact integrated
+candidate must be re-recorded and verified before a release claim. The
+2026-07-27 v1.9.0 paperwork boundary below retains the historical v1.8.9 to
+v1.9.0 provenance.
+
+**2026-07-27 v1.9.0 paperwork boundary (historical):** the latest published
+baseline was **v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first
+reconciled 1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag),
+with release-paperwork commits following it. The requested first refresh
+reached concurrent-work cutoff `de6dcd264` (**202 commits** past the tag, with
+three refresh-paperwork commits interleaved). This second paperwork pass opened
+at `3bf7bbca3` (**236 commits** past the tag, 31 committed changes after the
+prior paperwork tip `d46229e8a`), after surface-scoped Canvas grants, durable
 `canvas_fill` value redaction, per-call theme consent, Mistral UI/live-lane
 evidence, Pi attribution, and a scoped history-deletion deadline attempt
 landed. The final paperwork reconciliation opened at `37c60cfeb` (**261

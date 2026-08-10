@@ -838,8 +838,9 @@ picker, or resolves a plain alias against the current enabled roster. A
 hand-typed provider/role/model alias that matches multiple seats is rejected
 rather than selecting whichever participant happens to appear first. The
 renderer may send an advisory participant id for explicit UI gestures, but it
-cannot override a prompt routing signal. This main-authoritative change is
-newer than the v1.8.4 release baseline described under **Versioning** below.
+cannot override a prompt routing signal. This main-authoritative change shipped
+in v1.9.0 and is part of the current v1.9.4 release baseline described under
+**Versioning** below.
 
 ### Stage roles and background lanes
 
@@ -1275,9 +1276,9 @@ fix lands, then add owner, status, regression evidence, and release disposition.
 
 ## Versioning
 
-This document uses **v1.8.4** as its released baseline and also describes the
-current source-ahead checkout. Treat behavior newer than the tagged baseline as
-unshipped until it appears in the next release notes:
+This document uses **v1.9.4** as its released baseline and also describes the
+current source-ahead checkout (1.9.5-pre). Treat behavior newer than the tagged
+baseline as unshipped until it appears in the next release notes:
 
 - Sub-threads (Phase F1 + F2 back-propagation + F3 agent-driven
   delegation + J2 recall mode) — landed
@@ -1286,7 +1287,7 @@ unshipped until it appears in the next release notes:
   same-provider participants + turn/continuous modes
 - **Source-ahead routing hardening** — new-round participant selection is
   re-resolved in Electron main; exact picker links retain participant identity
-  and ambiguous plain aliases fail closed. This is not a v1.8.4 guarantee.
+  and ambiguous plain aliases fail closed. This guarantee shipped in v1.9.0.
 - Approval flow + timeout policy (Phase E1)
 - Approval ledger UX (Phase E2)
 - **MCP tool surface** — full canonical list in
