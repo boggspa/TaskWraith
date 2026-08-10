@@ -606,7 +606,10 @@ export type TranscriptPanelProps = {
   /** Live queued approvals per chat — used by fleet wave elevation. */
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
   /** Respond to an elevated fleet-wave approval (Allow / Deny / Allow-all). */
-  onRespondAgentApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
+  onRespondAgentApproval?: (
+    requestId: string,
+    action: AgentApprovalAction
+  ) => boolean | void | Promise<boolean | void>
   onPlanChoiceSubmit: (messageId: string, option: string) => void
   onProposedPlanApprove: (messageId: string, planBody: string) => void
   onProposedPlanDismiss: (messageId: string) => void
@@ -4774,7 +4777,13 @@ export const TranscriptPanel = memo(
                                 pendingApprovals,
                                 scopeKey
                               )) {
-                                await onRespondAgentApproval(id, 'accept')
+                                const accepted = await onRespondAgentApproval(id, 'accept')
+                                // Stop the bulk when an accept is rejected — do not
+                                // keep accepting the rest of the scope group.
+                                if (accepted === false) break
+                                // Yield so App can commit head/queue promotion before
+                                // the next id is located (same-chat sequential Allow-all).
+                                await new Promise<void>((resolve) => setTimeout(resolve, 0))
                               }
                             }
                           : undefined
@@ -4812,10 +4821,10 @@ export const TranscriptPanel = memo(
                                   queue.some((row) => pendingApprovalIds.has(row.id)))
                               const status = failed
                                 ? 'failed'
-                                : returned || archived
-                                  ? 'completed'
-                                  : hasPendingApproval
-                                    ? 'needs_approval'
+                                : hasPendingApproval
+                                  ? 'needs_approval'
+                                  : returned || archived
+                                    ? 'completed'
                                     : running
                                       ? 'working'
                                       : 'pending'
