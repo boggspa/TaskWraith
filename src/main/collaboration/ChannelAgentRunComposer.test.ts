@@ -8,7 +8,7 @@ import type {
   ComposerInput,
   ComposerRunPayload
 } from '../services/ComposerService'
-import type { AppSettings } from '../store/types'
+import type { AppSettings, ProviderId } from '../store/types'
 import type { ChannelAgentDispatchPlan } from './ChannelAgentDispatchAuthority'
 import { ChannelAgentDispatchJournalState } from './ChannelAgentDispatchJournalState'
 import {
@@ -293,6 +293,64 @@ describe('ChannelAgentRunComposer', () => {
     expect(payload.providerSessionId).toBeNull()
     expect(payload).not.toHaveProperty('composer')
     expect(JSON.stringify(payload)).not.toContain('Previous Channel history bytes')
+  })
+
+  it('keeps the accepted contribution singly untrusted across every provider route', async () => {
+    const providers: ProviderId[] = [
+      'gemini',
+      'codex',
+      'claude',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama',
+      'antigravity',
+      'pi',
+      'mistral'
+    ]
+
+    for (const provider of providers) {
+      const base = plan()
+      const effectivePermissions = resolveEffectiveRunPermissions({
+        provider,
+        workspacePath: '/workspace/channel-run-composer',
+        model: 'provider-default-model',
+        settings,
+        presetId: 'workspace_write'
+      })
+      const value = plan({
+        seat: {
+          ...base.seat,
+          provider,
+          model: undefined,
+          reasoningEffort: undefined,
+          serviceTier: undefined,
+          fastModeEnabled: false,
+          thinkingEnabled: true
+        },
+        effectivePermissions
+      })
+      const reserved = reservation(value)
+      const h = harness((payload, input, authority) => ({
+        ...payload,
+        serviceTier: authority.provider === 'kimi' ? 'standard' : null,
+        claudeReasoningEffort:
+          authority.provider === 'claude' ? (input.claudeReasoningEffort ?? null) : null,
+        claudeFastMode: authority.provider === 'claude' ? (input.claudeFastMode ?? false) : null,
+        kimiThinking: authority.provider === 'kimi' ? (input.kimiThinkingEnabled ?? true) : null
+      }))
+
+      const payload = await h.composer.compose(value, reserved)
+      const call = h.calls[0]
+      expect(call.input.provider).toBe(provider)
+      expect(call.input.contextIsolation).toBe('channel_agent')
+      expect(call.input.userInput).toBe(buildChannelAgentTurnPrompt(value))
+      expect(call.input.userInput?.split(WRAPPED_CONTRIBUTION)).toHaveLength(2)
+      expect(payload.provider).toBe(provider)
+      expect(payload.providerSessionId).toBeNull()
+      expect(payload.prompt.split(WRAPPED_CONTRIBUTION)).toHaveLength(2)
+      expect(JSON.stringify(payload)).not.toContain('Previous Channel history bytes')
+    }
   })
 
   it('refuses composition after consumption begins or when the plan is rebound', async () => {
