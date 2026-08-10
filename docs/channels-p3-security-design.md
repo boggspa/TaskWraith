@@ -1,8 +1,12 @@
 # Channels P3 — signed-agent security design and review package
 
-**Status:** PRE-REVIEW. Production agent participation is blocked by the
-source-only gate in
-[`ChannelAgentReviewGate.ts`](../src/shared/collaboration/ChannelAgentReviewGate.ts).
+**Status:** REVIEW ACCEPTED for candidate
+`b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4`. The explicit decision and residual
+risks are recorded in
+[`channels-p3-adversarial-review.md`](channels-p3-adversarial-review.md).
+Production agent participation remains blocked by the source-only gate in
+[`ChannelAgentReviewGate.ts`](../src/shared/collaboration/ChannelAgentReviewGate.ts)
+until the separate enable slice names that tracked acceptance record.
 
 **Implementation order:** identity and signed authority first; participation
 second. The complete production path may be built behind the gate, but the gate
