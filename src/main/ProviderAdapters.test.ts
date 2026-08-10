@@ -253,7 +253,7 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.approvalModes).toEqual(['default', 'plan'])
     expect(cap.reasoningEffort).toBe(false)
     expect(cap.speedTiers).toEqual(['fast'])
-    expect(cap.imageAttachments).toBe(false)
+    expect(cap.imageAttachments).toBe(true)
     expect(descriptor.transport).toBe('kimi-acp-authenticated-http-mcp')
     expect(descriptor.features.workspaceGrants).toBe(true)
     expect(descriptor.features.agentBenchMcpBridge).toBe(true)

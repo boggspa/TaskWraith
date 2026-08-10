@@ -233,7 +233,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['default', 'plan'],
         reasoningEffort: false,
         speedTiers: ['fast'],
-        imageAttachments: false,
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: true,
         perThreadMcp: true,
@@ -449,6 +449,38 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
             'Muse runs via `muse exec --json` under an isolated home. Native tool calls are projected into the transcript ActivityStack from durable session.jsonl for display. TaskWraith does not attach an MCP broker in v1 and does not show host per-tool approval cards for Muse-native effects — containment remains argv/sandbox + isolated home.'
         }
       ]
+    }
+  }
+  if (provider === 'mistral') {
+    return {
+      provider,
+      label: providerLabel(provider),
+      transport: 'mistral-vibe-acp',
+      runChannel: 'run-agent',
+      capabilitySource: 'provider',
+      features: {
+        persistentSessions: false,
+        appManagedApprovals: false,
+        workspaceGrants: true,
+        agentBenchMcpBridge: false,
+        providerManagedMcp: false,
+        nativeThreadTools: true,
+        hostCommandFallback: false
+      },
+      capabilities: {
+        approvalModes: ['default', 'plan'],
+        reasoningEffort: true,
+        speedTiers: [],
+        // Per-model: mistral-medium-3.5 supports vision, devstral-small (the
+        // default) does not. Keep provider-level false until the contract
+        // becomes per-model; flipping true would advertise an affordance the
+        // default model cannot deliver. See StaticProviderModels.ts.
+        imageAttachments: false,
+        contextInjection: true,
+        sessionResumption: false,
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
+      }
     }
   }
   if (provider === 'antigravity') {
