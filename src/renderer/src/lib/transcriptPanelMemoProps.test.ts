@@ -119,4 +119,65 @@ describe('transcriptPanelMemoProps', () => {
       )
     ).toBe(true)
   })
+
+  it('invalidates when fleet child pending approval maps or respond handler change', () => {
+    const shared = baseProps()
+    const respondA = () => undefined
+    const respondB = () => undefined
+    const approval = { id: 'apr-1' }
+    expect(
+      transcriptPanelPropsEqual(shared, {
+        ...shared,
+        pendingAgentApprovalByChatId: { 'child-1': approval as never }
+      })
+    ).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        {
+          ...shared,
+          pendingAgentApprovalByChatId: { 'child-1': approval as never },
+          pendingApprovalQueueByChatId: {},
+          onRespondAgentApproval: respondA
+        },
+        {
+          ...shared,
+          pendingAgentApprovalByChatId: { 'child-1': approval as never },
+          pendingApprovalQueueByChatId: {},
+          onRespondAgentApproval: respondA
+        }
+      )
+    ).toBe(true)
+    expect(
+      transcriptPanelPropsEqual(
+        {
+          ...shared,
+          pendingAgentApprovalByChatId: { 'child-1': approval as never },
+          onRespondAgentApproval: respondA
+        },
+        {
+          ...shared,
+          pendingAgentApprovalByChatId: { 'child-1': { id: 'apr-2' } as never },
+          onRespondAgentApproval: respondA
+        }
+      )
+    ).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, onRespondAgentApproval: respondA },
+        { ...shared, onRespondAgentApproval: respondB }
+      )
+    ).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        {
+          ...shared,
+          pendingApprovalQueueByChatId: { 'child-1': [approval as never] }
+        },
+        {
+          ...shared,
+          pendingApprovalQueueByChatId: { 'child-1': [{ id: 'apr-2' } as never] }
+        }
+      )
+    ).toBe(false)
+  })
 })
