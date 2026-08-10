@@ -63,6 +63,16 @@ function fakeDeps() {
         presentation: 'dock'
       }
     },
+    getChartDocument: (id: string, ctx: unknown) => {
+      calls.push(['getChartDocument', [id, ctx]])
+      if (id !== 'chart-1') return null
+      return {
+        schemaVersion: 1,
+        title: 'Latency',
+        kind: 'line',
+        series: [{ id: 'p50', label: 'p50', points: [{ x: 0, y: 1 }] }]
+      }
+    },
     navigate: async (id: string, input: unknown, ctx: unknown, opts: unknown) => {
       calls.push(['navigate', [id, input, ctx, opts]])
       return {
@@ -108,10 +118,32 @@ describe('registerCanvasEmbedIpc', () => {
       'canvas:clear-browser-profile',
       'canvas:navigate-chat',
       'canvas:list',
-      'canvas:list-chat'
+      'canvas:list-chat',
+      'canvas:chart-document'
     ]) {
       expect(ipc.has(channel)).toBe(true)
     }
+  })
+
+  it('returns a chat-scoped chart document for TelemetryPane without pixels', () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    expect(ipc.invoke('canvas:chart-document', 'chat-a', 'chart-1')).toEqual({
+      schemaVersion: 1,
+      title: 'Latency',
+      kind: 'line',
+      series: [{ id: 'p50', label: 'p50', points: [{ x: 0, y: 1 }] }]
+    })
+    expect(deps.calls.find((call) => call[0] === 'getChartDocument')?.[1]).toEqual([
+      'chart-1',
+      { chatId: 'chat-a', workspacePath: '/workspace/a' }
+    ])
+
+    expect(ipc.invoke('canvas:chart-document', 'chat-a', 'missing')).toBeNull()
+    expect(ipc.invoke('canvas:chart-document', 'chat-a', '')).toBeNull()
+    expect(() => ipc.invoke('canvas:chart-document', '', 'chart-1')).toThrow(/canonical chat/)
   })
 
   it('clears the app-wide Browser profile as a human action and retires closed embeds', async () => {
@@ -178,9 +210,9 @@ describe('registerCanvasEmbedIpc', () => {
     const ipc = fakeIpc()
     const deps = fakeDeps()
     registerCanvasEmbedIpc(ipc.ipcMain, deps)
-    await expect(ipc.invoke('canvas:navigate-chat', 'chat-a', 7, { action: 'back' })).resolves.toMatchObject(
-      { ok: false }
-    )
+    await expect(
+      ipc.invoke('canvas:navigate-chat', 'chat-a', 7, { action: 'back' })
+    ).resolves.toMatchObject({ ok: false })
     await expect(
       ipc.invoke('canvas:navigate-chat', 'chat-a', 'c1', { action: 'teleport' })
     ).resolves.toMatchObject({ ok: false })
@@ -287,10 +319,7 @@ describe('registerCanvasEmbedIpc', () => {
 
     expect(adopted).toMatchObject({ ok: true, canvasId: 'c1', presentation: 'dock' })
     await ipc.invoke('canvas:set-bounds', 'c1', { x: 1, y: 2, width: 3, height: 4 })
-    expect(deps.calls).toContainEqual([
-      'setBounds',
-      ['c1', { x: 1, y: 2, width: 3, height: 4 }]
-    ])
+    expect(deps.calls).toContainEqual(['setBounds', ['c1', { x: 1, y: 2, width: 3, height: 4 }]])
     expect(await ipc.invoke('canvas:list')).toEqual([
       expect.objectContaining({ canvasId: 'c1', presentation: 'dock' })
     ])
@@ -302,10 +331,12 @@ describe('registerCanvasEmbedIpc', () => {
     ;(deps.embed as { has: (id: string) => boolean }).has = () => false
     registerCanvasEmbedIpc(ipc.ipcMain, deps)
 
-    expect(ipc.invoke('canvas:adopt-embedded', { chatId: 'chat-a', canvasId: 'c1' })).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/embedded/i)
-    })
+    expect(ipc.invoke('canvas:adopt-embedded', { chatId: 'chat-a', canvasId: 'c1' })).toMatchObject(
+      {
+        ok: false,
+        error: expect.stringMatching(/embedded/i)
+      }
+    )
     expect(await ipc.invoke('canvas:list')).toEqual([])
   })
 
@@ -368,10 +399,7 @@ describe('registerCanvasEmbedIpc', () => {
     ])
     await ipc.invoke('canvas:close', 'c1')
 
-    expect(deps.calls).toContainEqual([
-      'setBounds',
-      ['c1', { x: 1, y: 2, width: 3, height: 4 }]
-    ])
+    expect(deps.calls).toContainEqual(['setBounds', ['c1', { x: 1, y: 2, width: 3, height: 4 }]])
     expect(deps.calls).toContainEqual(['setVisible', ['c1', false]])
     expect(deps.calls).toContainEqual([
       'close',

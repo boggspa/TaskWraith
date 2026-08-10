@@ -5,6 +5,7 @@ import { TranscriptPanel, transcriptRunningChatIdsSignature } from './Transcript
 import { SubThreadStatusTicker } from './SubThreadStatusTicker'
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
+import { transcriptPendingApprovalsSignature } from '../lib/transcriptPanelMemoProps'
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
 import { MainPaneActionPill } from './MainPaneActionPill'
@@ -238,6 +239,16 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     // skips, while an active-child start/stop reconciles this pane.
     transcriptRunningChatIdsSignature(a.runningChatIds) ===
       transcriptRunningChatIdsSignature(b.runningChatIds) &&
+    // Fleet elevated approvals — head/queue content + respond handler identity.
+    transcriptPendingApprovalsSignature(
+      a.pendingAgentApprovalByChatId,
+      a.pendingApprovalQueueByChatId
+    ) ===
+      transcriptPendingApprovalsSignature(
+        b.pendingAgentApprovalByChatId,
+        b.pendingApprovalQueueByChatId
+      ) &&
+    a.onRespondAgentApproval === b.onRespondAgentApproval &&
     // Per-pane agent-aura — MUST be compared or the pane won't re-tint when its
     // own run/approval/queue state (auraStatus) or provider/intensity changes.
     a.showAura === b.showAura &&

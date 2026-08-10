@@ -15,12 +15,14 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { CanvasBrowserChrome } from './CanvasBrowserChrome'
 import { CanvasPane } from './CanvasPane'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
+import { TelemetryCanvasPanel } from './TelemetryCanvasPanel'
 import { friendlyCanvasError } from './CanvasComposerButton'
 import { isNavigableCanvasUrl } from '../lib/canvasBrowserUrl'
 import {
   isCanvasDockPresentationEvent,
   selectUnownedDockPresentations
 } from '../lib/canvasPresentation'
+import { validateCanvasChart, type CanvasChartDocument } from '../../../shared/canvasChart'
 import {
   consumeMeshCanvasOpenRequest,
   getPendingMeshCanvasOpenRequest,
@@ -35,11 +37,18 @@ import { shouldOpenMeshFromChatRehydrate } from '../lib/simulatorCanvasPanelHelp
 import { MeshCanvasPanel, toMeshSceneSummary } from './MeshCanvasPanel'
 import { SimulatorCanvasPanel } from './SimulatorCanvasPanel'
 
-export type CanvasDockSessionKind = 'web' | 'sketch'
+export type CanvasDockSessionKind = 'web' | 'sketch' | 'chart'
 
 export interface CanvasDockSessionRef {
   canvasId: string
   kind: CanvasDockSessionKind
+}
+
+/** Map a Canvas driver string onto the dock session-tab kind. */
+export function dockSessionKindFromDriver(driver: string | undefined): CanvasDockSessionKind {
+  if (driver === 'sketch') return 'sketch'
+  if (driver === 'chart') return 'chart'
+  return 'web'
 }
 
 export interface CanvasDockChatState {
@@ -56,7 +65,7 @@ function isSessionRef(value: unknown): value is CanvasDockSessionRef {
   return (
     typeof ref.canvasId === 'string' &&
     ref.canvasId.length > 0 &&
-    (ref.kind === 'web' || ref.kind === 'sketch')
+    (ref.kind === 'web' || ref.kind === 'sketch' || ref.kind === 'chart')
   )
 }
 
@@ -179,6 +188,8 @@ export interface CanvasDockSummary {
   canGoBack?: boolean
   canGoForward?: boolean
   presentation?: 'dock'
+  /** Present when main/list includes the structured chart payload. */
+  chartDocument?: CanvasChartDocument
 }
 
 /** Defensive decode of a canvas summary that crossed the IPC bridge. */
@@ -186,6 +197,8 @@ export function toCanvasDockSummary(value: unknown): CanvasDockSummary | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
   if (typeof raw.canvasId !== 'string' || !raw.canvasId) return null
+  const chartVerdict =
+    raw.chartDocument !== undefined ? validateCanvasChart(raw.chartDocument) : null
   return {
     canvasId: raw.canvasId,
     driver: typeof raw.driver === 'string' ? raw.driver : 'web',
@@ -195,7 +208,8 @@ export function toCanvasDockSummary(value: unknown): CanvasDockSummary | null {
     ...(typeof raw.isLoading === 'boolean' ? { isLoading: raw.isLoading } : {}),
     ...(typeof raw.canGoBack === 'boolean' ? { canGoBack: raw.canGoBack } : {}),
     ...(typeof raw.canGoForward === 'boolean' ? { canGoForward: raw.canGoForward } : {}),
-    ...(raw.presentation === 'dock' ? { presentation: 'dock' as const } : {})
+    ...(raw.presentation === 'dock' ? { presentation: 'dock' as const } : {}),
+    ...(chartVerdict?.ok ? { chartDocument: chartVerdict.document } : {})
   }
 }
 
@@ -215,8 +229,9 @@ export function canvasSummaryLabel(summary: {
   driver?: string
 }): string {
   if (summary.title) return summary.title
-  // A sketch's record url is an internal sketch://<id> — never a useful label.
+  // A sketch/chart record url is an internal sketch:// or chart:// id — never a useful label.
   if (summary.driver === 'sketch') return 'Sketch canvas'
+  if (summary.driver === 'chart') return 'Chart'
   if (summary.url) {
     try {
       const parsed = new URL(summary.url)
@@ -229,7 +244,9 @@ export function canvasSummaryLabel(summary: {
     }
     return summary.url
   }
-  return summary.driver === 'sketch' ? 'Sketch canvas' : 'Canvas'
+  if (summary.driver === 'sketch') return 'Sketch canvas'
+  if (summary.driver === 'chart') return 'Chart'
+  return 'Canvas'
 }
 
 function driverBadge(driver: string): string {
@@ -295,8 +312,21 @@ function SurfaceGlyph({ kind }: { kind: 'browser' | 'sketch' | 'mesh' | 'simulat
   }
   return (
     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <rect x="5" y="2.75" width="10" height="14.5" rx="2" stroke="currentColor" strokeWidth="1.35" />
-      <path d="M8.25 5h3.5M9.1 14.9h1.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <rect
+        x="5"
+        y="2.75"
+        width="10"
+        height="14.5"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.35"
+      />
+      <path
+        d="M8.25 5h3.5M9.1 14.9h1.8"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
     </svg>
   )
 }
@@ -310,7 +340,13 @@ function ShieldGlyph() {
         strokeWidth="1.3"
         strokeLinejoin="round"
       />
-      <path d="m7.5 10 1.55 1.55L12.8 7.8" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="m7.5 10 1.55 1.55L12.8 7.8"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -390,9 +426,9 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     const api = window.api?.canvas
     if (!api) return
     try {
-      const owned = (await api.list()).map(toCanvasDockSummary).filter(
-        (summary): summary is CanvasDockSummary => summary !== null
-      )
+      const owned = (await api.list())
+        .map(toCanvasDockSummary)
+        .filter((summary): summary is CanvasDockSummary => summary !== null)
       if (chatIdRef.current !== chatId) return
       const chatWide = api.listForChat ? await api.listForChat(chatId) : []
       if (chatIdRef.current !== chatId) return
@@ -402,10 +438,27 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       const ownedById = new Map(owned.map((summary) => [summary.canvasId, summary]))
       const presentationApi = api as typeof api & CanvasPresentationBridge
 
+      // Chart dock presentations have no WebContentsView, so they never appear in
+      // renderer `list()`. Host them from the chat-wide summary so reconcile and
+      // the tab body can see titles / optional chartDocument payloads.
+      for (const summary of decodedChatWide) {
+        if (
+          summary.driver === 'chart' &&
+          summary.presentation === 'dock' &&
+          summary.status !== 'closed'
+        ) {
+          ownedById.set(summary.canvasId, summary)
+        }
+      }
+
       for (const candidate of selectUnownedDockPresentations(
         decodedChatWide,
         new Set(ownedById.keys())
       )) {
+        // Chart docks are native TelemetryPane tabs — no WebContentsView to adopt.
+        if (candidate.driver === 'chart') {
+          continue
+        }
         if (!presentationApi.adoptEmbedded) {
           setError(
             'Canvas presentation needs the updated preload bridge. Restart TaskWraith and try again.'
@@ -439,7 +492,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
         if (stored.sessions.some((session) => session.canvasId === summary.canvasId)) continue
         canvasDockSessionStore.add(chatId, {
           canvasId: summary.canvasId,
-          kind: summary.driver === 'sketch' ? 'sketch' : 'web'
+          kind: dockSessionKindFromDriver(summary.driver)
         })
       }
 
@@ -463,9 +516,10 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     let cancelled = false
     setShowMesh(false)
     setShowSimulator(false)
-    if (!api) return () => {
-      cancelled = true
-    }
+    if (!api)
+      return () => {
+        cancelled = true
+      }
     void api
       .listForChat(chatId)
       .then((records) => {
@@ -621,7 +675,9 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   }
 
   const clearBrowserProfile = async (): Promise<void> => {
-    const api = window.api?.canvas as (typeof window.api.canvas & CanvasPresentationBridge) | undefined
+    const api = window.api?.canvas as
+      | (typeof window.api.canvas & CanvasPresentationBridge)
+      | undefined
     if (!api?.clearBrowserProfile) {
       setProfileNotice({
         kind: 'error',
@@ -666,9 +722,17 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
 
   const closeSession = async (canvasId: string): Promise<void> => {
     const api = window.api?.canvas
+    const session = state.sessions.find((entry) => entry.canvasId === canvasId)
     canvasDockSessionStore.remove(chatId, canvasId)
     try {
-      await api?.close(canvasId)
+      // Chart tabs are never renderer-embed-owned; close through the chat-scoped
+      // path (same authority as closing an agent canvas). Web/sketch embeds use
+      // the ordinary owned close channel.
+      if (session?.kind === 'chart') {
+        await api?.closeForChat?.(chatId, canvasId)
+      } else {
+        await api?.close(canvasId)
+      }
     } catch {
       // Already closed (chat cleared / main restarted) — the store entry is gone.
     }
@@ -678,6 +742,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   const popOutSession = async (session: CanvasDockSessionRef): Promise<void> => {
     const api = window.api?.canvas
     if (!api) return
+    // Chart tabs are dock-native; there is no floating-window host for them.
+    if (session.kind === 'chart') return
     setError(null)
     const summary = ownedSummaries.get(session.canvasId)
     // Close the embed first: a sketch's document is chat-persisted (lossless);
@@ -725,17 +791,10 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     sessions[sessions.length - 1] ??
     null
   const activeSummary = active ? ownedSummaries.get(active.canvasId) : undefined
-  const agentCanvases = selectAgentCanvases(
-    chatSummaries,
-    new Set(ownedSummaries.keys())
-  )
+  const agentCanvases = selectAgentCanvases(chatSummaries, new Set(ownedSummaries.keys()))
   const launcherVisible = showLauncher || !sessions.length
   const showingSpecialSurface = showMesh || showSimulator
-  const toolbarTitle = showSimulator
-    ? 'Simulator Canvas'
-    : showMesh
-      ? 'Mesh Canvas'
-      : 'New tab'
+  const toolbarTitle = showSimulator ? 'Simulator Canvas' : showMesh ? 'Mesh Canvas' : 'New tab'
 
   const showBrowserSurface = (newTab: boolean): void => {
     setShowMesh(false)
@@ -797,7 +856,12 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
             title="Choose canvas surface"
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+              <path
+                d="M8 3v10M3 8h10"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
           <button
@@ -832,41 +896,83 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       )}
 
       {openMenu === 'surfaces' && (
-        <div className="canvas-dock-popover canvas-dock-surface-menu" role="menu" aria-label="Canvas surfaces">
+        <div
+          className="canvas-dock-popover canvas-dock-surface-menu"
+          role="menu"
+          aria-label="Canvas surfaces"
+        >
           <div className="canvas-dock-popover-eyebrow">Canvas surfaces</div>
-          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={() => showBrowserSurface(false)}>
-            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="browser" /></span>
+          <button
+            type="button"
+            className="canvas-dock-menu-item"
+            role="menuitem"
+            onClick={() => showBrowserSurface(false)}
+          >
+            <span className="canvas-dock-menu-icon">
+              <SurfaceGlyph kind="browser" />
+            </span>
             <span className="canvas-dock-menu-copy">
               <strong>{sessions.length ? 'Browser tabs' : 'Browser'}</strong>
-              <small>{sessions.length ? 'Return to your open pages' : 'Start with a new tab'}</small>
+              <small>
+                {sessions.length ? 'Return to your open pages' : 'Start with a new tab'}
+              </small>
             </span>
           </button>
           {sessions.length > 0 && (
-            <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={() => showBrowserSurface(true)}>
-              <span className="canvas-dock-menu-icon canvas-dock-menu-plus" aria-hidden="true">+</span>
+            <button
+              type="button"
+              className="canvas-dock-menu-item"
+              role="menuitem"
+              onClick={() => showBrowserSurface(true)}
+            >
+              <span className="canvas-dock-menu-icon canvas-dock-menu-plus" aria-hidden="true">
+                +
+              </span>
               <span className="canvas-dock-menu-copy">
                 <strong>New browser tab</strong>
                 <small>Open another site or local app</small>
               </span>
             </button>
           )}
-          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={openSketch} disabled={busy !== null}>
-            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="sketch" /></span>
+          <button
+            type="button"
+            className="canvas-dock-menu-item"
+            role="menuitem"
+            onClick={openSketch}
+            disabled={busy !== null}
+          >
+            <span className="canvas-dock-menu-icon">
+              <SurfaceGlyph kind="sketch" />
+            </span>
             <span className="canvas-dock-menu-copy">
               <strong>Sketch canvas</strong>
               <small>Shapes, arrows, freehand, and text</small>
             </span>
           </button>
           <div className="canvas-dock-menu-divider" />
-          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={openMeshSurface}>
-            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="mesh" /></span>
+          <button
+            type="button"
+            className="canvas-dock-menu-item"
+            role="menuitem"
+            onClick={openMeshSurface}
+          >
+            <span className="canvas-dock-menu-icon">
+              <SurfaceGlyph kind="mesh" />
+            </span>
             <span className="canvas-dock-menu-copy">
               <strong>Mesh Canvas</strong>
               <small>Inspect and author 3D scenes</small>
             </span>
           </button>
-          <button type="button" className="canvas-dock-menu-item" role="menuitem" onClick={openSimulatorSurface}>
-            <span className="canvas-dock-menu-icon"><SurfaceGlyph kind="simulator" /></span>
+          <button
+            type="button"
+            className="canvas-dock-menu-item"
+            role="menuitem"
+            onClick={openSimulatorSurface}
+          >
+            <span className="canvas-dock-menu-icon">
+              <SurfaceGlyph kind="simulator" />
+            </span>
             <span className="canvas-dock-menu-copy">
               <strong>Simulator Canvas</strong>
               <small>Preview and control an iOS app</small>
@@ -876,15 +982,24 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       )}
 
       {openMenu === 'profile' && (
-        <div className="canvas-dock-popover canvas-dock-profile-menu" role="dialog" aria-label="TaskWraith Browser profile">
+        <div
+          className="canvas-dock-popover canvas-dock-profile-menu"
+          role="dialog"
+          aria-label="TaskWraith Browser profile"
+        >
           <div className="canvas-dock-profile-heading">
-            <span className="canvas-dock-profile-icon"><ShieldGlyph /></span>
+            <span className="canvas-dock-profile-icon">
+              <ShieldGlyph />
+            </span>
             <span>
               <strong>TaskWraith Browser</strong>
               <small>Persistent profile on this device</small>
             </span>
           </div>
-          <p>Cookies and sign-ins stay inside TaskWraith. They are never shared with Safari, Chrome, or provider credentials.</p>
+          <p>
+            Cookies and sign-ins stay inside TaskWraith. They are never shared with Safari, Chrome,
+            or provider credentials.
+          </p>
           <div className="canvas-dock-profile-safety">
             Agents can use pages after you sign in, but cannot type passwords or verification codes.
           </div>
@@ -895,10 +1010,24 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
           )}
           {confirmingProfileClear ? (
             <div className="canvas-dock-profile-confirm">
-              <p>Close browser tabs across all tasks and clear cookies, sign-ins, site data, and cache? Sketch, 3D, and Simulator canvases stay open.</p>
+              <p>
+                Close browser tabs across all tasks and clear cookies, sign-ins, site data, and
+                cache? Sketch, 3D, and Simulator canvases stay open.
+              </p>
               <div className="canvas-dock-profile-actions">
-                <button type="button" onClick={() => setConfirmingProfileClear(false)} disabled={profileBusy}>Cancel</button>
-                <button type="button" className="is-danger" onClick={() => void clearBrowserProfile()} disabled={profileBusy}>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingProfileClear(false)}
+                  disabled={profileBusy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="is-danger"
+                  onClick={() => void clearBrowserProfile()}
+                  disabled={profileBusy}
+                >
                   {profileBusy ? 'Clearing…' : 'Clear data'}
                 </button>
               </div>
@@ -953,7 +1082,24 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
             </section>
           )}
 
-          {active && !launcherVisible && (
+          {active && !launcherVisible && active.kind === 'chart' && (
+            <div className="canvas-dock-pane-host">
+              <TelemetryCanvasPanel
+                key={active.canvasId}
+                chatId={chatId}
+                canvasId={active.canvasId}
+                title={canvasSummaryLabel({
+                  title: activeSummary?.title,
+                  url: activeSummary?.url,
+                  driver: 'chart'
+                })}
+                document={activeSummary?.chartDocument ?? null}
+                onClose={() => void closeSession(active.canvasId)}
+              />
+            </div>
+          )}
+
+          {active && !launcherVisible && active.kind !== 'chart' && (
             <div className="canvas-dock-pane-host">
               <CanvasPane
                 key={active.canvasId}
@@ -1011,9 +1157,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
                     <span className="canvas-dock-agent-label" title={summary.url}>
                       {canvasSummaryLabel(summary)}
                     </span>
-                    <span className="canvas-dock-agent-driver">
-                      {driverBadge(summary.driver)}
-                    </span>
+                    <span className="canvas-dock-agent-driver">{driverBadge(summary.driver)}</span>
                     <button
                       type="button"
                       className="canvas-dock-agent-close"
@@ -1027,8 +1171,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
                 ))}
               </ul>
               <div className="canvas-dock-agent-hint">
-                Opened by agents via canvas tools — web canvases live in floating windows;
-                renders are off-screen.
+                Opened by agents via canvas tools — web canvases live in floating windows; renders
+                are off-screen.
               </div>
             </div>
           )}

@@ -227,3 +227,22 @@ describe('inheritedSubThreadPermissions', () => {
     })
   })
 })
+
+describe('capped_inherit isolation', () => {
+  it('demotes full_access parents and strips grants', () => {
+    const decision = resolveSubThreadWorkerPermissions({
+      parentPermissions: {
+        ...fullAccess,
+        externalPathGrants: [parentBoundReadGrant]
+      },
+      readOnlyPermissions: readOnly,
+      isolation: { kind: 'capped_inherit' }
+    })
+    expect(decision.ok).toBe(true)
+    if (!decision.ok) return
+    expect(decision.isolation).toBe('capped_inherit')
+    expect(decision.effectivePermissions.presetId).toBe('workspace_write')
+    expect(decision.effectivePermissions.externalPathGrants).toEqual([])
+    expect(decision.effectivePermissions.readOnly).toBe(false)
+  })
+})

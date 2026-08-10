@@ -1891,10 +1891,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       sanitized.ensembleCollapseOlderRounds = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('maxWaveAgents' in sanitized) {
-      // Settings → General: cap delegate_wave batch size (default 8, clamp 2–20).
+      // Settings → General: cap delegate_wave batch size (default 8, clamp 2–64).
       const value = Number(sanitized.maxWaveAgents)
       if (Number.isFinite(value)) {
-        sanitized.maxWaveAgents = Math.max(2, Math.min(20, Math.floor(value)))
+        sanitized.maxWaveAgents = Math.max(2, Math.min(64, Math.floor(value)))
       } else {
         delete sanitized.maxWaveAgents
       }

@@ -113,7 +113,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
     case 'gemini':
       return {
         providerLabel: 'Gemini',
-        modelLabel: 'Pro 3.1',
+        modelLabel: 'Pro',
         permissionLabel: 'Accept Edits',
         placeholder: 'Ask Gemini'
       }

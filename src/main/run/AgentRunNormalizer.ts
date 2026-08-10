@@ -335,7 +335,9 @@ function normalizeRuntimeWorktreeIntent(value: unknown): AgentRunPayload['runtim
       ? 'composer'
       : value.source === 'ensembleLane'
         ? 'ensembleLane'
-        : 'runtimeProfile'
+        : value.source === 'ephemeralFleet'
+          ? 'ephemeralFleet'
+          : 'runtimeProfile'
   return {
     requested: value.requested !== false,
     source,

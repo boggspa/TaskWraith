@@ -138,8 +138,8 @@ function emptyResult(
 /**
  * Serial main-only admission owner for fsynced human Channel records. The
  * immutable source gate is checked both before execution startup and by the
- * mention admission function. With the production gate false, no recovery,
- * authority-plan, composer, run-event, or provider port is touched.
+ * mention admission function. An explicitly injected closed gate keeps every
+ * recovery, authority-plan, composer, run-event, and provider port inert.
  */
 export class ChannelAgentProductionService {
   private stateValue: ChannelAgentProductionServiceState = 'idle'

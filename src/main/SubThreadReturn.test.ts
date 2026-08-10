@@ -352,6 +352,97 @@ describe('opt-in side-chat authority return', () => {
     expect(updated.delegationContext).toBeUndefined()
   })
 
+  it('archives ephemeral sub-thread children on typed return and leaves durable alone', () => {
+    const ephemeral = markLinkedChildResultReturned(
+      {
+        appChatId: 'child-e',
+        scope: 'workspace',
+        chatKind: 'single',
+        provider: 'codex',
+        title: 'scout',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        messages: [],
+        runs: [],
+        parentChatId: 'parent',
+        parentChatRelation: 'subThread',
+        delegationContext: {
+          createdAt: 1,
+          parentProvider: 'codex',
+          delegationPrompt: 'go',
+          returnResultToParent: true,
+          lifecycle: 'ephemeral'
+        }
+      },
+      'subThread',
+      Date.parse('2026-01-01T00:02:00Z'),
+      'asst-1'
+    )
+    expect(ephemeral.archived).toBe(true)
+    expect(ephemeral.delegationContext?.resultReturnedAt).toBe(Date.parse('2026-01-01T00:02:00Z'))
+
+    const durable = markLinkedChildResultReturned(
+      {
+        appChatId: 'child-d',
+        scope: 'workspace',
+        chatKind: 'single',
+        provider: 'codex',
+        title: 'worker',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        messages: [],
+        runs: [],
+        parentChatId: 'parent',
+        parentChatRelation: 'subThread',
+        delegationContext: {
+          createdAt: 1,
+          parentProvider: 'codex',
+          delegationPrompt: 'go',
+          returnResultToParent: true,
+          lifecycle: 'durable'
+        }
+      },
+      'subThread',
+      Date.parse('2026-01-01T00:02:00Z'),
+      'asst-2'
+    )
+    expect(durable.archived).toBe(false)
+  })
+
+  it('can stamp resultReturnedAt without archiving when promote settle failed', () => {
+    const kept = markLinkedChildResultReturned(
+      {
+        appChatId: 'child-e',
+        scope: 'workspace',
+        chatKind: 'single',
+        provider: 'codex',
+        title: 'worker',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        messages: [],
+        runs: [],
+        parentChatId: 'parent',
+        parentChatRelation: 'subThread',
+        delegationContext: {
+          createdAt: 1,
+          parentProvider: 'codex',
+          delegationPrompt: 'go',
+          returnResultToParent: true,
+          lifecycle: 'ephemeral'
+        }
+      },
+      'subThread',
+      Date.parse('2026-01-01T00:02:00Z'),
+      'asst-1',
+      { archiveEphemeral: false }
+    )
+    expect(kept.archived).toBe(false)
+    expect(kept.delegationContext?.resultReturnedAt).toBe(Date.parse('2026-01-01T00:02:00Z'))
+  })
+
   it('uses a distinct untrusted side-chat envelope', () => {
     const content = buildLinkedChildReturnContent({
       relation: 'sideChat',

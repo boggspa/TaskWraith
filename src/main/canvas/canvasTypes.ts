@@ -9,9 +9,60 @@
  * Driver support is capability-gated by CanvasService. In particular, `window`
  * can open only through an internal, exact-run native lease target; declaring a
  * driver kind here never makes it agent-requestable.
+ *
+ * Chart document contracts + validation live in `src/shared/canvasChart.ts`
+ * (single source of truth for transcript fences + MCP dock). Re-exported here
+ * so existing main/canvas importers keep working.
  */
 
-export type CanvasDriverKind = 'web' | 'html' | 'image' | 'sketch' | 'window' | 'device'
+import type {
+  CanvasChartDocument,
+  CanvasChartKind,
+  CanvasChartPoint,
+  CanvasChartSeries,
+  CanvasChartValidation
+} from '../../shared/canvasChart'
+import {
+  CANVAS_CHART_KINDS,
+  CANVAS_CHART_MAX_JSON_BYTES,
+  CANVAS_CHART_MAX_POINTS_PER_SERIES,
+  CANVAS_CHART_MAX_SERIES,
+  CANVAS_CHART_MAX_TITLE_CHARS,
+  CANVAS_CHART_SCHEMA_VERSION,
+  validateCanvasChart
+} from '../../shared/canvasChart'
+
+export type {
+  CanvasChartDocument,
+  CanvasChartKind,
+  CanvasChartPoint,
+  CanvasChartSeries,
+  CanvasChartValidation
+}
+export {
+  CANVAS_CHART_KINDS,
+  CANVAS_CHART_MAX_JSON_BYTES,
+  CANVAS_CHART_MAX_POINTS_PER_SERIES,
+  CANVAS_CHART_MAX_SERIES,
+  CANVAS_CHART_MAX_TITLE_CHARS,
+  CANVAS_CHART_SCHEMA_VERSION,
+  validateCanvasChart
+}
+
+/** Compat aliases for earlier seat call sites. */
+export const MAX_CANVAS_CHART_SERIES = CANVAS_CHART_MAX_SERIES
+export const MAX_CANVAS_CHART_POINTS_PER_SERIES = CANVAS_CHART_MAX_POINTS_PER_SERIES
+export const MAX_CANVAS_CHART_TITLE_CHARS = CANVAS_CHART_MAX_TITLE_CHARS
+
+export type CanvasDriverKind =
+  | 'web'
+  | 'html'
+  | 'image'
+  | 'sketch'
+  | 'window'
+  | 'device'
+  /** Structured telemetry chart — screenshot-capable; docks without WebContentsView. */
+  | 'chart'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
 
@@ -63,7 +114,9 @@ export interface CanvasOpenInput {
   /**
    * INTERNAL ONLY. Distinguishes an explicit agent request to focus the Canvas
    * dock from an ordinary renderer-owned embed (for example, a multiview pane).
-   * Requires `embed: true`; renderer IPC never forwards this field.
+   * For web/sketch this requires `embed: true`. For `chart`, presentation:"dock"
+   * is allowed WITHOUT a WebContentsView embed (native TelemetryPane). Renderer
+   * IPC never forwards this field.
    */
   presentation?: 'dock'
   // --- html driver (agent-authored layout/SVG; canvas_render_html) ---
@@ -87,6 +140,12 @@ export interface CanvasOpenInput {
   mediaSha256?: string
   /** MIME type of the image asset (e.g. "image/png"). REQUIRED for the `image` driver. */
   mediaMimeType?: string
+  /**
+   * Structured chart document for the `chart` driver (canvas_render_chart).
+   * INTERNAL open-input only — agent-facing canvas_open must never accept
+   * `driver: "chart"`; the dedicated MCP tool owns the contract.
+   */
+  chartDocument?: CanvasChartDocument
   /**
    * Internal sketch driver bootstrap document. Set by CanvasService from the
    * persisted per-chat sketch document, never by agent-facing MCP schemas.
@@ -465,6 +524,11 @@ export interface CanvasDriver {
   navigate?(input: CanvasNavigateInput): Promise<CanvasNavState>
   /** Live chrome state (web driver only). Synchronous read of the surface. */
   navState?(): CanvasNavState
+  /**
+   * Structured chart document (chart driver only). Synchronous read so
+   * canvas_list / canvas_status can feed the Canvas dock TelemetryPane.
+   */
+  chartDocument?(): CanvasChartDocument | null
   close(): Promise<void>
 }
 
@@ -480,6 +544,11 @@ export interface CanvasSessionSummary {
   updatedAt: string
   /** Live host placement. Present only when the surface belongs in the Canvas dock. */
   presentation?: 'dock'
+  /**
+   * Structured chart payload for the Canvas dock TelemetryPane.
+   * Present only for live chart-driver sessions (not persisted history).
+   */
+  chartDocument?: CanvasChartDocument
   /** Live browser-chrome state; present only for open web-driver sessions. */
   isLoading?: boolean
   canGoBack?: boolean
@@ -556,6 +625,11 @@ export interface CanvasController {
   ): Promise<{ canvasId: string } & CanvasSessionHandle>
   list(ctx: CanvasCallContext): CanvasSessionSummary[]
   status(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary | null
+  /**
+   * Structured chart payload for a live chart session (Canvas dock TelemetryPane).
+   * Returns null when the canvas is missing, not owned, or not a chart driver.
+   */
+  getChartDocument(canvasId: string, ctx: CanvasCallContext): CanvasChartDocument | null
   snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree>
   screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame>
   inspect(
@@ -573,14 +647,14 @@ export interface CanvasController {
     args: { level?: 'all' | 'warn' | 'error'; lines?: number },
     ctx: CanvasCallContext
   ): Promise<CanvasConsoleEntry[]>
-  resize(canvasId: string, viewport: CanvasViewport, ctx: CanvasCallContext): Promise<CanvasViewport>
+  resize(
+    canvasId: string,
+    viewport: CanvasViewport,
+    ctx: CanvasCallContext
+  ): Promise<CanvasViewport>
   click(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
   fill(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
-  annotate(
-    canvasId: string,
-    marks: CanvasMark[],
-    ctx: CanvasCallContext
-  ): Promise<CanvasAnnotation>
+  annotate(canvasId: string, marks: CanvasMark[], ctx: CanvasCallContext): Promise<CanvasAnnotation>
   sketchDocument(canvasId: string, ctx: CanvasCallContext): Promise<CanvasSketchDocument>
   sketchUpdate(
     canvasId: string,
@@ -700,11 +774,7 @@ function classifyIPv4(host: string): CanvasHostClass {
  * loading and before each request.
  */
 export function classifyCanvasHost(rawHost: string): CanvasHostClass {
-  const host = rawHost
-    .toLowerCase()
-    .replace(/^\[/, '')
-    .replace(/\]$/, '')
-    .replace(/\.$/, '')
+  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '')
   if (!host) return 'invalid'
   if (METADATA_HOSTNAMES.has(host)) return 'linklocal'
   // IPv4-mapped / NAT64, dotted form.
@@ -854,7 +924,9 @@ export function redactUrlQuery(rawUrl: string): string {
  * start a segment with '-'.
  */
 export function isValidBundleId(value: string): boolean {
-  return value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value)
+  return (
+    value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value)
+  )
 }
 
 /** A simulator UDID (uppercase or lowercase UUID) or the literal 'booted'. */
@@ -920,10 +992,7 @@ export interface CanvasMediaRefValidation {
  * shape check — the asset store's own mime→ext whitelist + realpath jail is the
  * authoritative gate (and is what actually resolves the bytes).
  */
-export function validateCanvasImageRef(
-  sha256: string,
-  mimeType: string
-): CanvasMediaRefValidation {
+export function validateCanvasImageRef(sha256: string, mimeType: string): CanvasMediaRefValidation {
   const sha = typeof sha256 === 'string' ? sha256.trim() : ''
   const mime = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : ''
   if (!CANVAS_MEDIA_SHA_RE.test(sha)) {

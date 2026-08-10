@@ -160,7 +160,8 @@ describe('ChannelHostPanelView', () => {
     })
 
     expect(html).toContain('Human posts stay manual')
-    expect(html).toContain('mention dispatch remains disabled pending security review')
+    expect(html).toContain('active signed grant')
+    expect(html).toContain('start a bounded run automatically')
     expect(html).toContain('Chris')
     expect(html).toContain('Owner · Active')
     expect(html).toContain('Alex')

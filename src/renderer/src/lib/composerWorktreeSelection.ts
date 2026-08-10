@@ -13,9 +13,10 @@ export type ComposerWorktreeSelectionByChatId = Record<string, ComposerWorktreeS
 
 export interface RuntimeWorktreeIntent {
   requested: boolean
-  /** 'ensembleLane' is main-stamped for isolated fan-out lanes; the composer
-   * never produces it, but the mirror must accept it on round-trips. */
-  source: 'runtimeProfile' | 'composer' | 'ensembleLane'
+  /** 'ensembleLane' / 'ephemeralFleet' are main-stamped for isolated
+   * fan-out / fleet-writer lanes; the composer never produces them, but the
+   * mirror must accept them on round-trips. */
+  source: 'runtimeProfile' | 'composer' | 'ensembleLane' | 'ephemeralFleet'
   profileId?: string
   profileName?: string
   baseWorkspacePath?: string

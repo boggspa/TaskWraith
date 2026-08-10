@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_MAX_WAVE_AGENTS,
+  DELEGATE_WAVE_EPHEMERAL_MIN_WORKERS,
   DELEGATE_WAVE_MAX_WORKERS,
   DELEGATE_WAVE_MIN_WORKERS,
+  buildDelegateWaveApprovalCopy,
   clampMaxWaveAgents,
   createDelegateWaveId,
   executeDelegateWaveTool,
@@ -37,23 +39,68 @@ function twoWorkers(overrides: Record<string, unknown> = {}) {
 }
 
 describe('SubThreadDelegateWave pure helpers', () => {
-  it('caps wave size to the join quorum ceiling and requires at least two workers', () => {
+  it('decouples wave max from join quorum while both sit at 64', () => {
     expect(DELEGATE_WAVE_MIN_WORKERS).toBe(2)
-    expect(DELEGATE_WAVE_MAX_WORKERS).toBe(MAX_SUBTHREAD_JOIN_QUORUM)
-    expect(DELEGATE_WAVE_MAX_WORKERS).toBe(20)
+    expect(DELEGATE_WAVE_EPHEMERAL_MIN_WORKERS).toBe(1)
+    expect(DELEGATE_WAVE_MAX_WORKERS).toBe(64)
+    expect(MAX_SUBTHREAD_JOIN_QUORUM).toBe(64)
   })
 
-  it('rejects fewer than two workers before any join is resolved', () => {
+  it('rejects fewer than two durable workers before any join is resolved', () => {
     const result = parseDelegateWaveArgs(
       { workers: [{ provider: 'codex', prompt: 'alone' }] },
-      { parentChatId, parentAppRunId, nowMs, isAllowedProvider }
+      { parentChatId, parentAppRunId, nowMs, isAllowedProvider, parentProvider: 'codex' }
     )
     expect(result.ok).toBe(false)
     if (result.ok) return
-    expect(result.message).toMatch(/at least 2/i)
+    expect(result.message).toMatch(/durable workers must contain at least 2/)
   })
 
-  it('rejects more than MAX_SUBTHREAD_JOIN_QUORUM workers', () => {
+  it('allows a singleton ephemeral worker and inherits omitted provider', () => {
+    const result = parseDelegateWaveArgs(
+      { lifecycle: 'ephemeral', workers: [{ prompt: 'alone scout', role: 'scout' }] },
+      {
+        parentChatId,
+        parentAppRunId,
+        nowMs,
+        isAllowedProvider,
+        parentProvider: 'codex',
+        createWaveId: () => 'wave-solo'
+      }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.lifecycle).toBe('ephemeral')
+    expect(result.value.workers).toEqual([
+      { provider: 'codex', prompt: 'alone scout', role: 'scout' }
+    ])
+  })
+
+  it('rejects mixed providers unless allowMultiProvider is true', () => {
+    const mixed = parseDelegateWaveArgs(twoWorkers(), {
+      parentChatId,
+      parentAppRunId,
+      nowMs,
+      isAllowedProvider,
+      parentProvider: 'codex',
+      createWaveId: () => 'wave-mixed'
+    })
+    expect(mixed.ok).toBe(false)
+    if (mixed.ok) return
+    expect(mixed.message).toMatch(/allowMultiProvider=true/)
+
+    const allowedMixed = parseDelegateWaveArgs(twoWorkers({ allowMultiProvider: true }), {
+      parentChatId,
+      parentAppRunId,
+      nowMs,
+      isAllowedProvider,
+      parentProvider: 'codex',
+      createWaveId: () => 'wave-mixed-ok'
+    })
+    expect(allowedMixed.ok).toBe(true)
+  })
+
+  it('rejects more than DELEGATE_WAVE_MAX_WORKERS workers', () => {
     const workers = Array.from({ length: DELEGATE_WAVE_MAX_WORKERS + 1 }, (_, i) => ({
       provider: 'codex',
       prompt: `w${i}`
@@ -65,24 +112,22 @@ describe('SubThreadDelegateWave pure helpers', () => {
         parentAppRunId,
         nowMs,
         isAllowedProvider,
+        parentProvider: 'codex',
         maxWorkers: DELEGATE_WAVE_MAX_WORKERS
       }
     )
     expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.message).toMatch(/at most 20/i)
   })
 
-  it('clamps maxWaveAgents to 2–MAX_SUBTHREAD_JOIN_QUORUM with default 8', () => {
-    expect(DEFAULT_MAX_WAVE_AGENTS).toBe(8)
-    expect(clampMaxWaveAgents(undefined)).toBe(8)
+  it('clamps maxWaveAgents to 2–64 with default 8', () => {
+    expect(clampMaxWaveAgents(undefined)).toBe(DEFAULT_MAX_WAVE_AGENTS)
+    expect(clampMaxWaveAgents(8)).toBe(8)
+    expect(clampMaxWaveAgents(20)).toBe(20)
+    expect(clampMaxWaveAgents(64)).toBe(DELEGATE_WAVE_MAX_WORKERS)
+    expect(clampMaxWaveAgents(99)).toBe(DELEGATE_WAVE_MAX_WORKERS)
     expect(clampMaxWaveAgents(null)).toBe(8)
     expect(clampMaxWaveAgents('nope')).toBe(8)
     expect(clampMaxWaveAgents(1)).toBe(2)
-    expect(clampMaxWaveAgents(2)).toBe(2)
-    expect(clampMaxWaveAgents(8)).toBe(8)
-    expect(clampMaxWaveAgents(20)).toBe(MAX_SUBTHREAD_JOIN_QUORUM)
-    expect(clampMaxWaveAgents(99)).toBe(MAX_SUBTHREAD_JOIN_QUORUM)
     expect(clampMaxWaveAgents(8.9)).toBe(8)
   })
 
@@ -93,14 +138,28 @@ describe('SubThreadDelegateWave pure helpers', () => {
     }))
     const overSetting = parseDelegateWaveArgs(
       { workers },
-      { parentChatId, parentAppRunId, nowMs, isAllowedProvider, maxWorkers: 8 }
+      {
+        parentChatId,
+        parentAppRunId,
+        nowMs,
+        isAllowedProvider,
+        parentProvider: 'codex',
+        maxWorkers: 8
+      }
     )
     expect(overSetting.ok).toBe(false)
     if (!overSetting.ok) expect(overSetting.message).toMatch(/at most 8/i)
 
     const ok = parseDelegateWaveArgs(
       { workers: workers.slice(0, 8) },
-      { parentChatId, parentAppRunId, nowMs, isAllowedProvider, maxWorkers: 8 }
+      {
+        parentChatId,
+        parentAppRunId,
+        nowMs,
+        isAllowedProvider,
+        parentProvider: 'codex',
+        maxWorkers: 8
+      }
     )
     expect(ok.ok).toBe(true)
   })
@@ -112,14 +171,14 @@ describe('SubThreadDelegateWave pure helpers', () => {
     }))
     const overDefault = parseDelegateWaveArgs(
       { workers: nine },
-      { parentChatId, parentAppRunId, nowMs, isAllowedProvider }
+      { parentChatId, parentAppRunId, nowMs, isAllowedProvider, parentProvider: 'codex' }
     )
     expect(overDefault.ok).toBe(false)
     if (!overDefault.ok) expect(overDefault.message).toMatch(/at most 8/i)
 
     const atDefault = parseDelegateWaveArgs(
       { workers: nine.slice(0, 8) },
-      { parentChatId, parentAppRunId, nowMs, isAllowedProvider }
+      { parentChatId, parentAppRunId, nowMs, isAllowedProvider, parentProvider: 'codex' }
     )
     expect(atDefault.ok).toBe(true)
   })
@@ -496,6 +555,29 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(consumed).toBe(3)
   })
 
+  function trackingBudgetPorts() {
+    let consumed = 0
+    let released = 0
+    return {
+      get netConsumed() {
+        return consumed - released
+      },
+      get consumed() {
+        return consumed
+      },
+      get released() {
+        return released
+      },
+      tryConsumeBudgetSlot: (): 'allowed' | 'exhausted' => {
+        consumed += 1
+        return 'allowed'
+      },
+      releaseBudgetSlots: (count: number) => {
+        released += Math.max(0, Math.floor(count))
+      }
+    }
+  }
+
   it('executeDelegateWaveTool is all-or-nothing and rolls back partial spawns', async () => {
     const rolledBack: Array<{
       subThreadId: string
@@ -504,6 +586,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
       runId: string
     }> = []
     let spawnCalls = 0
+    const budget = trackingBudgetPorts()
     const outcome = await executeDelegateWaveTool({
       args: twoWorkers(),
       parentChatId,
@@ -514,7 +597,8 @@ describe('SubThreadDelegateWave pure helpers', () => {
       isBossOrCaptain: true,
       permissionPresetId: 'default',
       budgetRemaining: 10,
-      tryConsumeBudgetSlot: () => 'allowed',
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
       budgetCap: 20,
       requestApproval: async () => true,
       assertParentStillValid: () => undefined,
@@ -556,11 +640,14 @@ describe('SubThreadDelegateWave pure helpers', () => {
         runId: 'run-codex'
       }
     ])
+    // Spawn-failure rollback must refund the reserved wave slots (not leave N burned).
+    expect(budget.consumed).toBe(2)
+    expect(budget.netConsumed).toBe(0)
   })
 
   it('executeDelegateWaveTool skips approval for Boss+default but still consumes budget', async () => {
     let approvalCalls = 0
-    let budgetConsumed = 0
+    const budget = trackingBudgetPorts()
     const outcome = await executeDelegateWaveTool({
       args: twoWorkers(),
       parentChatId,
@@ -571,10 +658,8 @@ describe('SubThreadDelegateWave pure helpers', () => {
       isBossOrCaptain: true,
       permissionPresetId: 'workspace_write',
       budgetRemaining: 5,
-      tryConsumeBudgetSlot: () => {
-        budgetConsumed += 1
-        return 'allowed'
-      },
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
       budgetCap: 20,
       subThreadDelegationPolicy: 'ask',
       requestApproval: async () => {
@@ -603,7 +688,8 @@ describe('SubThreadDelegateWave pure helpers', () => {
     })
     expect(outcome.ok).toBe(true)
     expect(approvalCalls).toBe(0)
-    expect(budgetConsumed).toBe(2)
+    expect(budget.consumed).toBe(2)
+    expect(budget.netConsumed).toBe(2)
     if (!outcome.ok) return
     expect(outcome.result.waveId).toBe('wave-skip-approval')
     expect(outcome.result.children).toHaveLength(2)
@@ -612,7 +698,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
   it('authority card-skip still honors subThreadDelegation deny (no spawn)', async () => {
     let approvalCalls = 0
     let spawnCalls = 0
-    let budgetConsumed = 0
+    const budget = trackingBudgetPorts()
     const outcome = await executeDelegateWaveTool({
       args: twoWorkers(),
       parentChatId,
@@ -623,10 +709,8 @@ describe('SubThreadDelegateWave pure helpers', () => {
       isBossOrCaptain: true,
       permissionPresetId: 'full_access',
       budgetRemaining: 5,
-      tryConsumeBudgetSlot: () => {
-        budgetConsumed += 1
-        return 'allowed'
-      },
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
       budgetCap: 20,
       subThreadDelegationPolicy: 'deny',
       requestApproval: async () => {
@@ -661,8 +745,58 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(outcome.text).toMatch(/declined by TaskWraith policy/)
     expect(approvalCalls).toBe(0)
     expect(spawnCalls).toBe(0)
-    // Budget is reserved before the deny short-circuit (same order as ask decline).
-    expect(budgetConsumed).toBe(2)
+    // Policy deny after reserve must refund — otherwise the agent cannot retry this turn.
+    expect(budget.consumed).toBe(2)
+    expect(budget.netConsumed).toBe(0)
+  })
+
+  it('ask-path decline refunds reserved budget slots and never spawns', async () => {
+    let spawnCalls = 0
+    const budget = trackingBudgetPorts()
+    const outcome = await executeDelegateWaveTool({
+      args: twoWorkers(),
+      parentChatId,
+      parentAppRunId,
+      parentProviderLabel: 'Codex',
+      maxWorkers: 8,
+      isAllowedProvider,
+      isBossOrCaptain: false,
+      permissionPresetId: 'default',
+      budgetRemaining: 5,
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
+      budgetCap: 20,
+      subThreadDelegationPolicy: 'ask',
+      requestApproval: async () => false,
+      assertParentStillValid: () => undefined,
+      resolveWorkerSettings: () => ({
+        ok: true,
+        value: {
+          requestedModel: 'cli-default',
+          runPayload: {},
+          providerMetadataPatch: {}
+        }
+      }),
+      spawnWorker: async ({ worker }) => {
+        spawnCalls += 1
+        return {
+          subThreadId: `sub-${worker.provider}`,
+          provider: worker.provider,
+          title: `Sub-thread (${worker.provider})`,
+          runId: `run-${worker.provider}`
+        }
+      },
+      rollbackWorker: () => undefined,
+      providerLabel: (provider) => provider,
+      createWaveId: () => 'wave-ask-deny',
+      nowMs
+    })
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.text).toMatch(/declined by TaskWraith policy/)
+    expect(spawnCalls).toBe(0)
+    expect(budget.consumed).toBe(2)
+    expect(budget.netConsumed).toBe(0)
   })
 
   it('stripParentWaveDelegationCard removes only the matching projection card', () => {
@@ -686,5 +820,152 @@ describe('SubThreadDelegateWave pure helpers', () => {
     ]
     const next = stripParentWaveDelegationCard(messages, 'sub-a')
     expect(next.map((message) => message.id)).toEqual(['keep-user', 'wave-card-b', 'return-a'])
+  })
+
+  it('approval copy discloses ephemeral lifecycle, roles/labels, postures, and multi-provider', () => {
+    const joinPolicy = resolveDelegateWaveJoinPolicy({ required: true, quorum: 2 }, 'wave-copy', nowMs)
+    const { body } = buildDelegateWaveApprovalCopy({
+      parentProviderLabel: 'Codex',
+      waveId: 'wave-copy',
+      workers: [
+        {
+          provider: 'codex',
+          prompt: 'Map the auth surface',
+          role: 'scout',
+          label: 'Auth scout'
+        },
+        {
+          provider: 'claude',
+          prompt: 'Implement the fix',
+          role: 'worker',
+          label: 'Fixer'
+        },
+        {
+          provider: 'codex',
+          prompt: 'Review the diff',
+          role: 'reviewer'
+        },
+        {
+          provider: 'codex',
+          prompt: 'Default role omitted'
+        }
+      ],
+      joinPolicy,
+      providerLabel: (provider) => provider,
+      lifecycle: 'ephemeral',
+      allowMultiProvider: true
+    })
+    expect(body).toMatch(/Lifecycle:\s*ephemeral \(die-on-return\)/i)
+    expect(body).toMatch(/Multi-provider:\s*allowed/i)
+    expect(body).toMatch(/role=scout/i)
+    expect(body).toMatch(/label=Auth scout/)
+    expect(body).toMatch(/role=worker/i)
+    expect(body).toMatch(/label=Fixer/)
+    expect(body).toMatch(/role=reviewer/i)
+    expect(body).toMatch(/posture=read_only/)
+    expect(body).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
+    // Default / scout / reviewer are read_only; only the worker line carries capped inherit.
+    const workerLine = body
+      .split('\n')
+      .find((line) => /role=worker/i.test(line) && /label=Fixer/.test(line))
+    expect(workerLine).toBeTruthy()
+    expect(workerLine).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
+    expect(workerLine).not.toMatch(/same-checkout/)
+    expect(workerLine).not.toMatch(/posture=read_only/)
+  })
+
+  it('approval copy discloses durable lifecycle and omits multi-provider unless requested', () => {
+    const joinPolicy = resolveDelegateWaveJoinPolicy(undefined, 'wave-durable', nowMs)
+    const { body } = buildDelegateWaveApprovalCopy({
+      parentProviderLabel: 'Claude',
+      waveId: 'wave-durable',
+      workers: [
+        { provider: 'claude', prompt: 'A' },
+        { provider: 'claude', prompt: 'B', role: 'scout', label: 'S1' }
+      ],
+      joinPolicy,
+      providerLabel: (provider) => provider,
+      lifecycle: 'durable',
+      allowMultiProvider: false
+    })
+    expect(body).toMatch(/Lifecycle:\s*durable\b/i)
+    expect(body).not.toMatch(/die-on-return/i)
+    expect(body).not.toMatch(/Multi-provider:/i)
+    expect(body).toMatch(/role=scout/i)
+    expect(body).toMatch(/label=S1/)
+    expect(body).toMatch(/posture=read_only/)
+  })
+
+  it('executeDelegateWaveTool threads lifecycle + allowMultiProvider into the approval card', async () => {
+    let approvalBody = ''
+    const budget = trackingBudgetPorts()
+    const outcome = await executeDelegateWaveTool({
+      args: {
+        lifecycle: 'ephemeral',
+        allowMultiProvider: true,
+        workers: [
+          {
+            provider: 'codex',
+            prompt: 'Scout the tree',
+            role: 'scout',
+            label: 'Tree scout'
+          },
+          {
+            provider: 'claude',
+            prompt: 'Apply the patch',
+            role: 'worker',
+            label: 'Patcher'
+          }
+        ]
+      },
+      parentChatId,
+      parentAppRunId,
+      parentProvider: 'codex',
+      parentProviderLabel: 'Codex',
+      maxWorkers: 8,
+      isAllowedProvider,
+      isBossOrCaptain: false,
+      permissionPresetId: 'default',
+      budgetRemaining: 5,
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
+      budgetCap: 20,
+      subThreadDelegationPolicy: 'ask',
+      requestApproval: async (preview) => {
+        approvalBody = preview.body
+        return false
+      },
+      assertParentStillValid: () => undefined,
+      resolveWorkerSettings: () => ({
+        ok: true,
+        value: {
+          requestedModel: 'cli-default',
+          runPayload: {},
+          providerMetadataPatch: {}
+        }
+      }),
+      spawnWorker: async ({ worker }) => ({
+        subThreadId: `sub-${worker.provider}`,
+        provider: worker.provider,
+        title: `Sub-thread (${worker.provider})`,
+        runId: `run-${worker.provider}`
+      }),
+      rollbackWorker: () => undefined,
+      providerLabel: (provider) => provider,
+      createWaveId: () => 'wave-approval-thread',
+      nowMs
+    })
+    expect(outcome.ok).toBe(false)
+    expect(approvalBody).toMatch(/Lifecycle:\s*ephemeral \(die-on-return\)/i)
+    expect(approvalBody).toMatch(/Multi-provider:\s*allowed/i)
+    expect(approvalBody).toMatch(/role=scout/i)
+    expect(approvalBody).toMatch(/label=Tree scout/)
+    expect(approvalBody).toMatch(/role=worker/i)
+    expect(approvalBody).toMatch(/label=Patcher/)
+    expect(approvalBody).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
+    expect(approvalBody).not.toMatch(/same-checkout/)
+    // Decline still refunds — preserve budget invariant.
+    expect(budget.consumed).toBe(2)
+    expect(budget.netConsumed).toBe(0)
   })
 })

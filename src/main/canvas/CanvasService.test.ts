@@ -175,6 +175,9 @@ class FakeDriver implements CanvasDriver {
   navState(): CanvasNavState {
     return this.currentNav
   }
+  chartDocument() {
+    return this.lastOpenInput?.chartDocument ?? null
+  }
   async close(): Promise<void> {
     this.closeCalls += 1
     if (this.closeFailuresRemaining > 0) {
@@ -309,9 +312,7 @@ describe('CanvasService', () => {
       { chatId: 'chat-a' }
     )
     expect(lastDriverOpts?.embedded).toBe(true)
-    expect(
-      service.status(rendererWeb.canvasId, { chatId: 'chat-a' })?.presentation
-    ).toBeUndefined()
+    expect(service.status(rendererWeb.canvasId, { chatId: 'chat-a' })?.presentation).toBeUndefined()
     expect(
       events.find(
         (event) => event.canvasId === rendererWeb.canvasId && event.kind === 'session.opened'
@@ -324,8 +325,9 @@ describe('CanvasService', () => {
     )
     expect(lastDriverOpts?.embedded).toBe(true)
     expect(service.status(web.canvasId, { chatId: 'chat-a' })?.presentation).toBe('dock')
-    expect(events.find((event) => event.canvasId === web.canvasId && event.kind === 'session.opened'))
-      .toMatchObject({ detail: { presentation: 'dock' } })
+    expect(
+      events.find((event) => event.canvasId === web.canvasId && event.kind === 'session.opened')
+    ).toMatchObject({ detail: { presentation: 'dock' } })
 
     await service.open({ driver: 'sketch', embed: true }, { chatId: 'chat-a' })
     expect(lastDriverOpts?.embedded).toBe(true)
@@ -335,10 +337,58 @@ describe('CanvasService', () => {
     expect(lastDriverOpts?.embedded).toBe(false)
   })
 
-  it('device open requires canonical chat+run and a valid bundleId before the driver runs', async () => {
-    await expect(service.open({ driver: 'device', bundleId: 'com.example.App' }, {})).rejects.toThrow(
-      /canonical chat and run/
+  it('chart docks via presentation:"dock" without WebContentsView embed', async () => {
+    const chartDocument = {
+      schemaVersion: 1 as const,
+      title: 'Latency',
+      kind: 'line' as const,
+      series: [
+        {
+          id: 'p50',
+          label: 'p50',
+          points: [
+            { x: 0, y: 10 },
+            { x: 1, y: 12 }
+          ]
+        }
+      ]
+    }
+    const chart = await service.open(
+      { driver: 'chart', chartDocument, presentation: 'dock' },
+      { chatId: 'chat-a' }
     )
+    // Chart is a native dock surface — never a WebContentsView embed.
+    expect(lastDriverOpts?.embedded).toBe(false)
+    expect(service.status(chart.canvasId, { chatId: 'chat-a' })?.presentation).toBe('dock')
+    expect(service.status(chart.canvasId, { chatId: 'chat-a' })?.driver).toBe('chart')
+    // Dock TelemetryPane paints from list/status chartDocument — must be attached.
+    expect(service.status(chart.canvasId, { chatId: 'chat-a' })?.chartDocument).toEqual(
+      chartDocument
+    )
+    expect(
+      service.list({ chatId: 'chat-a' }).find((row) => row.canvasId === chart.canvasId)
+        ?.chartDocument
+    ).toEqual(chartDocument)
+    expect(
+      events.find((event) => event.canvasId === chart.canvasId && event.kind === 'session.opened')
+    ).toMatchObject({ detail: { presentation: 'dock', driver: 'chart' } })
+
+    // Without presentation:"dock", chart must not claim dock focus.
+    const undocked = await service.open({ driver: 'chart', chartDocument }, { chatId: 'chat-a' })
+    expect(service.status(undocked.canvasId, { chatId: 'chat-a' })?.presentation).toBeUndefined()
+    expect(service.status(undocked.canvasId, { chatId: 'chat-a' })?.driver).toBe('chart')
+    expect(service.status(undocked.canvasId, { chatId: 'chat-a' })?.chartDocument).toEqual(
+      chartDocument
+    )
+    expect(service.getChartDocument(chart.canvasId, { chatId: 'chat-a' })).toEqual(chartDocument)
+    expect(service.getChartDocument(chart.canvasId, { chatId: 'chat-b' })).toBeNull()
+    expect(service.getChartDocument('missing', { chatId: 'chat-a' })).toBeNull()
+  })
+
+  it('device open requires canonical chat+run and a valid bundleId before the driver runs', async () => {
+    await expect(
+      service.open({ driver: 'device', bundleId: 'com.example.App' }, {})
+    ).rejects.toThrow(/canonical chat and run/)
     await expect(
       service.open({ driver: 'device' }, { chatId: 'chat-a', runId: 'run-a' })
     ).rejects.toThrow(/bundleId/)
@@ -412,7 +462,9 @@ describe('CanvasService', () => {
     }
     const second = await service.open({ driver: 'sketch' }, { chatId: 'chat-a' })
     const document = await service.sketchDocument(second.canvasId, { chatId: 'chat-a' })
-    expect(document.elements).toMatchObject([{ id: 'saved-label', kind: 'text', text: 'persisted' }])
+    expect(document.elements).toMatchObject([
+      { id: 'saved-label', kind: 'text', text: 'persisted' }
+    ])
   })
 
   it('snapshot/screenshot emit redacted events — base64 never enters the audit', async () => {
@@ -441,9 +493,9 @@ describe('CanvasService', () => {
   it('clears the Browser profile only after closing every web surface', async () => {
     const drivers: Array<{ kind: string; driver: FakeDriver }> = []
     const clearBrowserProfileData = vi.fn(async () => {
-      expect(drivers.filter(({ kind }) => kind === 'web').every(({ driver }) => driver.closed)).toBe(
-        true
-      )
+      expect(
+        drivers.filter(({ kind }) => kind === 'web').every(({ driver }) => driver.closed)
+      ).toBe(true)
     })
     let seq = 0
     service = new CanvasService({
@@ -494,9 +546,9 @@ describe('CanvasService', () => {
     const secondReset = service.clearBrowserProfile()
     await vi.waitFor(() => expect(clearBrowserProfileData).toHaveBeenCalledTimes(1))
 
-    await expect(
-      service.open({ driver: 'web', url: 'https://example.org' }, {})
-    ).rejects.toThrow(/data is being cleared/)
+    await expect(service.open({ driver: 'web', url: 'https://example.org' }, {})).rejects.toThrow(
+      /data is being cleared/
+    )
     await expect(service.open({ driver: 'sketch' }, {})).resolves.toMatchObject({
       url: 'http://localhost:3000'
     })
@@ -648,9 +700,9 @@ describe('CanvasService', () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     const dispatches: string[] = []
     vi.spyOn(fake, 'act').mockImplementation(async (action) => {
-      const intents = store.listEvents(c.canvasId).filter(
-        (event) => event.kind === 'interaction' && event.detail?.phase === 'intent'
-      )
+      const intents = store
+        .listEvents(c.canvasId)
+        .filter((event) => event.kind === 'interaction' && event.detail?.phase === 'intent')
       expect(intents.at(-1)?.detail).toMatchObject({
         phase: 'intent',
         action: action.kind,
@@ -863,20 +915,16 @@ describe('CanvasService', () => {
       /budget/
     )
     // annotate is now charged against the same budget → also rejected when full.
-    await expect(
-      service.annotate(c.canvasId, [{ ref: 'e1', label: 'x' }], {})
-    ).rejects.toThrow(/budget/)
+    await expect(service.annotate(c.canvasId, [{ ref: 'e1', label: 'x' }], {})).rejects.toThrow(
+      /budget/
+    )
   })
 
   it('eval persists approval-bound pre/post receipts — never the script text or result', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     const script = 'document.cookie + "SECRET-SCRIPT"'
     const approval = createCanvasEvalApprovalReceipt(script, 'approval-1')
-    const res = await service.evaluate(
-      c.canvasId,
-      { script },
-      { canvasEvalApproval: approval }
-    )
+    const res = await service.evaluate(c.canvasId, { script }, { canvasEvalApproval: approval })
     expect(res.ok).toBe(true)
     // The driver did receive the real script…
     expect(fake.lastScript).toContain('SECRET-SCRIPT')
@@ -898,9 +946,9 @@ describe('CanvasService', () => {
     // …but neither the script text NOR the returned value ever enters the audit.
     expect(JSON.stringify(events)).not.toContain('SECRET-SCRIPT')
     expect(JSON.stringify(events)).not.toContain('EVAL-RESULT-SENTINEL')
-    const reopened = new CanvasStore(dir).listEvents(c.canvasId).filter((event) =>
-      event.kind.startsWith('eval.')
-    )
+    const reopened = new CanvasStore(dir)
+      .listEvents(c.canvasId)
+      .filter((event) => event.kind.startsWith('eval.'))
     expect(reopened).toHaveLength(2)
     expect(JSON.stringify(reopened)).not.toContain('SECRET-SCRIPT')
     expect(JSON.stringify(reopened)).not.toContain('EVAL-RESULT-SENTINEL')
@@ -910,24 +958,35 @@ describe('CanvasService', () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     const scriptErrorScript = 'throw new Error("SCRIPT-ERROR-SECRET")'
     fake.evalResult = { ok: false, error: 'SCRIPT-ERROR-SECRET' }
-    await service.evaluate(c.canvasId, { script: scriptErrorScript }, {
-      canvasEvalApproval: createCanvasEvalApprovalReceipt(scriptErrorScript, 'approval-script-error')
-    })
+    await service.evaluate(
+      c.canvasId,
+      { script: scriptErrorScript },
+      {
+        canvasEvalApproval: createCanvasEvalApprovalReceipt(
+          scriptErrorScript,
+          'approval-script-error'
+        )
+      }
+    )
 
     const hostErrorScript = 'location.reload()'
     fake.evalResult = undefined
     fake.evalError = new Error('HOST-ERROR-SECRET')
     await expect(
-      service.evaluate(c.canvasId, { script: hostErrorScript }, {
-        canvasEvalApproval: createCanvasEvalApprovalReceipt(hostErrorScript, 'approval-host-error')
-      })
+      service.evaluate(
+        c.canvasId,
+        { script: hostErrorScript },
+        {
+          canvasEvalApproval: createCanvasEvalApprovalReceipt(
+            hostErrorScript,
+            'approval-host-error'
+          )
+        }
+      )
     ).rejects.toThrow('HOST-ERROR-SECRET')
 
     const completed = events.filter((event) => event.kind === 'eval.completed')
-    expect(completed.map((event) => event.detail?.outcome)).toEqual([
-      'script_error',
-      'host_error'
-    ])
+    expect(completed.map((event) => event.detail?.outcome)).toEqual(['script_error', 'host_error'])
     expect(JSON.stringify(events)).not.toContain('SCRIPT-ERROR-SECRET')
     expect(JSON.stringify(events)).not.toContain('HOST-ERROR-SECRET')
   })
@@ -938,9 +997,13 @@ describe('CanvasService', () => {
       /bound approval receipt/
     )
     await expect(
-      service.evaluate(c.canvasId, { script: '2' }, {
-        canvasEvalApproval: createCanvasEvalApprovalReceipt('different', 'approval-mismatch')
-      })
+      service.evaluate(
+        c.canvasId,
+        { script: '2' },
+        {
+          canvasEvalApproval: createCanvasEvalApprovalReceipt('different', 'approval-mismatch')
+        }
+      )
     ).rejects.toThrow(/does not match/)
     expect(fake.lastScript).toBeUndefined()
 
@@ -948,9 +1011,13 @@ describe('CanvasService', () => {
       throw new Error('disk full')
     })
     await expect(
-      service.evaluate(c.canvasId, { script: '3' }, {
-        canvasEvalApproval: createCanvasEvalApprovalReceipt('3', 'approval-disk-full')
-      })
+      service.evaluate(
+        c.canvasId,
+        { script: '3' },
+        {
+          canvasEvalApproval: createCanvasEvalApprovalReceipt('3', 'approval-disk-full')
+        }
+      )
     ).rejects.toThrow(/blocked.*pre-execution audit receipt/)
     expect(fake.lastScript).toBeUndefined()
   })
@@ -963,9 +1030,13 @@ describe('CanvasService', () => {
       const evaluationGate = deferred<CanvasEvalResult>()
       vi.spyOn(fake, 'evaluate').mockImplementationOnce(() => evaluationGate.promise)
 
-      const evaluation = service.evaluate(c.canvasId, { script }, {
-        canvasEvalApproval: createCanvasEvalApprovalReceipt(script, 'approval-late-eval')
-      })
+      const evaluation = service.evaluate(
+        c.canvasId,
+        { script },
+        {
+          canvasEvalApproval: createCanvasEvalApprovalReceipt(script, 'approval-late-eval')
+        }
+      )
       expect(store.listEvents(c.canvasId).map((event) => event.kind)).toContain('eval.started')
 
       await service.purgeHistory()
@@ -1101,14 +1172,22 @@ describe('CanvasService', () => {
   it('caps eval per session with its own (separate) budget', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     for (let i = 0; i < 3; i++) {
-      await service.evaluate(c.canvasId, { script: '1' }, {
-        canvasEvalApproval: createCanvasEvalApprovalReceipt('1', `approval-${i}`)
-      })
+      await service.evaluate(
+        c.canvasId,
+        { script: '1' },
+        {
+          canvasEvalApproval: createCanvasEvalApprovalReceipt('1', `approval-${i}`)
+        }
+      )
     }
     await expect(
-      service.evaluate(c.canvasId, { script: '1' }, {
-        canvasEvalApproval: createCanvasEvalApprovalReceipt('1', 'approval-over-budget')
-      })
+      service.evaluate(
+        c.canvasId,
+        { script: '1' },
+        {
+          canvasEvalApproval: createCanvasEvalApprovalReceipt('1', 'approval-over-budget')
+        }
+      )
     ).rejects.toThrow(/budget/)
   })
 

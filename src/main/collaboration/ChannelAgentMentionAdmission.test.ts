@@ -1,4 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../shared/collaboration/ChannelAgentReviewGate', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../shared/collaboration/ChannelAgentReviewGate')>()
+  return { ...actual, channelAgentParticipationEnabled: () => false }
+})
+
 import { CHANNEL_AGENT_REVIEW_REQUIRED_CODE } from '../../shared/collaboration/ChannelAgentReviewGate'
 import type { ChannelMessage } from './ChannelMessageLog'
 import {
@@ -162,7 +169,7 @@ describe('ChannelAgentMentionAdmission', () => {
     ).toEqual({ kind: 'ignored', reason: 'not_human_text', ambiguities: [] })
   })
 
-  it('stops resolved durable human mentions at the immutable review gate', () => {
+  it('stops resolved durable human mentions at an explicitly injected closed gate', () => {
     const members = [human(), agent('agent-build', 'Build Agent')]
     const admission = admitAcceptedChannelAgentMentions({
       record: record('@Build Agent please inspect this.'),

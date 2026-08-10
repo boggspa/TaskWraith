@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../shared/collaboration/ChannelAgentReviewGate', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../shared/collaboration/ChannelAgentReviewGate')>()
+  return { ...actual, channelAgentParticipationEnabled: () => false }
+})
+
 import {
   CHANNEL_AGENT_REVIEW_ID,
   CHANNEL_AGENT_REVIEW_REQUIRED_CODE
@@ -131,7 +137,7 @@ function harness() {
   return { service, calls }
 }
 
-describe('createChannelAgentProductionComposition review gate', () => {
+describe('createChannelAgentProductionComposition closed review gate', () => {
   it('keeps every execution, recovery, authority, identity, and runtime port inert', async () => {
     const h = harness()
     expect(h.service.start([CHANNEL_ID])).toMatchObject({ state: 'review_blocked' })

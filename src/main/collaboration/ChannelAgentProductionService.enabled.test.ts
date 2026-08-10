@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../shared/collaboration/ChannelAgentReviewGate', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../shared/collaboration/ChannelAgentReviewGate')>()
-  return { ...actual, channelAgentParticipationEnabled: () => true }
-})
-
 import type { ChannelAgentDispatchPlan } from './ChannelAgentDispatchAuthority'
 import {
   ChannelAgentProductionService,

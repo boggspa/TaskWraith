@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
@@ -24,7 +25,15 @@ interface ReviewModule {
   }
   verifyPackagedGroups(
     groups: Record<string, Array<{ path: string; contents: string | Buffer }>>
-  ): Record<string, { fileCount: number; requiredMarkers: string[] }>
+  ): Record<
+    string,
+    {
+      fileCount: number
+      requiredMarkers: string[]
+      forbiddenMarkerCount: number
+      forbiddenMarkersSha256: string
+    }
+  >
   verifySourceBoundary(overrides?: Record<string, string>): {
     reviewId: string
     participationEnabled: boolean
@@ -34,6 +43,7 @@ interface ReviewModule {
 
 const require = createRequire(import.meta.url)
 const review = require('./channels-p3-review.cjs') as ReviewModule
+const ACCEPTED_CANDIDATE = 'b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4'
 
 describe('Channels P3 adversarial review harness', () => {
   it('requires one explicit package and exact candidate commit', () => {
@@ -67,6 +77,9 @@ describe('Channels P3 adversarial review harness', () => {
     )
     const accepted = review.verifyPackagedGroups(groups)
     expect(accepted.main.requiredMarkers).toContain('channel_agent_review_required')
+    expect(accepted.preload.forbiddenMarkerCount).toBeGreaterThan(0)
+    expect(accepted.preload.forbiddenMarkersSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(JSON.stringify(accepted)).not.toContain('privateKeyDerB64')
 
     for (const group of Object.keys(review.PACKAGED_REQUIRED_MARKERS)) {
       const stale = structuredClone(groups)
@@ -84,8 +97,12 @@ describe('Channels P3 adversarial review harness', () => {
     }
   })
 
-  it('pins the source-only false gate and exact five-channel IPC boundary', () => {
-    const boundary = review.verifySourceBoundary()
+  it('pins the accepted candidate source-only false gate and exact five-channel IPC boundary', () => {
+    const gatePath = 'src/shared/collaboration/ChannelAgentReviewGate.ts'
+    const acceptedGate = execFileSync('git', ['show', `${ACCEPTED_CANDIDATE}:${gatePath}`], {
+      encoding: 'utf8'
+    })
+    const boundary = review.verifySourceBoundary({ [gatePath]: acceptedGate })
     expect(boundary).toEqual(
       expect.objectContaining({
         reviewId: 'channels-p3-agent-participation-v1',
@@ -94,11 +111,9 @@ describe('Channels P3 adversarial review harness', () => {
       })
     )
 
-    const gatePath = 'src/shared/collaboration/ChannelAgentReviewGate.ts'
-    const gate = readFileSync(gatePath, 'utf8')
     expect(() =>
       review.verifySourceBoundary({
-        [gatePath]: `${gate}\nconst bypass = process.env.CHANNEL_AGENT_REVIEW\n`
+        [gatePath]: `${acceptedGate}\nconst bypass = process.env.CHANNEL_AGENT_REVIEW\n`
       })
     ).toThrow('runtime override seam')
   })

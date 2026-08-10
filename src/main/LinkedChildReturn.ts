@@ -167,7 +167,8 @@ export function markLinkedChildResultReturned(
   chat: ChatRecord,
   relation: LinkedChildRelation,
   returnedAt: number,
-  sourceAssistantMessageId: string
+  sourceAssistantMessageId: string,
+  options?: { archiveEphemeral?: boolean }
 ): ChatRecord {
   if (relation === 'sideChat') {
     return {
@@ -182,8 +183,11 @@ export function markLinkedChildResultReturned(
     }
   }
   if (!chat.delegationContext) return chat
+  const ephemeral = chat.delegationContext.lifecycle === 'ephemeral'
+  const archiveEphemeral = options?.archiveEphemeral !== false
   return {
     ...chat,
+    ...(ephemeral && archiveEphemeral ? { archived: true } : {}),
     delegationContext: {
       ...chat.delegationContext,
       resultReturnedAt: returnedAt

@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 205 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 206 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1063,11 +1063,11 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 
 ## delegate_wave
 
-Spawn a wave of 2+ fresh context-isolated sub-threads in one call. Each worker needs provider + prompt (optional model / reasoningEffort / kimiThinking). Waves are spawn-only (no subThreadId / recall). Results always return to the parent; optional join knobs (required/quorum/deadlineMs/debounceMs) bind to a host-allocated waveId group — never the parent run id. One approval covers the whole wave when required; worker count is capped by Settings → General → Max Wave Agents.
+Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await). One approval covers the wave; capped by Settings → General → Max Wave Agents.
 
 - Access: governed by your run permission role
 - Required args: workers
-- Optional args: join
+- Optional args: lifecycle, allowMultiProvider, join
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"delegate_wave","arguments":{"workers":[]}}}}`
 
 ## scout_brief
@@ -1165,6 +1165,15 @@ Render agent-authored HTML (or SVG markup) as a TaskWraith Canvas and return a s
 - Required args: html
 - Optional args: width, height
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_render_html","arguments":{"html":"text"}}}}`
+
+## canvas_render_chart
+
+Render a structured telemetry chart (line/bar/area/scatter series JSON) as a TaskWraith Canvas tab in the active chat Canvas dock and return a screenshot. Pass bounded structured data only — not HTML, not a CDN script, and never canvas_eval. Available on Ask and Plan with an approval modal (not a hard deny); Accept Edits and higher follow the ordinary canvas render gate. Returns a canvasId plus the first PNG frame; canvas_screenshot re-captures it. DOM actuation verbs (click/fill/eval) do not apply.
+
+- Access: governed by your run permission role
+- Required args: chartDocument
+- Optional args: width, height
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_render_chart","arguments":{"chartDocument":{}}}}}`
 
 ## canvas_open_attachment
 

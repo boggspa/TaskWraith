@@ -659,6 +659,36 @@ export const GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v16 makes `canvas_render_chart` discoverable through capability
+ * search without enlarging the direct catalogue — same shape as
+ * `canvas_navigate` on v10. Direct catalogues remain exact clones of their
+ * immutable v15 predecessors so a receipted pre-v16 session never sees a tool
+ * appear mid-session. Not added to FULL_MCP_ADVERTISE_TOOLS: that v1 snapshot
+ * stays frozen.
+ */
+export const GATEWAY_V16_ADDED_TOOL_NAMES = Object.freeze([
+  'canvas_render_chart'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V16_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V15_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V16_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V16_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V16_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V15_MESH_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V16_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V16_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -706,7 +736,7 @@ const GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   ensemble_await: 'JOIN wait on fan-out lanes; timeout≤600s. Then lane_result.',
   ensemble_lane_result: 'READ one fan-out lane output (status+text). Partial ok.',
   delegate_wave:
-    'Spawn 2+ sub-threads (workers[{provider,prompt,…}]). Spawn-only; join→waveId. Gated.',
+    'Wave (ephemeral|durable): workers[{provider?,prompt,role?,label?}]; allowMultiProvider; join→waveId. Gated.',
   // Budget companion: long DIRECT fan-out prose + schema descriptions would
   // leave the four promotions structurally unable to fit under 40k.
   ensemble_fanout: 'Fan-out Ensemble lanes (concurrent; capped). Then await / lane_result.'
@@ -990,6 +1020,16 @@ export const GATEWAY_V15_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V15_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+export const GATEWAY_V16_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V15_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V16_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V15_MESH_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V16_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -1002,6 +1042,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v16-mesh') return GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v16') return GATEWAY_V16_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v15-mesh') return GATEWAY_V15_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v15') return GATEWAY_V15_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v14-mesh') return GATEWAY_V14_MESH_MCP_HIDDEN_TOOL_NAMES
@@ -1033,6 +1075,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v16-mesh') return GATEWAY_V16_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v16') return GATEWAY_V16_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v15-mesh') return GATEWAY_V15_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v15') return GATEWAY_V15_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v14-mesh') return GATEWAY_V14_MESH_MCP_DIRECT_TOOLS
@@ -1125,7 +1169,11 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-gateway-v14': GATEWAY_V14_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v14-mesh': GATEWAY_V14_MESH_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v15': GATEWAY_V15_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v15-mesh': GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v15-mesh': GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS,
+  // v16 adds canvas_render_chart through discovery without growing either
+  // direct catalogue.
+  'taskwraith-gateway-v16': GATEWAY_V16_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v16-mesh': GATEWAY_V16_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */

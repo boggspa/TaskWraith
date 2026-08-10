@@ -355,7 +355,10 @@ interface SidebarProps {
    * under parallel fan-out. */
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
   /** Resolve an approval directly from the Approvals footer popover. */
-  onRespondAgentApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
+  onRespondAgentApproval?: (
+    requestId: string,
+    action: AgentApprovalAction
+  ) => boolean | void | Promise<boolean | void>
   /**
    * Per-chat pending `ask_user_question` queues. Same Approvals footer control
    * glows and lists these as "Needs your input" rows so a blocked elicitation
@@ -2567,7 +2570,10 @@ export function ApprovalsFooterPopover({
   pendingQuestions?: Array<{ chatId: string; question: AgentQuestionState }>
   resolveChatTitle?: (chatId: string) => string | undefined
   onJumpToChat?: (chatId: string) => void
-  onRespondApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
+  onRespondApproval?: (
+    requestId: string,
+    action: AgentApprovalAction
+  ) => boolean | void | Promise<boolean | void>
   onAnswerQuestion?: (
     questionId: string,
     answer: string,

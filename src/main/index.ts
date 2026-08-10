@@ -1256,6 +1256,7 @@ import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasBrowserProfile } from './canvas/CanvasBrowserProfile'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
+import { CanvasChartDriver } from './canvas/CanvasChartDriver'
 import { CanvasImageDriver } from './canvas/CanvasImageDriver'
 import { CanvasSketchDriver } from './canvas/CanvasSketchDriver'
 import { CanvasWindowDriverFactory } from './canvas/CanvasWindowDriverFactory'
@@ -1998,6 +1999,17 @@ import {
   shouldSkipDelegateWaveApproval,
   stripParentWaveDelegationCard
 } from './SubThreadDelegateWave'
+import {
+  buildEphemeralFleetRoleFrame,
+  resolveEphemeralFleetIsolationForWave,
+  shouldArchiveEphemeralFleetAfterSettle,
+  shouldArchiveEphemeralFleetChild
+} from './SubThreadEphemeralFleet'
+import {
+  allocateEphemeralFleetWriterWorktree,
+  buildEphemeralFleetRuntimeWorktreeIntent,
+  settleEphemeralFleetWriterWorktreeOnReturn
+} from './SubThreadEphemeralFleetWorktree'
 import { newProjectReferenceId } from '../shared/projects'
 import {
   delegationApprovalBudget,
@@ -4268,6 +4280,12 @@ const canvasService = new CanvasService({
     }
     if (kind === 'html') {
       return new CanvasRenderDriver(sessionId, {
+        render: (html, width, height) =>
+          offscreenImageEngine.renderHtmlToPng(html, width, height, CANVAS_HTML_RENDER_TIMEOUT_MS)
+      })
+    }
+    if (kind === 'chart') {
+      return new CanvasChartDriver(sessionId, {
         render: (html, width, height) =>
           offscreenImageEngine.renderHtmlToPng(html, width, height, CANVAS_HTML_RENDER_TIMEOUT_MS)
       })
@@ -8703,6 +8721,46 @@ runManager.onChange((event) => {
 })
 
 /**
+ * Promote/discard an ephemeral fleet sole-writer worktree on return.
+ * Returns null when settle does not apply (not ephemeral / no workspace).
+ */
+async function settleEphemeralFleetWriterIfNeeded(input: {
+  linkedChild: ChatRecord
+  parent: ChatRecord
+  relation: 'subThread' | 'sideChat'
+  outcome: 'done' | 'requires_action' | 'failed' | 'cancelled'
+}): Promise<{ ok: boolean; action: 'promoted' | 'discarded' | 'noop'; error?: string } | null> {
+  if (input.relation !== 'subThread' || !shouldArchiveEphemeralFleetChild(input.linkedChild)) {
+    return null
+  }
+  const baseWorkspacePath =
+    (typeof input.linkedChild.workspacePath === 'string' &&
+      input.linkedChild.workspacePath.trim()) ||
+    (typeof input.parent.workspacePath === 'string' && input.parent.workspacePath.trim()) ||
+    ''
+  if (!baseWorkspacePath || !input.linkedChild.parentChatId) {
+    return null
+  }
+  try {
+    return await settleEphemeralFleetWriterWorktreeOnReturn({
+      parentChatId: input.linkedChild.parentChatId,
+      workerChatId: input.linkedChild.appChatId,
+      label:
+        typeof input.linkedChild.delegationContext?.label === 'string'
+          ? input.linkedChild.delegationContext.label
+          : input.linkedChild.delegationContext?.role,
+      baseWorkspacePath,
+      outcome: input.outcome,
+      git: new GitService()
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn('[ephemeral-fleet] worktree settle failed:', message)
+    return { ok: false, action: 'promoted', error: message }
+  }
+}
+
+/**
  * Durable linked-child result back-propagation.
  *
  * Delegated sub-threads retain their existing return flag. Isolated side chats
@@ -8753,6 +8811,36 @@ async function maybePropagateLinkedChildResult(
     terminal.outcome === 'done' &&
     (!lastAssistant || (!lastAssistant.content.trim() && returnedMediaRefs.length === 0))
   ) {
+    // Tool-only / empty assistant still settles sole-writer fleet worktrees and
+    // archives on success; otherwise the fleet-* tree is orphaned forever.
+    if (decision.relation === 'subThread' && shouldArchiveEphemeralFleetChild(linkedChild)) {
+      const parentForSettle = AppStore.getChat(decision.parentChatId)
+      if (parentForSettle) {
+        const settle = await settleEphemeralFleetWriterIfNeeded({
+          linkedChild,
+          parent: parentForSettle,
+          relation: decision.relation,
+          outcome: terminal.outcome
+        })
+        if (shouldArchiveEphemeralFleetAfterSettle(settle)) {
+          const emptyReturnedAt = Date.now()
+          const archivedChild = markLinkedChildResultReturned(
+            linkedChild,
+            decision.relation,
+            emptyReturnedAt,
+            decision.sourceAssistantMessageId,
+            { archiveEphemeral: true }
+          )
+          AppStore.saveChat(archivedChild)
+          broadcastChatUpdated(archivedChild)
+        } else if (settle && !settle.ok) {
+          console.warn(
+            '[ephemeral-fleet] worktree settle failed:',
+            settle.error || 'unknown settle failure'
+          )
+        }
+      }
+    }
     return
   }
   const { sourceAssistantMessageId, sourceRunId, resultContent } = decision
@@ -8849,11 +8937,26 @@ async function maybePropagateLinkedChildResult(
       AppStore.saveChat(projectedParent)
       broadcastChatUpdated(projectedParent)
     }
+    const repairSettle = await settleEphemeralFleetWriterIfNeeded({
+      linkedChild,
+      parent,
+      relation: decision.relation,
+      outcome: terminal.outcome
+    })
+    if (repairSettle && !repairSettle.ok) {
+      console.warn(
+        '[ephemeral-fleet] worktree settle failed:',
+        repairSettle.error || 'unknown settle failure'
+      )
+    }
     const repairedLinkedChild = markLinkedChildResultReturned(
       linkedChild,
       decision.relation,
       returnedAt,
-      sourceAssistantMessageId
+      sourceAssistantMessageId,
+      {
+        archiveEphemeral: shouldArchiveEphemeralFleetAfterSettle(repairSettle)
+      }
     )
     AppStore.saveChat(repairedLinkedChild)
     broadcastChatUpdated(repairedLinkedChild)
@@ -8911,11 +9014,26 @@ async function maybePropagateLinkedChildResult(
     updatedAt: Date.now()
   }
   AppStore.saveChat(updatedParent)
+  const primarySettle = await settleEphemeralFleetWriterIfNeeded({
+    linkedChild,
+    parent,
+    relation: decision.relation,
+    outcome: terminal.outcome
+  })
+  if (primarySettle && !primarySettle.ok) {
+    console.warn(
+      '[ephemeral-fleet] worktree settle failed:',
+      primarySettle.error || 'unknown settle failure'
+    )
+  }
   const updatedLinkedChild = markLinkedChildResultReturned(
     linkedChild,
     decision.relation,
     returnedAt,
-    sourceAssistantMessageId
+    sourceAssistantMessageId,
+    {
+      archiveEphemeral: shouldArchiveEphemeralFleetAfterSettle(primarySettle)
+    }
   )
   AppStore.saveChat(updatedLinkedChild)
   // Audit: durable run-event on the PARENT chat so the audit log
@@ -39132,6 +39250,7 @@ async function executeGeminiMcpTool(
         args,
         parentChatId,
         parentAppRunId: context.appRunId,
+        parentProvider,
         parentProviderLabel,
         maxWorkers,
         isAllowedProvider: (provider) => waveAllowedProviderSet.has(provider),
@@ -39140,6 +39259,7 @@ async function executeGeminiMcpTool(
         permissionPresetId,
         budgetRemaining: delegationApprovalBudget.remaining(delegationBudgetKey),
         tryConsumeBudgetSlot: () => delegationApprovalBudget.tryConsume(delegationBudgetKey),
+        releaseBudgetSlots: (count) => delegationApprovalBudget.release(delegationBudgetKey, count),
         budgetCap: delegationApprovalBudget.cap(),
         subThreadDelegationPolicy:
           context.effectivePermissions?.agenticServices?.subThreadDelegation,
@@ -39202,14 +39322,47 @@ async function executeGeminiMcpTool(
             }
           }
         },
-        spawnWorker: async ({ worker, settings: workerSettings, joinPolicy, waveId }) => {
+        spawnWorker: async ({
+          worker,
+          settings: workerSettings,
+          joinPolicy,
+          waveId,
+          lifecycle,
+          peerWorkerRoles
+        }) => {
+          const title =
+            (typeof worker.label === 'string' && worker.label.trim()) ||
+            (typeof worker.role === 'string' && worker.role.trim()) ||
+            `Sub-thread (${worker.provider})`
           const subThread = AppStore.createSubThread({
             parentChatId,
             provider: worker.provider,
             delegationPrompt: worker.prompt,
             returnResultToParent: true,
-            joinPolicy
+            joinPolicy,
+            lifecycle,
+            role: worker.role,
+            label: worker.label,
+            title
           })
+          const soleFleetWriter =
+            worker.role === 'worker' &&
+            peerWorkerRoles.filter((role) => role === 'worker').length === 1
+          const baseWorkspacePath =
+            (typeof subThread.workspacePath === 'string' && subThread.workspacePath.trim()) ||
+            (typeof context.workspacePath === 'string' && context.workspacePath.trim()) ||
+            ''
+          // Soft-fail: null → resolveEphemeralFleetIsolationForWave keeps capped_inherit.
+          const writerWorktree =
+            soleFleetWriter && baseWorkspacePath
+              ? await allocateEphemeralFleetWriterWorktree({
+                  parentChatId,
+                  workerChatId: subThread.appChatId,
+                  label: worker.label || worker.role,
+                  baseWorkspacePath,
+                  git: new GitService()
+                })
+              : null
           const readOnlyPermissions = resolveEffectiveRunPermissions({
             provider: worker.provider,
             workspacePath: subThread.workspacePath,
@@ -39217,9 +39370,22 @@ async function executeGeminiMcpTool(
             settings: AppStore.getSettings(),
             presetId: 'read_only'
           })
+          const isolation = resolveEphemeralFleetIsolationForWave({
+            role: worker.role,
+            workerRoles: peerWorkerRoles,
+            ...(writerWorktree
+              ? {
+                  worktree: {
+                    baseWorkspacePath: writerWorktree.baseWorkspacePath,
+                    effectiveWorkspacePath: writerWorktree.effectiveWorkspacePath
+                  }
+                }
+              : {})
+          })
           const workerPermissions = resolveSubThreadWorkerPermissions({
             parentPermissions: context.effectivePermissions,
-            readOnlyPermissions
+            readOnlyPermissions,
+            isolation
           })
           if (!workerPermissions.ok) {
             AppStore.deleteChat(subThread.appChatId)
@@ -39229,45 +39395,8 @@ async function executeGeminiMcpTool(
           const delegatedApprovalMode = subThreadEffectivePermissions.approvalMode
           const inheritableRuntimeProfileId =
             worker.provider === parentProvider ? context.runtimeProfileId : undefined
-          try {
-            const parentChat = AppStore.getChat(parentChatId)
-            if (parentChat) {
-              const promptCardPreview =
-                worker.prompt.length > 240 ? `${worker.prompt.slice(0, 240)}…` : worker.prompt
-              const cardMessage: ChatMessage = {
-                id: `subthread-delegation-${subThread.appChatId}-${Date.now()}`,
-                role: 'system',
-                content: `↪ Wave ${waveId}: delegated to ${providerLabel(worker.provider)} sub-thread (${subThread.title}).`,
-                timestamp: new Date().toISOString(),
-                metadata: {
-                  kind: 'subThreadDelegation',
-                  subThreadId: subThread.appChatId,
-                  subThreadProvider: worker.provider,
-                  subThreadTitle: subThread.title,
-                  parentProvider,
-                  delegationPrompt: worker.prompt,
-                  delegationPromptPreview: promptCardPreview,
-                  returnResultToParent: true,
-                  joinPolicy,
-                  waveId,
-                  requestedModel: workerSettings.requestedModel,
-                  reasoningEffort: workerSettings.reasoningEffort,
-                  kimiThinking: workerSettings.kimiThinking,
-                  recall: false,
-                  providerContextVisibility: 'projection-only'
-                }
-              }
-              const updatedParent: ChatRecord = {
-                ...parentChat,
-                messages: [...parentChat.messages, cardMessage],
-                updatedAt: Date.now()
-              }
-              AppStore.saveChat(updatedParent)
-              broadcastChatUpdated(updatedParent)
-            }
-          } catch {
-            // Best-effort; missing card is non-fatal vs missing run.
-          }
+          // Per-worker subThreadDelegation cards are suppressed for fleets —
+          // projectFleetWaveCard appends one parent fleetWave card instead.
           try {
             appendDurableRunEventForRoute(
               parentProvider,
@@ -39283,6 +39412,9 @@ async function executeGeminiMcpTool(
                 returnResultToParent: true,
                 joinPolicy,
                 waveId,
+                lifecycle,
+                role: worker.role,
+                label: worker.label,
                 requestedModel: workerSettings.requestedModel,
                 reasoningEffort: workerSettings.reasoningEffort,
                 kimiThinking: workerSettings.kimiThinking,
@@ -39293,10 +39425,12 @@ async function executeGeminiMcpTool(
           } catch {
             // Best-effort.
           }
+          const roleFrame = buildEphemeralFleetRoleFrame(worker.role, worker.label)
+          const framedPrompt = `${roleFrame}\n\n${worker.prompt}`
           const providerPrompts = await composeDelegatedProviderPrompts({
             provider: worker.provider,
             subThread,
-            prompt: worker.prompt,
+            prompt: framedPrompt,
             approvalMode: delegatedApprovalMode,
             model: workerSettings.requestedModel
           })
@@ -39304,7 +39438,7 @@ async function executeGeminiMcpTool(
             subThread,
             parentProvider,
             provider: worker.provider,
-            prompt: worker.prompt,
+            prompt: framedPrompt,
             returnResultToParent: true,
             requestedModel: workerSettings.requestedModel,
             providerMetadataPatch: workerSettings.providerMetadataPatch,
@@ -39313,6 +39447,14 @@ async function executeGeminiMcpTool(
             joinPolicy
           })
           scheduleSubThreadJoinEvaluation(parentChatId, joinPolicy.groupId)
+          // Keep payload.workspace on the registered base checkout so preflight
+          // requireRegisteredWorkspace succeeds; stamp runtimeWorktree for the
+          // fleet sole-writer worktree so resolveRuntimeWorktreeWorkspace remaps cwd.
+          const fleetRuntimeWorktree = buildEphemeralFleetRuntimeWorktreeIntent({
+            isolation: workerPermissions.isolation,
+            baseWorkspacePath: writerWorktree?.baseWorkspacePath || baseWorkspacePath,
+            effectiveWorkspacePath: workerPermissions.effectiveWorkspacePath
+          })
           const runPayload: AgentRunPayload = {
             provider: worker.provider,
             scope: context.scope ?? 'workspace',
@@ -39328,7 +39470,8 @@ async function executeGeminiMcpTool(
             sessionTrust: false,
             externalPathGrants: subThreadEffectivePermissions.externalPathGrants,
             runtimeProfileId: inheritableRuntimeProfileId,
-            effectivePermissions: subThreadEffectivePermissions
+            effectivePermissions: subThreadEffectivePermissions,
+            ...(fleetRuntimeWorktree ? { runtimeWorktree: fleetRuntimeWorktree } : {})
           }
           runPayload.effectivePermissionsSignature = signRunPosture(
             delegatedApprovalMode,
@@ -39426,6 +39569,52 @@ async function executeGeminiMcpTool(
             // Best-effort card cleanup.
           }
           AppStore.deleteChat(child.subThreadId)
+        },
+        projectFleetWaveCard: ({
+          waveId,
+          joinPolicy,
+          lifecycle,
+          allowMultiProvider,
+          workers,
+          children
+        }) => {
+          const parentChat = AppStore.getChat(parentChatId)
+          if (!parentChat) return
+          const cardMessage: ChatMessage = {
+            id: `fleet-wave-${waveId}`,
+            role: 'system',
+            content: `↪ Fleet · ${children.length} agents (${lifecycle})`,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              kind: 'fleetWave',
+              waveId,
+              lifecycle,
+              allowMultiProvider,
+              parentProvider,
+              joinPolicy,
+              expectedCount: children.length,
+              settledCount: 0,
+              failedCount: 0,
+              approvalCount: 0,
+              status: 'running',
+              workers: children.map((child, index) => ({
+                subThreadId: child.subThreadId,
+                provider: child.provider,
+                title: child.title,
+                role: workers[index]?.role,
+                label: workers[index]?.label
+              })),
+              returnResultToParent: true,
+              providerContextVisibility: 'projection-only'
+            }
+          }
+          const updatedParent: ChatRecord = {
+            ...parentChat,
+            messages: [...parentChat.messages, cardMessage],
+            updatedAt: Date.now()
+          }
+          AppStore.saveChat(updatedParent)
+          broadcastChatUpdated(updatedParent)
         },
         providerLabel
       })

@@ -374,6 +374,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'canvas:navigate-chat',
   'canvas:list',
   'canvas:list-chat',
+  'canvas:chart-document',
 
   // Mesh Canvas's private asset URLs and human file picker are rendered only
   // in the main chat window; secondary renderers have no independent surface.

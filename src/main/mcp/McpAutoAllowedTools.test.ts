@@ -215,6 +215,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       [
         'cancel_subthread',
         'canvas_navigate',
+        'canvas_render_chart',
         'delegate_to_subthread',
         'delegate_wave',
         ...MESH_MCP_TOOL_NAMES,
@@ -233,6 +234,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     )
     const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_navigate.service).toBe('webBrowsing')
+    expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.service).toBe('mcpTools')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_to_subthread.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_wave.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.cancel_subthread.service).toBe('subThreadDelegation')
@@ -387,6 +389,18 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     expect(isReadOnlyAdvertisedTool('canvas_open')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_screenshot')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_close')).toBe(false)
+  })
+
+  it('advertises canvas_render_chart to Ask/Plan as an approval-queued recon instrument', () => {
+    // Dock charts must be reachable on every tier: Ask/Plan get a modal ask
+    // (never hard-deny / never auto-allow); Accept Edits+ follow mcpTools allow.
+    expect(isReadOnlyAdvertisedTool('canvas_render_chart')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_render_chart')).toBe(true)
+    expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toContain('canvas_render_chart')
+    expect(PLAN_INSTRUMENT_ADVERTISE_TOOLS).toContain('canvas_render_chart')
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_render_chart')).toBe(false)
+    expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.service).toBe('mcpTools')
+    expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.toolClass).toBe('orchestration')
   })
 
   it('advertises every Mesh Canvas action to Ask as an approval-queued instrument', () => {

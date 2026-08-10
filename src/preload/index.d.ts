@@ -400,7 +400,7 @@ interface AgentRunPayload {
   runtimeProfileId?: string
   runtimeWorktree?: {
     requested: boolean
-    source: 'runtimeProfile' | 'composer'
+    source: 'runtimeProfile' | 'composer' | 'ensembleLane' | 'ephemeralFleet'
     profileId?: string
     profileName?: string
     baseWorkspacePath?: string
@@ -1289,6 +1289,11 @@ declare global {
           | { ok: false; error: string }
         >
         listForChat: (chatId: string) => Promise<unknown[]>
+        /**
+         * Structured chart document for a chat-owned chart canvas (TelemetryPane).
+         * Null when missing / not a chart / not owned. No pixels.
+         */
+        chartDocument: (chatId: string, canvasId: string) => Promise<unknown | null>
         closeForChat: (chatId: string, canvasId: string) => Promise<void>
         clearBrowserProfile: () => Promise<
           { ok: true; closedSurfaceCount: number } | { ok: false; error: string }

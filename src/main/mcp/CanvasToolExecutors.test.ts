@@ -26,6 +26,7 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
     }),
     list: () => [],
     status: () => null,
+    getChartDocument: () => null,
     snapshot: async () => ({
       url: 'u',
       title: 'T',
@@ -456,6 +457,71 @@ describe('executeCanvasTool', () => {
     })
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
     const result = await executeCanvasTool('canvas_render_html', { html: '   ' }, ctx, 'claude')
+    expect(result.isError).toBe(true)
+    expect(opened).toBe(false)
+  })
+
+  it('canvas_render_chart opens a chart-driver canvas in the dock and returns the first frame', async () => {
+    let seen: unknown = null
+    const chartDocument = {
+      schemaVersion: 1 as const,
+      title: 'Latency',
+      kind: 'line' as const,
+      series: [
+        {
+          id: 'p50',
+          label: 'p50',
+          points: [
+            { x: 0, y: 12 },
+            { x: 1, y: 14 }
+          ]
+        }
+      ]
+    }
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return {
+          canvasId: 'chart-1',
+          url: 'chart://chart-1',
+          title: 'Latency',
+          viewport: { width: 800, height: 480 }
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_render_chart',
+      { chartDocument, width: 800, height: 480 },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({
+      driver: 'chart',
+      chartDocument,
+      presentation: 'dock'
+    })
+    expect(result.structuredContent?.canvasId).toBe('chart-1')
+    expect(result.structuredContent?.presentation).toBe('dock')
+    expect(result.content?.some((b) => b.type === 'image')).toBe(true)
+  })
+
+  it('canvas_render_chart rejects an invalid chart document before opening', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_render_chart',
+      { chartDocument: { schemaVersion: 1, title: '', kind: 'line', series: [] } },
+      ctx,
+      'claude'
+    )
     expect(result.isError).toBe(true)
     expect(opened).toBe(false)
   })

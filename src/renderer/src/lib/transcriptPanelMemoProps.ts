@@ -48,6 +48,10 @@ export type TranscriptPanelMemoComparable = {
   fileChangeDisplayDels: unknown
   chats: ChatRecord[]
   runningChatIds: string[]
+  /** Fleet wave elevation: pending maps keyed by child subThreadId. */
+  pendingAgentApprovalByChatId?: Record<string, { id?: string } | null | undefined>
+  pendingApprovalQueueByChatId?: Record<string, readonly { id?: string }[] | undefined>
+  onRespondAgentApproval?: unknown
   onOpenFileChangeInWorkbench?: unknown
   onCopyMessage: unknown
   onAddMessageToPrompt?: unknown
@@ -82,6 +86,36 @@ export type TranscriptPanelMemoComparable = {
 export function transcriptRunningChatIdsSignature(ids: readonly string[] | undefined): string {
   if (!ids || ids.length === 0) return ''
   return Array.from(new Set(ids)).sort().join('\u0000')
+}
+
+/** Head + queue approval ids by chat — fleet cards re-render when these change. */
+export function transcriptPendingApprovalsSignature(
+  byChatId?: Record<string, { id?: string } | null | undefined>,
+  queueByChatId?: Record<string, readonly { id?: string }[] | undefined>
+): string {
+  const keys = new Set<string>()
+  if (byChatId) {
+    for (const key of Object.keys(byChatId)) keys.add(key)
+  }
+  if (queueByChatId) {
+    for (const key of Object.keys(queueByChatId)) keys.add(key)
+  }
+  if (keys.size === 0) return ''
+  return [...keys]
+    .sort()
+    .map((chatId) => {
+      const ids: string[] = []
+      const head = byChatId?.[chatId]
+      if (head?.id) ids.push(head.id)
+      const queue = queueByChatId?.[chatId]
+      if (queue) {
+        for (const row of queue) {
+          if (row?.id) ids.push(row.id)
+        }
+      }
+      return `${chatId}\u0001${ids.join('\u0002')}`
+    })
+    .join('\u0003')
 }
 
 export function transcriptAuxiliaryChatsSignature(chats: readonly ChatRecord[]): string {
@@ -175,6 +209,15 @@ export function transcriptPanelPropsEqual(
     transcriptAuxiliaryChatsEqual(previous.chats, next.chats) &&
     transcriptRunningChatIdsSignature(previous.runningChatIds) ===
       transcriptRunningChatIdsSignature(next.runningChatIds) &&
+    transcriptPendingApprovalsSignature(
+      previous.pendingAgentApprovalByChatId,
+      previous.pendingApprovalQueueByChatId
+    ) ===
+      transcriptPendingApprovalsSignature(
+        next.pendingAgentApprovalByChatId,
+        next.pendingApprovalQueueByChatId
+      ) &&
+    previous.onRespondAgentApproval === next.onRespondAgentApproval &&
     previous.onOpenFileChangeInWorkbench === next.onOpenFileChangeInWorkbench &&
     previous.onCopyMessage === next.onCopyMessage &&
     previous.onAddMessageToPrompt === next.onAddMessageToPrompt &&

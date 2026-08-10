@@ -9,11 +9,16 @@ import {
 
 describe('reserved worktree namespaces', () => {
   it('claims the prefixes the automatic allocators actually use', () => {
-    for (const name of ['thread-abc-0123456789', 'fanout-lane-0123456789']) {
+    for (const name of [
+      'thread-abc-0123456789',
+      'fanout-lane-0123456789',
+      'fleet-worker-0123456789'
+    ]) {
       expect(isReservedWorktreeName(name)).toBe(true)
     }
     expect(isReservedBranchName('taskwraith/thread-abc')).toBe(true)
     expect(isReservedBranchName('taskwraith/fanout-lane')).toBe(true)
+    expect(isReservedBranchName('taskwraith/fleet-worker')).toBe(true)
   })
 
   it('matches case-insensitively', () => {
@@ -26,7 +31,7 @@ describe('reserved worktree namespaces', () => {
   })
 
   it('does not over-claim names that merely start similarly', () => {
-    for (const name of ['threading', 'thread', 'fanout', 'fan', 'review', '']) {
+    for (const name of ['threading', 'thread', 'fanout', 'fan', 'fleet', 'review', '']) {
       expect(isReservedWorktreeName(name)).toBe(false)
     }
     for (const branch of ['taskwraith', 'taskwraith-notes', 'feature/x', '']) {
@@ -46,7 +51,8 @@ describe('reserved worktree namespaces', () => {
     const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
     const sources = [
       read('../main/run/ThreadWorktreeBinding.ts'),
-      read('../main/run/FanoutWorktreeAllocation.ts')
+      read('../main/run/FanoutWorktreeAllocation.ts'),
+      read('../main/SubThreadEphemeralFleetWorktree.ts')
     ]
 
     // Every literal `name:` / `branch:` template an allocator mints must be

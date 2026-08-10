@@ -445,4 +445,24 @@ describe('buildChatViewProps (viewer policy)', () => {
     expect(p.onPreviewImage).toBe(onPreviewImage)
     expect(p.liveActivityViewport).toBe(true)
   })
+
+  it('forwards fleet pendingApprovals maps and respond handler', () => {
+    const pendingAgentApprovalByChatId = {
+      'child-1': { id: 'apr-1' }
+    } as unknown as NonNullable<BuildChatViewPropsInput['pendingAgentApprovalByChatId']>
+    const pendingApprovalQueueByChatId = {
+      'child-1': [{ id: 'apr-2' }]
+    } as unknown as NonNullable<BuildChatViewPropsInput['pendingApprovalQueueByChatId']>
+    const onRespondAgentApproval = vi.fn()
+    const p = buildChatViewProps(
+      makeInput({
+        pendingAgentApprovalByChatId,
+        pendingApprovalQueueByChatId,
+        onRespondAgentApproval
+      })
+    )
+    expect(p.pendingAgentApprovalByChatId).toBe(pendingAgentApprovalByChatId)
+    expect(p.pendingApprovalQueueByChatId).toBe(pendingApprovalQueueByChatId)
+    expect(p.onRespondAgentApproval).toBe(onRespondAgentApproval)
+  })
 })

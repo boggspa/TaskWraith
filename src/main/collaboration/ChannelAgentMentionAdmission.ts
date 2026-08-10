@@ -196,8 +196,8 @@ export function resolveChannelAgentMentions(
 
 /**
  * Production admission boundary for a record that the append-only log has
- * already fsynced. Pre-review it can resolve/audit intent, but it cannot spend
- * a signed grant or reach a provider: the source-only gate stops here.
+ * already fsynced. The source-only review gate is the final boundary before a
+ * resolved mention may spend a signed grant or reach a provider.
  */
 export function admitAcceptedChannelAgentMentions(args: {
   record: ChannelMessage

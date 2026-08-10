@@ -80,6 +80,10 @@ export interface BuildChatViewPropsInput {
   currency?: TranscriptPanelProps['currency']
   currencyOverestimatePercent?: number
   providerRates?: TranscriptPanelProps['providerRates']
+  /** Fleet wave elevation: pending approval head/queue keyed by child chat id. */
+  pendingAgentApprovalByChatId?: TranscriptPanelProps['pendingAgentApprovalByChatId']
+  pendingApprovalQueueByChatId?: TranscriptPanelProps['pendingApprovalQueueByChatId']
+  onRespondAgentApproval?: TranscriptPanelProps['onRespondAgentApproval']
 }
 
 /** Stable singletons so the viewer policy never changes prop identity. */
@@ -265,6 +269,9 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     userMessageGutterEnabled: false,
     currency: input.currency,
     currencyOverestimatePercent: input.currencyOverestimatePercent,
-    providerRates: input.providerRates
+    providerRates: input.providerRates,
+    pendingAgentApprovalByChatId: input.pendingAgentApprovalByChatId,
+    pendingApprovalQueueByChatId: input.pendingApprovalQueueByChatId,
+    onRespondAgentApproval: input.onRespondAgentApproval
   }
 }

@@ -199,7 +199,7 @@ import type { QuotaSnapshotHookSnapshot } from '../../shared/quotaSnapshotHook'
 import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
 import { openInteractiveProviderLogin } from './lib/providerLoginRefresh'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
-import { shouldDismissAgentApproval } from './lib/agentApprovalLifecycle'
+import { locatePendingApproval, shouldDismissAgentApproval } from './lib/agentApprovalLifecycle'
 import { formatScheduledRunTime, toDateTimeLocalValue } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
 import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
@@ -2679,6 +2679,16 @@ function App(): React.JSX.Element {
   const [pendingApprovalQueueByChatId, setPendingApprovalQueueByChatId] = useState<
     Record<string, AgentApprovalRequest[]>
   >({})
+  // Live maps for sequential Allow-all / multi-dismiss: findPendingApprovalRoute
+  // must not close over a stale render after an awaited accept promotes the queue.
+  const pendingApprovalsLiveRef = useRef({
+    byChatId: pendingAgentApprovalByChatId,
+    queueByChatId: pendingApprovalQueueByChatId
+  })
+  pendingApprovalsLiveRef.current = {
+    byChatId: pendingAgentApprovalByChatId,
+    queueByChatId: pendingApprovalQueueByChatId
+  }
   // Order-4 — optional one-line "why" note the user can attach to an
   // approval decision. Rides the existing approval-ledger metadata
   // channel as `{ intentNote }` (no schema migration). At most one
@@ -19713,28 +19723,28 @@ function App(): React.JSX.Element {
   const findPendingApprovalRoute = (
     requestId: string
   ): { chatId: string; location: 'head' | 'queue' } | null => {
-    for (const [chatId, approval] of Object.entries(pendingAgentApprovalByChatId)) {
-      if (approval?.id === requestId) return { chatId, location: 'head' }
-    }
-    for (const [chatId, queue] of Object.entries(pendingApprovalQueueByChatId)) {
-      if ((queue || []).some((approval) => approval.id === requestId)) {
-        return { chatId, location: 'queue' }
-      }
-    }
-    return null
+    const live = locatePendingApproval(
+      requestId,
+      pendingApprovalsLiveRef.current.byChatId,
+      pendingApprovalsLiveRef.current.queueByChatId
+    )
+    if (!live) return null
+    // Prefer head when the id is present in both (should not happen).
+    return { chatId: live.chatId, location: live.inHead ? 'head' : 'queue' }
   }
 
   const handleAgentApprovalAction = async (
     requestId: string,
     action: AgentApprovalAction,
     intentNoteOverride?: string
-  ) => {
+  ): Promise<boolean> => {
     // Order-4 — capture the optional intent note (trimmed) at decision
     // time and pass it down to the IPC, which stamps it onto the ledger
     // row's metadata. Empty stays undefined so we never persist a blank
     // note. Always optional — never gates the decision.
     const noteForDecision = (intentNoteOverride ?? intentNote).trim() || undefined
     const usesIntentNoteOverride = intentNoteOverride !== undefined
+    // Snapshot chatId before await for fallback only; dismiss re-locates live.
     const pendingRoute = findPendingApprovalRoute(requestId)
     let responseAccepted:
       | boolean
@@ -19760,7 +19770,7 @@ function App(): React.JSX.Element {
               'Approval response was not accepted. The request remains open for exact review or a different decision.'
           }
         ])
-        return
+        return false
       }
       const remapped =
         responseAccepted &&
@@ -19797,19 +19807,19 @@ function App(): React.JSX.Element {
       ])
     } finally {
       if (shouldDismissAgentApproval(responseAccepted)) {
-        // 1.0.4-AK4 — instead of nulling the head outright, advance
-        // the queue so the next pending approval for this chat
-        // (queued while the current one was on screen) becomes the
-        // new head. When the queue is empty the head goes to null
-        // as before. Pre-AK4 each chat held at most one in-flight
-        // approval so this distinction didn't matter.
-        const targetChatId = pendingRoute?.chatId || getCurrentComposerStateChatId()
+        // Re-locate against live maps after await — sequential Allow-all may
+        // have promoted this id from queue → head while we were in flight.
+        const liveRoute = findPendingApprovalRoute(requestId)
+        const targetChatId =
+          liveRoute?.chatId || pendingRoute?.chatId || getCurrentComposerStateChatId()
         // Order-4 — reset the intent note so the next queued approval
         // (or the next request entirely) starts with an empty field.
         if (!usesIntentNoteOverride) setIntentNote('')
         if (!targetChatId) {
           setPendingAgentApproval((prev) => (prev?.id === requestId ? null : prev))
-        } else if (pendingRoute?.location === 'queue') {
+        } else {
+          // Dismiss by id: scrub queue always, and clear+advance head when it
+          // matches — never trust a pre-await head/queue location alone.
           setPendingApprovalQueueByChatId((prev) => {
             const existing = prev[targetChatId] || []
             const next = existing.filter((approval) => approval.id !== requestId)
@@ -19820,14 +19830,19 @@ function App(): React.JSX.Element {
             }
             return { ...prev, [targetChatId]: next }
           })
-        } else {
-          setPendingAgentApprovalForChatId(targetChatId, (prev) =>
-            prev?.id === requestId ? null : prev
-          )
-          advanceApprovalQueueForChat(targetChatId)
+          let clearedHead = false
+          setPendingAgentApprovalForChatId(targetChatId, (prev) => {
+            if (prev?.id !== requestId) return prev
+            clearedHead = true
+            return null
+          })
+          if (clearedHead) {
+            advanceApprovalQueueForChat(targetChatId)
+          }
         }
       }
     }
+    return shouldDismissAgentApproval(responseAccepted)
   }
 
   const refreshGeminiMcpBridgeStatus = async () => {
@@ -28853,6 +28868,9 @@ function App(): React.JSX.Element {
         pendingAgentQuestions={
           pendingAgentQuestionsByChatId[viewerChatId] || EMPTY_AGENT_QUESTION_QUEUE
         }
+        pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+        pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+        onRespondAgentApproval={handleAgentApprovalAction}
         contextCompactionProgress={
           contextCompactionProgressByChatId[viewerChatId] || EMPTY_CONTEXT_COMPACTION_PROGRESS
         }

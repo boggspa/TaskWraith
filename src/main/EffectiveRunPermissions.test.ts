@@ -339,6 +339,28 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.webBrowsing).toBe('allow')
   })
 
+  it('canvas_render_chart service (mcpTools) is ask under Ask/Plan, not deny', () => {
+    // Seat 2: dock charts reuse mcpTools (no new canvasChart service). Ask and
+    // Plan must modal-ask — never hard-deny — and Accept Edits+ allow.
+    const base = { provider: 'claude' as const, workspacePath: '/repo', settings: settings() }
+    expect(
+      resolveEffectiveRunPermissions({ ...base, presetId: 'read_only' }).agenticServices.mcpTools
+    ).toBe('ask')
+    expect(
+      resolveEffectiveRunPermissions({ ...base, presetId: 'plan' }).agenticServices.mcpTools
+    ).toBe('ask')
+    expect(
+      resolveEffectiveRunPermissions({ ...base, presetId: 'default' }).agenticServices.mcpTools
+    ).toBe('allow')
+    expect(
+      resolveEffectiveRunPermissions({ ...base, presetId: 'workspace_write' }).agenticServices
+        .mcpTools
+    ).toBe('allow')
+    expect(
+      resolveEffectiveRunPermissions({ ...base, presetId: 'full_access' }).agenticServices.mcpTools
+    ).toBe('allow')
+  })
+
   it('aligns Plan and Ask on standard services without changing specialist permissions', () => {
     const base = { provider: 'claude' as const, workspacePath: '/repo', settings: settings() }
     const readOnly = resolveEffectiveRunPermissions({

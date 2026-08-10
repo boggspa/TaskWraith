@@ -3352,6 +3352,216 @@
   line-height: 1.45;
 }
 
+/* Fleet wave card — fourth NativeOrchestrationCard adapter. Chassis is
+ * .claude-workflow-card; no edge stripes. Density ladder: ≤6 / 7–20 chips,
+ * 21+ ghost strip + role roll-up + named exceptions only. */
+.fleet-wave-card.status-paused {
+  border-color: color-mix(in srgb, var(--tool-warning) 42%, transparent);
+  background: color-mix(in srgb, var(--tool-warning) 6%, transparent);
+}
+.fleet-wave-card.status-paused .claude-workflow-card-status {
+  color: var(--tool-warning);
+  background: color-mix(in srgb, var(--tool-warning) 14%, transparent);
+}
+.fleet-wave-card.status-paused .claude-workflow-card-glyph {
+  color: var(--tool-warning);
+  background: color-mix(in srgb, var(--tool-warning) 14%, transparent);
+}
+.fleet-wave-card-glyph {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* Worker chips — same lifecycle-tint contract as .multi-agent-card-agent. */
+.fleet-wave-card-workers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+}
+.fleet-wave-card-worker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: calc(var(--font-size-xs) - 1px);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+.fleet-wave-card-worker.status-working {
+  color: color-mix(in srgb, var(--tool-running) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--tool-running) 12%, transparent);
+}
+.fleet-wave-card-worker.status-completed {
+  color: color-mix(in srgb, var(--success) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.fleet-wave-card-worker.status-failed,
+.fleet-wave-card-worker.status-interrupted {
+  color: color-mix(in srgb, var(--danger) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.fleet-wave-card-worker.status-needs_approval {
+  color: color-mix(in srgb, var(--tool-warning) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--tool-warning) 12%, transparent);
+}
+
+/* Ghost density strip — one mini TaskWraith monoline per agent (13px).
+ * Outline = in flight, filled = settled; colour says which. Static. */
+.fleet-wave-card-density {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 4px;
+  margin-top: 8px;
+}
+.fleet-wave-card-cell {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  display: block;
+  color: color-mix(in srgb, var(--text-primary) 26%, transparent);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  overflow: visible;
+}
+.fleet-wave-card-cell.status-working {
+  color: var(--tool-running);
+}
+.fleet-wave-card-cell.status-needs_approval {
+  color: var(--tool-warning);
+  stroke-width: 1.6;
+}
+.fleet-wave-card-cell.status-completed,
+.fleet-wave-card-cell.status-failed {
+  fill: currentColor;
+  stroke: none;
+}
+.fleet-wave-card-cell.status-completed {
+  color: color-mix(in srgb, var(--success) 82%, transparent);
+}
+.fleet-wave-card-cell.status-failed {
+  color: var(--danger);
+}
+
+/* Role roll-up — aggregate that replaces per-agent chips at 21+. */
+.fleet-wave-card-rollup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: calc(var(--font-size-xs) - 1px);
+  color: var(--text-secondary);
+}
+.fleet-wave-card-rollup-role {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.fleet-wave-card-rollup-role strong,
+.fleet-wave-card-rollup-role b {
+  color: var(--text-primary);
+  font-weight: 640;
+}
+
+/* Exceptions — named failed / needs-approval agents; healthy stay anonymous. */
+.fleet-wave-card-exceptions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+}
+.fleet-wave-card-exception {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: calc(var(--font-size-xs) - 1px);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+.fleet-wave-card-exception.status-failed {
+  color: color-mix(in srgb, var(--danger) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.fleet-wave-card-exception.status-needs_approval {
+  color: color-mix(in srgb, var(--tool-warning) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--tool-warning) 12%, transparent);
+}
+.fleet-wave-card-more {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: calc(var(--font-size-xs) - 1px);
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--text-primary) 16%, transparent);
+  font-family: inherit;
+}
+
+/* Nested elevation row — one worker asking for a wider scope. Multiple
+ * pending asks collapse to one row with a counter; never N stacked rows. */
+.fleet-wave-card-elevation {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--tool-warning) 32%, transparent);
+  background: color-mix(in srgb, var(--tool-warning) 8%, transparent);
+  font-size: calc(var(--font-size-xs) - 1px);
+}
+.fleet-wave-card-elevation-count {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: calc(var(--font-size-xs) - 2px);
+  font-weight: 640;
+  color: var(--tool-warning);
+  background: color-mix(in srgb, var(--tool-warning) 16%, transparent);
+}
+.fleet-wave-card-elevation-text {
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.fleet-wave-card-elevation-text b,
+.fleet-wave-card-elevation-text strong {
+  color: var(--text-primary);
+  font-weight: 640;
+}
+.fleet-wave-card-elevation-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.fleet-wave-card-elevation-btn {
+  appearance: none;
+  font: inherit;
+  font-size: calc(var(--font-size-xs) - 1px);
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-secondary);
+}
+.fleet-wave-card-elevation-btn.primary {
+  border-color: color-mix(in srgb, var(--tool-warning) 46%, transparent);
+  background: color-mix(in srgb, var(--tool-warning) 16%, transparent);
+  color: var(--tool-warning);
+}
+
 .child-agent-thread {
   /* Provider accent fallback chain: identity color (inline var) wins, then
    * the provider brand color from the data-provider rules below, then the

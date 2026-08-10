@@ -33,7 +33,9 @@
   gap: 7px;
   flex: 1;
   min-width: 0;
-  font: 600 12px/1.3 system-ui, sans-serif;
+  font:
+    600 12px/1.3 system-ui,
+    sans-serif;
   opacity: 0.78;
   padding: 2px 5px;
 }
@@ -61,7 +63,9 @@
   background: color-mix(in srgb, var(--surface-2, transparent) 42%, transparent);
   color: inherit;
   padding: 3px 8px;
-  font: 11px/1.3 system-ui, sans-serif;
+  font:
+    11px/1.3 system-ui,
+    sans-serif;
   cursor: pointer;
   opacity: 0.72;
 }
@@ -143,13 +147,17 @@
 
 .canvas-dock-browser-empty h2 {
   margin: 0;
-  font: 650 15px/1.25 system-ui, sans-serif;
+  font:
+    650 15px/1.25 system-ui,
+    sans-serif;
   letter-spacing: -0.01em;
 }
 
 .canvas-dock-browser-empty > p {
   margin: 6px 0 18px;
-  font: 11.5px/1.4 system-ui, sans-serif;
+  font:
+    11.5px/1.4 system-ui,
+    sans-serif;
   opacity: 0.54;
 }
 
@@ -170,7 +178,9 @@
   outline: none;
   background: color-mix(in srgb, var(--surface-2, rgba(127, 127, 127, 0.09)) 68%, transparent);
   color: inherit;
-  font: 11.5px/1.3 system-ui, sans-serif;
+  font:
+    11.5px/1.3 system-ui,
+    sans-serif;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
@@ -191,7 +201,9 @@
   gap: 6px;
   max-width: 330px;
   margin-top: 16px;
-  font: 10px/1.45 system-ui, sans-serif;
+  font:
+    10px/1.45 system-ui,
+    sans-serif;
   opacity: 0.42;
 }
 
@@ -202,7 +214,9 @@
 
 .canvas-dock-browser-opening {
   margin-top: 10px;
-  font: 11px/1.35 system-ui, sans-serif;
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
   opacity: 0.58;
 }
 
@@ -233,7 +247,9 @@
 
 .canvas-dock-popover-eyebrow {
   padding: 5px 8px 6px;
-  font: 600 9.5px/1.2 system-ui, sans-serif;
+  font:
+    600 9.5px/1.2 system-ui,
+    sans-serif;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   opacity: 0.42;
@@ -279,7 +295,9 @@
 }
 
 .canvas-dock-menu-plus {
-  font: 300 18px/1 system-ui, sans-serif;
+  font:
+    300 18px/1 system-ui,
+    sans-serif;
 }
 
 .canvas-dock-menu-copy {
@@ -290,14 +308,18 @@
 
 .canvas-dock-menu-copy strong {
   overflow: hidden;
-  font: 550 11.5px/1.2 system-ui, sans-serif;
+  font:
+    550 11.5px/1.2 system-ui,
+    sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .canvas-dock-menu-copy small {
   overflow: hidden;
-  font: 10px/1.25 system-ui, sans-serif;
+  font:
+    10px/1.25 system-ui,
+    sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.48;
@@ -327,11 +349,15 @@
 }
 
 .canvas-dock-profile-heading strong {
-  font: 600 12px/1.2 system-ui, sans-serif;
+  font:
+    600 12px/1.2 system-ui,
+    sans-serif;
 }
 
 .canvas-dock-profile-heading small {
-  font: 10px/1.25 system-ui, sans-serif;
+  font:
+    10px/1.25 system-ui,
+    sans-serif;
   opacity: 0.48;
 }
 
@@ -349,7 +375,9 @@
 
 .canvas-dock-profile-menu p {
   margin: 0;
-  font: 10.5px/1.45 system-ui, sans-serif;
+  font:
+    10.5px/1.45 system-ui,
+    sans-serif;
   opacity: 0.62;
 }
 
@@ -358,14 +386,18 @@
   border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface-2, transparent) 44%, transparent);
-  font: 10px/1.4 system-ui, sans-serif;
+  font:
+    10px/1.4 system-ui,
+    sans-serif;
   opacity: 0.72;
 }
 
 .canvas-dock-profile-notice {
   padding: 7px 8px;
   border-radius: 7px;
-  font: 10px/1.4 system-ui, sans-serif;
+  font:
+    10px/1.4 system-ui,
+    sans-serif;
   background: color-mix(in srgb, var(--surface-2, transparent) 50%, transparent);
 }
 
@@ -385,7 +417,9 @@
   border-radius: 7px;
   background: transparent;
   color: inherit;
-  font: 10.5px/1.2 system-ui, sans-serif;
+  font:
+    10.5px/1.2 system-ui,
+    sans-serif;
   cursor: pointer;
 }
 
@@ -424,7 +458,9 @@
 
 .canvas-dock-error {
   margin: 0 12px 8px;
-  font: 11px/1.35 system-ui, sans-serif;
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
   color: var(--status-failed, #e5484d);
   flex-shrink: 0;
 }
@@ -469,7 +505,9 @@
 }
 
 .canvas-dock-agent-title {
-  font: 600 11px/1.35 system-ui, sans-serif;
+  font:
+    600 11px/1.35 system-ui,
+    sans-serif;
   opacity: 0.74;
 }
 
@@ -486,7 +524,9 @@
   align-items: center;
   gap: 7px;
   min-width: 0;
-  font: 11px/1.35 system-ui, sans-serif;
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
 }
 
 .canvas-dock-agent-status {
@@ -519,7 +559,9 @@
 
 .canvas-dock-agent-driver {
   flex-shrink: 0;
-  font: 10px/1.2 system-ui, sans-serif;
+  font:
+    10px/1.2 system-ui,
+    sans-serif;
   opacity: 0.55;
   border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
   border-radius: 4px;
@@ -536,7 +578,9 @@
   color: inherit;
   cursor: pointer;
   opacity: 0.55;
-  font: 12px/1 system-ui, sans-serif;
+  font:
+    12px/1 system-ui,
+    sans-serif;
 }
 
 .canvas-dock-agent-close:hover {
@@ -545,7 +589,9 @@
 }
 
 .canvas-dock-agent-hint {
-  font: 10px/1.4 system-ui, sans-serif;
+  font:
+    10px/1.4 system-ui,
+    sans-serif;
   opacity: 0.45;
 }
 
@@ -625,7 +671,9 @@
   outline: none;
   background: transparent;
   color: var(--text-primary);
-  font: 11.5px/1.3 system-ui, sans-serif;
+  font:
+    11.5px/1.3 system-ui,
+    sans-serif;
   padding: 0;
   text-overflow: ellipsis;
 }
@@ -670,4 +718,128 @@
     background-size: 100% 100%;
     opacity: 0.55;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Telemetry chart pane — native SVG body for kind:'chart' session tabs.
+   Same corporate-clean dock language; no browser chrome. */
+
+.canvas-dock-telemetry {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.canvas-dock-telemetry-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 12px 8px;
+}
+
+.canvas-dock-telemetry-heading {
+  min-width: 0;
+}
+
+.canvas-dock-telemetry-title {
+  overflow: hidden;
+  font:
+    650 12px/1.25 system-ui,
+    sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-dock-telemetry-subtitle {
+  margin-top: 2px;
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
+  opacity: 0.55;
+}
+
+.canvas-dock-telemetry-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.62;
+  font:
+    12px/1 system-ui,
+    sans-serif;
+}
+
+.canvas-dock-telemetry-close:hover {
+  opacity: 1;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.canvas-dock-telemetry-viewport {
+  flex: 1 1 auto;
+  min-height: 160px;
+  margin: 0 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.22));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2, transparent) 42%, transparent);
+}
+
+.canvas-dock-telemetry-viewport svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.canvas-dock-telemetry-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  flex-shrink: 0;
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px 12px;
+  font:
+    10.5px/1.3 system-ui,
+    sans-serif;
+  opacity: 0.78;
+}
+
+.canvas-dock-telemetry-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.canvas-dock-telemetry-swatch {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.canvas-dock-telemetry-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  padding: 24px 16px;
+  font:
+    11.5px/1.4 system-ui,
+    sans-serif;
+  opacity: 0.55;
+  text-align: center;
 }

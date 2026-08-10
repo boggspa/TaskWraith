@@ -314,7 +314,7 @@ interface SettingsPanelProps {
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
-  /** Settings → General: max workers accepted by `delegate_wave` (2–20, default 8). */
+  /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
   maxWaveAgents?: AppSettings['maxWaveAgents']
   /**
    * 1.0.5-EW49 — Dashboard statistics preferences. Per-stat
@@ -453,7 +453,7 @@ interface SettingsPanelProps {
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
-    /** Settings → General: max workers accepted by `delegate_wave` (2–20, default 8). */
+    /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
     maxWaveAgents?: AppSettings['maxWaveAgents']
     /**
      * 1.0.5-EW49 — Per-stat visibility map / global "reset all"
@@ -2419,6 +2419,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'launch_status',
     'canvas_open',
     'canvas_render_html',
+    'canvas_render_chart',
     'canvas_open_attachment',
     'canvas_open_launch',
     'canvas_sketch_open',
@@ -4814,7 +4815,7 @@ export function SettingsPanel({
   const safeMaxWaveAgents = (() => {
     const n = Number(maxWaveAgents)
     if (!Number.isFinite(n)) return 8
-    return Math.max(2, Math.min(20, Math.floor(n)))
+    return Math.max(2, Math.min(64, Math.floor(n)))
   })()
   const transcriptFontOptions = [...TRANSCRIPT_FONT_OPTIONS, ...installedFontOptions]
   const composerFontOptions = [...COMPOSER_FONT_OPTIONS, ...installedFontOptions]
@@ -6388,25 +6389,25 @@ export function SettingsPanel({
                   type="range"
                   className="composer-ensemble-context-slider"
                   min={2}
-                  max={20}
+                  max={64}
                   step={1}
                   value={safeMaxWaveAgents}
                   onChange={(e) =>
                     onChange({
                       maxWaveAgents: Math.max(
                         2,
-                        Math.min(20, Math.floor(Number(e.target.value) || 8))
+                        Math.min(64, Math.floor(Number(e.target.value) || 8))
                       )
                     })
                   }
                   style={{
                     width: '100%',
-                    ...rangeFillStyle(safeMaxWaveAgents, 2, 20)
+                    ...rangeFillStyle(safeMaxWaveAgents, 2, 64)
                   }}
                 />
                 <p className="settings-hint">
-                  Caps how many workers a single <code>delegate_wave</code> batch may spawn (2–20).
-                  Default is 8. Structural join quorum still cannot exceed 20.
+                  Caps how many workers a single <code>delegate_wave</code> batch may spawn (2–64).
+                  Default is 8. Structural wave + join ceilings are 64.
                 </p>
               </div>
 

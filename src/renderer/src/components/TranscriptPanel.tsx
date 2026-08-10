@@ -191,6 +191,13 @@ import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
+import { FleetWaveCard } from './FleetWaveCard'
+import { isFleetWaveMessage } from './FleetWaveCardModel'
+import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import {
+  approvalIdsForAllowAllSameScope,
+  collectFleetWavePendingApprovals
+} from '../lib/fleetWavePendingApprovals'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
@@ -595,6 +602,15 @@ export type TranscriptPanelProps = {
   /** Phase I3.2 — chat ids currently running on the run-queue so the
    * delegation card and the chat-header ticker can show live state. */
   runningChatIds: string[]
+  /** Live head approval per chat — used by fleet wave elevation. */
+  pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
+  /** Live queued approvals per chat — used by fleet wave elevation. */
+  pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  /** Respond to an elevated fleet-wave approval (Allow / Deny / Allow-all). */
+  onRespondAgentApproval?: (
+    requestId: string,
+    action: AgentApprovalAction
+  ) => boolean | void | Promise<boolean | void>
   onPlanChoiceSubmit: (messageId: string, option: string) => void
   onProposedPlanApprove: (messageId: string, planBody: string) => void
   onProposedPlanDismiss: (messageId: string) => void
@@ -921,6 +937,7 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // entirely behind "System · 2 system notices".
     !isDeliveredExternalContribution(msg) &&
     !isSubThreadDelegationMessage(msg) &&
+    !isFleetWaveMessage(msg) &&
     !isSubThreadReturnMessage(msg) &&
     !isEnsembleFanoutResultMessage(msg) &&
     msg.metadata?.kind !== 'ensembleParticipantHealth' &&
@@ -2281,6 +2298,9 @@ export const TranscriptPanel = memo(
     fileChangeDisplayDels,
     chats,
     runningChatIds,
+    pendingAgentApprovalByChatId,
+    pendingApprovalQueueByChatId,
+    onRespondAgentApproval,
     onPlanChoiceSubmit,
     onProposedPlanApprove,
     onProposedPlanDismiss,
@@ -4152,6 +4172,7 @@ export const TranscriptPanel = memo(
           )}
           {renderedRows.map(({ msg, rowKey }) => {
             const isDelegationCard = isSubThreadDelegationMessage(msg)
+            const isFleetWaveCard = isFleetWaveMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
             const isThreadMessageCard = isThreadMessageTranscriptMessage(msg)
             const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
@@ -4459,7 +4480,7 @@ export const TranscriptPanel = memo(
               return agentQuestionHeaderLineFor(asker, Array.isArray(options) && options.length > 0)
             })()
             const auxiliaryKey =
-              isDelegationCard || isReturnCard
+              isDelegationCard || isReturnCard || isFleetWaveCard
                 ? `${runningChatIdsSignature}|${auxiliaryChatsSignature}`
                 : ''
             const pendingProposedPlanKey = pendingProposedPlan?.messageId === msg.id
@@ -4703,7 +4724,129 @@ export const TranscriptPanel = memo(
                     message={msg}
                     onSetExpanded={setParallelResultViewportExpanded}
                   />
-                ) : isDelegationCard || isReturnCard ? (
+                ) : isFleetWaveCard ? (() => {
+                  const workers = Array.isArray(msg.metadata?.workers) ? msg.metadata.workers : []
+                  const workerChatIds = workers.map((worker: any, index: number) =>
+                    typeof worker?.subThreadId === 'string' ? worker.subThreadId : `w${index}`
+                  )
+                  const approvalByChatId = pendingAgentApprovalByChatId || {}
+                  const approvalQueueByChatId = pendingApprovalQueueByChatId || {}
+                  const pendingApprovals = collectFleetWavePendingApprovals(
+                    workerChatIds,
+                    approvalByChatId,
+                    approvalQueueByChatId
+                  )
+                  const pendingApprovalIds = new Set(
+                    pendingApprovals.map((row) => row.approvalId)
+                  )
+                  const metaStatus =
+                    msg.metadata?.status === 'pending' ||
+                    msg.metadata?.status === 'running' ||
+                    msg.metadata?.status === 'needs_approval' ||
+                    msg.metadata?.status === 'completed' ||
+                    msg.metadata?.status === 'failed'
+                      ? msg.metadata.status
+                      : 'running'
+                  return (
+                  <div key={msg.id} className="message-group fleet-wave-message">
+                    <FleetWaveCard
+                      provider={
+                        typeof msg.metadata?.parentProvider === 'string'
+                          ? (msg.metadata.parentProvider as ProviderId)
+                          : undefined
+                      }
+                      onOpenSubThread={onOpenSubThread}
+                      onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                      onAllowOnce={
+                        onRespondAgentApproval
+                          ? (id) => {
+                              void onRespondAgentApproval(id, 'accept')
+                            }
+                          : undefined
+                      }
+                      onDeny={
+                        onRespondAgentApproval
+                          ? (id) => {
+                              void onRespondAgentApproval(id, 'decline')
+                            }
+                          : undefined
+                      }
+                      onAllowAllSameScope={
+                        onRespondAgentApproval
+                          ? async (scopeKey) => {
+                              for (const id of approvalIdsForAllowAllSameScope(
+                                pendingApprovals,
+                                scopeKey
+                              )) {
+                                const accepted = await onRespondAgentApproval(id, 'accept')
+                                // Stop the bulk when an accept is rejected — do not
+                                // keep accepting the rest of the scope group.
+                                if (accepted === false) break
+                                // Yield so App can commit head/queue promotion before
+                                // the next id is located (same-chat sequential Allow-all).
+                                await new Promise<void>((resolve) => setTimeout(resolve, 0))
+                              }
+                            }
+                          : undefined
+                      }
+                      telemetry={{
+                        waveId:
+                          typeof msg.metadata?.waveId === 'string' ? msg.metadata.waveId : undefined,
+                        status:
+                          pendingApprovals.length > 0 ? 'needs_approval' : metaStatus,
+                        parentProvider:
+                          typeof msg.metadata?.parentProvider === 'string'
+                            ? msg.metadata.parentProvider
+                            : undefined,
+                        allowMultiProvider: Boolean(msg.metadata?.allowMultiProvider),
+                        pendingApprovals,
+                        agents: workers.map((worker: any, index: number) => {
+                              const subThreadId = workerChatIds[index]
+                              const child = chats.find((c) => c.appChatId === subThreadId)
+                              const running = runningChatIds.includes(subThreadId)
+                              const failed =
+                                Boolean(child?.delegationContext?.dispatchError) ||
+                                (typeof child?.delegationContext?.resultReturnedAt === 'number' &&
+                                  Array.isArray(child?.runs) &&
+                                  child.runs.some(
+                                    (run: { status?: string }) =>
+                                      run.status === 'failed' || run.status === 'cancelled'
+                                  ))
+                              const returned = Boolean(child?.delegationContext?.resultReturnedAt)
+                              const archived = Boolean(child?.archived)
+                              const head = approvalByChatId[subThreadId]
+                              const queue = approvalQueueByChatId[subThreadId]
+                              const hasPendingApproval =
+                                (head != null && pendingApprovalIds.has(head.id)) ||
+                                (Array.isArray(queue) &&
+                                  queue.some((row) => pendingApprovalIds.has(row.id)))
+                              const status = failed
+                                ? 'failed'
+                                : hasPendingApproval
+                                  ? 'needs_approval'
+                                  : returned || archived
+                                    ? 'completed'
+                                    : running
+                                      ? 'working'
+                                      : 'pending'
+                              return {
+                                id: subThreadId,
+                                label:
+                                  (typeof worker?.label === 'string' && worker.label) ||
+                                  (typeof worker?.role === 'string' && worker.role) ||
+                                  (typeof worker?.title === 'string' && worker.title) ||
+                                  `agent-${index + 1}`,
+                                role: worker?.role || 'worker',
+                                status,
+                                provider:
+                                  typeof worker?.provider === 'string' ? worker.provider : undefined
+                              }
+                            })
+                      }}
+                    />
+                  </div>
+                  )
+                })() : isDelegationCard || isReturnCard ? (
                   <div
                     key={msg.id}
                     className={`message-group ${

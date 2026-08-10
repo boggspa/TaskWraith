@@ -2,6 +2,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../shared/collaboration/ChannelAgentReviewGate', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../shared/collaboration/ChannelAgentReviewGate')>()
+  return { ...actual, channelAgentParticipationEnabled: () => false }
+})
+
 import {
   b64,
   exportRawEd25519PublicKey,
@@ -905,7 +912,7 @@ describe('ChannelProductionService', () => {
     ])
   })
 
-  it('audits an accepted human mention at the immutable review gate before authority access', async () => {
+  it('audits an accepted human mention at an injected closed gate before authority access', async () => {
     const userDataPath = temporaryUserData()
     const identity = generateIdentityKeyPair()
     const now = 1_700_000_000_000

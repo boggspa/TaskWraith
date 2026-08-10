@@ -162,7 +162,7 @@ describe('ComposerShellPreview — single metadata source', () => {
       ['claude', 'claude', 'Opus 5', 'plan', 'Plan'],
       ['cursor', 'cursor', 'Composer 2.5', 'default', 'Accept Edits'],
       ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Accept Edits'],
-      ['gemini', 'gemini', 'Pro 3.1', 'default', 'Accept Edits'],
+      ['gemini', 'gemini', 'Gemini Pro', 'default', 'Accept Edits'],
       ['kimi', 'kimi', 'K2.7 Coding', 'read_only', 'Read workspace'],
       ['default', 'codex', 'Auto', 'default', 'Accept Edits'],
       ['terminal', 'codex', 'Shell', 'default', 'Ask before tools']

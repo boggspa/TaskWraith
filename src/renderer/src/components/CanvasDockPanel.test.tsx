@@ -102,6 +102,7 @@ describe('canvasSummaryLabel', () => {
     expect(canvasSummaryLabel({ url: 'http://localhost:3000/deep/path' })).toBe('localhost:3000')
     expect(canvasSummaryLabel({ url: 'html://abc123' })).toBe('html://abc123')
     expect(canvasSummaryLabel({ driver: 'sketch' })).toBe('Sketch canvas')
+    expect(canvasSummaryLabel({ driver: 'chart' })).toBe('Chart')
     expect(canvasSummaryLabel({})).toBe('Canvas')
   })
 
@@ -110,6 +111,13 @@ describe('canvasSummaryLabel', () => {
     expect(
       canvasSummaryLabel({ driver: 'sketch', title: 'Sketch Canvas', url: 'sketch://x' })
     ).toBe('Sketch Canvas')
+  })
+
+  it('never labels a chart with its internal chart:// url', () => {
+    expect(canvasSummaryLabel({ driver: 'chart', url: 'chart://abc12345' })).toBe('Chart')
+    expect(
+      canvasSummaryLabel({ driver: 'chart', title: 'Latency p95', url: 'chart://deadbeef' })
+    ).toBe('Latency p95')
   })
 })
 
@@ -236,5 +244,70 @@ describe('CanvasDockPanel (static render)', () => {
     expect(source).toContain('cannot type passwords or verification codes')
     expect(source).toContain('Close browser tabs across all tasks')
     expect(source).toContain('Sketch, 3D, and Simulator canvases stay open')
+  })
+
+  it('hosts chart sessions as TelemetryCanvasPanel tabs without pop-out or CanvasPane', () => {
+    canvasDockSessionStore.add('chat-chart', { canvasId: 'c-chart', kind: 'chart' })
+    try {
+      const html = renderToStaticMarkup(<CanvasDockPanel chatId="chat-chart" />)
+      expect(html).toContain('role="tablist"')
+      expect(html).toContain('canvas-dock-tab')
+      expect(html).toContain('canvas-dock-telemetry')
+      expect(html).toContain('aria-label="Telemetry chart"')
+      // Native pane — never a WebContentsView host or floating-window pop-out.
+      expect(html).not.toContain('canvas-pane-host')
+      expect(html).not.toContain('aria-label="Move canvas to a floating window"')
+      expect(html).not.toContain('canvas-browser-chrome')
+    } finally {
+      canvasDockSessionStore.remove('chat-chart', 'c-chart')
+    }
+  })
+
+  it('adopts chart dock presentations without adoptEmbedded (native pane path)', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    expect(source).toContain("'web' | 'sketch' | 'chart'")
+    expect(source).toContain("driver === 'chart'")
+    expect(source).toContain('TelemetryCanvasPanel')
+    expect(source).toContain('dockSessionKindFromDriver')
+    // Chart must not share the WebContentsView adoption path.
+    const adoptBlock = source.slice(
+      source.indexOf('selectUnownedDockPresentations'),
+      source.indexOf('canvasDockSessionStore.reconcile')
+    )
+    expect(adoptBlock).toMatch(/driver === ['"]chart['"]/)
+    expect(adoptBlock).toContain('continue')
+  })
+})
+
+describe('toCanvasDockSummary chart document', () => {
+  it('forwards a validated chartDocument when list/status includes one', () => {
+    const chartDocument = {
+      schemaVersion: 1 as const,
+      title: 'Latency p95',
+      kind: 'line' as const,
+      series: [{ id: 'p95', label: 'p95', points: [{ x: 0, y: 1 }] }]
+    }
+    expect(
+      toCanvasDockSummary({
+        canvasId: 'c-chart',
+        driver: 'chart',
+        url: 'chart://abc',
+        title: 'Latency p95',
+        status: 'active',
+        presentation: 'dock',
+        chartDocument
+      })
+    ).toEqual({
+      canvasId: 'c-chart',
+      driver: 'chart',
+      url: 'chart://abc',
+      title: 'Latency p95',
+      status: 'active',
+      presentation: 'dock',
+      chartDocument
+    })
   })
 })

@@ -320,8 +320,8 @@ export function ChannelAgentManagementView({
         </button>
       </div>
       <p className="channel-host-safety-note">
-        Grants can be reviewed and signed now. Automatic mention dispatch remains source-disabled
-        until the P3 adversarial security review is accepted.
+        An active signed grant lets only its named humans start this agent by mention, within the
+        confirmed workspace, permissions, lifetime, and dispatch budget.
       </p>
 
       {state.error && (
