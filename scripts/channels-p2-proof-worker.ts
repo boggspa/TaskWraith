@@ -31,6 +31,7 @@ import {
 import { channelMemberReplicaPaths } from '../src/main/collaboration/ChannelMemberReplicaStore'
 import {
   createChannelProductionBootstrap,
+  type ChannelProductionAgentRuntimeOptions,
   type ChannelProductionBootstrap
 } from '../src/main/collaboration/ChannelProductionBootstrap'
 import {
@@ -58,6 +59,7 @@ interface WireMetrics {
   maxFrameBytes: number
   encryptedFrames: number
   handshakeFrames: number
+  agentRouteCalls: number
   plaintextApplicationFrames: number
 }
 
@@ -71,6 +73,7 @@ const metrics: WireMetrics = {
   maxFrameBytes: 0,
   encryptedFrames: 0,
   handshakeFrames: 0,
+  agentRouteCalls: 0,
   plaintextApplicationFrames: 0
 }
 
@@ -185,6 +188,21 @@ function proofSafeStorage(): HumanCollaborationSafeStorage {
       return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
     }
   }
+}
+
+function proofAgentExecution(): ChannelProductionAgentRuntimeOptions {
+  const rejectRoute = (): never => {
+    metrics.agentRouteCalls += 1
+    throw new Error('P2 compatibility mission reached an agent route')
+  }
+  return {
+    composeMainOwnedChannelAgentRun: rejectRoute,
+    dispatch: rejectRoute,
+    subscribeRunEvents: rejectRoute,
+    subscribeRunSessions: rejectRoute,
+    claimRunAudience: rejectRoute,
+    reconcileRun: rejectRoute
+  } as unknown as ChannelProductionAgentRuntimeOptions
 }
 
 function instrumentSocketFactory(factory: TransportSocketFactory): TransportSocketFactory {
@@ -303,6 +321,7 @@ async function runHost(): Promise<void> {
   const bootstrap: ChannelProductionBootstrap = createChannelProductionBootstrap({
     userDataPath: profilePath,
     loadIdentity: () => identityStore.load(),
+    safeStorage,
     relay: {
       hostRelayUrl: () => relayUrl,
       inviteRelayUrls: () => [relayUrl]
@@ -313,6 +332,27 @@ async function runHost(): Promise<void> {
     getOwnedChatId: () => null,
     publishToMain: (event) => events.emit(event),
     publishToChat: () => undefined,
+    agentManagement: {
+      getSettings: () =>
+        ({
+          agenticServices: {
+            shellCommands: 'ask',
+            fileChanges: 'ask',
+            mcpTools: 'ask',
+            subThreadDelegation: 'ask',
+            canvasInteraction: 'ask',
+            canvasEval: 'ask',
+            networkAccess: 'deny'
+          },
+          agenticWorkspaceGrants: []
+        }) as never,
+      providerAllowed: () => false,
+      getWorkspaces: () => [],
+      canonicalizePath: (value) => value,
+      getOwnerWindow: () => null,
+      confirm: async () => ({ confirmed: false })
+    },
+    agentExecution: proofAgentExecution(),
     socketFactory: instrumentSocketFactory(wsTransportSocketFactory)
   })
   bootstrap.start()

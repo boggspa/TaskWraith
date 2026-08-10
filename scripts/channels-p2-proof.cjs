@@ -24,6 +24,11 @@ const DEFAULT_EVIDENCE = join(ROOT, '.local-only', 'channels-p2-proof-evidence.j
 const REQUEST_TIMEOUT_MS = 30_000
 
 const EXPECTED_HOST_IPC = [
+  'channels:agent:enroll',
+  'channels:agent:grant',
+  'channels:agent:overview',
+  'channels:agent:revoke',
+  'channels:agent:rotate',
   'channels:append',
   'channels:audit',
   'channels:close',
@@ -134,6 +139,7 @@ class ProofWorker {
     const error = new Error(
       `${this.label} exited code=${String(code)} signal=${String(signal)}${detail ? `\n${detail}` : ''}`
     )
+    this.rejectReady(error)
     this.rejectAll(error)
     this.resolveExit(this.exitResult)
   }
@@ -318,6 +324,7 @@ function aggregateWireMetrics(...states) {
         maxFrameBytes: Math.max(combined.maxFrameBytes, Number(value.maxFrameBytes || 0)),
         encryptedFrames: combined.encryptedFrames + Number(value.encryptedFrames || 0),
         handshakeFrames: combined.handshakeFrames + Number(value.handshakeFrames || 0),
+        agentRouteCalls: combined.agentRouteCalls + Number(value.agentRouteCalls || 0),
         plaintextApplicationFrames:
           combined.plaintextApplicationFrames + Number(value.plaintextApplicationFrames || 0)
       }
@@ -326,6 +333,7 @@ function aggregateWireMetrics(...states) {
       maxFrameBytes: 0,
       encryptedFrames: 0,
       handshakeFrames: 0,
+      agentRouteCalls: 0,
       plaintextApplicationFrames: 0
     }
   )
@@ -363,6 +371,7 @@ async function runMission(input) {
         CHANNELS_P2_PROOF_PROFILE: profile,
         CHANNELS_P2_PROOF_RELAY_URL: workerRelayUrl,
         TASKWRAITH_INSTANCE_ID: String(instance),
+        NODE_PATH: join(ROOT, 'node_modules'),
         ...(workerRole === 'member' ? { IOS_REMOTE_TRUE: '0' } : {})
       },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -573,6 +582,10 @@ async function runMission(input) {
       'an application request crossed the relay in plaintext'
     )
     assertProof(wireMetrics.encryptedFrames > 0, 'no encrypted application frames were observed')
+    assertProof(
+      wireMetrics.agentRouteCalls === 0,
+      'P2 compatibility mission reached an agent route'
+    )
     assertProof(wireMetrics.maxFrameBytes < 1024 * 1024, 'a frame reached the relay ceiling')
     const relayState = await relay.request('state')
 
@@ -665,6 +678,7 @@ async function main() {
     platform: 'node',
     format: 'cjs',
     target: 'node20',
+    external: ['electron'],
     outfile: workerBundle,
     sourcemap: false,
     logLevel: 'warning'
@@ -731,6 +745,7 @@ async function main() {
 
 module.exports = {
   PACKAGED_SURFACE_MARKERS,
+  ProofWorker,
   parseArgs,
   verifySurfaceGroups
 }
