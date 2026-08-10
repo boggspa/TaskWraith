@@ -4737,9 +4737,7 @@ export const TranscriptPanel = memo(
                               const subThreadId =
                                 typeof worker?.subThreadId === 'string' ? worker.subThreadId : `w${index}`
                               const child = chats.find((c) => c.appChatId === subThreadId)
-                              const running = Array.isArray(runningChatIds)
-                                ? runningChatIds.includes(subThreadId)
-                                : Boolean(runningChatIds?.has?.(subThreadId))
+                              const running = runningChatIds.includes(subThreadId)
                               const failed =
                                 Boolean(child?.delegationContext?.dispatchError) ||
                                 (typeof child?.delegationContext?.resultReturnedAt === 'number' &&
