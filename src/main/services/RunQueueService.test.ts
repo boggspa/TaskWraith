@@ -1093,6 +1093,22 @@ describe('RunQueueService', () => {
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
   })
 
+  it('admits Muse queue jobs', () => {
+    // Regression: Muse was live in Composer/IpcValidation but missing from
+    // RunQueueService PROVIDER_IDS, so request-run-queue-job threw before live
+    // admission and Settings/composer showed "Failed to queue Muse run".
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    const job = service.requestJob({
+      provider: 'muse',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo'
+    })
+    expect(job.provider).toBe('muse')
+    expect(repository.saveRunQueueJob).toHaveBeenCalled()
+  })
+
   it('admits AntiGravity queue jobs on the configured-key signal alone, failing closed without it', () => {
     // A send on a busy AntiGravity chat queues instead of dispatching, so
     // queue admission must mirror ComposerService's key-lane stance or the
