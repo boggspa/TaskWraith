@@ -20,6 +20,7 @@ import {
   type ChannelAgentDispatchPlan,
   type ChannelAgentRunAuthoritySeal
 } from './ChannelAgentDispatchAuthority'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import {
   MAX_CHANNEL_MESSAGE_BYTES,
   redactChannelContent,
@@ -32,18 +33,7 @@ export const CHANNEL_AGENT_RUN_ID_DOMAIN = 'taskwraith.channel.agent-dispatch-ru
 
 const MAX_IDENTIFIER_LENGTH = 512
 const MAX_JOURNAL_EVENTS = 8
-const PROVIDERS = new Set([
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama',
-  'antigravity',
-  'pi',
-  'mistral'
-])
+const PROVIDERS: ReadonlySet<string> = new Set(PROVIDER_RUN_MANAGEMENT_IDS)
 
 export type ChannelAgentDispatchJournalPhase =
   | 'reserved'

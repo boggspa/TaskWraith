@@ -24,6 +24,7 @@ interface EnabledProofModule {
     workerBundleSha256: string
     mission: {
       status: string
+      provider: string
       dispatchCount: number
       finalHighWaterSequence: number
       assertionCount: number
@@ -163,6 +164,7 @@ describe('Channels P3 enabled proof harness', () => {
       expect(result.workerBundleSha256).toMatch(/^[a-f0-9]{64}$/)
       expect(result.mission).toMatchObject({
         status: 'passed',
+        provider: 'muse',
         dispatchCount: 1,
         finalHighWaterSequence: 2,
         assertionCount: 14

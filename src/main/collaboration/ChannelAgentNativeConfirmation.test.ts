@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import {
   buildChannelAgentNativeConfirmationOptions,
   confirmChannelAgentManagement,
@@ -69,6 +70,15 @@ function grant(
 }
 
 describe('ChannelAgentNativeConfirmation', () => {
+  it('recognizes every managed provider without treating recognition as admission', () => {
+    for (const provider of PROVIDER_RUN_MANAGEMENT_IDS) {
+      const options = buildChannelAgentNativeConfirmationOptions(
+        grant({ seat: { ...seat(), provider, model: `${provider}-proof-model` } })
+      )
+      expect(options.detail).toContain(`Provider/model: ${provider} / ${provider}-proof-model`)
+    }
+  })
+
   it('shows the exact human-readable grant authority without rendering hidden hashes', () => {
     const options = buildChannelAgentNativeConfirmationOptions(grant())
 

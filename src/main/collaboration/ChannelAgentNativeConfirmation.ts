@@ -5,6 +5,7 @@ import {
   confirmNativeWorkflowAuthority,
   type NativeWorkflowConfirmationOptions
 } from '../NativeWorkflowConfirmation'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import type { AgenticServicePolicy, ExternalPathGrantAccess, ProviderId } from '../store/types'
 import {
   CHANNEL_AGENT_MANAGED_MAX_DISPATCHES,
@@ -19,18 +20,7 @@ const MAX_LABEL_LENGTH = 240
 const MAX_EXTERNAL_PATH_LENGTH = 4_096
 const MAX_EXTERNAL_PATH_GRANTS = 32
 
-const PROVIDERS: ReadonlySet<string> = new Set([
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama',
-  'antigravity',
-  'pi',
-  'mistral'
-])
+const PROVIDERS: ReadonlySet<string> = new Set(PROVIDER_RUN_MANAGEMENT_IDS)
 
 export interface ChannelAgentNativeSeatSummary {
   readonly agentSeatId: string

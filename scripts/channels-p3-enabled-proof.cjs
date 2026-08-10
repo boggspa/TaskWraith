@@ -443,6 +443,7 @@ function runMission(workRoot) {
     'mission changed accepted candidate'
   )
   assertProof(mission.acceptanceCommit === ACCEPTANCE_COMMIT, 'mission changed acceptance commit')
+  assertProof(mission.provider === 'muse', 'enabled mission did not preserve the Muse route')
   assertProof(mission.dispatchCount === 1, 'mission did not dispatch exactly once')
   assertProof(mission.finalHighWaterSequence === 2, 'mission did not persist exactly two records')
   assertProof(mission.assertionCount === 14, 'mission assertion count changed')

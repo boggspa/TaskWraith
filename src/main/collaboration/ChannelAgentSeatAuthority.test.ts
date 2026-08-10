@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import type { AppSettings, ChatRecord, EnsembleParticipant, ProviderId } from '../store/types'
 import {
   hashChannelAgentWorkspacePrincipal,
@@ -132,6 +133,25 @@ describe('ChannelAgentSeatAuthority', () => {
         allowAll
       )
     ).toBeNull()
+  })
+
+  it('recognizes every canonical run-management provider before the independent admission gate', () => {
+    const candidates = listChannelAgentSeatCandidates(
+      chat(
+        PROVIDER_RUN_MANAGEMENT_IDS.map((provider, index) =>
+          participant(`participant-${provider}`, `pooled-agent-${provider}`, {
+            provider,
+            order: index + 1
+          })
+        )
+      ),
+      allowAll
+    )
+
+    expect(candidates.map((candidate) => candidate.provider).sort()).toEqual(
+      [...PROVIDER_RUN_MANAGEMENT_IDS].sort()
+    )
+    expect(candidates.map((candidate) => candidate.provider)).toContain('muse')
   })
 
   it('fails closed on malformed persisted identity and runtime fields', () => {

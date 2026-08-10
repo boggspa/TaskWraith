@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
+import type { ChannelAgentIpcProviderId } from '../../shared/collaboration/ChannelAgentIpc'
 import { CHANNEL_AGENT_PROTOCOL_VERSION } from '../../shared/collaboration/ChannelAgentProtocol'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import type {
   ChannelAgentComposerAuthority,
   ComposerInput,
@@ -296,18 +298,9 @@ describe('ChannelAgentRunComposer', () => {
   })
 
   it('keeps the accepted contribution singly untrusted across every provider route', async () => {
-    const providers: ProviderId[] = [
-      'gemini',
-      'codex',
-      'claude',
-      'kimi',
-      'grok',
-      'cursor',
-      'ollama',
-      'antigravity',
-      'pi',
-      'mistral'
-    ]
+    expectTypeOf<ChannelAgentIpcProviderId>().toEqualTypeOf<ProviderId>()
+    const providers: readonly ProviderId[] = PROVIDER_RUN_MANAGEMENT_IDS
+    expect(providers).toContain('muse')
 
     for (const provider of providers) {
       const base = plan()

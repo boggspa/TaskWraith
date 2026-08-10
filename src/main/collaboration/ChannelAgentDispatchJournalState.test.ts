@@ -14,6 +14,7 @@ import {
   type KeyPair
 } from '../../shared/e2ee/keys'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import type { AppSettings } from '../store/types'
 import {
   CHANNEL_AGENT_AUTHORITY_STATE_VERSION,
@@ -313,6 +314,16 @@ function expectStateError(operation: () => unknown, code: string): void {
 }
 
 describe('ChannelAgentDispatchJournalState', () => {
+  it('round-trips launch seals for every managed provider identity', () => {
+    for (const provider of PROVIDER_RUN_MANAGEMENT_IDS) {
+      const current = throughConsumption()
+      current.state.beginLaunch(sealFor(current.state, { provider }))
+      expect(ChannelAgentDispatchJournalState.restore(current.state.snapshot()).snapshot()).toEqual(
+        current.state.snapshot()
+      )
+    }
+  })
+
   it('reserves a deterministic run without persisting trigger, prompt, key, or signature bytes', () => {
     const value = fixture()
     const first = ChannelAgentDispatchJournalState.reserve(value.plan, NOW)

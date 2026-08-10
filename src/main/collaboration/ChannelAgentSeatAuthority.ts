@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { canonicalRunPermissionPosture } from '../RunPermissionPosture'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import type {
   AppSettings,
   ChatRecord,
@@ -17,18 +18,7 @@ const MAX_DISPLAY_NAME_LENGTH = 120
 const MAX_PARTICIPANT_ID_LENGTH = 512
 const MAX_INSTRUCTIONS_BYTES = 64 * 1024
 
-const KNOWN_PROVIDER_IDS: ReadonlySet<string> = new Set([
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama',
-  'antigravity',
-  'pi',
-  'mistral'
-])
+const KNOWN_PROVIDER_IDS: ReadonlySet<string> = new Set(PROVIDER_RUN_MANAGEMENT_IDS)
 
 export const CHANNEL_AGENT_GRANT_PERMISSION_PRESETS = [
   'read_only',

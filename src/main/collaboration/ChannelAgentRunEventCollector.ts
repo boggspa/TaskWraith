@@ -3,6 +3,7 @@ import { foldBridgeRunText, isTaggedCumulativeRestatement } from '../bridge/Brid
 import type { RunEvent, RunEventSink } from '../RunEventBus'
 import type { RunSessionChangeEvent, TerminalRunSessionStatus } from '../RunManager'
 import type { RunAdapterInvocationReceipt } from '../run/AgentRunTypes'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import type { ProviderId } from '../store/types'
 
 const MAX_IDENTIFIER_LENGTH = 512
@@ -17,18 +18,7 @@ const EMPTY_REPLY_FAILURE = 'The Channel agent run completed without a publishab
 const RUN_FAILURE = 'The Channel agent run failed before a complete reply was available.'
 const RUN_CANCELLED = 'The Channel agent run was cancelled before a complete reply was available.'
 
-const PROVIDERS: ReadonlySet<string> = new Set([
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama',
-  'antigravity',
-  'pi',
-  'mistral'
-])
+const PROVIDERS: ReadonlySet<string> = new Set(PROVIDER_RUN_MANAGEMENT_IDS)
 
 export type ChannelAgentRunEventCollectorErrorCode =
   | 'capacity_exceeded'

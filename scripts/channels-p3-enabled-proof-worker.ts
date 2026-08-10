@@ -18,7 +18,12 @@ import type {
   ComposerInput,
   ComposerRunPayload
 } from '../src/main/services/ComposerService'
-import type { AppSettings, ChatRecord, EnsembleParticipant } from '../src/main/store/types'
+import type {
+  AppSettings,
+  ChatRecord,
+  EnsembleParticipant,
+  ProviderId
+} from '../src/main/store/types'
 import type { ChannelAgentDispatchHooks } from '../src/main/collaboration/ChannelAgentDispatchCoordinator'
 import type { ChannelAgentIdentitySafeStorage } from '../src/main/collaboration/ChannelAgentIdentityStore'
 import {
@@ -36,6 +41,8 @@ const CHAT_ID = 'chat-channels-p3-enabled-proof'
 const WORKSPACE_ID = 'workspace-channels-p3-enabled-proof'
 const AGENT_SEAT_ID = 'pooled-agent-channels-p3-enabled-proof'
 const AGENT_PARTICIPANT_ID = 'participant-channels-p3-enabled-proof'
+const PROOF_PROVIDER = 'muse' as const satisfies ProviderId
+const PROOF_MODEL = 'muse-spark-1.2'
 
 const settings = {
   agenticServices: {
@@ -69,12 +76,12 @@ function assertMission(condition: unknown, message: string): asserts condition {
 function participant(): EnsembleParticipant {
   return {
     id: AGENT_PARTICIPANT_ID,
-    provider: 'codex',
+    provider: PROOF_PROVIDER,
     enabled: true,
     role: 'Channel proof responder',
     instructions: 'Return the deterministic acceptance receipt.',
     order: 1,
-    model: 'gpt-5.6-terra',
+    model: PROOF_MODEL,
     runtimeProfileId: 'profile-channels-p3-enabled-proof',
     permissionPresetId: 'read_only',
     reasoningEffort: 'high',
@@ -178,7 +185,7 @@ function agentExecution(
     resolveWorkspacePrincipal: (value) =>
       value.appChatId === CHAT_ID ? { kind: 'workspace', workspaceId: WORKSPACE_ID } : null,
     getSettings: () => settings,
-    providerAllowed: (provider) => provider === 'codex',
+    providerAllowed: (provider) => provider === PROOF_PROVIDER,
     composeMainOwnedChannelAgentRun: async (input, authority) => {
       metrics.composeCalls += 1
       return composedPayload(input, authority)
@@ -188,7 +195,10 @@ function agentExecution(
       assertMission(sessionListener, 'run session subscription was not active')
       assertMission(payload.appRunId, 'generic dispatch received no exact run id')
       assertMission(payload.appChatId === CHAT_ID, 'generic dispatch changed the chat route')
-      assertMission(payload.provider === 'codex', 'generic dispatch changed the provider route')
+      assertMission(
+        payload.provider === PROOF_PROVIDER,
+        'generic dispatch changed the provider route'
+      )
       assertMission(
         payload.workspace === sourceChat.workspacePath,
         'generic dispatch changed workspace'
@@ -362,7 +372,7 @@ async function main(): Promise<void> {
       permissionPresetId: 'read_only',
       workspacePrincipal: { kind: 'workspace', workspaceId: WORKSPACE_ID },
       settings,
-      providerAllowed: (provider) => provider === 'codex'
+      providerAllowed: (provider) => provider === PROOF_PROVIDER
     })
     const grant = await service.grantAgentDispatch({
       channelId: channel.channelId,
@@ -462,6 +472,7 @@ async function main(): Promise<void> {
         reviewId: REVIEW_ID,
         acceptedCandidate: CHANNEL_AGENT_REVIEW_ACCEPTED_CANDIDATE,
         acceptanceCommit: CHANNEL_AGENT_REVIEW_ACCEPTANCE_COMMIT,
+        provider: PROOF_PROVIDER,
         dispatchCount: metrics.dispatchCalls,
         finalHighWaterSequence: afterRestart.highWaterSequence,
         terminalContentSha256: sha256(TERMINAL_REPLY),

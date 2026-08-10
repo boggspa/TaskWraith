@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { CHANNEL_AGENT_MAX_POST_BYTES } from '../../shared/collaboration/ChannelAgentProtocol'
 import type { RunEvent } from '../RunEventBus'
 import type { RunSessionChangeEvent, RunSessionStatus } from '../RunManager'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 import type { ProviderId } from '../store/types'
 import {
   ChannelAgentRunEventCollector,
@@ -126,6 +127,15 @@ async function expectCollectorError(operation: () => unknown, code: string): Pro
 }
 
 describe('ChannelAgentRunEventCollector', () => {
+  it('tracks every managed provider identity without treating recognition as admission', () => {
+    for (const provider of PROVIDER_RUN_MANAGEMENT_IDS) {
+      const collector = new ChannelAgentRunEventCollector({ now: clock() })
+      const tracked = collector.track(binding({ provider }))
+      expect(collector.pendingCount()).toBe(1)
+      expect(tracked.stop()).toBe(true)
+    }
+  })
+
   it('buffers synchronous output until exact launch and lifecycle evidence agree', async () => {
     const collector = new ChannelAgentRunEventCollector({ now: clock() })
     const tracked = collector.track(binding())
