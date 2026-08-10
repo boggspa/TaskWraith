@@ -19,6 +19,7 @@ import {
   type SignedChannelAgentDelegation
 } from '../../shared/collaboration/ChannelAgentProtocol'
 import { importRawEd25519PublicKey } from '../../shared/e2ee/keys'
+import { channelStoreSubsetDigest } from './ChannelStoreSubsetDigest'
 
 export const CHANNEL_SCHEMA_VERSION = 3
 export const MAX_CHANNEL_MEMBERS = 8
@@ -131,6 +132,19 @@ export interface ChannelStoreSnapshot {
   channels: Channel[]
   members: ChannelMember[]
   invites: ChannelInvite[]
+}
+
+export interface ChannelStoreMigrationMutation {
+  mode: 'create' | 'merge'
+  beforeDigest: string | null
+  channel: Channel
+  members: ChannelMember[]
+  invites: ChannelInvite[]
+}
+
+export interface ChannelStoreMigrationApplyResult {
+  applied: boolean
+  channelIds: string[]
 }
 
 export interface ResolvedChannelReference<T> {
@@ -375,6 +389,128 @@ export class ChannelStore {
     return this.snapshot.invites
       .filter((invite) => invite.channelId === channelId)
       .map((invite) => clone(invite))
+  }
+
+  /**
+   * Main-only migration seam. Every target must still equal its planned
+   * before-state, or every target must already equal the exact desired state.
+   * The complete candidate is validated and persisted with one metadata
+   * replacement so a crash cannot expose a partially applied batch.
+   */
+  applyMigrationBatch(
+    mutations: readonly ChannelStoreMigrationMutation[]
+  ): ChannelStoreMigrationApplyResult {
+    this.assertHealthy()
+    if (this.channelRecoveryBlocked.size > 0) {
+      throw new ChannelError('recovery_blocked', 'A Channel metadata subset requires recovery')
+    }
+    if (!Array.isArray(mutations)) {
+      throw new ChannelError('recovery_blocked', 'Migration batch is invalid')
+    }
+    const channelIds = new Set<string>()
+    const desiredDigests = new Map<string, string>()
+    let pending = 0
+    let alreadyApplied = 0
+
+    for (const mutation of mutations) {
+      const channelId = mutation?.channel?.channelId
+      if (
+        !mutation ||
+        (mutation.mode !== 'create' && mutation.mode !== 'merge') ||
+        typeof channelId !== 'string' ||
+        !channelId ||
+        channelIds.has(channelId) ||
+        !Array.isArray(mutation.members) ||
+        !Array.isArray(mutation.invites) ||
+        mutation.members.some((member) => member.channelId !== channelId) ||
+        mutation.invites.some((invite) => invite.channelId !== channelId) ||
+        (mutation.mode === 'create' && mutation.beforeDigest !== null) ||
+        (mutation.mode === 'merge' &&
+          (typeof mutation.beforeDigest !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(mutation.beforeDigest)))
+      ) {
+        throw new ChannelError('recovery_blocked', 'Migration mutation is invalid')
+      }
+      channelIds.add(channelId)
+      const desiredDigest = channelStoreSubsetDigest(
+        mutation.channel,
+        mutation.members,
+        mutation.invites
+      )
+      desiredDigests.set(channelId, desiredDigest)
+      const currentChannel = this.snapshot.channels.find(
+        (channel) => channel.channelId === channelId
+      )
+      if (!currentChannel) {
+        if (mutation.mode !== 'create') {
+          throw new ChannelError('recovery_blocked', 'Migration merge target disappeared')
+        }
+        pending += 1
+        continue
+      }
+      const currentDigest = channelStoreSubsetDigest(
+        currentChannel,
+        this.snapshot.members.filter((member) => member.channelId === channelId),
+        this.snapshot.invites.filter((invite) => invite.channelId === channelId)
+      )
+      if (currentDigest === desiredDigest) {
+        alreadyApplied += 1
+        continue
+      }
+      if (mutation.mode !== 'merge' || currentDigest !== mutation.beforeDigest) {
+        throw new ChannelError('recovery_blocked', 'Migration target changed after planning')
+      }
+      pending += 1
+    }
+
+    const sortedChannelIds = [...channelIds].sort()
+    if (pending > 0 && alreadyApplied > 0) {
+      throw new ChannelError('recovery_blocked', 'Migration batch is only partially applied')
+    }
+    if (pending === 0) return { applied: false, channelIds: sortedChannelIds }
+
+    const candidate: ChannelStoreSnapshot = {
+      schemaVersion: CHANNEL_SCHEMA_VERSION,
+      channels: [
+        ...this.snapshot.channels.filter((channel) => !channelIds.has(channel.channelId)),
+        ...mutations.map((mutation) => clone(mutation.channel))
+      ],
+      members: [
+        ...this.snapshot.members.filter((member) => !channelIds.has(member.channelId)),
+        ...mutations.flatMap((mutation) => mutation.members.map(clone))
+      ],
+      invites: [
+        ...this.snapshot.invites.filter((invite) => !channelIds.has(invite.channelId)),
+        ...mutations.flatMap((mutation) => mutation.invites.map(clone))
+      ]
+    }
+    const normalized = normalizeSnapshot(candidate)
+    if (!normalized || normalized.driftedChannelIds.length > 0) {
+      throw new ChannelError('recovery_blocked', 'Migration candidate violates Channel authority')
+    }
+    for (const channelId of channelIds) {
+      const channel = normalized.snapshot.channels.find((entry) => entry.channelId === channelId)
+      if (
+        !channel ||
+        channelStoreSubsetDigest(
+          channel,
+          normalized.snapshot.members.filter((member) => member.channelId === channelId),
+          normalized.snapshot.invites.filter((invite) => invite.channelId === channelId)
+        ) !== desiredDigests.get(channelId)
+      ) {
+        throw new ChannelError('recovery_blocked', 'Migration candidate was not canonical')
+      }
+    }
+
+    const previous = this.snapshot
+    this.snapshot = normalized.snapshot
+    try {
+      this.persist()
+    } catch (error) {
+      this.snapshot = previous
+      throw error
+    }
+    return { applied: true, channelIds: sortedChannelIds }
   }
 
   beginMemberAdmission(args: {
@@ -1169,6 +1305,7 @@ function normalizeSnapshot(
     let normalized: ChannelMember
     if (member.kind === 'human') {
       if (member.agentSeatId !== undefined || member.keyGeneration !== undefined) return null
+      if ((member.status === 'revoked') !== (member.revokedAt !== undefined)) return null
       normalized = {
         memberId: member.memberId,
         channelId: member.channelId,
@@ -1291,7 +1428,7 @@ function normalizeSnapshot(
       channelMembers.some(
         (member) =>
           member.memberId !== channel.ownerMemberId &&
-          ((member.kind === 'human' && !member.roomId) ||
+          ((member.kind === 'human' && member.status !== 'revoked' && !member.roomId) ||
             (member.kind === 'agent' && member.roomId !== undefined))
       ) ||
       hasInvalidAgentSeatHistory(agentMembers)

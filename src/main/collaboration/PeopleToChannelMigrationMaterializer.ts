@@ -4,12 +4,15 @@ import type { HumanCollaborationInvite, HumanCollaborationShare } from './HumanC
 import type { HumanContributionRules } from './HumanContributionRules'
 import type { ChannelHumanMigrationPolicyInput } from './ChannelHumanPolicyStore'
 import type { Channel, ChannelInvite, ChannelMember, HumanChannelMember } from './ChannelStore'
+import { channelStoreSubsetDigest } from './ChannelStoreSubsetDigest'
 import {
   createPeopleToChannelMigrationPlan,
   type PeopleToChannelMigrationPlan,
   type PeopleToChannelMigrationPlanInput,
   type PeopleToChannelMigrationRequirement
 } from './PeopleToChannelMigrationPlan'
+
+export { channelStoreSubsetDigest as peopleToChannelChannelSubsetDigest } from './ChannelStoreSubsetDigest'
 
 export const PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION = 1
 
@@ -116,20 +119,6 @@ function latestRoom(
       (left, right) =>
         right.createdAt - left.createdAt || compareText(left.inviteId, right.inviteId)
     )[0]?.roomId
-}
-
-export function peopleToChannelChannelSubsetDigest(
-  channel: Channel,
-  members: readonly ChannelMember[],
-  invites: readonly ChannelInvite[]
-): string {
-  return sha256(
-    canonicalJson({
-      channel,
-      members: [...members].sort((left, right) => compareText(left.memberId, right.memberId)),
-      invites: [...invites].sort((left, right) => compareText(left.inviteId, right.inviteId))
-    })
-  )
 }
 
 function memberFromSource(args: {
@@ -381,7 +370,7 @@ export function materializePeopleToChannels(input: {
     mutations.push({
       mode: existingChannel ? 'merge' : 'create',
       beforeDigest: existingChannel
-        ? peopleToChannelChannelSubsetDigest(existingChannel, existingMembers, existingInvites)
+        ? channelStoreSubsetDigest(existingChannel, existingMembers, existingInvites)
         : null,
       channel,
       members: finalMembers,
