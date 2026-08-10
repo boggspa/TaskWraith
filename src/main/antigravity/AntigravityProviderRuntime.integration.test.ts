@@ -115,4 +115,27 @@ describe('AntiGravity S3 runtime integration', () => {
     expect(indexSource).toContain("cancel: (runId) => cancelProviderRun('antigravity', runId)")
     expect(constantsSource).toContain("'antigravity'")
   })
+
+  it('projects arbitrated agy tool calls into the transcript', () => {
+    const agy = probe.fn('runAntigravityAgyProvider')
+
+    // The PreToolUse bridge callback is agy's only observable seam. Without
+    // projection, native tool calls happen headlessly and the transcript
+    // stays empty even though work occurred on disk.
+    const emitCalls = probe.callsTo(agy, 'emitAgyHookToolEvent')
+    expect(emitCalls.length).toBeGreaterThanOrEqual(4)
+
+    // The single sendAgentCompatLine helper inside emitAgyHookToolEvent
+    // branches on eventType and emits both tool_use and tool_result shapes.
+    const compatCall = probe
+      .callsTo(agy, 'sendAgentCompatLine')
+      .find((call) => probe.argText(call, 2).includes("'tool_use'"))
+    expect(compatCall).toBeDefined()
+    expect(probe.argText(compatCall!, 2)).toContain("'tool_result'")
+    expect(probe.argText(compatCall!, 3)).toBe('route')
+
+    // The helper must be wired for both shell and write tool kinds.
+    expect(probe.text(agy)).toContain('agy-shell-')
+    expect(probe.text(agy)).toContain('agy-write-')
+  })
 })

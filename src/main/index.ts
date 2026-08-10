@@ -1670,6 +1670,7 @@ import {
   classifyAgyHookTool,
   createAgyHookBridgeToken,
   startAgyHookBridgeServer,
+  type AgyHookBridgeDecision,
   type AgyHookBridgeServer
 } from './antigravity/AntigravityHookBridge'
 import {
@@ -33510,10 +33511,45 @@ async function runAntigravityAgyProvider(
       if (!agyHookBridge) throw new Error('The agy approval bridge is unavailable.')
       const bridge = agyHookBridge
       const token = createAgyHookBridgeToken()
+      let toolSeq = 0
+      const emitAgyHookToolEvent = (
+        toolId: string,
+        eventType: 'tool_use' | 'tool_result',
+        toolName: string,
+        parameters: Record<string, unknown>,
+        status?: 'success' | 'error',
+        output?: string
+      ): void => {
+        sendAgentCompatLine(
+          event.sender,
+          'antigravity',
+          eventType === 'tool_use'
+            ? {
+                type: 'tool_use',
+                tool_id: toolId,
+                tool_name: toolName,
+                parameters,
+                provider: 'antigravity'
+              }
+            : {
+                type: 'tool_result',
+                tool_id: toolId,
+                tool_name: toolName,
+                status: status ?? 'success',
+                output: output ?? '',
+                provider: 'antigravity'
+              },
+          route
+        )
+      }
       releaseHookBridgeRun = bridge.registerRun(token, async (toolCall) => {
         const kind = classifyAgyHookTool(toolCall.name)
         if (kind === 'shell') {
           if (!toolCall.command) return { decision: 'none' }
+          const toolId = `agy-shell-${Date.now()}-${++toolSeq}`
+          emitAgyHookToolEvent(toolId, 'tool_use', toolCall.name, {
+            command: toolCall.command
+          })
           const allowed = await requestAgenticServiceApproval(
             event.sender,
             'antigravity',
@@ -33531,27 +33567,37 @@ async function runAntigravityAgyProvider(
               runId: route.appRunId
             }
           )
-          return allowed
+          const decision: AgyHookBridgeDecision = allowed
             ? { decision: 'allow' }
             : {
                 decision: 'deny',
                 reason:
                   'TaskWraith declined this command under the current permission tier. Continue with permitted read-only inspection or adjust the approach.'
               }
+          emitAgyHookToolEvent(
+            toolId,
+            'tool_result',
+            toolCall.name,
+            {},
+            decision.decision === 'allow' ? 'success' : 'error',
+            decision.decision === 'allow' ? 'TaskWraith allowed this command.' : decision.reason
+          )
+          return decision
         }
         if (kind !== 'write') return { decision: 'none' }
         // A plan-mode run must not gain write capability through the bridge —
         // but it must say so. agy's headless soft-deny is silent, which is how
         // a refused edit became "produced no assistant output"; an explicit
         // reason lets the model finish the turn as a plan instead.
-        if (launch.mode !== 'accept-edits') {
-          return {
-            decision: 'deny',
-            reason:
-              'This run is read-only (plan mode), so file changes cannot be applied. Describe the intended edits in your response instead of writing them.'
-          }
-        }
         const target = toolCall.targetPath
+        const toolId = `agy-write-${Date.now()}-${++toolSeq}`
+        emitAgyHookToolEvent(toolId, 'tool_use', toolCall.name, target ? { path: target } : {})
+        if (launch.mode !== 'accept-edits') {
+          const reason =
+            'This run is read-only (plan mode), so file changes cannot be applied. Describe the intended edits in your response instead of writing them.'
+          emitAgyHookToolEvent(toolId, 'tool_result', toolCall.name, {}, 'error', reason)
+          return { decision: 'deny', reason }
+        }
         const allowed = await requestAgenticServiceApproval(
           event.sender,
           'antigravity',
@@ -33568,13 +33614,22 @@ async function runAntigravityAgyProvider(
             runId: route.appRunId
           }
         )
-        return allowed
+        const decision: AgyHookBridgeDecision = allowed
           ? { decision: 'allow' }
           : {
               decision: 'deny',
               reason:
                 'TaskWraith declined this file change under the current permission tier. Continue without editing this path or adjust the approach.'
             }
+        emitAgyHookToolEvent(
+          toolId,
+          'tool_result',
+          toolCall.name,
+          {},
+          decision.decision === 'allow' ? 'success' : 'error',
+          decision.decision === 'allow' ? 'TaskWraith allowed this file change.' : decision.reason
+        )
+        return decision
       })
       hookOverlay = {
         hooksPath: join(workspacePath, '.agents', 'hooks.json'),
