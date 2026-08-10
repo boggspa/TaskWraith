@@ -638,12 +638,20 @@ export interface RemoteCloseoutParticipantTable {
 }
 
 /** Structured Commits rows for the iOS Task-complete epic stack. */
+export interface RemoteCloseoutCommitFile {
+  path: string
+  additions?: number
+  deletions?: number
+  hunks?: string
+}
+
 export interface RemoteCloseoutCommit {
   hash: string
   subject?: string
   stats?: string
   participantId?: string
   seatLink?: RemoteCloseoutSeatLink
+  files?: RemoteCloseoutCommitFile[]
 }
 
 /** Slim File Changes rows for the iOS Task-complete epic stack (no diffText). */
@@ -2194,9 +2202,35 @@ function buildCloseoutCommits(
     if (participantId) projected.participantId = participantId
     const seatLink = buildCloseoutSeatLink(commit.seatLink)
     if (seatLink) projected.seatLink = seatLink
+    const files = buildCloseoutCommitFiles(commit.files)
+    if (files) projected.files = files
     commits.push(projected)
   }
   return commits.length > 0 ? commits : undefined
+}
+
+function buildCloseoutCommitFiles(
+  raw: unknown
+): RemoteCloseoutCommitFile[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const files: RemoteCloseoutCommitFile[] = []
+  for (const entry of raw.slice(0, REMOTE_CLOSEOUT_FILE_CHANGES_LIMIT)) {
+    if (!entry || typeof entry !== 'object') continue
+    const file = entry as Record<string, unknown>
+    const path = stringField(file.path, 260)
+    if (!path) continue
+    const projected: RemoteCloseoutCommitFile = { path }
+    if (typeof file.additions === 'number' && Number.isFinite(file.additions)) {
+      projected.additions = file.additions
+    }
+    if (typeof file.deletions === 'number' && Number.isFinite(file.deletions)) {
+      projected.deletions = file.deletions
+    }
+    const hunks = stringField(file.hunks, 8000)
+    if (hunks) projected.hunks = hunks
+    files.push(projected)
+  }
+  return files.length > 0 ? files : undefined
 }
 
 function clipCloseoutFilePath(path: string): string {
