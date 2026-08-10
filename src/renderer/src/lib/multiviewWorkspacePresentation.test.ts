@@ -103,7 +103,10 @@ describe('Multiview focused workspace presentation', () => {
     expect(composerIndex).toBeGreaterThan(chatIndex)
     expect(layoutSource).toContain('renderFocusedChatCell={')
     expect(layoutSource).toContain('const focusedHostOverlayRequired = Boolean(')
-    expect(layoutSource).toContain('chatId === currentChatAppChatId ? humanCollaborationControls')
+    expect(layoutSource).toMatch(
+      /chatId === currentChatAppChatId \? \(\s*<>\s*\{humanCollaborationControls\}/
+    )
+    expect(layoutSource).toContain('{!focusedHostOverlayRequired && channelMemberControl}')
     expect(layoutSource).toContain('showFocusedHostOverlay={focusedHostOverlayRequired}')
     expect(layoutSource).not.toContain('(!isChatPopoutWindow && !showWorkspaceSidebar)')
     expect(source).toContain(
