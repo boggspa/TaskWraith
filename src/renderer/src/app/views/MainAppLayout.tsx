@@ -105,6 +105,7 @@ import { Composer, type ComposerProps } from '../../components/Composer'
 import { ExecutionMapView } from '../../components/ExecutionMapView'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 import { ChannelHostPanel } from '../../components/ChannelHostPanel'
+import { ChannelMemberPanel } from '../../components/ChannelMemberPanel'
 import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
 import { getProjectReferenceContextSelection } from '../../lib/projectReferenceContextSelection'
 import {
@@ -1317,6 +1318,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       visibleAuditRun ||
       threadSearchVisible
   )
+  const channelMemberControl = isChatPopoutWindow ? null : <ChannelMemberPanel />
 
   return (
       <div
@@ -1882,7 +1884,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               renderFocusedChatCell={(chatId, paneIndex) =>
                 renderMultiviewPaneCell(chatId, paneIndex, {
                   topLeftChromeExtra:
-                    chatId === currentChatAppChatId ? humanCollaborationControls : undefined
+                    chatId === currentChatAppChatId ? (
+                      <>
+                        {humanCollaborationControls}
+                        {!focusedHostOverlayRequired && channelMemberControl}
+                      </>
+                    ) : undefined
                 })
               }
               showFocusedHostOverlay={focusedHostOverlayRequired}
@@ -1948,6 +1955,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               {/* Main-window surface — see humanCollaborationControls above for why
                   this is left-anchored and in-flow rather than its own top-right box. */}
               {humanCollaborationControls}
+              {channelMemberControl}
             </div>
           )}
 
