@@ -400,7 +400,7 @@ interface AgentRunPayload {
   runtimeProfileId?: string
   runtimeWorktree?: {
     requested: boolean
-    source: 'runtimeProfile' | 'composer'
+    source: 'runtimeProfile' | 'composer' | 'ensembleLane' | 'ephemeralFleet'
     profileId?: string
     profileName?: string
     baseWorkspacePath?: string
