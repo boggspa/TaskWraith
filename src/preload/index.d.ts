@@ -102,6 +102,7 @@ import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPre
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
+import type { ChannelAgentIpcApi } from '../shared/collaboration/ChannelAgentIpc'
 import type { ChannelIpcApi } from '../shared/collaboration/ChannelIpc'
 import type { ChannelMemberIpcApi } from '../shared/collaboration/ChannelMemberIpc'
 import type { HostCliToolId } from '../shared/hostCliToolCatalog'
@@ -591,6 +592,7 @@ declare global {
       hostPlatform: NodeJS.Platform
       getRuntimeVersions: () => NodeJS.ProcessVersions
       channels: ChannelIpcApi
+      channelAgents: ChannelAgentIpcApi
       channelMemberships: ChannelMemberIpcApi
       selectWorkspace: () => Promise<WorkspaceRecord | null>
       selectImageFiles: () => Promise<string[]>

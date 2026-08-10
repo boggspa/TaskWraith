@@ -57,6 +57,7 @@ import type {
   PromoteQueuedJobForSteerResult
 } from '../main/services/RunLifecycleCoordinator'
 import { createAntigravityGeminiApiSecretBridge } from './antigravityGeminiApiSecretContract'
+import { createChannelAgentIpcBridge } from './channelAgentIpcBridge'
 import { createChannelIpcBridge } from './channelIpcBridge'
 import { createChannelMemberIpcBridge } from './channelMemberIpcBridge'
 import { createPiKeyBridge } from './piKeyContract'
@@ -469,6 +470,7 @@ const api = {
   hostPlatform: process.platform,
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
   channels: createChannelIpcBridge(ipcRenderer),
+  channelAgents: createChannelAgentIpcBridge(ipcRenderer),
   channelMemberships: createChannelMemberIpcBridge(ipcRenderer),
   selectWorkspace: () => ipcRenderer.invoke('select-workspace'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
