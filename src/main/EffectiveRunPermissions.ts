@@ -146,7 +146,10 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     agenticServices: {
       shellCommands: 'allow',
       fileChanges: 'allow',
-      externalPublish: 'allow',
+      // Accept Edits auto-allows basic workspace mutations (fileChanges) but
+      // still prompts for external publishing so push/PR actions require a
+      // second authorization.
+      externalPublish: 'ask',
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       // Ordinary browser actuation. Surface ownership, stale-observation,
@@ -316,8 +319,9 @@ export const READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticSer
     'webBrowsing'
   ])
 
-const POSTURE_APPROVAL_ONLY_SERVICES: ReadonlySet<AgenticServiceId> =
-  new Set<AgenticServiceId>(['externalPublish'])
+const POSTURE_APPROVAL_ONLY_SERVICES: ReadonlySet<AgenticServiceId> = new Set<AgenticServiceId>([
+  'externalPublish'
+])
 
 /**
  * Should a would-be automatic approval of `service` be downgraded to a
@@ -425,10 +429,9 @@ export function resolveEffectiveRunPermissions(
     )
   }
 
-  const networkAccess =
-    previewRiskModel
-      ? 'deny'
-      : input.settings.agenticServices?.networkAccess === 'deny'
+  const networkAccess = previewRiskModel
+    ? 'deny'
+    : input.settings.agenticServices?.networkAccess === 'deny'
       ? 'deny'
       : input.overrides?.networkAccess ||
         preset.networkAccess ||

@@ -76,7 +76,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
         antigravity: 120000,
         pi: 120000,
         mistral: 120000,
-        muse: 120000,
+        muse: 120000
       },
       mainAuthorityMs: 120000
     },
@@ -147,7 +147,11 @@ describe('resolveEffectiveRunPermissions', () => {
 
       expect(policyFor('read_only'), `${service} under Ask`).toBe('ask')
       expect(policyFor('plan'), `${service} under Plan`).toBe('ask')
-      expect(policyFor('default'), `${service} under Accept Edits`).toBe('allow')
+      // Accept Edits auto-allows workspace edits but keeps external publishing
+      // (push/PR) as an attended decision.
+      expect(policyFor('default'), `${service} under Accept Edits`).toBe(
+        service === 'externalPublish' ? 'ask' : 'allow'
+      )
       expect(policyFor('workspace_write'), `${service} under Full WS Access`).toBe('allow')
       expect(policyFor('full_access'), `${service} under Full Access`).toBe('allow')
 
@@ -169,7 +173,9 @@ describe('resolveEffectiveRunPermissions', () => {
   })
 
   it('pins the Sketch Canvas mutation ladder across every permission preset', () => {
-    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+    const policyFor = (
+      presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']
+    ) =>
       resolveEffectiveRunPermissions({
         provider: 'claude',
         workspacePath: '/repo',
@@ -200,7 +206,9 @@ describe('resolveEffectiveRunPermissions', () => {
   })
 
   it('pins external publishing to the standard permission ladder', () => {
-    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+    const policyFor = (
+      presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']
+    ) =>
       resolveEffectiveRunPermissions({
         provider: 'claude',
         workspacePath: '/repo',
@@ -210,12 +218,15 @@ describe('resolveEffectiveRunPermissions', () => {
 
     expect(policyFor('read_only')).toBe('ask')
     expect(policyFor('plan')).toBe('ask')
-    expect(policyFor('default')).toBe('allow')
+    // Accept Edits keeps external publishing as an attended decision (push/PR
+    // require a separate workspace grant or per-invocation approval).
+    expect(policyFor('default')).toBe('ask')
     expect(policyFor('workspace_write')).toBe('allow')
     expect(policyFor('full_access')).toBe('allow')
 
     // read_only/plan additionally carry the posture hold so grants/session-YOLO
-    // can never zero-click a publish there; default/write tiers do not.
+    // can never zero-click a publish there; write tiers do not, so a workspace
+    // grant can promote externalPublish under Full WS Access / Full Access.
     expect(isPostureApprovalOnlyService('read_only', 'externalPublish')).toBe(true)
     expect(isPostureApprovalOnlyService('plan', 'externalPublish')).toBe(true)
     expect(isPostureApprovalOnlyService('default', 'externalPublish')).toBe(false)
@@ -237,7 +248,9 @@ describe('resolveEffectiveRunPermissions', () => {
   })
 
   it('pins the file-changes ladder: Accept Edits auto-accepts in-workspace edits', () => {
-    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+    const policyFor = (
+      presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']
+    ) =>
       resolveEffectiveRunPermissions({
         provider: 'claude',
         workspacePath: '/repo',
@@ -270,7 +283,9 @@ describe('resolveEffectiveRunPermissions', () => {
   })
 
   it('pins the Browser navigation (webBrowsing) ladder across every permission preset', () => {
-    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+    const policyFor = (
+      presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']
+    ) =>
       resolveEffectiveRunPermissions({
         provider: 'claude',
         workspacePath: '/repo',
@@ -385,7 +400,9 @@ describe('resolveEffectiveRunPermissions', () => {
   })
 
   it('pins the sub-thread delegation ladder across every permission preset', () => {
-    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+    const policyFor = (
+      presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']
+    ) =>
       resolveEffectiveRunPermissions({
         provider: 'claude',
         workspacePath: '/repo',
@@ -401,7 +418,9 @@ describe('resolveEffectiveRunPermissions', () => {
   })
 
   it('pins the Simulator Canvas ladder across every permission preset (mirrors subThreadDelegation)', () => {
-    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+    const policyFor = (
+      presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']
+    ) =>
       resolveEffectiveRunPermissions({
         provider: 'claude',
         workspacePath: '/repo',
@@ -770,7 +789,7 @@ describe('resolveEffectiveRunPermissions', () => {
     })
     // A settings/import value of 'allow' must not produce an auto-allow eval policy.
     expect(withAllow.agenticServices.canvasEval).toBe('ask')
-    expect(withAllow.agenticServices.externalPublish).toBe('allow')
+    expect(withAllow.agenticServices.externalPublish).toBe('ask')
 
     const withDeny = resolveEffectiveRunPermissions({
       provider: 'codex',
@@ -844,7 +863,7 @@ describe('resolveEffectiveRunPermissions', () => {
       presetId: 'default'
     })
     expect(withGrant.workspaceGrantServiceIds).toContain('externalPublish')
-    expect(withGrant.agenticServices.externalPublish).toBe('allow')
+    expect(withGrant.agenticServices.externalPublish).toBe('workspace')
   })
 
   it('merges workspace grants and provider-scoped external path grants', () => {
