@@ -187,10 +187,7 @@ export interface ChatServiceStore {
   getChat: (chatId: string) => ChatRecord | null
   createChat: (workspaceId: string, workspacePath: string) => ChatRecord
   createGlobalChat: () => ChatRecord
-  createEnsembleChat: (
-    args?: { workspaceId?: string; workspacePath?: string },
-    configuredProviders?: Set<ProviderId>
-  ) => ChatRecord
+  createEnsembleChat: (args?: { workspaceId?: string; workspacePath?: string }, configuredProviders?: Set<ProviderId>) => ChatRecord
   createSubThread: (args: CreateSubThreadInput) => ChatRecord
   createSideChat: (args: CreateSideChatInput) => ChatRecord
   setChatKind: (
@@ -295,10 +292,7 @@ export class ChatService {
     return this.deps.appStore.createGlobalChat()
   }
 
-  createEnsembleChat(
-    args?: { workspaceId?: string; workspacePath?: string },
-    configuredProviders?: Set<ProviderId>
-  ): ChatRecord {
+  createEnsembleChat(args?: { workspaceId?: string; workspacePath?: string }, configuredProviders?: Set<ProviderId>): ChatRecord {
     if (!args?.workspaceId && !args?.workspacePath) {
       return this.deps.appStore.createEnsembleChat(undefined, configuredProviders)
     }
@@ -308,13 +302,10 @@ export class ChatService {
     if (!registered || registered.id !== workspaceId) {
       throw new Error('Ensemble workspace must be a registered TaskWraith workspace.')
     }
-    return this.deps.appStore.createEnsembleChat(
-      {
-        workspaceId,
-        workspacePath: this.deps.canonicalPath(workspacePath)
-      },
-      configuredProviders
-    )
+    return this.deps.appStore.createEnsembleChat({
+      workspaceId,
+      workspacePath: this.deps.canonicalPath(workspacePath)
+    }, configuredProviders)
   }
 
   createSubThread(args: CreateSubThreadInput | undefined): ChatRecord {
@@ -367,12 +358,7 @@ export class ChatService {
     this.deps.assertParentChatCreationAllowed?.(parentChatId)
     const sideChat = this.deps.appStore.createSideChat({
       parentChatId,
-      chatKind:
-        args?.chatKind === 'ensemble'
-          ? 'ensemble'
-          : args?.chatKind === 'single'
-            ? 'single'
-            : undefined,
+      chatKind: args?.chatKind === 'ensemble' ? 'ensemble' : args?.chatKind === 'single' ? 'single' : undefined,
       provider,
       title: typeof args?.title === 'string' ? args.title : undefined,
       selectedModelType: optionalString(args?.selectedModelType),
@@ -381,15 +367,15 @@ export class ChatService {
       grokReasoningEffort: optionalString(args?.grokReasoningEffort),
       museReasoningEffort: optionalString(args?.museReasoningEffort),
       cursorReasoningEffort: optionalString(args?.cursorReasoningEffort),
-      ...(typeof args?.cursorFastMode === 'boolean' ? { cursorFastMode: args.cursorFastMode } : {}),
+      ...(typeof args?.cursorFastMode === 'boolean'
+        ? { cursorFastMode: args.cursorFastMode }
+        : {}),
       originMessageId:
         typeof args?.originMessageId === 'string' && args.originMessageId.trim()
           ? args.originMessageId
           : undefined,
       originRunId:
-        typeof args?.originRunId === 'string' && args.originRunId.trim()
-          ? args.originRunId
-          : undefined,
+        typeof args?.originRunId === 'string' && args.originRunId.trim() ? args.originRunId : undefined,
       sideChatMode
     })
 
@@ -504,7 +490,9 @@ export class ChatService {
         this.activeExternalCountForChat(chatId) > 0 &&
         this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble'
       ) {
-        throw new Error('This chat is shared. Stop sharing before switching it out of panel mode.')
+        throw new Error(
+          'This chat is shared. Stop sharing before switching it out of panel mode.'
+        )
       }
     }
     const canonicalProviderMetadata =
@@ -605,7 +593,10 @@ export class ChatService {
     if (chatMatchesRebindTarget(current, target)) {
       const cleared = clearPendingWorkspaceRebind(current)
       if (cleared === current) return current
-      return this.saveChatInternal({ ...cleared, updatedAt: options.now ?? Date.now() }, false)
+      return this.saveChatInternal(
+        { ...cleared, updatedAt: options.now ?? Date.now() },
+        false
+      )
     }
     options.assertIdle?.(current)
 
@@ -945,9 +936,11 @@ export class ChatService {
    * — the caller uses it to decide whether to broadcast, because the transport
    * lane does not notify the host renderer by itself.
    */
-  convertChatForExternalJoin(args: { chatId: string; shareId: string; collaboratorId: string }): {
-    outcome: 'converted' | 'queued' | 'noop'
-  } {
+  convertChatForExternalJoin(args: {
+    chatId: string
+    shareId: string
+    collaboratorId: string
+  }): { outcome: 'converted' | 'queued' | 'noop' } {
     const chatId = requireSafeChatId(args.chatId, 'Chat id')
     const chat = this.deps.appStore.getChat(chatId)
     // Idempotent on CHAT STATE, never on the handshake. A reconnect fires on
@@ -1092,8 +1085,7 @@ export class ChatService {
       // Only reverse a conversion this feature caused. A panel the host built
       // themselves is theirs, and sharing it must not silently dismantle it.
       if (!chat.providerMetadata?.[EXTERNAL_JOIN_CONVERTED_KEY]) return false
-      const reverted =
-        this.setChatKind({ chatId: id, targetKind: 'single' }) ?? this.deps.appStore.getChat(id)
+      const reverted = this.setChatKind({ chatId: id, targetKind: 'single' }) ?? this.deps.appStore.getChat(id)
       if (reverted) {
         this.saveChat({ ...clearExternalJoinConvertedMark(reverted), updatedAt: Date.now() })
       }
@@ -1239,9 +1231,7 @@ export class ChatService {
     const current = this.deps.appStore.getChat(chatId)
     if (!current || current.archived) throw new Error('Chat is not available for collaboration.')
     if (validation.existingMessageId) {
-      const existing = current.messages.find(
-        (message) => message.id === validation.existingMessageId
-      )
+      const existing = current.messages.find((message) => message.id === validation.existingMessageId)
       if (existing) {
         this.deps.humanCollaborationAudit?.append({
           kind: 'contribution.deduped',
@@ -1494,10 +1484,10 @@ export class ChatService {
     return { chat: updated, message, deduped: false, ...(autoDraft ? { autoDraft } : {}) }
   }
 
-  promoteCollaboratorComment(args: { chatId: string; messageId: string }): {
-    chat: ChatRecord
-    draft: string
-  } {
+  promoteCollaboratorComment(args: {
+    chatId: string
+    messageId: string
+  }): { chat: ChatRecord; draft: string } {
     const chatId = requireSafeChatId(args.chatId, 'Chat id')
     const messageId = requireNonEmptyString(args.messageId, 'Message id')
     const chat = this.deps.appStore.getChat(chatId)
@@ -1693,11 +1683,11 @@ export class ChatService {
       !workspaceChanged && current?.provider === 'claude' && chat.provider === 'claude'
     const crossesClaudeBoundary = Boolean(
       (!current && chat.provider === 'claude') ||
-      (current && (current.provider === 'claude') !== (chat.provider === 'claude'))
+        (current && (current.provider === 'claude') !== (chat.provider === 'claude'))
     )
     const suppressIncomingSoloRerouteSession = Boolean(
       current?.provider === chat.provider &&
-      isEphemeralProviderRerouteSession(chat, chat.linkedProviderSessionId)
+        isEphemeralProviderRerouteSession(chat, chat.linkedProviderSessionId)
     )
     let canonicalSoloSession = chat.linkedProviderSessionId
     if (workspaceChanged || crossesClaudeBoundary) canonicalSoloSession = undefined
@@ -1722,28 +1712,31 @@ export class ChatService {
         const currentParticipant = currentParticipants.get(participant.id)
         const currentReceipt =
           currentParticipant &&
-          isTaskWraithMcpProfileReceiptForSession(currentParticipant.taskWraithMcpProfileReceipt, {
-            provider: currentParticipant.provider,
-            providerSessionId: currentParticipant.linkedProviderSessionId
-          })
+          isTaskWraithMcpProfileReceiptForSession(
+            currentParticipant.taskWraithMcpProfileReceipt,
+            {
+              provider: currentParticipant.provider,
+              providerSessionId: currentParticipant.linkedProviderSessionId
+            }
+          )
             ? currentParticipant.taskWraithMcpProfileReceipt
             : undefined
         const sameClaudeParticipant = Boolean(
           !workspaceChanged &&
-          currentParticipant?.provider === 'claude' &&
-          participant.provider === 'claude'
+            currentParticipant?.provider === 'claude' &&
+            participant.provider === 'claude'
         )
         const suppressIncomingRerouteSession = Boolean(
           currentParticipant?.provider === participant.provider &&
-          isEphemeralProviderRerouteSession(
-            chat,
-            participant.linkedProviderSessionId,
-            participant.id
-          )
+            isEphemeralProviderRerouteSession(
+              chat,
+              participant.linkedProviderSessionId,
+              participant.id
+            )
         )
         const crossesClaudeParticipantBoundary = Boolean(
           !currentParticipant ||
-          (currentParticipant.provider === 'claude') !== (participant.provider === 'claude')
+            (currentParticipant.provider === 'claude') !== (participant.provider === 'claude')
         )
         let canonicalSession = participant.linkedProviderSessionId
         if (workspaceChanged || crossesClaudeParticipantBoundary) canonicalSession = undefined
@@ -1779,7 +1772,9 @@ export class ChatService {
     if (!changed) return chat
     const next: ChatRecord = {
       ...chat,
-      ...(chat.ensemble && participants ? { ensemble: { ...chat.ensemble, participants } } : {})
+      ...(chat.ensemble && participants
+        ? { ensemble: { ...chat.ensemble, participants } }
+        : {})
     }
     if (canonicalSoloSession === undefined) delete next.linkedProviderSessionId
     else next.linkedProviderSessionId = canonicalSoloSession
@@ -1831,9 +1826,7 @@ export class ChatService {
       (message) => !preservedIds.has(message.id)
     )
     if (missingCollaboratorComments.length === 0 && !changed) return chat
-    const messages = [...sanitizedMessages, ...missingCollaboratorComments].sort(
-      compareMessagesByTime
-    )
+    const messages = [...sanitizedMessages, ...missingCollaboratorComments].sort(compareMessagesByTime)
     return {
       ...chat,
       messages
@@ -1926,9 +1919,9 @@ function preserveCanonicalExternalPathGrantMetadata(
   const currentMetadata = current?.providerMetadata
   const currentHasGrantMetadata = Boolean(
     currentMetadata &&
-    EXTERNAL_PATH_GRANT_METADATA_KEYS.some((key) =>
-      Object.prototype.hasOwnProperty.call(currentMetadata, key)
-    )
+      EXTERNAL_PATH_GRANT_METADATA_KEYS.some((key) =>
+        Object.prototype.hasOwnProperty.call(currentMetadata, key)
+      )
   )
   const next = { ...incoming }
   if (!currentHasGrantMetadata) {
@@ -1942,12 +1935,17 @@ function preserveCanonicalExternalPathGrantMetadata(
     if (!grant.signature || !Number.isSafeInteger(grant.order) || (grant.order ?? -1) < 0) continue
     incomingOrderByIdentity.set(`${grant.id}\u0000${grant.signature}`, grant.order as number)
   }
-  const canonicalGrants = collectExternalPathGrantsFromMetadata(currentMetadata).map((grant) => {
-    if (!grant.signature) return grant
-    const order = incomingOrderByIdentity.get(`${grant.id}\u0000${grant.signature}`)
-    return order === undefined ? grant : { ...grant, order }
-  })
-  next.providerMetadata = canonicalizeExternalPathGrantMetadata(providerMetadata, canonicalGrants)
+  const canonicalGrants = collectExternalPathGrantsFromMetadata(currentMetadata).map(
+    (grant) => {
+      if (!grant.signature) return grant
+      const order = incomingOrderByIdentity.get(`${grant.id}\u0000${grant.signature}`)
+      return order === undefined ? grant : { ...grant, order }
+    }
+  )
+  next.providerMetadata = canonicalizeExternalPathGrantMetadata(
+    providerMetadata,
+    canonicalGrants
+  )
   return next
 }
 
@@ -1965,7 +1963,8 @@ function isEphemeralProviderRerouteSession(
   providerSessionId: string | null | undefined,
   ensembleParticipantId?: string
 ): boolean {
-  const normalizedSessionId = typeof providerSessionId === 'string' ? providerSessionId.trim() : ''
+  const normalizedSessionId =
+    typeof providerSessionId === 'string' ? providerSessionId.trim() : ''
   if (!normalizedSessionId) return false
   return (chat.runs || []).some((run) => {
     const reroute = run.providerReroute
@@ -2131,8 +2130,7 @@ function fenceSavedProviderAdmission(incoming: ChatRecord, current: ChatRecord |
   const incomingPending = readPendingProviderChange(incoming)
   if (incomingPending && !isLiveSelectableProvider(incomingPending.provider)) {
     const currentPending = current ? readPendingProviderChange(current) : null
-    if (currentPending?.provider !== incomingPending.provider)
-      assertLiveProviderId(incomingPending.provider)
+    if (currentPending?.provider !== incomingPending.provider) assertLiveProviderId(incomingPending.provider)
     // A conditional AntiGravity switch that reaches this point was either
     // admitted just above against the configured API-key lane or already
     // existed in canonical state. Preserve that user-authored control state so
