@@ -1,8 +1,11 @@
 # Channels P3 Muse delta review
 
-Date: 2026-08-10  
-Status: accepted as a bounded post-acceptance provider delta  
-Original reviewed candidate: `b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4`  
+Date: 2026-08-10
+
+Status: accepted as a bounded post-acceptance provider delta
+
+Original reviewed candidate: `b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4`
+
 Original acceptance record: `92ad1e98259a95377b78c689b586e5e9f8d120d0`
 
 ## Decision
