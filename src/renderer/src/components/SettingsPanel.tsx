@@ -312,7 +312,7 @@ interface SettingsPanelProps {
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
-  /** Settings → General: max workers accepted by `delegate_wave` (2–20, default 8). */
+  /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
   maxWaveAgents?: AppSettings['maxWaveAgents']
   /**
    * 1.0.5-EW49 — Dashboard statistics preferences. Per-stat
@@ -450,7 +450,7 @@ interface SettingsPanelProps {
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
-    /** Settings → General: max workers accepted by `delegate_wave` (2–20, default 8). */
+    /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
     maxWaveAgents?: AppSettings['maxWaveAgents']
     /**
      * 1.0.5-EW49 — Per-stat visibility map / global "reset all"
