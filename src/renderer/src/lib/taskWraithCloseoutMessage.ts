@@ -1814,6 +1814,15 @@ function statusFromChildChat(child: CloseoutChildChat): CloseoutSubagentDelegati
 /** Visible commit rows in the Task-complete epic stack (metadata keeps the rest). */
 export const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
 
+/** Per-file detail harvested from git --stat output in commit receipts. */
+export type CloseoutCommitFile = {
+  path: string
+  additions?: number
+  deletions?: number
+  /** Raw diff hunk text when available (from --patch / --unified output). */
+  hunks?: string
+}
+
 export type CloseoutCommit = {
   hash: string
   subject?: string
@@ -1821,6 +1830,8 @@ export type CloseoutCommit = {
   /** Seat that authored the commit — same element as the Participants column. */
   seatLink?: SeatChangeLink
   participantId?: string
+  /** Per-file breakdown harvested from --stat output in commit receipts. */
+  files?: CloseoutCommitFile[]
 }
 
 export type CloseoutParticipantRow = {
@@ -1882,6 +1893,7 @@ function scoreCloseoutCommit(commit: CloseoutCommit): number {
   return (
     (commit.subject ? 2 : 0) +
     (commit.stats ? 1 : 0) +
+    (commit.files && commit.files.length > 0 ? 2 : 0) +
     (commit.seatLink ? 2 : 0) +
     (commit.participantId ? 1 : 0)
   )
@@ -2317,21 +2329,62 @@ function extractCommitsFromText(text: string, requireGitReceipt = false): Closeo
   const normalized = normalizeCommitText(text)
   const commits = new Map<string, CloseoutCommit>()
   const claimedSpans: Array<[number, number]> = []
+  /** Commit hashes in order of appearance so we can associate --stat file lines. */
+  const commitOrder: Array<{ hash: string; endIndex: number }> = []
   const bracketPattern = requireGitReceipt
     ? /^[ \t]*\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n[]+))?/gim
     : /\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n[]+))?/gi
   let match: RegExpExecArray | null
   while ((match = bracketPattern.exec(normalized)) !== null) {
-    claimedSpans.push([match.index, match.index + match[0].length])
+    // Claim only the bracket line itself (up to and including the subject),
+    // not the optional next line, so --stat file lines remain visible to the
+    // per-file scanner below.
+    const bracketLineEnd =
+      match.index +
+      match[0].indexOf(match[3]) +
+      match[3].length +
+      // Account for the newline after the subject line.
+      (match[0].slice(match[0].indexOf(match[3]) + match[3].length).startsWith('\n') ? 1 : 0)
+    claimedSpans.push([match.index, bracketLineEnd])
     const hash = match[2]
     const subject = cleanCommitSubject(match[3] || '')
-    const nextLine = match[4]?.trim()
-    const stats =
-      nextLine && /files?\s+changed/i.test(nextLine) ? formatCommitStats(nextLine) : undefined
+    // Scan forward from the bracket line end for the stats summary line
+    // (past possible --stat file lines between the subject and summary).
+    const afterBracket = normalized.slice(bracketLineEnd)
+    const summaryMatch = afterBracket.match(/^[^\n\[\]]*?(\d+\s+files?\s+changed[^\n]*)/im)
+    const statsLine = summaryMatch ? summaryMatch[1].trim() : undefined
+    const stats = statsLine ? formatCommitStats(statsLine) : undefined
     mergeCloseoutCommit(commits, {
       hash,
       ...(subject ? { subject } : {}),
       ...(stats ? { stats } : {})
+    })
+    commitOrder.push({ hash, endIndex: bracketLineEnd })
+  }
+  // Harvest --stat per-file lines and associate them with the nearest
+  // preceding commit bracket receipt (by position in the output text).
+  const statFilePattern = /^\s{1,4}([^|\n]+?)\s*\|\s*(\d+)\s+([+\-]+)\s*$/gm
+  while ((match = statFilePattern.exec(normalized)) !== null) {
+    const fileStart = match.index
+    // Skip file lines that fall inside an already-claimed bracket span.
+    if (claimedSpans.some(([from, to]) => fileStart >= from && fileStart < to)) continue
+    const ownerCommit = findNearestPrecedingCommit(commitOrder, fileStart)
+    if (!ownerCommit) continue
+    const existingCommit = commits.get(ownerCommit.hash)
+    if (!existingCommit) continue
+    const path = match[1].trim()
+    if (!path) continue
+    const changeCount = parseInt(match[2], 10)
+    const plusMinus = match[3]
+    const additions = (plusMinus.match(/\+/g) || []).length
+    const deletions = (plusMinus.match(/-/g) || []).length
+    const file: CloseoutCommitFile = { path }
+    if (additions > 0) file.additions = additions
+    if (deletions > 0) file.deletions = deletions
+    const existingFiles = existingCommit.files || []
+    commits.set(ownerCommit.hash, {
+      ...existingCommit,
+      files: [...existingFiles, file]
     })
   }
   // Generic shell output contains unrelated object ids (for example from
@@ -2358,13 +2411,30 @@ function extractCommitsFromText(text: string, requireGitReceipt = false): Closeo
   return Array.from(commits.values())
 }
 
+/** Find the commit hash whose bracket receipt ends nearest (but before) the
+ *  given position in the output text. Returns null when no commit precedes it. */
+function findNearestPrecedingCommit(
+  commitOrder: Array<{ hash: string; endIndex: number }>,
+  position: number
+): { hash: string; endIndex: number } | null {
+  let best: { hash: string; endIndex: number } | null = null
+  for (const entry of commitOrder) {
+    if (entry.endIndex > position) continue
+    if (!best || entry.endIndex > best.endIndex) best = entry
+  }
+  return best
+}
+
 function mergeCloseoutCommit(commits: Map<string, CloseoutCommit>, commit: CloseoutCommit): void {
   const existing = commits.get(commit.hash)
   if (!existing || scoreCloseoutCommit(commit) >= scoreCloseoutCommit(existing)) {
     commits.set(commit.hash, {
       hash: commit.hash,
       subject: commit.subject || existing?.subject,
-      stats: commit.stats || existing?.stats
+      stats: commit.stats || existing?.stats,
+      files: commit.files || existing?.files,
+      seatLink: commit.seatLink || existing?.seatLink,
+      participantId: commit.participantId || existing?.participantId
     })
   }
 }

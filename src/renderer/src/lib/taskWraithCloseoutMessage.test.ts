@@ -1035,6 +1035,172 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.metadata?.closeoutCommits).toHaveLength(10)
   })
 
+  it('harvests --stat per-file lines from commit receipts and attaches them as files', () => {
+    const run: ChatRun = {
+      runId: 'run-stat-files',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('t1', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main a1b2c3d4e] refactor: split closeout message library\n src/renderer/src/lib/taskWraithCloseoutMessage.ts      | 240 ++++++++++++++++++\n src/renderer/src/lib/taskWraithCloseoutMessage.test.ts | 200 +++++++++++++++\n 2 files changed, 440 insertions(+)'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:39.000Z',
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits).toHaveLength(1)
+    const commit = closeout.metadata!.closeoutCommits![0]
+    expect(commit.hash).toBe('a1b2c3d4e')
+    expect(commit.subject).toBe('refactor: split closeout message library')
+    expect(commit.stats).toBe('2 files, +440')
+    expect(commit.files).toHaveLength(2)
+    expect(commit.files![0]).toEqual({
+      path: 'src/renderer/src/lib/taskWraithCloseoutMessage.ts',
+      additions: 18
+    })
+    expect(commit.files![1]).toEqual({
+      path: 'src/renderer/src/lib/taskWraithCloseoutMessage.test.ts',
+      additions: 15
+    })
+    // Must not leak files into prose.
+    expect(closeout.content).not.toContain('taskWraithCloseoutMessage.ts')
+  })
+
+  it('associates --stat file lines with the nearest preceding commit when multiple commits appear', () => {
+    const run: ChatRun = {
+      runId: 'run-multi-stat',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('t1', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main abc111111] feat: add parser\n src/parser.ts      | 50 ++++++++++\n 1 file changed, 50 insertions(+)\n[main def222222] feat: add UI\n src/ui.tsx         | 30 +++\n src/styles.css     | 10 +-\n 2 files changed, 40 insertions(+), 10 deletions(-)'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:39.000Z',
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits).toHaveLength(2)
+    const commits = closeout.metadata!.closeoutCommits!
+    const parserCommit = commits.find((c) => c.hash === 'abc111111')
+    const uiCommit = commits.find((c) => c.hash === 'def222222')
+    expect(parserCommit?.files).toHaveLength(1)
+    expect(parserCommit?.files![0].path).toBe('src/parser.ts')
+    expect(uiCommit?.files).toHaveLength(2)
+    expect(uiCommit?.files![0].path).toBe('src/ui.tsx')
+    expect(uiCommit?.files![1].path).toBe('src/styles.css')
+    expect(uiCommit?.files![1].deletions).toBe(1)
+  })
+
+  it('keeps --stat file lines out of the commit stats summary field', () => {
+    const run: ChatRun = {
+      runId: 'run-stat-vs-summary',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('t1', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main fff999888] chore: update deps\n package.json | 4 ++--\n yarn.lock   | 8 ++++----\n 2 files changed, 12 insertions(+), 6 deletions(-)'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:39.000Z',
+      exitCode: 0
+    })
+
+    const commit = closeout.metadata?.closeoutCommits?.[0]
+    // stats should come from the summary line, not the per-file lines.
+    expect(commit?.stats).toBe('2 files, +12 −6')
+    expect(commit?.files).toHaveLength(2)
+    // File lines must not appear as part of stats.
+    expect(commit?.stats).not.toContain('package.json')
+    expect(commit?.stats).not.toContain('yarn.lock')
+  })
+
+  it('omits files when commit receipt has no --stat lines', () => {
+    const run: ChatRun = {
+      runId: 'run-no-stat',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('t1', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[main 111aaaa22] fix: typo\n 1 file changed, 1 insertion(+), 1 deletion(-)'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:39.000Z',
+      exitCode: 0
+    })
+
+    const commit = closeout.metadata?.closeoutCommits?.[0]
+    expect(commit?.hash).toBe('111aaaa22')
+    expect(commit?.stats).toBe('1 file, +1 −1')
+    // files omitted when no --stat lines present:
+    expect(commit?.files).toBeUndefined()
+  })
+
   it('inserts an ensemble closeout after its round body without stamping ensembleRoundId', () => {
     const round: EnsembleRoundState = {
       roundId: 'round-1',
