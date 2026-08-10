@@ -59,7 +59,8 @@ const PACKAGED_SURFACE_MARKERS = {
     'Compare each code out of band before the member confirms.',
     'Opened the retained read-only history for this revoked membership.',
     'People share stays available alongside it',
-    'Channel posts notify people; they never start an agent run.'
+    'Human posts stay manual.',
+    'automatic mention dispatch remains disabled pending security review.'
   ]
 }
 

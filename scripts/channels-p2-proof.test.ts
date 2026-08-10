@@ -33,6 +33,10 @@ describe('Channels P2 acceptance proof harness', () => {
     const accepted = proof.verifySurfaceGroups(groups)
     expect(accepted.main.fileCount).toBe(1)
     expect(accepted.renderer.markers).toContain('Confirm joins')
+    expect(accepted.renderer.markers).toContain('Human posts stay manual.')
+    expect(accepted.renderer.markers).toContain(
+      'automatic mention dispatch remains disabled pending security review.'
+    )
 
     const stale = structuredClone(groups)
     stale.renderer[0].contents = stale.renderer[0].contents.replace('Confirm joins', '')
