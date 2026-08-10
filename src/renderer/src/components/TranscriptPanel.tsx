@@ -4714,6 +4714,8 @@ export const TranscriptPanel = memo(
                           ? (msg.metadata.parentProvider as ProviderId)
                           : undefined
                       }
+                      onOpenSubThread={onOpenSubThread}
+                      onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
                       telemetry={{
                         waveId:
                           typeof msg.metadata?.waveId === 'string' ? msg.metadata.waveId : undefined,
