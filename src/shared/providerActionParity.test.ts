@@ -85,7 +85,7 @@ describe('provider action parity (orchestration)', () => {
         .filter((provider) => PROVIDER_ACTION_ADAPTERS[provider].mcpAttachment === 'none')
         .sort()
     )
-    expect(expectedDenyProviders).toEqual(['pi'])
+    expect(expectedDenyProviders).toEqual(['muse', 'pi'])
 
     for (const provider of providers) {
       const declaration = PROVIDER_ACTION_ADAPTERS[provider]
