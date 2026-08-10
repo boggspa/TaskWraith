@@ -1485,6 +1485,10 @@
 [data-user-bubble-color="yellow"]   { --user-bubble-base: #f2c94c; }
 [data-user-bubble-color="graphite"] { --user-bubble-base: #9da6b8; }
 
+/* Settings → Appearance now supplies one custom accent. The message bubble
+ * aliases it rather than retaining a second user-facing colour choice. */
+[data-user-bubble-color="shared"] { --user-bubble-base: var(--accent); }
+
 [data-corners="hard"] {
   --radius-sm: 3px;
   --radius-md: 5px;

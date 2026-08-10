@@ -9,6 +9,7 @@ import type {
   VisualEffectStyle
 } from '../../../main/store/types'
 import { resolvePaneOpacityFactor } from './useAppearance'
+import { DEFAULT_THEME_ACCENT_COLOR } from '../../../shared/themeAccentColor'
 
 describe('Appearance settings validation', () => {
   it('valid appearance modes are accepted by the type system', () => {
@@ -25,6 +26,7 @@ describe('Appearance settings validation', () => {
       themeAppearance: 'system' as ThemeAppearance,
       themeCornerStyle: 'rounded' as ThemeCornerStyle,
       themeAccentStyle: 'system' as ThemeAccentStyle,
+      themeAccentColor: DEFAULT_THEME_ACCENT_COLOR,
       userBubbleColor: 'system' as UserBubbleColor,
       promptSurfaceStyle: 'liquid_glass' as PromptSurfaceStyle,
       reduceTransparency: false,
@@ -37,6 +39,7 @@ describe('Appearance settings validation', () => {
     expect(defaults.appearanceMode).toBe('soft_glass')
     expect(defaults.visualEffectStyle).toBe('auto')
     expect(defaults.themeAppearance).toBe('system')
+    expect(defaults.themeAccentColor).toBe(DEFAULT_THEME_ACCENT_COLOR)
     expect(defaults.reduceTransparency).toBe(false)
     expect(defaults.reduceMotion).toBe(false)
     expect(defaults.showInspector).toBe(false)

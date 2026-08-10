@@ -34,7 +34,6 @@ import type {
   WorkspaceBoardCard,
   ProviderId,
   ComposerStyle,
-  ThemeAccentStyle,
   ThemeAppearance,
   ApprovalLedgerRecord
 } from '../../../main/store/types'
@@ -253,14 +252,12 @@ interface SidebarProps {
   onOpenChangelog?: () => void
   appearanceQuickSettings?: {
     composerStyle: ComposerStyle
-    themeAccentStyle: ThemeAccentStyle
     themeAppearance: ThemeAppearance
     sidebarOpacity: number
     mainPaneOpacity: number
   }
   onAppearanceQuickChange?: (next: {
     composerStyle?: ComposerStyle
-    themeAccentStyle?: ThemeAccentStyle
     themeAppearance?: ThemeAppearance
     sidebarOpacity?: number
     mainPaneOpacity?: number
@@ -566,7 +563,7 @@ const SIDEBAR_SECTION_PREVIEW_LIMIT = 5
  *  the Workspaces / Chats sections already surface. */
 const SIDEBAR_RECENTS_MAX = 20
 
-export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' | 'system'
+export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'system'
 
 const SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER = 8
 const SIDEBAR_SETTINGS_MENU_MAX_WIDTH = 260
@@ -608,17 +605,6 @@ const SIDEBAR_COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: strin
   { value: 'satellite', label: 'Satellite' },
   { value: 'obsidian', label: 'Obsidian' },
   { value: 'alabaster', label: 'Alabaster' }
-]
-
-const SIDEBAR_ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'green', label: 'Green' },
-  { value: 'red', label: 'Red' },
-  { value: 'yellow', label: 'Yellow' }
 ]
 
 const SIDEBAR_SYSTEM_THEME_OPTIONS: Array<{ value: ThemeAppearance; label: string }> = [
@@ -960,14 +946,6 @@ export function SidebarSettingsMenu({
         <button
           type="button"
           className="sidebar-settings-menu-item"
-          onClick={() => setPane('accent')}
-        >
-          <span className="sidebar-settings-menu-item-label">Accent Theme</span>
-          <MenuChevronIcon />
-        </button>
-        <button
-          type="button"
-          className="sidebar-settings-menu-item"
           onClick={() => setPane('system')}
         >
           <span className="sidebar-settings-menu-item-label">System Theme</span>
@@ -1001,26 +979,6 @@ export function SidebarSettingsMenu({
         {SIDEBAR_COMPOSER_STYLE_OPTIONS.map((option) =>
           renderChoice(option.label, quickSettings?.composerStyle === option.value, () =>
             selectAppearance({ composerStyle: option.value })
-          )
-        )}
-      </div>
-    )
-  }
-
-  if (pane === 'accent') {
-    return (
-      <div
-        className={menuClassName}
-        style={style}
-        role="menu"
-        aria-label="Accent theme shortcuts"
-        onKeyDown={moveMenuFocus}
-      >
-        {renderBackButton('Accent Theme', 'themes')}
-        <div className="sidebar-settings-menu-divider" aria-hidden />
-        {SIDEBAR_ACCENT_OPTIONS.map((option) =>
-          renderChoice(option.label, quickSettings?.themeAccentStyle === option.value, () =>
-            selectAppearance({ themeAccentStyle: option.value })
           )
         )}
       </div>

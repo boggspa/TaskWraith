@@ -4,8 +4,7 @@ import type {
   ComposerStyle,
   ProviderId,
   ProviderApiKeyStatus,
-  ThemeAppearance,
-  UserBubbleColor
+  ThemeAppearance
 } from '../../../main/store/types'
 import type { DiffStatColors } from '../../../shared/diffStatColors'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
@@ -118,14 +117,11 @@ export interface FirstLaunchSheetProps {
    * can render the sheet without wiring the preference preview. */
   themeAppearance?: ThemeAppearance
   composerStyle?: ComposerStyle
-  userBubbleColor?: UserBubbleColor
   /** Reuses saved Appearance colors when onboarding is reopened later. */
   diffStatColors?: DiffStatColors
   userName?: string
   onAppearancePreviewChange?: (
-    next: Partial<
-      Pick<AppSettings, 'themeAppearance' | 'composerStyle' | 'userBubbleColor' | 'userName'>
-    >
+    next: Partial<Pick<AppSettings, 'themeAppearance' | 'composerStyle' | 'userName'>>
   ) => void
   /**
    * Extra directories searched first when resolving ANY external CLI. Surfaced
@@ -251,18 +247,6 @@ const ONBOARDING_COMPOSER_OPTIONS: Array<{ value: ComposerStyle; label: string }
   { value: 'alabaster', label: 'Alabaster' }
 ]
 
-const ONBOARDING_BUBBLE_OPTIONS: Array<{ value: UserBubbleColor; label: string }> = [
-  { value: 'system', label: 'Default' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'green', label: 'Green' },
-  { value: 'red', label: 'Red' },
-  { value: 'yellow', label: 'Yellow' },
-  { value: 'graphite', label: 'Graphite' }
-]
-
 export function FirstLaunchSheet({
   open,
   onDismiss,
@@ -280,7 +264,6 @@ export function FirstLaunchSheet({
   usageSummary,
   themeAppearance = 'system',
   composerStyle = 'default',
-  userBubbleColor = 'system',
   diffStatColors = DEFAULT_DIFF_STAT_COLORS,
   userName = '',
   onAppearancePreviewChange,
@@ -743,7 +726,6 @@ export function FirstLaunchSheet({
             className="first-launch-sheet-preference-card"
             data-theme={themeAppearance}
             data-composer-style={composerStyle}
-            data-user-bubble-color={userBubbleColor}
           >
             <div className="first-launch-sheet-theme-preview">
               <span className="first-launch-sheet-preference-field">Theme</span>
@@ -768,23 +750,6 @@ export function FirstLaunchSheet({
                   }
                 >
                   {ONBOARDING_COMPOSER_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="first-launch-sheet-preference-field">
-                <span>Message bubble</span>
-                <select
-                  value={userBubbleColor}
-                  onChange={(e) =>
-                    onAppearancePreviewChange?.({
-                      userBubbleColor: e.target.value as UserBubbleColor
-                    })
-                  }
-                >
-                  {ONBOARDING_BUBBLE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>

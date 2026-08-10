@@ -90,6 +90,7 @@ import {
 } from '../../shared/contextCompaction'
 import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
+import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import {
   buildOllamaPullCommand,
   isOllamaModelInstalled,
@@ -7610,13 +7611,10 @@ function App(): React.JSX.Element {
       settingsPatch.themeCornerStyle = next.themeCornerStyle
       appearance.update({ themeCornerStyle: next.themeCornerStyle })
     }
-    if (next.themeAccentStyle !== undefined) {
-      settingsPatch.themeAccentStyle = next.themeAccentStyle
-      appearance.update({ themeAccentStyle: next.themeAccentStyle })
-    }
-    if (next.userBubbleColor !== undefined) {
-      settingsPatch.userBubbleColor = next.userBubbleColor
-      appearance.update({ userBubbleColor: next.userBubbleColor })
+    if (next.themeAccentColor !== undefined) {
+      const themeAccentColor = normalizeThemeAccentColor(next.themeAccentColor)
+      settingsPatch.themeAccentColor = themeAccentColor
+      appearance.update({ themeAccentColor })
     }
     if (next.diffStatColors !== undefined) {
       const diffStatColors = normalizeDiffStatColors(next.diffStatColors)
@@ -31041,7 +31039,6 @@ function App(): React.JSX.Element {
         usageSummary={usageSummary}
         themeAppearance={appearance.themeAppearance || 'system'}
         composerStyle={appearance.composerStyle || 'default'}
-        userBubbleColor={appearance.userBubbleColor || 'system'}
         diffStatColors={appearance.diffStatColors}
         userName={settings?.userName ?? ''}
         onAppearancePreviewChange={handleSettingsChange}

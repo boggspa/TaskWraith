@@ -1068,6 +1068,16 @@ describe('MainSanitizers settings patches', () => {
     expect(sanitizeSettingsPatch({ userBubbleColor: 'green' }).userBubbleColor).toBe('green')
   })
 
+  it('persists a canonical shared theme accent color', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ themeAccentColor: '#12ab34' }).themeAccentColor).toBe('#12AB34')
+    expect(sanitizeSettingsPatch({ themeAccentColor: 'f0c' }).themeAccentColor).toBe('#FF00CC')
+    expect(sanitizeSettingsPatch({ themeAccentColor: 'not-a-colour' }).themeAccentColor).toBe(
+      '#5A8CFF'
+    )
+  })
+
   it('persists diffStatColors (regression: dropped by the allowlist, so it never survived a restart)', () => {
     // Same class as toolIconAccent/userBubbleColor above. `useAppearance` sent
     // diffStatColors in every appearance patch and `rendererAppearanceSettings`

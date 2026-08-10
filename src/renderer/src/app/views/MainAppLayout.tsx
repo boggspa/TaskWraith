@@ -1408,7 +1408,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onOpenChangelog={handleOpenChangelogSheet}
                 appearanceQuickSettings={{
                   composerStyle: appearance.composerStyle,
-                  themeAccentStyle: appearance.themeAccentStyle,
                   themeAppearance: appearance.themeAppearance,
                   sidebarOpacity: appearance.sidebarOpacity,
                   mainPaneOpacity: appearance.mainPaneOpacity
@@ -1524,10 +1523,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               visualEffectStyle={appearance.visualEffectStyle}
               themeAppearance={appearance.themeAppearance}
               themeCornerStyle={appearance.themeCornerStyle}
-              themeAccentStyle={appearance.themeAccentStyle}
+              themeAccentColor={appearance.themeAccentColor}
               diffStatColors={appearance.diffStatColors}
               appIconVariant={appearance.appIconVariant}
-              userBubbleColor={appearance.userBubbleColor}
               promptSurfaceStyle={appearance.promptSurfaceStyle}
               fanoutLaneLayout={appearance.fanoutLaneLayout}
               composerStyle={appearance.composerStyle}
@@ -1979,7 +1977,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onSelectChat={handleSelectChat}
               quickSettings={{
                 composerStyle: appearance.composerStyle,
-                themeAccentStyle: appearance.themeAccentStyle,
                 themeAppearance: appearance.themeAppearance,
                 sidebarOpacity: appearance.sidebarOpacity,
                 mainPaneOpacity: appearance.mainPaneOpacity

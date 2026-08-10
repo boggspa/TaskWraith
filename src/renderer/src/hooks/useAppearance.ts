@@ -14,6 +14,7 @@ import type {
 import type { DiffStatColors } from '../../../shared/diffStatColors'
 import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../../../shared/iconVariants'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
+import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../../../shared/themeAccentColor'
 import {
   normalizeAgentThemeTokenOverrides,
   type AgentThemeTokenOverrides
@@ -47,6 +48,7 @@ export interface AppearanceState {
   themeAppearance: ThemeAppearance
   themeCornerStyle: ThemeCornerStyle
   themeAccentStyle: ThemeAccentStyle
+  themeAccentColor: string
   userBubbleColor: UserBubbleColor
   diffStatColors: DiffStatColors
   agentThemeTokens: AgentThemeTokenOverrides
@@ -146,6 +148,7 @@ function getInitialState(): AppearanceState {
     themeAppearance: 'system',
     themeCornerStyle: 'rounded',
     themeAccentStyle: 'system',
+    themeAccentColor: DEFAULT_THEME_ACCENT_COLOR,
     userBubbleColor: 'system',
     diffStatColors: DEFAULT_DIFF_STAT_COLORS,
     agentThemeTokens: {},
@@ -234,6 +237,7 @@ export function useAppearance() {
           themeAppearance,
           themeCornerStyle: settings.themeCornerStyle || 'rounded',
           themeAccentStyle: settings.themeAccentStyle || 'system',
+          themeAccentColor: normalizeThemeAccentColor(settings.themeAccentColor),
           appIconVariant: settings.appIconVariant || DEFAULT_APP_ICON_VARIANT,
           userBubbleColor: settings.userBubbleColor || 'system',
           diffStatColors: normalizeDiffStatColors(settings.diffStatColors),
@@ -318,8 +322,13 @@ export function useAppearance() {
     root.setAttribute('data-visual-effect', next.visualEffectStyle)
     root.setAttribute('data-theme', next.themeAppearance)
     root.setAttribute('data-corners', next.themeCornerStyle)
-    root.setAttribute('data-accent', next.themeAccentStyle)
-    root.setAttribute('data-user-bubble-color', next.userBubbleColor)
+    root.setAttribute('data-accent', 'custom')
+    root.setAttribute('data-user-bubble-color', 'shared')
+    root.style.setProperty('--accent', next.themeAccentColor)
+    root.style.setProperty(
+      '--accent-hover',
+      `color-mix(in srgb, ${next.themeAccentColor} 78%, white)`
+    )
     root.style.setProperty('--diff-stat-add-color', next.diffStatColors.additions)
     root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
     root.setAttribute('data-prompt-surface', next.promptSurfaceStyle)
@@ -461,6 +470,7 @@ export function useAppearance() {
             : prev.advancedFx
         }
         next.themeAppearance = normalizeSystemThemeAppearance(next.themeAppearance) as ThemeAppearance
+        next.themeAccentColor = normalizeThemeAccentColor(next.themeAccentColor)
         next.inspectorWidth = normalizeAppearanceDimension(
           next.inspectorWidth,
           DEFAULT_INSPECTOR_WIDTH,
@@ -483,6 +493,7 @@ export function useAppearance() {
             themeAppearance: next.themeAppearance,
             themeCornerStyle: next.themeCornerStyle,
             themeAccentStyle: next.themeAccentStyle,
+            themeAccentColor: next.themeAccentColor,
             userBubbleColor: next.userBubbleColor,
             diffStatColors: next.diffStatColors,
             appIconVariant: next.appIconVariant,

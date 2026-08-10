@@ -169,7 +169,6 @@ describe('FirstLaunchSheet', () => {
         claudeAuthStatus={null}
         kimiAuthStatus={null}        themeAppearance="blue"
         composerStyle="claude"
-        userBubbleColor="purple"
         diffStatColors={{ additions: '#12C4A0', deletions: '#F15A70' }}
       />
     )
@@ -182,10 +181,9 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('--theme-preview-diff-deletions:#F15A70')
     expect(html).toContain('Composer shell')
     expect(html).toContain('Gemini shell')
-    expect(html).toContain('Message bubble')
     expect(html).toContain('Composer preview')
     expect(html).toContain('data-composer-style="claude"')
-    expect(html).toContain('data-user-bubble-color="purple"')
+    expect(html).not.toContain('Message bubble')
     expect(html).toContain('Plan')
   })
 

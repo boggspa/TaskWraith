@@ -32,10 +32,9 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     visualEffectStyle: 'auto',
     themeAppearance: 'dark',
     themeCornerStyle: 'rounded',
-    themeAccentStyle: 'blue',
+    themeAccentColor: '#5A8CFF',
     diffStatColors: { additions: '#2DB777', deletions: '#EC3D35' },
     appIconVariant: 'regular',
-    userBubbleColor: 'system',
     promptSurfaceStyle: 'theme',
     composerStyle: 'default',
     transcriptFontFamily: 'system',
@@ -153,12 +152,17 @@ function makeRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimePro
 }
 
 describe('SettingsPanel provider cards', () => {
-  it('renders visual theme cards and adjustable diff colors on the Appearance tab', () => {
+  it('renders shared accent/bubble controls, theme cards, and adjustable diff colors on Appearance', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance' })} />
     )
 
     expect(html).toContain('Diff stat colors')
+    expect(html).toContain('Accent &amp; chat bubble')
+    expect(html).toContain('Shared color')
+    expect(html).toContain('Accent and message bubble preview')
+    expect(html).toContain('Message bubble corners')
+    expect(html).toContain('Looks good — your accent and message bubble now stay in sync.')
     expect(html).toContain('Additions')
     expect(html).toContain('Deletions')
     expect(html).toContain('#2DB777')
@@ -174,6 +178,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('--theme-preview-diff-deletions:#EC3D35')
     expect(html).not.toContain('settings-theme-option')
     expect(html).not.toContain('Tool-icon color')
+    expect(html).not.toContain('Your chat bubble')
+    expect(html).not.toContain('Selected accent')
   })
 
   it('binds the custom transcript-font input to the PERSISTED value (not appearance state)', () => {

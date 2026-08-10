@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { MascotGhost } from './AppChromeSymbols'
 import { ComposerShellPreview } from './ComposerShellPreview'
 import { SettingsDiffStatPreview } from './SettingsDiffStatPreview'
+import { SettingsSharedAccentControl } from './SettingsSharedAccentControl'
 import { ThemeAppearancePreviewStack } from './ThemeAppearancePreviewStack'
 import type {
   AgenticNetworkPolicy,
@@ -27,10 +28,8 @@ import type {
   PromptSurfaceStyle,
   FanoutLaneLayout,
   ComposerStyle,
-  ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
-  UserBubbleColor,
   VisualEffectStyle,
   WorkspaceRecord,
   PinnedMessageGroup,
@@ -264,9 +263,8 @@ interface SettingsPanelProps {
   visualEffectStyle: VisualEffectStyle
   themeAppearance: ThemeAppearance
   themeCornerStyle: ThemeCornerStyle
-  themeAccentStyle: ThemeAccentStyle
+  themeAccentColor: string
   diffStatColors: DiffStatColors
-  userBubbleColor: UserBubbleColor
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   composerStyle: ComposerStyle
@@ -420,9 +418,8 @@ interface SettingsPanelProps {
     visualEffectStyle?: VisualEffectStyle
     themeAppearance?: ThemeAppearance
     themeCornerStyle?: ThemeCornerStyle
-    themeAccentStyle?: ThemeAccentStyle
+    themeAccentColor?: string
     diffStatColors?: DiffStatColors
-    userBubbleColor?: UserBubbleColor
     appIconVariant?: AppIconVariant
     promptSurfaceStyle?: PromptSurfaceStyle
     composerStyle?: ComposerStyle
@@ -556,46 +553,12 @@ const VISUAL_EFFECT_OPTIONS: Array<{ value: VisualEffectStyle; label: string }> 
   { value: 'thin_material', label: 'ultraThinMaterial' },
   { value: 'classic', label: 'PoorMansGlassBackground' }
 ]
-const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'green', label: 'Green' },
-  { value: 'red', label: 'Red' },
-  { value: 'yellow', label: 'Yellow' }
-]
 const APP_ICON_THUMBS: Record<AppIconVariant, string> = {
   regular: appIconRegularThumb,
   monoline: appIconMonolineThumb,
   glass: appIconGlassThumb,
   lightMonoline: appIconLightMonolineThumb
 }
-/**
- * User chat-bubble colour palette. `system` (default) keeps the
- * existing neutral elevated-surface look so users who don't care
- * never see a change. The named options mix the chosen hue into
- * the elevated surface for the bubble background AND apply the
- * same hue (saturated) to the matching "You" label — so the user-
- * side of the transcript reads with a single coherent theme colour
- * rather than diverging between label and bubble. CSS seam:
- * `--user-bubble-base` + `[data-user-bubble-color="X"]` rules in
- * `theme.css`; the swatch dots reuse the same `.accent-*` palette
- * via a dedicated `.user-bubble-color-*` class so the picker
- * preview matches the live result.
- */
-const USER_BUBBLE_COLOR_OPTIONS: Array<{ value: UserBubbleColor; label: string }> = [
-  { value: 'system', label: 'Default' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'orange', label: 'Orange' },
-  { value: 'green', label: 'Green' },
-  { value: 'red', label: 'Red' },
-  { value: 'yellow', label: 'Yellow' },
-  { value: 'graphite', label: 'Graphite' }
-]
 const PROMPT_SURFACE_OPTIONS: Array<{ value: PromptSurfaceStyle; label: string }> = [
   { value: 'theme', label: 'Follow theme' },
   { value: 'liquid_glass', label: 'Liquid glass' },
@@ -3879,10 +3842,9 @@ export function SettingsPanel({
   visualEffectStyle,
   themeAppearance,
   themeCornerStyle,
-  themeAccentStyle,
+  themeAccentColor,
   diffStatColors,
   appIconVariant,
-  userBubbleColor,
   promptSurfaceStyle,
   composerStyle,
   configuredProviderSnapshot = { ready: false, providerIds: [] },
@@ -5661,36 +5623,19 @@ export function SettingsPanel({
                 </p>
               </div>
 
-              <div className="settings-group">
-                <label className="settings-label">Corners</label>
-                <div className="settings-option-list settings-option-list-inline">
-                  {(['rounded', 'hard'] as ThemeCornerStyle[]).map((option) => (
-                    <button
-                      key={option}
-                      className={`settings-radio-option ${themeCornerStyle === option ? 'active' : ''}`}
-                      onClick={() => onChange({ themeCornerStyle: option })}
-                    >
-                      <span className="settings-radio-dot" />
-                      <span>{option === 'rounded' ? 'Rounded' : 'Hard'}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="settings-group">
-                <label className="settings-label">Accent color</label>
-                <div className="settings-option-grid">
-                  {ACCENT_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      className={`settings-radio-option ${themeAccentStyle === option.value ? 'active' : ''}`}
-                      onClick={() => onChange({ themeAccentStyle: option.value })}
-                    >
-                      <span className={`settings-radio-dot accent-dot accent-${option.value}`} />
-                      <span>{option.label}</span>
-                    </button>
-                  ))}
-                </div>
+              <div className="settings-group settings-shared-accent-group">
+                <label className="settings-label">Accent &amp; chat bubble</label>
+                <SettingsSharedAccentControl
+                  color={themeAccentColor}
+                  cornerStyle={themeCornerStyle}
+                  transcriptFontFamily={transcriptFontFamily}
+                  onColorChange={(themeAccentColor) => onChange({ themeAccentColor })}
+                  onCornerStyleChange={(themeCornerStyle) => onChange({ themeCornerStyle })}
+                />
+                <p className="settings-hint">
+                  One shared color drives the interface accent, your message bubble, and its
+                  “You” label.
+                </p>
               </div>
 
               <div className="settings-group settings-diff-stat-colors">
@@ -5732,27 +5677,6 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   Drives the +N / -N counters in composer rows, transcript file summaries, and
                   tool-call rows.
-                </p>
-              </div>
-
-              <div className="settings-group">
-                <label className="settings-label">Your chat bubble</label>
-                <div className="settings-option-grid">
-                  {USER_BUBBLE_COLOR_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      className={`settings-radio-option ${userBubbleColor === option.value ? 'active' : ''}`}
-                      onClick={() => onChange({ userBubbleColor: option.value })}
-                    >
-                      <span
-                        className={`settings-radio-dot user-bubble-color-dot user-bubble-color-${option.value}`}
-                      />
-                      <span>{option.label}</span>
-                    </button>
-                  ))}
-                </div>
-                <p className="settings-hint">
-                  Tints your message bubble and the &quot;You&quot; label with the same hue.
                 </p>
               </div>
 
