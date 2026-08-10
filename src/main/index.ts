@@ -2000,9 +2000,14 @@ import {
 } from './SubThreadDelegateWave'
 import {
   buildEphemeralFleetRoleFrame,
-  resolveEphemeralFleetIsolationForWave
+  resolveEphemeralFleetIsolationForWave,
+  shouldArchiveEphemeralFleetChild
 } from './SubThreadEphemeralFleet'
-import { allocateEphemeralFleetWriterWorktree } from './SubThreadEphemeralFleetWorktree'
+import {
+  allocateEphemeralFleetWriterWorktree,
+  buildEphemeralFleetRuntimeWorktreeIntent,
+  settleEphemeralFleetWriterWorktreeOnReturn
+} from './SubThreadEphemeralFleetWorktree'
 import { newProjectReferenceId } from '../shared/projects'
 import {
   delegationApprovalBudget,
@@ -8868,6 +8873,34 @@ async function maybePropagateLinkedChildResult(
     )
     AppStore.saveChat(repairedLinkedChild)
     broadcastChatUpdated(repairedLinkedChild)
+    if (
+      decision.relation === 'subThread' &&
+      shouldArchiveEphemeralFleetChild(repairedLinkedChild)
+    ) {
+      const baseWorkspacePath =
+        (typeof repairedLinkedChild.workspacePath === 'string' &&
+          repairedLinkedChild.workspacePath.trim()) ||
+        (typeof parent.workspacePath === 'string' && parent.workspacePath.trim()) ||
+        ''
+      if (baseWorkspacePath && repairedLinkedChild.parentChatId) {
+        void settleEphemeralFleetWriterWorktreeOnReturn({
+          parentChatId: repairedLinkedChild.parentChatId,
+          workerChatId: repairedLinkedChild.appChatId,
+          label:
+            typeof repairedLinkedChild.delegationContext?.label === 'string'
+              ? repairedLinkedChild.delegationContext.label
+              : repairedLinkedChild.delegationContext?.role,
+          baseWorkspacePath,
+          outcome: terminal.outcome,
+          git: new GitService()
+        }).catch((error) => {
+          console.warn(
+            '[ephemeral-fleet] worktree settle failed:',
+            error instanceof Error ? error.message : String(error)
+          )
+        })
+      }
+    }
     await maybeDrainParentSubThreadMailbox(parent.appChatId)
     return
   }
@@ -8929,6 +8962,36 @@ async function maybePropagateLinkedChildResult(
     sourceAssistantMessageId
   )
   AppStore.saveChat(updatedLinkedChild)
+  // Ephemeral fleet sole-writer worktrees: promote on done, discard otherwise,
+  // then remove so die-on-return cannot orphan fleet-* under .taskwraith-worktrees.
+  if (
+    decision.relation === 'subThread' &&
+    shouldArchiveEphemeralFleetChild(updatedLinkedChild)
+  ) {
+    const baseWorkspacePath =
+      (typeof updatedLinkedChild.workspacePath === 'string' &&
+        updatedLinkedChild.workspacePath.trim()) ||
+      (typeof parent.workspacePath === 'string' && parent.workspacePath.trim()) ||
+      ''
+    if (baseWorkspacePath && updatedLinkedChild.parentChatId) {
+      void settleEphemeralFleetWriterWorktreeOnReturn({
+        parentChatId: updatedLinkedChild.parentChatId,
+        workerChatId: updatedLinkedChild.appChatId,
+        label:
+          typeof updatedLinkedChild.delegationContext?.label === 'string'
+            ? updatedLinkedChild.delegationContext.label
+            : updatedLinkedChild.delegationContext?.role,
+        baseWorkspacePath,
+        outcome: terminal.outcome,
+        git: new GitService()
+      }).catch((error) => {
+        console.warn(
+          '[ephemeral-fleet] worktree settle failed:',
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+    }
+  }
   // Audit: durable run-event on the PARENT chat so the audit log
   // shows the propagation happened.
   try {
@@ -39311,8 +39374,13 @@ async function executeGeminiMcpTool(
           })
           scheduleSubThreadJoinEvaluation(parentChatId, joinPolicy.groupId)
           // Keep payload.workspace on the registered base checkout so preflight
-          // requireRegisteredWorkspace succeeds; stamp runtimeWorktree like
-          // ensemble fan-out so resolveRuntimeWorktreeWorkspace remaps cwd.
+          // requireRegisteredWorkspace succeeds; stamp runtimeWorktree for the
+          // fleet sole-writer worktree so resolveRuntimeWorktreeWorkspace remaps cwd.
+          const fleetRuntimeWorktree = buildEphemeralFleetRuntimeWorktreeIntent({
+            isolation: workerPermissions.isolation,
+            baseWorkspacePath: writerWorktree?.baseWorkspacePath || baseWorkspacePath,
+            effectiveWorkspacePath: workerPermissions.effectiveWorkspacePath
+          })
           const runPayload: AgentRunPayload = {
             provider: worker.provider,
             scope: context.scope ?? 'workspace',
@@ -39329,19 +39397,7 @@ async function executeGeminiMcpTool(
             externalPathGrants: subThreadEffectivePermissions.externalPathGrants,
             runtimeProfileId: inheritableRuntimeProfileId,
             effectivePermissions: subThreadEffectivePermissions,
-            ...(workerPermissions.isolation === 'worktree' &&
-            workerPermissions.effectiveWorkspacePath
-              ? {
-                  runtimeWorktree: {
-                    requested: true,
-                    source: 'ensembleLane' as const,
-                    baseWorkspacePath:
-                      writerWorktree?.baseWorkspacePath || baseWorkspacePath,
-                    effectiveWorkspacePath: workerPermissions.effectiveWorkspacePath,
-                    status: 'selected' as const
-                  }
-                }
-              : {})
+            ...(fleetRuntimeWorktree ? { runtimeWorktree: fleetRuntimeWorktree } : {})
           }
           runPayload.effectivePermissionsSignature = signRunPosture(
             delegatedApprovalMode,
