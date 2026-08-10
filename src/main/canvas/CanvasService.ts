@@ -19,6 +19,7 @@ import type {
   CanvasAnnotation,
   CanvasController,
   CanvasCallContext,
+  CanvasChartDocument,
   CanvasConsoleEntry,
   CanvasDriver,
   CanvasDriverKind,
