@@ -137,7 +137,8 @@ import { admitKimiRuntime, type AdmittedKimiRuntime } from './kimi/KimiRuntimeAd
 import {
   classifyKimiToolPermission,
   kimiBrokerDeferredMeshMcpToolName,
-  isKimiSafeMcpTool
+  isKimiSafeMcpTool,
+  resolveKimiTaskWraithMcpToolService
 } from './kimi/KimiToolPolicy'
 import {
   KimiMeshApprovalRelay,
@@ -24151,7 +24152,7 @@ async function runKimiAcpProvider(
       // deferred classifier and retain their ordinary service classification.
       const service = brokerDeferredMesh
         ? ('meshCanvas' as AgenticServiceId)
-        : grokToolKindToService(request.toolKind)
+        : (resolveKimiTaskWraithMcpToolService(request) ?? grokToolKindToService(request.toolKind))
       const meshPreview =
         brokerDeferredMeshTool && brokerDeferredMeshArguments
           ? {

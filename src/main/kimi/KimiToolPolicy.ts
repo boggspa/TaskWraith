@@ -9,6 +9,7 @@ import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
 import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
 import { MESH_MCP_TOOL_NAMES } from '../../shared/taskWraithMcpCatalog'
+import type { AgenticServiceId } from '../store/types'
 
 const KIMI_NATIVE_DENY_NAMES = new Set(KIMI_ACP_DENY_TOOLS.map((name) => name.toLowerCase()))
 const KIMI_BROKER_DEFERRED_MESH_TOOLS: ReadonlySet<string> = new Set(MESH_MCP_TOOL_NAMES)
@@ -78,6 +79,27 @@ export function unqualifyKimiMcpToolName(value: unknown): string | null {
   if (typeof value !== 'string' || !value) return null
   const match = value.match(/^mcp__[A-Za-z0-9_-]+?__(.+)$/)
   return match ? match[1] : value
+}
+
+/**
+ * Resolve the TaskWraith agentic service for a Kimi ACP permission request.
+ * Returns null when the request does not identify a declared TaskWraith MCP
+ * tool, so callers can fall back to the coarser ACP `toolKind` heuristic.
+ * For `capability_invoke`, the service is derived from the wrapped target.
+ */
+export function resolveKimiTaskWraithMcpToolService(
+  request: KimiToolPolicyRequest
+): AgenticServiceId | null {
+  const tool = resolveKimiTaskWraithMcpTool(request)
+  if (!tool) return null
+  // capability_invoke resolves its real target from a root `name` argument,
+  // but Kimi ACP wraps arguments in `rawInput`. Unwrap so the gateway resolver
+  // can see the target identity.
+  const rawInput = (request.rawToolCall as { rawInput?: Record<string, unknown> } | undefined)
+    ?.rawInput
+  const args = tool === 'capability_invoke' && rawInput ? rawInput : request.rawToolCall
+  const contract = resolveToolDispatchContractStrict(tool, args)
+  return contract.ok ? contract.service : null
 }
 
 /**
