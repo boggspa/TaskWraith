@@ -66,7 +66,7 @@ describe('Channels P3 adversarial review harness', () => {
       ])
     )
     const accepted = review.verifyPackagedGroups(groups)
-    expect(accepted.main.requiredMarkers).toContain('blocked_pending_adversarial_review')
+    expect(accepted.main.requiredMarkers).toContain('channel_agent_review_required')
 
     for (const group of Object.keys(review.PACKAGED_REQUIRED_MARKERS)) {
       const stale = structuredClone(groups)

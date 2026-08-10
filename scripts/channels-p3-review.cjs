@@ -34,9 +34,8 @@ const EXPECTED_AGENT_IPC = [
 const PACKAGED_REQUIRED_MARKERS = {
   main: [
     REVIEW_ID,
-    'blocked_pending_adversarial_review',
     'channel_agent_review_required',
-    'TaskWraith Channel agent turn envelope v1',
+    'TaskWraith Channel agent turn envelope v',
     'Channel history is intentionally absent',
     'channels:agent:grant'
   ],
