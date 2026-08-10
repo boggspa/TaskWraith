@@ -148,36 +148,32 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual([
-      'pi',
-      'mistral',
-      'claude',
-      'antigravity',
-      'kimi'
-    ])
-    expect(groups.map((g) => g.label)).toEqual(['Pi', 'Mistral', 'Claude', 'AntiGravity', 'Kimi'])
+    expect(groups.map((g) => g.provider)).toEqual(['muse', 'ollama', 'mistral', 'pi'])
+    expect(groups.map((g) => g.label)).toEqual(['Muse', 'Ollama', 'Mistral', 'Pi'])
+    // Dropped from the card once they stopped being the newest story.
+    expect(groups.map((g) => g.provider)).not.toContain('claude')
+    expect(groups.map((g) => g.provider)).not.toContain('antigravity')
+    expect(groups.map((g) => g.provider)).not.toContain('kimi')
 
-    const pi = groups.find((g) => g.provider === 'pi')
-    // One row per BYOK upstream, each spoofing its own brand hue — the classes
-    // must stay in lockstep with PI_UPSTREAM_BRANDS.
-    expect(pi?.models.map((m) => m.accentProvider)).toEqual([
-      'deepseek',
-      'zai',
-      'qwen',
-      'minimax',
-      'mistral',
-      'groq',
-      'cerebras'
-    ])
-    for (const model of pi?.models ?? []) {
-      expect(model.accentProvider).toBeTruthy()
+    const muse = groups.find((g) => g.provider === 'muse')
+    expect(muse?.models.map((m) => m.name)).toEqual(['Muse Spark 1.2'])
+    for (const model of muse?.models ?? []) {
+      expect(model.accentProvider).toBeUndefined()
     }
-    expect(newAdditions?.body).toContain('The Pi seat arrives')
+
+    const ollama = groups.find((g) => g.provider === 'ollama')
+    // Newest curated local tags — each spoofs its upstream brand hue.
+    expect(ollama?.models.map((m) => m.name)).toEqual([
+      'North Mini Code 1.0',
+      'GLM-4.7-Flash',
+      'Rnj-1'
+    ])
+    expect(ollama?.models.map((m) => m.accentProvider)).toEqual(['cohere', 'zai', 'essential'])
 
     const mistral = groups.find((g) => g.provider === 'mistral')
     // Mistral's own Vibe seat, distinct from the `mistral/*` BYOK rows Pi
-    // serves. Unlike the Pi rows these carry NO accentProvider — every model
-    // here really is this provider, so the group's own hue is correct.
+    // serves. Unlike the Pi/Ollama rows these carry NO accentProvider — every
+    // model here really is this provider, so the group's own hue is correct.
     expect(mistral?.models.map((m) => m.name)).toEqual(['Devstral Small', 'Mistral Medium 3.5'])
     for (const model of mistral?.models ?? []) {
       expect(model.accentProvider).toBeUndefined()
@@ -194,44 +190,22 @@ describe('notification registry', () => {
       // false, so no quota/allowance language.
       expect(model.blurb).not.toMatch(/quota|allowance|unlimited|\bfree\b/i)
     }
-    expect(newAdditions?.body).toContain('Vibe coding agent')
 
-    const claude = groups.find((g) => g.provider === 'claude')
-    expect(claude?.models).toEqual([
-      {
-        name: 'Opus 5',
-        blurb:
-          'Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode.'
-      }
+    const pi = groups.find((g) => g.provider === 'pi')
+    // One row per BYOK upstream, each spoofing its own brand hue — the classes
+    // must stay in lockstep with PI_UPSTREAM_BRANDS.
+    expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      'deepseek',
+      'zai',
+      'qwen',
+      'minimax',
+      'mistral',
+      'groq',
+      'cerebras'
     ])
-    expect(newAdditions?.body).toContain('Claude Opus 5')
-
-    const antigravity = groups.find((g) => g.provider === 'antigravity')
-    // BYOK Gemini API lane only; the consent-gated agy CLI lane is deliberately
-    // not advertised.
-    expect(antigravity?.models.map((m) => m.name)).toEqual([
-      'Gemini 3.6 Flash',
-      'Gemini 3.5 Flash',
-      'Gemini 3.5 Flash-Lite'
-    ])
-    expect(antigravity?.models[0]?.blurb).toContain('bring your own Gemini API key')
-    // The body leads with Pi from 1.9.0, so it summarises the AntiGravity lane
-    // by its BYOK requirement rather than repeating the 1.8.8 spend-meter line.
-    expect(newAdditions?.body).toContain('your own Gemini API key')
-    expect(newAdditions?.body).not.toContain('2.5 family')
-    for (const model of antigravity?.models ?? []) {
-      expect(model.blurb).not.toMatch(/agy|ban|OAuth/i)
+    for (const model of pi?.models ?? []) {
+      expect(model.accentProvider).toBeTruthy()
     }
-
-    const kimi = groups.find((g) => g.provider === 'kimi')
-    // K2.7 Coding Highspeed retired from the card at 1.9.0 — no longer new.
-    expect(kimi?.models).toEqual([
-      {
-        name: 'K3',
-        blurb:
-          "Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."
-      }
-    ])
 
     for (const group of groups) {
       for (const model of group.models) {

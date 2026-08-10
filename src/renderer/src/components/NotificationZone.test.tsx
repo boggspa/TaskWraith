@@ -199,14 +199,18 @@ describe('NotificationZone', () => {
     )
   })
 
-  it('renders the official Antigravity PNG in the pinned New Additions notice', () => {
+  it('renders official Ollama / Mistral / Pi logos in the pinned New Additions notice', () => {
     const html = renderToStaticMarkup(<NotificationZone notifications={PINNED_APP_NOTIFICATIONS} />)
 
-    expect(html).toContain('notification-newadditions-provider provider-antigravity')
-    expect(html).toContain('data-provider-logo="antigravity"')
-    expect(html).toContain('provider-brand-logo-antigravity')
-    expect(html).toContain('provider-logo-antigravity.png')
-    expect(html).not.toContain('provider-glyph-antigravity')
+    expect(html).toContain('notification-newadditions-provider provider-muse')
+    expect(html).toContain('notification-newadditions-provider provider-ollama')
+    expect(html).toContain('notification-newadditions-provider provider-mistral')
+    expect(html).toContain('notification-newadditions-provider provider-pi')
+    expect(html).toContain('data-provider-logo="ollama"')
+    expect(html).toContain('data-provider-logo="mistral"')
+    expect(html).toContain('data-provider-logo="pi"')
+    expect(html).toContain('provider-logo-mistral.png')
+    expect(html).not.toContain('provider-glyph-mistral')
   })
 
   it('drops expired notifications when now is past expiresAt', () => {

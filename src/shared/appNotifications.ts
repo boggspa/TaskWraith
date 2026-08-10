@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-26b'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-10'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,9 +137,70 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'The Pi seat arrives — one bring-your-own-key provider fronting DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, and Cerebras, each model wearing its own upstream brand. Mistral joins as a seat in its own right, running its Vibe coding agent on your Mistral plan. Claude Opus 5 brings near-Fable 5 intelligence at half the price with Fast mode, AntiGravity runs Gemini 3.x through your own Gemini API key, and Kimi K3 is available now.',
+    // Fallback / a11y only — renderers with `groups` show the structured list.
+    body: 'Muse Spark 1.2, local Ollama North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.',
     dismissible: true,
     groups: [
+      {
+        provider: 'muse',
+        label: 'Muse',
+        models: [
+          {
+            name: 'Muse Spark 1.2',
+            blurb: 'Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok.'
+          }
+        ]
+      },
+      {
+        // Curated local tags wear their upstream brand hue via accentProvider
+        // (shared/ollamaBrandTable). The Ollama heading stays Ollama green.
+        provider: 'ollama',
+        label: 'Ollama',
+        models: [
+          {
+            name: 'North Mini Code 1.0',
+            blurb: "Cohere's 500K agentic coder with tools and thinking — local, no cloud account.",
+            accentProvider: 'cohere'
+          },
+          {
+            name: 'GLM-4.7-Flash',
+            blurb: 'Z.ai 30B-A3B local reasoner with tools and thinking (~203K).',
+            accentProvider: 'zai'
+          },
+          {
+            name: 'Rnj-1',
+            blurb: "Essential AI's 8B agentic coding model with native tools.",
+            accentProvider: 'essential'
+          }
+        ]
+      },
+      {
+        // Mistral's OWN seat — the Vibe coding agent, run on your Mistral plan
+        // — NOT the `mistral/*` BYOK rows Pi serves below. Both appear on this
+        // card at once, and that overlap is a deliberate, documented exception
+        // (see the note above `ProviderId` in main/store/types.ts); do not
+        // "fix" it by dropping either one. No per-row `accentProvider` here:
+        // unlike the Pi/Ollama rows, every model below genuinely IS this
+        // provider, so the group's own Mistral hue is the correct accent.
+        provider: 'mistral',
+        label: 'Mistral',
+        models: [
+          {
+            name: 'Devstral Small',
+            blurb: 'A fast, frugal 262K coding model — the better default for lane work.'
+          },
+          {
+            // NO image claim here, deliberately. The model supports images, but
+            // the capability contract is PER-PROVIDER and the seat declares
+            // `imageAttachments: false` (index.ts) because its default model,
+            // devstral-small, cannot — so the UI never offers attachment on a
+            // Mistral seat. Advertising it would promise an affordance that
+            // does not exist. Restore only if the contract becomes per-model.
+            name: 'Mistral Medium 3.5',
+            blurb: 'The 262K flagship, with its full thinking ladder, on your Mistral plan.'
+          }
+        ]
+      },
       {
         // One row per Pi UPSTREAM, not per model: a Pi run is always
         // `provider: 'pi'`, but each wire id names the BYOK upstream serving
@@ -183,79 +244,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'GLM-4.7 (Cerebras)',
             blurb: 'Open weights at Cerebras speed, with GPT-OSS 120B on the same key.',
             accentProvider: 'cerebras'
-          }
-        ]
-      },
-      {
-        // Mistral's OWN seat — the Vibe coding agent, run on your Mistral plan
-        // — NOT the `mistral/*` BYOK rows Pi serves above. Both appear on this
-        // card at once, and that overlap is a deliberate, documented exception
-        // (see the note above `ProviderId` in main/store/types.ts); do not
-        // "fix" it by dropping either one. No per-row `accentProvider` here:
-        // unlike the Pi rows, every model below genuinely IS this provider, so
-        // the group's own Mistral hue is the correct accent.
-        provider: 'mistral',
-        label: 'Mistral',
-        models: [
-          {
-            name: 'Devstral Small',
-            blurb: 'A fast, frugal 262K coding model — the better default for lane work.'
-          },
-          {
-            // NO image claim here, deliberately. The model supports images, but
-            // the capability contract is PER-PROVIDER and the seat declares
-            // `imageAttachments: false` (index.ts) because its default model,
-            // devstral-small, cannot — so the UI never offers attachment on a
-            // Mistral seat. Advertising it would promise an affordance that
-            // does not exist. Restore only if the contract becomes per-model.
-            name: 'Mistral Medium 3.5',
-            blurb: 'The 262K flagship, with its full thinking ladder, on your Mistral plan.'
-          }
-        ]
-      },
-      {
-        provider: 'claude',
-        label: 'Claude',
-        models: [
-          {
-            name: 'Opus 5',
-            blurb:
-              'Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode.'
-          }
-        ]
-      },
-      {
-        // The Gemini API-key (BYOK) lane only — the agy CLI lane stays behind
-        // its own informed-consent card and is never advertised here. These
-        // are the exact current GA model names, with the product prefix kept
-        // for recognition outside the ANTIGRAVITY picker header.
-        provider: 'antigravity',
-        label: 'AntiGravity',
-        models: [
-          {
-            name: 'Gemini 3.6 Flash',
-            blurb:
-              "Google's newest production model for agentic coding and multimodal work — bring your own Gemini API key."
-          },
-          {
-            name: 'Gemini 3.5 Flash',
-            blurb: 'Sustained frontier performance for long-horizon agentic and coding tasks.'
-          },
-          {
-            name: 'Gemini 3.5 Flash-Lite',
-            blurb:
-              'The fastest, lowest-cost 3.5 model for high-throughput subagents and structured extraction.'
-          }
-        ]
-      },
-      {
-        provider: 'kimi',
-        label: 'Kimi',
-        models: [
-          {
-            name: 'K3',
-            blurb:
-              "Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."
           }
         ]
       }

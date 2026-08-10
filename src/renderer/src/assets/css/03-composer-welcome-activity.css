@@ -14194,6 +14194,13 @@ button.diff-file-row {
 .notification-newadditions-model.provider-ollama {
   color: var(--provider-ollama-color, #1a8562);
 }
+.notification-newadditions-provider.provider-mistral {
+  color: var(--provider-mistral-color, #d44404);
+}
+.notification-newadditions-provider.provider-muse,
+.notification-newadditions-model.provider-muse {
+  color: var(--provider-muse-color, #1671ea);
+}
 /* Ollama-backed models wear their spoofed upstream brand hue (set per-model via
  * `accentProvider`) — so a model name reads in its brand colour instead of
  * generic Ollama green. The "Ollama" group heading stays green above. */
@@ -14233,8 +14240,8 @@ button.diff-file-row {
 .notification-newadditions-model.provider-mistral {
   color: var(--provider-mistral-color, #d44404);
 }
-.notification-newadditions-model.provider-muse {
-  color: var(--provider-muse-color, #1671ea);
+.notification-newadditions-model.provider-qwen {
+  color: var(--provider-qwen-color, #615ced);
 }
 
 .notification-newadditions-model.provider-groq {

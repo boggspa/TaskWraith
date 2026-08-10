@@ -381,11 +381,28 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      'pi',
+      'muse',
+      'ollama',
       'mistral',
-      'claude',
-      'antigravity',
-      'kimi'
+      'pi'
+    ])
+    const museGroup = newAdditions?.groups?.find((group) => group.provider === 'muse')
+    expect(museGroup?.models.map((model) => model.name)).toEqual(['Muse Spark 1.2'])
+    const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
+    expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'North Mini Code 1.0',
+      'GLM-4.7-Flash',
+      'Rnj-1'
+    ])
+    expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'cohere',
+      'zai',
+      'essential'
+    ])
+    const mistralGroup = newAdditions?.groups?.find((group) => group.provider === 'mistral')
+    expect(mistralGroup?.models.map((model) => model.name)).toEqual([
+      'Devstral Small',
+      'Mistral Medium 3.5'
     ])
     // Pi's per-upstream spoof accents must survive the bridge projection —
     // without them every Pi row renders in one seat colour on the phone.
@@ -398,25 +415,6 @@ describe('buildRemoteFirstLaunchState', () => {
       'mistral',
       'groq',
       'cerebras'
-    ])
-    const claudeGroup = newAdditions?.groups?.find((group) => group.provider === 'claude')
-    expect(claudeGroup?.models.map((model) => model.name)).toEqual(['Opus 5'])
-    expect(claudeGroup?.models[0]?.blurb).toMatch(/half the price.*Fast mode/)
-    const antigravityGroup = newAdditions?.groups?.find(
-      (group) => group.provider === 'antigravity'
-    )
-    expect(antigravityGroup?.models.map((model) => model.name)).toEqual([
-      'Gemini 3.6 Flash',
-      'Gemini 3.5 Flash',
-      'Gemini 3.5 Flash-Lite'
-    ])
-    expect(antigravityGroup?.models[0]?.blurb).toMatch(/bring your own Gemini API key/)
-    const kimiGroup = newAdditions?.groups?.find((group) => group.provider === 'kimi')
-    expect(kimiGroup?.models).toEqual([
-      expect.objectContaining({
-        name: 'K3',
-        blurb: expect.stringMatching(/256K on Moderato.*up to 1M on Allegretto\+.*Low, High, or Max thinking/)
-      })
     ])
   })
 

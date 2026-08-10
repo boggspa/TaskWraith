@@ -2122,7 +2122,19 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-07-26b","kind":"addition","title":"New Additions","body":"The Pi seat arrives — one bring-your-own-key provider fronting DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, and Cerebras, each model wearing its own upstream brand. Mistral joins as a seat in its own right, running its Vibe coding agent on your Mistral plan. Claude Opus 5 brings near-Fable 5 intelligence at half the price with Fast mode, AntiGravity runs Gemini 3.x through your own Gemini API key, and Kimi K3 is available now.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-10","kind":"addition","title":"New Additions","body":"Muse Spark 1.2, local Ollama North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"muse","label":"Muse","models":[
+              {"name":"Muse Spark 1.2","blurb":"Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok."}
+            ]},
+            {"provider":"ollama","label":"Ollama","models":[
+              {"name":"North Mini Code 1.0","blurb":"Cohere's 500K agentic coder with tools and thinking — local, no cloud account.","accentProvider":"cohere"},
+              {"name":"GLM-4.7-Flash","blurb":"Z.ai 30B-A3B local reasoner with tools and thinking (~203K).","accentProvider":"zai"},
+              {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
+            ]},
+            {"provider":"mistral","label":"Mistral","models":[
+              {"name":"Devstral Small","blurb":"A fast, frugal 262K coding model — the better default for lane work."},
+              {"name":"Mistral Medium 3.5","blurb":"The 262K flagship, with its full thinking ladder, on your Mistral plan."}
+            ]},
             {"provider":"pi","label":"Pi","models":[
               {"name":"DeepSeek V4 Pro + Flash","blurb":"1M-context reasoning coders, billed on your own DeepSeek key.","accentProvider":"deepseek"},
               {"name":"Z.ai GLM-5.2","blurb":"The GLM coding-plan flagship — 1M context with thinking, plus 5.1 and 4.7.","accentProvider":"zai"},
@@ -2131,21 +2143,6 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Devstral 2512","blurb":"Mistral's 262K coding model, alongside Mistral Medium 3.5.","accentProvider":"mistral"},
               {"name":"GPT-OSS 120B (Groq)","blurb":"Open weights on Groq silicon for very fast passes; Qwen3 32B too.","accentProvider":"groq"},
               {"name":"GLM-4.7 (Cerebras)","blurb":"Open weights at Cerebras speed, with GPT-OSS 120B on the same key.","accentProvider":"cerebras"}
-            ]},
-            {"provider":"mistral","label":"Mistral","models":[
-              {"name":"Devstral Small","blurb":"A fast, frugal 262K coding model — the better default for lane work."},
-              {"name":"Mistral Medium 3.5","blurb":"The 262K flagship, with its full thinking ladder, on your Mistral plan."}
-            ]},
-            {"provider":"claude","label":"Claude","models":[
-              {"name":"Opus 5","blurb":"Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode."}
-            ]},
-            {"provider":"antigravity","label":"AntiGravity","models":[
-              {"name":"Gemini 3.6 Flash","blurb":"Google's newest production model for agentic coding and multimodal work — bring your own Gemini API key."},
-              {"name":"Gemini 3.5 Flash","blurb":"Sustained frontier performance for long-horizon agentic and coding tasks."},
-              {"name":"Gemini 3.5 Flash-Lite","blurb":"The fastest, lowest-cost 3.5 model for high-throughput subagents and structured extraction."}
-            ]},
-            {"provider":"kimi","label":"Kimi","models":[
-              {"name":"K3","blurb":"Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."}
             ]}
           ]}
          ],
