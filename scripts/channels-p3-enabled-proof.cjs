@@ -28,6 +28,10 @@ const ACCEPTANCE_COMMIT = '92ad1e98259a95377b78c689b586e5e9f8d120d0'
 const ENABLE_COMMIT = '191e5e37d6602f8a60e5cf280d416dc342b96492'
 const PACKAGE_PROVENANCE_COMMIT = 'e0d7d1be4e4e5af1ad0ab8e91ffe65cf26338828'
 const FLEET_WORKTREE_SOURCE_COMMIT = '7a2561c47519036e529308b93fbc425303b3c12a'
+const MUSE_PROVIDER_COMMIT = 'b8556ee603c0f8ac1f715a4ccbe985ba9450ca03'
+const MUSE_CHANNEL_REVIEW_COMMIT = 'a79bff720819fd4ae39888b0803c78c34ef741a6'
+const MUSE_SETTINGS_COMPLETENESS_COMMIT = '63d5985665a21c89c28cabd6bc37432e4ca9918e'
+const MUSE_DELTA_ACCEPTANCE_COMMIT = 'a092cfd83bf1ee6ea698c62343bd0c43e1c5f464'
 
 const PACKAGED_REQUIRED_MARKERS = {
   main: [
@@ -37,7 +41,8 @@ const PACKAGED_REQUIRED_MARKERS = {
     'docs/channels-p3-adversarial-review.md',
     'TaskWraith Channel agent turn envelope v',
     'Channel history is intentionally absent',
-    'channels:agent:grant'
+    'channels:agent:grant',
+    'muse-spark-1.2'
   ],
   preload: ['channels:agent:overview', 'channels:agent:grant', 'channels:agent:rotate'],
   renderer: [
@@ -101,7 +106,20 @@ const ENABLE_TRANSITION_FILES = [
 const POST_ACCEPTANCE_PROTECTED_PINS = new Map([
   ['src/shared/collaboration/ChannelAgentReviewGate.test.ts', PACKAGE_PROVENANCE_COMMIT],
   ['src/shared/collaboration/ChannelAgentReviewGate.ts', PACKAGE_PROVENANCE_COMMIT],
-  ['src/main/run/AgentRunTypes.ts', FLEET_WORKTREE_SOURCE_COMMIT]
+  ['src/main/run/AgentRunTypes.ts', FLEET_WORKTREE_SOURCE_COMMIT],
+  ['src/shared/collaboration/ChannelAgentIpc.ts', MUSE_PROVIDER_COMMIT],
+  ['src/main/services/ComposerService.ts', MUSE_PROVIDER_COMMIT],
+  ['src/main/collaboration/ChannelAgentDispatchJournalState.test.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentDispatchJournalState.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentNativeConfirmation.test.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentNativeConfirmation.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentRunComposer.test.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentRunEventCollector.test.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentRunEventCollector.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentSeatAuthority.test.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['src/main/collaboration/ChannelAgentSeatAuthority.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['scripts/channels-p3-enabled-proof-worker.ts', MUSE_CHANNEL_REVIEW_COMMIT],
+  ['docs/channels-p3-muse-delta-review.md', MUSE_DELTA_ACCEPTANCE_COMMIT]
 ])
 
 const PROTECTED_BLOB_PINS = new Map([
@@ -290,6 +308,10 @@ function verifyProtectedBoundary(candidateCommit) {
     enableCommit: ENABLE_COMMIT,
     packageProvenanceCommit: PACKAGE_PROVENANCE_COMMIT,
     fleetWorktreeSourceCommit: FLEET_WORKTREE_SOURCE_COMMIT,
+    museProviderCommit: MUSE_PROVIDER_COMMIT,
+    museChannelReviewCommit: MUSE_CHANNEL_REVIEW_COMMIT,
+    museSettingsCompletenessCommit: MUSE_SETTINGS_COMPLETENESS_COMMIT,
+    museDeltaAcceptanceCommit: MUSE_DELTA_ACCEPTANCE_COMMIT,
     changedFileCount: changedFiles.length,
     changedFilesSha256: sha256(changedFiles.sort().join('\n')),
     pinnedEnableFileCount: ENABLE_TRANSITION_FILES.length,
@@ -500,7 +522,11 @@ async function main() {
         acceptanceCommit: ACCEPTANCE_COMMIT,
         enableCommit: ENABLE_COMMIT,
         packageProvenanceCommit: PACKAGE_PROVENANCE_COMMIT,
-        fleetWorktreeSourceCommit: FLEET_WORKTREE_SOURCE_COMMIT
+        fleetWorktreeSourceCommit: FLEET_WORKTREE_SOURCE_COMMIT,
+        museProviderCommit: MUSE_PROVIDER_COMMIT,
+        museChannelReviewCommit: MUSE_CHANNEL_REVIEW_COMMIT,
+        museSettingsCompletenessCommit: MUSE_SETTINGS_COMPLETENESS_COMMIT,
+        museDeltaAcceptanceCommit: MUSE_DELTA_ACCEPTANCE_COMMIT
       },
       boundaryAudit,
       packageSurface,
@@ -533,6 +559,10 @@ module.exports = {
   ACCEPTED_CANDIDATE,
   ENABLE_COMMIT,
   FLEET_WORKTREE_SOURCE_COMMIT,
+  MUSE_CHANNEL_REVIEW_COMMIT,
+  MUSE_DELTA_ACCEPTANCE_COMMIT,
+  MUSE_PROVIDER_COMMIT,
+  MUSE_SETTINGS_COMPLETENESS_COMMIT,
   PACKAGED_FORBIDDEN_MARKERS,
   PACKAGED_REQUIRED_MARKERS,
   PACKAGE_PROVENANCE_COMMIT,

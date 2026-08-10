@@ -11,6 +11,10 @@ interface EnabledProofModule {
   ACCEPTED_CANDIDATE: string
   ENABLE_COMMIT: string
   FLEET_WORKTREE_SOURCE_COMMIT: string
+  MUSE_CHANNEL_REVIEW_COMMIT: string
+  MUSE_DELTA_ACCEPTANCE_COMMIT: string
+  MUSE_PROVIDER_COMMIT: string
+  MUSE_SETTINGS_COMPLETENESS_COMMIT: string
   PACKAGED_FORBIDDEN_MARKERS: Record<string, string[]>
   PACKAGED_REQUIRED_MARKERS: Record<string, string[]>
   PACKAGE_PROVENANCE_COMMIT: string
@@ -77,6 +81,7 @@ describe('Channels P3 enabled proof harness', () => {
     )
     const accepted = proof.verifyPackagedGroups(groups)
     expect(accepted.main.requiredMarkerCount).toBeGreaterThan(5)
+    expect(proof.PACKAGED_REQUIRED_MARKERS.main).toContain('muse-spark-1.2')
     expect(accepted.renderer.requiredMarkerCount).toBe(3)
     expect(accepted.preload.forbiddenMarkerCount).toBeGreaterThan(0)
     expect(accepted.preload.forbiddenMarkersSha256).toMatch(/^[a-f0-9]{64}$/)
@@ -96,9 +101,13 @@ describe('Channels P3 enabled proof harness', () => {
         'src/shared/collaboration/ChannelAgentReviewGate.ts',
         'src/renderer/src/components/ChannelHostPanel.tsx',
         'src/main/run/AgentRunTypes.ts',
+        'src/shared/collaboration/ChannelAgentIpc.ts',
+        'src/main/collaboration/ChannelAgentSeatAuthority.ts',
+        'src/main/services/ComposerService.ts',
+        'docs/channels-p3-muse-delta-review.md',
         'src/main/SubThreadEphemeralFleet.ts'
       ])
-    ).toMatchObject({ protectedChangeCount: 3 })
+    ).toMatchObject({ protectedChangeCount: 7 })
 
     expect(() =>
       proof.verifyProtectedChanges(['src/shared/collaboration/ChannelAgentProtocol.ts'])
@@ -154,6 +163,10 @@ describe('Channels P3 enabled proof harness', () => {
     expect(proof.ENABLE_COMMIT).toBe('191e5e37d6602f8a60e5cf280d416dc342b96492')
     expect(proof.PACKAGE_PROVENANCE_COMMIT).toBe('e0d7d1be4e4e5af1ad0ab8e91ffe65cf26338828')
     expect(proof.FLEET_WORKTREE_SOURCE_COMMIT).toBe('7a2561c47519036e529308b93fbc425303b3c12a')
+    expect(proof.MUSE_PROVIDER_COMMIT).toBe('b8556ee603c0f8ac1f715a4ccbe985ba9450ca03')
+    expect(proof.MUSE_CHANNEL_REVIEW_COMMIT).toBe('a79bff720819fd4ae39888b0803c78c34ef741a6')
+    expect(proof.MUSE_SETTINGS_COMPLETENESS_COMMIT).toBe('63d5985665a21c89c28cabd6bc37432e4ca9918e')
+    expect(proof.MUSE_DELTA_ACCEPTANCE_COMMIT).toBe('a092cfd83bf1ee6ea698c62343bd0c43e1c5f464')
   })
 
   it('runs one real production dispatch and verifies its signed post after restart', () => {
