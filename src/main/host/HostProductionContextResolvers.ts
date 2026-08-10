@@ -16,6 +16,12 @@
 import type { BridgeRosterParticipant } from '../BridgeActionPayload'
 import type { HostDecodeResult } from '../../shared/hostProtocol'
 import { HOST_PROTOCOL_MAX_ID } from '../../shared/hostProtocol'
+import type { TaskWraithControlThreadOffers } from '../../shared/taskWraithControlProtocol'
+import {
+  resolveTaskWraithThreadOffers,
+  validateTaskWraithThreadSelection,
+  type TaskWraithThreadSelection
+} from '../control/TaskWraithThreadOffers'
 import type {
   HostBridgeApprovalContext,
   HostBridgeComposerSendContext,
@@ -104,6 +110,7 @@ type RequiredContext =
   | HostBridgeQuestionContext
   | HostBridgeEnsembleSeatContext
   | HostBridgeThreadSelectContext
+  | TaskWraithControlThreadOffers
 
 const TERMINAL_RUN_STATUSES = new Set([
   'completed',
@@ -299,8 +306,34 @@ export function createHostProductionContextResolvers(
     throw new Error('HostProductionContextResolvers requires getQuestion')
   }
 
+  const offersForChat = (
+    threadId: string,
+    chat: HostProductionResolverChat
+  ): HostDecodeResult<TaskWraithControlThreadOffers> => {
+    const provider = providerForChat(chat)
+    if (!provider) return { ok: false, error: 'Thread has no canonical provider.' }
+    const currentModel = modelForChat(chat)
+    const currentReasoningEffort = reasoningForProvider(provider, chat)
+    return ok(
+      resolveTaskWraithThreadOffers({
+        threadId,
+        provider,
+        ...(currentModel ? { currentModel } : {}),
+        ...(currentReasoningEffort ? { currentReasoningEffort } : {}),
+        ensemble: isEnsemble(chat),
+        archived: chat.archived === true
+      })
+    )
+  }
+
   return {
-    async resolveComposerSend(threadId) {
+    async resolveThreadOffers(threadId: string) {
+      const resolved = readChat(deps.getChat, threadId)
+      if (!resolved.ok) return fail<TaskWraithControlThreadOffers>(resolved.error)
+      return offersForChat(threadId, resolved.value)
+    },
+
+    async resolveComposerSend(threadId, selection?: TaskWraithThreadSelection) {
       const resolved = readChat(deps.getChat, threadId)
       if (!resolved.ok) return fail<HostBridgeComposerSendContext>(resolved.error)
       const chat = resolved.value
@@ -311,6 +344,12 @@ export function createHostProductionContextResolvers(
       if (!workspace.ok) return fail<HostBridgeComposerSendContext>(workspace.error)
 
       if (isEnsemble(chat)) {
+        if (selection?.model || selection?.reasoningEffort) {
+          const offers = offersForChat(threadId, chat)
+          if (!offers.ok) return fail<HostBridgeComposerSendContext>(offers.error)
+          const validated = validateTaskWraithThreadSelection(offers.value, selection)
+          if (!validated.ok) return fail<HostBridgeComposerSendContext>(validated.error)
+        }
         const round = liveRound(chat)
         return ok<HostBridgeComposerSendContext>({
           mode: 'ensemble',
@@ -326,14 +365,30 @@ export function createHostProductionContextResolvers(
       const approvalMode = approvalModeForChat(chat)
       const defaultModel = modelForChat(chat)
       const defaultReasoningEffort = reasoningForProvider(provider, chat)
+      let selected: TaskWraithThreadSelection = {}
+      if (selection?.model || selection?.reasoningEffort) {
+        const offers = offersForChat(threadId, chat)
+        if (!offers.ok) return fail<HostBridgeComposerSendContext>(offers.error)
+        const validated = validateTaskWraithThreadSelection(offers.value, selection)
+        if (!validated.ok) return fail<HostBridgeComposerSendContext>(validated.error)
+        selected = validated.value
+      }
       return ok<HostBridgeComposerSendContext>({
         mode: 'solo',
         workspaceId: workspace.value,
         provider,
         ...(approvalMode ? { approvalMode } : {}),
         ...(chat.workflowMode ? { workflowMode: chat.workflowMode } : {}),
-        ...(defaultModel ? { defaultModel } : {}),
-        ...(defaultReasoningEffort ? { defaultReasoningEffort } : {})
+        ...(selected.model
+          ? { model: selected.model }
+          : defaultModel
+            ? { model: defaultModel }
+            : {}),
+        ...(selected.reasoningEffort
+          ? { reasoningEffort: selected.reasoningEffort }
+          : defaultReasoningEffort
+            ? { reasoningEffort: defaultReasoningEffort }
+            : {})
       })
     },
 

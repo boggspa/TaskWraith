@@ -24,7 +24,6 @@ import type {
 } from '../store/types'
 import type {
   TaskWraithControlEnsembleSummary,
-  TaskWraithControlModelOffer,
   TaskWraithControlParticipant,
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
@@ -40,9 +39,11 @@ import {
   resolveTaskWraithProviderPresentation,
   taskWraithProviderLabel
 } from '../../shared/taskWraithProviderPresentation'
-import { isLiveSelectableProvider } from '../../shared/retiredProviders'
-import { getStaticProviderModels } from '../providers/StaticProviderModels'
 import { LocalControlServer, type LocalControlServerOptions } from './LocalControlServer'
+import {
+  resolveTaskWraithThreadOffers,
+  validateTaskWraithThreadSelection
+} from './TaskWraithThreadOffers'
 
 export interface TaskWraithControlFacadeOptions {
   executeComposerPrompt: (
@@ -77,12 +78,6 @@ function nonEmptyString(...values: unknown[]): string | undefined {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return undefined
-}
-
-function normalizeProviderModelKey(model?: string | null): string {
-  return String(model || '')
-    .trim()
-    .toLowerCase()
 }
 
 function latestRun(chat: Pick<ChatRecord, 'runs'>): ChatRun | undefined {
@@ -473,74 +468,6 @@ function workspaceAccessForChat(chat: ChatRecord): 'read' | 'write' {
   return permission.includes('read') || permission === 'plan' ? 'read' : 'write'
 }
 
-/** Bounded projection caps so a worst-case offers frame stays far inside the
- * local-control line limit. */
-const TUI_MODEL_OFFER_LIMIT = 40
-const TUI_REASONING_OFFER_LIMIT = 12
-
-interface CuratedModelOption {
-  id: string
-  label?: string
-  isDefault?: boolean
-  disabled?: boolean
-  disabledReason?: string
-  retiresAt?: string
-  supportedReasoningEfforts?: Array<{
-    reasoningEffort: string
-    disabled?: boolean
-    disabledReason?: string
-  }>
-  defaultReasoningEffort?: string | null
-}
-
-/**
- * The curated picker rows for one provider, or a locked reason. Only rows from
- * the main-owned static catalogue that also hydrates the App are ever offered;
- * machine-dependent catalogues (Ollama installs, Pi upstream keys) stay
- * App-side rather than offering models that would fail at dispatch.
- */
-function curatedRowsForProvider(provider: string): CuratedModelOption[] | { locked: string } {
-  if (!isLiveSelectableProvider(provider)) {
-    return { locked: 'This provider cannot be switched here — manage it in the App.' }
-  }
-  switch (provider) {
-    case 'codex':
-    case 'claude':
-    case 'kimi':
-    case 'grok':
-    case 'cursor':
-    case 'mistral':
-      return getStaticProviderModels(provider) as CuratedModelOption[]
-    case 'ollama':
-      return { locked: 'Ollama models follow the local install — pick them in the App.' }
-    case 'pi':
-      return { locked: 'Pi upstream models follow your configured keys — pick them in the App.' }
-    default:
-      return { locked: 'This provider has no terminal picker yet — use the App.' }
-  }
-}
-
-function offerFromRow(row: CuratedModelOption, currentKey: string): TaskWraithControlModelOffer {
-  return {
-    id: row.id,
-    ...(row.label ? { label: row.label } : {}),
-    ...(row.isDefault ? { isDefault: true } : {}),
-    ...(currentKey && normalizeProviderModelKey(row.id) === currentKey ? { current: true } : {}),
-    ...(row.disabled ? { disabled: true } : {}),
-    ...(row.disabledReason ? { disabledReason: row.disabledReason } : {}),
-    ...(row.retiresAt ? { retiresAt: row.retiresAt } : {}),
-    reasoningEfforts: (row.supportedReasoningEfforts ?? [])
-      .slice(0, TUI_REASONING_OFFER_LIMIT)
-      .map((effort) => ({
-        id: effort.reasoningEffort,
-        ...(row.defaultReasoningEffort === effort.reasoningEffort ? { isDefault: true } : {}),
-        ...(effort.disabled ? { disabled: true } : {}),
-        ...(effort.disabledReason ? { disabledReason: effort.disabledReason } : {})
-      })),
-    ...(row.defaultReasoningEffort ? { defaultReasoningEffort: row.defaultReasoningEffort } : {})
-  }
-}
-
 export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOptions) {
   const now = options.now ?? (() => Date.now())
   let sequence = 0
@@ -619,39 +546,14 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
       chat,
       participantForActiveRound(chat)
     )
-    const base: TaskWraithControlThreadOffers = {
+    return resolveTaskWraithThreadOffers({
       threadId,
-      provider: presentation,
+      provider: presentation.runtimeProvider,
       ...(currentModel ? { currentModel } : {}),
       ...(currentReasoning ? { currentReasoningEffort: currentReasoning } : {}),
-      models: [],
-      source: 'curated'
-    }
-    if (chat.chatKind === 'ensemble' || chat.ensemble?.enabled) {
-      return {
-        ...base,
-        locked: 'Ensemble seats carry their own models — edit the roster in the App.'
-      }
-    }
-    if (chat.archived) {
-      return { ...base, locked: 'Archived threads cannot switch models.' }
-    }
-    const rows = curatedRowsForProvider(presentation.runtimeProvider)
-    if (!Array.isArray(rows)) return { ...base, locked: rows.locked }
-    const currentKey = normalizeProviderModelKey(currentModel)
-    const models = rows.slice(0, TUI_MODEL_OFFER_LIMIT).map((row) => offerFromRow(row, currentKey))
-    if (currentModel && !models.some((model) => model.current)) {
-      // The thread runs a model outside the curated rows (live-catalogue pick
-      // made in the App). Keep it selectable so "stay on the current model"
-      // is always expressible, with only its known current effort attached.
-      models.unshift({
-        id: currentModel,
-        ...(presentation.modelLabel ? { label: presentation.modelLabel } : {}),
-        current: true,
-        reasoningEfforts: currentReasoning ? [{ id: currentReasoning, isDefault: true }] : []
-      })
-    }
-    return { ...base, models }
+      ensemble: chat.chatKind === 'ensemble' || chat.ensemble?.enabled === true,
+      archived: chat.archived === true
+    })
   }
 
   const sendPrompt = async (
@@ -693,22 +595,10 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
     let overrideEffort: string | undefined
     if (selection?.model || selection?.reasoningEffort) {
       const offers = threadOffers(threadId)
-      if (offers.locked) throw new Error(offers.locked)
-      const wantedModel = selection.model ?? offers.currentModel
-      const offer = offers.models.find(
-        (candidate) => candidate.id === wantedModel && !candidate.disabled
-      )
-      if (!offer) throw new Error('That model is not offered for this thread.')
-      overrideModel = offer.id
-      if (selection.reasoningEffort) {
-        const effort = offer.reasoningEfforts.find(
-          (candidate) => candidate.id === selection.reasoningEffort && !candidate.disabled
-        )
-        if (!effort) {
-          throw new Error('That reasoning effort is not offered for the selected model.')
-        }
-        overrideEffort = effort.id
-      }
+      const validated = validateTaskWraithThreadSelection(offers, selection)
+      if (!validated.ok) throw new Error(validated.error)
+      overrideModel = validated.value.model
+      overrideEffort = validated.value.reasoningEffort
     }
     const metadata = record(chat.providerMetadata)
     const defaultModel = modelForChat(chat)

@@ -102,9 +102,62 @@ describe('createHostProductionContextResolvers', () => {
         provider: 'claude',
         approvalMode: 'on-request',
         workflowMode: 'plan',
-        defaultModel: 'claude-sonnet-4-7',
-        defaultReasoningEffort: 'high'
+        model: 'claude-sonnet-4-7',
+        reasoningEffort: 'high'
       }
+    })
+  })
+
+  it('projects canonical offers and rejects any composer nomination outside them', async () => {
+    const { resolvers } = open({
+      chats: [
+        chat({
+          provider: 'codex',
+          requestedModel: 'gpt-5.6-sol',
+          providerMetadata: { codexReasoningEffort: 'high' }
+        })
+      ]
+    })
+
+    const offers = await resolvers.resolveThreadOffers('thread-1')
+    expect(offers).toMatchObject({
+      ok: true,
+      value: {
+        threadId: 'thread-1',
+        currentModel: 'gpt-5.6-sol',
+        currentReasoningEffort: 'high',
+        source: 'curated'
+      }
+    })
+    if (!offers.ok) return
+    const alternative = offers.value.models.find(
+      (model) => model.id !== 'gpt-5.6-sol' && !model.disabled
+    )!
+    const effort = alternative.reasoningEfforts.find((candidate) => !candidate.disabled)!
+
+    await expect(
+      resolvers.resolveComposerSend('thread-1', {
+        model: alternative.id,
+        reasoningEffort: effort.id
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { model: alternative.id, reasoningEffort: effort.id }
+    })
+    await expect(
+      resolvers.resolveComposerSend('thread-1', { model: 'claude-opus-5' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'That model is not offered for this thread.'
+    })
+    await expect(
+      resolvers.resolveComposerSend('thread-1', {
+        model: alternative.id,
+        reasoningEffort: 'invented-effort'
+      })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'That reasoning effort is not offered for the selected model.'
     })
   })
 

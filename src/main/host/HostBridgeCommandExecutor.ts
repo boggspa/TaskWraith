@@ -36,6 +36,7 @@ import type {
 } from '../BridgeActionPayload'
 import type { BridgeActionExecutionResult, BridgeActionExecutor } from '../BridgeActionExecutor'
 import type { HostActorIdentity, HostCommand, HostDecodeResult } from '../../shared/hostProtocol'
+import type { TaskWraithControlThreadOffers } from '../../shared/taskWraithControlProtocol'
 import {
   HOST_APPROVAL_DECIDE_DECISIONS,
   HOST_PROTOCOL_MAX_ID,
@@ -79,8 +80,9 @@ export type HostBridgeComposerSendContext =
       readonly provider: string
       readonly approvalMode?: string
       readonly workflowMode?: 'normal' | 'plan'
-      readonly defaultModel?: string
-      readonly defaultReasoningEffort?: string
+      /** Final Host-resolved values. Never copied directly from command args. */
+      readonly model?: string
+      readonly reasoningEffort?: string
     }
   | {
       readonly mode: 'ensemble'
@@ -136,8 +138,14 @@ export type HostBridgeThreadSelectContext = {
  * prose, Bridge result bodies, or client assertions.
  */
 export interface HostBridgeContextResolvers {
-  resolveComposerSend(
+  resolveThreadOffers(
     threadId: string
+  ):
+    | HostDecodeResult<TaskWraithControlThreadOffers>
+    | Promise<HostDecodeResult<TaskWraithControlThreadOffers>>
+  resolveComposerSend(
+    threadId: string,
+    selection?: { readonly model?: string; readonly reasoningEffort?: string }
   ):
     | HostDecodeResult<HostBridgeComposerSendContext>
     | Promise<HostDecodeResult<HostBridgeComposerSendContext>>
@@ -283,6 +291,7 @@ export class HostBridgeCommandExecutor {
     const resolvers = options.resolvers
     if (
       !resolvers ||
+      typeof resolvers.resolveThreadOffers !== 'function' ||
       typeof resolvers.resolveComposerSend !== 'function' ||
       typeof resolvers.resolveRunCancel !== 'function' ||
       typeof resolvers.resolveApprovalDecide !== 'function' ||
@@ -388,7 +397,13 @@ export class HostBridgeCommandExecutor {
     if (!threadId)
       return failResult('invalid_command_arguments', 'composer.send target.threadId required')
 
-    const resolved = await this.resolvers.resolveComposerSend(threadId)
+    const selection = {
+      ...(typeof command.arguments.model === 'string' ? { model: command.arguments.model } : {}),
+      ...(typeof command.arguments.reasoningEffort === 'string'
+        ? { reasoningEffort: command.arguments.reasoningEffort }
+        : {})
+    }
+    const resolved = await this.resolvers.resolveComposerSend(threadId, selection)
     if (!resolved.ok) {
       return failResult('context_resolve_failed', resolved.error)
     }
@@ -409,13 +424,6 @@ export class HostBridgeCommandExecutor {
       return mapBridgeExecutionResult(await this.bridge.executeEnsembleSteer(action))
     }
 
-    const model =
-      typeof command.arguments.model === 'string' ? command.arguments.model : ctx.defaultModel
-    const reasoningEffort =
-      typeof command.arguments.reasoningEffort === 'string'
-        ? command.arguments.reasoningEffort
-        : ctx.defaultReasoningEffort
-
     const action: BridgeComposerPromptAction = {
       kind: 'composerPrompt',
       ...meta,
@@ -425,8 +433,8 @@ export class HostBridgeCommandExecutor {
       provider: ctx.provider,
       ...(ctx.approvalMode ? { approvalMode: ctx.approvalMode } : {}),
       ...(ctx.workflowMode ? { workflowMode: ctx.workflowMode } : {}),
-      ...(model ? { model } : {}),
-      ...(reasoningEffort ? { reasoningEffort } : {})
+      ...(ctx.model ? { model: ctx.model } : {}),
+      ...(ctx.reasoningEffort ? { reasoningEffort: ctx.reasoningEffort } : {})
     }
     return mapBridgeExecutionResult(await this.bridge.executeComposerPrompt(action))
   }

@@ -104,6 +104,9 @@ function makeResolvers(
   overrides: Partial<HostBridgeContextResolvers> = {}
 ): HostBridgeContextResolvers {
   return {
+    resolveThreadOffers: overrides.resolveThreadOffers
+      ? overrides.resolveThreadOffers
+      : () => err('unused in executor tests'),
     resolveComposerSend: overrides.resolveComposerSend
       ? overrides.resolveComposerSend
       : (): HostDecodeResult<HostBridgeComposerSendContext> =>
@@ -111,8 +114,8 @@ function makeResolvers(
             mode: 'solo',
             workspaceId: 'ws-1',
             provider: 'codex',
-            defaultModel: 'gpt-5.6',
-            defaultReasoningEffort: 'high'
+            model: 'gpt-5.6',
+            reasoningEffort: 'high'
           }),
     resolveRunCancel: overrides.resolveRunCancel
       ? overrides.resolveRunCancel
@@ -311,8 +314,21 @@ describe('argument validation gates Bridge', () => {
 })
 
 describe('composer.send', () => {
-  it('maps solo context to executeComposerPrompt with host-resolved provider', async () => {
-    const { executor, bridge } = open()
+  it('uses only Host-resolved model fields and never copies raw command nominations', async () => {
+    const resolveComposerSend = vi.fn(
+      (
+        _threadId: string,
+        _selection?: { readonly model?: string; readonly reasoningEffort?: string }
+      ) =>
+        ok<HostBridgeComposerSendContext>({
+          mode: 'solo',
+          workspaceId: 'ws-1',
+          provider: 'codex',
+          model: 'gpt-5.6-sol',
+          reasoningEffort: 'xhigh'
+        })
+    )
+    const { executor, bridge } = open({}, { resolveComposerSend })
     const result = await executor.execute(
       command(
         'composer.send',
@@ -332,9 +348,13 @@ describe('composer.send', () => {
       threadId: 'thread-1',
       text: 'hello',
       provider: 'codex',
-      model: 'gpt-custom',
-      reasoningEffort: 'medium',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'xhigh',
       actionId: EXPECTED_ACTION_ID
+    })
+    expect(resolveComposerSend).toHaveBeenCalledWith('thread-1', {
+      model: 'gpt-custom',
+      reasoningEffort: 'medium'
     })
   })
 
