@@ -473,6 +473,7 @@ function providerDisplayName(provider: unknown, fallback = 'Sub-thread'): string
   if (provider === 'antigravity') return 'AntiGravity'
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
+  if (provider === 'muse') return 'Muse'
   return fallback
 }
 
@@ -1125,6 +1126,11 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // context-blind turn that *looks* resumed. If the lane ever adopts
   // session/load, this becomes conditional and this comment must change with it.
   const mistralNeedsContextInjection = provider === 'mistral'
+  // Muse opaque `muse exec --json` opens a fresh isolated home + UUID session
+  // each turn. Native Muse session files are not resumed across TaskWraith
+  // turns, so the host must re-inject compact conversation context — same
+  // class as Cursor Path-B / Mistral Vibe ACP.
+  const museNeedsContextInjection = provider === 'muse'
   const geminiNeedsContextInjection = provider === 'gemini' && !resumeSessionId
   const codexNeedsContextInjection =
     provider === 'codex' && !resumeSessionId && !codexModelChangedAfterWork
@@ -1151,6 +1157,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     grokNeedsContextInjection ||
     cursorNeedsContextInjection ||
     mistralNeedsContextInjection ||
+    museNeedsContextInjection ||
     geminiNeedsContextInjection ||
     codexNeedsContextInjection ||
     claudeNeedsContextInjection ||
@@ -1201,6 +1208,8 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
           ? `Context turns: ${contextTurnsApplied} (Cursor: appending compact conversation context because Path-B opens a fresh contained process each turn)`
           : mistralNeedsContextInjection
             ? `Context turns: ${contextTurnsApplied} (Mistral: appending compact conversation context because the Vibe ACP lane opens a fresh session each turn)`
+            : museNeedsContextInjection
+              ? `Context turns: ${contextTurnsApplied} (Muse: appending compact conversation context because opaque muse exec opens a fresh session each turn)`
             : codexNeedsContextInjection
               ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
               : provider === 'ollama' && ollamaPromptIntent !== 'workspace'

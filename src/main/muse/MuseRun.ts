@@ -15,6 +15,7 @@ import {
   buildMuseExecArgv,
   museWriteCapable,
   normalizeMuseReasoningEffort,
+  resolveMuseExecSessionId,
   type MuseReasoningEffort
 } from './MuseCliArgs'
 import { assertMuseCronJobsEmpty, type MuseCronAssertResult } from './MuseCronAssert'
@@ -162,8 +163,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const workspacePath = requireNonEmpty(input.workspacePath, 'workspacePath')
   const runId = requireNonEmpty(input.runId, 'runId')
   const temporaryRoot = requireNonEmpty(input.temporaryRoot, 'temporaryRoot')
-  const sessionId =
-    typeof input.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : runId
+  const sessionId = resolveMuseExecSessionId(input.sessionId)
   const writeCapable = museWriteCapable(input.approvalMode)
   const effort = normalizeMuseReasoningEffort(input.reasoningEffort)
   const apiKeyStdin = Boolean(input.apiKey && input.apiKey.length > 0)

@@ -49,6 +49,26 @@ export type MuseSandboxNetworkMode = 'restricted' | 'enabled' | 'proxy-only'
 
 export const MUSE_DEFAULT_SANDBOX_NETWORK: MuseSandboxNetworkMode = 'proxy-only'
 
+import { randomUUID } from 'node:crypto'
+
+/** Muse `--session-id` must be a UUID; TaskWraith appRunIds are not. */
+const MUSE_SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isMuseSessionUuid(value: string | null | undefined): boolean {
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  return trimmed.length > 0 && MUSE_SESSION_UUID_RE.test(trimmed)
+}
+
+/** Prefer a resumable Muse UUID; never fall back to TaskWraith appRunId. */
+export function resolveMuseExecSessionId(
+  providerSessionId: string | null | undefined,
+  createSessionId: () => string = randomUUID
+): string {
+  if (isMuseSessionUuid(providerSessionId)) return String(providerSessionId).trim()
+  return createSessionId()
+}
+
 export const MUSE_DEFAULT_REASONING_EFFORT: MuseReasoningEffort = 'high'
 
 export interface MuseSeatHomes {
@@ -154,6 +174,11 @@ export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
   }
   if (!sessionId) {
     throw new Error('buildMuseExecArgv requires a non-empty sessionId')
+  }
+  if (!isMuseSessionUuid(sessionId)) {
+    throw new Error(
+      `buildMuseExecArgv requires a UUID --session-id (got ${JSON.stringify(sessionId)}; Muse rejects TaskWraith appRunId-shaped ids)`
+    )
   }
 
   const args: string[] = [

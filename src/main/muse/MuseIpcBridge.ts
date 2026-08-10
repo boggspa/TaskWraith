@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
+import { resolveMuseExecSessionId } from './MuseCliArgs'
 import {
   isMuseCredentialPresent,
   parseMuseAuthJsonCredential,
@@ -81,6 +82,20 @@ export interface MuseIpcBridgeDeps {
 
 const MUSE_LOGIN_HINT =
   'Muse is not signed in. Run `muse login` (Settings → Providers → Muse → Open Terminal), or set META_API_KEY.'
+
+function formatMuseFailureResultText(outcome: MuseRunOutcome): string | undefined {
+  const warnings = Array.isArray(outcome.warnings)
+    ? outcome.warnings.map((w) => String(w || '').trim()).filter(Boolean)
+    : []
+  if (warnings.length === 0) return undefined
+  return warnings
+    .map((w) => w.replace(/^muse stderr:\s*/i, '').trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** Re-export for composition-root / adapter callers. */
+export { resolveMuseExecSessionId } from './MuseCliArgs'
 
 /** Default path written by interactive `muse login`. */
 export function defaultMuseAuthJsonPath(
@@ -298,13 +313,14 @@ export async function runMuseProviderFromIpc(
   const run = deps.runMuseProvider ?? runMuseProvider
   let emittedTerminalResult = false
   const startedAt = deps.now?.() ?? Date.now()
+  const museSessionId = resolveMuseExecSessionId(payload.providerSessionId)
 
   try {
     deps.sendCompatLine(
       event.sender,
       {
         type: 'init',
-        session_id: payload.providerSessionId || runId,
+        session_id: museSessionId,
         model: payload.model || undefined,
         provider: 'muse',
         timestamp: new Date().toISOString()
@@ -318,10 +334,7 @@ export async function runMuseProviderFromIpc(
       prompt,
       runId,
       temporaryRoot: deps.getTemporaryRoot(),
-      sessionId:
-        typeof payload.providerSessionId === 'string' && payload.providerSessionId.trim()
-          ? payload.providerSessionId.trim()
-          : runId,
+      sessionId: museSessionId,
       model: payload.model,
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
@@ -338,6 +351,7 @@ export async function runMuseProviderFromIpc(
 
     if (!emittedTerminalResult) {
       const failed = outcome.status !== 'success'
+      const failureText = failed ? formatMuseFailureResultText(outcome) : undefined
       deps.sendCompatLine(
         event.sender,
         {
@@ -345,6 +359,7 @@ export async function runMuseProviderFromIpc(
           status: outcome.status === 'cancelled' ? 'cancelled' : failed ? 'failed' : 'success',
           subtype: failed ? 'error' : 'success',
           provider: 'muse',
+          ...(failureText ? { result: failureText } : {}),
           stats: {
             ...(outcome.providerStats || {}),
             duration_ms: Date.now() - startedAt

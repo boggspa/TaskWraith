@@ -93,7 +93,7 @@ describe('runMuseProvider', () => {
   it('leases home with skill pin, builds safe argv, pumps stdout, meters jsonl, asserts cron', async () => {
     const temporaryRoot = tempDir('muse-run-')
     const workspacePath = tempDir('muse-ws-')
-    const sessionId = 'sess-run-1'
+    const sessionId = '11111111-1111-1111-1111-111111111111'
     const runId = 'run-abc'
     const sessionLogPath = join(temporaryRoot, 'session.jsonl')
     writeFileSync(sessionLogPath, `${usageSessionLine(1, runId, sessionId)}\n`, 'utf8')
@@ -219,7 +219,7 @@ describe('runMuseProvider', () => {
     const argv = buildMuseExecArgv({
       prompt: 'x',
       workspace: workspacePath,
-      sessionId: 's',
+      sessionId: '22222222-2222-2222-2222-222222222222',
       readOnlySeat: true
     })
     expect(argv).not.toContain('--yolo')

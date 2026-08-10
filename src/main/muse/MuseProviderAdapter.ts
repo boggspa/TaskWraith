@@ -15,6 +15,7 @@ import {
   createMuseOrchestrationStubs,
   type MuseOrchestrationModules
 } from './MuseOrchestrationContracts'
+import { resolveMuseExecSessionId } from './MuseCliArgs'
 import {
   MUSE_FORBIDDEN_ARGV_FLAGS,
   MUSE_METERING_EXCLUSIVE_ARGV_FLAGS,
@@ -503,7 +504,7 @@ export function createMuseProviderAdapter<TPayload extends MuseAdapterRunPayload
           prompt: payload.prompt,
           runId,
           temporaryRoot: deps.temporaryRoot,
-          sessionId: payload.providerSessionId ?? deps.createSessionId?.() ?? runId,
+          sessionId: resolveMuseExecSessionId(payload.providerSessionId),
           model: payload.model,
           reasoningEffort: payload.reasoningEffort,
           approvalMode: payload.approvalMode,

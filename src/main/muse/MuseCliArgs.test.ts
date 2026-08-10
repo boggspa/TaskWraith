@@ -12,6 +12,7 @@ import {
   MUSE_TOOL_SURFACE_VERSION_PIN,
   buildMuseExecArgv,
   buildMuseSeatEnv,
+  isMuseSessionUuid,
   museMetaApiKeyScrubbed,
   museWriteCapable,
   normalizeMuseReasoningEffort
@@ -217,6 +218,14 @@ describe('buildMuseExecArgv', () => {
   it('rejects empty workspace or sessionId', () => {
     expect(() => buildMuseExecArgv({ ...base, workspace: '  ' })).toThrow(/workspace/)
     expect(() => buildMuseExecArgv({ ...base, sessionId: '' })).toThrow(/sessionId/)
+  })
+
+  it('rejects TaskWraith appRunId-shaped session ids (Muse requires a UUID)', () => {
+    expect(isMuseSessionUuid('1786386574521-0o0k5nn6qpef')).toBe(false)
+    expect(isMuseSessionUuid(base.sessionId)).toBe(true)
+    expect(() => buildMuseExecArgv({ ...base, sessionId: '1786386574521-0o0k5nn6qpef' })).toThrow(
+      /UUID|session-id|sessionId/i
+    )
   })
 })
 

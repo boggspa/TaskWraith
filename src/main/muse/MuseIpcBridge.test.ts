@@ -198,6 +198,79 @@ describe('runMuseProviderFromIpc', () => {
     ).rejects.toThrow(/appRunId|run id/i)
   })
 
+  it('mints a UUID --session-id instead of using TaskWraith appRunId', async () => {
+    // Regression: Muse CLI rejects non-UUID --session-id with exit 2 and empty
+    // JSONL (~100ms). Bridge used to pass createAppRunId()-shaped appRunId.
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const appRunId = `${Date.now()}-0o0k5nn6qpef`
+
+    await runMuseProviderFromIpc(event, basePayload({ appRunId, providerSessionId: null }), {
+      ...baseDeps({
+        readAuthJsonText: async () =>
+          JSON.stringify({ providers: { meta: { api_key: 'meta-secret' } } }),
+        runMuseProvider
+      })
+    })
+
+    expect(runMuseProvider).toHaveBeenCalledOnce()
+    const input = runMuseProvider.mock.calls[0]?.[0] as { sessionId?: string; runId?: string }
+    expect(input.runId).toBe(appRunId)
+    expect(input.sessionId).not.toBe(appRunId)
+    expect(input.sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    )
+  })
+
+  it('reuses a UUID providerSessionId when one is already present', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const sessionId = '123e4567-e89b-12d3-a456-426614174000'
+
+    await runMuseProviderFromIpc(event, basePayload({ providerSessionId: sessionId }), {
+      ...baseDeps({
+        readAuthJsonText: async () =>
+          JSON.stringify({ providers: { meta: { api_key: 'meta-secret' } } }),
+        runMuseProvider
+      })
+    })
+
+    expect(runMuseProvider).toHaveBeenCalledWith(expect.objectContaining({ sessionId }))
+  })
+
+  it('surfaces muse stderr on a failed synthetic result so Inspect is not blank', async () => {
+    const sendCompatLine = vi.fn()
+    const runMuseProvider = vi.fn(async () =>
+      successOutcome({
+        status: 'failed',
+        exitCode: 2,
+        assistantText: '',
+        warnings: [
+          'muse stderr: invalid --session-id: 1786386574521-0o0k5nn6qpef\n(expected a UUID, e.g. 123e4567-e89b-12d3-a456-426614174000)'
+        ]
+      })
+    )
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({
+        sendCompatLine,
+        readAuthJsonText: async () =>
+          JSON.stringify({ providers: { meta: { api_key: 'meta-secret' } } }),
+        runMuseProvider
+      })
+    })
+
+    expect(sendCompatLine).toHaveBeenCalledWith(
+      event.sender,
+      expect.objectContaining({
+        type: 'result',
+        status: 'failed',
+        subtype: 'error',
+        provider: 'muse',
+        result: expect.stringMatching(/invalid --session-id|expected a UUID/i)
+      }),
+      expect.anything()
+    )
+  })
+
   it('calls runMuseProvider with binary, spawn, temporaryRoot, and apiKey from auth.json', async () => {
     const runMuseProvider = vi.fn(async () => successOutcome())
     const spawn = vi.fn(() => fakeSpawnHandle(0))
