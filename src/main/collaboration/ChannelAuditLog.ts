@@ -27,6 +27,10 @@ export type ChannelAuditEventKind =
   | 'message.rejected'
   | 'replay.completed'
   | 'member.revoked'
+  | 'agent.enrolled'
+  | 'agent.grant.issued'
+  | 'agent.revoked'
+  | 'agent.key.rotated'
   | 'agent.mention.rejected'
   | 'agent.dispatch.blocked'
   | 'protocol.rejected'
@@ -40,6 +44,8 @@ export interface ChannelAuditEvent {
   code?: string
   contentHash?: string
   detail?: string
+  /** Main-only idempotency hash. Omitted from renderer/member projections. */
+  dedupeKey?: string
 }
 
 export type ChannelAuditInput = Omit<ChannelAuditEvent, 'id' | 'at'> & { at?: number }
@@ -77,6 +83,12 @@ export class ChannelAuditLog implements ChannelAuditLike {
   }
 
   append(input: ChannelAuditInput): void {
+    if (input.dedupeKey !== undefined && !/^[a-f0-9]{64}$/.test(input.dedupeKey)) {
+      throw new Error('Channel audit dedupe key is invalid')
+    }
+    if (input.dedupeKey && this.events.some((event) => event.dedupeKey === input.dedupeKey)) {
+      return
+    }
     const event: ChannelAuditEvent = {
       id: randomUUID(),
       at: Number.isFinite(input.at) ? input.at! : Date.now(),
@@ -85,7 +97,8 @@ export class ChannelAuditLog implements ChannelAuditLike {
       ...(input.memberId ? { memberId: String(input.memberId).slice(0, 512) } : {}),
       ...(input.code ? { code: String(input.code).slice(0, 80) } : {}),
       ...(input.contentHash ? { contentHash: String(input.contentHash).slice(0, 64) } : {}),
-      ...(input.detail ? { detail: sanitizeDetail(input.detail) } : {})
+      ...(input.detail ? { detail: sanitizeDetail(input.detail) } : {}),
+      ...(input.dedupeKey ? { dedupeKey: input.dedupeKey } : {})
     }
     this.events = capChannelAuditEvents([...this.events, event])
     this.persist()

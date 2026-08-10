@@ -203,6 +203,13 @@ interface RunningState {
 }
 
 const SERVICE_REGISTRY = new Map<string, ChannelProductionServiceImpl>()
+const AGENT_MANAGEMENT_AUDIT_DOMAIN = 'taskwraith.channel.agent-management-audit.v1'
+
+function agentManagementAuditDedupeKey(kind: string, signedObjectId: string): string {
+  return createHash('sha256')
+    .update(`${AGENT_MANAGEMENT_AUDIT_DOMAIN}\n${kind}\n${signedObjectId}`, 'utf8')
+    .digest('hex')
+}
 
 export function channelProductionDataPaths(userDataPath: string): ChannelProductionDataPaths {
   const root = join(resolvePath(userDataPath), 'channels')
@@ -660,6 +667,18 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       this.enqueueAgentManagement(() =>
         this.enqueueChannel(args.channelId, () => {
           const result = state.agentManagement.enrollAgent(args)
+          this.appendAgentManagementAudit(state, {
+            kind: 'agent.enrolled',
+            channelId: args.channelId,
+            memberId: result.member.memberId,
+            code: 'owner_delegation',
+            detail: `generation=${result.identity.keyGeneration}`,
+            dedupeKey: agentManagementAuditDedupeKey(
+              'agent.enrolled',
+              result.signedDelegation.delegation.delegationId
+            ),
+            at: result.signedDelegation.delegation.issuedAt
+          })
           this.notifyMembershipChange(state, args.channelId)
           return result
         })
@@ -682,6 +701,18 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       this.enqueueAgentManagement(() =>
         this.enqueueChannel(args.channelId, () => {
           const result = state.agentManagement.grantDispatch(args)
+          this.appendAgentManagementAudit(state, {
+            kind: 'agent.grant.issued',
+            channelId: args.channelId,
+            memberId: result.member.memberId,
+            code: 'mention',
+            detail: `generation=${result.identity.keyGeneration};budget=${result.signedDispatchGrant.grant.maxDispatches};expires_at=${result.signedDispatchGrant.grant.expiresAt}`,
+            dedupeKey: agentManagementAuditDedupeKey(
+              'agent.grant.issued',
+              result.signedDispatchGrant.grant.grantId
+            ),
+            at: result.signedDispatchGrant.grant.issuedAt
+          })
           this.notifyMembershipChange(state, args.channelId)
           return result
         })
@@ -699,6 +730,18 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       this.enqueueAgentManagement(() =>
         this.enqueueChannel(args.channelId, () => {
           const result = state.agentManagement.revokeAgent(args)
+          this.appendAgentManagementAudit(state, {
+            kind: 'agent.revoked',
+            channelId: args.channelId,
+            memberId: result.member.memberId,
+            code: result.signedRevocation.revocation.reason,
+            detail: `generation=${result.member.keyGeneration}`,
+            dedupeKey: agentManagementAuditDedupeKey(
+              'agent.revoked',
+              result.signedRevocation.revocation.revocationId
+            ),
+            at: result.signedRevocation.revocation.revokedAt
+          })
           this.notifyMembershipChange(state, args.channelId)
           return result
         })
@@ -733,6 +776,18 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         )
         const result = state.agentManagement.rotateAgentKey(args)
         for (const enrollment of result.channels) {
+          this.appendAgentManagementAudit(state, {
+            kind: 'agent.key.rotated',
+            channelId: enrollment.member.channelId,
+            memberId: enrollment.member.memberId,
+            code: 'key_rotated',
+            detail: `generation=${result.identity.keyGeneration}`,
+            dedupeKey: agentManagementAuditDedupeKey(
+              'agent.key.rotated',
+              enrollment.signedDelegation.delegation.delegationId
+            ),
+            at: enrollment.signedDelegation.delegation.issuedAt
+          })
           this.notifyMembershipChange(state, enrollment.member.channelId)
         }
         return result
@@ -758,11 +813,23 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
               const digest = createHash('sha256')
                 .update(`taskwraith.channel.close-agent.v1\n${channelId}\n${member.memberId}`)
                 .digest('hex')
-              state.agentManagement.revokeAgent({
+              const result = state.agentManagement.revokeAgent({
                 channelId,
                 agentSeatId: member.agentSeatId,
                 operationId: `channel-close-${digest}`,
                 reason: 'channel_closed'
+              })
+              this.appendAgentManagementAudit(state, {
+                kind: 'agent.revoked',
+                channelId,
+                memberId: result.member.memberId,
+                code: result.signedRevocation.revocation.reason,
+                detail: `generation=${result.member.keyGeneration}`,
+                dedupeKey: agentManagementAuditDedupeKey(
+                  'agent.revoked',
+                  result.signedRevocation.revocation.revocationId
+                ),
+                at: result.signedRevocation.revocation.revokedAt
               })
             }
             const closed = state.store.closeChannel({ channelId, now: this.now() })
@@ -970,6 +1037,14 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       agentSeatId,
       currentKeyGeneration: history?.current.keyGeneration ?? null,
       memberships
+    }
+  }
+
+  private appendAgentManagementAudit(state: RunningState, event: ChannelAuditInput): void {
+    try {
+      state.audit.append(event)
+    } catch {
+      this.options.logger?.('[channels] agent management audit failed')
     }
   }
 

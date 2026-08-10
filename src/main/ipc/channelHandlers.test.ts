@@ -140,6 +140,7 @@ function fixture(
         channelId: 'channel-a',
         memberId: 'owner-channel-a',
         contentHash: 'a'.repeat(64),
+        dedupeKey: 'c'.repeat(64),
         rawPayload: 'must-not-cross-ipc'
       }
     ]),
@@ -289,7 +290,7 @@ describe('registerChannelHandlers', () => {
     const audit = await own.invoke(CHANNEL_IPC_CHANNELS.audit, { limit: 12 })
     expect(audit.ok).toBe(true)
     expect(own.service.listAudit).toHaveBeenCalledWith({ channelId: 'channel-a', limit: 12 })
-    expect(JSON.stringify(audit)).not.toContain('rawPayload')
+    expect(JSON.stringify(audit)).not.toMatch(/rawPayload|dedupeKey/)
 
     const denied = await own.invoke(CHANNEL_IPC_CHANNELS.read, {
       channelId: 'channel-b',

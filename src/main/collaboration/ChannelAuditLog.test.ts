@@ -105,6 +105,45 @@ describe('ChannelAuditLog', () => {
     expect(durable).not.toContain('"content":')
   })
 
+  it('deduplicates durable management evidence without projecting the signed object id', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-channel-management-audit-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'audit.json')
+    const dedupeKey = 'c'.repeat(64)
+    const signedObjectId = 'grant-sensitive-object-id'
+    const append = (log: ChannelAuditLog) =>
+      log.append({
+        kind: 'agent.grant.issued',
+        channelId: 'channel',
+        memberId: 'agent-member',
+        code: 'mention',
+        detail: 'generation=2;budget=1',
+        dedupeKey,
+        at: 12
+      })
+
+    const first = new ChannelAuditLog(path)
+    append(first)
+    append(first)
+    const restarted = new ChannelAuditLog(path)
+    append(restarted)
+
+    expect(restarted.list()).toEqual([
+      expect.objectContaining({
+        kind: 'agent.grant.issued',
+        channelId: 'channel',
+        memberId: 'agent-member',
+        dedupeKey
+      })
+    ])
+    const durable = readFileSync(path, 'utf8')
+    expect(durable).not.toContain(signedObjectId)
+    expect(() => restarted.append({ kind: 'agent.revoked', dedupeKey: signedObjectId })).toThrow(
+      /dedupe key is invalid/
+    )
+    expect(restarted.list()).toHaveLength(1)
+  })
+
   it('purges selected Channel evidence and reserves global purge for whole-history deletion', () => {
     const directory = mkdtempSync(join(tmpdir(), 'taskwraith-channel-audit-purge-'))
     temporaryDirectories.push(directory)

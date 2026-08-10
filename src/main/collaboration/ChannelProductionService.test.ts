@@ -690,6 +690,11 @@ describe('ChannelProductionService', () => {
       operationId: 'production-enroll-first'
     })
     await fixture.service.enrollAgent({
+      channelId: first.channelId,
+      seat,
+      operationId: 'production-enroll-first'
+    })
+    await fixture.service.enrollAgent({
       channelId: second.channelId,
       seat,
       operationId: 'production-enroll-second'
@@ -699,6 +704,14 @@ describe('ChannelProductionService', () => {
       resumeAfter: 0
     }).members[0]
     const grant = await fixture.service.grantAgentDispatch({
+      channelId: first.channelId,
+      agentSeatId,
+      operationId: 'production-grant',
+      allowedMentionerMemberIds: [owner.memberId],
+      workspaceIdentityHash: 'a'.repeat(64),
+      permissionPostureHash: 'b'.repeat(64)
+    })
+    await fixture.service.grantAgentDispatch({
       channelId: first.channelId,
       agentSeatId,
       operationId: 'production-grant',
@@ -754,6 +767,12 @@ describe('ChannelProductionService', () => {
     })
     expect(rotation.identity.keyGeneration).toBe(2)
     expect(rotation.channels).toHaveLength(2)
+    await expect(
+      fixture.service.rotateAgentKey({
+        agentSeatId,
+        operationId: 'production-rotate'
+      })
+    ).resolves.toMatchObject({ identity: { keyGeneration: 2 }, resumed: true })
     for (const channel of [first, second]) {
       expect(
         fixture.service
@@ -770,6 +789,13 @@ describe('ChannelProductionService', () => {
       operationId: 'production-remove'
     })
     expect(removed.member).toMatchObject({ status: 'revoked', keyGeneration: 2 })
+    await expect(
+      fixture.service.revokeAgent({
+        channelId: first.channelId,
+        agentSeatId,
+        operationId: 'production-remove'
+      })
+    ).resolves.toMatchObject({ alreadyRevoked: true })
     const afterRemoval = fixture.service.inspectAgentSeat(agentSeatId)
     expect(afterRemoval).toMatchObject({
       agentSeatId,
@@ -805,6 +831,21 @@ describe('ChannelProductionService', () => {
         ([event]) => event.channelId === first.channelId && event.reason === 'membership'
       )
     ).toBe(true)
+    const managementAudit = fixture.service
+      .listAudit()
+      .filter((event) => event.kind.startsWith('agent.') && event.kind !== 'agent.dispatch.blocked')
+    expect(managementAudit.map((event) => event.kind).sort()).toEqual([
+      'agent.enrolled',
+      'agent.enrolled',
+      'agent.grant.issued',
+      'agent.key.rotated',
+      'agent.key.rotated',
+      'agent.revoked'
+    ])
+    expect(new Set(managementAudit.map((event) => event.dedupeKey)).size).toBe(6)
+    expect(JSON.stringify(managementAudit)).not.toMatch(
+      /workspaceIdentityHash|permissionPostureHash|publicKey|privateKey|signature/i
+    )
   })
 
   it('persists agent-key revocation before closing a Channel', async () => {
@@ -851,6 +892,17 @@ describe('ChannelProductionService', () => {
       agentSeatId: enrolled.identity.agentSeatId,
       keyGeneration: enrolled.identity.keyGeneration
     })
+    expect(
+      fixture.service
+        .listAudit({ channelId: channel.channelId })
+        .filter((event) => event.kind === 'agent.revoked')
+    ).toEqual([
+      expect.objectContaining({
+        memberId: enrolled.member.memberId,
+        code: 'channel_closed',
+        detail: `generation=${enrolled.identity.keyGeneration}`
+      })
+    ])
   })
 
   it('audits an accepted human mention at the immutable review gate before authority access', async () => {
