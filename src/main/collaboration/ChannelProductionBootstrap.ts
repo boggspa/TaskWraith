@@ -1,20 +1,23 @@
+import { basename } from 'path'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { KeyPair } from '../../shared/e2ee/keys'
 import type { ChannelIpcChangeEvent } from '../../shared/collaboration/ChannelIpc'
 import type { TransportSocketFactory } from '../remote/RemoteTransportClient'
+import { resolveChatPrimaryWorkspace } from '../ExternalPathGrantBinding'
+import type { ChatRecord, WorkspaceRecord } from '../store/types'
 import {
   registerChannelAgentHandlers,
   type ChannelAgentHandlersRegistration
 } from '../ipc/channelAgentHandlers'
 import {
   registerChannelHandlers,
-  type ChannelHandlersDeps,
   type ChannelHandlersRegistration,
   type ChannelIpcSenderScope
 } from '../ipc/channelHandlers'
 import {
   ChannelAgentManagementController,
-  type ChannelAgentManagementControllerDependencies
+  type ChannelAgentManagementControllerDependencies,
+  type ChannelAgentWorkspaceResolution
 } from './ChannelAgentManagementController'
 import {
   createChannelProductionService,
@@ -32,8 +35,10 @@ export interface ChannelProductionRelaySources {
 
 export interface ChannelProductionAgentManagementOptions extends Omit<
   ChannelAgentManagementControllerDependencies,
-  'service'
+  'service' | 'getChat' | 'resolveWorkspace'
 > {
+  getWorkspaces: () => readonly WorkspaceRecord[]
+  canonicalizePath: (value: string) => string
   getOwnerWindow: (event: IpcMainInvokeEvent) => BrowserWindow | null
 }
 
@@ -43,13 +48,12 @@ export interface ChannelProductionBootstrapOptions {
   safeStorage: ChannelAgentIdentitySafeStorage
   relay: ChannelProductionRelayPort
   ipc: Pick<IpcMain, 'handle' | 'removeHandler'>
-  getChat: ChannelHandlersDeps['getChat']
+  getChat: (chatId: string) => ChatRecord | null
   isMainSender: (event: IpcMainInvokeEvent) => boolean
   getOwnedChatId: (senderId: number) => string | null | undefined
   publishToMain: (event: ChannelIpcChangeEvent) => void
   publishToChat: (chatId: string, event: ChannelIpcChangeEvent) => void
-  /** Omitted until the composition root supplies every main-owned authority port. */
-  agentManagement?: ChannelProductionAgentManagementOptions
+  agentManagement: ChannelProductionAgentManagementOptions
   socketFactory?: TransportSocketFactory
   logger?: (line: string) => void
   createService?: (options: ChannelProductionServiceOptions) => ChannelProductionService
@@ -76,6 +80,30 @@ function advertisedRelayUrls(sources: ChannelProductionRelaySources): string[] {
     ]
   } catch {
     return []
+  }
+}
+
+function resolveAgentWorkspace(
+  chat: ChatRecord,
+  options: ChannelProductionAgentManagementOptions
+): ChannelAgentWorkspaceResolution | null {
+  if (chat.scope === 'global') {
+    return {
+      principal: { kind: 'global', chatId: chat.appChatId },
+      label: 'Global chat'
+    }
+  }
+  if (!chat.workspaceId) return null
+  let workspace: WorkspaceRecord | null
+  try {
+    workspace = resolveChatPrimaryWorkspace(chat, options.getWorkspaces(), options.canonicalizePath)
+  } catch {
+    return null
+  }
+  if (!workspace || workspace.id !== chat.workspaceId) return null
+  return {
+    principal: { kind: 'workspace', workspaceId: workspace.id },
+    label: workspace.displayName.trim() || basename(workspace.path) || 'Workspace'
   }
 }
 
@@ -146,15 +174,14 @@ export function createChannelProductionBootstrap(
     throw new Error('ChannelProductionBootstrap requires renderer publication ports')
   }
   if (
-    options.agentManagement !== undefined &&
-    (!options.agentManagement ||
-      typeof options.agentManagement.getChat !== 'function' ||
-      typeof options.agentManagement.getSettings !== 'function' ||
-      typeof options.agentManagement.providerAllowed !== 'function' ||
-      typeof options.agentManagement.resolveWorkspace !== 'function' ||
-      typeof options.agentManagement.getOwnerWindow !== 'function' ||
-      (options.agentManagement.confirm !== undefined &&
-        typeof options.agentManagement.confirm !== 'function'))
+    !options.agentManagement ||
+    typeof options.agentManagement.getSettings !== 'function' ||
+    typeof options.agentManagement.providerAllowed !== 'function' ||
+    typeof options.agentManagement.getWorkspaces !== 'function' ||
+    typeof options.agentManagement.canonicalizePath !== 'function' ||
+    typeof options.agentManagement.getOwnerWindow !== 'function' ||
+    (options.agentManagement.confirm !== undefined &&
+      typeof options.agentManagement.confirm !== 'function')
   ) {
     throw new Error('ChannelProductionBootstrap agent management requires main-owned authority')
   }
@@ -199,16 +226,14 @@ export function createChannelProductionBootstrap(
     ...(options.logger ? { logger: options.logger } : {}),
     onChange: publishChange
   })
-  const agentController = options.agentManagement
-    ? new ChannelAgentManagementController({
-        service,
-        getChat: options.agentManagement.getChat,
-        getSettings: options.agentManagement.getSettings,
-        providerAllowed: options.agentManagement.providerAllowed,
-        resolveWorkspace: options.agentManagement.resolveWorkspace,
-        ...(options.agentManagement.confirm ? { confirm: options.agentManagement.confirm } : {})
-      })
-    : null
+  const agentController = new ChannelAgentManagementController({
+    service,
+    getChat: options.getChat,
+    getSettings: options.agentManagement.getSettings,
+    providerAllowed: options.agentManagement.providerAllowed,
+    resolveWorkspace: (chat) => resolveAgentWorkspace(chat, options.agentManagement),
+    ...(options.agentManagement.confirm ? { confirm: options.agentManagement.confirm } : {})
+  })
 
   const resolveSenderScope = (event: IpcMainInvokeEvent): ChannelIpcSenderScope => {
     if (options.isMainSender(event)) return { kind: 'main' }
@@ -228,13 +253,11 @@ export function createChannelProductionBootstrap(
           getChat: options.getChat,
           resolveSenderScope
         })
-        if (agentController && options.agentManagement) {
-          agentRegistration = registerChannelAgentHandlers(options.ipc, {
-            controller: agentController,
-            isMainSender: options.isMainSender,
-            getOwnerWindow: options.agentManagement.getOwnerWindow
-          })
-        }
+        agentRegistration = registerChannelAgentHandlers(options.ipc, {
+          controller: agentController,
+          isMainSender: options.isMainSender,
+          getOwnerWindow: options.agentManagement.getOwnerWindow
+        })
         return service.start()
       } catch (error) {
         agentRegistration?.dispose()

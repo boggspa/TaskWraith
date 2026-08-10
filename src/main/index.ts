@@ -47658,6 +47658,14 @@ if (isGeminiMcpBridgeProcess) {
           const owner = workspacePopoutOwnerForSender(senderId)
           return owner?.kind === 'chat' ? owner.chatId : undefined
         },
+        agentManagement: {
+          getSettings: () => AppStore.getSettings(),
+          providerAllowed: (provider, settings) =>
+            selectableProviderIds(settings).includes(provider),
+          getWorkspaces: () => AppStore.getWorkspaces(),
+          canonicalizePath: canonicalPath,
+          getOwnerWindow: (event) => BrowserWindow.fromWebContents(event.sender)
+        },
         publishToMain: (event) => {
           if (!mainWindow || mainWindow.isDestroyed()) return
           mainWindow.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)

@@ -102,16 +102,19 @@ function agentManagement() {
   )
   const getOwnerWindow = vi.fn(() => OWNER_WINDOW)
   const options: ChannelProductionAgentManagementOptions = {
-    getChat: (chatId) => (chatId === 'chat-a' ? agentChat() : null),
     getSettings: agentSettings,
     providerAllowed: (provider) => provider === 'codex',
-    resolveWorkspace: (chat) =>
-      chat.workspaceId
-        ? {
-            principal: { kind: 'workspace', workspaceId: chat.workspaceId },
-            label: 'Workspace A'
-          }
-        : null,
+    getWorkspaces: () => [
+      {
+        id: 'workspace-a',
+        path: '/workspaces/a',
+        displayName: 'Workspace A',
+        lastOpenedAt: 1,
+        createdAt: 1,
+        pinned: false
+      }
+    ],
+    canonicalizePath: (value) => value,
     getOwnerWindow,
     confirm
   }
@@ -195,17 +198,19 @@ function harness(overrides: Partial<ChannelProductionBootstrapOptions> = {}): {
   const publishToMain = vi.fn()
   const publishToChat = vi.fn()
   const logger = vi.fn()
+  const defaultAgentManagement = agentManagement().options
   const bootstrap = createChannelProductionBootstrap({
     userDataPath: '/tmp/channel-production-bootstrap-test',
     loadIdentity: generateIdentityKeyPair,
     safeStorage,
     relay: { hostRelayUrl: () => '', inviteRelayUrls: () => [] },
     ipc,
-    getChat: (chatId) => ({ appChatId: chatId, title: chatId, archived: false }),
+    getChat: (chatId) => ({ ...agentChat(), appChatId: chatId, title: chatId }),
     isMainSender: (event) => event.sender.id === 1,
     getOwnedChatId: (senderId) => (senderId === 2 ? 'chat-a' : null),
     publishToMain,
     publishToChat,
+    agentManagement: defaultAgentManagement,
     logger,
     ...optionOverrides,
     createService: (options) => {
@@ -227,7 +232,7 @@ function harness(overrides: Partial<ChannelProductionBootstrapOptions> = {}): {
 }
 
 describe('ChannelProductionBootstrap', () => {
-  it('registers exactly eight handlers and binds popouts to their main-owned chat', async () => {
+  it('registers the mandatory 13-handler surface and binds popouts to their chat', async () => {
     const fixture = harness()
 
     expect(fixture.handlers.size).toBe(0)
@@ -242,7 +247,8 @@ describe('ChannelProductionBootstrap', () => {
         'channels:issue-invite',
         'channels:list',
         'channels:read',
-        'channels:revoke-member'
+        'channels:revoke-member',
+        ...Object.values(CHANNEL_AGENT_IPC_CHANNELS)
       ].sort()
     )
 
@@ -433,7 +439,7 @@ describe('ChannelProductionBootstrap', () => {
     await fixture.bootstrap.stop()
 
     expect(fixture.handlers.size).toBe(0)
-    expect(fixture.removeHandler).toHaveBeenCalledTimes(16)
+    expect(fixture.removeHandler).toHaveBeenCalledTimes(26)
     expect(fixture.service.stop).toHaveBeenCalledOnce()
     await expect(fixture.bootstrap.stop()).resolves.toBeUndefined()
     expect(fixture.service.stop).toHaveBeenCalledOnce()

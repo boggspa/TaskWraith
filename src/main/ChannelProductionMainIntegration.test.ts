@@ -27,6 +27,15 @@ describe('Channels production main integration', () => {
     )
     expect(composition).toContain('channelProductionBootstrap.start()')
     expect(composition).toContain('workspacePopoutOwnerForSender(senderId)')
+    expect(composition).toContain('agentManagement: {')
+    expect(composition).toContain('getSettings: () => AppStore.getSettings()')
+    expect(composition).toContain('selectableProviderIds(settings).includes(provider)')
+    expect(composition).toContain('getWorkspaces: () => AppStore.getWorkspaces()')
+    expect(composition).toContain('canonicalizePath: canonicalPath')
+    expect(composition).toContain(
+      'getOwnerWindow: (event) => BrowserWindow.fromWebContents(event.sender)'
+    )
+    expect(composition).not.toContain('confirm:')
     expect(composition).toContain('win.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)')
     expect(composition).toContain('historyClearAdmissionGate.isAuthorityBlocked({')
 
