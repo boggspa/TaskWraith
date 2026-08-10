@@ -91,6 +91,58 @@ describe('provider action taxonomy', () => {
     })
   })
 
+  it('pins Muse native tool names to honest taxonomy actions', () => {
+    const muse = PROVIDER_ACTION_ADAPTERS.muse
+    expect(muse.declaredNativeActions).toEqual([
+      'read',
+      'write',
+      'edit',
+      'patch',
+      'delete',
+      'shell',
+      'web-search',
+      'web-fetch'
+    ])
+
+    const aliasSet = (action: string) => new Set(muse.nativeActionMappings[action]?.aliases ?? [])
+
+    expect(aliasSet('read')).toEqual(new Set(['read_file', 'Read', 'Read file']))
+    expect(aliasSet('write')).toEqual(new Set(['write_file', 'Write', 'Write file']))
+    expect(aliasSet('edit')).toEqual(new Set(['edit_file']))
+    expect(aliasSet('patch')).toEqual(new Set(['apply_patch']))
+    expect(aliasSet('delete')).toEqual(new Set(['delete_file']))
+    expect(aliasSet('shell')).toEqual(new Set(['bash', 'exec_command', 'Bash', 'shell', 'Shell']))
+    expect(aliasSet('web-search')).toEqual(new Set(['web_search', 'WebSearch', 'Search web']))
+    expect(aliasSet('web-fetch')).toEqual(new Set(['web_fetch', 'WebFetch', 'Fetch']))
+
+    // Display resolution maps Muse-specific tool names to their canonical catalog actions.
+    expect(resolveProviderNativeActionForDisplay('muse', 'edit_file')).toMatchObject({
+      nativeAction: 'edit',
+      catalogTool: 'replace'
+    })
+    expect(resolveProviderNativeActionForDisplay('muse', 'apply_patch')).toMatchObject({
+      nativeAction: 'patch',
+      catalogTool: 'apply_patch'
+    })
+    expect(resolveProviderNativeActionForDisplay('muse', 'delete_file')).toMatchObject({
+      nativeAction: 'delete',
+      catalogTool: 'delete_path'
+    })
+    expect(resolveProviderNativeActionForDisplay('muse', 'exec_command')).toMatchObject({
+      nativeAction: 'shell',
+      catalogTool: 'run_shell_command'
+    })
+
+    // Strict execution still fails observed-native; taxonomy only answers display/parity.
+    for (const spelling of ['edit_file', 'apply_patch', 'delete_file', 'exec_command']) {
+      expect(resolveProviderNativeActionStrict('muse', spelling)).toMatchObject({
+        ok: false,
+        denied: true,
+        code: 'native_surface_unobservable'
+      })
+    }
+  })
+
   it('keeps Cursor broker attachment route-dependent while Pi remains none', () => {
     expect(PROVIDER_ACTION_ADAPTERS.cursor).toMatchObject({
       nativeSurface: 'unobservable-native',

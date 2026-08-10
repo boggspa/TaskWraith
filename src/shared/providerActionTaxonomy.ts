@@ -694,7 +694,16 @@ export const PROVIDER_ACTION_ADAPTERS = {
     structuredKindMappings: {},
     declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
     deniedNativeActionMappings: {},
-    declaredNativeActions: ['read', 'write', 'shell', 'web-search', 'web-fetch'] as const,
+    declaredNativeActions: [
+      'read',
+      'write',
+      'edit',
+      'patch',
+      'delete',
+      'shell',
+      'web-search',
+      'web-fetch'
+    ] as const,
     nativeActionMappings: {
       read: {
         aliases: ['read_file', 'Read', 'Read file'],
@@ -706,8 +715,23 @@ export const PROVIDER_ACTION_ADAPTERS = {
         catalogTool: 'write_file',
         action: 'workspace.mutate'
       },
+      edit: {
+        aliases: ['edit_file'],
+        catalogTool: 'replace',
+        action: 'workspace.mutate'
+      },
+      patch: {
+        aliases: ['apply_patch'],
+        catalogTool: 'apply_patch',
+        action: 'workspace.mutate'
+      },
+      delete: {
+        aliases: ['delete_file'],
+        catalogTool: 'delete_path',
+        action: 'workspace.mutate'
+      },
       shell: {
-        aliases: ['bash', 'Bash', 'shell', 'Shell'],
+        aliases: ['bash', 'exec_command', 'Bash', 'shell', 'Shell'],
         catalogTool: 'run_shell_command',
         action: 'shell.execute'
       },
