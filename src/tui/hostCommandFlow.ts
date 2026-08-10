@@ -6,7 +6,7 @@
  * status, and may answer the Host ask via approval.decide.
  */
 
-import { randomUUID } from 'node:crypto'
+import { mintHostCommandIdentity } from '../main/host/HostCommandIdentity'
 import {
   HOST_PROTOCOL_VERSION,
   type HostActorIdentity,
@@ -29,8 +29,22 @@ export function isTerminalHostReceiptStatus(status: HostReceiptStatus): boolean 
   return HOST_RECEIPT_TERMINAL_STATUSES.has(status)
 }
 
-export function mintHostCommandIds(): { commandId: string; idempotencyKey: string } {
-  return { commandId: randomUUID(), idempotencyKey: randomUUID() }
+export function mintHostCommandIds(actor: HostActorIdentity): {
+  commandId: string
+  idempotencyKey: string
+} {
+  const identity = mintHostCommandIdentity({
+    actorId: actor.actorId,
+    clientId: actor.clientId,
+    clientClass: actor.clientClass
+  })
+  if (!identity.ok) {
+    throw new Error(`Could not mint Host command identity: ${identity.error}`)
+  }
+  return {
+    commandId: identity.value.commandId,
+    idempotencyKey: identity.value.idempotencyKey
+  }
 }
 
 export function buildHostCommand(input: {
@@ -42,7 +56,7 @@ export function buildHostCommand(input: {
   idempotencyKey?: string
   issuedAt?: string
 }): HostCommand {
-  const ids = mintHostCommandIds()
+  const ids = mintHostCommandIds(input.actor)
   return {
     type: 'host.command',
     protocolVersion: HOST_PROTOCOL_VERSION,

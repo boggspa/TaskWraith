@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { HostDeferredCommandEnvelopeStore } from '../main/host/HostDeferredCommandEnvelopeStore'
+import { fingerprintHostCommand } from '../main/host/HostCommandFingerprint'
 import { HOST_PROTOCOL_VERSION, type HostCommandReceipt } from '../shared/hostProtocol'
 import {
   buildHostCommand,
@@ -39,6 +44,30 @@ describe('hostCommandFlow', () => {
     expect(command.commandId.length).toBeGreaterThan(8)
     expect(command.idempotencyKey.length).toBeGreaterThan(8)
     expect(command.arguments.text).toBe('hello')
+  })
+
+  it('mints the actor-bound idempotency key required by deferred Host storage', () => {
+    const command = buildHostCommand({
+      name: 'thread.select',
+      actor: { actorId: 'tui-1', clientId: 'tui-1', clientClass: 'tui' },
+      target: { threadId: 'thread-1' }
+    })
+    const dataDir = mkdtempSync(join(tmpdir(), 'tw-tui-command-identity-'))
+
+    try {
+      const store = new HostDeferredCommandEnvelopeStore({ dataDir })
+      expect(
+        store.put({
+          deferredId: '11111111-1111-4111-8111-111111111111',
+          challengeId: '22222222-2222-4222-8222-222222222222',
+          challengeKind: 'approval',
+          commandFingerprint: fingerprintHostCommand(command).fingerprint,
+          command
+        })
+      ).toEqual({ kind: 'created' })
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true })
+    }
   })
 
   it('never describes pending as success', () => {
