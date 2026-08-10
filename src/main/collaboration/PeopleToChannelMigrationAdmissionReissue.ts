@@ -15,6 +15,7 @@ import {
 import { dirname } from 'path'
 
 import type { HumanCollaborationSafeStorage } from './HumanCollaborationIdentityStore'
+import { normalizeContributionRules } from './HumanContributionRules'
 import {
   DEFAULT_CHANNEL_INVITE_TTL_MS,
   ChannelError,
@@ -31,6 +32,7 @@ import {
 import {
   PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION,
   type PeopleToChannelMigrationMaterialization,
+  type PeopleToChannelPendingAdmissionPolicy,
   type PeopleToChannelPendingAdmissionReissue
 } from './PeopleToChannelMigrationMaterializer'
 
@@ -46,6 +48,7 @@ export interface PeopleToChannelReissuedAdmission {
   purpose: PeopleToChannelReissuedAdmissionPurpose
   sourceCollaboratorId?: string
   openInviteOrdinal?: number
+  policy: PeopleToChannelPendingAdmissionPolicy
   inviteId: string
   roomId: string
   inviteToken: string
@@ -79,6 +82,7 @@ interface ReissueTask {
   purpose: PeopleToChannelReissuedAdmissionPurpose
   sourceCollaboratorId?: string
   openInviteOrdinal?: number
+  policy: PeopleToChannelPendingAdmissionPolicy
 }
 
 interface ReissuePayload {
@@ -113,11 +117,18 @@ const PAYLOAD_KEYS = new Set([
   'createdAt',
   'invitations'
 ])
+const PENDING_POLICY_KEYS = new Set([
+  'sourceDigest',
+  'rules',
+  'requiresHostApproval',
+  'fullHistory'
+])
 const PENDING_INVITATION_KEYS = new Set([
   'sourceShareId',
   'channelId',
   'purpose',
   'sourceCollaboratorId',
+  'policy',
   'inviteId',
   'roomId',
   'inviteToken',
@@ -129,6 +140,7 @@ const OPEN_INVITATION_KEYS = new Set([
   'channelId',
   'purpose',
   'openInviteOrdinal',
+  'policy',
   'inviteId',
   'roomId',
   'inviteToken',
@@ -206,6 +218,30 @@ function safeIdentifier(value: unknown): value is string {
   return typeof value === 'string' && SAFE_IDENTIFIER_PATTERN.test(value)
 }
 
+function strictPendingPolicy(value: unknown): PeopleToChannelPendingAdmissionPolicy | null {
+  const raw = objectRecord(value)
+  const normalized = normalizeContributionRules(raw?.rules)
+  if (
+    !raw ||
+    !exactKeys(raw, PENDING_POLICY_KEYS) ||
+    typeof raw.sourceDigest !== 'string' ||
+    !SHA256_PATTERN.test(raw.sourceDigest) ||
+    !normalized ||
+    normalized.providerDispatch !== 'never' ||
+    canonicalJson(normalized) !== canonicalJson(raw.rules) ||
+    typeof raw.requiresHostApproval !== 'boolean' ||
+    typeof raw.fullHistory !== 'boolean'
+  ) {
+    return null
+  }
+  return {
+    sourceDigest: raw.sourceDigest,
+    rules: clone(normalized),
+    requiresHostApproval: raw.requiresHostApproval,
+    fullHistory: raw.fullHistory
+  }
+}
+
 function materializationDigest(materialization: PeopleToChannelMigrationMaterialization): string {
   const { materializationDigest: _recorded, ...withoutDigest } = materialization
   return sha256(canonicalJson(withoutDigest))
@@ -247,10 +283,12 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
     channelId: string
     pendingCollaboratorIds: string[]
     openInviteCount: number
+    policy: PeopleToChannelPendingAdmissionPolicy
   }> = []
   for (const candidate of reissues as readonly unknown[]) {
     const reissue = objectRecord(candidate)
     const collaborators = reissue?.pendingCollaboratorIds
+    const policy = strictPendingPolicy(reissue?.policy)
     if (
       !reissue ||
       !safeIdentifier(reissue.sourceShareId) ||
@@ -259,7 +297,8 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
       collaborators.length > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
       collaborators.some((collaboratorId) => !safeIdentifier(collaboratorId)) ||
       !safeCount(reissue.openInviteCount) ||
-      reissue.openInviteCount > MAX_PEOPLE_TO_CHANNEL_REISSUES
+      reissue.openInviteCount > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
+      !policy
     ) {
       blocked('People migration admission manifest is invalid')
     }
@@ -267,7 +306,8 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
       sourceShareId: reissue.sourceShareId,
       channelId: reissue.channelId,
       pendingCollaboratorIds: collaborators as string[],
-      openInviteCount: reissue.openInviteCount
+      openInviteCount: reissue.openInviteCount,
+      policy
     })
   }
   const shareIds = new Set<string>()
@@ -299,7 +339,8 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
         sourceShareId: reissue.sourceShareId,
         channelId: reissue.channelId,
         purpose: 'pending-collaborator',
-        sourceCollaboratorId
+        sourceCollaboratorId,
+        policy: clone(reissue.policy)
       })
     }
     for (let ordinal = 1; ordinal <= reissue.openInviteCount; ordinal += 1) {
@@ -307,7 +348,8 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
         sourceShareId: reissue.sourceShareId,
         channelId: reissue.channelId,
         purpose: 'open-invite',
-        openInviteOrdinal: ordinal
+        openInviteOrdinal: ordinal,
+        policy: clone(reissue.policy)
       })
     }
   }
@@ -437,6 +479,7 @@ function invitationMatchesTask(
     invitation.purpose !== task.purpose ||
     invitation.sourceCollaboratorId !== task.sourceCollaboratorId ||
     invitation.openInviteOrdinal !== task.openInviteOrdinal ||
+    canonicalJson(invitation.policy) !== canonicalJson(task.policy) ||
     !safeIdentifier(invitation.inviteId) ||
     !safeIdentifier(invitation.roomId) ||
     typeof invitation.inviteToken !== 'string' ||

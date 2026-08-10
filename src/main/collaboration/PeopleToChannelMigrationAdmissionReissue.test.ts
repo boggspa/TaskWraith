@@ -231,12 +231,19 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     expect(storedInvites.map((invite) => invite.tokenHash)).toEqual(
       first.invitations.map((invitation) => hashChannelInviteToken(invitation.inviteToken))
     )
+    expect(first.invitations.map((invitation) => invitation.policy)).toEqual([
+      built.base.pendingAdmissionReissues[0].policy,
+      built.base.pendingAdmissionReissues[0].policy
+    ])
     expect(statSync(built.escrowPath).mode & 0o777).toBe(0o600)
     const escrowBytes = readFileSync(built.escrowPath)
     const serialized = escrowBytes.toString('utf8')
     expect(serialized).toContain(`"schemaVersion": ${PEOPLE_TO_CHANNEL_ADMISSION_REISSUE_VERSION}`)
     for (const privateValue of [
       'collaborator_one',
+      '"policy"',
+      '"providerDispatch"',
+      built.base.pendingAdmissionReissues[0].policy.sourceDigest,
       ...first.invitations.flatMap((invitation) => [
         invitation.inviteToken,
         invitation.inviteId,
@@ -256,6 +263,28 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     }).apply({ base: built.base, history: built.history })
     expect(rerun).toEqual({ ...first, metadataApplied: false })
     expect(readFileSync(built.escrowPath)).toEqual(escrowBytes)
+  })
+
+  it('binds each future admission to the frozen source policy', () => {
+    const built = fixture()
+    const first = service(built).apply({ base: built.base, history: built.history })
+    expect(first.invitations.every((invitation) => invitation.policy.rules.appendComment)).toBe(
+      true
+    )
+
+    const { materializationDigest: _digest, ...changedDraft } = clone(built.base)
+    changedDraft.pendingAdmissionReissues[0].policy = {
+      ...changedDraft.pendingAdmissionReissues[0].policy,
+      sourceDigest: 'd'.repeat(64),
+      rules: contributionRulesForPreset('readOnly')
+    }
+    const changed = sealBase(changedDraft)
+    const { executionDigest: _historyDigest, ...historyDraft } = clone(built.history)
+    historyDraft.baseMaterializationDigest = changed.materializationDigest
+    const history = sealHistory(historyDraft)
+
+    expectRecoveryBlocked(() => service(built).apply({ base: changed, history }))
+    expect(built.store.listInvites(built.channel.channelId)).toHaveLength(2)
   })
 
   it('resumes after encrypted escrow is durable but before Channel metadata', () => {
