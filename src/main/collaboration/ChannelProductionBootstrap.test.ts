@@ -15,8 +15,15 @@ import {
   createChannelProductionRelayPort,
   type ChannelProductionBootstrapOptions
 } from './ChannelProductionBootstrap'
+import type { ChannelAgentIdentitySafeStorage } from './ChannelAgentIdentityStore'
 
 type Handler = (event: { sender: { id: number } }, ...args: unknown[]) => unknown
+
+const safeStorage: ChannelAgentIdentitySafeStorage = {
+  isEncryptionAvailable: () => true,
+  encryptString: (value) => Buffer.from(value, 'utf8'),
+  decryptString: (value) => value.toString('utf8')
+}
 
 function channel(channelId: string, chatId: string): ChannelIpcChannel {
   return {
@@ -92,6 +99,7 @@ function harness(overrides: Partial<ChannelProductionBootstrapOptions> = {}): {
   const bootstrap = createChannelProductionBootstrap({
     userDataPath: '/tmp/channel-production-bootstrap-test',
     loadIdentity: generateIdentityKeyPair,
+    safeStorage,
     relay: { hostRelayUrl: () => '', inviteRelayUrls: () => [] },
     ipc,
     getChat: (chatId) => ({ appChatId: chatId, title: chatId, archived: false }),
@@ -124,6 +132,7 @@ describe('ChannelProductionBootstrap', () => {
     const fixture = harness()
 
     expect(fixture.handlers.size).toBe(0)
+    expect(fixture.serviceOptions.safeStorage).toBe(safeStorage)
     expect(fixture.bootstrap.start()).toMatchObject({ state: 'running', channelCount: 2 })
     expect([...fixture.handlers.keys()].sort()).toEqual(
       [
@@ -212,6 +221,12 @@ describe('ChannelProductionBootstrap', () => {
     expect(() => fixture.bootstrap.start()).toThrow('identity unavailable')
     expect(fixture.handlers.size).toBe(0)
     expect(service.stop).toHaveBeenCalledOnce()
+  })
+
+  it('requires main-injected safeStorage before constructing the service', () => {
+    expect(() => harness({ safeStorage: undefined as never })).toThrow(
+      'requires injected safeStorage'
+    )
   })
 })
 

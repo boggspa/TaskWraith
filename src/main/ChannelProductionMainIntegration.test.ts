@@ -19,6 +19,7 @@ describe('Channels production main integration', () => {
     )
     expect(composition).toContain('createChannelProductionBootstrap({')
     expect(composition).toContain("'human-collaboration-identity.json'")
+    expect(composition).toContain('safeStorage,')
     expect(composition).toContain('createChannelProductionRelayPort({')
     expect(composition).toContain('getEmbeddedRelayPort: () => embeddedRelayHandle?.port')
     expect(composition).toContain(

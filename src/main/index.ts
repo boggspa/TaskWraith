@@ -47637,6 +47637,7 @@ if (isGeminiMcpBridgeProcess) {
       channelProductionBootstrap = createChannelProductionBootstrap({
         userDataPath: app.getPath('userData'),
         loadIdentity: () => channelIdentityStore.load(),
+        safeStorage,
         relay: createChannelProductionRelayPort({
           getEmbeddedRelayPort: () => embeddedRelayHandle?.port,
           getAdvertisedRelayUrls: () => iosRemoteRuntime?.describeHost().relayUrls ?? []

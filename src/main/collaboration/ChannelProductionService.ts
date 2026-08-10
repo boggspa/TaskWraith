@@ -1,5 +1,5 @@
 import { join, resolve as resolvePath } from 'path'
-import type { KeyPair } from '../../shared/e2ee/keys'
+import { importRawEd25519PublicKey, type KeyPair } from '../../shared/e2ee/keys'
 import type { TransportSocketFactory } from '../remote/RemoteTransportClient'
 import { wsTransportSocketFactory } from '../remote/wsTransportSocket'
 import {
@@ -8,6 +8,11 @@ import {
   type ChannelAuditInput,
   type ChannelAuditLike
 } from './ChannelAuditLog'
+import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
+import {
+  ChannelAgentIdentityStore,
+  type ChannelAgentIdentitySafeStorage
+} from './ChannelAgentIdentityStore'
 import { ChannelHostTransport } from './ChannelHostTransport'
 import {
   ChannelMessageLog,
@@ -28,6 +33,8 @@ export interface ChannelProductionDataPaths {
   metadata: string
   logs: string
   audit: string
+  agentIdentities: string
+  agentAuthority: string
 }
 
 export interface ChannelProductionRelayPort {
@@ -38,6 +45,7 @@ export interface ChannelProductionRelayPort {
 export interface ChannelProductionServiceOptions {
   userDataPath: string
   loadIdentity: () => KeyPair
+  safeStorage: ChannelAgentIdentitySafeStorage
   relay: ChannelProductionRelayPort
   socketFactory?: TransportSocketFactory
   logger?: (line: string) => void
@@ -144,6 +152,8 @@ interface RunningState {
   store: ChannelStore
   log: ChannelMessageLog
   audit: ChannelAuditLog
+  agentIdentities: ChannelAgentIdentityStore
+  agentAuthority: ChannelAgentAuthorityStore
   runtime: ChannelRuntime
   transport: ChannelHostTransport
   recoveryBlockedChannelIds: Set<string>
@@ -157,7 +167,9 @@ export function channelProductionDataPaths(userDataPath: string): ChannelProduct
     root,
     metadata: join(root, 'channels.json'),
     logs: join(root, 'logs'),
-    audit: join(root, 'audit.json')
+    audit: join(root, 'audit.json'),
+    agentIdentities: join(root, 'agent-identities'),
+    agentAuthority: join(root, 'agent-authority')
   }
 }
 
@@ -184,6 +196,9 @@ function validateOptions(options: ChannelProductionServiceOptions): void {
   }
   if (typeof options.loadIdentity !== 'function') {
     throw new Error('ChannelProductionService requires an identity loader')
+  }
+  if (!options.safeStorage || typeof options.safeStorage !== 'object') {
+    throw new Error('ChannelProductionService requires injected safeStorage')
   }
   if (!options.relay || typeof options.relay !== 'object') {
     throw new Error('ChannelProductionService requires an injected relay port')
@@ -274,7 +289,35 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     if (this.state) return this.status()
 
     const store = new ChannelStore(this.paths.metadata)
-    const log = new ChannelMessageLog(this.paths.logs, store)
+    const agentIdentities = new ChannelAgentIdentityStore({
+      storageDirectory: this.paths.agentIdentities,
+      safeStorage: this.options.safeStorage,
+      now: this.now,
+      ...(this.options.logger ? { logger: this.options.logger } : {})
+    })
+    const agentAuthority = new ChannelAgentAuthorityStore({
+      storageDirectory: this.paths.agentAuthority,
+      resolveOwnerPublicKey: (channelId, ownerMemberId) => {
+        const channel = store.getChannel(channelId)
+        const owner = store.getMember(channelId, ownerMemberId)
+        if (
+          !channel ||
+          channel.ownerMemberId !== ownerMemberId ||
+          !owner ||
+          owner.kind !== 'human'
+        ) {
+          return null
+        }
+        try {
+          return importRawEd25519PublicKey(Buffer.from(owner.identityPublicKey, 'base64'))
+        } catch {
+          return null
+        }
+      },
+      now: this.now,
+      ...(this.options.logger ? { logger: this.options.logger } : {})
+    })
+    const log = new ChannelMessageLog(this.paths.logs, store, undefined, agentAuthority)
     const audit = new ChannelAuditLog(this.paths.audit)
     const recoveryBlockedChannelIds = new Set<string>()
     for (const channel of store.listChannels()) {
@@ -311,7 +354,16 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       runtime,
       ...(this.options.logger ? { logger: this.options.logger } : {})
     })
-    this.state = { store, log, audit, runtime, transport, recoveryBlockedChannelIds }
+    this.state = {
+      store,
+      log,
+      audit,
+      agentIdentities,
+      agentAuthority,
+      runtime,
+      transport,
+      recoveryBlockedChannelIds
+    }
     this.refreshRelayRooms()
     return this.status()
   }
@@ -564,10 +616,13 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       if (scope.kind === 'global') {
         state.log.purgeAll()
         state.audit.purgeAll()
+        state.agentAuthority.purgeAll()
+        state.agentIdentities.purgeAll()
         state.store.purgeAllChannels()
       } else {
         state.log.purgeChannels(channelIds)
         state.audit.purgeChannels(channelIds)
+        for (const channelId of channelIds) state.agentAuthority.eraseChannel(channelId)
         state.store.purgeChannels(channelIds)
       }
       for (const channelId of channelIds) {

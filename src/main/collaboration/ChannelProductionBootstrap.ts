@@ -15,6 +15,7 @@ import {
   type ChannelProductionServiceOptions,
   type ChannelProductionStatus
 } from './ChannelProductionService'
+import type { ChannelAgentIdentitySafeStorage } from './ChannelAgentIdentityStore'
 
 export interface ChannelProductionRelaySources {
   getEmbeddedRelayPort: () => number | null | undefined
@@ -24,6 +25,7 @@ export interface ChannelProductionRelaySources {
 export interface ChannelProductionBootstrapOptions {
   userDataPath: string
   loadIdentity: () => KeyPair
+  safeStorage: ChannelAgentIdentitySafeStorage
   relay: ChannelProductionRelayPort
   ipc: Pick<IpcMain, 'handle' | 'removeHandler'>
   getChat: ChannelHandlersDeps['getChat']
@@ -107,6 +109,9 @@ export function createChannelProductionBootstrap(
   if (typeof options.loadIdentity !== 'function') {
     throw new Error('ChannelProductionBootstrap requires an identity loader')
   }
+  if (!options.safeStorage || typeof options.safeStorage !== 'object') {
+    throw new Error('ChannelProductionBootstrap requires injected safeStorage')
+  }
   if (!options.relay || typeof options.relay !== 'object') {
     throw new Error('ChannelProductionBootstrap requires a relay port')
   }
@@ -157,6 +162,7 @@ export function createChannelProductionBootstrap(
   const service = serviceFactory({
     userDataPath: options.userDataPath,
     loadIdentity: options.loadIdentity,
+    safeStorage: options.safeStorage,
     relay: options.relay,
     ...(options.socketFactory ? { socketFactory: options.socketFactory } : {}),
     ...(options.logger ? { logger: options.logger } : {}),

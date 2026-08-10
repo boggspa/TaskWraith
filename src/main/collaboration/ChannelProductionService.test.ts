@@ -3,13 +3,33 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { generateIdentityKeyPair, type KeyPair } from '../../shared/e2ee/keys'
+import {
+  CHANNEL_AGENT_MAX_POST_BYTES,
+  CHANNEL_AGENT_PROTOCOL_VERSION,
+  hashChannelAgentContent,
+  signChannelAgentDelegation,
+  signChannelAgentDispatchGrant,
+  signChannelAgentPost
+} from '../../shared/collaboration/ChannelAgentProtocol'
 import type {
   TransportSocket,
   TransportSocketFactory,
   TransportSocketHandlers
 } from '../remote/RemoteTransportClient'
 import { ChannelMemberClient } from './ChannelMemberClient'
-import { ChannelError, type ChannelErrorCode } from './ChannelStore'
+import {
+  CHANNEL_AGENT_AUTHORITY_FILE_SUFFIX,
+  ChannelAgentAuthorityStore,
+  channelAgentAuthorityFileHash
+} from './ChannelAgentAuthorityStore'
+import {
+  CHANNEL_AGENT_IDENTITY_FILE_SUFFIX,
+  ChannelAgentIdentityStore,
+  channelAgentSeatFileHash,
+  type ChannelAgentIdentitySafeStorage
+} from './ChannelAgentIdentityStore'
+import { ChannelMessageLog } from './ChannelMessageLog'
+import { ChannelError, ChannelStore, type ChannelErrorCode } from './ChannelStore'
 import {
   channelProductionDataPaths,
   createChannelProductionService,
@@ -96,6 +116,17 @@ function socketHarness(): {
 const roots = new Set<string>()
 const services = new Set<ChannelProductionService>()
 
+function xorCipher(value: Buffer): Buffer {
+  return Buffer.from(value.map((byte) => byte ^ 0xa5))
+}
+
+const secureStorage: ChannelAgentIdentitySafeStorage = {
+  isEncryptionAvailable: () => true,
+  encryptString: (plaintext) => xorCipher(Buffer.from(plaintext, 'utf8')),
+  decryptString: (ciphertext) => xorCipher(ciphertext).toString('utf8'),
+  getSelectedStorageBackend: () => 'kwallet6'
+}
+
 function temporaryUserData(): string {
   const root = mkdtempSync(join(tmpdir(), 'taskwraith-channel-production-'))
   roots.add(root)
@@ -129,6 +160,7 @@ function createService(
   const options: ChannelProductionServiceOptions = {
     userDataPath,
     loadIdentity,
+    safeStorage: secureStorage,
     relay: {
       hostRelayUrl: args.hostRelayUrl ?? (() => 'ws://127.0.0.1:8787'),
       inviteRelayUrls:
@@ -179,6 +211,7 @@ describe('ChannelProductionService', () => {
     const same = createChannelProductionService({
       userDataPath: `${fixture.userDataPath}/.`,
       loadIdentity: () => generateIdentityKeyPair(),
+      safeStorage: secureStorage,
       relay: {
         hostRelayUrl: () => 'ws://ignored.example',
         inviteRelayUrls: () => []
@@ -208,6 +241,7 @@ describe('ChannelProductionService', () => {
     const valid = {
       userDataPath,
       loadIdentity: () => generateIdentityKeyPair(),
+      safeStorage: secureStorage,
       relay: { hostRelayUrl: () => 'ws://host', inviteRelayUrls: () => [] }
     }
 
@@ -220,6 +254,9 @@ describe('ChannelProductionService', () => {
     expect(() =>
       createChannelProductionService({ ...valid, loadIdentity: undefined as never })
     ).toThrow('requires an identity loader')
+    expect(() =>
+      createChannelProductionService({ ...valid, safeStorage: undefined as never })
+    ).toThrow('requires injected safeStorage')
     expect(() => createChannelProductionService({ ...valid, relay: undefined as never })).toThrow(
       'requires an injected relay port'
     )
@@ -459,6 +496,155 @@ describe('ChannelProductionService', () => {
       records: [{ sequence: 1, content: 'accepted before stop' }]
     })
     expect(restarted.service.listAudit().map((event) => event.kind)).toContain('message.accepted')
+  })
+
+  it('verifies durable signed-agent history on production restart and erases its stores by scope', async () => {
+    const userDataPath = temporaryUserData()
+    const identity = generateIdentityKeyPair()
+    const now = 1_700_000_000_000
+    const first = createService({ userDataPath, identity, now: () => now })
+    first.service.start()
+    const channel = first.service.createChannel({
+      chatId: 'chat-agent-restart',
+      title: 'Agent restart proof',
+      ownerDisplayName: 'Host'
+    })
+    await first.service.stop()
+
+    const paths = channelProductionDataPaths(userDataPath)
+    const store = new ChannelStore(paths.metadata)
+    const agentSeatId = 'pooled-agent-production-proof'
+    const agentMemberId = 'agent-member-production-proof'
+    const identities = new ChannelAgentIdentityStore({
+      storageDirectory: paths.agentIdentities,
+      safeStorage: secureStorage,
+      platform: 'darwin',
+      now: () => now
+    })
+    const agentIdentity = identities.loadOrCreate(agentSeatId)
+    const authority = new ChannelAgentAuthorityStore({
+      storageDirectory: paths.agentAuthority,
+      resolveOwnerPublicKey: (channelId, ownerMemberId) =>
+        channelId === channel.channelId && ownerMemberId === channel.ownerMemberId
+          ? identity.publicKey
+          : null,
+      now: () => now
+    })
+    const signedDelegation = signChannelAgentDelegation(identity.privateKey, {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      delegationId: 'delegation-production-proof',
+      channelId: channel.channelId,
+      ownerMemberId: channel.ownerMemberId,
+      agentMemberId,
+      agentSeatId,
+      agentPublicKeyB64: agentIdentity.publicKeyB64,
+      keyGeneration: agentIdentity.keyGeneration,
+      scopes: ['channel.dispatch', 'channel.post'],
+      issuedAt: now,
+      notBefore: now,
+      expiresAt: now + 60_000,
+      maxPostBytes: CHANNEL_AGENT_MAX_POST_BYTES
+    })
+    authority.registerDelegation(signedDelegation)
+    store.registerAgentMember({
+      channelId: channel.channelId,
+      displayName: 'Build Agent',
+      signedDelegation,
+      now
+    })
+    const workspaceIdentityHash = 'a'.repeat(64)
+    const permissionPostureHash = 'b'.repeat(64)
+    const signedGrant = signChannelAgentDispatchGrant(identity.privateKey, {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      grantId: 'grant-production-proof',
+      channelId: channel.channelId,
+      ownerMemberId: channel.ownerMemberId,
+      agentMemberId,
+      agentSeatId,
+      agentPublicKeyB64: agentIdentity.publicKeyB64,
+      keyGeneration: agentIdentity.keyGeneration,
+      delegationId: signedDelegation.delegation.delegationId,
+      trigger: 'mention',
+      allowedMentionerMemberIds: [channel.ownerMemberId],
+      workspaceIdentityHash,
+      permissionPostureHash,
+      issuedAt: now,
+      notBefore: now,
+      expiresAt: now + 60_000,
+      maxDispatches: 1
+    })
+    authority.registerDispatchGrant(signedGrant)
+    expect(
+      authority.consumeDispatch(channel.channelId, {
+        grantId: signedGrant.grant.grantId,
+        triggerMessageId: 'trigger-production-proof',
+        mentionerMemberId: channel.ownerMemberId,
+        workspaceIdentityHash,
+        permissionPostureHash,
+        at: now + 1
+      })
+    ).toMatchObject({ kind: 'authorized', remainingDispatches: 0 })
+
+    const content = 'Signed production replay works.'
+    const signedPost = signChannelAgentPost(agentIdentity.privateKey, {
+      schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+      channelId: channel.channelId,
+      agentMemberId,
+      agentSeatId,
+      agentPublicKeyB64: agentIdentity.publicKeyB64,
+      keyGeneration: agentIdentity.keyGeneration,
+      delegationId: signedDelegation.delegation.delegationId,
+      dispatchGrantId: signedGrant.grant.grantId,
+      triggerMessageId: 'trigger-production-proof',
+      runId: 'run-production-proof',
+      runAuthorityHash: 'c'.repeat(64),
+      clientMessageId: 'agent-post-production-proof',
+      kind: 'agent.text',
+      content,
+      contentHash: hashChannelAgentContent(content),
+      createdAt: now + 2
+    })
+    new ChannelMessageLog(paths.logs, store, undefined, authority).appendSignedAgentPost({
+      signedPost,
+      now: now + 2
+    })
+
+    const restarted = createService({ userDataPath, identity, now: () => now + 3 })
+    expect(restarted.service.start()).toMatchObject({
+      state: 'running',
+      channelCount: 1,
+      recoveryBlockedChannelCount: 0
+    })
+    expect(
+      restarted.service.readChannel({ channelId: channel.channelId, resumeAfter: 0 }).records
+    ).toEqual([
+      expect.objectContaining({
+        kind: 'agent.text',
+        authorMemberId: agentMemberId,
+        content
+      })
+    ])
+
+    const authorityPath = join(
+      paths.agentAuthority,
+      `${channelAgentAuthorityFileHash(channel.channelId)}${CHANNEL_AGENT_AUTHORITY_FILE_SUFFIX}`
+    )
+    const identityPath = join(
+      paths.agentIdentities,
+      `${channelAgentSeatFileHash(agentSeatId)}${CHANNEL_AGENT_IDENTITY_FILE_SUFFIX}`
+    )
+    expect(existsSync(authorityPath)).toBe(true)
+    expect(existsSync(identityPath)).toBe(true)
+
+    await restarted.service.purgeForHistoryDeletionScope({
+      kind: 'chat',
+      chatIds: ['chat-agent-restart']
+    })
+    expect(existsSync(authorityPath)).toBe(false)
+    expect(existsSync(identityPath)).toBe(true)
+
+    await restarted.service.purgeForHistoryDeletionScope({ kind: 'global' })
+    expect(existsSync(identityPath)).toBe(false)
   })
 
   it('does not mint an invite while the host relay is unavailable', async () => {
