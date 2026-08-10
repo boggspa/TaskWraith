@@ -29,11 +29,13 @@ import {
   validateCanvasImageRef,
   validateCanvasUrl
 } from '../canvas/canvasTypes'
+import { validateCanvasChart } from '../../shared/canvasChart'
 import type { LaunchAttempt } from '../launch/types'
 
 export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_open',
   'canvas_render_html',
+  'canvas_render_chart',
   'canvas_open_attachment',
   'canvas_open_launch',
   'canvas_sketch_open',
@@ -509,6 +511,48 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               canvasId: opened.canvasId,
               url: redactUrlQuery(opened.url),
               title: opened.title,
+              mimeType: frame.mimeType,
+              width: frame.width,
+              height: frame.height,
+              byteLength: frame.byteLength,
+              hash: frame.hash,
+              capturedAt: frame.capturedAt
+            },
+            [{ type: 'image', mimeType: frame.mimeType, data: frame.data }]
+          )
+        }
+        case 'canvas_render_chart': {
+          // Structured series data only — never canvas_eval / HTML / CDN scripts.
+          const rawDocument =
+            args.chartDocument !== undefined
+              ? args.chartDocument
+              : args.chart !== undefined
+                ? args.chart
+                : undefined
+          if (rawDocument === undefined) {
+            return fail(toolName, '`chartDocument` (structured chart JSON) is required.')
+          }
+          const verdict = validateCanvasChart(rawDocument)
+          if (!verdict.ok) return fail(toolName, verdict.reason || 'Invalid chart document.')
+          const viewport = resolveViewport({ width: args.width, height: args.height })
+          const opened = await controller.open(
+            {
+              driver: 'chart',
+              chartDocument: verdict.document,
+              presentation: 'dock',
+              viewport
+            },
+            ctx
+          )
+          const frame = await controller.screenshot(opened.canvasId, ctx)
+          return jsonResult(
+            {
+              ok: true,
+              tool: toolName,
+              canvasId: opened.canvasId,
+              url: redactUrlQuery(opened.url),
+              title: opened.title,
+              presentation: 'dock' as const,
               mimeType: frame.mimeType,
               width: frame.width,
               height: frame.height,

@@ -51,9 +51,13 @@ export const TASKWRAITH_GATEWAY_V15_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   'taskwraith-gateway-v15'
 export const TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   'taskwraith-gateway-v15-mesh'
+export const TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  'taskwraith-gateway-v16'
+export const TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  'taskwraith-gateway-v16-mesh'
 /** Current birth profile for a fresh, persistently fenceable gateway session. */
 export const TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  TASKWRAITH_GATEWAY_V15_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID
 /** Backwards-compatible generic alias for the current fresh gateway profile. */
 export const TASKWRAITH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
@@ -119,7 +123,9 @@ export function isTaskWraithMcpProfileId(value: unknown): value is TaskWraithMcp
     value === TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V15_MCP_PROFILE_ID ||
-    value === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    value === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -234,7 +240,7 @@ export function resolveTaskWraithMcpProfile(input: {
     if (input.profileReceiptCanPersist !== false) {
       return {
         profileId: input.meshCanvasParticipantCanRequest
-          ? TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+          ? TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
           : TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: input.meshCanvasParticipantCanRequest
           ? 'fresh_gateway_mesh_participant'
@@ -250,7 +256,7 @@ export function resolveTaskWraithMcpProfile(input: {
 
   return {
     profileId: input.meshCanvasParticipantCanRequest
-      ? TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+      ? TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
       : TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
     source: input.meshCanvasParticipantCanRequest
       ? 'fresh_gateway_mesh_participant'
@@ -489,7 +495,9 @@ export function isGatewayTaskWraithMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V15_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -522,7 +530,9 @@ export function isPortableEnsembleControlMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V15_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -539,7 +549,8 @@ export function isMeshCanvasDirectTaskWraithMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V12_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V13_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -547,7 +558,10 @@ export function isMeshCanvasDirectTaskWraithMcpProfile(
 export function isMeshTopologyDirectTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
-  return profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+  return (
+    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
+  )
 }
 
 /** Whether a profile directly advertises Sketch Canvas at session birth. */
@@ -570,7 +584,9 @@ export function isSketchCanvasDirectTaskWraithMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V15_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -590,7 +606,9 @@ export function isGatewayV13DirectTaskWraithMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V14_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V14_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V15_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID
   )
 }
 

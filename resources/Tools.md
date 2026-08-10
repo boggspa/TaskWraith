@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 205 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 206 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1165,6 +1165,15 @@ Render agent-authored HTML (or SVG markup) as a TaskWraith Canvas and return a s
 - Required args: html
 - Optional args: width, height
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_render_html","arguments":{"html":"text"}}}}`
+
+## canvas_render_chart
+
+Render a structured telemetry chart (line/bar/area/scatter series JSON) as a TaskWraith Canvas tab in the active chat Canvas dock and return a screenshot. Pass bounded structured data only — not HTML, not a CDN script, and never canvas_eval. Available on Ask and Plan with an approval modal (not a hard deny); Accept Edits and higher follow the ordinary canvas render gate. Returns a canvasId plus the first PNG frame; canvas_screenshot re-captures it. DOM actuation verbs (click/fill/eval) do not apply.
+
+- Access: governed by your run permission role
+- Required args: chartDocument
+- Optional args: width, height
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_render_chart","arguments":{"chartDocument":{}}}}}`
 
 ## canvas_open_attachment
 

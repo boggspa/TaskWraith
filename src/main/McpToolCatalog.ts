@@ -3929,6 +3929,65 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_render_chart',
+      description:
+        'Render a structured telemetry chart (line/bar/area/scatter series JSON) as a TaskWraith Canvas tab in the active chat Canvas dock and return a screenshot. Pass bounded structured data only — not HTML, not a CDN script, and never canvas_eval. Available on Ask and Plan with an approval modal (not a hard deny); Accept Edits and higher follow the ordinary canvas render gate. Returns a canvasId plus the first PNG frame; canvas_screenshot re-captures it. DOM actuation verbs (click/fill/eval) do not apply.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          chartDocument: {
+            type: 'object',
+            description:
+              'Structured chart document (schemaVersion 1): title, kind (line|bar|area|scatter), series[{id,label,points[{x,y}]}], optional xLabel/yLabel. Caps: ≤8 series, ≤2000 points/series, title ≤120 chars, JSON ≤256KiB.',
+            properties: {
+              schemaVersion: { type: 'number', description: 'Must be 1.' },
+              title: { type: 'string', description: 'Chart title (non-empty, ≤120 chars).' },
+              kind: {
+                type: 'string',
+                enum: ['line', 'bar', 'area', 'scatter'],
+                description: 'Chart kind.'
+              },
+              series: {
+                type: 'array',
+                description: 'One to eight series of labeled points.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    label: { type: 'string' },
+                    points: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          x: { description: 'Finite number or category string.' },
+                          y: { type: 'number', description: 'Finite numeric value.' }
+                        },
+                        required: ['x', 'y']
+                      }
+                    }
+                  },
+                  required: ['id', 'label', 'points']
+                }
+              },
+              xLabel: { type: 'string' },
+              yLabel: { type: 'string' }
+            },
+            required: ['schemaVersion', 'title', 'kind', 'series']
+          },
+          width: { type: 'number', description: 'Viewport width in CSS pixels (default 1280).' },
+          height: { type: 'number', description: 'Viewport height in CSS pixels (default 800).' }
+        },
+        required: ['chartDocument']
+      }
+    },
+    {
       name: 'canvas_open_attachment',
       description:
         "Open an EXISTING image attachment in a TaskWraith Canvas and return it as an image. Pass the content hash (`sha256`) and `mimeType` of an image asset you already have (e.g. from image_generate / image_edit output or a chat attachment). The hash resolves through the media store's realpath jail, so only assets that already exist can be viewed — never an arbitrary file. Returns a canvasId; canvas_screenshot re-returns the image, canvas_close ends it; the DOM verbs do not apply. Only image/* attachments are supported today. Gated like canvas_open.",

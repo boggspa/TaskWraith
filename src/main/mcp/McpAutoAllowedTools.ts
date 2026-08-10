@@ -240,22 +240,24 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
 /**
  * Recon-tier instrument tools: the approval-gated instruments a `read_only`
  * (Recon) seat may REACH that remain outside MCP_AUTO_ALLOWED_TOOLS. Today this
- * is Canvas Browser navigation (user decision 2026-08-04), sub-thread
- * delegation/cancel (user decision 2026-08-08), Mesh Canvas authoring
- * (user decision 2026-08-09), and Simulator Canvas control verbs (user decision
- * 2026-08-08): reachable on Ask/Plan as a per-invocation
- * ASK instead of silent unavailability. CRITICAL INVARIANT (mirrors the
- * plan-instrument tier below): nothing here is auto-allowed, so every call
- * still hits the host approval gate; advertising makes it REACHABLE and
- * approval-queued, NEVER auto-run. `webBrowsing` / `subThreadDelegation` /
- * `meshCanvas` / `simulatorCanvas` resolve to ASK under read_only (and Plan) with
- * grant-immunity where configured (isPlanInstrumentGrantHold); the global kill
- * switch still forces deny. DERIVED, never hand-listed.
+ * is Canvas Browser navigation (user decision 2026-08-04), Canvas dock charts
+ * (user decision 2026-08-10), sub-thread delegation/cancel (user decision
+ * 2026-08-08), Mesh Canvas authoring (user decision 2026-08-09), and Simulator
+ * Canvas control verbs (user decision 2026-08-08): reachable on Ask/Plan as a
+ * per-invocation ASK instead of silent unavailability. CRITICAL INVARIANT
+ * (mirrors the plan-instrument tier below): nothing here is auto-allowed, so
+ * every call still hits the host approval gate; advertising makes it REACHABLE
+ * and approval-queued, NEVER auto-run. `webBrowsing` / `subThreadDelegation` /
+ * `meshCanvas` / `simulatorCanvas` / chart's `mcpTools` resolve to ASK under
+ * read_only (and Plan) with grant-immunity where configured
+ * (isPlanInstrumentGrantHold); the global kill switch still forces deny.
+ * DERIVED, never hand-listed.
  */
 export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter(
     (tool) =>
       tool === 'canvas_navigate' ||
+      tool === 'canvas_render_chart' ||
       tool === 'delegate_to_subthread' ||
       tool === 'delegate_wave' ||
       tool === 'cancel_subthread' ||
@@ -315,6 +317,8 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
       tool === 'canvas_click' ||
       tool === 'canvas_fill' ||
       tool === 'canvas_sketch_update' ||
+      // Shared with Ask's recon tier (explicit overlap keeps Plan bridge complete).
+      tool === 'canvas_render_chart' ||
       (MESH_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       MEDIA_EDITING_TOOLS.has(tool)

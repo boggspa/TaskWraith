@@ -1785,6 +1785,18 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'application-resource',
     'url-argument'
   ),
+  // Dock chart render: orchestration (not workspace_write) so the read-only
+  // mcpTools→shellCommands remapping never fires. Service stays mcpTools —
+  // Ask/Plan already resolve mcpTools to per-invocation ASK (grant-held);
+  // Accept Edits / Full WS / Full Access follow normal mcpTools allow.
+  canvas_render_chart: tool(
+    'orchestration',
+    'mcpTools',
+    'application.mutate',
+    'canvas',
+    'host-state',
+    'application-resource'
+  ),
   canvas_close: tool(
     'orchestration',
     'mcpTools',

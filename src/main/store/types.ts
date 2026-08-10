@@ -870,6 +870,10 @@ export type TaskWraithMcpProfileId =
   // v15 adds revisioned Mesh topology conversion/inspection/editing.
   | 'taskwraith-gateway-v15'
   | 'taskwraith-gateway-v15-mesh'
+  // v16 adds canvas_render_chart through capability discovery without changing
+  // either v15 direct birth catalogue.
+  | 'taskwraith-gateway-v16'
+  | 'taskwraith-gateway-v16-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born
