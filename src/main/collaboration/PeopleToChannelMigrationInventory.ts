@@ -13,7 +13,8 @@ import {
   createPeopleToChannelMigrationPlan,
   type PeopleToChannelLegacyContributionEvidence,
   type PeopleToChannelMigrationChat,
-  type PeopleToChannelMigrationPlan
+  type PeopleToChannelMigrationPlan,
+  type PeopleToChannelMigrationPlanInput
 } from './PeopleToChannelMigrationPlan'
 import {
   EXTERNAL_SEAT_TURN_KIND,
@@ -52,6 +53,11 @@ export interface PeopleToChannelMigrationInventoryInput {
   channels: PeopleToChannelInventoryChannelPort
   chats: readonly PeopleToChannelInventoryChat[]
   workflowChatIds?: readonly string[]
+}
+
+export interface PeopleToChannelMigrationInventoryRead {
+  source: PeopleToChannelMigrationPlanInput
+  plan: PeopleToChannelMigrationPlan
 }
 
 export class PeopleToChannelMigrationInventoryError extends Error {
@@ -219,11 +225,24 @@ function channelSnapshot(port: PeopleToChannelInventoryChannelPort): {
 export function inventoryPeopleToChannelMigration(
   input: PeopleToChannelMigrationInventoryInput
 ): PeopleToChannelMigrationPlan {
+  return readPeopleToChannelMigrationInventory(input).plan
+}
+
+/**
+ * Returns the exact validated source generation alongside its content-free
+ * plan. Production execution needs both values from one read; independently
+ * rebuilding the materialization after the donor or Channel store changed
+ * would turn a read/write race into migration authority.
+ */
+export function readPeopleToChannelMigrationInventory(
+  input: PeopleToChannelMigrationInventoryInput
+): PeopleToChannelMigrationInventoryRead {
   const workflowChatIds = new Set(input.workflowChatIds ?? [])
-  return createPeopleToChannelMigrationPlan({
+  const source: PeopleToChannelMigrationPlanInput = {
     hostIdentityPublicKey: input.hostIdentityPublicKey,
     people: { shares: peopleShares(input.people) },
     channels: channelSnapshot(input.channels),
     chats: input.chats.map((chat) => migrationChat(chat, workflowChatIds))
-  })
+  }
+  return { source, plan: createPeopleToChannelMigrationPlan(source) }
 }

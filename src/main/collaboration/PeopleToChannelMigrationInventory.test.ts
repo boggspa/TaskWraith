@@ -8,6 +8,7 @@ import {
   inventoryPeopleToChannelMigration,
   peopleToChannelLegacyContributionEvidence,
   PeopleToChannelMigrationInventoryError,
+  readPeopleToChannelMigrationInventory,
   type PeopleToChannelInventoryChat,
   type PeopleToChannelMigrationInventoryInput
 } from './PeopleToChannelMigrationInventory'
@@ -145,6 +146,21 @@ function inventoryInput(
 }
 
 describe('PeopleToChannelMigrationInventory', () => {
+  it('returns one validated source generation with the plan used to bind it', () => {
+    const people = vi.fn(() => ({ shares: [share()] }))
+    const input = inventoryInput({ people: { readMigrationSnapshot: people } })
+    const read = readPeopleToChannelMigrationInventory(input)
+
+    expect(people).toHaveBeenCalledTimes(1)
+    expect(read.plan).toEqual(inventoryPeopleToChannelMigration(input))
+    expect(read.source).toMatchObject({
+      hostIdentityPublicKey: HOST_KEY,
+      people: { shares: [{ shareId: 'share_one' }] },
+      channels: { schemaVersion: 4, channels: [], members: [], invites: [] },
+      chats: [{ chatId: 'chat_one', title: 'Private chat title' }]
+    })
+  })
+
   it('hashes legacy contribution content into a deterministic content-free plan', () => {
     const source = inventoryInput()
     const before = JSON.stringify(source.chats)
