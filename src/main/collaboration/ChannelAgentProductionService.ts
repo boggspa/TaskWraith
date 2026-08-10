@@ -66,7 +66,11 @@ export interface ChannelAgentProductionHandleResult {
   readonly retained: number
 }
 
-export type ChannelAgentProductionServiceErrorCode = 'invalid_options' | 'not_running' | 'stopped'
+export type ChannelAgentProductionServiceErrorCode =
+  | 'invalid_channel'
+  | 'invalid_options'
+  | 'not_running'
+  | 'stopped'
 
 export class ChannelAgentProductionServiceError extends Error {
   constructor(
@@ -141,6 +145,7 @@ export class ChannelAgentProductionService {
   private stateValue: ChannelAgentProductionServiceState = 'idle'
   private readonly activeOperations = new Set<Promise<unknown>>()
   private readonly channelTails = new Map<string, Promise<void>>()
+  private readonly quiescingChannels = new Set<string>()
   private retainedRecoveryCount = 0
   private executionStarted = false
   private stopPromise: Promise<void> | null = null
@@ -184,6 +189,7 @@ export class ChannelAgentProductionService {
     this.executionStarted = true
     this.stateValue = 'running'
     for (const channelId of new Set(channelIds)) {
+      if (this.quiescingChannels.has(channelId)) continue
       const operation = this.enqueueChannel(channelId, async () => {
         try {
           const report = await this.options.recovery.recoverChannel(channelId)
@@ -295,10 +301,40 @@ export class ChannelAgentProductionService {
       }
       return Promise.resolve(emptyResult('rejected', admission.targets.length))
     }
+    if (this.quiescingChannels.has(result.record.channelId)) {
+      for (const target of admission.targets) {
+        this.auditBlocked(humanResult, target, 'agent_channel_quiescing')
+      }
+      return Promise.resolve(emptyResult('rejected', admission.targets.length))
+    }
     const operation = this.enqueueChannel(result.record.channelId, () =>
       this.dispatchAdmitted(humanResult, admission.targets)
     )
     return this.track(operation)
+  }
+
+  /** Wait for work accepted before this call without fencing later work. */
+  drainChannel(channelId: string): Promise<void> {
+    if (!isIdentifier(channelId)) {
+      throw serviceError('invalid_channel', 'Channel agent production Channel id is invalid')
+    }
+    if (this.stateValue === 'stopped' || this.stateValue === 'stopping') {
+      throw serviceError('stopped', 'Channel agent production service has stopped')
+    }
+    if (this.stateValue !== 'running') return Promise.resolve()
+    return this.track(this.enqueueChannel(channelId, async () => undefined))
+  }
+
+  /** Fence new work immediately, then wait for already accepted work. */
+  quiesceChannel(channelId: string): Promise<void> {
+    if (!isIdentifier(channelId)) {
+      throw serviceError('invalid_channel', 'Channel agent production Channel id is invalid')
+    }
+    if (this.stateValue === 'stopped' || this.stateValue === 'stopping') {
+      throw serviceError('stopped', 'Channel agent production service has stopped')
+    }
+    this.quiescingChannels.add(channelId)
+    return this.drainChannel(channelId)
   }
 
   status(): ChannelAgentProductionServiceStatus {

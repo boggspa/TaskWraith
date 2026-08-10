@@ -243,6 +243,58 @@ describe('ChannelAgentProductionService admitted path', () => {
     expect(h.service.status().state).toBe('stopped')
   })
 
+  it('fences a Channel immediately and waits for its accepted dispatch queue', async () => {
+    const h = harness()
+    h.recovery.recoverChannel.mockResolvedValue({
+      channelId: CHANNEL_ID,
+      items: [],
+      completed: 0,
+      retained: 0
+    })
+    h.resolveDispatchPlan.mockResolvedValue({ kind: 'authorized', plan: PLAN })
+    let releaseDispatch!: () => void
+    const dispatchBarrier = new Promise<void>((resolve) => {
+      releaseDispatch = resolve
+    })
+    h.execution.dispatchPlan.mockImplementation(async () => {
+      await dispatchBarrier
+      return postedResult('agent-build')
+    })
+    h.service.start([CHANNEL_ID])
+    await vi.waitFor(() => expect(h.service.status().pendingOperations).toBe(0))
+
+    const accepted = h.service.handleDurableAppend({
+      deduplicated: false,
+      record: record('message-6', 'Ask <@agent-build> before close.')
+    })
+    await vi.waitFor(() => expect(h.execution.dispatchPlan).toHaveBeenCalledOnce())
+    let quiesced = false
+    const quiescing = h.service.quiesceChannel(CHANNEL_ID).then(() => {
+      quiesced = true
+    })
+    await Promise.resolve()
+    expect(quiesced).toBe(false)
+    await expect(
+      h.service.handleDurableAppend({
+        deduplicated: false,
+        record: record('message-7', 'Ask <@agent-build> after close began.')
+      })
+    ).resolves.toMatchObject({ kind: 'rejected', dispatched: 0 })
+    expect(h.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'agent.dispatch.blocked',
+        code: 'agent_channel_quiescing'
+      })
+    )
+
+    releaseDispatch()
+    await expect(accepted).resolves.toMatchObject({ kind: 'processed', posted: 1 })
+    await quiescing
+    expect(quiesced).toBe(true)
+    expect(h.execution.dispatchPlan).toHaveBeenCalledOnce()
+    await h.service.stop()
+  })
+
   it('redacts plan and dispatch dependency failures into bounded audit codes', async () => {
     const h = harness()
     h.recovery.recoverChannel.mockResolvedValue({

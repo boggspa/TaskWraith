@@ -127,6 +127,11 @@ describe('ChannelAgentProductionService review gate', () => {
     )
     expect(JSON.stringify(h.audit.mock.calls)).not.toContain(CONTENT)
 
+    await expect(h.service.drainChannel(CHANNEL_ID)).resolves.toBeUndefined()
+    await expect(h.service.quiesceChannel(CHANNEL_ID)).resolves.toBeUndefined()
+    expect(() => h.service.drainChannel('')).toThrowError(
+      expect.objectContaining({ code: 'invalid_channel' })
+    )
     await h.service.stop()
     expect(h.execution.dispose).not.toHaveBeenCalled()
     expect(h.service.status().state).toBe('stopped')
