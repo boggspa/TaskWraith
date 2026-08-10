@@ -2393,6 +2393,11 @@
   background: var(--provider-mistral-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-mistral-color) 50%, transparent);
 }
+.welcome-usage-provider-card-dot.provider-muse {
+  background: var(--provider-muse-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-muse-color) 50%, transparent);
+}
+
 .welcome-usage-provider-card-totals {
   display: flex;
   align-items: baseline;
@@ -2459,6 +2464,10 @@
 .welcome-usage-provider-card-fill.provider-mistral {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-mistral-color) 70%, transparent), var(--provider-mistral-color));
 }
+.welcome-usage-provider-card-fill.provider-muse {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-muse-color) 70%, transparent), var(--provider-muse-color));
+}
+
 
 /* Giant 24H wall-time timecode. The single dominant glyph of
  * the Providers tab — monospace tabular-nums so the digits
@@ -3118,8 +3127,14 @@
 .welcome-usage-model-meter-fill.provider-minimax,
 .welcome-usage-bar-segment.provider-minimax { color: var(--provider-minimax-color); }
 .welcome-usage-model-dot.provider-mistral,
+    .provider-muse,
 .welcome-usage-model-meter-fill.provider-mistral,
+    .provider-muse,
 .welcome-usage-bar-segment.provider-mistral { color: var(--provider-mistral-color); }
+.welcome-usage-model-dot.provider-muse,
+.welcome-usage-model-meter-fill.provider-muse,
+.welcome-usage-bar-segment.provider-muse { color: var(--provider-muse-color); }
+
 .welcome-usage-model-dot.provider-groq,
 .welcome-usage-model-meter-fill.provider-groq,
 .welcome-usage-bar-segment.provider-groq { color: var(--provider-groq-color); }
@@ -13066,6 +13081,8 @@ button.diff-file-row {
 .activity-yield-target.provider-zai { --provider-tint: var(--provider-zai-color); }
 .activity-yield-target.provider-minimax { --provider-tint: var(--provider-minimax-color); }
 .activity-yield-target.provider-mistral { --provider-tint: var(--provider-mistral-color); }
+.activity-yield-target.provider-muse { --provider-tint: var(--provider-muse-color); }
+
 .activity-yield-target.provider-groq { --provider-tint: var(--provider-groq-color); }
 .activity-yield-target.provider-cerebras { --provider-tint: var(--provider-cerebras-color); }
 
@@ -14216,6 +14233,10 @@ button.diff-file-row {
 .notification-newadditions-model.provider-mistral {
   color: var(--provider-mistral-color, #d44404);
 }
+.notification-newadditions-model.provider-muse {
+  color: var(--provider-muse-color, #1671ea);
+}
+
 .notification-newadditions-model.provider-groq {
   color: var(--provider-groq-color, #088482);
 }

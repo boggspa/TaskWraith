@@ -92,7 +92,8 @@ describe('resolveContextWindow', () => {
       pi: 1_000_000,
       // Both Vibe seat models sit at 262_144 — NOT Pi's 1_000_000, despite the
       // shared brand word. The two `mistral` identities are different providers.
-      mistral: 262_144
+      mistral: 262_144,
+      muse: 200_000
     }
 
     for (const [provider, limit] of Object.entries(expected) as Array<

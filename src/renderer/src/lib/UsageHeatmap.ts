@@ -38,7 +38,8 @@ export const HEATMAP_PROVIDER_COLOR_HEX: Record<ProviderId, string> = {
   ollama: '#1A8562',
   antigravity: '#308713',
   pi: '#68768C',
-  mistral: '#D44404'
+  mistral: '#D44404',
+  muse: '#1671EA'
 }
 
 export interface HeatmapCell {
@@ -107,7 +108,8 @@ export const HEATMAP_PROVIDER_ORDER: ProviderId[] = [
   'ollama',
   'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ]
 
 /** Filter tabs for the usage surfaces: "All" plus every provider, labelled

@@ -53,7 +53,8 @@ const PROVIDER_HELPERS: Record<Exclude<ProviderId, 'gemini'>, string> = {
   antigravity:
     'Conditionally admitted AntiGravity seat using its configured agy CLI or Gemini API lane.',
   mistral:
-    "Mistral's Vibe CLI seat; plan-backed sign-in, ACP tool routing through the TaskWraith gateway in default (write) mode."
+    "Mistral's Vibe CLI seat; plan-backed sign-in, ACP tool routing through the TaskWraith gateway in default (write) mode.",
+  muse: 'Meta Muse opaque CLI seat; Meta Model API login / key setup, governed TaskWraith tool routing when attached.'
 }
 
 function buildSubThreadProviderOptions(

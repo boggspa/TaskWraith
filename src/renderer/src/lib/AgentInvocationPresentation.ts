@@ -17,6 +17,7 @@ export function providerDisplayName(provider?: ProviderId | string): string {
   if (provider === 'antigravity') return 'AntiGravity'
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
+  if (provider === 'muse') return 'Muse'
   return 'Agent'
 }
 

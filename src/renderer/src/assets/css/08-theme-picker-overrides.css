@@ -7709,6 +7709,11 @@
   --welcome-provider-color: var(--provider-mistral-color);
 }
 
+.app-transcript.provider-muse .welcome-hero h1 strong {
+  --welcome-provider-color: var(--provider-muse-color);
+}
+
+
 .app-transcript.provider-antigravity .welcome-hero h1 strong {
   --welcome-provider-color: var(--provider-antigravity-color);
 }
@@ -7720,6 +7725,11 @@
 .workspace-name-glow.provider-mistral {
   --workspace-name-glow-color: var(--provider-mistral-color);
 }
+
+.workspace-name-glow.provider-muse {
+  --workspace-name-glow-color: var(--provider-muse-color);
+}
+
 
 .workspace-name-glow.provider-antigravity {
   --workspace-name-glow-color: var(--provider-antigravity-color);

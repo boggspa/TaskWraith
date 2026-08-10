@@ -910,12 +910,13 @@ describe('mixProviderColors', () => {
     antigravity: '#308713',
     pi: '#68768C',
     mistral: '#D44404',
+    muse: '#1671EA'
   } as const
 
   it('returns empty string when no provider has weight', () => {
     expect(
       mixProviderColors(
-        { gemini: 0, codex: 0, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0 },
+        { gemini: 0, codex: 0, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
         palette
       )
     ).toBe('')
@@ -924,7 +925,7 @@ describe('mixProviderColors', () => {
   it('returns the single provider color when only one contributes', () => {
     expect(
       mixProviderColors(
-        { gemini: 0, codex: 50, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0 },
+        { gemini: 0, codex: 50, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
         palette
       )
     ).toBe('#705AFF')
@@ -932,7 +933,7 @@ describe('mixProviderColors', () => {
 
   it('builds a nested color-mix() expression that references both providers when two contribute', () => {
     const result = mixProviderColors(
-      { gemini: 30, codex: 70, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0 },
+      { gemini: 30, codex: 70, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
       palette
     )
     expect(result).toContain('color-mix(in srgb,')
@@ -942,7 +943,7 @@ describe('mixProviderColors', () => {
 
   it('weights the dominant provider with a higher percentage in the color-mix expression', () => {
     const dominantCodex = mixProviderColors(
-      { gemini: 10, codex: 90, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0 },
+      { gemini: 10, codex: 90, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
       palette
     )
     // color-mix(in srgb, <gemini> 10%, <codex> 90%) → codex weight should appear with a high number.

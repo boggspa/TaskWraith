@@ -53,7 +53,8 @@ const STATIC_CATALOGUE_ROSTER: Record<StaticCatalogueProviderId, true> = {
   kimi: true,
   grok: true,
   cursor: true,
-  mistral: true
+  mistral: true,
+  muse: true
 }
 const STATIC_CATALOGUE_PROVIDER_IDS = Object.keys(
   STATIC_CATALOGUE_ROSTER

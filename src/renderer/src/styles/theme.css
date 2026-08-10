@@ -225,6 +225,8 @@
    * below carries the identity. Low chroma keeps it clear of Grok's pure
    * neutral gray. */
   --provider-pi-color: #68768C;
+  /* Muse Code — Meta Model API blue (same reviewed Meta swatch). */
+  --provider-muse-color: #1671EA;
   /* Ensemble — aggregate provider roster in a soft white-gray pink. */
   --provider-ensemble-color: #986781;
   /* Ollama-backed display brands. Runtime provider remains `ollama`; these

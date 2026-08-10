@@ -1371,6 +1371,7 @@ export function getProviderName(provider?: ProviderId) {
   if (provider === 'antigravity') return 'Antigravity'
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
+  if (provider === 'muse') return 'Muse'
   return 'Gemini'
 }
 

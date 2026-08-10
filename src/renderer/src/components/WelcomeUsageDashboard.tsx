@@ -226,7 +226,8 @@ export function WelcomeUsageDashboard({
     ollama: '#1A8562',
     antigravity: '#308713',
     pi: '#68768C',
-    mistral: '#D44404'
+    mistral: '#D44404',
+    muse: '#1671EA'
   } as const
   const chipRailColor =
     mixProviderColors(data.providerTokenTotals, PROVIDER_PALETTE) ||

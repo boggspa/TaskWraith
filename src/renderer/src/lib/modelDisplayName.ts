@@ -227,6 +227,7 @@ export function canonicalModelIdForProvider(
     if (provider === 'antigravity') return 'gemini-api:gemini-2.5-flash'
     if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
     if (provider === 'mistral') return 'devstral-small'
+    if (provider === 'muse') return 'muse-spark-1.2'
   }
   if (provider === 'mistral') {
     // Vibe speaks aliases on the ACP surface but its own config stores the

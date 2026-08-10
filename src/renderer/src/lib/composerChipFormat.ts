@@ -39,6 +39,8 @@ export interface ComposerChipContext {
   kimiThinkingEnabled?: boolean
   /** K3 thinking effort token (low/high/max). */
   kimiReasoningEffort?: string
+  /** Muse Spark reasoning effort (minimal→ultra; never none). */
+  museReasoningEffort?: string
   /** Claude composer shell only — render explicit "Fast" between model +
    * reasoning for Claude/Codex tier toggles and Cursor composer-2.5-fast. */
   shellFastModeActive?: boolean
@@ -323,6 +325,19 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   const modelId = ctx.modelId.trim().toLowerCase()
   if (provider === 'mistral' && modelId === 'mistral-medium-3.5') return 'High'
   if (provider === 'pi' && modelId === 'mistral/mistral-medium-3.5') return 'High'
+
+  if (provider === 'muse') {
+    const value = String(ctx.museReasoningEffort || '').trim().toLowerCase()
+    // Muse Spark rejects `none`; omit the suffix when unset/off so the chip
+    // does not invent a level the seat will refuse.
+    if (!value || value === 'none' || value === 'off') return ''
+    if (value === 'minimal') return 'Minimal'
+    if (value === 'low') return 'Low'
+    if (value === 'medium') return 'Medium'
+    if (value === 'high') return 'High'
+    if (value === 'ultra' || value === 'ultracode') return 'Ultra'
+    return value.charAt(0).toUpperCase() + value.slice(1)
+  }
 
   return ''
 }
