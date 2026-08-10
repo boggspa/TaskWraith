@@ -44,6 +44,9 @@ const ANTIGRAVITY_USER_OWNED_SETUP_NOTICE =
 const MISTRAL_USER_OWNED_SETUP_NOTICE =
   'This opens the official Mistral Vibe setup wizard for a user-owned plan or API-key sign-in. TaskWraith does not read, copy, or store Vibe credentials. After setup, managed Mistral runs use the separate `vibe-acp` runtime.'
 
+const MUSE_USER_OWNED_SETUP_NOTICE =
+  'This opens the official Muse Code CLI for a user-owned Meta Model API login (`muse login`) or credential clear (`muse logout`). TaskWraith does not read or store Meta credentials here. After login, managed Muse runs use opaque `muse exec --json` with a seat-local home.'
+
 export interface ProviderTerminalHandlersDeps {
   resolveCliProviderBinary: (provider: ProviderId) => Promise<ResolvedProviderBinary>
   getUserDataPath: () => string
@@ -199,10 +202,7 @@ async function openProviderAuthTerminal(
       if (action === 'upgrade') {
         rawCommand = 'curl -fsSL https://ollama.com/install.sh | sh'
       } else {
-        commandParts = [
-          resolved.binaryPath || 'ollama',
-          action === 'logout' ? 'signout' : 'signin'
-        ]
+        commandParts = [resolved.binaryPath || 'ollama', action === 'logout' ? 'signout' : 'signin']
       }
     } else if (provider === 'mistral') {
       label = 'Mistral Vibe'
@@ -227,6 +227,17 @@ async function openProviderAuthTerminal(
         // TaskWraith turns still use `vibe-acp`, never this terminal TUI.
         setupNotice = MISTRAL_USER_OWNED_SETUP_NOTICE
         commandParts = ['vibe', '--setup']
+      }
+    } else if (provider === 'muse') {
+      label = 'Muse'
+      setupNotice = MUSE_USER_OWNED_SETUP_NOTICE
+      if (action === 'upgrade') {
+        rawCommand = 'curl -fsSL https://api.meta.ai/muse-launcher.sh | bash'
+      } else {
+        // `muse login` opens Meta browser login; `muse logout` clears stored
+        // Meta credentials (does not touch META_API_KEY in the environment).
+        const resolved = await deps.resolveCliProviderBinary('muse')
+        commandParts = [resolved.binaryPath || 'muse', action === 'logout' ? 'logout' : 'login']
       }
     } else {
       return { ok: false, error: `No terminal ${action} for ${provider}.` }

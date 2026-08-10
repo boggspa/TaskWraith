@@ -108,9 +108,7 @@ describe('registerProviderTerminalHandlers', () => {
     const commandFile = join(loginDir, 'antigravity-login.command')
     registerProviderTerminalHandlers(deps)
 
-    await expect(
-      handlerFor('provider:open-login-terminal')({}, 'antigravity')
-    ).resolves.toEqual({
+    await expect(handlerFor('provider:open-login-terminal')({}, 'antigravity')).resolves.toEqual({
       ok: true,
       scope: 'user-owned-provider-setup',
       managedRunReady: false,
@@ -118,11 +116,9 @@ describe('registerProviderTerminalHandlers', () => {
     })
 
     expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
-    expect(deps.writeFileSync).toHaveBeenCalledWith(
-      commandFile,
-      expect.stringContaining("'agy'"),
-      { mode: 0o755 }
-    )
+    expect(deps.writeFileSync).toHaveBeenCalledWith(commandFile, expect.stringContaining("'agy'"), {
+      mode: 0o755
+    })
     const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
     expect(script).toContain('does not read, copy, or store Google or AntiGravity OAuth')
     expect(script).toContain('unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_APPLICATION_CREDENTIALS')
@@ -136,7 +132,9 @@ describe('registerProviderTerminalHandlers', () => {
       const { deps } = createDeps()
       registerProviderTerminalHandlers(deps)
 
-      await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'antigravity')).resolves.toEqual({
+      await expect(
+        handlerFor(`provider:open-${action}-terminal`)({}, 'antigravity')
+      ).resolves.toEqual({
         ok: false,
         error: `AntiGravity terminal ${action} is not supported here. No agy process was started.`
       })
@@ -251,7 +249,9 @@ describe('registerProviderTerminalHandlers', () => {
     expect(deps.writeFileSync).toHaveBeenNthCalledWith(
       2,
       cmdFile,
-      expect.stringContaining('powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%~dp0codex-upgrade.ps1"')
+      expect.stringContaining(
+        'powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%~dp0codex-upgrade.ps1"'
+      )
     )
     expect(deps.openPath).toHaveBeenCalledWith(cmdFile)
   })
@@ -438,6 +438,58 @@ describe('registerProviderTerminalHandlers', () => {
     const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
     expect(script).toContain('curl -LsSf https://mistral.ai/vibe/install.sh | bash')
     expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+  })
+
+  it('opens muse login for Meta account sign-in (currently missing → no-op)', async () => {
+    const { deps, loginDir } = createDeps()
+    const commandFile = join(loginDir, 'muse-login.command')
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-login-terminal')({}, 'muse')).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/muse login|Meta Model API/i)
+    })
+
+    expect(deps.resolveCliProviderBinary).toHaveBeenCalledWith('muse')
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain("'login'")
+    expect(script).toMatch(/muse['"]?\s+'login'|bin\/muse' 'login'/)
+    expect(deps.openPath).toHaveBeenCalledWith(commandFile)
+  })
+
+  it('opens muse logout to clear stored Meta credentials', async () => {
+    const { deps, loginDir } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-logout-terminal')({}, 'muse')).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/muse login|Meta Model API/i)
+    })
+    const script = String(
+      deps.writeFileSync.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith('muse-logout.command')
+      )?.[1] || ''
+    )
+    expect(script).toContain("'logout'")
+    expect(deps.openPath).toHaveBeenCalledWith(join(loginDir, 'muse-logout.command'))
+  })
+
+  it('opens the official Muse installer for an explicit upgrade', async () => {
+    const { deps } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'muse')).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/muse login|Meta Model API/i)
+    })
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('curl -fsSL https://api.meta.ai/muse-launcher.sh | bash')
   })
 })
 
