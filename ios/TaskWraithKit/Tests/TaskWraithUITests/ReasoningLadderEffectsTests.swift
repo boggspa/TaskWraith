@@ -37,4 +37,31 @@ struct ReasoningLadderEffectsTests {
             TWReasoningLadderEffectProfile.forIndex(12)
                 == TWReasoningLadderEffectProfile.forIndex(6))
     }
+
+    @Test func museMetaEffortMapsOntoSharedLadderStops() {
+        #expect(twLadderIndex(for: "minimal", provider: "muse") == 0)
+        #expect(twLadderIndex(for: "low", provider: "muse") == 1)
+        #expect(twLadderIndex(for: "medium", provider: "muse") == 2)
+        #expect(twLadderIndex(for: "high", provider: "muse") == 3)
+        #expect(twLadderIndex(for: "xhigh", provider: "muse") == 4)
+        #expect(twLadderIndex(for: "ultra", provider: "muse") == 6)
+        // Muse-scoped: other providers must not treat minimal as Off.
+        #expect(twLadderIndex(for: "minimal", provider: "codex") == nil)
+        #expect(twLadderIndex(for: "minimal", provider: "pi") == nil)
+    }
+
+    @Test func museMetaEffortDisplayLabelsMatchDesktop() {
+        #expect(twReasoningDisplayLabel("minimal", provider: "muse") == "Minimal")
+        #expect(twReasoningDisplayLabel("xhigh", provider: "muse") == "Extra High")
+        #expect(twReasoningDisplayLabel("ultra", provider: "muse") == "Ultra")
+        #expect(twReasoningDisplayLabel("ultracode", provider: "muse") == "Ultra")
+        #expect(twReasoningDisplayLabel("xhigh", provider: "claude") == "Extra")
+    }
+
+    @Test func museMetaWireTokensStayOnSharedFloorAndCeiling() {
+        #expect(twLadderWireEffort(index: 0, provider: "muse") == "minimal")
+        #expect(twLadderWireEffort(index: 6, provider: "muse") == "ultra")
+        #expect(twLadderWireEffort(index: 0, provider: "codex") == "off")
+        #expect(twLadderWireEffort(index: 6, provider: "codex") == "ultracode")
+    }
 }

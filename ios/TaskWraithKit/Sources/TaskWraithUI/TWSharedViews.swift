@@ -1955,7 +1955,9 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         var indices = Set<Int>()
         for option in twReasoningOptions(in: currentCatalog, modelId: modelId)
         where option.disabled != true {
-            if let i = twLadderIndex(for: option.reasoningEffort) { indices.insert(i) }
+            if let i = twLadderIndex(for: option.reasoningEffort, provider: provider) {
+                indices.insert(i)
+            }
         }
         return indices
     }
@@ -1970,7 +1972,9 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         // Clamp to an ENABLED stop so a carried-over disabled effort doesn't
         // mislabel the sidecar header (matches the thumb's clamped position).
         let idx = ReasoningLadder.clampedIndex(
-            for: ladderEffortBinding.wrappedValue, enabled: enabledLadderIndices)
+            for: ladderEffortBinding.wrappedValue,
+            enabled: enabledLadderIndices,
+            provider: provider)
         if isKimiProvider && reasoningEffort?.lowercased() == "on" { return "On" }
         return twLadderStopLabel(idx, provider: provider)
     }
@@ -2284,6 +2288,8 @@ private let twReasoningStops: [TWReasoningStop] = [
 ]
 
 /// Coalesce provider synonyms onto the canonical ladder effort strings.
+/// Muse-specific floor/ceiling mapping lives in `twLadderIndex(for:provider:)`
+/// so Codex/Pi `minimal` and Mistral `ultra` are not remapped globally.
 private func twNormalizeLadderEffort(_ effort: String) -> String {
     switch effort.lowercased() {
     case "extra": return "xhigh"
@@ -2291,16 +2297,42 @@ private func twNormalizeLadderEffort(_ effort: String) -> String {
     default: return effort.lowercased()
     }
 }
-private func twLadderIndex(for effort: String?) -> Int? {
+
+/// Map a wire effort onto the shared Off→Ultracode ladder. Muse Meta parks
+/// `minimal` at Off (0) and `ultra` at Ultracode (6) without rewriting those
+/// tokens for other providers.
+func twLadderIndex(for effort: String?, provider: String? = nil) -> Int? {
     guard let effort else { return nil }
-    let normalized = twNormalizeLadderEffort(effort)
+    let token = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if provider?.lowercased() == "muse" {
+        if token == "minimal" { return 0 }
+        if token == "ultra" { return 6 }
+    }
+    let normalized = twNormalizeLadderEffort(token)
     if normalized == "on" { return 1 }
     return twReasoningStops.first(where: { $0.effort == normalized })?.index
 }
-/// Display label for a ladder stop, resolving the top stop's provider-specific
-/// name ("Ultra" on Codex, "Ultracode" elsewhere). Display-only — the wire
-/// token stays 'ultracode' for every provider.
+/// Canonical wire token for a ladder stop. Muse Meta uses `minimal`/`ultra`
+/// (never `off`/`ultracode`) at the shared floor/ceiling indices.
+func twLadderWireEffort(index: Int, provider: String?) -> String {
+    if provider?.lowercased() == "muse" {
+        switch index {
+        case 0: return "minimal"
+        case 6: return "ultra"
+        default: break
+        }
+    }
+    return twReasoningStops[max(0, min(twReasoningStops.count - 1, index))].effort
+}
+
+/// Display label for a ladder stop, resolving Muse floor/ceiling and the top
+/// stop's provider-specific name ("Ultra" on Codex/Muse, "Ultracode" elsewhere).
 private func twLadderStopLabel(_ index: Int, provider: String?) -> String {
+    if provider?.lowercased() == "muse" {
+        if index == 0 { return "Minimal" }
+        if index == 6 { return "Ultra" }
+        if index == 4 { return "Extra High" }
+    }
     let stop = twReasoningStops[index]
     guard stop.effort == "ultracode" else { return stop.label }
     return twReasoningDisplayLabel(stop.effort, provider: provider)
@@ -2505,14 +2537,14 @@ private struct ReasoningLadder: View {
         ]
 
     private var currentIndex: Int {
-        Self.clampedIndex(for: reasoningEffort, enabled: enabledIndices)
+        Self.clampedIndex(for: reasoningEffort, enabled: enabledIndices, provider: provider)
     }
 
     /// The stop the thumb sits on: the current effort's stop when it's enabled,
     /// else the NEAREST enabled stop (a carried-over disabled effort — e.g.
     /// 'xhigh' on Sonnet 4.6 — must never park the thumb on a disabled stop).
-    static func clampedIndex(for effort: String?, enabled: Set<Int>) -> Int {
-        if let raw = twLadderIndex(for: effort) {
+    static func clampedIndex(for effort: String?, enabled: Set<Int>, provider: String? = nil) -> Int {
+        if let raw = twLadderIndex(for: effort, provider: provider) {
             if enabled.contains(raw) { return raw }
             // Deterministic tie-break to the HIGHER stop (Set iteration order is
             // per-launch random) — matches snap(toY:) + Electron's nearestEnabled.
@@ -2618,7 +2650,7 @@ private struct ReasoningLadder: View {
                 ?? (sorted.count - 1)
             let next = direction == .increment
                 ? min(sorted.count - 1, pos + 1) : max(0, pos - 1)
-            reasoningEffort = twReasoningStops[sorted[next]].effort
+            reasoningEffort = twLadderWireEffort(index: sorted[next], provider: provider)
         }
     }
 
@@ -2639,7 +2671,7 @@ private struct ReasoningLadder: View {
                 return d0 == d1 ? $0 > $1 : d0 < d1
             })
         else { return }
-        let effort = twReasoningStops[nearest].effort
+        let effort = twLadderWireEffort(index: nearest, provider: provider)
         if reasoningEffort != effort { reasoningEffort = effort }
     }
 
@@ -2819,30 +2851,34 @@ private func twNormalizeReasoningSelection(
 /// file-private) because the ensemble seat strip renders the same vocabulary as
 /// the composer chip — one rule, two surfaces.
 func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
-    let isCodex = provider?.lowercased() == "codex"
+    let providerId = provider?.lowercased()
+    let isCodex = providerId == "codex"
+    let isMuse = providerId == "muse"
     switch effort.lowercased() {
     case "off": return "Off"
+    // Muse Meta floor stop — never "Off"/none on the Meta CLI.
+    case "minimal": return "Minimal"
     // Kimi's thinking toggle is a separate input from the effort ladder, but it
     // lands on the same ordinal stop and reads as "Thinking" on the chip. This
     // is the ONE place that rule lives — the composer picker and the seat strip
     // both route through it rather than re-testing the provider at the call site.
-    case "on": return provider?.lowercased() == "kimi" ? "Thinking" : "On"
+    case "on": return providerId == "kimi" ? "Thinking" : "On"
     // Codex names its lowest tier "Light" (both `low` and `light` wire tokens
     // land here); Claude, Grok and Cursor Grok call it "Low". Mirrors Electron's
     // codexReasoningDisplayLabel vs claude/grokReasoningDisplayLabel.
     case "low", "light": return isCodex ? "Light" : "Low"
     case "medium": return "Medium"
     case "high": return "High"
-    // Codex's fourth tier is "Extra High"; Claude renders the same wire token
+    // Codex + Muse use "Extra High"; Claude renders the same wire token
     // ('xhigh') as "Extra".
-    case "xhigh", "extra": return isCodex ? "Extra High" : "Extra"
+    case "xhigh", "extra": return (isCodex || isMuse) ? "Extra High" : "Extra"
     case "max": return "Max"
-    // Wire token is 'ultracode' for every provider; only the wording is
-    // per-provider — OpenAI's official GPT-5.6 tier id is 'ultra', so Codex
-    // seats read "Ultra" while Claude keeps "Ultracode" (mirrors Electron's
-    // codexReasoningDisplayLabel / claudeReasoningDisplayLabel split).
+    // Wire token is 'ultracode' for Codex/Claude; Muse Meta uses wire `ultra`.
+    // Both read "Ultra" on Muse/Codex; Claude keeps "Ultracode".
     case "ultracode":
-        return isCodex ? "Ultra" : "Ultracode"
+        return isCodex || isMuse ? "Ultra" : "Ultracode"
+    case "ultra":
+        return "Ultra"
     default:
         return effort.prefix(1).uppercased() + String(effort.dropFirst())
     }
