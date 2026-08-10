@@ -1686,6 +1686,7 @@ import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGe
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
 import { emitAntigravityColdStartInit } from './antigravity/AntigravityColdStartLiveness'
+import { projectAgyBrainTranscriptAfterTurn } from './antigravity/AntigravityBrainTranscriptProjection'
 import {
   AGY_USAGE_MANUAL_MIN_INTERVAL_MS,
   agyQuotaUnavailableSnapshot,
@@ -33766,6 +33767,9 @@ async function runAntigravityAgyProvider(
         }
       }
     )
+    // Project read-side tool calls from agy's brain transcript.
+    // Shell/write tools are already projected by the PreToolUse bridge.
+    await projectAgyBrainTranscriptAfterTurn(sendAgentCompatLine, event.sender, route, payload.workspace)
   } finally {
     await releasePermissionLease()
   }
