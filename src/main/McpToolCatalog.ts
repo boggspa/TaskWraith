@@ -3571,11 +3571,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'delegate_wave',
       description:
-        'Spawn a wave of 2+ fresh context-isolated sub-threads in one call. ' +
-        'Each worker needs provider + prompt (optional model / reasoningEffort / kimiThinking). ' +
-        'Waves are spawn-only (no subThreadId / recall). Results always return to the parent; ' +
-        'optional join knobs (required/quorum/deadlineMs/debounceMs) bind to a host-allocated waveId group — never the parent run id. ' +
-        'One approval covers the whole wave when required; worker count is capped by Settings → General → Max Wave Agents.',
+        'Spawn a wave of fresh context-isolated sub-threads (fleet). ' +
+        'lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). ' +
+        'Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. ' +
+        'Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. ' +
+        'Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await). ' +
+        'One approval covers the wave; capped by Settings → General → Max Wave Agents.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3585,22 +3586,41 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
+          lifecycle: {
+            type: 'string',
+            enum: ['ephemeral', 'durable'],
+            description: 'ephemeral = die-on-return fleet; durable = recallable (default).'
+          },
+          allowMultiProvider: {
+            type: 'boolean',
+            description:
+              'When false (default), every worker must match the parent provider (or omit provider).'
+          },
           workers: {
             type: 'array',
-            minItems: 2,
-            maxItems: 20,
+            minItems: 1,
+            maxItems: 64,
             items: {
               type: 'object',
               properties: {
                 provider: {
                   type: 'string',
                   enum: selectableProviderIds(),
-                  description:
-                    'Selectable provider for this worker (runtime admission still applies).'
+                  description: 'Omit to inherit the parent provider.'
                 },
                 prompt: {
                   type: 'string',
                   description: 'First-turn prompt for this fresh worker seat.'
+                },
+                role: {
+                  type: 'string',
+                  enum: ['scout', 'worker', 'reviewer'],
+                  description:
+                    'Agent-assigned fleet role (parallel to Ensemble stage names; not Ensemble dispatch).'
+                },
+                label: {
+                  type: 'string',
+                  description: 'Optional short display label for the progress card.'
                 },
                 model: {
                   type: 'string',
@@ -3616,9 +3636,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                   description: 'Legacy Kimi flag; only true is accepted when present.'
                 }
               },
-              required: ['provider', 'prompt']
+              required: ['prompt']
             },
-            description: 'Two or more spawn-only worker specs (capped by Max Wave Agents).'
+            description: 'Spawn-only worker specs (ephemeral min 1; durable min 2 at parse).'
           },
           join: {
             type: 'object',

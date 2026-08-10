@@ -1063,11 +1063,11 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 
 ## delegate_wave
 
-Spawn a wave of 2+ fresh context-isolated sub-threads in one call. Each worker needs provider + prompt (optional model / reasoningEffort / kimiThinking). Waves are spawn-only (no subThreadId / recall). Results always return to the parent; optional join knobs (required/quorum/deadlineMs/debounceMs) bind to a host-allocated waveId group — never the parent run id. One approval covers the whole wave when required; worker count is capped by Settings → General → Max Wave Agents.
+Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await). One approval covers the wave; capped by Settings → General → Max Wave Agents.
 
 - Access: governed by your run permission role
 - Required args: workers
-- Optional args: join
+- Optional args: lifecycle, allowMultiProvider, join
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"delegate_wave","arguments":{"workers":[]}}}}`
 
 ## scout_brief

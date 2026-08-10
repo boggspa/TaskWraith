@@ -706,7 +706,7 @@ const GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   ensemble_await: 'JOIN wait on fan-out lanes; timeout≤600s. Then lane_result.',
   ensemble_lane_result: 'READ one fan-out lane output (status+text). Partial ok.',
   delegate_wave:
-    'Spawn 2+ sub-threads (workers[{provider,prompt,…}]). Spawn-only; join→waveId. Gated.',
+    'Wave (ephemeral|durable): workers[{provider?,prompt,role?,label?}]; allowMultiProvider; join→waveId. Gated.',
   // Budget companion: long DIRECT fan-out prose + schema descriptions would
   // leave the four promotions structurally unable to fit under 40k.
   ensemble_fanout: 'Fan-out Ensemble lanes (concurrent; capped). Then await / lane_result.'
