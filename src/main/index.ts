@@ -1685,6 +1685,7 @@ import {
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
+import { emitAntigravityColdStartInit } from './antigravity/AntigravityColdStartLiveness'
 import {
   AGY_USAGE_MANUAL_MIN_INTERVAL_MS,
   agyQuotaUnavailableSnapshot,
@@ -33734,6 +33735,10 @@ async function runAntigravityAgyProvider(
       )
       throw error
     }
+  }
+
+  if (!launch.resumedConversationId) {
+    emitAntigravityColdStartInit(sendAgentCompatLine, event.sender, route)
   }
 
   try {
