@@ -80,8 +80,7 @@ export function fleetWaveApprovalScopeKey(approval: AgentApprovalRequest): strin
   const sortedPathsJoined = [...new Set(collectPreviewPaths(preview))].sort().join(',')
   // Shell asks use { kind:'command', command } with no paths — command text is
   // the load-bearing differentiator for Allow-all (omit → every shell collapses).
-  const command =
-    preview && typeof preview.command === 'string' ? preview.command.trim() : ''
+  const command = preview && typeof preview.command === 'string' ? preview.command.trim() : ''
   if (!method && !kind && !toolName && !sortedPathsJoined && !command) return '__unset__'
   return `${method}|${kind}|${toolName}|${sortedPathsJoined}|${command}`
 }

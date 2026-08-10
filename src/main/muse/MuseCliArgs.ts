@@ -130,9 +130,7 @@ export function normalizeMuseReasoningEffort(
   return MUSE_DEFAULT_REASONING_EFFORT
 }
 
-function resolveSandboxNetwork(
-  mode: MuseSandboxNetworkMode | undefined
-): MuseSandboxNetworkMode {
+function resolveSandboxNetwork(mode: MuseSandboxNetworkMode | undefined): MuseSandboxNetworkMode {
   if (mode === 'restricted' || mode === 'enabled' || mode === 'proxy-only') return mode
   return MUSE_DEFAULT_SANDBOX_NETWORK
 }
@@ -193,14 +191,8 @@ export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
     args.push('--max-model-steps', String(Math.max(0, Math.trunc(input.maxModelSteps))))
   }
 
-  if (
-    typeof input.maxToolOutputBytes === 'number' &&
-    Number.isFinite(input.maxToolOutputBytes)
-  ) {
-    args.push(
-      '--max-tool-output-bytes',
-      String(Math.max(0, Math.trunc(input.maxToolOutputBytes)))
-    )
+  if (typeof input.maxToolOutputBytes === 'number' && Number.isFinite(input.maxToolOutputBytes)) {
+    args.push('--max-tool-output-bytes', String(Math.max(0, Math.trunc(input.maxToolOutputBytes))))
   }
 
   const modelArg = resolveModelArg(input.model)
@@ -271,9 +263,7 @@ export function buildMuseSeatEnv(
 }
 
 /** True when META_API_KEY is absent or empty in the given environment. */
-export function museMetaApiKeyScrubbed(
-  env: Readonly<Record<string, string | undefined>>
-): boolean {
+export function museMetaApiKeyScrubbed(env: Readonly<Record<string, string | undefined>>): boolean {
   const value = env[MUSE_META_API_KEY_ENV]
   return value === undefined || value === ''
 }

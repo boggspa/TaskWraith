@@ -20,19 +20,13 @@ import {
   normalizeMuseReasoningEffort,
   type MuseReasoningEffort
 } from './MuseCliArgs'
-import {
-  assertMuseCronJobsEmpty,
-  type MuseCronAssertResult
-} from './MuseCronAssert'
+import { assertMuseCronJobsEmpty, type MuseCronAssertResult } from './MuseCronAssert'
 import {
   museExecLineToEvents,
   parseMuseExecJsonChunk,
   type MuseExecNormalizedEvent
 } from './MuseExecJson'
-import {
-  createMuseIsolatedHome,
-  type MuseIsolatedHomeLease
-} from './MuseIsolatedHome'
+import { createMuseIsolatedHome, type MuseIsolatedHomeLease } from './MuseIsolatedHome'
 import {
   createMuseSessionLogTailer,
   resolveMuseSessionLogPath,
@@ -172,9 +166,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const runId = requireNonEmpty(input.runId, 'runId')
   const temporaryRoot = requireNonEmpty(input.temporaryRoot, 'temporaryRoot')
   const sessionId =
-    typeof input.sessionId === 'string' && input.sessionId.trim()
-      ? input.sessionId.trim()
-      : runId
+    typeof input.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : runId
   const writeCapable = museWriteCapable(input.approvalMode)
   const effort = normalizeMuseReasoningEffort(input.reasoningEffort)
   const apiKeyStdin = Boolean(input.apiKey && input.apiKey.length > 0)
@@ -266,9 +258,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       sessionId
     }).catch((error: unknown) => {
       warnings.push(
-        `Muse session-log resolve failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `Muse session-log resolve failed: ${error instanceof Error ? error.message : String(error)}`
       )
       return {
         row: null,
@@ -282,7 +272,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       argv,
       cwd: workspacePath,
       env,
-      stdin: apiKeyStdin ? input.apiKey ?? null : null
+      stdin: apiKeyStdin ? (input.apiKey ?? null) : null
     })
 
     handle.onStdout((chunk) => handleStdoutEvents(chunk))
@@ -327,9 +317,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       }
       meter = reducer.snapshot()
     } else if (sessionLog.source === 'missing') {
-      warnings.push(
-        'Muse session.jsonl was not resolved for metering; usage marked unavailable'
-      )
+      warnings.push('Muse session.jsonl was not resolved for metering; usage marked unavailable')
       meter = unavailableMuseMeterSnapshot(sessionId)
     }
 
@@ -380,7 +368,6 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 /** Alias matching wave-1 F naming (`MuseRun` lifecycle entry). */
 export const runMuseOpaqueExecTurn = runMuseProvider
 
-
 /**
  * IPC / provider-adapter entry for `createProviderAdapterRegistry` in index.ts.
  *
@@ -399,9 +386,7 @@ export async function runMuseProviderFromIpc(
   }
 ): Promise<never> {
   const chat =
-    typeof payload.appChatId === 'string' && payload.appChatId
-      ? ` chat=${payload.appChatId}`
-      : ''
+    typeof payload.appChatId === 'string' && payload.appChatId ? ` chat=${payload.appChatId}` : ''
   throw new Error(
     'Muse adapter is registered; IPC→MuseRunInput spawn bridge is not wired yet. ' +
       `Call runMuseProvider({ binaryPath, workspacePath, prompt, runId, temporaryRoot, spawn, ... }).${chat}`

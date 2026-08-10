@@ -72,7 +72,9 @@ export function parseMuseVersion(raw: string): string | null {
  * Shape (verified wave-1 A): `{ schema_version, providers: { meta: { api_key } } }`.
  * Returns length only — never the secret.
  */
-export function parseMuseAuthJsonCredential(raw: string | null | undefined): MuseCredentialEvidence {
+export function parseMuseAuthJsonCredential(
+  raw: string | null | undefined
+): MuseCredentialEvidence {
   if (typeof raw !== 'string' || !raw.trim()) {
     return { present: false, source: 'none', apiKeyLength: null }
   }

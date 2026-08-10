@@ -7,12 +7,7 @@
 /** Parallel to EnsembleStageRole — fleet has no `background`; do not unify. */
 export type FleetWaveRole = 'scout' | 'worker' | 'reviewer'
 
-export type FleetWaveAgentStatus =
-  | 'pending'
-  | 'working'
-  | 'needs_approval'
-  | 'completed'
-  | 'failed'
+export type FleetWaveAgentStatus = 'pending' | 'working' | 'needs_approval' | 'completed' | 'failed'
 
 export type FleetWaveDensityTier = 'enumerate' | 'chips' | 'aggregate'
 
@@ -54,20 +49,28 @@ export function fleetWaveDensityTier(agentCount: number): FleetWaveDensityTier {
 }
 
 /** Exceptions are named at every tier — never suppress failed / needs_approval. */
-export function fleetWaveExceptions(
-  agents: readonly FleetWaveAgentState[]
-): FleetWaveAgentState[] {
-  return agents.filter(
-    (agent) => agent.status === 'failed' || agent.status === 'needs_approval'
-  )
+export function fleetWaveExceptions(agents: readonly FleetWaveAgentState[]): FleetWaveAgentState[] {
+  return agents.filter((agent) => agent.status === 'failed' || agent.status === 'needs_approval')
 }
 
-export function fleetWaveRoleRollup(
-  agents: readonly FleetWaveAgentState[]
-): Array<{ role: string; total: number; completed: number; working: number; failed: number; waiting: number }> {
+export function fleetWaveRoleRollup(agents: readonly FleetWaveAgentState[]): Array<{
+  role: string
+  total: number
+  completed: number
+  working: number
+  failed: number
+  waiting: number
+}> {
   const byRole = new Map<
     string,
-    { role: string; total: number; completed: number; working: number; failed: number; waiting: number }
+    {
+      role: string
+      total: number
+      completed: number
+      working: number
+      failed: number
+      waiting: number
+    }
   >()
   for (const agent of agents) {
     const role = String(agent.role || 'worker')
@@ -112,9 +115,8 @@ export function fleetWaveGhostCellStates(
 
 /** Agents that are not failed / needs_approval (exceptions stay named separately). */
 export function fleetWaveHealthyCount(agents: readonly FleetWaveAgentState[]): number {
-  return agents.filter(
-    (agent) => agent.status !== 'failed' && agent.status !== 'needs_approval'
-  ).length
+  return agents.filter((agent) => agent.status !== 'failed' && agent.status !== 'needs_approval')
+    .length
 }
 
 /** Allow-all only when ≥2 pending approvals share one scopeKey. */

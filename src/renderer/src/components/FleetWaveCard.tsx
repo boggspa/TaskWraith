@@ -179,17 +179,31 @@ export function FleetWaveCard({
     <NativeOrchestrationCard
       cardClassName="fleet-wave-card"
       provider={(provider || telemetry.parentProvider || 'claude') as ProviderId}
-      status={status === 'needs_approval' ? 'paused' : status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'running'}
+      status={
+        status === 'needs_approval'
+          ? 'paused'
+          : status === 'completed'
+            ? 'completed'
+            : status === 'failed'
+              ? 'failed'
+              : 'running'
+      }
       statusLabel={statusLabel}
       isRunning={status === 'running' || status === 'needs_approval'}
       useProviderAccent={!isClaude}
-      glyph={<span className="fleet-wave-card-glyph" aria-hidden="true">⬡</span>}
+      glyph={
+        <span className="fleet-wave-card-glyph" aria-hidden="true">
+          ⬡
+        </span>
+      }
       name={count ? `Fleet · ${count} agents` : 'Fleet'}
-      metaParts={[
-        telemetry.parentProvider,
-        count ? `${settled} of ${count} returned` : undefined,
-        telemetry.durationMs != null ? `${Math.round(telemetry.durationMs / 1000)}s` : undefined
-      ].filter(Boolean) as string[]}
+      metaParts={
+        [
+          telemetry.parentProvider,
+          count ? `${settled} of ${count} returned` : undefined,
+          telemetry.durationMs != null ? `${Math.round(telemetry.durationMs / 1000)}s` : undefined
+        ].filter(Boolean) as string[]
+      }
       progressFraction={progressFraction}
       extras={densityExtras}
     />
@@ -214,7 +228,13 @@ function FleetWaveDensityStrip({
       role="img"
       aria-label={`${settled} of ${total} settled`}
     >
-      <svg width={0} height={0} aria-hidden="true" focusable="false" style={{ position: 'absolute' }}>
+      <svg
+        width={0}
+        height={0}
+        aria-hidden="true"
+        focusable="false"
+        style={{ position: 'absolute' }}
+      >
         <symbol id={ghostSymbolId} viewBox="0 0 128 128">
           {FLEET_WAVE_GHOST_PATHS}
         </symbol>
@@ -252,9 +272,7 @@ function FleetWaveElevationRow({
 
   return (
     <div className="fleet-wave-card-elevation">
-      <span className="fleet-wave-card-elevation-count">
-        1 of {total}
-      </span>
+      <span className="fleet-wave-card-elevation-count">1 of {total}</span>
       <span className="fleet-wave-card-elevation-text">
         {first.postureLabel ? (
           <>

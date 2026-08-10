@@ -286,7 +286,9 @@ function splitCompleteLines(buffer: string): { complete: string[]; pending: stri
  * Handles torn last lines, truncate/rotate (`size < offset` → reset), and a
  * final flush after process exit.
  */
-export function createMuseSessionLogTailer(options: MuseSessionLogTailOptions): MuseSessionLogTailer {
+export function createMuseSessionLogTailer(
+  options: MuseSessionLogTailOptions
+): MuseSessionLogTailer {
   let byteOffset = 0
   let pending = ''
   let parseErrorCount = 0

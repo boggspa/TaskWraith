@@ -267,7 +267,7 @@ describe('estimateMuseCostUsd / catalog', () => {
       rate: SPARK_RATE
     })
     expect(usd).not.toBeNull()
-    expect(usd!).toBeCloseTo(16009 / 1e6 * 1.25 + 130 / 1e6 * 4.25, 5)
+    expect(usd!).toBeCloseTo((16009 / 1e6) * 1.25 + (130 / 1e6) * 4.25, 5)
     expect(usd!).toBeCloseTo(0.0206, 3)
   })
 

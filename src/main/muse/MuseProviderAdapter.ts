@@ -34,10 +34,7 @@ import {
   isMuseCredentialPresent,
   type MuseProbeDeps
 } from './MuseProbe'
-import {
-  runMuseProvider,
-  type MuseRunSpawn
-} from './MuseRun'
+import { runMuseProvider, type MuseRunSpawn } from './MuseRun'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 
 /**
@@ -128,8 +125,10 @@ export interface MuseAdapterRunPayload {
   museApiKey?: string | null
 }
 
-export interface MuseProviderAdapter<TPayload = MuseAdapterRunPayload, TEvent = unknown>
-  extends MuseProviderAdapterDescriptor {
+export interface MuseProviderAdapter<
+  TPayload = MuseAdapterRunPayload,
+  TEvent = unknown
+> extends MuseProviderAdapterDescriptor {
   run(context: ProviderRunContext<TPayload, TEvent>): Promise<void>
   cancel(runId?: string): Promise<boolean>
   getStatus(): Promise<unknown>
@@ -157,9 +156,7 @@ export interface MuseProviderAdapterDeps {
   createSessionId?: () => string
 }
 
-function mapMuseExecEventToNormalized(
-  event: MuseExecNormalizedEvent
-): NormalizedMuseRunEvent {
+function mapMuseExecEventToNormalized(event: MuseExecNormalizedEvent): NormalizedMuseRunEvent {
   if (event.type === 'content') {
     return {
       type: 'content',
@@ -170,9 +167,7 @@ function mapMuseExecEventToNormalized(
   }
   if (event.type === 'terminal') {
     const failed =
-      event.terminal === 'failed' ||
-      event.terminal === 'error' ||
-      event.terminal === 'cancelled'
+      event.terminal === 'failed' || event.terminal === 'error' || event.terminal === 'cancelled'
     return {
       type: 'result',
       text: event.text,
@@ -271,9 +266,7 @@ export function validateMuseLaunchArgv(argv: readonly string[]): MuseArgvValidat
   }
 }
 
-function scrubInheritedMuseEnv(
-  base: Readonly<Record<string, string>>
-): Record<string, string> {
+function scrubInheritedMuseEnv(base: Readonly<Record<string, string>>): Record<string, string> {
   const env = { ...base }
   // Prefer seat-local auth / --api-key-stdin; never forward a host META_API_KEY
   // that happened to land on the plan env map. Lease-local MUSE_AUTH_PATH stays.
@@ -365,11 +358,7 @@ export async function runMuseOpaqueExec(input: {
           warnings.push(surface.reason)
           terminalStatus = 'failed'
         }
-        if (
-          plan.buildShaExpected &&
-          event.buildSha &&
-          event.buildSha !== plan.buildShaExpected
-        ) {
+        if (plan.buildShaExpected && event.buildSha && event.buildSha !== plan.buildShaExpected) {
           warnings.push(
             `build.sha mismatch: got ${event.buildSha}, expected ${plan.buildShaExpected}`
           )
@@ -401,7 +390,7 @@ export async function runMuseOpaqueExec(input: {
       argv: plan.argv,
       cwd: plan.cwd,
       env: plan.env,
-      stdin: plan.apiKeyStdin ? input.request.apiKey ?? null : null
+      stdin: plan.apiKeyStdin ? (input.request.apiKey ?? null) : null
     })
 
     handle.onStdout((chunk) => handleEvents(parser.push(chunk)))
@@ -507,8 +496,7 @@ export function createMuseProviderAdapter<TPayload extends MuseAdapterRunPayload
 
       try {
         const spawn: MuseRunSpawn =
-          deps.spawn ??
-          ((spawnInput) => deps.modules.process.spawn(spawnInput))
+          deps.spawn ?? ((spawnInput) => deps.modules.process.spawn(spawnInput))
         await runMuseProvider({
           binaryPath: resolved.binaryPath,
           workspacePath,
@@ -602,15 +590,14 @@ export function createMuseProviderAdapter<TPayload extends MuseAdapterRunPayload
           available: false,
           enabled: false,
           tools: [],
-          message:
-            mcpStatus.message ||
-            'Muse v1 has no TaskWraith MCP broker.'
+          message: mcpStatus.message || 'Muse v1 has no TaskWraith MCP broker.'
         },
-        warnings: descriptor.capabilityCaveats?.map((caveat) => ({
-          id: caveat.id,
-          severity: caveat.severity,
-          message: caveat.message
-        })) ?? []
+        warnings:
+          descriptor.capabilityCaveats?.map((caveat) => ({
+            id: caveat.id,
+            severity: caveat.severity,
+            message: caveat.message
+          })) ?? []
       }
     }
   }

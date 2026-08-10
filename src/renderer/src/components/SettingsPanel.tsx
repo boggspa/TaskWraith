@@ -7424,8 +7424,8 @@ export function SettingsPanel({
                       <code>muse</code>
                       <span>
                         Install the Muse Code CLI and finish Meta Model API login in Terminal.
-                        TaskWraith probes binary + credential fail-closed and does not store the Meta
-                        key in this card.
+                        TaskWraith probes binary + credential fail-closed and does not store the
+                        Meta key in this card.
                       </span>
                     </div>
                     <div className="settings-provider-auth-action-row">

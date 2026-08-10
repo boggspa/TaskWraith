@@ -2339,8 +2339,7 @@ const defaultSettings: AppSettings = {
       ollama: 120_000,
       antigravity: 120_000,
       pi: 120_000,
-      mistral: 60_000,
-      muse: 120_000
+      mistral: 60_000
     },
     mainAuthorityMs: 60_000
   }
@@ -6637,12 +6636,8 @@ export class AppStore {
         ...(args.lifecycle === 'ephemeral' || args.lifecycle === 'durable'
           ? { lifecycle: args.lifecycle }
           : {}),
-        ...(typeof args.role === 'string' && args.role.trim()
-          ? { role: args.role.trim() }
-          : {}),
-        ...(typeof args.label === 'string' && args.label.trim()
-          ? { label: args.label.trim() }
-          : {})
+        ...(typeof args.role === 'string' && args.role.trim() ? { role: args.role.trim() } : {}),
+        ...(typeof args.label === 'string' && args.label.trim() ? { label: args.label.trim() } : {})
       }
     }
     if (settings.storeLocalChatHistory) {

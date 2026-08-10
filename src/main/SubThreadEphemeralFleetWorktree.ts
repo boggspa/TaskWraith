@@ -34,9 +34,7 @@ export interface EphemeralFleetWorktreeGitService {
 
 /** Git surface for promote/discard/remove on die-on-return. */
 export interface EphemeralFleetWorktreeLifecycleGitService extends EphemeralFleetWorktreeGitService {
-  captureWorktreePatch(input: {
-    worktreePath: string
-  }): Promise<
+  captureWorktreePatch(input: { worktreePath: string }): Promise<
     | {
         ok: true
         data: { patch: string; clean: boolean }
@@ -223,7 +221,11 @@ function normalizePath(value: string): string {
   return value.trim().replace(/\/+$/, '')
 }
 
-export type EphemeralFleetWorktreeSettleOutcome = 'done' | 'failed' | 'cancelled' | 'requires_action'
+export type EphemeralFleetWorktreeSettleOutcome =
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  | 'requires_action'
 
 /**
  * Re-adopt a linked fleet worktree by deterministic identity. Returns null when
@@ -411,4 +413,3 @@ export async function settleEphemeralFleetWriterWorktreeOnReturn(input: {
   }
   return { ok: true, action: removed.removed ? 'discarded' : 'noop' }
 }
-

@@ -179,9 +179,7 @@ export function estimateMuseCostUsd(args: {
   // Billable input excludes cache-read tokens when the catalog has a cached rate
   // and cache-read is known; otherwise price the full input at the input rate.
   const billableInput =
-    cacheRead > 0 && args.rate.cachedUsdPerMillion >= 0
-      ? Math.max(0, input - cacheRead)
-      : input
+    cacheRead > 0 && args.rate.cachedUsdPerMillion >= 0 ? Math.max(0, input - cacheRead) : input
   const usd =
     (billableInput / 1_000_000) * args.rate.inputUsdPerMillion +
     (cacheRead / 1_000_000) * args.rate.cachedUsdPerMillion +

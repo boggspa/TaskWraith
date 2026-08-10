@@ -61,10 +61,7 @@ describe('muse constants + policy', () => {
       '--disable-sandbox',
       '--no-session-log'
     ])
-    expect(MUSE_NATIVE_TOOL_POLICY.readOnlyFlags).toEqual([
-      '--disable-write',
-      '--disable-shell'
-    ])
+    expect(MUSE_NATIVE_TOOL_POLICY.readOnlyFlags).toEqual(['--disable-write', '--disable-shell'])
     expect(MUSE_NATIVE_TOOL_POLICY.headlessFlags).toEqual([
       '--disable-approval',
       '--user-input-auto-resolve'
@@ -115,14 +112,7 @@ describe('normalizeMuseReasoningEffort', () => {
 describe('buildMuseExecArgv', () => {
   it('always starts with exec --json --provider meta --workspace', () => {
     const args = buildMuseExecArgv(base)
-    expect(args.slice(0, 6)).toEqual([
-      'exec',
-      '--json',
-      '--provider',
-      'meta',
-      '--workspace',
-      '/ws'
-    ])
+    expect(args.slice(0, 6)).toEqual(['exec', '--json', '--provider', 'meta', '--workspace', '/ws'])
   })
 
   it('includes headless flags, session id, effort, and sandbox network pin', () => {
@@ -130,9 +120,7 @@ describe('buildMuseExecArgv', () => {
     expect(args).toContain('--no-foreign-personal-context')
     expect(args).toContain('--disable-approval')
     expect(args).toContain('--user-input-auto-resolve')
-    expect(args.join(' ')).toContain(
-      '--session-id 11111111-2222-3333-4444-555555555555'
-    )
+    expect(args.join(' ')).toContain('--session-id 11111111-2222-3333-4444-555555555555')
     expect(args.join(' ')).toContain('--reasoning-effort high')
     expect(args.join(' ')).toContain('--sandbox-network proxy-only')
     expect(args).toContain('--disable-web-tools')
@@ -254,11 +242,9 @@ describe('buildMuseSeatEnv', () => {
   })
 
   it('can retain META_API_KEY when scrubMetaApiKey is false', () => {
-    const env = buildMuseSeatEnv(
-      { [MUSE_META_API_KEY_ENV]: 'sk-keep' },
-      homes,
-      { scrubMetaApiKey: false }
-    )
+    const env = buildMuseSeatEnv({ [MUSE_META_API_KEY_ENV]: 'sk-keep' }, homes, {
+      scrubMetaApiKey: false
+    })
     expect(env[MUSE_META_API_KEY_ENV]).toBe('sk-keep')
   })
 

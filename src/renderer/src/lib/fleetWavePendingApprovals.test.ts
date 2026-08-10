@@ -81,24 +81,28 @@ describe('fleetWaveApprovalScopeKey', () => {
     })
     expect(fleetWaveApprovalScopeKey(status)).not.toBe(fleetWaveApprovalScopeKey(destroy))
     expect(fleetWaveApprovalScopeKey(status)).toContain('git status')
-    expect(canAllowAllPendingApprovals([
-      { approvalId: 's1', scopeKey: fleetWaveApprovalScopeKey(status), summary: 'a' },
-      { approvalId: 's2', scopeKey: fleetWaveApprovalScopeKey(destroy), summary: 'b' }
-    ])).toBe(false)
-    expect(canAllowAllPendingApprovals([
-      { approvalId: 's1', scopeKey: fleetWaveApprovalScopeKey(status), summary: 'a' },
-      {
-        approvalId: 's3',
-        scopeKey: fleetWaveApprovalScopeKey(
-          makeApproval({
-            id: 's3',
-            method: 'shellCommands',
-            preview: { kind: 'command', command: 'git status' }
-          })
-        ),
-        summary: 'c'
-      }
-    ])).toBe(true)
+    expect(
+      canAllowAllPendingApprovals([
+        { approvalId: 's1', scopeKey: fleetWaveApprovalScopeKey(status), summary: 'a' },
+        { approvalId: 's2', scopeKey: fleetWaveApprovalScopeKey(destroy), summary: 'b' }
+      ])
+    ).toBe(false)
+    expect(
+      canAllowAllPendingApprovals([
+        { approvalId: 's1', scopeKey: fleetWaveApprovalScopeKey(status), summary: 'a' },
+        {
+          approvalId: 's3',
+          scopeKey: fleetWaveApprovalScopeKey(
+            makeApproval({
+              id: 's3',
+              method: 'shellCommands',
+              preview: { kind: 'command', command: 'git status' }
+            })
+          ),
+          summary: 'c'
+        }
+      ])
+    ).toBe(true)
   })
 })
 

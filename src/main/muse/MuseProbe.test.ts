@@ -45,9 +45,8 @@ describe('MuseProbe', () => {
       expect(parseMuseAuthJsonCredential(null).present).toBe(false)
       expect(parseMuseAuthJsonCredential('{').present).toBe(false)
       expect(
-        parseMuseAuthJsonCredential(
-          JSON.stringify({ providers: { meta: { api_key: '' } } })
-        ).present
+        parseMuseAuthJsonCredential(JSON.stringify({ providers: { meta: { api_key: '' } } }))
+          .present
       ).toBe(false)
     })
   })

@@ -35,17 +35,23 @@ describe('agent approval lifecycle UI', () => {
   })
 
   it('locates an id in head or queue without trusting a pre-await snapshot', () => {
-    expect(
-      locatePendingApproval('b', { child: { id: 'b' } }, { child: [{ id: 'c' }] })
-    ).toEqual({ chatId: 'child', inHead: true, inQueue: false })
-    expect(
-      locatePendingApproval('c', { child: { id: 'b' } }, { child: [{ id: 'c' }] })
-    ).toEqual({ chatId: 'child', inHead: false, inQueue: true })
+    expect(locatePendingApproval('b', { child: { id: 'b' } }, { child: [{ id: 'c' }] })).toEqual({
+      chatId: 'child',
+      inHead: true,
+      inQueue: false
+    })
+    expect(locatePendingApproval('c', { child: { id: 'b' } }, { child: [{ id: 'c' }] })).toEqual({
+      chatId: 'child',
+      inHead: false,
+      inQueue: true
+    })
     // After head A was accepted and B promoted, live maps show B as head —
     // even if a stale snapshot still had B in the queue.
-    expect(
-      locatePendingApproval('b', { child: { id: 'b' } }, { child: [] })
-    ).toEqual({ chatId: 'child', inHead: true, inQueue: false })
+    expect(locatePendingApproval('b', { child: { id: 'b' } }, { child: [] })).toEqual({
+      chatId: 'child',
+      inHead: true,
+      inQueue: false
+    })
     expect(locatePendingApproval('missing', { child: { id: 'b' } }, {})).toBeNull()
   })
 })

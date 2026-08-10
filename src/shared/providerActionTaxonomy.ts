@@ -687,13 +687,7 @@ export const PROVIDER_ACTION_ADAPTERS = {
     structuredKindMappings: {},
     declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
     deniedNativeActionMappings: {},
-    declaredNativeActions: [
-      'read',
-      'write',
-      'shell',
-      'web-search',
-      'web-fetch'
-    ] as const,
+    declaredNativeActions: ['read', 'write', 'shell', 'web-search', 'web-fetch'] as const,
     nativeActionMappings: {
       read: {
         aliases: ['read_file', 'Read', 'Read file'],

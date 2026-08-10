@@ -96,11 +96,7 @@ describe('runMuseProvider', () => {
     const sessionId = 'sess-run-1'
     const runId = 'run-abc'
     const sessionLogPath = join(temporaryRoot, 'session.jsonl')
-    writeFileSync(
-      sessionLogPath,
-      `${usageSessionLine(1, runId, sessionId)}\n`,
-      'utf8'
-    )
+    writeFileSync(sessionLogPath, `${usageSessionLine(1, runId, sessionId)}\n`, 'utf8')
 
     const cron = vi.fn(() => ({
       ok: true as const,

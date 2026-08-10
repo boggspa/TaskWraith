@@ -823,7 +823,11 @@ describe('SubThreadDelegateWave pure helpers', () => {
   })
 
   it('approval copy discloses ephemeral lifecycle, roles/labels, postures, and multi-provider', () => {
-    const joinPolicy = resolveDelegateWaveJoinPolicy({ required: true, quorum: 2 }, 'wave-copy', nowMs)
+    const joinPolicy = resolveDelegateWaveJoinPolicy(
+      { required: true, quorum: 2 },
+      'wave-copy',
+      nowMs
+    )
     const { body } = buildDelegateWaveApprovalCopy({
       parentProviderLabel: 'Codex',
       waveId: 'wave-copy',
@@ -869,7 +873,9 @@ describe('SubThreadDelegateWave pure helpers', () => {
       .split('\n')
       .find((line) => /role=worker/i.test(line) && /label=Fixer/.test(line))
     expect(workerLine).toBeTruthy()
-    expect(workerLine).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
+    expect(workerLine).toMatch(
+      /posture=capped inherit or worktree when available \(never Full Access\)/
+    )
     expect(workerLine).not.toMatch(/same-checkout/)
     expect(workerLine).not.toMatch(/posture=read_only/)
   })
@@ -962,7 +968,9 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(approvalBody).toMatch(/label=Tree scout/)
     expect(approvalBody).toMatch(/role=worker/i)
     expect(approvalBody).toMatch(/label=Patcher/)
-    expect(approvalBody).toMatch(/posture=capped inherit or worktree when available \(never Full Access\)/)
+    expect(approvalBody).toMatch(
+      /posture=capped inherit or worktree when available \(never Full Access\)/
+    )
     expect(approvalBody).not.toMatch(/same-checkout/)
     // Decline still refunds — preserve budget invariant.
     expect(budget.consumed).toBe(2)

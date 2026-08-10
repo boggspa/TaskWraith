@@ -141,9 +141,7 @@ export function shouldArchiveEphemeralFleetChild(
  * `null` means settle was unnecessary (no fleet worktree / not ephemeral path).
  * Promote/discard failure keeps the child visible for recovery.
  */
-export function shouldArchiveEphemeralFleetAfterSettle(
-  settle: { ok: boolean } | null
-): boolean {
+export function shouldArchiveEphemeralFleetAfterSettle(settle: { ok: boolean } | null): boolean {
   if (settle == null) return true
   return settle.ok
 }

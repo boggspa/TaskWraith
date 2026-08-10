@@ -47,9 +47,9 @@ describe('MuseProviderAdapter', () => {
       )
       // Headless seats intentionally emit --disable-approval (MuseCliArgs).
       expect(validateMuseLaunchArgv(['exec', '--disable-approval']).ok).toBe(true)
-      expect(
-        validateMuseLaunchArgv(['exec', '--reasoning-effort', 'none']).forbidden
-      ).toContain('--reasoning-effort none')
+      expect(validateMuseLaunchArgv(['exec', '--reasoning-effort', 'none']).forbidden).toContain(
+        '--reasoning-effort none'
+      )
     })
 
     it('rejects --no-session-log for metering seats', () => {
@@ -207,9 +207,7 @@ describe('MuseProviderAdapter', () => {
         },
         process: {
           spawn: () =>
-            fakeSpawn([
-              JSON.stringify({ payload_type: 'run.terminal.completed', text: 'done' })
-            ])
+            fakeSpawn([JSON.stringify({ payload_type: 'run.terminal.completed', text: 'done' })])
         }
       })
       const result = await runMuseOpaqueExec({
