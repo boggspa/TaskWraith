@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { ChannelAgentIpcApi } from '../../../shared/collaboration/ChannelAgentIpc'
 import type { ChannelIpcApi, ChannelIpcMember } from '../../../shared/collaboration/ChannelIpc'
+import { isChannelMemberPresentation } from '../../../shared/collaboration/ChannelMemberPresentation'
 import { ChannelAgentManagement } from './ChannelAgentManagement'
 import {
   ChannelHostPanelController,
@@ -67,6 +68,35 @@ function memberStatusLabel(status: ChannelIpcMember['status']): string {
   return 'Removed'
 }
 
+function memberPresentation(member: ChannelIpcMember) {
+  return isChannelMemberPresentation(member.presentation, { allowSeatDisabled: true })
+    ? member.presentation
+    : undefined
+}
+
+function memberAccentClass(member: ChannelIpcMember | undefined): string {
+  const colorIndex = member ? memberPresentation(member)?.colorIndex : undefined
+  return colorIndex === undefined ? '' : ` is-color-${colorIndex}`
+}
+
+function orderedMembers(
+  members: readonly ChannelIpcMember[],
+  ownerMemberId: string | undefined
+): ChannelIpcMember[] {
+  return [...members].sort((left, right) => {
+    const ownerOrder =
+      Number(right.memberId === ownerMemberId) - Number(left.memberId === ownerMemberId)
+    if (ownerOrder !== 0) return ownerOrder
+    const leftOrder = memberPresentation(left)?.seatOrder ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = memberPresentation(right)?.seatOrder ?? Number.MAX_SAFE_INTEGER
+    return (
+      leftOrder - rightOrder ||
+      left.joinedAt - right.joinedAt ||
+      (left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0)
+    )
+  })
+}
+
 function isoTime(timestamp: number): string {
   try {
     return new Date(timestamp).toISOString()
@@ -110,6 +140,10 @@ export function ChannelHostPanelView({
   const active = channel?.status === 'active'
   const ready = channel?.availability === 'ready'
   const busy = state.busy !== null
+  const members = useMemo(
+    () => orderedMembers(state.members, channel?.ownerMemberId),
+    [channel?.ownerMemberId, state.members]
+  )
   const memberById = new Map(state.members.map((member) => [member.memberId, member]))
   const lastSequence = state.records.at(-1)?.sequence || 0
   const hasMore = lastSequence < state.highWaterSequence
@@ -328,18 +362,20 @@ export function ChannelHostPanelView({
                   )}
                 </div>
                 <div className="channel-host-members">
-                  {state.members.map((member) => {
+                  {members.map((member) => {
                     const owner = member.memberId === channel.ownerMemberId
+                    const presentation = memberPresentation(member)
                     return (
                       <div
                         key={member.memberId}
-                        className={`channel-host-member is-${member.status}`}
+                        className={`channel-host-member is-${member.status}${memberAccentClass(member)}${presentation?.seatDisabled ? ' is-muted' : ''}`}
                       >
                         <div>
                           <strong>{member.displayName}</strong>
                           <span>
                             {owner ? 'Owner' : member.kind === 'agent' ? 'Agent' : 'Human'} ·{' '}
                             {memberStatusLabel(member.status)}
+                            {presentation?.seatDisabled ? ' · Muted' : ''}
                           </span>
                         </div>
                         {!owner &&
@@ -359,7 +395,7 @@ export function ChannelHostPanelView({
                       </div>
                     )
                   })}
-                  {state.members.length === 0 && (
+                  {members.length === 0 && (
                     <span className="channel-host-muted">Member details are unavailable.</span>
                   )}
                 </div>
@@ -413,7 +449,7 @@ export function ChannelHostPanelView({
                     return (
                       <article
                         key={record.messageId}
-                        className={`channel-host-message${own ? ' is-own' : ''}${record.kind === 'agent.text' ? ' is-agent' : ''}`}
+                        className={`channel-host-message${own ? ' is-own' : ''}${record.kind === 'agent.text' ? ' is-agent' : ''}${memberAccentClass(member)}`}
                       >
                         <div className="channel-host-message-meta">
                           <strong>

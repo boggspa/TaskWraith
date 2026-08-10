@@ -88,6 +88,7 @@ function fixture(
           displayName: 'Host',
           status: 'active' as const,
           joinedAt: 1,
+          presentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true },
           identityPublicKey: 'must-not-cross-ipc',
           roomId: 'must-not-cross-ipc'
         },
@@ -304,7 +305,11 @@ describe('registerChannelHandlers', () => {
     expect(read).toMatchObject({
       value: {
         members: [
-          { memberId: 'owner-channel-a', kind: 'human' },
+          {
+            memberId: 'owner-channel-a',
+            kind: 'human',
+            presentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true }
+          },
           { memberId: 'agent-channel-a', kind: 'agent' }
         ],
         records: [

@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import { join, resolve as resolvePath } from 'path'
+import { copyChannelMemberPresentation } from '../../shared/collaboration/ChannelMemberPresentation'
 import { importRawEd25519PublicKey, type KeyPair } from '../../shared/e2ee/keys'
 import type { TransportSocketFactory } from '../remote/RemoteTransportClient'
 import { wsTransportSocketFactory } from '../remote/wsTransportSocket'
@@ -120,7 +121,14 @@ export interface ChannelProductionChannelView extends Channel {
 
 export type ChannelProductionMemberView = Pick<
   ChannelMember,
-  'memberId' | 'channelId' | 'kind' | 'displayName' | 'status' | 'joinedAt' | 'revokedAt'
+  | 'memberId'
+  | 'channelId'
+  | 'kind'
+  | 'displayName'
+  | 'status'
+  | 'joinedAt'
+  | 'revokedAt'
+  | 'presentation'
 >
 
 export interface ChannelProductionPendingAdmissionView {
@@ -414,7 +422,10 @@ function memberView(member: ChannelMember): ChannelProductionMemberView {
     displayName: member.displayName,
     status: member.status,
     joinedAt: member.joinedAt,
-    ...(member.revokedAt === undefined ? {} : { revokedAt: member.revokedAt })
+    ...(member.revokedAt === undefined ? {} : { revokedAt: member.revokedAt }),
+    ...(member.presentation
+      ? { presentation: copyChannelMemberPresentation(member.presentation) }
+      : {})
   }
 }
 

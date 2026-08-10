@@ -1,4 +1,5 @@
 import type { ChannelWireErrorCode } from './ChannelWireProtocol'
+import type { ChannelMemberPresentation } from './ChannelMemberPresentation'
 
 export const CHANNEL_IPC_CHANNELS = {
   list: 'channels:list',
@@ -67,6 +68,8 @@ export interface ChannelIpcMember {
   status: ChannelIpcMemberStatus
   joinedAt: number
   revokedAt?: number
+  /** Host projection; member-facing Channels omit the host-private mute field. */
+  presentation?: ChannelMemberPresentation
 }
 
 export interface ChannelIpcPendingAdmission {

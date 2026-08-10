@@ -182,6 +182,69 @@ describe('ChannelHostPanelView', () => {
     expect(html).toContain('Post')
   })
 
+  it('orders migrated seats and distinguishes host mute from irreversible removal', () => {
+    const room = channel({ ownerMemberId: 'member-host' })
+    const html = render({
+      state: {
+        loading: false,
+        busy: null,
+        channel: room,
+        members: [
+          member({
+            memberId: 'member-muted',
+            displayName: 'Muted Alex',
+            joinedAt: 4,
+            presentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true }
+          }),
+          member({
+            memberId: 'member-former',
+            displayName: 'Former Blair',
+            status: 'revoked',
+            joinedAt: 2,
+            revokedAt: 5,
+            presentation: { seatOrder: 0, colorIndex: 7, seatDisabled: true }
+          }),
+          member({ presentation: { seatOrder: 99, colorIndex: 2 } }),
+          member({
+            memberId: 'member-active',
+            displayName: 'Active Casey',
+            joinedAt: 3,
+            presentation: { seatOrder: 1, colorIndex: 0 }
+          }),
+          member({
+            memberId: 'member-invalid',
+            displayName: 'Invalid Palette',
+            joinedAt: 6,
+            presentation: { colorIndex: 99 }
+          })
+        ],
+        pendingAdmissions: [],
+        humanReviews: [],
+        records: [
+          message({
+            authorMemberId: 'member-muted',
+            content: 'Muted is still a trusted member.'
+          })
+        ],
+        highWaterSequence: 1,
+        invite: null,
+        notice: null,
+        error: null
+      }
+    })
+
+    expect(html.indexOf('Chris')).toBeLessThan(html.indexOf('Former Blair'))
+    expect(html.indexOf('Former Blair')).toBeLessThan(html.indexOf('Active Casey'))
+    expect(html.indexOf('Active Casey')).toBeLessThan(html.indexOf('Muted Alex'))
+    expect(html).toContain('channel-host-member is-active is-color-5 is-muted')
+    expect(html).toContain('Human · Active · Muted')
+    expect(html).toContain('Human · Removed · Muted')
+    expect(html).toContain('Remove Muted Alex from Channel')
+    expect(html).not.toContain('Remove Former Blair from Channel')
+    expect(html).toContain('channel-host-message is-color-5')
+    expect(html).not.toContain('is-color-99')
+  })
+
   it('mounts signed-agent management only inside an active recovery-ready host panel', () => {
     const agentManagement = <div data-agent-management="true">Signed agent controls</div>
     const active = render({

@@ -382,6 +382,46 @@ describe('ChannelProductionService', () => {
     )
   })
 
+  it('projects durable host presentation without exposing member authority', () => {
+    const userDataPath = temporaryUserData()
+    const identity = generateIdentityKeyPair()
+    const paths = channelProductionDataPaths(userDataPath)
+    const store = new ChannelStore(paths.metadata)
+    const created = store.createChannel({
+      chatId: 'chat-presentation',
+      title: 'Presentation proof',
+      owner: {
+        displayName: 'Host',
+        identityPublicKey: exportRawEd25519PublicKey(identity.publicKey).toString('base64')
+      },
+      now: 1_000
+    })
+    const snapshot = JSON.parse(readFileSync(paths.metadata, 'utf8')) as {
+      members: Array<Record<string, unknown>>
+    }
+    snapshot.members[0].presentation = { seatOrder: 3, colorIndex: 6, seatDisabled: true }
+    writeFileSync(paths.metadata, `${JSON.stringify(snapshot)}\n`, 'utf8')
+
+    const fixture = createService({ userDataPath, identity })
+    fixture.service.start()
+    const read = fixture.service.readChannel({
+      channelId: created.channel.channelId,
+      resumeAfter: 0
+    })
+    expect(read.members).toEqual([
+      {
+        memberId: created.owner.memberId,
+        channelId: created.channel.channelId,
+        kind: 'human',
+        displayName: 'Host',
+        status: 'active',
+        joinedAt: 1_000,
+        presentation: { seatOrder: 3, colorIndex: 6, seatDisabled: true }
+      }
+    ])
+    expect(JSON.stringify(read.members)).not.toMatch(/identityPublicKey|roomId|memberPresentation/)
+  })
+
   it('owns safe main queries and host commands without leaking authority fields', async () => {
     let now = 1_700_000_000_000
     const onChange = vi.fn()

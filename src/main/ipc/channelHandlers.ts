@@ -20,6 +20,7 @@ import type {
   ChannelIpcResult,
   ChannelIpcRevokeMemberInput
 } from '../../shared/collaboration/ChannelIpc'
+import { copyChannelMemberPresentation } from '../../shared/collaboration/ChannelMemberPresentation'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { assertSafeChatId } from '../ChatPath'
 import type { ChannelAuditEvent } from '../collaboration/ChannelAuditLog'
@@ -315,7 +316,10 @@ function projectMember(member: ChannelProductionMemberView): ChannelIpcMember {
     displayName: member.displayName,
     status: member.status,
     joinedAt: member.joinedAt,
-    ...(member.revokedAt === undefined ? {} : { revokedAt: member.revokedAt })
+    ...(member.revokedAt === undefined ? {} : { revokedAt: member.revokedAt }),
+    ...(member.presentation
+      ? { presentation: copyChannelMemberPresentation(member.presentation) }
+      : {})
   }
 }
 
