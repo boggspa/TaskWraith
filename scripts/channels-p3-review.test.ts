@@ -118,22 +118,13 @@ describe('Channels P3 adversarial review harness', () => {
     ).toThrow('runtime override seam')
   })
 
-  it('enumerates all ten provider routes in the shared untrusted composer proof', () => {
+  it('enumerates every canonical provider route in the shared untrusted composer proof', () => {
     const source = readFileSync('src/main/collaboration/ChannelAgentRunComposer.test.ts', 'utf8')
-    for (const provider of [
-      'gemini',
-      'codex',
-      'claude',
-      'kimi',
-      'grok',
-      'cursor',
-      'ollama',
-      'antigravity',
-      'pi',
-      'mistral'
-    ]) {
-      expect(source).toContain(`'${provider}'`)
-    }
+    expect(source).toContain(
+      'expectTypeOf<ChannelAgentIpcProviderId>().toEqualTypeOf<ProviderId>()'
+    )
+    expect(source).toContain('const providers: readonly ProviderId[] = PROVIDER_RUN_MANAGEMENT_IDS')
+    expect(source).toContain("expect(providers).toContain('muse')")
     expect(source).toContain(
       'keeps the accepted contribution singly untrusted across every provider route'
     )
