@@ -39,7 +39,7 @@ import type {
 } from '../../../main/store/types'
 import type { TaskWraithPluginActivatedWorkflowTemplate } from '../../../shared/plugins/PluginTypes'
 import { getProviderLabel } from '../lib/providerLabels'
-import { selectRecentChats } from '../lib/recentChatsList'
+import { chatRecentsSortKeyMs, selectRecentChats } from '../lib/recentChatsList'
 import { isContentlessRemoteDraftChat } from '../../../main/remote/RemoteDraftChats'
 import { normalizeThreadTitle } from '../../../shared/threadTitles'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
@@ -3509,7 +3509,19 @@ export function Sidebar({
     ),
     { limit: SIDEBAR_RECENTS_MAX }
   )
-  const orderedEnsembleChats = orderSidebarChatList('code:ensembles', ensembleChats)
+  // 1.0.8 — Ensembles fallback order must not race on `updatedAt` write
+  // recency. Active rounds/tool saves stamp `updatedAt = Date.now()` constantly,
+  // so concurrent active ensembles leapfrog for the top slot. Use the same
+  // stable, user-facing recency key as Recents (last user message, else
+  // `createdAt`) and break ties by id so the list is deterministic.
+  const orderedEnsembleChats = orderSidebarChatList(
+    'code:ensembles',
+    [...ensembleChats].sort((left, right) => {
+      const keyDiff = chatRecentsSortKeyMs(right) - chatRecentsSortKeyMs(left)
+      if (keyDiff !== 0) return keyDiff
+      return left.appChatId.localeCompare(right.appChatId)
+    })
+  )
   const visibleEnsembleChats = isSidebarSearchActive
     ? orderedEnsembleChats.filter(
         (chat) => !chat.pinned && chatMatchesSearch(chat, sidebarSearchQuery)

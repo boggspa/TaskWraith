@@ -1677,6 +1677,45 @@ describe('Sidebar ensembles section', () => {
     expect(disabledWorkspaces).not.toContain('Hidden when ensemble mode off')
     expect(disabledHtml).not.toContain('sidebar-ensembles-section')
   })
+
+  it('orders ensembles by stable recency instead of thrashing updatedAt', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('ensembles')
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'active-old',
+          chatKind: 'ensemble',
+          title: 'Older active ensemble',
+          provider: 'codex',
+          createdAt: 100,
+          updatedAt: 500
+        }),
+        makeChat({
+          appChatId: 'recent-new',
+          chatKind: 'ensemble',
+          title: 'Newer ensemble',
+          provider: 'claude',
+          createdAt: 200,
+          updatedAt: 100
+        })
+      ],
+      { ensembleModeEnabled: true }
+    )
+
+    const ensemblesSection = html.slice(
+      html.indexOf('sidebar-ensembles-section'),
+      html.indexOf('sidebar-workspace-list')
+    )
+
+    // If order followed updatedAt, the thrashing "older" ensemble would be
+    // first. Stable recency puts the newer-created ensemble on top.
+    expect(ensemblesSection.indexOf('Newer ensemble')).toBeLessThan(
+      ensemblesSection.indexOf('Older active ensemble')
+    )
+  })
 })
 
 describe('Sidebar Chats section', () => {
