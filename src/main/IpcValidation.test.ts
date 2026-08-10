@@ -530,6 +530,20 @@ describe('IpcValidation', () => {
     )
   })
 
+  it('accepts Muse on provider terminal login/logout/upgrade IPC', () => {
+    // Regression: Muse was live in the UI and handler branch but missing from
+    // IpcValidation PROVIDERS, so invoke('provider:open-login-terminal', 'muse')
+    // threw before openProviderAuthTerminal ran and the Settings button looked dead.
+    expect(() => validateIpcArgs('provider:open-login-terminal', ['muse'])).not.toThrow()
+    expect(() => validateIpcArgs('provider:open-logout-terminal', ['muse'])).not.toThrow()
+    expect(() => validateIpcArgs('provider:open-upgrade-terminal', ['muse'])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('run-agent', [
+        { provider: 'muse', workspace: '/tmp/workspace', prompt: 'hello' }
+      ])
+    ).not.toThrow()
+  })
+
   it('bounds host CLI tool ids and mirrors the shared catalog exactly', () => {
     for (const channel of ['host-tool:open-install-terminal', 'host-tool:status']) {
       for (const id of HOST_CLI_TOOL_IDS) {

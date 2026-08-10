@@ -68,7 +68,8 @@ const PROVIDERS = new Set([
   'ollama',
   'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ])
 const APPROVAL_ACTIONS = new Set([
   'accept',
