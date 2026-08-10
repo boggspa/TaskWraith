@@ -1,5 +1,9 @@
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
-import type { AgentRunPayload, RunDispatchObserver } from './AgentRunTypes'
+import type {
+  AgentRunPayload,
+  RunDispatchFinalAuthorization,
+  RunDispatchObserver
+} from './AgentRunTypes'
 import type { RunCoordinator } from '../services/RunCoordinator'
 import type { WorkflowBudgetRegistry } from '../WorkflowBudgetRegistry'
 import type { FailoverRunSnapshot } from '../services/ProviderAutoFailover'
@@ -82,7 +86,8 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
   return async (
     payload: AgentRunPayload,
     event: IpcMainInvokeEvent | { sender: WebContents },
-    observer?: RunDispatchObserver
+    observer?: RunDispatchObserver,
+    finalAuthorization?: RunDispatchFinalAuthorization
   ): Promise<{ dispatched: boolean; appRunId: string }> => {
     // This MUST be the first operation at the outer dispatch boundary. Config
     // repair and PDF expansion both await; a history clear during either wait
@@ -249,7 +254,15 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
         }
       }
     }
-    const dispatchResult = observer
+    const dispatchResult = finalAuthorization
+      ? await deps.runCoordinator.dispatch(
+          routedPayload,
+          event,
+          dispatchReservation,
+          observer,
+          finalAuthorization
+        )
+      : observer
       ? await deps.runCoordinator.dispatch(
           routedPayload,
           event,

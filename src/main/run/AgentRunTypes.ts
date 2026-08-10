@@ -37,6 +37,16 @@ export interface RunDispatchObserver {
   onAdapterInvoked?: (receipt: RunAdapterInvocationReceipt) => void
 }
 
+/**
+ * Main-owned one-shot authority for one exact dispatch. Unlike the observational
+ * receipt above, rejection aborts dispatch. The callback must finish
+ * synchronously: RunCoordinator invokes it after every asynchronous preflight
+ * and immediately before adapter.run, with no cancellation or mutation gap.
+ */
+export interface RunDispatchFinalAuthorization {
+  authorizeBeforeAdapterRun(payload: AgentRunPayload): undefined
+}
+
 export interface RuntimeWorktreeIntent {
   requested: boolean
   /**

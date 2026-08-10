@@ -380,6 +380,114 @@ describe('RunCoordinator', () => {
     )
   })
 
+  it('runs one per-dispatch authorization after async global gates and directly before adapter.run', async () => {
+    const order: string[] = []
+    const { deps, adapter, spies } = makeDeps({
+      applyRuntimeProfileToPayload: (payload) => {
+        payload.model = 'runtime-profile-model'
+        order.push('runtime-profile')
+        return payload
+      },
+      captureReferenceContext: vi.fn(async () => {
+        order.push('capture')
+      }),
+      authorizeBeforeAdapterRun: vi.fn(async () => {
+        order.push('global-authorize')
+      })
+    })
+    spies.ensureProviderRunPreflight.mockImplementation(async () => {
+      order.push('preflight')
+      return true
+    })
+    ;(adapter.run as ReturnType<typeof vi.fn>).mockImplementation(async ({ payload }) => {
+      expect(payload.workspace).toBe('/tmp/ws')
+      order.push('adapter')
+    })
+    const observer = {
+      onAdapterInvoked: vi.fn(() => {
+        order.push('receipt')
+      })
+    }
+    const finalAuthorization = {
+      authorizeBeforeAdapterRun: vi.fn((payload: AgentRunPayload) => {
+        expect(payload).toMatchObject({
+          appRunId: 'run-fixed',
+          appChatId: 'chat-1',
+          provider: 'gemini',
+          workspace: '/tmp/ws',
+          model: 'runtime-profile-model'
+        })
+        order.push('per-dispatch-authorize')
+        return undefined
+      })
+    }
+
+    await new RunCoordinator(deps).dispatch(
+      samplePayload,
+      makeFakeEvent(),
+      undefined,
+      observer,
+      finalAuthorization
+    )
+
+    expect(order).toEqual([
+      'runtime-profile',
+      'preflight',
+      'capture',
+      'global-authorize',
+      'per-dispatch-authorize',
+      'adapter',
+      'receipt'
+    ])
+    expect(finalAuthorization.authorizeBeforeAdapterRun).toHaveBeenCalledOnce()
+  })
+
+  it('does not invoke the adapter or observer when per-dispatch authorization rejects', async () => {
+    const { deps, adapter } = makeDeps()
+    const observer = { onAdapterInvoked: vi.fn() }
+
+    await expect(
+      new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent(), undefined, observer, {
+        authorizeBeforeAdapterRun: () => {
+          throw new Error('exact dispatch changed')
+        }
+      })
+    ).rejects.toThrow('exact dispatch changed')
+    expect(adapter.run).not.toHaveBeenCalled()
+    expect(observer.onAdapterInvoked).not.toHaveBeenCalled()
+  })
+
+  it('rejects an accidentally asynchronous per-dispatch authorization', async () => {
+    const { deps, adapter } = makeDeps()
+
+    await expect(
+      new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent(), undefined, undefined, {
+        authorizeBeforeAdapterRun: (() => Promise.resolve()) as never
+      })
+    ).rejects.toThrow('must complete synchronously')
+    expect(adapter.run).not.toHaveBeenCalled()
+  })
+
+  it('does not spend per-dispatch authorization when generic preflight declines', async () => {
+    const { deps, adapter, spies } = makeDeps()
+    spies.ensureProviderRunPreflight.mockResolvedValue(false)
+    const finalAuthorization = {
+      authorizeBeforeAdapterRun: vi.fn(() => undefined)
+    }
+
+    await expect(
+      new RunCoordinator(deps).dispatch(
+        samplePayload,
+        makeFakeEvent(),
+        undefined,
+        undefined,
+        finalAuthorization
+      )
+    ).resolves.toMatchObject({ dispatched: false })
+    expect(finalAuthorization.authorizeBeforeAdapterRun).not.toHaveBeenCalled()
+    expect(adapter.run).not.toHaveBeenCalled()
+  })
+
   it('holds one exact dispatch reservation across preflight and always releases it', async () => {
     const order: string[] = []
     const reservation = Object.freeze({ id: 'dispatch-1' })

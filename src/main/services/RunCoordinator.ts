@@ -1,6 +1,11 @@
 import type { ProviderId } from '../store/types'
 import type { ProviderAdapter } from '../ProviderAdapters'
-import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run/AgentRunTypes'
+import type {
+  AgentRunPayload,
+  AgentRunRoute,
+  RunDispatchFinalAuthorization,
+  RunDispatchObserver
+} from '../run/AgentRunTypes'
 
 /**
  * RunCoordinator — Phase B1 extraction.
@@ -185,7 +190,8 @@ export class RunCoordinator {
     payload: AgentRunPayload,
     event: RunDispatchEvent,
     outerDispatchReservation?: object,
-    observer?: RunDispatchObserver
+    observer?: RunDispatchObserver,
+    finalAuthorization?: RunDispatchFinalAuthorization
   ): Promise<DispatchResult> {
     const ownsDispatchReservation = outerDispatchReservation === undefined
     const dispatchReservation = outerDispatchReservation ?? this.deps.reserveDispatch?.(payload)
@@ -284,6 +290,11 @@ export class RunCoordinator {
           throw error
         }
         if (lifecycleCancelled()) return declinedResult()
+        const finalAuthorizationResult =
+          finalAuthorization?.authorizeBeforeAdapterRun(normalizedPayload)
+        if (finalAuthorizationResult !== undefined) {
+          throw new Error('Final run dispatch authorization must complete synchronously.')
+        }
         const adapterOperation = this.deps.runAdapter
           ? this.deps.runAdapter(adapter, event, normalizedPayload)
           : adapter.run({ event, payload: normalizedPayload })

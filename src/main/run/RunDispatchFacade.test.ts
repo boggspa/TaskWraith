@@ -177,6 +177,24 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     )
   })
 
+  it('forwards one exact final authorization beside the observational receipt', async () => {
+    const deps = makeDeps([])
+    const observer = { onAdapterInvoked: vi.fn() }
+    const finalAuthorization = {
+      authorizeBeforeAdapterRun: vi.fn(() => undefined)
+    }
+
+    await createRunDispatchFacade(deps)(payload(), senderEvent, observer, finalAuthorization)
+
+    expect(deps.runCoordinator.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ appRunId: 'run-1' }),
+      senderEvent,
+      expect.objectContaining({ id: 'dispatch-reservation' }),
+      observer,
+      finalAuthorization
+    )
+  })
+
   it('runs the ordinary reroute and failover-snapshot sequence in order', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
