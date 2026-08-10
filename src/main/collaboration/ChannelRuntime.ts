@@ -35,6 +35,7 @@ import {
   type ChannelWireError,
   type ChannelWireRequest
 } from '../../shared/collaboration/ChannelWireProtocol'
+import { parseSignedChannelAgentPost } from '../../shared/collaboration/ChannelAgentProtocol'
 import {
   ChannelError,
   ChannelStore,
@@ -46,6 +47,7 @@ import {
 import {
   ChannelMessageLog,
   MAX_REPLAY_BYTES,
+  type ChannelAgentAppendInput,
   type ChannelAppendInput,
   type ChannelAppendResult,
   type ChannelMessage
@@ -360,6 +362,29 @@ export class ChannelRuntime {
         await this.opts.afterDurableCommit?.(result)
         this.fanOut(result.record)
       }
+      return result
+    })
+  }
+
+  /**
+   * Main-only terminal delivery path. Signature/authority verification and the
+   * append-only fsync happen in ChannelMessageLog before either audit or live
+   * member fan-out. It deliberately does not invoke afterDurableCommit, which
+   * is the human-mention admission source.
+   */
+  appendSignedAgentPost(input: ChannelAgentAppendInput): Promise<ChannelAppendResult> {
+    const signedPost = parseSignedChannelAgentPost(input?.signedPost)
+    if (!signedPost) throw new ChannelError('identity_mismatch', 'Signed agent post is invalid')
+    const channelId = signedPost.post.channelId
+    this.assertChannelAccepting(channelId)
+    return this.enqueueChannel(channelId, async () => {
+      this.assertChannelAccepting(channelId)
+      const result = this.opts.log.appendSignedAgentPost({
+        signedPost,
+        ...(input.now === undefined ? {} : { now: input.now })
+      })
+      this.auditCommit(result)
+      if (!result.deduplicated) this.fanOut(result.record)
       return result
     })
   }

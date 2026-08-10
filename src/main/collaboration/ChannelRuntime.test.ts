@@ -1,9 +1,19 @@
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { generateIdentityKeyPair } from '../../shared/e2ee/keys'
-import { ChannelMessageLog } from './ChannelMessageLog'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  CHANNEL_AGENT_PROTOCOL_VERSION,
+  hashChannelAgentContent,
+  signChannelAgentPost
+} from '../../shared/collaboration/ChannelAgentProtocol'
+import { exportRawEd25519PublicKey, generateIdentityKeyPair } from '../../shared/e2ee/keys'
+import {
+  ChannelMessageLog,
+  type AgentChannelMessage,
+  type ChannelAppendResult,
+  type ChannelMessage
+} from './ChannelMessageLog'
 import { ChannelRuntime, type ChannelRuntimeTransport } from './ChannelRuntime'
 import { ChannelStore } from './ChannelStore'
 
@@ -19,6 +29,46 @@ function directory(): string {
   const path = mkdtempSync(join(tmpdir(), 'taskwraith-channel-runtime-fault-'))
   temporaryDirectories.push(path)
   return path
+}
+
+function signedAgentFixture(channelId: string): {
+  signedPost: ReturnType<typeof signChannelAgentPost>
+  result: ChannelAppendResult
+} {
+  const keys = generateIdentityKeyPair()
+  const publicKeyB64 = exportRawEd25519PublicKey(keys.publicKey).toString('base64')
+  const content = 'Signed runtime delivery.'
+  const signedPost = signChannelAgentPost(keys.privateKey, {
+    schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+    channelId,
+    agentMemberId: 'agent-runtime-proof',
+    agentSeatId: 'pooled-agent-runtime-proof',
+    agentPublicKeyB64: publicKeyB64,
+    keyGeneration: 1,
+    delegationId: 'delegation-runtime-proof',
+    dispatchGrantId: 'grant-runtime-proof',
+    triggerMessageId: 'trigger-runtime-proof',
+    runId: 'run-runtime-proof',
+    runAuthorityHash: 'a'.repeat(64),
+    clientMessageId: 'agent-post-runtime-proof',
+    kind: 'agent.text',
+    content,
+    contentHash: hashChannelAgentContent(content),
+    createdAt: 1_000
+  })
+  const record: AgentChannelMessage = {
+    channelId,
+    sequence: 1,
+    messageId: 'message-runtime-proof',
+    authorMemberId: signedPost.post.agentMemberId,
+    clientMessageId: signedPost.post.clientMessageId,
+    kind: 'agent.text',
+    content,
+    acceptedAt: 1_001,
+    contentHash: signedPost.post.contentHash,
+    agentProof: { signedPost } as never
+  }
+  return { signedPost, result: { record, deduplicated: false } }
 }
 
 class RecordingTransport implements ChannelRuntimeTransport {
@@ -123,6 +173,78 @@ describe('ChannelRuntime durability boundary', () => {
       } as never)
     ).rejects.toMatchObject({ code: 'human_only' })
     expect(log.highWaterSequence(created.channel.channelId)).toBe(0)
+    runtime.dispose()
+  })
+
+  it('fans out a signed agent post only after durable append and audit', async () => {
+    const root = directory()
+    const store = new ChannelStore(join(root, 'channels.json'))
+    const trace: string[] = []
+    const fixtureRef: { current: ReturnType<typeof signedAgentFixture> | null } = {
+      current: null
+    }
+    const appendSignedAgentPost = vi.fn(() => {
+      trace.push('log.append')
+      return fixtureRef.current!.result
+    })
+    const afterDurableCommit = vi.fn()
+    const audit = vi.fn(() => trace.push('audit.append'))
+    const runtime = new ChannelRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      log: { appendSignedAgentPost } as unknown as ChannelMessageLog,
+      audit: { append: audit },
+      afterDurableCommit
+    })
+    const created = runtime.createChannel({
+      chatId: 'chat-agent-runtime',
+      title: 'Agent runtime proof',
+      ownerDisplayName: 'Host'
+    })
+    const fixture = signedAgentFixture(created.channel.channelId)
+    fixtureRef.current = fixture
+    trace.length = 0
+    audit.mockClear()
+    const fanOut = vi
+      .spyOn(runtime as unknown as { fanOut(record: ChannelMessage): void }, 'fanOut')
+      .mockImplementation(() => {
+        trace.push('runtime.fanOut')
+      })
+
+    await expect(
+      runtime.appendSignedAgentPost({ signedPost: fixture.signedPost, now: 1_001 })
+    ).resolves.toEqual(fixture.result)
+    expect(trace).toEqual(['log.append', 'audit.append', 'runtime.fanOut'])
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'message.accepted',
+        channelId: created.channel.channelId,
+        memberId: 'agent-runtime-proof',
+        contentHash: fixture.result.record.contentHash
+      })
+    )
+    expect(afterDurableCommit).not.toHaveBeenCalled()
+
+    trace.length = 0
+    appendSignedAgentPost.mockImplementation(() => {
+      trace.push('log.append')
+      return { ...fixture.result, deduplicated: true }
+    })
+    await runtime.appendSignedAgentPost({ signedPost: fixture.signedPost, now: 1_002 })
+    expect(trace).toEqual(['log.append', 'audit.append'])
+    expect(fanOut).toHaveBeenCalledOnce()
+
+    trace.length = 0
+    appendSignedAgentPost.mockImplementation(() => {
+      trace.push('log.append')
+      throw new Error('injected durable append failure')
+    })
+    await expect(
+      runtime.appendSignedAgentPost({ signedPost: fixture.signedPost, now: 1_003 })
+    ).rejects.toThrow('injected durable append failure')
+    expect(trace).toEqual(['log.append'])
+    expect(fanOut).toHaveBeenCalledOnce()
+    expect(afterDurableCommit).not.toHaveBeenCalled()
     runtime.dispose()
   })
 
