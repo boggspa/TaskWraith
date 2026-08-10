@@ -51,15 +51,30 @@ export class SettingsService {
 
   updateSettings(rawPatch: unknown): void {
     const previousSettings = this.deps.getSettings()
-    const sanitizedPatch = this.deps.managedPolicy?.filterSettingsPatch(
+    const sanitizedPatch =
+      this.deps.managedPolicy?.filterSettingsPatch(this.deps.sanitizeSettingsPatch(rawPatch)) ??
       this.deps.sanitizeSettingsPatch(rawPatch)
-    ) ?? this.deps.sanitizeSettingsPatch(rawPatch)
+
+    // Chat renderers only receive elevation acknowledgements for their own
+    // workspace (path privacy). Merge their patch into the persisted record
+    // so acknowledging Accept Edits in one workspace never drops acknowledgements
+    // that other workspaces already recorded.
+    const mergedPatch: Partial<AppSettings> = { ...sanitizedPatch }
+    if (
+      Object.prototype.hasOwnProperty.call(sanitizedPatch, 'approvalModeElevationAcknowledgements')
+    ) {
+      mergedPatch.approvalModeElevationAcknowledgements = {
+        ...previousSettings.approvalModeElevationAcknowledgements,
+        ...sanitizedPatch.approvalModeElevationAcknowledgements
+      }
+    }
+
     const enforcedPatch =
       this.deps.managedPolicy?.enforcedSettingsPatch({
         ...previousSettings,
-        ...sanitizedPatch
+        ...mergedPatch
       } as AppSettings) ?? {}
-    const finalPatch = { ...sanitizedPatch, ...enforcedPatch }
+    const finalPatch = { ...mergedPatch, ...enforcedPatch }
     this.deps.updateSettings(finalPatch)
     const nextSettings = this.deps.getSettings()
     const context: SettingsUpdateContext = {

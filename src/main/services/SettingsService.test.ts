@@ -256,4 +256,46 @@ describe('SettingsService', () => {
     expect(storeUpdate).toHaveBeenCalledWith({ agenticWorkspaceGrants: [sanitizedGrant] })
     expect(settings.agenticWorkspaceGrants).toEqual([sanitizedGrant])
   })
+
+  it('merges approvalModeElevationAcknowledgements instead of replacing the record', () => {
+    let settings = makeSettings({
+      approvalModeElevationAcknowledgements: {
+        '/work/alpha': true,
+        '/work/alpha|claude': true,
+        '/work/beta': true
+      }
+    })
+    const storeUpdate = vi.fn((partial: Partial<AppSettings>) => {
+      settings = { ...settings, ...partial }
+    })
+    const service = new SettingsService({
+      getSettings: () => settings,
+      updateSettings: storeUpdate,
+      sanitizeSettingsPatch: (partial) => partial as Partial<AppSettings>
+    })
+
+    // A chat renderer for workspace alpha only sees alpha acks and writes back
+    // that filtered subset plus a new legacy provider ack.
+    service.updateSettings({
+      approvalModeElevationAcknowledgements: {
+        '/work/alpha': true,
+        '/work/alpha|codex': true
+      }
+    })
+
+    expect(storeUpdate).toHaveBeenCalledWith({
+      approvalModeElevationAcknowledgements: {
+        '/work/alpha': true,
+        '/work/alpha|claude': true,
+        '/work/beta': true,
+        '/work/alpha|codex': true
+      }
+    })
+    expect(settings.approvalModeElevationAcknowledgements).toEqual({
+      '/work/alpha': true,
+      '/work/alpha|claude': true,
+      '/work/beta': true,
+      '/work/alpha|codex': true
+    })
+  })
 })
