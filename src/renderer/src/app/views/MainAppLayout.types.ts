@@ -614,6 +614,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   sideClaudeReasoning: any
   sideCodexReasoning: any
   sideGrokReasoning: any
+  sideMuseReasoning: any
   sideCursorReasoning: any
   sideComposerContextMenu: any
   sideComposerHasMention: any

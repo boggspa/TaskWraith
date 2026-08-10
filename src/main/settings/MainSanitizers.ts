@@ -1144,6 +1144,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       geminiWorktree: input.geminiWorktree as any,
       codexReasoningEffort: optionalString(input.codexReasoningEffort),
       grokReasoningEffort: optionalString(input.grokReasoningEffort),
+      museReasoningEffort: optionalString(input.museReasoningEffort),
       cursorReasoningEffort: optionalString(input.cursorReasoningEffort),
       codexServiceTier: optionalString(input.codexServiceTier),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,

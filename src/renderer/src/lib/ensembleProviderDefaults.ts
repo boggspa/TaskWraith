@@ -522,11 +522,12 @@ export function getDefaultEnsembleParticipantConfig(
       }
     case 'muse':
       // Must stay in lockstep with getDefaultEnsembleModel in
-      // src/main/EnsembleDefaults.ts.
+      // src/main/EnsembleDefaults.ts. Default high matches
+      // MuseCliArgs MUSE_DEFAULT_REASONING_EFFORT.
       return {
         model: 'muse-spark-1.2',
         permissionPresetId: 'default',
-        reasoningEffort: 'medium'
+        reasoningEffort: 'high'
       }
     default:
       return {
@@ -1166,7 +1167,7 @@ export function getEnsembleModelDefaults(
       return {
         modelOptions: MUSE_MODELS,
         reasoningOptions: MUSE_REASONING,
-        defaultReasoning: 'medium',
+        defaultReasoning: 'high',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'muse-spark-1.2'
       }

@@ -476,6 +476,9 @@ export function buildScheduledTaskDispatchReceipt(task: ScheduledTask, generated
       ...(task.grokReasoningEffort !== undefined
         ? { grokReasoningEffort: task.grokReasoningEffort }
         : {}),
+      ...(task.museReasoningEffort !== undefined
+        ? { museReasoningEffort: task.museReasoningEffort }
+        : {}),
       ...(task.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: task.cursorReasoningEffort }
         : {}),

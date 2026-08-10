@@ -160,6 +160,8 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   claudeReasoningEffort?: string | null
   /** Grok-specific reasoning effort override. Valid only for Grok 4.5. */
   grokReasoningEffort?: string | null
+  /** Muse-specific reasoning effort override (minimal|low|medium|high|xhigh|ultra). */
+  museReasoningEffort?: string | null
   /** Cursor-specific reasoning effort override. Valid only for Cursor Grok 4.5. */
   cursorReasoningEffort?: string | null
   /** Cursor Fast tier toggle. Valid only for Cursor Grok 4.5. */
@@ -898,6 +900,7 @@ export interface BridgeCreateSideChatAction extends BridgeActionMetadata {
   codexReasoningEffort?: string | null
   claudeReasoningEffort?: string | null
   grokReasoningEffort?: string | null
+  museReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean
   mode?: 'singleProvider' | 'ensembleClone' | 'fanOut'
@@ -1871,6 +1874,9 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
     (v.grokReasoningEffort === undefined ||
       v.grokReasoningEffort === null ||
       typeof v.grokReasoningEffort === 'string') &&
+    (v.museReasoningEffort === undefined ||
+      v.museReasoningEffort === null ||
+      typeof v.museReasoningEffort === 'string') &&
     (v.cursorReasoningEffort === undefined ||
       v.cursorReasoningEffort === null ||
       typeof v.cursorReasoningEffort === 'string') &&

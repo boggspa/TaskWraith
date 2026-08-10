@@ -107,6 +107,10 @@ export interface CreateSideChatInput {
   selectedModelType?: string
   codexReasoningEffort?: string | null
   claudeReasoningEffort?: string | null
+  grokReasoningEffort?: string | null
+  museReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean
 }
 
 export interface CreateForkChatInput {
@@ -359,6 +363,12 @@ export class ChatService {
       selectedModelType: optionalString(args?.selectedModelType),
       codexReasoningEffort: optionalString(args?.codexReasoningEffort),
       claudeReasoningEffort: optionalString(args?.claudeReasoningEffort),
+      grokReasoningEffort: optionalString(args?.grokReasoningEffort),
+      museReasoningEffort: optionalString(args?.museReasoningEffort),
+      cursorReasoningEffort: optionalString(args?.cursorReasoningEffort),
+      ...(typeof args?.cursorFastMode === 'boolean'
+        ? { cursorFastMode: args.cursorFastMode }
+        : {}),
       originMessageId:
         typeof args?.originMessageId === 'string' && args.originMessageId.trim()
           ? args.originMessageId

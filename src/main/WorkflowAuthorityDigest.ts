@@ -69,6 +69,7 @@ export function workflowRunTemplateAuthority(
     kimiReasoningEffort: template.kimiReasoningEffort,
     kimiThinkingEnabled: template.kimiThinkingEnabled,
     grokReasoningEffort: template.grokReasoningEffort,
+    museReasoningEffort: template.museReasoningEffort,
     cursorReasoningEffort: template.cursorReasoningEffort,
     cursorFastMode: template.cursorFastMode,
     runtimeProfileId: template.runtimeProfileId,

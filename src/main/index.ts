@@ -15406,6 +15406,7 @@ async function dispatchDueScheduledLoopHeadless(
               customModel: task.customModel,
               codexReasoningEffort: task.codexReasoningEffort,
               grokReasoningEffort: task.grokReasoningEffort,
+              museReasoningEffort: task.museReasoningEffort,
               cursorReasoningEffort: task.cursorReasoningEffort,
               cursorFastMode: task.cursorFastMode,
               codexServiceTier: task.codexServiceTier,
@@ -15938,6 +15939,7 @@ async function dispatchDueScheduledTaskHeadless(
       externalPathGrants: task.externalPathGrants,
       codexReasoningEffort: task.codexReasoningEffort,
       grokReasoningEffort: task.grokReasoningEffort,
+      museReasoningEffort: task.museReasoningEffort,
       cursorReasoningEffort: task.cursorReasoningEffort,
       cursorFastMode: task.cursorFastMode,
       codexServiceTier: task.codexServiceTier,
@@ -42726,6 +42728,7 @@ if (isGeminiMcpBridgeProcess) {
         reasoningEffort?: string | null
         claudeReasoningEffort?: string | null
         grokReasoningEffort?: string | null
+        museReasoningEffort?: string | null
         cursorReasoningEffort?: string | null
         cursorFastMode?: boolean
         claudeFastMode?: boolean
@@ -42826,6 +42829,10 @@ if (isGeminiMcpBridgeProcess) {
           provider === 'grok' && isGrok45ReasoningModelId(grokCapabilityModel)
             ? (action.grokReasoningEffort ?? action.reasoningEffort)
             : undefined
+        const queueMuseReasoning =
+          provider === 'muse'
+            ? (action.museReasoningEffort ?? action.reasoningEffort)
+            : undefined
         const queueCursorReasoning =
           provider === 'cursor' && isCursorGrok45ModelId(selectedModelType)
             ? (action.cursorReasoningEffort ?? action.reasoningEffort)
@@ -42893,6 +42900,9 @@ if (isGeminiMcpBridgeProcess) {
             ...(queueGrokReasoning !== undefined
               ? { grokReasoningEffort: queueGrokReasoning }
               : {}),
+            ...(queueMuseReasoning !== undefined
+              ? { museReasoningEffort: queueMuseReasoning }
+              : {}),
             ...(queueCursorReasoning !== undefined
               ? { cursorReasoningEffort: queueCursorReasoning }
               : {}),
@@ -42934,6 +42944,9 @@ if (isGeminiMcpBridgeProcess) {
                 : {}),
               ...(action.grokReasoningEffort !== undefined
                 ? { grokReasoningEffort: action.grokReasoningEffort }
+                : {}),
+              ...(action.museReasoningEffort !== undefined
+                ? { museReasoningEffort: action.museReasoningEffort }
                 : {}),
               ...(action.cursorReasoningEffort !== undefined
                 ? { cursorReasoningEffort: action.cursorReasoningEffort }
@@ -43957,6 +43970,9 @@ if (isGeminiMcpBridgeProcess) {
                 : {}),
               ...(action.grokReasoningEffort !== undefined
                 ? { grokReasoningEffort: action.grokReasoningEffort }
+                : {}),
+              ...(action.museReasoningEffort !== undefined
+                ? { museReasoningEffort: action.museReasoningEffort }
                 : {}),
               ...(action.cursorReasoningEffort !== undefined
                 ? { cursorReasoningEffort: action.cursorReasoningEffort }
@@ -45248,6 +45264,7 @@ if (isGeminiMcpBridgeProcess) {
                 reasoningEffort: action.reasoningEffort,
                 claudeReasoningEffort: action.claudeReasoningEffort,
                 grokReasoningEffort: action.grokReasoningEffort,
+                museReasoningEffort: action.museReasoningEffort,
                 cursorReasoningEffort: action.cursorReasoningEffort,
                 cursorFastMode: action.cursorFastMode,
                 claudeFastMode: action.claudeFastMode,
@@ -45399,6 +45416,10 @@ if (isGeminiMcpBridgeProcess) {
               provider === 'grok' && isGrok45ReasoningModelId(workflowGrokCapabilityModel)
                 ? (action.grokReasoningEffort ?? action.reasoningEffort)
                 : undefined
+            const workflowMuseReasoning =
+              provider === 'muse'
+                ? (action.museReasoningEffort ?? action.reasoningEffort)
+                : undefined
             const workflowCursorReasoning =
               provider === 'cursor' && isCursorGrok45ModelId(workflowSelectedModel)
                 ? (action.cursorReasoningEffort ?? action.reasoningEffort)
@@ -45431,6 +45452,9 @@ if (isGeminiMcpBridgeProcess) {
                   : {}),
                 ...(workflowGrokReasoning !== undefined
                   ? { grokReasoningEffort: workflowGrokReasoning }
+                  : {}),
+                ...(workflowMuseReasoning !== undefined
+                  ? { museReasoningEffort: workflowMuseReasoning }
                   : {}),
                 ...(workflowCursorReasoning !== undefined
                   ? { cursorReasoningEffort: workflowCursorReasoning }
@@ -45644,6 +45668,10 @@ if (isGeminiMcpBridgeProcess) {
             typeof providerMetadata.grokReasoningEffort === 'string'
               ? providerMetadata.grokReasoningEffort
               : undefined
+          const metadataMuseReasoningEffort =
+            typeof providerMetadata.museReasoningEffort === 'string'
+              ? providerMetadata.museReasoningEffort
+              : undefined
           const metadataCursorReasoningEffort =
             typeof providerMetadata.cursorReasoningEffort === 'string'
               ? providerMetadata.cursorReasoningEffort
@@ -45690,13 +45718,18 @@ if (isGeminiMcpBridgeProcess) {
                     action.reasoningEffort ||
                     metadataGrokReasoningEffort ||
                     undefined
-                  : provider === 'cursor' &&
-                      isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
-                    ? action.cursorReasoningEffort ||
+                  : provider === 'muse'
+                    ? action.museReasoningEffort ||
                       action.reasoningEffort ||
-                      metadataCursorReasoningEffort ||
+                      metadataMuseReasoningEffort ||
                       undefined
-                    : undefined
+                    : provider === 'cursor' &&
+                        isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
+                      ? action.cursorReasoningEffort ||
+                        action.reasoningEffort ||
+                        metadataCursorReasoningEffort ||
+                        undefined
+                      : undefined
           const inheritedClaudeReasoningEffort =
             action.claudeReasoningEffort || metadataClaudeReasoningEffort || undefined
           const inheritedCursorFastMode =
@@ -45737,6 +45770,9 @@ if (isGeminiMcpBridgeProcess) {
             ...(inheritedKimiFastMode !== undefined ? { kimiFastMode: inheritedKimiFastMode } : {}),
             ...(provider === 'kimi' && inheritedReasoningEffort
               ? { kimiReasoningEffort: inheritedReasoningEffort }
+              : {}),
+            ...(provider === 'muse' && inheritedReasoningEffort
+              ? { museReasoningEffort: inheritedReasoningEffort }
               : {}),
             ...(inheritedKimiThinkingEnabled !== undefined
               ? { kimiThinkingEnabled: inheritedKimiThinkingEnabled }
@@ -45985,6 +46021,9 @@ if (isGeminiMcpBridgeProcess) {
               : {}),
             model: inheritedModel,
             ...(inheritedReasoningEffort ? { reasoningEffort: inheritedReasoningEffort } : {}),
+            ...(provider === 'muse' && inheritedReasoningEffort
+              ? { museReasoningEffort: inheritedReasoningEffort }
+              : {}),
             ...(inheritedCursorFastMode !== undefined
               ? { serviceTier: inheritedCursorFastMode ? 'fast' : null }
               : {}),
@@ -50510,6 +50549,7 @@ if (isGeminiMcpBridgeProcess) {
         kimiReasoningEffort: request.kimiReasoningEffort,
         kimiThinkingEnabled: request.kimiThinkingEnabled,
         grokReasoningEffort: request.grokReasoningEffort,
+        museReasoningEffort: request.museReasoningEffort,
         cursorReasoningEffort: request.cursorReasoningEffort,
         cursorFastMode: request.cursorFastMode,
         runtimeProfileId: request.runtimeProfileId,

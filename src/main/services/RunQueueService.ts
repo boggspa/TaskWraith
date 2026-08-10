@@ -726,6 +726,7 @@ export class RunQueueService {
         codexReasoningEffort: optionalStringOrNull(value.codexReasoningEffort),
         claudeReasoningEffort: optionalStringOrNull(value.claudeReasoningEffort),
         grokReasoningEffort: optionalStringOrNull(value.grokReasoningEffort),
+        museReasoningEffort: optionalStringOrNull(value.museReasoningEffort),
         cursorReasoningEffort: optionalStringOrNull(value.cursorReasoningEffort),
         codexServiceTier: optionalStringOrNull(value.codexServiceTier),
         geminiAuthProfileId: optionalStringOrNull(value.geminiAuthProfileId),
@@ -1000,6 +1001,7 @@ function sanitizeRemoteComposer(
   const reasoningEffort = optionalStringOrNull(value.reasoningEffort)
   const claudeReasoningEffort = optionalStringOrNull(value.claudeReasoningEffort)
   const grokReasoningEffort = optionalStringOrNull(value.grokReasoningEffort)
+  const museReasoningEffort = optionalStringOrNull(value.museReasoningEffort)
   const cursorReasoningEffort = optionalStringOrNull(value.cursorReasoningEffort)
   // Preserve an explicit "" (codex Fast-OFF sentinel) — optionalStringOrNull would
   // trim it to undefined and drop it, resurrecting a stale 'fast' on rehydration.
@@ -1018,6 +1020,7 @@ function sanitizeRemoteComposer(
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     ...(claudeReasoningEffort !== undefined ? { claudeReasoningEffort } : {}),
     ...(grokReasoningEffort !== undefined ? { grokReasoningEffort } : {}),
+    ...(museReasoningEffort !== undefined ? { museReasoningEffort } : {}),
     ...(cursorReasoningEffort !== undefined ? { cursorReasoningEffort } : {}),
     ...(typeof value.cursorFastMode === 'boolean' ? { cursorFastMode: value.cursorFastMode } : {}),
     ...(codexServiceTier !== undefined ? { codexServiceTier } : {}),

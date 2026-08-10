@@ -1155,6 +1155,7 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     geminiWorktree: input.geminiWorktree,
     codexReasoningEffort: input.codexReasoningEffort,
     grokReasoningEffort: input.grokReasoningEffort,
+    museReasoningEffort: input.museReasoningEffort,
     cursorReasoningEffort: input.cursorReasoningEffort,
     codexServiceTier: input.codexServiceTier,
     claudeFastMode: input.claudeFastMode,
@@ -6354,6 +6355,8 @@ export class AppStore {
           derived.claudeReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) {
           derived.grokReasoningEffort = participant.reasoningEffort
+        } else if (participant.provider === 'muse') {
+          derived.museReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)) {
           derived.cursorReasoningEffort = participant.reasoningEffort
         }
@@ -6442,6 +6445,7 @@ export class AppStore {
     codexReasoningEffort?: string | null
     claudeReasoningEffort?: string | null
     grokReasoningEffort?: string | null
+    museReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
     cursorFastMode?: boolean
   }): ChatRecord {
@@ -6493,6 +6497,9 @@ export class AppStore {
         : {}),
       ...(args.grokReasoningEffort !== undefined
         ? { grokReasoningEffort: args.grokReasoningEffort }
+        : {}),
+      ...(args.museReasoningEffort !== undefined
+        ? { museReasoningEffort: args.museReasoningEffort }
         : {}),
       ...(args.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: args.cursorReasoningEffort }

@@ -55,6 +55,7 @@ function reasoningMetadataKey(provider: ProviderId): string | undefined {
   if (provider === 'claude') return 'claudeReasoningEffort'
   if (provider === 'kimi') return 'kimiReasoningEffort'
   if (provider === 'grok') return 'grokReasoningEffort'
+  if (provider === 'muse') return 'museReasoningEffort'
   if (provider === 'cursor') return 'cursorReasoningEffort'
   return undefined
 }

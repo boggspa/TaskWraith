@@ -278,6 +278,7 @@ export interface ProviderReroutePlan {
   kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
+  museReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
 }
@@ -4792,6 +4793,7 @@ export interface ScheduledTask {
   kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
+  museReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   runtimeProfileId?: string
@@ -4860,6 +4862,7 @@ export type WorkflowRunTemplate = Pick<
   | 'kimiReasoningEffort'
   | 'kimiThinkingEnabled'
   | 'grokReasoningEffort'
+  | 'museReasoningEffort'
   | 'cursorReasoningEffort'
   | 'cursorFastMode'
   | 'runtimeProfileId'
@@ -5834,6 +5837,7 @@ export interface RunQueueRequestSnapshot {
   kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
+  museReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   scheduledTaskId?: string
@@ -5858,6 +5862,7 @@ export interface RunQueueRequestSnapshot {
     reasoningEffort?: string | null
     claudeReasoningEffort?: string | null
     grokReasoningEffort?: string | null
+    museReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
     cursorFastMode?: boolean
     claudeFastMode?: boolean

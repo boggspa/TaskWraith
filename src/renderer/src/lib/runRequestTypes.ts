@@ -51,6 +51,7 @@ export interface QueuedRunRequest {
   kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
+  museReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   scheduledTaskId?: string

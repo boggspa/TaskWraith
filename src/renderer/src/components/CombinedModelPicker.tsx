@@ -233,6 +233,8 @@ interface CombinedModelPickerProps {
   claudeReasoningEffort?: string
   /** Grok reasoning effort token (so the chip text can format it). */
   grokReasoningEffort?: string
+  /** Muse reasoning effort token (so the chip text can format it). */
+  museReasoningEffort?: string
   /** Cursor Grok reasoning effort token (so the chip text can format it). */
   cursorReasoningEffort?: string
   /** Kimi thinking flag (so the chip text can format it). */
@@ -1035,6 +1037,7 @@ export function CombinedModelPicker({
   codexReasoningEffort,
   claudeReasoningEffort,
   grokReasoningEffort,
+  museReasoningEffort,
   cursorReasoningEffort,
   kimiThinkingEnabled,
   kimiReasoningEffort,
@@ -1221,6 +1224,8 @@ export function CombinedModelPicker({
         cursorReasoningEffort,
         kimiThinkingEnabled,
         kimiReasoningEffort,
+        museReasoningEffort:
+          provider === 'muse' ? museReasoningEffort || selectedReasoning : undefined,
         shellFastModeActive: showShellFastLabel
       }),
     [
@@ -1234,6 +1239,8 @@ export function CombinedModelPicker({
       cursorReasoningEffort,
       kimiThinkingEnabled,
       kimiReasoningEffort,
+      museReasoningEffort,
+      selectedReasoning,
       showShellFastLabel
     ]
   )
@@ -1251,7 +1258,8 @@ export function CombinedModelPicker({
         cursorReasoningEffort,
         kimiThinkingEnabled,
         kimiReasoningEffort,
-        museReasoningEffort: provider === 'muse' ? selectedReasoning : undefined
+        museReasoningEffort:
+          provider === 'muse' ? museReasoningEffort || selectedReasoning : undefined
       }),
     [
       provider,
@@ -1263,7 +1271,9 @@ export function CombinedModelPicker({
       grokReasoningEffort,
       cursorReasoningEffort,
       kimiThinkingEnabled,
-      kimiReasoningEffort
+      kimiReasoningEffort,
+      museReasoningEffort,
+      selectedReasoning
     ]
   )
   // AntiGravity encodes effort in the selected agy wire model

@@ -154,6 +154,11 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
             : null
         }
       : {}),
+    ...(resolution.provider === 'muse'
+      ? {
+          museReasoningEffort: plan.museReasoningEffort ?? null
+        }
+      : {}),
     ...(resolution.provider === 'cursor'
       ? {
           reasoningEffort: isCursorGrok45ModelId(plan.selectedModelType)
@@ -310,6 +315,11 @@ function sanitizeReroutePlan(value: unknown): ProviderReroutePlan | null {
       ? { grokReasoningEffort: null }
       : sanitizeShortString(input.grokReasoningEffort, 80)
         ? { grokReasoningEffort: sanitizeShortString(input.grokReasoningEffort, 80) }
+        : {}),
+    ...(input.museReasoningEffort === null
+      ? { museReasoningEffort: null }
+      : sanitizeShortString(input.museReasoningEffort, 80)
+        ? { museReasoningEffort: sanitizeShortString(input.museReasoningEffort, 80) }
         : {}),
     ...(input.cursorReasoningEffort === null
       ? { cursorReasoningEffort: null }

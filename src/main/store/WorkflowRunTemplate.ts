@@ -29,6 +29,7 @@ const WORKFLOW_RUN_TEMPLATE_FIELDS: Record<keyof WorkflowRunTemplate, true> = {
   kimiReasoningEffort: true,
   kimiThinkingEnabled: true,
   grokReasoningEffort: true,
+  museReasoningEffort: true,
   cursorReasoningEffort: true,
   cursorFastMode: true,
   runtimeProfileId: true,

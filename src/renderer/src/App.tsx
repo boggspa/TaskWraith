@@ -514,6 +514,7 @@ import {
   isCursorGrok45ModelId,
   isGrok45ReasoningModelId
 } from '../../shared/grok45Models'
+
 import {
   deleteEnsembleRosterPreset,
   importEnsembleRosterPresetsFromJson,
@@ -973,6 +974,17 @@ import {
 // src/renderer/src/lib/ComposerSlashCommands.ts so the Cmd-K palette
 // and slash picker consume the same data without drift.
 
+/** Matches MuseCliArgs MUSE_DEFAULT_REASONING_EFFORT (renderer-safe). */
+const MUSE_DEFAULT_REASONING_EFFORT = 'high'
+const MUSE_REASONING_EFFORT_ALLOWLIST = new Set([
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'ultra'
+])
+
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 
 interface WorkspaceBoardCaptureInput {
@@ -1015,6 +1027,7 @@ function summarizeAuditRetentionPurge(result: AuditRetentionPurgeResult): string
   const verb = receipt.dryRun ? 'would delete' : 'deleted'
   const mode = receipt.dryRun ? 'dry-run' : 'purge'
   const disabledNote = receipt.enabled ? '' : ' (retention disabled; forced dry-run)'
+
   return `${mode}${disabledNote}: scanned ${totals.scanned}, retained ${totals.retained}, ${verb} ${totals.deleted}`
 }
 
@@ -2221,6 +2234,9 @@ function App(): React.JSX.Element {
   const [kimiThinkingEnabled, setKimiThinkingEnabled] = useState<boolean>(true)
   const [grokReasoningEffort, setGrokReasoningEffort] = useState<string>(
     GROK_45_DEFAULT_REASONING_EFFORT
+  )
+  const [museReasoningEffort, setMuseReasoningEffort] = useState<string>(
+    MUSE_DEFAULT_REASONING_EFFORT
   )
   const [cursorReasoningEffort, setCursorReasoningEffort] = useState<string>(
     GROK_45_DEFAULT_REASONING_EFFORT
@@ -4704,6 +4720,12 @@ function App(): React.JSX.Element {
             }
           : { grokReasoningEffort: '' }
         : {}),
+      ...(provider === 'muse'
+        ? {
+            museReasoningEffort:
+              participant.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+          }
+        : {}),
       ...(provider === 'cursor'
         ? {
             ...(isCursorGrok45ModelId(providerModel)
@@ -4831,6 +4853,11 @@ function App(): React.JSX.Element {
           ...(fallbackProvider === 'grok'
             ? typeof fallbackMetadata.grokReasoningEffort === 'string'
               ? { grokReasoningEffort: fallbackMetadata.grokReasoningEffort }
+              : {}
+            : {}),
+          ...(fallbackProvider === 'muse'
+            ? typeof fallbackMetadata.museReasoningEffort === 'string'
+              ? { museReasoningEffort: fallbackMetadata.museReasoningEffort }
               : {}
             : {}),
           ...(fallbackProvider === 'cursor'
@@ -6497,6 +6524,11 @@ function App(): React.JSX.Element {
         providerReasoningEfforts.has(metadata.grokReasoningEffort)
           ? metadata.grokReasoningEffort
           : providerDefaultReasoning,
+      museReasoningEffort:
+        typeof metadata.museReasoningEffort === 'string' &&
+        MUSE_REASONING_EFFORT_ALLOWLIST.has(metadata.museReasoningEffort)
+          ? metadata.museReasoningEffort
+          : MUSE_DEFAULT_REASONING_EFFORT,
       cursorReasoningEffort:
         typeof metadata.cursorReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.cursorReasoningEffort)
@@ -6536,6 +6568,7 @@ function App(): React.JSX.Element {
     setKimiReasoningEffort(selection.kimiReasoningEffort)
     setKimiThinkingEnabled(true)
     setGrokReasoningEffort(selection.grokReasoningEffort)
+    setMuseReasoningEffort(selection.museReasoningEffort)
     setCursorReasoningEffort(selection.cursorReasoningEffort)
     setCursorFastMode(selection.cursorFastMode)
     setRuntimeProfileForChat(
@@ -6603,6 +6636,14 @@ function App(): React.JSX.Element {
           ? { reasoningEffort: selection.grokReasoningEffort || defaults.reasoningEffort }
           : {}
         : {}),
+      ...(provider === 'muse'
+        ? {
+            reasoningEffort:
+              selection.museReasoningEffort ||
+              defaults.reasoningEffort ||
+              MUSE_DEFAULT_REASONING_EFFORT
+          }
+        : {}),
       ...(provider === 'cursor'
         ? {
             ...(isCursorGrok45ModelId(selection.selectedModelType)
@@ -6647,6 +6688,7 @@ function App(): React.JSX.Element {
     'kimiReasoningEffort',
     'kimiThinkingEnabled',
     'grokReasoningEffort',
+    'museReasoningEffort',
     'cursorReasoningEffort',
     'cursorFastMode',
     'runtimeProfileId',
@@ -8117,6 +8159,10 @@ function App(): React.JSX.Element {
           provider === 'kimi' ? true : undefined,
         grokReasoningEffort:
           provider === 'grok' ? normalizedSelection.reasoningEffort || '' : undefined,
+        museReasoningEffort:
+          provider === 'muse'
+            ? normalizedSelection.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+            : undefined,
         cursorReasoningEffort:
           provider === 'cursor' ? normalizedSelection.reasoningEffort || '' : undefined,
         cursorFastMode:
@@ -8193,6 +8239,10 @@ function App(): React.JSX.Element {
         setKimiThinkingEnabled(true)
       } else if (provider === 'grok') {
         setGrokReasoningEffort(String(metadata.grokReasoningEffort || ''))
+      } else if (provider === 'muse') {
+        setMuseReasoningEffort(
+          String(metadata.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT)
+        )
       } else if (provider === 'cursor') {
         setCursorReasoningEffort(String(metadata.cursorReasoningEffort || ''))
         setCursorFastMode(Boolean(metadata.cursorFastMode))
@@ -13150,6 +13200,9 @@ function App(): React.JSX.Element {
       ...(snapshot.grokReasoningEffort !== undefined
         ? { grokReasoningEffort: snapshot.grokReasoningEffort }
         : {}),
+      ...(snapshot.museReasoningEffort !== undefined
+        ? { museReasoningEffort: snapshot.museReasoningEffort }
+        : {}),
       ...(snapshot.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: snapshot.cursorReasoningEffort }
         : {}),
@@ -13247,6 +13300,9 @@ function App(): React.JSX.Element {
       : {}),
     ...(request.grokReasoningEffort !== undefined
       ? { grokReasoningEffort: request.grokReasoningEffort }
+      : {}),
+    ...(request.museReasoningEffort !== undefined
+      ? { museReasoningEffort: request.museReasoningEffort }
       : {}),
     ...(request.cursorReasoningEffort !== undefined
       ? { cursorReasoningEffort: request.cursorReasoningEffort }
@@ -13397,6 +13453,8 @@ function App(): React.JSX.Element {
         queuedProviderSelection?.kimiThinkingEnabled ?? request.kimiThinkingEnabled,
       grokReasoningEffort:
         queuedProviderSelection?.grokReasoningEffort ?? request.grokReasoningEffort,
+      museReasoningEffort:
+        queuedProviderSelection?.museReasoningEffort ?? request.museReasoningEffort,
       cursorReasoningEffort:
         queuedProviderSelection?.cursorReasoningEffort ?? request.cursorReasoningEffort,
       cursorFastMode: queuedProviderSelection?.cursorFastMode ?? request.cursorFastMode,
@@ -13698,6 +13756,12 @@ function App(): React.JSX.Element {
       provider === 'grok'
         ? composerSelection?.grokReasoningEffort || grokReasoningEffort
         : grokReasoningEffort
+    const requestMuseReasoningEffort =
+      provider === 'muse'
+        ? composerSelection?.museReasoningEffort ||
+          museReasoningEffort ||
+          MUSE_DEFAULT_REASONING_EFFORT
+        : museReasoningEffort
     const requestCursorReasoningEffort =
       provider === 'cursor'
         ? composerSelection?.cursorReasoningEffort || cursorReasoningEffort
@@ -13785,6 +13849,7 @@ function App(): React.JSX.Element {
       kimiReasoningEffort: requestKimiReasoningEffort,
       kimiThinkingEnabled: requestKimiThinkingEnabled,
       grokReasoningEffort: requestGrokReasoningEffort,
+      museReasoningEffort: requestMuseReasoningEffort,
       cursorReasoningEffort: requestCursorReasoningEffort,
       cursorFastMode: requestCursorFastMode,
       runtimeProfileId: getRuntimeProfileIdForChat(selectedChat, provider),
@@ -14435,6 +14500,7 @@ function App(): React.JSX.Element {
           kimiReasoningEffort: request.kimiReasoningEffort,
           kimiThinkingEnabled: request.kimiThinkingEnabled,
           grokReasoningEffort: request.grokReasoningEffort,
+          museReasoningEffort: request.museReasoningEffort,
           cursorReasoningEffort: request.cursorReasoningEffort,
           cursorFastMode: request.cursorFastMode,
           runtimeProfileId: request.runtimeProfileId,
@@ -17407,6 +17473,7 @@ function App(): React.JSX.Element {
       kimiReasoningEffort: request.kimiReasoningEffort,
       kimiThinkingEnabled: request.kimiThinkingEnabled,
       grokReasoningEffort: request.grokReasoningEffort,
+      museReasoningEffort: request.museReasoningEffort,
       cursorReasoningEffort: request.cursorReasoningEffort,
       cursorFastMode: request.cursorFastMode,
       runtimeProfileId: request.runtimeProfileId,
@@ -18356,6 +18423,7 @@ function App(): React.JSX.Element {
       kimiReasoningEffort: selection.kimiReasoningEffort,
       kimiThinkingEnabled: selection.kimiThinkingEnabled,
       grokReasoningEffort: selection.grokReasoningEffort,
+      museReasoningEffort: selection.museReasoningEffort,
       cursorReasoningEffort: selection.cursorReasoningEffort,
       cursorFastMode: selection.cursorFastMode,
       runtimeProfileId: lane.runtimeProfileId || getRuntimeProfileIdForChat(chat, provider),
@@ -22061,6 +22129,8 @@ function App(): React.JSX.Element {
   const sideKimiFastMode = Boolean(sideComposerSelection?.kimiFastMode)
   const sideGrokReasoning =
     sideComposerSelection?.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+  const sideMuseReasoning =
+    sideComposerSelection?.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
   const sideCursorReasoning =
     sideComposerSelection?.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
   const sideCursorFastMode = Boolean(sideComposerSelection?.cursorFastMode)
@@ -22125,6 +22195,16 @@ function App(): React.JSX.Element {
       { value: 'high', label: grokReasoningDisplayLabel('high') }
     ]
     sideComposerSelectedReasoning = sideCursorReasoning
+  } else if (sideComposerProvider === 'muse') {
+    sideComposerReasoningOptions = [
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'xhigh', label: 'Extra High' },
+      { value: 'ultra', label: 'Ultra' }
+    ]
+    sideComposerSelectedReasoning = sideMuseReasoning
   }
   const sideFastModeCapableModelIds = (() => {
     if (sideComposerProvider === 'codex') {
@@ -22308,6 +22388,9 @@ function App(): React.JSX.Element {
         ? GROK_45_DEFAULT_REASONING_EFFORT
         : ''
     }
+    if (sideComposerProvider === 'muse') {
+      metadataPatch.museReasoningEffort = MUSE_DEFAULT_REASONING_EFFORT
+    }
     if (sideComposerProvider === 'cursor') {
       if (isCursorGrok45ModelId(nextModel)) {
         metadataPatch.cursorReasoningEffort = GROK_45_DEFAULT_REASONING_EFFORT
@@ -22331,6 +22414,8 @@ function App(): React.JSX.Element {
       })
     } else if (sideComposerProvider === 'grok') {
       rememberSideChatComposerSelection({ grokReasoningEffort: value })
+    } else if (sideComposerProvider === 'muse') {
+      rememberSideChatComposerSelection({ museReasoningEffort: value })
     } else if (sideComposerProvider === 'cursor') {
       rememberSideChatComposerSelection({ cursorReasoningEffort: value })
     }
@@ -29399,6 +29484,8 @@ function App(): React.JSX.Element {
       const viewerKimiReasoning = viewerSelection.kimiReasoningEffort || 'on'
       const viewerGrokReasoning =
         viewerSelection.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+      const viewerMuseReasoning =
+        viewerSelection.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
       const viewerCursorReasoning =
         viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
       const viewerCursorFastMode = Boolean(viewerSelection.cursorFastMode)
@@ -29871,6 +29958,7 @@ function App(): React.JSX.Element {
         kimiReasoningEffort: viewerKimiReasoning,
         kimiThinkingEnabled: viewerKimiThinking,
         grokReasoningEffort: viewerGrokReasoning,
+        museReasoningEffort: viewerMuseReasoning,
         cursorReasoningEffort: viewerCursorReasoning,
         cursorFastMode: viewerCursorFastMode,
         codexServiceTier: paneViewerSelection.codexServiceTier || '',
@@ -30000,6 +30088,7 @@ function App(): React.JSX.Element {
         setKimiReasoningEffort: paneNoopSetter,
         setKimiThinkingEnabled: paneNoopSetter,
         setGrokReasoningEffort: paneNoopSetter,
+        setMuseReasoningEffort: paneNoopSetter,
         setCursorReasoningEffort: paneNoopSetter,
         setCursorFastMode: paneNoopSetter,
         setCodexServiceTier: paneNoopSetter,
@@ -30195,6 +30284,7 @@ function App(): React.JSX.Element {
     codexReasoningOptions,
     codexServiceTier,
     grokReasoningEffort,
+    museReasoningEffort,
     cursorReasoningEffort,
     cursorFastMode,
     composerAreaRef,
@@ -30312,6 +30402,7 @@ function App(): React.JSX.Element {
     setCodexServiceTier,
     setCustomModel,
     setGrokReasoningEffort,
+    setMuseReasoningEffort,
     setCursorReasoningEffort,
     setCursorFastMode,
     setKimiFastMode,
@@ -30860,6 +30951,7 @@ function App(): React.JSX.Element {
     sideClaudeReasoning,
     sideCodexReasoning,
     sideGrokReasoning,
+    sideMuseReasoning,
     sideCursorReasoning,
     sideComposerContextMenu,
     sideComposerHasMention,

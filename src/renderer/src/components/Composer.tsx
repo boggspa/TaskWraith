@@ -181,6 +181,9 @@ import {
   isCursorGrok45ModelId,
   isGrok45ReasoningModelId
 } from '../../../shared/grok45Models'
+
+/** Matches `MUSE_DEFAULT_REASONING_EFFORT` in main muse/MuseCliArgs.ts. */
+const MUSE_DEFAULT_REASONING_EFFORT = 'high'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import { resolveComposerEffectiveWorkspacePath } from '../lib/composerWorktreeSelection'
 import { resolveComposerGitActionBasePath } from '../lib/composerFocusedWorkspace'
@@ -243,6 +246,7 @@ export interface ComposerProps {
   codexReasoningOptions: any
   codexServiceTier: any
   grokReasoningEffort: any
+  museReasoningEffort: any
   cursorReasoningEffort: any
   cursorFastMode: any
   composerAboveBarStackAuraClass: any
@@ -487,6 +491,7 @@ export interface ComposerProps {
   setCodexReasoningEffort: any
   setCodexServiceTier: any
   setGrokReasoningEffort: any
+  setMuseReasoningEffort: any
   setCursorReasoningEffort: any
   setCursorFastMode: any
   setCurrentChat: any
@@ -600,6 +605,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     codexReasoningOptions,
     codexServiceTier,
     grokReasoningEffort,
+    museReasoningEffort,
     cursorReasoningEffort,
     cursorFastMode,
     composerAboveBarStackAuraClass,
@@ -809,6 +815,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setCodexReasoningEffort,
     setCodexServiceTier,
     setGrokReasoningEffort,
+    setMuseReasoningEffort,
     setCursorReasoningEffort,
     setCursorFastMode,
     setCurrentChat,
@@ -3808,6 +3815,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     'string'
                                 ? soloPendingProviderMetadata.grokReasoningEffort
                                 : grokReasoningEffort
+                          const effectiveMuseReasoning =
+                            ensembleResolved?.provider === 'muse'
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.museReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.museReasoningEffort
+                                : museReasoningEffort
                           const effectiveCursorReasoning =
                             ensembleResolved?.provider === 'cursor'
                               ? ensembleResolved.reasoningEffort
@@ -3937,13 +3951,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             }
                           } else if (
                             effectiveProvider === 'mistral' ||
-                            effectiveProvider === 'pi' ||
-                            effectiveProvider === 'muse'
+                            effectiveProvider === 'pi'
                           ) {
                             // Mistral Medium 3.5 → locked High (vibe schema /
                             // known Pi upstream default). Devstral and other
                             // Pi models stay option-free (inert — rail).
-                            // Muse Spark → minimal…ultra ladder (never none).
                             combinedReasoningOptions = getEnsembleReasoningOptions(
                               effectiveProvider,
                               effectiveSelectedModel
@@ -3951,12 +3963,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             combinedSelectedReasoning =
                               (ensembleResolved &&
                               (ensembleResolved.provider === 'mistral' ||
-                                ensembleResolved.provider === 'pi' ||
-                                ensembleResolved.provider === 'muse')
+                                ensembleResolved.provider === 'pi')
                                 ? ensembleResolved.reasoningEffort
                                 : '') ||
                               combinedReasoningOptions[0]?.value ||
                               ''
+                          } else if (effectiveProvider === 'muse') {
+                            // Muse Spark → minimal…ultra ladder (never none).
+                            // Solo persists museReasoningEffort; default high
+                            // matches MuseCliArgs MUSE_DEFAULT_REASONING_EFFORT.
+                            combinedReasoningOptions = getEnsembleReasoningOptions(
+                              'muse',
+                              effectiveSelectedModel
+                            )
+                            combinedSelectedReasoning =
+                              effectiveMuseReasoning || MUSE_DEFAULT_REASONING_EFFORT
                           }
 
                           const handleCombinedModelChange = (nextModel: string) => {
@@ -4257,6 +4278,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               rememberCurrentChatComposerSelection({
                                 grokReasoningEffort: value
                               })
+                            } else if (effectiveProvider === 'muse') {
+                              if (shouldUpdateLiveComposerState) {
+                                setMuseReasoningEffort(value)
+                              }
+                              rememberCurrentChatComposerSelection({
+                                museReasoningEffort: value
+                              })
                             } else if (effectiveProvider === 'cursor') {
                               if (shouldUpdateLiveComposerState) {
                                 setCursorReasoningEffort(value)
@@ -4314,6 +4342,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 codexReasoningEffort={effectiveCodexReasoning}
                                 claudeReasoningEffort={effectiveClaudeReasoning}
                                 grokReasoningEffort={effectiveGrokReasoning}
+                                museReasoningEffort={effectiveMuseReasoning}
                                 cursorReasoningEffort={effectiveCursorReasoning}
                                 kimiThinkingEnabled={effectiveKimiThinking}
                                 kimiReasoningEffort={effectiveKimiReasoning}
