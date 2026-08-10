@@ -2,7 +2,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { generateIdentityKeyPair, type KeyPair } from '../../shared/e2ee/keys'
+import {
+  b64,
+  exportRawEd25519PublicKey,
+  generateIdentityKeyPair,
+  type KeyPair
+} from '../../shared/e2ee/keys'
 import {
   CHANNEL_AGENT_MAX_POST_BYTES,
   CHANNEL_AGENT_PROTOCOL_VERSION,
@@ -11,6 +16,10 @@ import {
   signChannelAgentDispatchGrant,
   signChannelAgentPost
 } from '../../shared/collaboration/ChannelAgentProtocol'
+import {
+  CHANNEL_AGENT_REVIEW_ID,
+  CHANNEL_AGENT_REVIEW_REQUIRED_CODE
+} from '../../shared/collaboration/ChannelAgentReviewGate'
 import type {
   TransportSocket,
   TransportSocketFactory,
@@ -645,6 +654,81 @@ describe('ChannelProductionService', () => {
 
     await restarted.service.purgeForHistoryDeletionScope({ kind: 'global' })
     expect(existsSync(identityPath)).toBe(false)
+  })
+
+  it('audits an accepted human mention at the immutable review gate before authority access', async () => {
+    const userDataPath = temporaryUserData()
+    const identity = generateIdentityKeyPair()
+    const now = 1_700_000_000_000
+    const first = createService({ userDataPath, identity, now: () => now })
+    first.service.start()
+    const channel = first.service.createChannel({
+      chatId: 'chat-agent-mention-gate',
+      title: 'Agent mention gate proof',
+      ownerDisplayName: 'Host'
+    })
+    await first.service.stop()
+
+    const paths = channelProductionDataPaths(userDataPath)
+    const store = new ChannelStore(paths.metadata)
+    const agentIdentity = generateIdentityKeyPair()
+    const agentMemberId = 'agent-member-mention-gate'
+    store.registerAgentMember({
+      channelId: channel.channelId,
+      displayName: 'Build Agent',
+      signedDelegation: signChannelAgentDelegation(identity.privateKey, {
+        schemaVersion: CHANNEL_AGENT_PROTOCOL_VERSION,
+        delegationId: 'delegation-mention-gate',
+        channelId: channel.channelId,
+        ownerMemberId: channel.ownerMemberId,
+        agentMemberId,
+        agentSeatId: 'pooled-agent-mention-gate',
+        agentPublicKeyB64: b64.encode(exportRawEd25519PublicKey(agentIdentity.publicKey)),
+        keyGeneration: 1,
+        scopes: ['channel.dispatch', 'channel.post'],
+        issuedAt: now,
+        notBefore: now,
+        expiresAt: now + 60_000,
+        maxPostBytes: CHANNEL_AGENT_MAX_POST_BYTES
+      }),
+      now
+    })
+    expect(existsSync(paths.agentAuthority)).toBe(false)
+
+    const restarted = createService({ userDataPath, identity, now: () => now + 1 })
+    restarted.service.start()
+    const content = 'Please ask @Build Agent to inspect this.'
+    const appended = await restarted.service.appendHost({
+      channelId: channel.channelId,
+      clientMessageId: 'mention-before-review',
+      content
+    })
+    const retry = await restarted.service.appendHost({
+      channelId: channel.channelId,
+      clientMessageId: 'mention-before-review',
+      content
+    })
+
+    expect(appended.record).toMatchObject({ kind: 'human.text', content })
+    expect(retry).toMatchObject({
+      deduplicated: true,
+      record: { messageId: appended.record.messageId }
+    })
+    const blockedEvents = restarted.service
+      .listAudit({ channelId: channel.channelId })
+      .filter((event) => event.kind === 'agent.dispatch.blocked')
+    expect(blockedEvents).toHaveLength(1)
+    const blocked = blockedEvents[0]
+    expect(blocked).toMatchObject({
+      channelId: channel.channelId,
+      memberId: agentMemberId,
+      code: CHANNEL_AGENT_REVIEW_REQUIRED_CODE,
+      contentHash: appended.record.contentHash,
+      detail: CHANNEL_AGENT_REVIEW_ID,
+      at: appended.record.acceptedAt
+    })
+    expect(JSON.stringify(blocked)).not.toContain(content)
+    expect(existsSync(paths.agentAuthority)).toBe(false)
   })
 
   it('does not mint an invite while the host relay is unavailable', async () => {

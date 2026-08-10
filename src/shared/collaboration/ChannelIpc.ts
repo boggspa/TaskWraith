@@ -106,6 +106,8 @@ export type ChannelIpcAuditEventKind =
   | 'message.rejected'
   | 'replay.completed'
   | 'member.revoked'
+  | 'agent.mention.rejected'
+  | 'agent.dispatch.blocked'
   | 'protocol.rejected'
 
 export interface ChannelIpcAuditEvent {

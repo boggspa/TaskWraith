@@ -27,6 +27,8 @@ export type ChannelAuditEventKind =
   | 'message.rejected'
   | 'replay.completed'
   | 'member.revoked'
+  | 'agent.mention.rejected'
+  | 'agent.dispatch.blocked'
   | 'protocol.rejected'
 
 export interface ChannelAuditEvent {

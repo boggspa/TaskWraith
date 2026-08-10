@@ -63,6 +63,48 @@ describe('ChannelAuditLog', () => {
     expect(JSON.parse(durable).events[0].detail.length).toBeLessThanOrEqual(160)
   })
 
+  it('persists redacted agent mention and review-gate evidence without prompt text', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-channel-agent-audit-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'audit.json')
+    const log = new ChannelAuditLog(path)
+    log.append({
+      kind: 'agent.mention.rejected',
+      channelId: 'channel',
+      code: 'ambiguous_agent_mention',
+      contentHash: 'a'.repeat(64),
+      detail: 'candidate_count:2',
+      at: 10
+    })
+    log.append({
+      kind: 'agent.dispatch.blocked',
+      channelId: 'channel',
+      memberId: 'agent-build',
+      code: 'channel_agent_review_required',
+      contentHash: 'b'.repeat(64),
+      detail: 'channels-p3-agent-participation-v1',
+      at: 11
+    })
+
+    expect(new ChannelAuditLog(path).list()).toEqual([
+      expect.objectContaining({
+        kind: 'agent.dispatch.blocked',
+        memberId: 'agent-build',
+        code: 'channel_agent_review_required',
+        contentHash: 'b'.repeat(64)
+      }),
+      expect.objectContaining({
+        kind: 'agent.mention.rejected',
+        code: 'ambiguous_agent_mention',
+        contentHash: 'a'.repeat(64)
+      })
+    ])
+    const durable = readFileSync(path, 'utf8')
+    expect(durable).not.toContain('prompt')
+    expect(durable).not.toContain('message body')
+    expect(durable).not.toContain('"content":')
+  })
+
   it('purges selected Channel evidence and reserves global purge for whole-history deletion', () => {
     const directory = mkdtempSync(join(tmpdir(), 'taskwraith-channel-audit-purge-'))
     temporaryDirectories.push(directory)

@@ -13,6 +13,7 @@ import {
   ChannelAgentIdentityStore,
   type ChannelAgentIdentitySafeStorage
 } from './ChannelAgentIdentityStore'
+import { admitAcceptedChannelAgentMentions } from './ChannelAgentMentionAdmission'
 import { ChannelHostTransport } from './ChannelHostTransport'
 import {
   ChannelMessageLog,
@@ -347,7 +348,9 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       audit: auditSink,
       now: this.now,
       ...(this.options.logger ? { logger: this.options.logger } : {}),
-      onAdmissionBegan: (info) => this.recordPendingAdmission(info, store)
+      onAdmissionBegan: (info) => this.recordPendingAdmission(info, store),
+      afterDurableCommit: (result) =>
+        this.recordAcceptedAgentMentionAdmission(result, store, auditSink)
     })
     const transport = new ChannelHostTransport({
       socketFactory: this.options.socketFactory ?? wsTransportSocketFactory,
@@ -760,6 +763,56 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     }
     if (event.kind === 'message.accepted') {
       this.notifyChange({ channelId: event.channelId, chatId, reason: 'message' })
+    }
+  }
+
+  private recordAcceptedAgentMentionAdmission(
+    result: ChannelAppendResult,
+    store: ChannelStore,
+    audit: ChannelAuditLike
+  ): void {
+    try {
+      const admission = admitAcceptedChannelAgentMentions({
+        record: result.record,
+        members: store.listMembers(result.record.channelId)
+      })
+      if (admission.kind === 'ignored') return
+      for (const ambiguity of admission.ambiguities) {
+        audit.append({
+          kind: 'agent.mention.rejected',
+          channelId: result.record.channelId,
+          code: 'ambiguous_agent_mention',
+          contentHash: result.record.contentHash,
+          detail: `candidate_count:${ambiguity.candidateMemberIds.length}`,
+          at: result.record.acceptedAt
+        })
+      }
+      if (admission.kind === 'rejected') {
+        if (admission.reason === 'ambiguous_agent_mention') return
+        audit.append({
+          kind: 'agent.mention.rejected',
+          channelId: result.record.channelId,
+          code: admission.reason,
+          contentHash: result.record.contentHash,
+          at: result.record.acceptedAt
+        })
+        return
+      }
+      for (const target of admission.targets) {
+        audit.append({
+          kind: 'agent.dispatch.blocked',
+          channelId: result.record.channelId,
+          memberId: target.memberId,
+          code: admission.code,
+          contentHash: result.record.contentHash,
+          detail: admission.reviewId,
+          at: result.record.acceptedAt
+        })
+      }
+    } catch {
+      // The human record is already durable. Audit failure must not turn an
+      // accepted append into a retry that could duplicate downstream effects.
+      this.options.logger?.('[channels] agent mention admission audit failed')
     }
   }
 
