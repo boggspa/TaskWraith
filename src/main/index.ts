@@ -2001,6 +2001,7 @@ import {
   buildEphemeralFleetRoleFrame,
   resolveEphemeralFleetIsolationForWave
 } from './SubThreadEphemeralFleet'
+import { allocateEphemeralFleetWriterWorktree } from './SubThreadEphemeralFleetWorktree'
 import { newProjectReferenceId } from '../shared/projects'
 import {
   delegationApprovalBudget,
@@ -39200,6 +39201,24 @@ async function executeGeminiMcpTool(
             label: worker.label,
             title
           })
+          const soleFleetWriter =
+            worker.role === 'worker' &&
+            peerWorkerRoles.filter((role) => role === 'worker').length === 1
+          const baseWorkspacePath =
+            (typeof subThread.workspacePath === 'string' && subThread.workspacePath.trim()) ||
+            (typeof context.workspacePath === 'string' && context.workspacePath.trim()) ||
+            ''
+          // Soft-fail: null → resolveEphemeralFleetIsolationForWave keeps capped_inherit.
+          const writerWorktree =
+            soleFleetWriter && baseWorkspacePath
+              ? await allocateEphemeralFleetWriterWorktree({
+                  parentChatId,
+                  workerChatId: subThread.appChatId,
+                  label: worker.label || worker.role,
+                  baseWorkspacePath,
+                  git: new GitService()
+                })
+              : null
           const readOnlyPermissions = resolveEffectiveRunPermissions({
             provider: worker.provider,
             workspacePath: subThread.workspacePath,
@@ -39209,7 +39228,15 @@ async function executeGeminiMcpTool(
           })
           const isolation = resolveEphemeralFleetIsolationForWave({
             role: worker.role,
-            workerRoles: peerWorkerRoles
+            workerRoles: peerWorkerRoles,
+            ...(writerWorktree
+              ? {
+                  worktree: {
+                    baseWorkspacePath: writerWorktree.baseWorkspacePath,
+                    effectiveWorkspacePath: writerWorktree.effectiveWorkspacePath
+                  }
+                }
+              : {})
           })
           const workerPermissions = resolveSubThreadWorkerPermissions({
             parentPermissions: context.effectivePermissions,
@@ -39276,6 +39303,9 @@ async function executeGeminiMcpTool(
             joinPolicy
           })
           scheduleSubThreadJoinEvaluation(parentChatId, joinPolicy.groupId)
+          // Keep payload.workspace on the registered base checkout so preflight
+          // requireRegisteredWorkspace succeeds; stamp runtimeWorktree like
+          // ensemble fan-out so resolveRuntimeWorktreeWorkspace remaps cwd.
           const runPayload: AgentRunPayload = {
             provider: worker.provider,
             scope: context.scope ?? 'workspace',
@@ -39291,7 +39321,20 @@ async function executeGeminiMcpTool(
             sessionTrust: false,
             externalPathGrants: subThreadEffectivePermissions.externalPathGrants,
             runtimeProfileId: inheritableRuntimeProfileId,
-            effectivePermissions: subThreadEffectivePermissions
+            effectivePermissions: subThreadEffectivePermissions,
+            ...(workerPermissions.isolation === 'worktree' &&
+            workerPermissions.effectiveWorkspacePath
+              ? {
+                  runtimeWorktree: {
+                    requested: true,
+                    source: 'ensembleLane' as const,
+                    baseWorkspacePath:
+                      writerWorktree?.baseWorkspacePath || baseWorkspacePath,
+                    effectiveWorkspacePath: workerPermissions.effectiveWorkspacePath,
+                    status: 'selected' as const
+                  }
+                }
+              : {})
           }
           runPayload.effectivePermissionsSignature = signRunPosture(
             delegatedApprovalMode,
