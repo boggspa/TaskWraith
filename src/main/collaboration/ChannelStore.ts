@@ -32,6 +32,7 @@ export type ChannelErrorCode =
   | 'identity_mismatch'
   | 'revoked'
   | 'quota_exceeded'
+  | 'policy_denied'
   | 'idempotency_conflict'
   | 'invalid_cursor'
   | 'resync_required'

@@ -14,6 +14,7 @@ import {
   type ChannelAppendResult,
   type ChannelMessage
 } from './ChannelMessageLog'
+import { ChannelHumanPolicyError, type ChannelHumanPolicyStore } from './ChannelHumanPolicyStore'
 import { ChannelRuntime, type ChannelRuntimeTransport } from './ChannelRuntime'
 import { ChannelStore } from './ChannelStore'
 
@@ -86,6 +87,69 @@ class RecordingTransport implements ChannelRuntimeTransport {
 }
 
 describe('ChannelRuntime durability boundary', () => {
+  it('maps migrated-human policy decisions to fail-closed Channel errors', () => {
+    const root = directory()
+    const evaluate = vi.fn<ChannelHumanPolicyStore['evaluate']>()
+    const store = new ChannelStore(join(root, 'channels.json'))
+    const runtime = new ChannelRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      log: new ChannelMessageLog(join(root, 'logs'), store),
+      humanPolicy: { evaluate }
+    })
+    const enforce = (
+      runtime as unknown as {
+        enforceHumanAppendPolicy: (
+          session: { channelId: string; memberId: string },
+          content: string
+        ) => void
+      }
+    ).enforceHumanAppendPolicy.bind(runtime)
+    const session = { channelId: 'channel-policy', memberId: 'member-policy' }
+
+    evaluate.mockReturnValueOnce({ outcome: 'append', policy: null })
+    expect(() => enforce(session, '🧪')).not.toThrow()
+    expect(evaluate).toHaveBeenLastCalledWith({
+      channelId: 'channel-policy',
+      memberId: 'member-policy',
+      intent: 'comment',
+      contentBytes: 4
+    })
+
+    evaluate.mockReturnValueOnce({
+      outcome: 'deny',
+      code: 'quota_exceeded',
+      message: 'too large',
+      policy: null
+    })
+    expect(() => enforce(session, 'x')).toThrowError(
+      expect.objectContaining({ code: 'quota_exceeded', message: 'too large' })
+    )
+
+    evaluate.mockReturnValueOnce({
+      outcome: 'deny',
+      code: 'read_only',
+      message: 'read only',
+      policy: null
+    })
+    expect(() => enforce(session, 'x')).toThrowError(
+      expect.objectContaining({ code: 'policy_denied', message: 'read only' })
+    )
+
+    evaluate.mockReturnValueOnce({ outcome: 'host_review', policy: {} as never })
+    expect(() => enforce(session, 'x')).toThrowError(
+      expect.objectContaining({ code: 'policy_denied', message: expect.stringContaining('review') })
+    )
+
+    evaluate.mockImplementationOnce(() => {
+      throw new ChannelHumanPolicyError('corrupt')
+    })
+    expect(() => enforce(session, 'x')).toThrowError(
+      expect.objectContaining({ code: 'recovery_blocked' })
+    )
+    runtime.dispose()
+  })
+
   it('recovers a crash after fsync but before fan-out and deduplicates the retry', async () => {
     const root = directory()
     const storePath = join(root, 'channels.json')

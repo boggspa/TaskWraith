@@ -36,6 +36,11 @@ import type { ChannelAgentProductionService } from './ChannelAgentProductionServ
 import type { ChannelAgentSeatCandidate } from './ChannelAgentSeatAuthority'
 import { ChannelHostTransport } from './ChannelHostTransport'
 import {
+  ChannelHumanPolicyError,
+  ChannelHumanPolicyStore,
+  channelHumanPolicyPath
+} from './ChannelHumanPolicyStore'
+import {
   ChannelMessageLog,
   type ChannelAppendResult,
   type ChannelMessage
@@ -58,6 +63,7 @@ export interface ChannelProductionDataPaths {
   agentIdentities: string
   agentAuthority: string
   agentDispatchJournal: string
+  humanPolicies: string
 }
 
 export interface ChannelProductionRelayPort {
@@ -221,6 +227,7 @@ interface RunningState {
   agentIdentities: ChannelAgentIdentityStore
   agentAuthority: ChannelAgentAuthorityStore
   agentDispatchJournal: ChannelAgentDispatchJournalStore
+  humanPolicies: ChannelHumanPolicyStore
   agentManagement: ChannelAgentManagementService
   agentProduction: ChannelAgentProductionService | null
   runtime: ChannelRuntime
@@ -246,7 +253,8 @@ export function channelProductionDataPaths(userDataPath: string): ChannelProduct
     audit: join(root, 'audit.json'),
     agentIdentities: join(root, 'agent-identities'),
     agentAuthority: join(root, 'agent-authority'),
-    agentDispatchJournal: join(root, 'agent-dispatch-journal')
+    agentDispatchJournal: join(root, 'agent-dispatch-journal'),
+    humanPolicies: channelHumanPolicyPath(userDataPath)
   }
 }
 
@@ -405,6 +413,15 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     if (this.state) return this.status()
 
     const store = new ChannelStore(this.paths.metadata)
+    const humanPolicies = new ChannelHumanPolicyStore(this.paths.humanPolicies)
+    let humanPoliciesHealthy = true
+    try {
+      humanPolicies.list()
+    } catch (error) {
+      if (!(error instanceof ChannelHumanPolicyError)) throw error
+      humanPoliciesHealthy = false
+      this.options.logger?.('[channels] migrated human policy recovery is blocked')
+    }
     const agentIdentities = new ChannelAgentIdentityStore({
       storageDirectory: this.paths.agentIdentities,
       safeStorage: this.options.safeStorage,
@@ -454,6 +471,10 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     })
     const recoveryBlockedChannelIds = new Set<string>()
     for (const channel of store.listChannels()) {
+      if (!humanPoliciesHealthy) {
+        recoveryBlockedChannelIds.add(channel.channelId)
+        continue
+      }
       try {
         store.getDisplayEnvelope(channel.channelId)
         log.highWaterSequence(channel.channelId)
@@ -479,6 +500,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       store,
       log,
       audit: auditSink,
+      humanPolicy: humanPolicies,
       now: this.now,
       ...(this.options.logger ? { logger: this.options.logger } : {}),
       onAdmissionBegan: (info) => this.recordPendingAdmission(info, store),
@@ -529,6 +551,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       agentIdentities,
       agentAuthority,
       agentDispatchJournal,
+      humanPolicies,
       agentManagement,
       agentProduction,
       runtime,
@@ -990,6 +1013,10 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     const chatIdByChannelId = new Map(
       targets.map((channel) => [channel.channelId, channel.chatId] as const)
     )
+    const humanPolicyChannelIds =
+      scope.kind === 'global'
+        ? state.humanPolicies.list().map((record) => record.channelId)
+        : channelIds
     if (scope.kind === 'truncate') {
       return Promise.resolve({
         kind: scope.kind,
@@ -1028,6 +1055,9 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         state.agentAuthority.purgeAll()
         state.agentIdentities.purgeAll()
         state.store.purgeAllChannels()
+        // Delete policy only after Channel authority is gone. A late persistence
+        // failure may leave an orphaned policy, but can never widen a live member.
+        state.humanPolicies.purgeChannels(humanPolicyChannelIds)
       } else {
         state.log.purgeChannels(channelIds)
         state.audit.purgeChannels(channelIds)
@@ -1036,6 +1066,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
           state.agentAuthority.eraseChannel(channelId)
         }
         state.store.purgeChannels(channelIds)
+        state.humanPolicies.purgeChannels(humanPolicyChannelIds)
       }
       for (const channelId of channelIds) {
         const chatId = chatIdByChannelId.get(channelId)

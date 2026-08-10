@@ -53,6 +53,7 @@ import {
   type ChannelMessage
 } from './ChannelMessageLog'
 import type { ChannelAuditLike } from './ChannelAuditLog'
+import { ChannelHumanPolicyError, type ChannelHumanPolicyStore } from './ChannelHumanPolicyStore'
 
 const HANDSHAKE_TTL_MS = 2 * 60 * 1000
 const MAX_PENDING_HANDSHAKES = 32
@@ -95,6 +96,8 @@ export interface ChannelRuntimeOptions {
     highWaterSequence: number
     live: boolean
   }) => void
+  /** Migration-bound policy authority. Missing means ordinary Channel rules. */
+  humanPolicy?: Pick<ChannelHumanPolicyStore, 'evaluate'>
 }
 
 export interface ChannelRoomBinding {
@@ -804,6 +807,7 @@ export class ChannelRuntime {
     await this.enqueueChannel(session.channelId, async () => {
       this.revalidateSession(session)
       this.consumeAppendRate(session, this.now())
+      this.enforceHumanAppendPolicy(session, input.content)
       const result = this.opts.log.appendWithResult({
         channelId: session.channelId,
         principalMemberId: session.memberId,
@@ -834,6 +838,34 @@ export class ChannelRuntime {
       )
       if (!result.deduplicated) this.fanOut(result.record)
     })
+  }
+
+  private enforceHumanAppendPolicy(session: RuntimeSession, content: string): void {
+    if (!this.opts.humanPolicy) return
+    let decision: ReturnType<ChannelHumanPolicyStore['evaluate']>
+    try {
+      decision = this.opts.humanPolicy.evaluate({
+        channelId: session.channelId,
+        memberId: session.memberId,
+        intent: 'comment',
+        contentBytes: Buffer.byteLength(content, 'utf8')
+      })
+    } catch (error) {
+      if (error instanceof ChannelHumanPolicyError && error.code === 'recovery_blocked') {
+        throw new ChannelError('recovery_blocked', 'Channel human policy recovery is blocked')
+      }
+      throw error
+    }
+    if (decision.outcome === 'append') return
+    if (decision.outcome === 'deny' && decision.code === 'quota_exceeded') {
+      throw new ChannelError('quota_exceeded', decision.message)
+    }
+    throw new ChannelError(
+      'policy_denied',
+      decision.outcome === 'deny'
+        ? decision.message
+        : 'Channel contribution requires host review before it can be accepted'
+    )
   }
 
   private async handleResume(session: RuntimeSession, request: ChannelWireRequest): Promise<void> {

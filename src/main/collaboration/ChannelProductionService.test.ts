@@ -27,6 +27,7 @@ import {
   CHANNEL_AGENT_REVIEW_ID,
   CHANNEL_AGENT_REVIEW_REQUIRED_CODE
 } from '../../shared/collaboration/ChannelAgentReviewGate'
+import { contributionRulesForPreset } from './HumanContributionRules'
 import type {
   TransportSocket,
   TransportSocketFactory,
@@ -45,6 +46,7 @@ import {
   type ChannelAgentIdentitySafeStorage
 } from './ChannelAgentIdentityStore'
 import { ChannelMessageLog } from './ChannelMessageLog'
+import { ChannelHumanPolicyStore } from './ChannelHumanPolicyStore'
 import { ChannelError, ChannelStore, type ChannelErrorCode } from './ChannelStore'
 import {
   channelProductionDataPaths,
@@ -462,6 +464,116 @@ describe('ChannelProductionService', () => {
       vi.useRealTimers()
       expiringClient?.dispose()
       client.dispose()
+    }
+  })
+
+  it('enforces and erases durable migrated-human policy on the real member transport', async () => {
+    const relay = new BlindTestRelay()
+    const userDataPath = temporaryUserData()
+    const hostIdentity = generateIdentityKeyPair()
+    const memberIdentity = generateIdentityKeyPair()
+    const now = 1_700_000_100_000
+    const first = createService({
+      userDataPath,
+      identity: hostIdentity,
+      now: () => now,
+      socketFactory: relay.socketFactory,
+      hostRelayUrl: () => 'ws://relay.test',
+      inviteRelayUrls: () => ['ws://relay.test']
+    })
+    first.service.start()
+    const channel = first.service.createChannel({
+      chatId: 'chat-migrated-policy',
+      title: 'Migrated policy',
+      ownerDisplayName: 'Host'
+    })
+    const invite = first.service.issueInvite({ channelId: channel.channelId })
+    const admitted = new ChannelMemberClient({
+      socketFactory: relay.socketFactory,
+      identity: memberIdentity,
+      requestTimeoutMs: 2_000
+    })
+    let reconnected: ChannelMemberClient | null = null
+
+    try {
+      admitted.connect('ws://relay.test', invite.roomId)
+      await admitted.whenConnected(2_000)
+      const member = await admitted.admit({
+        channelId: channel.channelId,
+        inviteId: invite.inviteId,
+        inviteToken: invite.inviteToken,
+        displayName: 'Migrated Reader',
+        expectedHostIdentityPubKeyB64: first.service.hostIdentityPublicKey()
+      })
+      admitted.dispose()
+      await first.service.stop()
+
+      const paths = channelProductionDataPaths(userDataPath)
+      new ChannelHumanPolicyStore(paths.humanPolicies).applyMigrationPolicies({
+        migrationPlanId: 'd'.repeat(64),
+        policies: [
+          {
+            channelId: channel.channelId,
+            memberId: member.memberId,
+            sourceShareId: 'legacy_share',
+            sourceCollaboratorId: 'legacy_reader',
+            sourceDigest: 'e'.repeat(64),
+            rules: contributionRulesForPreset('readOnly'),
+            requiresHostApproval: false,
+            fullHistory: false
+          }
+        ],
+        now
+      })
+
+      const restarted = createService({
+        userDataPath,
+        identity: hostIdentity,
+        now: () => now + 1,
+        socketFactory: relay.socketFactory,
+        hostRelayUrl: () => 'ws://relay.test',
+        inviteRelayUrls: () => ['ws://relay.test']
+      })
+      expect(restarted.service.start()).toMatchObject({
+        state: 'running',
+        recoveryBlockedChannelCount: 0,
+        openRoomCount: 1
+      })
+      reconnected = new ChannelMemberClient({
+        socketFactory: relay.socketFactory,
+        identity: memberIdentity,
+        requestTimeoutMs: 2_000
+      })
+      reconnected.connect('ws://relay.test', invite.roomId)
+      await reconnected.whenConnected(2_000)
+      await reconnected.reconnect({
+        channelId: channel.channelId,
+        memberId: member.memberId,
+        expectedHostIdentityPubKeyB64: restarted.service.hostIdentityPublicKey()
+      })
+
+      await expect(
+        reconnected.append('must stay read-only', 'migrated-policy-denial')
+      ).rejects.toMatchObject({
+        code: 'policy_denied'
+      })
+      expect(
+        restarted.service.readChannel({ channelId: channel.channelId, resumeAfter: 0 })
+      ).toMatchObject({ highWaterSequence: 0, records: [] })
+      expect(restarted.service.listAudit({ channelId: channel.channelId })).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'message.rejected', code: 'policy_denied' })
+        ])
+      )
+
+      await restarted.service.purgeForHistoryDeletionScope({
+        kind: 'chat',
+        chatIds: ['chat-migrated-policy']
+      })
+      expect(new ChannelHumanPolicyStore(paths.humanPolicies).list()).toEqual([])
+    } finally {
+      reconnected?.dispose()
+      admitted.dispose()
     }
   })
 
@@ -1302,5 +1414,57 @@ describe('ChannelProductionService', () => {
     expect(restarted.service.listChannels().map((channel) => channel.channelId)).toEqual([
       healthy.channelId
     ])
+  })
+
+  it('blocks every restored Channel when migrated-human policy authority is corrupt', async () => {
+    const userDataPath = temporaryUserData()
+    const identity = generateIdentityKeyPair()
+    const first = createService({ userDataPath, identity })
+    first.service.start()
+    const channels = [
+      first.service.createChannel({
+        chatId: 'chat-policy-blocked-a',
+        title: 'Policy blocked A',
+        ownerDisplayName: 'Host'
+      }),
+      first.service.createChannel({
+        chatId: 'chat-policy-blocked-b',
+        title: 'Policy blocked B',
+        ownerDisplayName: 'Host'
+      })
+    ]
+    for (const channel of channels) first.service.issueInvite({ channelId: channel.channelId })
+    await first.service.stop()
+
+    const paths = channelProductionDataPaths(userDataPath)
+    writeFileSync(paths.humanPolicies, '{not-json', 'utf8')
+    const corrupt = readFileSync(paths.humanPolicies)
+    const sockets = socketHarness()
+    const logger = vi.fn()
+    const restarted = createService({ userDataPath, identity, sockets, logger })
+
+    expect(restarted.service.start()).toMatchObject({
+      state: 'running',
+      channelCount: 2,
+      recoveryBlockedChannelCount: 2,
+      openRoomCount: 0
+    })
+    expect(sockets.sockets).toEqual([])
+    expect(logger).toHaveBeenCalledWith('[channels] migrated human policy recovery is blocked')
+    expect(restarted.service.listChannels().map((channel) => channel.availability)).toEqual([
+      'recovery_blocked',
+      'recovery_blocked'
+    ])
+    for (const channel of channels) {
+      expectCode(
+        () => restarted.service.readChannel({ channelId: channel.channelId, resumeAfter: 0 }),
+        'recovery_blocked'
+      )
+      expectCode(
+        () => restarted.service.issueInvite({ channelId: channel.channelId }),
+        'recovery_blocked'
+      )
+    }
+    expect(readFileSync(paths.humanPolicies)).toEqual(corrupt)
   })
 })
