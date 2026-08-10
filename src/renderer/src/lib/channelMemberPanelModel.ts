@@ -279,6 +279,14 @@ export class ChannelMemberPanelController {
         return this.failAction(result.error)
       }
       this.pendingAppend = null
+      if (result.value.queuedForHostReview) {
+        this.finishSynchronizedAction(
+          result.value.deduplicated
+            ? 'Message is still awaiting host review.'
+            : 'Message queued for host review.'
+        )
+        return true
+      }
       this.patch({ records: mergeRecord(this.state.records, result.value.record) })
       await this.enqueueSync(false)
       this.finishSynchronizedAction(

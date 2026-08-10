@@ -13,7 +13,11 @@ import { tmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CHANNEL_WIRE_PROTOCOL } from '../../shared/collaboration/ChannelWireProtocol'
 import type { ChannelHandshakeConfirmResult } from '../../shared/collaboration/ChannelWireProtocol'
-import type { ChannelAdmissionInput, ChannelMemberClientOptions } from './ChannelMemberClient'
+import type {
+  ChannelAdmissionInput,
+  ChannelMemberAppendResult,
+  ChannelMemberClientOptions
+} from './ChannelMemberClient'
 import { ChannelRemoteError } from './ChannelMemberClient'
 import type { ChannelMessage } from './ChannelMessageLog'
 import {
@@ -80,6 +84,7 @@ interface FakeHost {
   }>
   clients: FakeChannelMemberClient[]
   appendIds: Map<string, ChannelMessage>
+  queueForReview?: boolean
   rejectAdmission?: ChannelRemoteError
 }
 
@@ -158,10 +163,20 @@ class FakeChannelMemberClient implements ChannelMemberClientLike {
     return result
   }
 
-  async append(
-    content: string,
-    clientMessageId = 'generated'
-  ): Promise<{ accepted: true; deduplicated: boolean; record: ChannelMessage }> {
+  async append(content: string, clientMessageId = 'generated'): Promise<ChannelMemberAppendResult> {
+    if (this.host.queueForReview) {
+      return {
+        accepted: false,
+        queuedForHostReview: true,
+        deduplicated: false,
+        review: {
+          reviewId: `review-${clientMessageId}`,
+          state: 'queued',
+          enqueuedAt: 10_000,
+          expiresAt: 20_000
+        }
+      }
+    }
     const existing = this.host.appendIds.get(clientMessageId)
     if (existing) return { accepted: true, deduplicated: true, record: structuredClone(existing) }
     const next = record(this.host.records.length + 1, content)
@@ -396,6 +411,38 @@ describe('ChannelMemberProductionService', () => {
     expect(new ChannelMemberReplicaStore(root).readActive()).toMatchObject({
       highWaterSequence: 1,
       records: [{ clientMessageId: 'member-b-1', content: 'hello Channel' }]
+    })
+  })
+
+  it('acknowledges host-review queueing without inventing a local transcript row', async () => {
+    const root = directory()
+    const host = fakeHost()
+    host.queueForReview = true
+    const member = service(root, host)
+    await member.beginJoin(joinInput({ relayUrls: ['wss://relay.example'] }))
+    await member.confirmJoin()
+
+    await expect(
+      member.append({ content: 'review this', clientMessageId: 'member-review-1' })
+    ).resolves.toEqual({
+      queuedForHostReview: true,
+      deduplicated: false,
+      review: {
+        reviewId: 'review-member-review-1',
+        state: 'queued',
+        enqueuedAt: 10_000,
+        expiresAt: 20_000
+      }
+    })
+    expect(member.snapshot()).toMatchObject({
+      phase: 'connected',
+      records: [],
+      highWaterSequence: 0,
+      error: null
+    })
+    expect(new ChannelMemberReplicaStore(root).readActive()).toMatchObject({
+      records: [],
+      highWaterSequence: 0
     })
   })
 

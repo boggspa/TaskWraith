@@ -311,6 +311,7 @@ describe('encrypted Channel runtime over blind member rooms', () => {
     ])
     await flush()
 
+    if (!fromB.accepted || !fromC.accepted) throw new Error('ordinary append was not committed')
     expect(fromB.record.authorMemberId).toBe(memberB.memberId)
     expect(fromC.record.authorMemberId).toBe(memberC.memberId)
     expect(fromHost.record.authorMemberId).toBe(fixture.ownerMemberId)
@@ -578,6 +579,7 @@ describe('encrypted Channel runtime over blind member rooms', () => {
 
     const accepted = await memberC.client.append('C remains active', 'c-active')
     await flush()
+    if (!accepted.accepted) throw new Error('ordinary append was not committed')
     expect(accepted.record.authorMemberId).toBe(memberC.memberId)
     expect(fixture.store.getMember(fixture.channelId, memberC.memberId)?.status).toBe('active')
   })

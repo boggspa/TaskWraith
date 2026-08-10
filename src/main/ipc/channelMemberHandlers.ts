@@ -460,6 +460,13 @@ export function registerChannelMemberHandlers(
       authorize(event)
       const input = parseAppendInput(value)
       const result = await deps.service.append(input)
+      if (result.queuedForHostReview) {
+        return {
+          queuedForHostReview: true as const,
+          deduplicated: result.deduplicated,
+          review: { ...result.review }
+        }
+      }
       return { record: projectMessage(result.record), deduplicated: result.deduplicated }
     })
   )

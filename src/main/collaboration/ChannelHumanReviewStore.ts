@@ -451,7 +451,14 @@ export class ChannelHumanReviewStore {
   }
 
   listAwaitingMaterialization(): ChannelHumanReviewEntry[] {
-    return this.list().filter((entry) => entry.state === 'approved')
+    return this.list()
+      .filter((entry) => entry.state === 'approved')
+      .sort(
+        (left, right) =>
+          (left.resolvedAt ?? left.enqueuedAt) - (right.resolvedAt ?? right.enqueuedAt) ||
+          left.enqueuedAt - right.enqueuedAt ||
+          (left.reviewId < right.reviewId ? -1 : left.reviewId > right.reviewId ? 1 : 0)
+      )
   }
 
   approve(reviewId: string, now = Date.now()): ChannelHumanReviewEntry {
@@ -482,7 +489,7 @@ export class ChannelHumanReviewStore {
     const next = clone(this.snapshot)
     const entry = this.requireEntry(next, reviewId)
     if (entry.state === 'denied') return clone(entry)
-    if (entry.state !== 'queued' && entry.state !== 'approved') {
+    if (entry.state !== 'queued') {
       fail('invalid_state', 'Channel human review can no longer be denied')
     }
     entry.state = 'denied'
@@ -541,7 +548,9 @@ export class ChannelHumanReviewStore {
     for (const entry of next.entries) {
       if (entry.channelId !== filter.channelId) continue
       if (filter.memberId !== undefined && entry.memberId !== filter.memberId) continue
-      if (entry.state !== 'queued' && entry.state !== 'approved') continue
+      // Durable approval is an irreversible host release. Revocation/closure
+      // lapses only work the host has not decided; callers flush approvals first.
+      if (entry.state !== 'queued') continue
       entry.state = 'lapsed'
       entry.resolvedAt = Math.max(at, entry.enqueuedAt)
       entry.resolutionReason = reason

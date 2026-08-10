@@ -102,13 +102,13 @@ describe('ChannelRuntime durability boundary', () => {
         enforceHumanAppendPolicy: (
           session: { channelId: string; memberId: string },
           content: string
-        ) => void
+        ) => 'append' | 'host_review'
       }
     ).enforceHumanAppendPolicy.bind(runtime)
     const session = { channelId: 'channel-policy', memberId: 'member-policy' }
 
     evaluate.mockReturnValueOnce({ outcome: 'append', policy: null })
-    expect(() => enforce(session, '🧪')).not.toThrow()
+    expect(enforce(session, '🧪')).toBe('append')
     expect(evaluate).toHaveBeenLastCalledWith({
       channelId: 'channel-policy',
       memberId: 'member-policy',
@@ -137,9 +137,7 @@ describe('ChannelRuntime durability boundary', () => {
     )
 
     evaluate.mockReturnValueOnce({ outcome: 'host_review', policy: {} as never })
-    expect(() => enforce(session, 'x')).toThrowError(
-      expect.objectContaining({ code: 'policy_denied', message: expect.stringContaining('review') })
-    )
+    expect(enforce(session, 'x')).toBe('host_review')
 
     evaluate.mockImplementationOnce(() => {
       throw new ChannelHumanPolicyError('corrupt')

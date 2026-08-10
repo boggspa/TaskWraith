@@ -1,4 +1,4 @@
-import { CHANNEL_WIRE_PROTOCOL } from './ChannelWireProtocol'
+import { CHANNEL_WIRE_PROTOCOL, type ChannelHumanReviewReceipt } from './ChannelWireProtocol'
 
 export const CHANNEL_MEMBER_INVITE_PAYLOAD_TYPE = 'taskwraith-channel-invite'
 export const CHANNEL_MEMBER_INVITE_PAYLOAD_VERSION = 1
@@ -127,6 +127,14 @@ export interface ChannelMemberIpcAppendInput {
   clientMessageId: string
 }
 
+export type ChannelMemberIpcAppendResult =
+  | { queuedForHostReview?: false; record: ChannelMemberIpcMessage; deduplicated: boolean }
+  | {
+      queuedForHostReview: true
+      deduplicated: boolean
+      review: ChannelHumanReviewReceipt
+    }
+
 export interface ChannelMemberIpcConfirmedLocalMutationInput {
   channelId: string
   confirmed: true
@@ -149,7 +157,7 @@ export interface ChannelMemberIpcApi {
   ): Promise<ChannelMemberIpcResult<ChannelMemberIpcSnapshot>>
   append(
     input: ChannelMemberIpcAppendInput
-  ): Promise<ChannelMemberIpcResult<{ record: ChannelMemberIpcMessage; deduplicated: boolean }>>
+  ): Promise<ChannelMemberIpcResult<ChannelMemberIpcAppendResult>>
   resume(): Promise<ChannelMemberIpcResult<ChannelMemberIpcSnapshot>>
   disconnect(): Promise<ChannelMemberIpcResult<ChannelMemberIpcSnapshot>>
   resetLocalHistory(

@@ -184,6 +184,20 @@ export interface ChannelHandshakeConfirmResult {
   establishedAt: number
 }
 
+export interface ChannelHumanReviewReceipt {
+  reviewId: string
+  state: 'queued' | 'approved'
+  enqueuedAt: number
+  expiresAt: number
+}
+
+export interface ChannelQueuedAppendResult {
+  accepted: false
+  queuedForHostReview: true
+  deduplicated: boolean
+  review: ChannelHumanReviewReceipt
+}
+
 const MAX_REQ_ID = 200
 const MAX_IDENTIFIER = 512
 const MAX_KEY_OR_SIGNATURE = 512

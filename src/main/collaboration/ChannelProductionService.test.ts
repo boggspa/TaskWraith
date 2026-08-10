@@ -47,6 +47,7 @@ import {
 } from './ChannelAgentIdentityStore'
 import { ChannelMessageLog } from './ChannelMessageLog'
 import { ChannelHumanPolicyStore } from './ChannelHumanPolicyStore'
+import { ChannelHumanReviewStore } from './ChannelHumanReviewStore'
 import { ChannelError, ChannelStore, type ChannelErrorCode } from './ChannelStore'
 import {
   channelProductionDataPaths,
@@ -192,6 +193,107 @@ function createService(
   const service = createChannelProductionService(options)
   services.add(service)
   return { service, userDataPath, identity, sockets, loadIdentity }
+}
+
+async function createReviewedMemberFixture(chatId: string): Promise<{
+  userDataPath: string
+  hostIdentity: KeyPair
+  memberIdentity: KeyPair
+  now: number
+  channelId: string
+  memberId: string
+  roomId: string
+  service: ChannelProductionService
+  client: ChannelMemberClient
+}> {
+  const relay = new BlindTestRelay()
+  const userDataPath = temporaryUserData()
+  const hostIdentity = generateIdentityKeyPair()
+  const memberIdentity = generateIdentityKeyPair()
+  const now = 1_700_000_200_000
+  const first = createService({
+    userDataPath,
+    identity: hostIdentity,
+    now: () => now,
+    socketFactory: relay.socketFactory,
+    hostRelayUrl: () => 'ws://relay.test',
+    inviteRelayUrls: () => ['ws://relay.test']
+  })
+  first.service.start()
+  const channel = first.service.createChannel({
+    chatId,
+    title: 'Reviewed migration',
+    ownerDisplayName: 'Host'
+  })
+  const invite = first.service.issueInvite({ channelId: channel.channelId })
+  const admitted = new ChannelMemberClient({
+    socketFactory: relay.socketFactory,
+    identity: memberIdentity,
+    requestTimeoutMs: 2_000
+  })
+  admitted.connect('ws://relay.test', invite.roomId)
+  await admitted.whenConnected(2_000)
+  const member = await admitted.admit({
+    channelId: channel.channelId,
+    inviteId: invite.inviteId,
+    inviteToken: invite.inviteToken,
+    displayName: 'Reviewed member',
+    expectedHostIdentityPubKeyB64: first.service.hostIdentityPublicKey()
+  })
+  admitted.dispose()
+  await first.service.stop()
+
+  new ChannelHumanPolicyStore(
+    channelProductionDataPaths(userDataPath).humanPolicies
+  ).applyMigrationPolicies({
+    migrationPlanId: 'f'.repeat(64),
+    policies: [
+      {
+        channelId: channel.channelId,
+        memberId: member.memberId,
+        sourceShareId: 'reviewed_share',
+        sourceCollaboratorId: 'reviewed_collaborator',
+        sourceDigest: 'a'.repeat(64),
+        rules: contributionRulesForPreset('comments'),
+        requiresHostApproval: true,
+        fullHistory: false
+      }
+    ],
+    now
+  })
+  const restarted = createService({
+    userDataPath,
+    identity: hostIdentity,
+    now: () => now + 1,
+    socketFactory: relay.socketFactory,
+    hostRelayUrl: () => 'ws://relay.test',
+    inviteRelayUrls: () => ['ws://relay.test']
+  })
+  restarted.service.start()
+  const client = new ChannelMemberClient({
+    socketFactory: relay.socketFactory,
+    identity: memberIdentity,
+    requestTimeoutMs: 2_000
+  })
+  client.connect('ws://relay.test', invite.roomId)
+  await client.whenConnected(2_000)
+  await client.reconnect({
+    channelId: channel.channelId,
+    memberId: member.memberId,
+    expectedHostIdentityPubKeyB64: restarted.service.hostIdentityPublicKey()
+  })
+  await client.resume({ resumeAfter: 0 })
+  return {
+    userDataPath,
+    hostIdentity,
+    memberIdentity,
+    now,
+    channelId: channel.channelId,
+    memberId: member.memberId,
+    roomId: invite.roomId,
+    service: restarted.service,
+    client
+  }
 }
 
 function expectCode(action: () => unknown, code: ChannelErrorCode): void {
@@ -574,6 +676,163 @@ describe('ChannelProductionService', () => {
     } finally {
       reconnected?.dispose()
       admitted.dispose()
+    }
+  })
+
+  it('queues migrated review-required appends and materializes only an explicit host approval', async () => {
+    const fixture = await createReviewedMemberFixture('chat-reviewed-live')
+    try {
+      const queued = await fixture.client.append('review this first', 'review-live-1')
+      expect(queued).toMatchObject({
+        accepted: false,
+        queuedForHostReview: true,
+        deduplicated: false,
+        review: { state: 'queued' }
+      })
+      if (queued.accepted) throw new Error('review-required append bypassed host review')
+      expect(
+        fixture.service.readChannel({ channelId: fixture.channelId, resumeAfter: 0 })
+      ).toMatchObject({ highWaterSequence: 0, records: [] })
+      const projectedReviews = fixture.service.listHumanReviews({ channelId: fixture.channelId })
+      expect(projectedReviews).toEqual([
+        expect.objectContaining({
+          reviewId: queued.review.reviewId,
+          memberId: fixture.memberId,
+          displayName: 'Reviewed member',
+          content: 'review this first',
+          state: 'queued'
+        })
+      ])
+      expect(JSON.stringify(projectedReviews)).not.toMatch(/identityPublicKey|roomId/)
+
+      await expect(
+        fixture.client.append('review this first', 'review-live-1')
+      ).resolves.toMatchObject({
+        accepted: false,
+        queuedForHostReview: true,
+        deduplicated: true,
+        review: { reviewId: queued.review.reviewId }
+      })
+      const approved = await fixture.service.approveHumanReview(queued.review.reviewId)
+      expect(approved).toMatchObject({
+        review: { state: 'materialized' },
+        append: { deduplicated: false, record: { sequence: 1, content: 'review this first' } }
+      })
+      await Promise.resolve()
+      expect(fixture.client.records()).toEqual([
+        expect.objectContaining({ sequence: 1, content: 'review this first' })
+      ])
+      expect(fixture.service.listHumanReviews({ channelId: fixture.channelId })).toEqual([])
+
+      const deniedQueue = await fixture.client.append('host should decline', 'review-live-2')
+      if (deniedQueue.accepted) throw new Error('review-required append bypassed host review')
+      await expect(
+        fixture.service.denyHumanReview({
+          reviewId: deniedQueue.review.reviewId,
+          reason: 'Not part of this Channel'
+        })
+      ).resolves.toMatchObject({
+        state: 'denied',
+        resolutionReason: 'Not part of this Channel'
+      })
+      await expect(
+        fixture.client.append('host should decline', 'review-live-2')
+      ).rejects.toMatchObject({ code: 'policy_denied' })
+      expect(
+        fixture.service.readChannel({ channelId: fixture.channelId, resumeAfter: 0 })
+      ).toMatchObject({ highWaterSequence: 1 })
+      const audit = fixture.service.listAudit({ channelId: fixture.channelId })
+      expect(audit.map((event) => event.kind)).toEqual(
+        expect.arrayContaining([
+          'human.review.queued',
+          'human.review.deduplicated',
+          'human.review.approved',
+          'human.review.materialized',
+          'human.review.denied'
+        ])
+      )
+      expect(JSON.stringify(audit)).not.toMatch(/review this first|host should decline/)
+
+      const revokedQueue = await fixture.client.append('lapse on revoke', 'review-live-3')
+      if (revokedQueue.accepted) throw new Error('review-required append bypassed host review')
+      await fixture.service.revokeMember({
+        channelId: fixture.channelId,
+        memberId: fixture.memberId
+      })
+      expect(
+        new ChannelHumanReviewStore(
+          channelProductionDataPaths(fixture.userDataPath).humanReviews
+        ).get(revokedQueue.review.reviewId)
+      ).toMatchObject({ state: 'lapsed', resolutionReason: 'member_revoked' })
+
+      const paths = channelProductionDataPaths(fixture.userDataPath)
+      await fixture.service.purgeForHistoryDeletionScope({
+        kind: 'chat',
+        chatIds: ['chat-reviewed-live']
+      })
+      expect(new ChannelHumanReviewStore(paths.humanReviews).list()).toEqual([])
+    } finally {
+      fixture.client.dispose()
+    }
+  })
+
+  it('recovers both approval crash windows in approval order before reopening rooms', async () => {
+    const fixture = await createReviewedMemberFixture('chat-reviewed-recovery')
+    const paths = channelProductionDataPaths(fixture.userDataPath)
+    try {
+      const first = await fixture.client.append('approved before crash one', 'review-crash-1')
+      const second = await fixture.client.append('approved before crash two', 'review-crash-2')
+      if (first.accepted || second.accepted) {
+        throw new Error('review-required append bypassed host review')
+      }
+      fixture.client.dispose()
+      await fixture.service.stop()
+
+      const reviews = new ChannelHumanReviewStore(paths.humanReviews)
+      const firstApproved = reviews.approve(first.review.reviewId, fixture.now + 2)
+      reviews.approve(second.review.reviewId, fixture.now + 3)
+      const channelStore = new ChannelStore(paths.metadata)
+      new ChannelMessageLog(paths.logs, channelStore).appendWithResult({
+        channelId: firstApproved.channelId,
+        principalMemberId: firstApproved.memberId,
+        identityPublicKey: firstApproved.identityPublicKeyB64,
+        roomId: firstApproved.roomId,
+        clientMessageId: firstApproved.clientMessageId,
+        content: firstApproved.content,
+        now: firstApproved.resolvedAt ?? fixture.now + 2
+      })
+
+      const restarted = createService({
+        userDataPath: fixture.userDataPath,
+        identity: fixture.hostIdentity,
+        now: () => fixture.now + 4
+      })
+      expect(restarted.service.start()).toMatchObject({
+        state: 'running',
+        recoveryBlockedChannelCount: 0,
+        openRoomCount: 1
+      })
+      expect(
+        restarted.service.readChannel({ channelId: fixture.channelId, resumeAfter: 0 }).records
+      ).toMatchObject([
+        { sequence: 1, clientMessageId: 'review-crash-1' },
+        { sequence: 2, clientMessageId: 'review-crash-2' }
+      ])
+      expect(restarted.service.listHumanReviews({ channelId: fixture.channelId })).toEqual([])
+      expect(
+        new Map(
+          new ChannelHumanReviewStore(paths.humanReviews)
+            .list()
+            .map((review) => [review.clientMessageId, review.state])
+        )
+      ).toEqual(
+        new Map([
+          ['review-crash-1', 'materialized'],
+          ['review-crash-2', 'materialized']
+        ])
+      )
+    } finally {
+      fixture.client.dispose()
     }
   })
 
@@ -1466,5 +1725,38 @@ describe('ChannelProductionService', () => {
       )
     }
     expect(readFileSync(paths.humanPolicies)).toEqual(corrupt)
+  })
+
+  it('keeps every restored room closed when human review authority is corrupt', async () => {
+    const userDataPath = temporaryUserData()
+    const identity = generateIdentityKeyPair()
+    const first = createService({ userDataPath, identity })
+    first.service.start()
+    const channel = first.service.createChannel({
+      chatId: 'chat-review-corrupt',
+      title: 'Review corrupt',
+      ownerDisplayName: 'Host'
+    })
+    first.service.issueInvite({ channelId: channel.channelId })
+    await first.service.stop()
+
+    const paths = channelProductionDataPaths(userDataPath)
+    writeFileSync(paths.humanReviews, '{not-json', 'utf8')
+    const corrupt = readFileSync(paths.humanReviews)
+    const sockets = socketHarness()
+    const logger = vi.fn()
+    const restarted = createService({ userDataPath, identity, sockets, logger })
+    expect(restarted.service.start()).toMatchObject({
+      state: 'running',
+      channelCount: 1,
+      recoveryBlockedChannelCount: 1,
+      openRoomCount: 0
+    })
+    expect(sockets.sockets).toEqual([])
+    expect(logger).toHaveBeenCalledWith('[channels] human review recovery is blocked')
+    expect(restarted.service.listChannels()).toEqual([
+      expect.objectContaining({ channelId: channel.channelId, availability: 'recovery_blocked' })
+    ])
+    expect(readFileSync(paths.humanReviews)).toEqual(corrupt)
   })
 })

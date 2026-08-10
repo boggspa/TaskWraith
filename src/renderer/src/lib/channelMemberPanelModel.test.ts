@@ -360,6 +360,38 @@ describe('ChannelMemberPanelController', () => {
     expect(controller.snapshot().records).toHaveLength(1)
   })
 
+  it('acknowledges host-review receipts without projecting an unapproved row', async () => {
+    let duplicate = false
+    const append = vi.fn(async () =>
+      ok({
+        queuedForHostReview: true as const,
+        deduplicated: duplicate,
+        review: {
+          reviewId: 'review-1',
+          state: 'queued' as const,
+          enqueuedAt: 1_000,
+          expiresAt: 2_000
+        }
+      })
+    )
+    const controller = new ChannelMemberPanelController({
+      api: createApi({ append }),
+      createClientMessageId: () => 'member:review-id'
+    })
+    await controller.start()
+
+    expect(await controller.append('Please review')).toBe(true)
+    expect(controller.snapshot()).toMatchObject({
+      notice: 'Message queued for host review.',
+      records: [{ sequence: 1 }]
+    })
+
+    duplicate = true
+    expect(await controller.append('Please review')).toBe(true)
+    expect(controller.snapshot().notice).toBe('Message is still awaiting host review.')
+    expect(controller.snapshot().records).toHaveLength(1)
+  })
+
   it('catches up, disconnects, and retains the durable projection', async () => {
     const caughtUp = snapshot({ records: [message(1), message(2)], highWaterSequence: 2 })
     const disconnected = snapshot({

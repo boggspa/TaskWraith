@@ -27,6 +27,7 @@ import {
   type ChannelHandshakeBeginResult,
   type ChannelHandshakeConfirmResult,
   type ChannelHandshakeContext,
+  type ChannelQueuedAppendResult,
   type ChannelWireEvent
 } from '../../shared/collaboration/ChannelWireProtocol'
 import type { TransportSocket, TransportSocketFactory } from '../remote/RemoteTransportClient'
@@ -75,6 +76,10 @@ export interface ChannelReconnectInput {
   memberId: string
   expectedHostIdentityPubKeyB64: string
 }
+
+export type ChannelMemberAppendResult =
+  | { accepted: true; deduplicated: boolean; record: ChannelMessage }
+  | ChannelQueuedAppendResult
 
 interface PendingRequest {
   resolve: (value: unknown) => void
@@ -382,11 +387,11 @@ export class ChannelMemberClient {
   append(
     content: string,
     clientMessageId: string = randomUUID()
-  ): Promise<{ accepted: true; deduplicated: boolean; record: ChannelMessage }> {
+  ): Promise<ChannelMemberAppendResult> {
     return this.sendEncryptedRequest('channel.log.append', {
       clientMessageId,
       content
-    }) as Promise<{ accepted: true; deduplicated: boolean; record: ChannelMessage }>
+    }) as Promise<ChannelMemberAppendResult>
   }
 
   resume(args?: {

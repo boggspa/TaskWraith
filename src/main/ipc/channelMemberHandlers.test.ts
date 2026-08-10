@@ -8,7 +8,10 @@ import {
   type ChannelMemberIpcSnapshot
 } from '../../shared/collaboration/ChannelMemberIpc'
 import { CHANNEL_WIRE_PROTOCOL } from '../../shared/collaboration/ChannelWireProtocol'
-import { ChannelMemberProductionError } from '../collaboration/ChannelMemberProductionService'
+import {
+  ChannelMemberProductionError,
+  type ChannelMemberProductionAppendResult
+} from '../collaboration/ChannelMemberProductionService'
 import {
   registerChannelMemberHandlers,
   type ChannelMemberHandlersDeps
@@ -134,15 +137,21 @@ function fixture() {
     })),
     confirmJoin: vi.fn(async () => current),
     reconnect: vi.fn(async () => current),
-    append: vi.fn(async (input: { content: string; clientMessageId: string }) => ({
-      record: {
-        ...current.records[0],
-        content: input.content,
-        clientMessageId: input.clientMessageId
-      },
-      deduplicated: false,
-      sessionId: 'must-not-cross-ipc'
-    })),
+    append: vi.fn(
+      async (input: {
+        content: string
+        clientMessageId: string
+      }): Promise<ChannelMemberProductionAppendResult> =>
+        ({
+          record: {
+            ...current.records[0],
+            content: input.content,
+            clientMessageId: input.clientMessageId
+          },
+          deduplicated: false,
+          sessionId: 'must-not-cross-ipc'
+        }) as ChannelMemberProductionAppendResult & { sessionId: string }
+    ),
     resume: vi.fn(async () => current),
     disconnect: vi.fn(() => {
       current = snapshot({ phase: 'disconnected', connected: false })
@@ -351,6 +360,34 @@ describe('registerChannelMemberHandlers', () => {
     })
     expect(JSON.stringify(result)).not.toContain('sessionId')
 
+    target.service.append.mockResolvedValueOnce({
+      queuedForHostReview: true,
+      deduplicated: false,
+      review: {
+        reviewId: 'review-1',
+        state: 'queued',
+        enqueuedAt: 1_100,
+        expiresAt: 2_100
+      }
+    })
+    await expect(
+      target.invoke(CHANNEL_MEMBER_IPC_CHANNELS.append, [
+        { content: 'review me', clientMessageId: 'member-b-review' }
+      ])
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        queuedForHostReview: true,
+        deduplicated: false,
+        review: {
+          reviewId: 'review-1',
+          state: 'queued',
+          enqueuedAt: 1_100,
+          expiresAt: 2_100
+        }
+      }
+    })
+
     for (const input of [
       { content: '', clientMessageId: 'member-b-2' },
       { content: 'x'.repeat(8_001), clientMessageId: 'member-b-3' },
@@ -360,7 +397,7 @@ describe('registerChannelMemberHandlers', () => {
       const denied = await target.invoke(CHANNEL_MEMBER_IPC_CHANNELS.append, [input])
       expect(denied).toMatchObject({ ok: false })
     }
-    expect(target.service.append).toHaveBeenCalledTimes(1)
+    expect(target.service.append).toHaveBeenCalledTimes(2)
   })
 
   it('requires exact human confirmation before local history or membership erasure', async () => {

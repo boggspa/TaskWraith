@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import {
   b64,
   exportRawEd25519PublicKey,
@@ -32,6 +32,7 @@ import {
   type ChannelHandshakeConfirmResult,
   type ChannelHandshakeContext,
   type ChannelHandshakeMode,
+  type ChannelQueuedAppendResult,
   type ChannelWireError,
   type ChannelWireRequest
 } from '../../shared/collaboration/ChannelWireProtocol'
@@ -54,6 +55,11 @@ import {
 } from './ChannelMessageLog'
 import type { ChannelAuditLike } from './ChannelAuditLog'
 import { ChannelHumanPolicyError, type ChannelHumanPolicyStore } from './ChannelHumanPolicyStore'
+import {
+  ChannelHumanReviewError,
+  type ChannelHumanReviewEntry,
+  type ChannelHumanReviewStore
+} from './ChannelHumanReviewStore'
 
 const HANDSHAKE_TTL_MS = 2 * 60 * 1000
 const MAX_PENDING_HANDSHAKES = 32
@@ -64,6 +70,13 @@ const APPEND_RATE_WINDOW_MS = 60_000
 const MAX_APPENDS_PER_MEMBER_WINDOW = 120
 const MAX_OUTBOUND_FRAME_BYTES = 950_000
 const MAX_SNAPSHOT_MEMBERS = 64
+const HUMAN_REVIEW_AUDIT_DOMAIN = 'taskwraith.channel.human-review-audit.v1'
+
+function humanReviewAuditDedupeKey(kind: string, reviewId: string): string {
+  return createHash('sha256')
+    .update(`${HUMAN_REVIEW_AUDIT_DOMAIN}\n${kind}\n${reviewId}`, 'utf8')
+    .digest('hex')
+}
 
 export interface ChannelRuntimeTransport {
   send(roomId: string, payload: string): boolean
@@ -98,6 +111,23 @@ export interface ChannelRuntimeOptions {
   }) => void
   /** Migration-bound policy authority. Missing means ordinary Channel rules. */
   humanPolicy?: Pick<ChannelHumanPolicyStore, 'evaluate'>
+  /** Durable authority for migrated contributions that require host review. */
+  humanReview?: Pick<
+    ChannelHumanReviewStore,
+    | 'enqueue'
+    | 'get'
+    | 'listAwaitingMaterialization'
+    | 'approve'
+    | 'deny'
+    | 'markMaterialized'
+    | 'lapse'
+    | 'sweep'
+  >
+}
+
+export interface ChannelHumanReviewApprovalResult {
+  review: ChannelHumanReviewEntry
+  append: ChannelAppendResult
 }
 
 export interface ChannelRoomBinding {
@@ -369,6 +399,86 @@ export class ChannelRuntime {
     })
   }
 
+  approveHumanReview(reviewId: string): Promise<ChannelHumanReviewApprovalResult> {
+    this.sweepHumanReviews(this.now())
+    const pending = this.requireHumanReview(reviewId)
+    this.assertChannelAccepting(pending.channelId)
+    return this.enqueueChannel(pending.channelId, async () => {
+      this.assertChannelAccepting(pending.channelId)
+      const review = this.runHumanReviewOperation(() =>
+        this.opts.humanReview!.approve(reviewId, this.now())
+      )
+      this.auditHumanReview('human.review.approved', review)
+      const result = this.materializeHumanReview(review)
+      this.auditCommit(result)
+      if (!result.deduplicated) {
+        await this.opts.afterDurableCommit?.(result)
+        this.fanOut(result.record)
+      }
+      return {
+        review: this.requireHumanReview(reviewId),
+        append: result
+      }
+    })
+  }
+
+  denyHumanReview(reviewId: string, reason?: string): Promise<ChannelHumanReviewEntry> {
+    this.sweepHumanReviews(this.now())
+    const pending = this.requireHumanReview(reviewId)
+    this.assertChannelAccepting(pending.channelId)
+    return this.enqueueChannel(pending.channelId, () => {
+      this.assertChannelAccepting(pending.channelId)
+      const review = this.runHumanReviewOperation(() =>
+        this.opts.humanReview!.deny(reviewId, reason, this.now())
+      )
+      this.auditHumanReview('human.review.denied', review)
+      return review
+    })
+  }
+
+  flushApprovedHumanReviews(channelId: string, memberId?: string): Promise<ChannelAppendResult[]> {
+    this.assertChannelAccepting(channelId)
+    return this.enqueueChannel(channelId, () => {
+      this.assertChannelAccepting(channelId)
+      return this.flushApprovedHumanReviewsWithinQueue(channelId, memberId)
+    })
+  }
+
+  /** Startup-only recovery before any relay transport is attached. */
+  reconcileHumanReviewBeforeServing(reviewId: string): ChannelHumanReviewApprovalResult {
+    const review = this.requireHumanReview(reviewId)
+    if (review.state !== 'approved') {
+      throw new ChannelError(
+        'policy_denied',
+        'Channel human review is not awaiting materialization'
+      )
+    }
+    this.assertChannelAccepting(review.channelId)
+    const append = this.materializeHumanReview(review)
+    this.auditCommit(append)
+    return { review: this.requireHumanReview(reviewId), append }
+  }
+
+  sweepHumanReviews(now = this.now()): ChannelHumanReviewEntry[] {
+    if (!this.opts.humanReview) return []
+    const lapsed = this.runHumanReviewOperation(() => this.opts.humanReview!.sweep(now))
+    for (const review of lapsed) this.auditHumanReview('human.review.lapsed', review)
+    return lapsed
+  }
+
+  lapseHumanReviews(
+    filter: { channelId: string; memberId?: string },
+    reason: 'member_revoked' | 'channel_closed',
+    now = this.now()
+  ): ChannelHumanReviewEntry[] {
+    if (!this.opts.humanReview) return []
+    const lapsed = this.runHumanReviewOperation(() =>
+      this.opts.humanReview!.lapse(filter, reason, now)
+    )
+    for (const review of lapsed) this.auditHumanReview('human.review.lapsed', review)
+    return lapsed
+  }
+
   /**
    * Main-only terminal delivery path. Signature/authority verification and the
    * append-only fsync happen in ChannelMessageLog before either audit or live
@@ -400,6 +510,7 @@ export class ChannelRuntime {
     this.assertChannelAccepting(args.channelId)
     return this.enqueueChannel(args.channelId, async () => {
       this.assertChannelAccepting(args.channelId)
+      await this.flushApprovedHumanReviewsWithinQueue(args.channelId, args.memberId)
       const member = this.opts.store.revokeMember(args)
       const channel = this.opts.store.getChannel(args.channelId)
       for (const [sessionId, session] of this.sessions) {
@@ -411,6 +522,19 @@ export class ChannelRuntime {
         })
         this.sessions.delete(sessionId)
         this.transport?.close(session.roomId)
+      }
+      try {
+        this.lapseHumanReviews(
+          { channelId: args.channelId, memberId: args.memberId },
+          'member_revoked',
+          args.now ?? this.now()
+        )
+      } catch (error) {
+        this.opts.logger?.(
+          `[channel-runtime] human review lapse failed after member revocation: ${
+            error instanceof Error ? error.message : 'unknown'
+          }`
+        )
       }
       this.audit({
         kind: 'member.revoked',
@@ -807,7 +931,11 @@ export class ChannelRuntime {
     await this.enqueueChannel(session.channelId, async () => {
       this.revalidateSession(session)
       this.consumeAppendRate(session, this.now())
-      this.enforceHumanAppendPolicy(session, input.content)
+      const policyOutcome = this.enforceHumanAppendPolicy(session, input.content)
+      if (policyOutcome === 'host_review') {
+        await this.handleHumanReviewAppend(session, request, input)
+        return
+      }
       const result = this.opts.log.appendWithResult({
         channelId: session.channelId,
         principalMemberId: session.memberId,
@@ -816,32 +944,15 @@ export class ChannelRuntime {
         clientMessageId: input.clientMessageId,
         content: input.content
       })
-      this.auditCommit(result)
-      if (!result.deduplicated) await this.opts.afterDurableCommit?.(result)
-      this.sendEncryptedResponse(session, request.reqId, {
-        ok: true,
-        result: {
-          accepted: true,
-          deduplicated: result.deduplicated,
-          record: result.record
-        }
-      })
-      this.sendEvent(
-        session,
-        'channel.log.appendResult',
-        {
-          accepted: true,
-          deduplicated: result.deduplicated,
-          record: result.record
-        },
-        request.reqId
-      )
-      if (!result.deduplicated) this.fanOut(result.record)
+      await this.finishMemberAppend(session, request.reqId, result)
     })
   }
 
-  private enforceHumanAppendPolicy(session: RuntimeSession, content: string): void {
-    if (!this.opts.humanPolicy) return
+  private enforceHumanAppendPolicy(
+    session: RuntimeSession,
+    content: string
+  ): 'append' | 'host_review' {
+    if (!this.opts.humanPolicy) return 'append'
     let decision: ReturnType<ChannelHumanPolicyStore['evaluate']>
     try {
       decision = this.opts.humanPolicy.evaluate({
@@ -856,7 +967,8 @@ export class ChannelRuntime {
       }
       throw error
     }
-    if (decision.outcome === 'append') return
+    if (decision.outcome === 'append') return 'append'
+    if (decision.outcome === 'host_review') return 'host_review'
     if (decision.outcome === 'deny' && decision.code === 'quota_exceeded') {
       throw new ChannelError('quota_exceeded', decision.message)
     }
@@ -864,8 +976,79 @@ export class ChannelRuntime {
       'policy_denied',
       decision.outcome === 'deny'
         ? decision.message
-        : 'Channel contribution requires host review before it can be accepted'
+        : 'Channel contribution is not available under this migrated policy'
     )
+  }
+
+  private async handleHumanReviewAppend(
+    session: RuntimeSession,
+    request: ChannelWireRequest,
+    input: { clientMessageId: string; content: string }
+  ): Promise<void> {
+    if (!this.opts.humanReview) {
+      throw new ChannelError(
+        'policy_denied',
+        'Channel host review is required but its durable authority is unavailable'
+      )
+    }
+    const queued = this.runHumanReviewOperation(() =>
+      this.opts.humanReview!.enqueue({
+        channelId: session.channelId,
+        memberId: session.memberId,
+        identityPublicKeyB64: session.memberIdentityPubKeyB64,
+        roomId: session.roomId,
+        clientMessageId: input.clientMessageId,
+        content: input.content,
+        now: this.now()
+      })
+    )
+    if (queued.outcome === 'duplicate_terminal' || !queued.entry) {
+      throw new ChannelError('policy_denied', 'Channel human review was already resolved')
+    }
+    const review = queued.entry
+    if (review.state === 'denied' || review.state === 'lapsed') {
+      throw new ChannelError('policy_denied', 'Channel human review was not accepted')
+    }
+    if (review.state === 'approved' || review.state === 'materialized') {
+      const result = this.materializeHumanReview(review)
+      await this.finishMemberAppend(session, request.reqId, result)
+      return
+    }
+
+    this.auditHumanReview(
+      queued.outcome === 'queued' ? 'human.review.queued' : 'human.review.deduplicated',
+      review
+    )
+    const result: ChannelQueuedAppendResult = {
+      accepted: false,
+      queuedForHostReview: true,
+      deduplicated: queued.outcome === 'duplicate',
+      review: {
+        reviewId: review.reviewId,
+        state: review.state,
+        enqueuedAt: review.enqueuedAt,
+        expiresAt: review.expiresAt
+      }
+    }
+    this.sendEncryptedResponse(session, request.reqId, { ok: true, result })
+    this.sendEvent(session, 'channel.log.appendResult', result, request.reqId)
+  }
+
+  private async finishMemberAppend(
+    session: RuntimeSession,
+    requestId: string,
+    result: ChannelAppendResult
+  ): Promise<void> {
+    this.auditCommit(result)
+    if (!result.deduplicated) await this.opts.afterDurableCommit?.(result)
+    const response = {
+      accepted: true as const,
+      deduplicated: result.deduplicated,
+      record: result.record
+    }
+    this.sendEncryptedResponse(session, requestId, { ok: true, result: response })
+    this.sendEvent(session, 'channel.log.appendResult', response, requestId)
+    if (!result.deduplicated) this.fanOut(result.record)
   }
 
   private async handleResume(session: RuntimeSession, request: ChannelWireRequest): Promise<void> {
@@ -1096,6 +1279,98 @@ export class ChannelRuntime {
     }
     retained.push(now)
     this.appendRates.set(key, retained)
+  }
+
+  private materializeHumanReview(review: ChannelHumanReviewEntry): ChannelAppendResult {
+    if (!this.opts.humanReview) {
+      throw new ChannelError('recovery_blocked', 'Channel human review authority is unavailable')
+    }
+    const result = this.opts.log.appendWithResult({
+      channelId: review.channelId,
+      principalMemberId: review.memberId,
+      identityPublicKey: review.identityPublicKeyB64,
+      roomId: review.roomId,
+      clientMessageId: review.clientMessageId,
+      content: review.content,
+      now: review.resolvedAt ?? this.now()
+    })
+    const materialized = this.runHumanReviewOperation(() =>
+      this.opts.humanReview!.markMaterialized(
+        review.reviewId,
+        { sequence: result.record.sequence, messageId: result.record.messageId },
+        this.now()
+      )
+    )
+    this.auditHumanReview('human.review.materialized', materialized)
+    return result
+  }
+
+  private async flushApprovedHumanReviewsWithinQueue(
+    channelId: string,
+    memberId?: string
+  ): Promise<ChannelAppendResult[]> {
+    if (!this.opts.humanReview) return []
+    const results: ChannelAppendResult[] = []
+    for (const review of this.runHumanReviewOperation(() =>
+      this.opts.humanReview!.listAwaitingMaterialization()
+    )) {
+      if (review.channelId !== channelId) continue
+      if (memberId !== undefined && review.memberId !== memberId) continue
+      const result = this.materializeHumanReview(review)
+      this.auditCommit(result)
+      if (!result.deduplicated) {
+        await this.opts.afterDurableCommit?.(result)
+        this.fanOut(result.record)
+      }
+      results.push(result)
+    }
+    return results
+  }
+
+  private requireHumanReview(reviewId: string): ChannelHumanReviewEntry {
+    if (!this.opts.humanReview) {
+      throw new ChannelError('recovery_blocked', 'Channel human review authority is unavailable')
+    }
+    const review = this.runHumanReviewOperation(() => this.opts.humanReview!.get(reviewId))
+    if (!review) {
+      throw new ChannelError('protocol_unsupported', 'Channel human review was not found')
+    }
+    return review
+  }
+
+  private runHumanReviewOperation<T>(operation: () => T): T {
+    try {
+      return operation()
+    } catch (error) {
+      if (!(error instanceof ChannelHumanReviewError)) throw error
+      switch (error.code) {
+        case 'recovery_blocked':
+          throw new ChannelError('recovery_blocked', error.message)
+        case 'quota_exceeded':
+          throw new ChannelError('quota_exceeded', error.message)
+        case 'idempotency_conflict':
+          throw new ChannelError('idempotency_conflict', error.message)
+        case 'invalid_state':
+          throw new ChannelError('policy_denied', error.message)
+        case 'invalid':
+        case 'not_found':
+        default:
+          throw new ChannelError('protocol_unsupported', error.message)
+      }
+    }
+  }
+
+  private auditHumanReview(
+    kind: Parameters<ChannelAuditLike['append']>[0]['kind'],
+    review: ChannelHumanReviewEntry
+  ): void {
+    this.audit({
+      kind,
+      channelId: review.channelId,
+      memberId: review.memberId,
+      contentHash: review.contentHash,
+      dedupeKey: humanReviewAuditDedupeKey(kind, review.reviewId)
+    })
   }
 
   private enqueueChannel<T>(channelId: string, operation: () => Promise<T> | T): Promise<T> {

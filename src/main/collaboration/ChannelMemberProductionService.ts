@@ -1,7 +1,10 @@
 import { existsSync } from 'fs'
 import type { KeyPair } from '../../shared/e2ee/keys'
-import { CHANNEL_WIRE_PROTOCOL } from '../../shared/collaboration/ChannelWireProtocol'
-import type { ChannelHandshakeConfirmResult } from '../../shared/collaboration/ChannelWireProtocol'
+import {
+  CHANNEL_WIRE_PROTOCOL,
+  type ChannelHandshakeConfirmResult,
+  type ChannelHumanReviewReceipt
+} from '../../shared/collaboration/ChannelWireProtocol'
 import type { TransportSocketFactory } from '../remote/RemoteTransportClient'
 import { wsTransportSocketFactory } from '../remote/wsTransportSocket'
 import {
@@ -12,6 +15,7 @@ import {
   ChannelMemberClient,
   ChannelRemoteError,
   type ChannelAdmissionInput,
+  type ChannelMemberAppendResult,
   type ChannelMemberClientOptions,
   type ChannelReconnectInput
 } from './ChannelMemberClient'
@@ -81,6 +85,14 @@ export interface ChannelMemberProductionMembershipSummary extends ChannelMemberP
   active: boolean
 }
 
+export type ChannelMemberProductionAppendResult =
+  | { queuedForHostReview?: false; record: ChannelMessage; deduplicated: boolean }
+  | {
+      queuedForHostReview: true
+      deduplicated: boolean
+      review: ChannelHumanReviewReceipt
+    }
+
 export interface ChannelMemberProductionJoinInput {
   protocol: string
   version: number
@@ -107,10 +119,7 @@ export interface ChannelMemberClientLike {
   beginAdmission(input: ChannelAdmissionInput): Promise<{ confirmCode: string }>
   confirmAdmission(): Promise<ChannelHandshakeConfirmResult>
   reconnect(input: ChannelReconnectInput): Promise<ChannelHandshakeConfirmResult>
-  append(
-    content: string,
-    clientMessageId?: string
-  ): Promise<{ accepted: true; deduplicated: boolean; record: ChannelMessage }>
+  append(content: string, clientMessageId?: string): Promise<ChannelMemberAppendResult>
   resume(args?: {
     resumeAfter?: number
     maxRecords?: number
@@ -170,7 +179,7 @@ export interface ChannelMemberProductionService {
   append(input: {
     content: string
     clientMessageId: string
-  }): Promise<{ record: ChannelMessage; deduplicated: boolean }>
+  }): Promise<ChannelMemberProductionAppendResult>
   resume(): Promise<ChannelMemberProductionSnapshot>
   disconnect(): void
   resetLocalHistory(channelId?: string): ChannelMemberProductionSnapshot
@@ -635,7 +644,7 @@ class ChannelMemberProductionServiceImpl implements ChannelMemberProductionServi
   append(input: {
     content: string
     clientMessageId: string
-  }): Promise<{ record: ChannelMessage; deduplicated: boolean }> {
+  }): Promise<ChannelMemberProductionAppendResult> {
     return this.enqueue(async () => {
       const client = this.requireEstablishedClient()
       const content = normalizeMessageText(input?.content)
@@ -644,6 +653,15 @@ class ChannelMemberProductionServiceImpl implements ChannelMemberProductionServi
         const result = await client.append(content, clientMessageId)
         this.assertCurrentClient(client)
         if (!this.replica) throw productionError('not_joined', 'No Channel membership is active.')
+        if (!result.accepted) {
+          this.publicError = null
+          this.publish()
+          return {
+            queuedForHostReview: true,
+            deduplicated: result.deduplicated,
+            review: { ...result.review }
+          }
+        }
         this.replica = this.store.appendRecords(this.replica.session.channelId, [result.record])
         this.publish()
         return { record: clone(result.record), deduplicated: result.deduplicated }

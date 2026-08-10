@@ -106,6 +106,10 @@ describe('ChannelHumanReviewStore', () => {
       const approvedBytes = readFileSync(path)
       expect(store.approve(queued.entry.reviewId, 3_000)).toEqual(approved)
       expect(readFileSync(path)).toEqual(approvedBytes)
+      expectCode(
+        () => store.deny(queued.entry.reviewId, 'withdraw approval', 3_000),
+        'invalid_state'
+      )
 
       const materialized = store.markMaterialized(
         queued.entry.reviewId,

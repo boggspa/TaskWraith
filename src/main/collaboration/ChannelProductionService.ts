@@ -41,6 +41,12 @@ import {
   channelHumanPolicyPath
 } from './ChannelHumanPolicyStore'
 import {
+  ChannelHumanReviewError,
+  ChannelHumanReviewStore,
+  channelHumanReviewPath,
+  type ChannelHumanReviewEntry
+} from './ChannelHumanReviewStore'
+import {
   ChannelMessageLog,
   type ChannelAppendResult,
   type ChannelMessage
@@ -64,6 +70,7 @@ export interface ChannelProductionDataPaths {
   agentAuthority: string
   agentDispatchJournal: string
   humanPolicies: string
+  humanReviews: string
 }
 
 export interface ChannelProductionRelayPort {
@@ -124,6 +131,22 @@ export interface ChannelProductionPendingAdmissionView {
   expiresAt: number
 }
 
+export interface ChannelProductionHumanReviewView {
+  reviewId: string
+  channelId: string
+  memberId: string
+  displayName: string
+  clientMessageId: string
+  content: string
+  contentBytes: number
+  contentHash: string
+  state: ChannelHumanReviewEntry['state']
+  enqueuedAt: number
+  expiresAt: number
+  resolvedAt: number | null
+  resolutionReason: string | null
+}
+
 export interface ChannelProductionReadResult {
   channel: ChannelProductionChannelView
   members: ChannelProductionMemberView[]
@@ -176,6 +199,15 @@ export interface ChannelProductionService {
   inspectAgentSeat(agentSeatId: string): ChannelAgentManagementSeatInspection
   inspectChannelAgentSeats(channelId: string): readonly ChannelAgentManagementSeatInspection[]
   listAudit(args?: { channelId?: string; limit?: number }): ChannelAuditEvent[]
+  listHumanReviews(args?: { channelId?: string }): ChannelProductionHumanReviewView[]
+  approveHumanReview(reviewId: string): Promise<{
+    review: ChannelProductionHumanReviewView
+    append: ChannelAppendResult
+  }>
+  denyHumanReview(args: {
+    reviewId: string
+    reason?: string
+  }): Promise<ChannelProductionHumanReviewView>
   createChannel(args: {
     chatId: string
     title: string
@@ -228,6 +260,7 @@ interface RunningState {
   agentAuthority: ChannelAgentAuthorityStore
   agentDispatchJournal: ChannelAgentDispatchJournalStore
   humanPolicies: ChannelHumanPolicyStore
+  humanReviews: ChannelHumanReviewStore
   agentManagement: ChannelAgentManagementService
   agentProduction: ChannelAgentProductionService | null
   runtime: ChannelRuntime
@@ -254,7 +287,8 @@ export function channelProductionDataPaths(userDataPath: string): ChannelProduct
     agentIdentities: join(root, 'agent-identities'),
     agentAuthority: join(root, 'agent-authority'),
     agentDispatchJournal: join(root, 'agent-dispatch-journal'),
-    humanPolicies: channelHumanPolicyPath(userDataPath)
+    humanPolicies: channelHumanPolicyPath(userDataPath),
+    humanReviews: channelHumanReviewPath(userDataPath)
   }
 }
 
@@ -381,6 +415,28 @@ function memberView(member: ChannelMember): ChannelProductionMemberView {
   }
 }
 
+function humanReviewView(
+  review: ChannelHumanReviewEntry,
+  store: ChannelStore
+): ChannelProductionHumanReviewView {
+  const member = store.getMember(review.channelId, review.memberId)
+  return {
+    reviewId: review.reviewId,
+    channelId: review.channelId,
+    memberId: review.memberId,
+    displayName: member?.displayName ?? 'Former Channel member',
+    clientMessageId: review.clientMessageId,
+    content: review.content,
+    contentBytes: review.contentBytes,
+    contentHash: review.contentHash,
+    state: review.state,
+    enqueuedAt: review.enqueuedAt,
+    expiresAt: review.expiresAt,
+    resolvedAt: review.resolvedAt,
+    resolutionReason: review.resolutionReason
+  }
+}
+
 function recoveryCode(error: unknown): boolean {
   return error instanceof ChannelError && error.code === 'recovery_blocked'
 }
@@ -421,6 +477,15 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       if (!(error instanceof ChannelHumanPolicyError)) throw error
       humanPoliciesHealthy = false
       this.options.logger?.('[channels] migrated human policy recovery is blocked')
+    }
+    const humanReviews = new ChannelHumanReviewStore(this.paths.humanReviews)
+    let humanReviewsHealthy = true
+    try {
+      humanReviews.list()
+    } catch (error) {
+      if (!(error instanceof ChannelHumanReviewError)) throw error
+      humanReviewsHealthy = false
+      this.options.logger?.('[channels] human review recovery is blocked')
     }
     const agentIdentities = new ChannelAgentIdentityStore({
       storageDirectory: this.paths.agentIdentities,
@@ -471,7 +536,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     })
     const recoveryBlockedChannelIds = new Set<string>()
     for (const channel of store.listChannels()) {
-      if (!humanPoliciesHealthy) {
+      if (!humanPoliciesHealthy || !humanReviewsHealthy) {
         recoveryBlockedChannelIds.add(channel.channelId)
         continue
       }
@@ -501,6 +566,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       log,
       audit: auditSink,
       humanPolicy: humanPolicies,
+      humanReview: humanReviews,
       now: this.now,
       ...(this.options.logger ? { logger: this.options.logger } : {}),
       onAdmissionBegan: (info) => this.recordPendingAdmission(info, store),
@@ -512,6 +578,43 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         this.recordAcceptedAgentMentionAdmission(result, store, auditSink)
       }
     })
+    const recoveredHumanReviewAppends: ChannelAppendResult[] = []
+    if (humanReviewsHealthy) {
+      runtime.sweepHumanReviews(this.now())
+      for (const review of humanReviews.list()) {
+        const channel = store.getChannel(review.channelId)
+        const member = store.getMember(review.channelId, review.memberId)
+        if (channel?.status === 'closed') {
+          runtime.lapseHumanReviews({ channelId: review.channelId }, 'channel_closed', this.now())
+          continue
+        }
+        if (!member || member.status === 'revoked') {
+          runtime.lapseHumanReviews(
+            { channelId: review.channelId, memberId: review.memberId },
+            'member_revoked',
+            this.now()
+          )
+        }
+      }
+      for (const review of humanReviews.listAwaitingMaterialization()) {
+        if (recoveryBlockedChannelIds.has(review.channelId)) continue
+        try {
+          const recovered = runtime.reconcileHumanReviewBeforeServing(review.reviewId)
+          if (!recovered.append.deduplicated) {
+            recoveredHumanReviewAppends.push(recovered.append)
+          }
+        } catch (error) {
+          if (store.getChannel(review.channelId)) {
+            recoveryBlockedChannelIds.add(review.channelId)
+          }
+          this.options.logger?.(
+            `[channels] human review materialization recovery blocked for ${review.channelId.slice(0, 64)}: ${
+              error instanceof Error ? error.message.slice(0, 160) : 'unknown error'
+            }`
+          )
+        }
+      }
+    }
     const transport = new ChannelHostTransport({
       socketFactory: this.options.socketFactory ?? wsTransportSocketFactory,
       runtime,
@@ -544,6 +647,10 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         )
       }
     }
+    for (const result of recoveredHumanReviewAppends) {
+      if (agentProduction) this.scheduleAcceptedAgentAppend(agentProduction, result)
+      else this.recordAcceptedAgentMentionAdmission(result, store, auditSink)
+    }
     this.state = {
       store,
       log,
@@ -552,6 +659,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       agentAuthority,
       agentDispatchJournal,
       humanPolicies,
+      humanReviews,
       agentManagement,
       agentProduction,
       runtime,
@@ -690,6 +798,54 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
 
   listAudit(args?: { channelId?: string; limit?: number }): ChannelAuditEvent[] {
     return this.requireRunning().audit.list(args)
+  }
+
+  listHumanReviews(args?: { channelId?: string }): ChannelProductionHumanReviewView[] {
+    const state = this.requireRunning()
+    state.runtime.sweepHumanReviews(this.now())
+    try {
+      return state.humanReviews
+        .list(args?.channelId)
+        .filter((review) => review.state === 'queued' || review.state === 'approved')
+        .map((review) => humanReviewView(review, state.store))
+    } catch (error) {
+      if (error instanceof ChannelHumanReviewError) {
+        throw new ChannelError(
+          error.code === 'recovery_blocked' ? 'recovery_blocked' : 'protocol_unsupported',
+          error.message
+        )
+      }
+      throw error
+    }
+  }
+
+  approveHumanReview(reviewId: string): Promise<{
+    review: ChannelProductionHumanReviewView
+    append: ChannelAppendResult
+  }> {
+    const state = this.requireRunning()
+    const review = this.requireHumanReview(state, reviewId)
+    this.requireReadyChannel(review.channelId)
+    return this.track(
+      state.runtime.approveHumanReview(reviewId).then((result) => ({
+        review: humanReviewView(result.review, state.store),
+        append: result.append
+      }))
+    )
+  }
+
+  denyHumanReview(args: {
+    reviewId: string
+    reason?: string
+  }): Promise<ChannelProductionHumanReviewView> {
+    const state = this.requireRunning()
+    const review = this.requireHumanReview(state, args.reviewId)
+    this.requireReadyChannel(review.channelId)
+    return this.track(
+      state.runtime
+        .denyHumanReview(args.reviewId, args.reason)
+        .then((denied) => humanReviewView(denied, state.store))
+    )
   }
 
   createChannel(args: {
@@ -949,7 +1105,9 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         this.enqueueChannel(channelId, async () => {
           try {
             await agentQuiescence
+            await state.runtime.flushApprovedHumanReviews(channelId)
             await state.runtime.quiesceChannel(channelId)
+            state.runtime.lapseHumanReviews({ channelId }, 'channel_closed', this.now())
             const agents = state.store
               .listMembers(channelId)
               .filter(
@@ -1058,6 +1216,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         // Delete policy only after Channel authority is gone. A late persistence
         // failure may leave an orphaned policy, but can never widen a live member.
         state.humanPolicies.purgeChannels(humanPolicyChannelIds)
+        state.humanReviews.purgeAll()
       } else {
         state.log.purgeChannels(channelIds)
         state.audit.purgeChannels(channelIds)
@@ -1067,6 +1226,7 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
         }
         state.store.purgeChannels(channelIds)
         state.humanPolicies.purgeChannels(humanPolicyChannelIds)
+        state.humanReviews.purgeChannels(channelIds)
       }
       for (const channelId of channelIds) {
         const chatId = chatIdByChannelId.get(channelId)
@@ -1129,6 +1289,24 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       throw new ChannelError('recovery_blocked', 'Channel history could not be recovered safely')
     }
     return state
+  }
+
+  private requireHumanReview(state: RunningState, reviewId: string): ChannelHumanReviewEntry {
+    try {
+      const review = state.humanReviews.get(reviewId)
+      if (!review) {
+        throw new ChannelError('protocol_unsupported', 'Channel human review was not found')
+      }
+      return review
+    } catch (error) {
+      if (error instanceof ChannelHumanReviewError) {
+        throw new ChannelError(
+          error.code === 'recovery_blocked' ? 'recovery_blocked' : 'protocol_unsupported',
+          error.message
+        )
+      }
+      throw error
+    }
   }
 
   private channelView(channel: Channel, state: RunningState): ChannelProductionChannelView {
@@ -1291,7 +1469,14 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       this.notifyChange({ channelId: event.channelId, chatId, reason: 'membership' })
       return
     }
-    if (event.kind === 'message.accepted') {
+    if (
+      event.kind === 'message.accepted' ||
+      event.kind === 'human.review.queued' ||
+      event.kind === 'human.review.approved' ||
+      event.kind === 'human.review.denied' ||
+      event.kind === 'human.review.lapsed' ||
+      event.kind === 'human.review.materialized'
+    ) {
       this.notifyChange({ channelId: event.channelId, chatId, reason: 'message' })
     }
   }
