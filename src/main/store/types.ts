@@ -2451,6 +2451,12 @@ export interface AppSettings {
   themeAppearance: ThemeAppearance
   themeCornerStyle: ThemeCornerStyle
   themeAccentStyle: ThemeAccentStyle
+  /**
+   * Explicit shared accent for the entire interface and the user's message
+   * bubble. Kept optional so settings files written before this preference
+   * remain readable; the store resolves their legacy named selections.
+   */
+  themeAccentColor?: string
   toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
   /** Unified +N / -N diff stat colors for composer rows and transcript tool-call rows. */

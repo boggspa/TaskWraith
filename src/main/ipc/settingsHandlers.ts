@@ -132,6 +132,7 @@ function rendererAppearanceSettings(settings: AppSettings): AppSettings {
     themeAppearance: settings.themeAppearance,
     themeCornerStyle: settings.themeCornerStyle,
     themeAccentStyle: settings.themeAccentStyle,
+    themeAccentColor: settings.themeAccentColor,
     toolIconAccent: settings.toolIconAccent,
     userBubbleColor: settings.userBubbleColor,
     diffStatColors: settings.diffStatColors,

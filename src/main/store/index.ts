@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
+import { DEFAULT_THEME_ACCENT_COLOR, resolveThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeEnsembleAuthority } from '../../shared/ensembleAuthority'
 import {
   normalizeSystemThemeAppearance,
@@ -2226,6 +2227,7 @@ const defaultSettings: AppSettings = {
   themeAppearance: 'system',
   themeCornerStyle: 'rounded',
   themeAccentStyle: 'system',
+  themeAccentColor: DEFAULT_THEME_ACCENT_COLOR,
   toolIconAccent: 'system',
   userBubbleColor: 'system',
   diffStatColors: DEFAULT_DIFF_STAT_COLORS,
@@ -4785,6 +4787,11 @@ export class AppStore {
         ...defaultSettings.agenticServices,
         ...(stored.agenticServices || {})
       },
+      themeAccentColor: resolveThemeAccentColor(
+        stored.themeAccentColor,
+        stored.themeAccentStyle,
+        stored.userBubbleColor
+      ),
       diffStatColors: normalizeDiffStatColors(stored.diffStatColors),
       auditRetention: normalizeAuditRetentionSettings(stored.auditRetention),
       dashboardStatPrefs: {

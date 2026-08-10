@@ -27,6 +27,7 @@ import type {
   WorkspaceBoardDefinition
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
+import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../shared/themeAccentColor'
 import {
   LIVE_ENSEMBLE_LANE_STATUSES,
   isEnsembleRoundDispatchLive
@@ -743,6 +744,7 @@ export type BuildRemoteShellAppearanceSettings = Partial<
     | 'themeAppearance'
     | 'themeCornerStyle'
     | 'themeAccentStyle'
+    | 'themeAccentColor'
     | 'promptSurfaceStyle'
     | 'composerStyle'
     | 'reduceTransparency'
@@ -852,6 +854,7 @@ const DEFAULT_REMOTE_SHELL_SETTINGS: Required<BuildRemoteShellAppearanceSettings
   themeAppearance: 'system',
   themeCornerStyle: 'rounded',
   themeAccentStyle: 'system',
+  themeAccentColor: DEFAULT_THEME_ACCENT_COLOR,
   promptSurfaceStyle: 'liquid_glass',
   composerStyle: 'default',
   reduceTransparency: false,
@@ -990,8 +993,9 @@ export function buildRemoteShellAppearance(
   options: BuildRemoteShellAppearanceOptions = {}
 ): RemoteShellAppearance {
   const resolved = { ...DEFAULT_REMOTE_SHELL_SETTINGS, ...settings }
-  const accent =
-    resolved.themeAccentStyle === 'system'
+  const accent = settings.themeAccentColor
+    ? normalizeThemeAccentColor(settings.themeAccentColor)
+    : resolved.themeAccentStyle === 'system'
       ? THEME_ACCENTS[resolved.themeAppearance] || DEFAULT_REMOTE_SHELL_COLORS.accent
       : THEME_ACCENTS[resolved.themeAccentStyle] || DEFAULT_REMOTE_SHELL_COLORS.accent
 

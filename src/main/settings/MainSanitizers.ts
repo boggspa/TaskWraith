@@ -3,6 +3,7 @@ import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
+import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
 import { ACTIVITY_ARCHETYPES, sanitizeBannerTemplate } from '../../shared/bannerTemplate'
 import type { ActivityArchetype } from '../../shared/bannerTemplate'
@@ -154,6 +155,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'themeAppearance',
   'themeCornerStyle',
   'themeAccentStyle',
+  'themeAccentColor',
   'toolIconAccent',
   'userBubbleColor',
   // Was MISSING while `useAppearance` sent it in every appearance patch and
@@ -1733,6 +1735,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
       sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)
+    }
+    if ('themeAccentColor' in sanitized) {
+      sanitized.themeAccentColor = normalizeThemeAccentColor(sanitized.themeAccentColor)
     }
     // Normalize on WRITE, not only on read. The store already normalizes when
     // loading, but the allowlist alone would let an arbitrary object reach disk;

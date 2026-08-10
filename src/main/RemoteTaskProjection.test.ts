@@ -337,6 +337,19 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects the shared custom accent when one is configured', () => {
+    const appearance = buildRemoteShellAppearance({
+      themeAccentStyle: 'purple',
+      themeAccentColor: '#12ab34'
+    })
+
+    expect(appearance.colors.accent).toBe('#12AB34')
+    expect(appearance.colors.accentSoft).toEqual({
+      light: '#12AB3424',
+      dark: '#12AB342e'
+    })
+  })
+
   it('builds a bounded task feed sorted by recent activity', () => {
     const question = buildMobileQuestionCard({
       questionId: 'q1',
