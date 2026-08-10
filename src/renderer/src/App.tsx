@@ -28860,6 +28860,9 @@ function App(): React.JSX.Element {
         pendingAgentQuestions={
           pendingAgentQuestionsByChatId[viewerChatId] || EMPTY_AGENT_QUESTION_QUEUE
         }
+        pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+        pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+        onRespondAgentApproval={handleAgentApprovalAction}
         contextCompactionProgress={
           contextCompactionProgressByChatId[viewerChatId] || EMPTY_CONTEXT_COMPACTION_PROGRESS
         }
