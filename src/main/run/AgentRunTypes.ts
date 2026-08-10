@@ -54,8 +54,12 @@ export interface RuntimeWorktreeIntent {
    * fan-out lanes: main-built, always status 'selected' with a per-lane
    * worktree already allocated, validated by the same preflight linkage
    * check as a composer-selected worktree.
+   *
+   * 'ephemeralFleet' is stamped by delegate_wave spawn for a sole fleet
+   * writer on an allocated worktree: main-built, always status 'selected',
+   * validated by the same preflight linkage check.
    */
-  source: 'runtimeProfile' | 'composer' | 'ensembleLane'
+  source: 'runtimeProfile' | 'composer' | 'ensembleLane' | 'ephemeralFleet'
   profileId?: string
   profileName?: string
   baseWorkspacePath?: string

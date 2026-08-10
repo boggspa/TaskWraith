@@ -637,4 +637,33 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(result.workspace).toBe('/home/user')
     expect(vi.mocked(deps.canonicalWorkspacePath)).not.toHaveBeenCalled()
   })
+
+  it('preserves runtimeWorktree source ephemeralFleet (does not fall through to runtimeProfile)', () => {
+    const result = normalizeAgentRunPayload(
+      {
+        provider: 'codex',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'fleet worker',
+        runtimeWorktree: {
+          requested: true,
+          source: 'ephemeralFleet',
+          status: 'selected',
+          baseWorkspacePath: '/repo',
+          effectiveWorkspacePath: '/worktrees/fleet-worker'
+        }
+      },
+      makeDeps()
+    )
+
+    expect(result.runtimeWorktree).toEqual({
+      requested: true,
+      source: 'ephemeralFleet',
+      status: 'selected',
+      baseWorkspacePath: '/repo',
+      effectiveWorkspacePath: '/worktrees/fleet-worker',
+      profileId: undefined,
+      profileName: undefined
+    })
+  })
 })
