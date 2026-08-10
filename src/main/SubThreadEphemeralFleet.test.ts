@@ -71,6 +71,85 @@ describe('SubThreadEphemeralFleet', () => {
     ).toEqual({ kind: 'read_only' })
   })
 
+  it('wave-aware: sole worker with distinct worktree paths → worktree isolation', () => {
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['worker'],
+        worktree: {
+          baseWorkspacePath: '/repo',
+          effectiveWorkspacePath: '/repo-worktrees/fleet-worker-abc'
+        }
+      })
+    ).toEqual({
+      kind: 'worktree',
+      baseWorkspacePath: '/repo',
+      effectiveWorkspacePath: '/repo-worktrees/fleet-worker-abc'
+    })
+    // Scout/reviewer stay read_only even when a worktree payload is present.
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'scout',
+        workerRoles: ['scout', 'worker'],
+        worktree: {
+          baseWorkspacePath: '/repo',
+          effectiveWorkspacePath: '/repo-worktrees/fleet-worker-abc'
+        }
+      })
+    ).toEqual({ kind: 'read_only' })
+    // Parallel workers never get worktree (or capped_inherit) via this helper.
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['worker', 'worker'],
+        worktree: {
+          baseWorkspacePath: '/repo',
+          effectiveWorkspacePath: '/repo-worktrees/fleet-worker-abc'
+        }
+      })
+    ).toEqual({ kind: 'read_only' })
+  })
+
+  it('wave-aware: sole worker rejects non-distinct or blank worktree paths → capped_inherit', () => {
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['worker'],
+        worktree: {
+          baseWorkspacePath: '/repo',
+          effectiveWorkspacePath: '/repo'
+        }
+      })
+    ).toEqual({ kind: 'capped_inherit' })
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['worker'],
+        worktree: {
+          baseWorkspacePath: '/repo/',
+          effectiveWorkspacePath: '/repo'
+        }
+      })
+    ).toEqual({ kind: 'capped_inherit' })
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['worker'],
+        worktree: {
+          baseWorkspacePath: '/repo',
+          effectiveWorkspacePath: '   '
+        }
+      })
+    ).toEqual({ kind: 'capped_inherit' })
+    expect(
+      resolveEphemeralFleetIsolationForWave({
+        role: 'worker',
+        workerRoles: ['scout', 'worker'],
+        worktree: undefined
+      })
+    ).toEqual({ kind: 'capped_inherit' })
+  })
+
   it('builds short role frames', () => {
     expect(buildEphemeralFleetRoleFrame('scout', 'repro')).toMatch(/scout \(repro\)/)
     expect(buildEphemeralFleetRoleFrame('scout', 'repro').split('.').length).toBeLessThanOrEqual(3)

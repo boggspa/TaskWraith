@@ -4,8 +4,9 @@
  * TaskWraith allocates worktrees automatically in two places, and BOTH re-adopt
  * an existing one by matching Git rather than by remembering they made it:
  *
- *   ThreadWorktreeBinding      name `thread-<hint>-<digest>`   branch `taskwraith/thread-…`
- *   FanoutWorktreeAllocation   name `fanout-<hint>-<digest>`   branch `taskwraith/fanout-…`
+ *   ThreadWorktreeBinding              name `thread-<hint>-<digest>`   branch `taskwraith/thread-…`
+ *   FanoutWorktreeAllocation           name `fanout-<hint>-<digest>`   branch `taskwraith/fanout-…`
+ *   SubThreadEphemeralFleetWorktree    name `fleet-<hint>-<digest>`    branch `taskwraith/fleet-…`
  *
  * That re-adoption is what makes these names load-bearing rather than cosmetic.
  * A hand-created worktree that lands in one of those namespaces is not merely
@@ -24,7 +25,7 @@
  */
 
 /** Name prefixes owned by an automatic allocator. */
-export const RESERVED_WORKTREE_NAME_PREFIXES = ['thread-', 'fanout-'] as const
+export const RESERVED_WORKTREE_NAME_PREFIXES = ['thread-', 'fanout-', 'fleet-'] as const
 
 /** Branch prefix owned by TaskWraith's own allocators. */
 export const RESERVED_BRANCH_PREFIXES = ['taskwraith/'] as const

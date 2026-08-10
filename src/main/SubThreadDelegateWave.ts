@@ -34,10 +34,7 @@ export const DEFAULT_MAX_WAVE_AGENTS = 8
  */
 export function clampMaxWaveAgents(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MAX_WAVE_AGENTS
-  return Math.max(
-    DELEGATE_WAVE_MIN_WORKERS,
-    Math.min(DELEGATE_WAVE_MAX_WORKERS, Math.floor(value))
-  )
+  return Math.max(DELEGATE_WAVE_MIN_WORKERS, Math.min(DELEGATE_WAVE_MAX_WORKERS, Math.floor(value)))
 }
 
 /**
@@ -221,8 +218,7 @@ function parseWorker(
       message: `delegate_wave: workers[${index}].role must be scout, worker, or reviewer when set.`
     }
   }
-  const label =
-    typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined
+  const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined
   const worker: DelegateWaveWorkerSpec = {
     provider: providerRaw as ProviderId,
     prompt,
@@ -283,13 +279,7 @@ export function parseDelegateWaveArgs(
 
   const workers: DelegateWaveWorkerSpec[] = []
   for (let i = 0; i < args.workers.length; i++) {
-    const parsed = parseWorker(
-      args.workers[i],
-      i,
-      options,
-      allowMultiProvider,
-      parentProvider
-    )
+    const parsed = parseWorker(args.workers[i], i, options, allowMultiProvider, parentProvider)
     if (!parsed.ok) return error(parsed.message)
     workers.push(parsed.value)
   }
@@ -408,14 +398,21 @@ export function releaseDelegateWaveBudgetSlots(input: {
 
 function describeDelegateWaveWorkerPosture(
   role: FleetWaveRole | undefined,
-  workerRoles: ReadonlyArray<FleetWaveRole | undefined>
+  workerRoles: ReadonlyArray<FleetWaveRole | undefined>,
+  worktree?: { baseWorkspacePath: string; effectiveWorkspacePath: string }
 ): string {
-  // Mirror resolveEphemeralFleetIsolationForWave: sole worker → capped inherit;
-  // 2+ role=worker seats → all read_only (shared-checkout fail-closed).
+  // Mirror resolveEphemeralFleetIsolationForWave: sole worker + distinct
+  // worktree → worktree; sole worker otherwise → capped inherit; 2+ workers →
+  // all read_only (shared-checkout fail-closed).
   if (role === 'worker') {
     const workerSeatCount = workerRoles.filter((entry) => entry === 'worker').length
     if (workerSeatCount > 1) {
       return 'read_only (parallel workers; shared checkout)'
+    }
+    const base = worktree?.baseWorkspacePath?.trim().replace(/\/+$/, '') ?? ''
+    const effective = worktree?.effectiveWorkspacePath?.trim().replace(/\/+$/, '') ?? ''
+    if (base && effective && base !== effective) {
+      return 'worktree (never Full Access; isolated checkout)'
     }
     return 'capped inherit (never Full Access; same-checkout)'
   }
@@ -433,6 +430,8 @@ export function buildDelegateWaveApprovalCopy(input: {
     kimiThinking?: boolean
     role?: FleetWaveRole
     label?: string
+    /** When set for a sole worker, approval copy discloses worktree isolation. */
+    worktree?: { baseWorkspacePath: string; effectiveWorkspacePath: string }
   }>
   joinPolicy: SubThreadJoinPolicy
   providerLabel: (provider: ProviderId) => string
@@ -457,7 +456,7 @@ export function buildDelegateWaveApprovalCopy(input: {
     const roleBits = [
       worker.role ? `role=${worker.role}` : null,
       worker.label ? `label=${worker.label}` : null,
-      `posture=${describeDelegateWaveWorkerPosture(worker.role, waveRoles)}`
+      `posture=${describeDelegateWaveWorkerPosture(worker.role, waveRoles, worker.worktree)}`
     ]
       .filter((value): value is string => Boolean(value))
       .join(', ')
@@ -469,12 +468,8 @@ export function buildDelegateWaveApprovalCopy(input: {
     )
   })
   const lifecycleLine =
-    input.lifecycle === 'ephemeral'
-      ? 'Lifecycle: ephemeral (die-on-return)'
-      : 'Lifecycle: durable'
-  const multiProviderLine = input.allowMultiProvider
-    ? 'Multi-provider: allowed\n'
-    : ''
+    input.lifecycle === 'ephemeral' ? 'Lifecycle: ephemeral (die-on-return)' : 'Lifecycle: durable'
+  const multiProviderLine = input.allowMultiProvider ? 'Multi-provider: allowed\n' : ''
   const joinLine =
     `join=${input.joinPolicy.required ? 'required' : 'optional'}, ` +
     `quorum=${input.joinPolicy.quorum ?? 'all-required'}, ` +
@@ -522,10 +517,7 @@ export function stripParentWaveDelegationCard<
   if (!id) return [...messages]
   return messages.filter(
     (message) =>
-      !(
-        message.metadata?.kind === 'subThreadDelegation' &&
-        message.metadata?.subThreadId === id
-      )
+      !(message.metadata?.kind === 'subThreadDelegation' && message.metadata?.subThreadId === id)
   )
 }
 

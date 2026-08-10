@@ -11,6 +11,7 @@
  * rediscovered as a missing tool.
  */
 
+import { resolve } from 'path'
 import type { ChatRecord } from './store/types'
 import type { SubThreadWorkerIsolationRequest } from './SubThreadPermissions'
 
@@ -58,10 +59,12 @@ export function resolveEphemeralFleetIsolation(
  * Wave-aware isolation for ephemeral fleet seats.
  *
  * Residual: parallel `role=worker` seats would otherwise all get
- * `capped_inherit` and race on the shared parent checkout. Until worktree
- * isolation exists, fail closed: when two or more seats in the wave have
- * `role === 'worker'`, every worker seat is `read_only`. A sole worker still
- * gets `capped_inherit`. Scout / reviewer / undefined remain `read_only`.
+ * `capped_inherit` and race on the shared parent checkout. Fail closed:
+ * when two or more seats in the wave have `role === 'worker'`, every worker
+ * seat is `read_only`. A sole worker may take optional worktree isolation
+ * when the caller supplies distinct base/effective paths (from
+ * `allocateEphemeralFleetWriterWorktree`); otherwise it falls back to
+ * `capped_inherit`. Scout / reviewer / undefined remain `read_only`.
  *
  * `workerRoles` is the role list for all seats in the wave (same order as
  * spawn is fine; only the count of `'worker'` matters).
@@ -70,17 +73,39 @@ export function resolveEphemeralFleetIsolationForWave(input: {
   role: FleetWaveRole | undefined
   workerIndex?: number
   workerRoles: ReadonlyArray<FleetWaveRole | undefined>
+  /** Optional sole-writer worktree paths from a successful soft-fail allocator. */
+  worktree?: { baseWorkspacePath: string; effectiveWorkspacePath: string }
 }): SubThreadWorkerIsolationRequest {
   if (input.role !== 'worker') {
     return { kind: 'read_only' }
   }
   // Prefer ALL read_only when count(worker) > 1 — shared-checkout races are
-  // not product-safe under capped_inherit (no FanoutCandidate / worktrees here).
+  // not product-safe under capped_inherit, and multi-writer worktrees are not
+  // admitted by this helper (parent allocates at most one sole-writer tree).
   const workerSeatCount = input.workerRoles.filter((role) => role === 'worker').length
   if (workerSeatCount > 1) {
     return { kind: 'read_only' }
   }
+  const worktree = normalizeSoleWorkerWorktree(input.worktree)
+  if (worktree) {
+    return {
+      kind: 'worktree',
+      baseWorkspacePath: worktree.baseWorkspacePath,
+      effectiveWorkspacePath: worktree.effectiveWorkspacePath
+    }
+  }
   return { kind: 'capped_inherit' }
+}
+
+function normalizeSoleWorkerWorktree(
+  worktree: { baseWorkspacePath: string; effectiveWorkspacePath: string } | undefined
+): { baseWorkspacePath: string; effectiveWorkspacePath: string } | null {
+  if (!worktree) return null
+  const baseWorkspacePath = worktree.baseWorkspacePath.trim().replace(/\/+$/, '')
+  const effectiveWorkspacePath = worktree.effectiveWorkspacePath.trim().replace(/\/+$/, '')
+  if (!baseWorkspacePath || !effectiveWorkspacePath) return null
+  if (resolve(baseWorkspacePath) === resolve(effectiveWorkspacePath)) return null
+  return { baseWorkspacePath, effectiveWorkspacePath }
 }
 
 /** Host-injected ≤2-sentence role frame prepended to the parent’s task prompt. */
