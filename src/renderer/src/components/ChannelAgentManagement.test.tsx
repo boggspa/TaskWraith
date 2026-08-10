@@ -93,8 +93,8 @@ describe('ChannelAgentManagementView', () => {
 
     expect(html).toContain('Agents')
     expect(html).toContain('Loading signed agent roster')
-    expect(html).toContain('Automatic mention dispatch remains source-disabled')
-    expect(html).toContain('P3 adversarial security review is accepted')
+    expect(html).toContain('only its named humans start this agent by mention')
+    expect(html).toContain('confirmed workspace, permissions, lifetime, and dispatch budget')
     expect(html).not.toContain('Review enrollment')
     expect(html).not.toContain('Review mention grant')
   })

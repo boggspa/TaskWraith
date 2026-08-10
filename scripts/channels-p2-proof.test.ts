@@ -49,7 +49,7 @@ describe('Channels P2 acceptance proof harness', () => {
     expect(accepted.renderer.markers).toContain('Confirm joins')
     expect(accepted.renderer.markers).toContain('Human posts stay manual.')
     expect(accepted.renderer.markers).toContain(
-      'automatic mention dispatch remains disabled pending security review.'
+      'named in an active signed grant can mention that agent to start a bounded run'
     )
 
     const stale = structuredClone(groups)

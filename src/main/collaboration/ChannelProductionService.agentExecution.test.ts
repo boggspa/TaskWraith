@@ -3,6 +3,12 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../shared/collaboration/ChannelAgentReviewGate', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../shared/collaboration/ChannelAgentReviewGate')>()
+  return { ...actual, channelAgentParticipationEnabled: () => false }
+})
+
 import {
   CHANNEL_AGENT_REVIEW_ID,
   CHANNEL_AGENT_REVIEW_REQUIRED_CODE
@@ -87,7 +93,7 @@ afterEach(async () => {
   roots.clear()
 })
 
-describe('ChannelProductionService agent execution review gate', () => {
+describe('ChannelProductionService injected closed agent execution gate', () => {
   it('attaches the production composition while every external execution port stays inert', async () => {
     const userDataPath = temporaryUserData()
     const identity = generateIdentityKeyPair()

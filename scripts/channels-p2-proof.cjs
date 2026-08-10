@@ -65,7 +65,7 @@ const PACKAGED_SURFACE_MARKERS = {
     'Opened the retained read-only history for this revoked membership.',
     'People share stays available alongside it',
     'Human posts stay manual.',
-    'automatic mention dispatch remains disabled pending security review.'
+    'named in an active signed grant can mention that agent to start a bounded run'
   ]
 }
 

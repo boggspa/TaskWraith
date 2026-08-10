@@ -178,8 +178,9 @@ export function ChannelMemberPanelView({
           </header>
 
           <p className="channel-member-safety-note">
-            Human posting stays manual. Signed agent participants and replies are labelled;
-            automatic mention dispatch remains disabled pending security review.
+            Human posting stays manual. Signed agent participants and replies are labelled. A human
+            named in an active signed grant can mention that agent to start a bounded run
+            automatically.
           </p>
 
           {state.error && (

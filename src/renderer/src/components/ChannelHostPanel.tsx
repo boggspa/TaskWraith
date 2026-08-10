@@ -165,8 +165,9 @@ export function ChannelHostPanelView({
           </header>
 
           <p className="channel-host-safety-note">
-            Human posts stay manual. Signed agent participants and replies are labelled; automatic
-            mention dispatch remains disabled pending security review.
+            Human posts stay manual. Signed agent participants and replies are labelled. A human
+            named in an active signed grant can mention that agent to start a bounded run
+            automatically.
           </p>
 
           {state.error && (

@@ -10,12 +10,6 @@ const doubles = vi.hoisted(() => ({
   resolvePlan: vi.fn()
 }))
 
-vi.mock('../../shared/collaboration/ChannelAgentReviewGate', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../shared/collaboration/ChannelAgentReviewGate')>()
-  return { ...actual, channelAgentParticipationEnabled: () => true }
-})
-
 vi.mock('./ChannelAgentProductionOrchestrator', () => ({
   ChannelAgentProductionOrchestrator: class {
     constructor(options: unknown) {
