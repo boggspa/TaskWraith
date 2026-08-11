@@ -604,6 +604,14 @@ export interface RemoteSeatChangeSeat {
   permissionPresetId?: string
   /** Chat-level workspace grant count at emit time. */
   grantsCount?: number
+  /** Stage identity (scout / worker / reviewer / background) — the glyph
+   * beside the role name. Plain string on the wire: the seat is a RECORD, so
+   * a stage a newer Mac invents still projects and the client degrades to no
+   * glyph rather than failing the row. */
+  stageRole?: string
+  /** Chat-level authority at emit time (boss / captain). Outranks `stageRole`
+   * for the glyph — a Boss who is also a Scout reads as the Boss. */
+  authority?: string
 }
 
 export interface RemoteSeatChange {
@@ -613,6 +621,30 @@ export interface RemoteSeatChange {
   before: RemoteSeatChangeSeat
   after: RemoteSeatChangeSeat
   /** ISO timestamp of the LATEST coalesced adjustment. */
+  appliedAt: string
+  /** The seat's goal/brief text moved in this change. The flag says a brief
+   * moved; it deliberately does not carry the text (paragraphs against the
+   * row's one line). Without it a brief-only change projects two identical
+   * sides — a strip saying a change happened without saying what. */
+  briefUpdated?: true
+}
+
+/** One seat of a roster-created stack — the change-seat shape plus its
+ * durable participant id, flat, mirroring `SeatRosterSeat`. */
+export interface RemoteSeatRosterSeat extends RemoteSeatChangeSeat {
+  participantId?: string
+}
+
+/** Roster-created stack (desktop SeatRosterStack parity): every seat the
+ * roster now has, in roster order — order IS the #N. Distinct from
+ * `RemoteSeatChange`, which describes one seat moving; this row describes a
+ * roster coming into being mid-round. */
+export interface RemoteSeatRoster {
+  /** Human summary used as the row's heading ("Ensemble roster applied — N
+   * seats"). Carries the TRUE count even when `seats` was bounded. */
+  label: string
+  seats: RemoteSeatRosterSeat[]
+  /** ISO timestamp of the LATEST fold into this row. */
   appliedAt: string
 }
 
@@ -964,6 +996,10 @@ export interface RemoteThreadRow {
    * (desktop SeatChangeRow parity). The row stays kind 'system' with its plain
    * sentence in `preview`, so clients without the strip are unaffected. */
   seatChange?: RemoteSeatChange
+  /** Present on a roster-created row — drives the remote roster stack
+   * (desktop SeatRosterStack parity). Same carrier and degradation story as
+   * `seatChange`; the two are mutually exclusive by payload shape. */
+  seatRoster?: RemoteSeatRoster
   /**
    * TaskWraith close-out Participants table for the Task-complete epic stack.
    * Absent on older Macs and non-close-out rows; the phone falls back to the
@@ -2143,6 +2179,10 @@ function buildSeatChangeSeat(raw: unknown): RemoteSeatChangeSeat | undefined {
   if (permissionPresetId) result.permissionPresetId = permissionPresetId
   const grantsCount = boundedSeatCount(seat.grantsCount, 0, REMOTE_SEAT_GRANTS_MAX)
   if (grantsCount !== undefined) result.grantsCount = grantsCount
+  const stageRole = stringField(seat.stageRole, REMOTE_SEAT_FIELD_MAX)
+  if (stageRole) result.stageRole = stageRole
+  const authority = stringField(seat.authority, REMOTE_SEAT_FIELD_MAX)
+  if (authority) result.authority = authority
   return result
 }
 
@@ -2178,6 +2218,48 @@ function buildSeatChange(message: ChatMessage): RemoteSeatChange | undefined {
     label: stringField(payload.label, REMOTE_SEAT_FIELD_MAX) ?? after.role ?? after.provider,
     before,
     after,
+    appliedAt: stringField(payload.appliedAt, 40) ?? message.timestamp,
+    // The shared coalescer already ORed the flag across the flurry; project
+    // strictly `true` so the wire never carries a junk value.
+    ...(payload.briefUpdated === true ? { briefUpdated: true as const } : {})
+  }
+}
+
+/** Roster stacks per wire row. Far above any real roster (8-member channel
+ * ceiling, ~50-seat ensembles at the extreme); the label keeps the true
+ * count when this ever bounds. */
+const REMOTE_SEAT_ROSTER_MAX = 64
+
+/**
+ * Project the roster-created stack from the SAME `metadata.seatChange`
+ * carrier (both writers stamp `kind: 'ensembleSeatChange'`; the payload
+ * shape is the discriminator, exactly as `isSeatRosterPayload` reads it —
+ * `Array.isArray(seats)`, deliberately not truthiness, because this reads
+ * persisted metadata). A roster payload has no `participantId`/`after`, so
+ * `buildSeatChange` can never claim it and vice versa.
+ */
+function buildSeatRoster(message: ChatMessage): RemoteSeatRoster | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (message.role !== 'system' || metadata?.kind !== 'ensembleSeatChange') return undefined
+  const raw = metadata.seatChange
+  if (!raw || typeof raw !== 'object') return undefined
+  const payload = raw as Record<string, unknown>
+  if (!Array.isArray(payload.seats)) return undefined
+  const seats: RemoteSeatRosterSeat[] = []
+  for (const rawSeat of payload.seats) {
+    if (seats.length >= REMOTE_SEAT_ROSTER_MAX) break
+    const seat = buildSeatChangeSeat(rawSeat)
+    if (!seat) continue
+    const participantId =
+      rawSeat && typeof rawSeat === 'object'
+        ? stringField((rawSeat as Record<string, unknown>).participantId, REMOTE_SEAT_FIELD_MAX)
+        : undefined
+    seats.push(participantId ? { ...seat, participantId } : seat)
+  }
+  if (seats.length === 0) return undefined
+  return {
+    label: stringField(payload.label, REMOTE_SEAT_FIELD_MAX) ?? 'Ensemble roster applied',
+    seats,
     appliedAt: stringField(payload.appliedAt, 40) ?? message.timestamp
   }
 }
@@ -2741,6 +2823,8 @@ function buildRow(
   if (proposedPlan) row.proposedPlan = proposedPlan
   const seatChange = buildSeatChange(message)
   if (seatChange) row.seatChange = seatChange
+  const seatRoster = buildSeatRoster(message)
+  if (seatRoster) row.seatRoster = seatRoster
   if (metadata?.kind === 'contextCompaction') {
     // Mirror the renderer's mapping (ContextCompactionCard): 'failed' and
     // 'started' pass through, anything else — including record kinds a

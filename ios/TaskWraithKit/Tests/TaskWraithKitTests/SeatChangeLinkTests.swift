@@ -163,4 +163,31 @@ struct SeatChangeLinkTests {
         #expect(payload.after?.model == "")
         #expect(payload.renderableLink == nil)
     }
+
+    /// The seat state's decoder is HAND-ROLLED (tolerant field-by-field), so a
+    /// new wire field renders nowhere until it gets its own decode line — the
+    /// synthesized CodingKeys growing is not enough. This pins the two glyph
+    /// fields and the brief flag all the way through that decoder.
+    @Test func stageAuthorityAndBriefUpdatedDecodeThroughTheManualDecoder() throws {
+        let json = """
+            {"participantId":"p1","label":"SolBoss","appliedAt":"2026-08-05T12:00:00.000Z",
+             "briefUpdated":true,
+             "before":{"provider":"claude","model":"claude-opus-5","role":"SolBoss",
+                       "stageRole":"scout"},
+             "after":{"provider":"claude","model":"claude-opus-5","role":"SolBoss",
+                      "stageRole":"worker","authority":"boss"}}
+            """
+        let payload = try JSONDecoder().decode(TWSeatChangePayload.self, from: Data(json.utf8))
+        #expect(payload.briefUpdated == true)
+        #expect(payload.before?.stageRole == "scout")
+        #expect(payload.after?.stageRole == "worker")
+        #expect(payload.after?.authority == "boss")
+        // Older Macs ship neither — absent stays nil, never "".
+        let legacy = try JSONDecoder().decode(
+            TWSeatChangePayload.self,
+            from: Data(#"{"after":{"provider":"claude","model":"claude-opus-5"}}"#.utf8))
+        #expect(legacy.briefUpdated == nil)
+        #expect(legacy.after?.stageRole == nil)
+        #expect(legacy.after?.authority == nil)
+    }
 }

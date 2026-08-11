@@ -233,4 +233,84 @@ struct TWSeatStripTests {
         // build changes nothing for a snapshot that carries no seat.
         #expect(twIsPlainSystemNoticeRow(seatChangeRow(withSeatChange: false)) == true)
     }
+
+    // MARK: - Stage/authority glyphs
+
+    @Test func authorityOutranksStageForTheGlyph() {
+        // A Boss who is also a Scout reads as the Boss — desktop
+        // ParticipantRoleIcon order, and the composer chips'.
+        let boss = twSeatRoleGlyph(authority: "boss", stageRole: "scout")
+        #expect(boss?.systemName == "crown.fill")
+        #expect(boss?.title == "Boss")
+        let captain = twSeatRoleGlyph(authority: "captain", stageRole: nil)
+        #expect(captain?.systemName == "shield.fill")
+        #expect(captain?.title == "Captain")
+    }
+
+    @Test func stageGlyphsCoverTheFourStagesAndUnknownDrawsNothing() {
+        #expect(twSeatRoleGlyph(authority: nil, stageRole: "scout")?.title == "Scout")
+        #expect(twSeatRoleGlyph(authority: nil, stageRole: "worker")?.title == "Worker")
+        #expect(twSeatRoleGlyph(authority: nil, stageRole: "reviewer")?.title == "Reviewer")
+        #expect(twSeatRoleGlyph(authority: nil, stageRole: "background")?.title == "Background")
+        // A stage a newer Mac invents is a record, not evidence — no glyph,
+        // no crash. Same rule as the unknown provider dot.
+        #expect(twSeatRoleGlyph(authority: nil, stageRole: "auditor") == nil)
+        #expect(twSeatRoleGlyph(authority: "emperor", stageRole: nil) == nil)
+        #expect(twSeatRoleGlyph(authority: nil, stageRole: nil) == nil)
+    }
+
+    @Test func theSideCarriesTheGlyphAndSpeaksItsTitle() {
+        let side = twSeatStripSide(
+            TWSeatChangeState(
+                provider: "claude", model: "claude-opus-5", role: "SolBoss", seatNumber: 1,
+                stageRole: "worker", authority: "boss"))
+        #expect(side.roleGlyph == "crown.fill")
+        #expect(side.roleGlyphTitle == "Boss")
+        #expect(twSeatStripSpokenLabel(side).contains("Boss #1 SolBoss"))
+    }
+
+    // MARK: - Roster-created stack
+
+    private func rosterRow() -> RemoteThreadSnapshot.Row {
+        let object: [String: Any] = [
+            "id": "roster-1", "role": "system", "kind": "system",
+            "preview": "Ensemble roster applied — 2 seats: Claude; Grok.",
+            "seatRoster": [
+                "label": "Ensemble roster applied — 2 seats",
+                "appliedAt": "2026-08-05T12:00:00.000Z",
+                "seats": [
+                    [
+                        "participantId": "p-1", "provider": "claude",
+                        "model": "claude-opus-5", "role": "SolBoss", "seatNumber": 1,
+                        "authority": "boss", "permissionPresetId": "default"
+                    ],
+                    [
+                        "participantId": "p-2", "provider": "grok",
+                        "model": "grok-4.5-fast", "role": "GrokCapt", "seatNumber": 2,
+                        "stageRole": "scout"
+                    ],
+                    ["participantId": "p-ghost", "role": "NoProvider"]
+                ]
+            ]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return try! JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+    }
+
+    @Test func aProjectedRosterDecodesInOrderAndDropsBlankProviders() {
+        let roster = rosterRow().seatRoster
+        let seats = roster?.renderableSeats ?? []
+        #expect(seats.count == 2)
+        #expect(seats.first?.participantId == "p-1")
+        #expect(seats.first?.state.authority == "boss")
+        #expect(seats.last?.state.stageRole == "scout")
+        #expect(roster?.label == "Ensemble roster applied — 2 seats")
+    }
+
+    /// The roster stack is the only thing saying WHAT the roster is; folded,
+    /// the row reads "System · Ensemble roster applied — 2 seats" and the
+    /// seats vanish. Same rule, same reason as the change strip above.
+    @Test func aRosterRowNeverFoldsIntoASystemNoticeSummary() {
+        #expect(twIsPlainSystemNoticeRow(rosterRow()) == false)
+    }
 }

@@ -1416,6 +1416,97 @@ describe('RemoteThreadProjection', () => {
       const snap = project({ kind: 'latestN', n: 10 }, MESSAGES)
       expect(snap.rows.every((row) => row.seatChange === undefined)).toBe(true)
     })
+
+    it('projects stageRole, authority, and briefUpdated on the change row', () => {
+      // The glyph pair and the brief note are exactly what the desktop commit
+      // pair (roster glyphs / "(Brief updated)") added; dropping them on the
+      // wire re-creates the failure those commits fixed — a brief-only change
+      // projects two identical sides saying nothing moved.
+      const withStage = {
+        ...CHANGE,
+        briefUpdated: true,
+        before: { ...CHANGE.before, stageRole: 'scout' },
+        after: { ...CHANGE.after, stageRole: 'worker', authority: 'captain' }
+      }
+      const snap = project({ kind: 'latestN', n: 10 }, [seatChangeRow(withStage)])
+      expect(snap.rows[0].seatChange).toEqual(withStage)
+      // A stage this build has never heard of still projects — the seat is a
+      // RECORD, same rule as the unknown provider.
+      const future = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow({ ...CHANGE, after: { ...CHANGE.after, stageRole: 'auditor' } })
+      ])
+      expect(future.rows[0].seatChange?.after.stageRole).toBe('auditor')
+    })
+  })
+
+  describe('seatRoster (roster-created stack parity)', () => {
+    const rosterRow = (seatChange: unknown, overrides = {}) =>
+      msg(1, {
+        id: 'ensemble-seat-roster-r1',
+        role: 'system',
+        content: 'Ensemble roster applied — 2 seats: Claude (SolBoss); Grok (GrokCapt).',
+        metadata: { kind: 'ensembleSeatChange', ensembleRoundId: 'r1', seatChange } as never,
+        ...overrides
+      })
+
+    const ROSTER = {
+      label: 'Ensemble roster applied — 2 seats',
+      appliedAt: '2026-08-05T12:00:00.000Z',
+      seats: [
+        {
+          participantId: 'p-1',
+          provider: 'claude',
+          model: 'claude-opus-5',
+          role: 'SolBoss',
+          seatNumber: 1,
+          authority: 'boss',
+          permissionPresetId: 'default'
+        },
+        {
+          participantId: 'p-2',
+          provider: 'grok',
+          model: 'grok-4.5-fast',
+          role: 'GrokCapt',
+          seatNumber: 2,
+          stageRole: 'scout'
+        }
+      ]
+    }
+
+    it('projects the stack in roster order and never as a change row', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [rosterRow(ROSTER)])
+      expect(snap.rows[0].seatRoster).toEqual(ROSTER)
+      expect(snap.rows[0].seatChange).toBeUndefined()
+      // Still an ordinary system row carrying its sentence, so a client
+      // without the stack renders exactly what it always has.
+      expect(snap.rows[0].kind).toBe('system')
+      expect(snap.rows[0].preview).toContain('Ensemble roster applied')
+    })
+
+    it('drops seats without a provider and bounds the stack size', () => {
+      const seats = [
+        { participantId: 'p-bad', role: 'Ghost' },
+        ...Array.from({ length: 70 }, (_, i) => ({
+          participantId: `p-${i}`,
+          provider: 'claude',
+          model: 'claude-opus-5',
+          seatNumber: i + 1
+        }))
+      ]
+      const snap = project({ kind: 'latestN', n: 10 }, [rosterRow({ ...ROSTER, seats })])
+      const projected = snap.rows[0].seatRoster?.seats ?? []
+      expect(projected).toHaveLength(64)
+      expect(projected.every((seat) => seat.provider === 'claude')).toBe(true)
+    })
+
+    it('projects nothing without the writer stamp or with an empty stack', () => {
+      const unstamped = project({ kind: 'latestN', n: 10 }, [
+        rosterRow(ROSTER, { metadata: { seatChange: ROSTER } as never })
+      ])
+      expect(unstamped.rows[0].seatRoster).toBeUndefined()
+      const empty = project({ kind: 'latestN', n: 10 }, [rosterRow({ ...ROSTER, seats: [] })])
+      expect(empty.rows[0].seatRoster).toBeUndefined()
+    })
   })
 
   describe('agentQuestion', () => {

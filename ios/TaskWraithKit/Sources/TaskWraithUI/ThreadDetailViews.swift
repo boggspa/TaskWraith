@@ -4612,6 +4612,10 @@ struct ThreadRowView: View, Equatable {
     /// sentence keeps rendering there untouched.
     private var seatChangeLink: TWSeatChangeLink? { row.seatChange?.renderableLink }
     private var hasSeatChangeCard: Bool { seatChangeLink != nil }
+    /// Roster-created stack — same ownership rule as the change strip: the
+    /// stack replaces the plain sentence. Empty renderable seats fall back to
+    /// the sentence, exactly like an older Mac that projected nothing.
+    private var hasSeatRosterCard: Bool { row.seatRoster?.renderableSeats.isEmpty == false }
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
     private var hasContextCompactionCard: Bool {
         ContextCompactionSummaryCard.matches(
@@ -4664,12 +4668,12 @@ struct ThreadRowView: View, Equatable {
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard
                     || hasFanoutResultCard || hasRunFailureCard || hasTrustAwareCard
-                    || hasDelegationLifecycleCard || hasSeatChangeCard)
+                    || hasDelegationLifecycleCard || hasSeatChangeCard || hasSeatRosterCard)
             VStack(alignment: .leading, spacing: 4) {
                 if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard
                     && !hasFanoutResultCard && !hasRunFailureCard && !hasTrustAwareCard
-                    && !hasSeatChangeCard
+                    && !hasSeatChangeCard && !hasSeatRosterCard
                 {
                     HStack(spacing: 0) {
                         Text(label)
@@ -4713,7 +4717,12 @@ struct ThreadRowView: View, Equatable {
                     TWSeatStrip(
                         link: seatChangeLink,
                         showsChair: true,
-                        timestamp: row.seatChange?.appliedAt ?? row.timestamp)
+                        timestamp: row.seatChange?.appliedAt ?? row.timestamp,
+                        briefUpdated: row.seatChange?.briefUpdated == true)
+                } else if hasSeatRosterCard, let roster = row.seatRoster {
+                    TWSeatRosterStack(
+                        roster: roster,
+                        timestamp: roster.appliedAt ?? row.timestamp)
                 } else if hasContextCompactionCard {
                     ContextCompactionSummaryCard(
                         preview: row.preview ?? "", phase: row.contextCompaction?.phase)

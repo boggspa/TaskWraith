@@ -1707,6 +1707,10 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         /// always did. Shape mirrors the close-out link's seat 1:1, so ONE
         /// value type decodes both surfaces.
         public let seatChange: TWSeatChangePayload?
+        /// Roster-created stack (mutually exclusive with `seatChange` by
+        /// payload shape on the Mac). Absent on older Macs — the plain
+        /// sentence in `preview` keeps rendering there.
+        public let seatRoster: TWSeatRosterPayload?
         /// ask_user_question prompt anchored to this (asking) row — drives the
         /// inline question card. `promptId` === the registry questionId, so the
         /// inline card resolves the same parked tool the top banner does.

@@ -43,6 +43,12 @@ public struct TWSeatChangeState: Codable, Sendable, Equatable {
     /// Chat-level workspace grant count at emit time (the permission chip's
     /// "N grants" suffix).
     public var grantsCount: Int?
+    /// Stage identity (scout/worker/reviewer/background) — the glyph beside
+    /// the role. Plain String: an unknown stage is a record, not a crash.
+    public var stageRole: String?
+    /// Chat-level authority (boss/captain). Outranks `stageRole` for the
+    /// glyph — a Boss who is also a Scout reads as the Boss.
+    public var authority: String?
 
     public init(
         provider: String,
@@ -52,7 +58,9 @@ public struct TWSeatChangeState: Codable, Sendable, Equatable {
         reasoningEffort: String? = nil,
         thinkingEnabled: Bool? = nil,
         permissionPresetId: String? = nil,
-        grantsCount: Int? = nil
+        grantsCount: Int? = nil,
+        stageRole: String? = nil,
+        authority: String? = nil
     ) {
         self.provider = provider
         self.model = model
@@ -62,6 +70,8 @@ public struct TWSeatChangeState: Codable, Sendable, Equatable {
         self.thinkingEnabled = thinkingEnabled
         self.permissionPresetId = permissionPresetId
         self.grantsCount = grantsCount
+        self.stageRole = stageRole
+        self.authority = authority
     }
 
     public init(from decoder: Decoder) throws {
@@ -77,6 +87,11 @@ public struct TWSeatChangeState: Codable, Sendable, Equatable {
         thinkingEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .thinkingEnabled)) ?? nil
         permissionPresetId = string(.permissionPresetId)
         grantsCount = (try? container.decodeIfPresent(Int.self, forKey: .grantsCount)) ?? nil
+        // This decoder is field-by-field BY HAND: a new wire field renders
+        // nowhere until it gets its own line here — synthesized CodingKeys
+        // growing is not enough. SeatChangeLinkTests pins these two.
+        stageRole = string(.stageRole)
+        authority = string(.authority)
     }
 }
 
@@ -106,19 +121,25 @@ public struct TWSeatChangePayload: Codable, Sendable, Equatable {
     public let after: TWSeatChangeState?
     /// ISO timestamp of the LATEST coalesced adjustment.
     public let appliedAt: String?
+    /// The seat's goal/brief moved in this change. The Mac's coalescer ORs
+    /// the flag across a flurry, so it survives a later unrelated tweak; a
+    /// brief-only change ships two identical sides plus this.
+    public let briefUpdated: Bool?
 
     public init(
         participantId: String?,
         label: String?,
         before: TWSeatChangeState?,
         after: TWSeatChangeState?,
-        appliedAt: String?
+        appliedAt: String?,
+        briefUpdated: Bool? = nil
     ) {
         self.participantId = participantId
         self.label = label
         self.before = before
         self.after = after
         self.appliedAt = appliedAt
+        self.briefUpdated = briefUpdated
     }
 
     /// The two sides as a renderable link, or nil when the payload carries no
@@ -131,6 +152,67 @@ public struct TWSeatChangePayload: Codable, Sendable, Equatable {
             participantId: participantId ?? "",
             before: resolvedBefore ?? after,
             after: after)
+    }
+}
+
+/// One seat of a roster-created stack. The wire shape is FLAT — the seat
+/// state's own keys plus `participantId` at the same level — so this decodes
+/// the id from the keyed container and hands the SAME decoder to
+/// `TWSeatChangeState`, which reads its fields beside it.
+public struct TWSeatRosterSeat: Codable, Sendable, Equatable {
+    public let participantId: String?
+    public let state: TWSeatChangeState
+
+    public init(participantId: String?, state: TWSeatChangeState) {
+        self.participantId = participantId
+        self.state = state
+    }
+
+    private enum CodingKeys: String, CodingKey { case participantId }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        participantId = (try? container.decodeIfPresent(String.self, forKey: .participantId)) ?? nil
+        state = try TWSeatChangeState(from: decoder)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(participantId, forKey: .participantId)
+        try state.encode(to: encoder)
+    }
+}
+
+/// Roster-created stack (desktop SeatRosterStack parity): every seat the
+/// roster now has, in roster order — order IS the #N. Wholly tolerant decode:
+/// a malformed stack yields nil fields and the row falls back to its plain
+/// sentence, never a thrown row.
+public struct TWSeatRosterPayload: Codable, Sendable, Equatable {
+    /// Human summary used as the row's heading ("Ensemble roster applied — N
+    /// seats"). Carries the TRUE count even when the Mac bounded `seats`.
+    public let label: String?
+    /// ISO timestamp of the LATEST fold into this row.
+    public let appliedAt: String?
+    public let seats: [TWSeatRosterSeat]?
+
+    public init(label: String?, appliedAt: String?, seats: [TWSeatRosterSeat]?) {
+        self.label = label
+        self.appliedAt = appliedAt
+        self.seats = seats
+    }
+
+    private enum CodingKeys: String, CodingKey { case label, appliedAt, seats }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = (try? container.decodeIfPresent(String.self, forKey: .label)) ?? nil
+        appliedAt = (try? container.decodeIfPresent(String.self, forKey: .appliedAt)) ?? nil
+        seats = (try? container.decodeIfPresent([TWSeatRosterSeat].self, forKey: .seats)) ?? nil
+    }
+
+    /// Seats worth drawing — a blank provider draws nothing worth a row.
+    public var renderableSeats: [TWSeatRosterSeat] {
+        (seats ?? []).filter { !$0.state.provider.isEmpty }
     }
 }
 

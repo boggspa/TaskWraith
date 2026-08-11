@@ -48,6 +48,33 @@ struct TWSeatStripSide: Equatable {
     let grantsLabel: String
     /// "#8 GemProWork", "GemProWork", or "" — the approval-modal vocabulary.
     let roleLabel: String
+    /// SF Symbol drawn beside the role ("" when the seat carries neither an
+    /// authority nor a stage this build knows).
+    let roleGlyph: String
+    /// Accessible name for the glyph ("Boss", "Scout", …); "" with no glyph.
+    let roleGlyphTitle: String
+}
+
+/// Authority outranks stage for the glyph — a Boss who is also a Scout reads
+/// as the Boss, matching the desktop ParticipantRoleIcon and the composer
+/// chips. Unknown values draw nothing: the seat is a RECORD, and a stage this
+/// build has never heard of is not evidence worth a symbol. Boss/captain
+/// symbols reuse the roster chip's existing vocabulary (crown / shield).
+func twSeatRoleGlyph(authority: String?, stageRole: String?) -> (
+    systemName: String, title: String
+)? {
+    switch authority {
+    case "boss": return ("crown.fill", "Boss")
+    case "captain": return ("shield.fill", "Captain")
+    default: break
+    }
+    switch stageRole {
+    case "scout": return ("binoculars.fill", "Scout")
+    case "worker": return ("hammer.fill", "Worker")
+    case "reviewer": return ("checkmark.seal.fill", "Reviewer")
+    case "background": return ("moon.fill", "Background")
+    default: return nil
+    }
 }
 
 func twSeatStripSide(_ state: TWSeatChangeState) -> TWSeatStripSide {
@@ -70,6 +97,7 @@ func twSeatStripSide(_ state: TWSeatChangeState) -> TWSeatStripSide {
     } else {
         roleLabel = role
     }
+    let glyph = twSeatRoleGlyph(authority: state.authority, stageRole: state.stageRole)
     return TWSeatStripSide(
         provider: state.provider,
         model: state.model,
@@ -80,14 +108,20 @@ func twSeatStripSide(_ state: TWSeatChangeState) -> TWSeatStripSide {
         reasoningToken: token,
         permissionLabel: TWPermissionTiers.label(state.permissionPresetId),
         grantsLabel: grants > 0 ? "\(grants) grant\(grants == 1 ? "" : "s")" : "",
-        roleLabel: roleLabel)
+        roleLabel: roleLabel,
+        roleGlyph: glyph?.systemName ?? "",
+        roleGlyphTitle: glyph?.title ?? "")
 }
 
 /// Spoken form of one side — the seat read out as a sentence rather than as a
 /// row of chips VoiceOver would otherwise announce field by field.
 func twSeatStripSpokenLabel(_ side: TWSeatStripSide) -> String {
     var parts: [String] = []
-    if !side.roleLabel.isEmpty { parts.append(side.roleLabel) }
+    if !side.roleLabel.isEmpty {
+        parts.append(
+            side.roleGlyphTitle.isEmpty
+                ? side.roleLabel : "\(side.roleGlyphTitle) \(side.roleLabel)")
+    }
     parts.append(side.providerLabel)
     if !side.modelLabel.isEmpty { parts.append(side.modelLabel) }
     if !side.reasoningLabel.isEmpty { parts.append("\(side.reasoningLabel) reasoning") }
@@ -112,6 +146,11 @@ struct TWSeatStrip: View {
     /// table cell carries neither (the close-out header already dates the row).
     var showsChair: Bool = false
     var timestamp: String? = nil
+    /// The seat's brief moved in this change — renders "(Brief updated)" on
+    /// the AFTER phase, desktop parity. Also forces the roll: a brief-only
+    /// change has two identical sides, and without rolling, the after-gated
+    /// note would never appear.
+    var briefUpdated: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsAfter = false
@@ -144,12 +183,27 @@ struct TWSeatStrip: View {
             HStack(spacing: 5) {
                 permissionChip
                 if !current.roleLabel.isEmpty {
-                    Text(current.roleLabel)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(accent)
+                    HStack(spacing: 3) {
+                        if !current.roleGlyph.isEmpty {
+                            Image(systemName: current.roleGlyph)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(accent)
+                                .accessibilityHidden(true)
+                        }
+                        Text(current.roleLabel)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(accent)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .contentTransition(reduceMotion ? .identity : .opacity)
+                    }
+                }
+                if briefUpdated && showsAfter {
+                    Text("(Brief updated)")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .contentTransition(reduceMotion ? .identity : .opacity)
+                        .transition(.opacity)
                 }
                 if let time = twSeatStripTime(timestamp) {
                     Spacer(minLength: 4)
@@ -165,11 +219,16 @@ struct TWSeatStrip: View {
             value: showsAfter
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(twSeatStripAccessibilityLabel(before: before, after: after))
+        .accessibilityLabel(
+            briefUpdated
+                ? "\(twSeatStripAccessibilityLabel(before: before, after: after)). Brief updated"
+                : twSeatStripAccessibilityLabel(before: before, after: after))
         .task(id: link) {
             // Replay on every appearance, by design: reset, hold, then move.
+            // A brief-only change must roll too — its sides are identical,
+            // and the note it exists for is gated on the after phase.
             showsAfter = false
-            guard changed else { return }
+            guard changed || briefUpdated else { return }
             try? await Task.sleep(for: .seconds(Self.holdSeconds))
             guard !Task.isCancelled else { return }
             showsAfter = true
@@ -272,4 +331,128 @@ func twSeatTableCell(_ raw: String) -> (link: TWSeatChangeLink?, text: String)? 
 func twSeatStripTime(_ timestamp: String?) -> String? {
     guard let timestamp, !timestamp.isEmpty else { return nil }
     return TWTranscriptTimestampFormat.footerCaption(iso: timestamp)
+}
+
+// MARK: - Roster-created stack
+
+/// Roster-created stack (desktop SeatRosterStack parity): the headline label
+/// with the chair glyph and time once, then every seat as its own line —
+/// role LEADING (the change row trails it), no roll, no expansion, because
+/// nothing here changed; the roster came into being. Rendered as a numbered
+/// visual order only through the seats' own "#N" role prefixes.
+struct TWSeatRosterStack: View {
+    let roster: TWSeatRosterPayload
+    var timestamp: String? = nil
+
+    private var seats: [(key: String, side: TWSeatStripSide)] {
+        roster.renderableSeats.enumerated().map { index, seat in
+            (key: seat.participantId ?? "seat-\(index)", side: twSeatStripSide(seat.state))
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "chair.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(TWTheme.textMuted)
+                    .accessibilityHidden(true)
+                Text(roster.label ?? "Ensemble roster applied")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(2)
+                if let time = twSeatStripTime(timestamp ?? roster.appliedAt) {
+                    Spacer(minLength: 4)
+                    Text(time)
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .monospacedDigit()
+                }
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(seats, id: \.key) { seat in
+                    TWSeatRosterSeatRow(side: seat.side)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rosterSpokenLabel)
+    }
+
+    private var rosterSpokenLabel: String {
+        let head = roster.label ?? "Ensemble roster applied"
+        let spokenSeats = seats.map { twSeatStripSpokenLabel($0.side) }
+        return ([head] + spokenSeats).joined(separator: ". ")
+    }
+}
+
+/// One roster seat: glyph + role in the provider accent leading, then the
+/// cluster and permission chips — static (a roster is a record; nothing
+/// rolls, nothing shimmers).
+private struct TWSeatRosterSeatRow: View {
+    let side: TWSeatStripSide
+
+    private var accent: Color {
+        TWTheme.providerAccent(side.provider, modelId: side.model, modelLabel: side.modelLabel)
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if !side.roleLabel.isEmpty {
+                HStack(spacing: 3) {
+                    if !side.roleGlyph.isEmpty {
+                        Image(systemName: side.roleGlyph)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(accent)
+                            .accessibilityHidden(true)
+                    }
+                    Text(side.roleLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+            }
+            HStack(spacing: 4) {
+                ProviderLogoIcon(provider: side.provider, modelId: side.model, size: 11)
+                Text(side.providerLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(1)
+                if !side.modelLabel.isEmpty {
+                    Text("· \(side.modelLabel)")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                if !side.reasoningLabel.isEmpty {
+                    Text("· \(side.reasoningLabel)")
+                        .font(.caption2)
+                        .foregroundStyle(accent)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(TWTheme.surface3))
+            .overlay(Capsule().strokeBorder(TWTheme.border, lineWidth: 0.5))
+            permissionSummary
+        }
+    }
+
+    private var permissionSummary: some View {
+        HStack(spacing: 3) {
+            Text(side.permissionLabel)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(TWTheme.textSecondary)
+                .lineLimit(1)
+            if !side.grantsLabel.isEmpty {
+                Text("· \(side.grantsLabel)")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .lineLimit(1)
+            }
+        }
+    }
 }
