@@ -4,6 +4,7 @@
  */
 import { execFile } from 'child_process'
 import { findExecutableOnHost } from '../HostToolResolver'
+import { createDefaultIdbGrpcTransport, type IdbGrpcTransport } from './IdbGrpcTransport'
 import {
   isSimulatorHardwareButton,
   isSimulatorRotateDirection,
@@ -29,6 +30,7 @@ export interface IdbClientDeps {
   resolveBinary?: (name: string) => string | null
   run?: IdbExecRunner
   now?: () => number
+  grpcTransport?: IdbGrpcTransport | null
 }
 
 export interface IdbExecResult {
@@ -175,6 +177,7 @@ export class IdbClient {
   private readonly resolveBinary: (name: string) => string | null
   private readonly run: IdbExecRunner
   private readonly now: () => number
+  private readonly grpcTransport: IdbGrpcTransport | null
   private readonly connectCache = new Map<string, number>()
   private readonly connectInFlight = new Map<string, Promise<void>>()
 
@@ -183,6 +186,8 @@ export class IdbClient {
     this.resolveBinary = deps.resolveBinary ?? ((name) => findExecutableOnHost(name))
     this.run = deps.run ?? defaultRunner
     this.now = deps.now ?? (() => Date.now())
+    this.grpcTransport =
+      deps.grpcTransport === undefined ? createDefaultIdbGrpcTransport() : deps.grpcTransport
   }
 
   /** True when the `idb` client binary resolves on PATH (macOS only). */
@@ -224,13 +229,17 @@ export class IdbClient {
    */
   private execQueue: Promise<void> = Promise.resolve()
 
-  private exec(args: readonly string[]): Promise<IdbExecResult> {
-    const result = this.execQueue.then(() => this.execSerialized(args))
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.execQueue.then(operation)
     this.execQueue = result.then(
       () => undefined,
       () => undefined
     )
     return result
+  }
+
+  private exec(args: readonly string[]): Promise<IdbExecResult> {
+    return this.enqueue(() => this.execSerialized(args))
   }
 
   private async execSerialized(args: readonly string[]): Promise<IdbExecResult> {
@@ -246,6 +255,43 @@ export class IdbClient {
         error: error instanceof Error ? error.message : String(error)
       }
     }
+  }
+
+  /**
+   * Keep the gRPC fast path and CLI fallback inside one queue operation. If
+   * they used separate queues, a later gRPC gesture could overtake an earlier
+   * gesture while that earlier call was falling back to the Python client.
+   */
+  private execGesture(
+    grpcOperation: (transport: IdbGrpcTransport) => Promise<void>,
+    cliArgs: readonly string[]
+  ): Promise<IdbExecResult> {
+    return this.enqueue(async () => {
+      if (this.platform === 'darwin' && this.grpcTransport) {
+        try {
+          await grpcOperation(this.grpcTransport)
+          return { ok: true, stdout: '', stderr: '' }
+        } catch {
+          // Socket absent, companion down, or schema mismatch: preserve the
+          // mature CLI path rather than turning a latency win into downtime.
+        }
+      }
+      return this.execSerialized(cliArgs)
+    })
+  }
+
+  private prewarmConnection(udid: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.platform === 'darwin' && this.grpcTransport) {
+        try {
+          await this.grpcTransport.describe(udid)
+          return
+        } catch {
+          // No healthy companion channel yet; let the CLI connect/spawn it.
+        }
+      }
+      await this.execSerialized(['connect', udid])
+    })
   }
 
   async listTargets(): Promise<{ ok: boolean; targets?: IdbTarget[]; error?: string }> {
@@ -272,7 +318,7 @@ export class IdbClient {
     if (inFlight) return inFlight
     const pending = (async () => {
       try {
-        await this.connect(id)
+        await this.prewarmConnection(id)
       } catch {
         // Pre-warm is best-effort; swallow so the gesture can proceed.
       } finally {
@@ -296,14 +342,22 @@ export class IdbClient {
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
       return { ok: false, stdout: '', stderr: '', error: 'idb tap requires finite x/y.' }
     }
-    return this.exec(withUdid(['ui', 'tap', String(Math.round(x)), String(Math.round(y))], udid))
+    const roundedX = Math.round(x)
+    const roundedY = Math.round(y)
+    return this.execGesture(
+      (transport) => transport.tap(udid, roundedX, roundedY),
+      withUdid(['ui', 'tap', String(roundedX), String(roundedY)], udid)
+    )
   }
 
   async text(udid: string, value: string): Promise<IdbExecResult> {
     if (typeof value !== 'string') {
       return { ok: false, stdout: '', stderr: '', error: 'idb text requires a string.' }
     }
-    return this.exec(withUdid(['ui', 'text', value], udid))
+    return this.execGesture(
+      (transport) => transport.text(udid, value),
+      withUdid(['ui', 'text', value], udid)
+    )
   }
 
   async swipe(
@@ -317,18 +371,10 @@ export class IdbClient {
     if (coords.some((value) => !Number.isFinite(value))) {
       return { ok: false, stdout: '', stderr: '', error: 'idb swipe requires finite coordinates.' }
     }
-    return this.exec(
-      withUdid(
-        [
-          'ui',
-          'swipe',
-          String(Math.round(xStart)),
-          String(Math.round(yStart)),
-          String(Math.round(xEnd)),
-          String(Math.round(yEnd))
-        ],
-        udid
-      )
+    const rounded = coords.map((value) => Math.round(value))
+    return this.execGesture(
+      (transport) => transport.swipe(udid, rounded[0], rounded[1], rounded[2], rounded[3]),
+      withUdid(['ui', 'swipe', ...rounded.map((value) => String(value))], udid)
     )
   }
 

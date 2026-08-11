@@ -326,6 +326,27 @@ describe('IdbClient', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('pre-warms over gRPC without spawning the Python client when the socket is healthy', async () => {
+    const describe = vi.fn(async () => undefined)
+    const run = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run,
+      grpcTransport: {
+        tap: async () => undefined,
+        text: async () => undefined,
+        swipe: async () => undefined,
+        describe
+      }
+    })
+
+    await client.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+
+    expect(describe).toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it('serialises concurrent invocations so companion auto-spawn cannot race', async () => {
     const udid = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
     const started: string[][] = []
@@ -378,6 +399,114 @@ describe('IdbClient', () => {
     expect(started).toEqual([
       ['ui', 'tap', '1', '2', '--udid', udid],
       ['ui', 'tap', '3', '4', '--udid', udid]
+    ])
+  })
+
+  it('uses gRPC without spawning the Python client when the companion is healthy', async () => {
+    const calls: Array<{ kind: string; args: unknown[] }> = []
+    const run = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => null,
+      run,
+      grpcTransport: {
+        tap: async (...args) => {
+          calls.push({ kind: 'tap', args })
+        },
+        text: async (...args) => {
+          calls.push({ kind: 'text', args })
+        },
+        swipe: async (...args) => {
+          calls.push({ kind: 'swipe', args })
+        },
+        describe: async () => undefined
+      }
+    })
+
+    await expect(client.tap('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 12.6, 40.2)).resolves.toEqual({
+      ok: true,
+      stdout: '',
+      stderr: ''
+    })
+    await client.text('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'one\ntwo')
+    await client.swipe('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 1.2, 2.4, 3.6, 4.8)
+
+    expect(calls).toEqual([
+      {
+        kind: 'tap',
+        args: ['AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 13, 40]
+      },
+      {
+        kind: 'text',
+        args: ['AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'one\ntwo']
+      },
+      {
+        kind: 'swipe',
+        args: ['AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 1, 2, 4, 5]
+      }
+    ])
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('falls back to CLI inside the same queue without reordering gestures', async () => {
+    const order: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        order.push('cli:' + args.slice(0, 2).join(':'))
+        return { stdout: '', stderr: '' }
+      },
+      grpcTransport: {
+        tap: async () => {
+          order.push('grpc:tap')
+          await gate
+          throw new Error('socket closed')
+        },
+        text: async () => {
+          order.push('grpc:text')
+        },
+        swipe: async () => undefined,
+        describe: async () => undefined
+      }
+    })
+
+    const first = client.tap('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 1, 2)
+    const second = client.text('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'x')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(order).toEqual(['grpc:tap'])
+    release()
+    await Promise.all([first, second])
+
+    expect(order).toEqual(['grpc:tap', 'cli:ui:tap', 'grpc:text'])
+  })
+
+  it('passes an unsupported text batch to CLI unchanged after gRPC rejects it', async () => {
+    const calls: string[][] = []
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        calls.push([...args])
+        return { stdout: '', stderr: '' }
+      },
+      grpcTransport: {
+        tap: async () => undefined,
+        text: async () => {
+          throw new Error('unsupported HID character')
+        },
+        swipe: async () => undefined,
+        describe: async () => undefined
+      }
+    })
+
+    await client.text('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 'hello🙂\nworld')
+    expect(calls).toEqual([
+      ['ui', 'text', 'hello🙂\nworld', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
     ])
   })
 })
