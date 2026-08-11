@@ -506,8 +506,10 @@ describe('Ensemble prompt composition', () => {
   })
 
   it('teaches Captain that fan-out remains available while Boss is healthy', () => {
+    const captain = { ...ensemble.participants[1], stageRole: 'worker' as const }
     const captainConfig: EnsembleConfig = {
       ...ensemble,
+      participants: [ensemble.participants[0], captain, ensemble.participants[2]],
       bossmanParticipantId: 'claude',
       captainParticipantIds: ['codex', 'gemini'],
       secondInCommandParticipantId: 'codex'
@@ -515,19 +517,60 @@ describe('Ensemble prompt composition', () => {
     const prompt = buildEnsembleParticipantPrompt({
       chat: { ...chat(), ensemble: captainConfig },
       config: captainConfig,
-      participant: captainConfig.participants[1],
+      participant: captain,
       currentPrompt: 'Dispatch the reviewers.',
       roundId: 'round-captain-fanout'
     })
 
     expect(prompt).toContain('you are a configured Captain')
+    expect(prompt).toContain('Captain authority is additive to your assigned role and stage')
+    expect(prompt).toContain('keep performing that scheduled work')
     expect(prompt).toContain('share all configured fan-out powers with Boss')
+    expect(prompt).toContain('Stage role: worker')
+    expect(prompt).toContain('Worker rule: execute the assigned implementation slice')
+    expect(prompt).not.toContain('remains standby while Boss is available')
     expect(prompt).toContain('only the first available Captain in this listed roster order acts')
     expect(prompt).toContain(
       'broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available'
     )
     expect(prompt).not.toContain('active Captain after Boss unavailability')
   })
+
+  it.each([
+    ['Scout', 'scout', 'Gather the facts your peers will need'],
+    ['Work', 'worker', 'Act on the request'],
+    ['Review', 'reviewer', 'Review what changed']
+  ] as const)(
+    "keeps a Captain's %s role and %s stage active",
+    (role, stageRole, expectedStageInstruction) => {
+      const captain: EnsembleParticipant = {
+        ...ensemble.participants[1],
+        role,
+        stageRole,
+        instructions: `Perform the ${role} responsibility. Keep scope clear.`
+      }
+      const captainConfig: EnsembleConfig = {
+        ...ensemble,
+        participants: [ensemble.participants[0], captain, ensemble.participants[2]],
+        bossmanParticipantId: 'claude',
+        captainParticipantIds: ['codex'],
+        secondInCommandParticipantId: 'codex'
+      }
+      const prompt = buildEnsembleParticipantPrompt({
+        chat: { ...chat(), ensemble: captainConfig },
+        config: captainConfig,
+        participant: captain,
+        currentPrompt: 'Carry out your assigned stage.',
+        roundId: `round-captain-${stageRole}`
+      })
+
+      expect(prompt).toContain(`Treat your role (${role} / Codex)`)
+      expect(prompt).toContain(`Stage role: ${stageRole}`)
+      expect(prompt).toContain(expectedStageInstruction)
+      expect(prompt).toContain('Captain authority is additive to your assigned role and stage')
+      expect(prompt).not.toContain('Advisory turn boundary')
+    }
+  )
 
   it('does not add a role boundary contract for solo-participant rounds', () => {
     const soloEnsemble: EnsembleConfig = {

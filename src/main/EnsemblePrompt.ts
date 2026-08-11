@@ -400,6 +400,7 @@ function formatRoleBoundaryContract(
   if (orderedParticipants.length < 2) return []
   const selfRole = sanitizeText(participant.role || 'Participant') || 'Participant'
   const roleText = `${selfRole} / ${providerLabel(participant.provider)}`
+  const isCaptain = isConfiguredCaptain(config, participant.id)
   const lines = [
     `- Treat your role (${roleText}) and your role instructions as your ownership boundary for this turn. Do not absorb peers' responsibilities just because you can.`,
     '- Do the smallest useful slice that advances your own role. Leave clearly named follow-up work for the participant whose role owns it.',
@@ -418,7 +419,9 @@ function formatRoleBoundaryContract(
 
   if (isReviewOrReconLike(participant)) {
     lines.push(
-      '- Review/Recon/Scout rule: produce findings, evidence, risks, and acceptance criteria. Do not implement or independently complete the active goal unless the user or Lead/Boss explicitly assigns that work, or the host marks fallback takeover available.'
+      isCaptain
+        ? '- Review/Recon/Scout stage rule: fulfill the scheduled investigation or review, then report findings, evidence, risks, and acceptance criteria. Captain authority is additive: retain your listed Captain powers and this stage instead of becoming an advisory-only coordinator or abandoning the stage work.'
+        : '- Review/Recon/Scout rule: produce findings, evidence, risks, and acceptance criteria. Do not implement or independently complete the active goal unless the user or Lead/Boss explicitly assigns that work, or the host marks fallback takeover available.'
     )
   } else if (isWorkerLike(participant)) {
     lines.push(
@@ -461,7 +464,7 @@ function formatAuthorityLines(
       return participant ? formatParticipantScopeName(participant) : id
     })
     .join(', ')
-  const isAuthority = uniqueAuthorityIds.includes(currentParticipantId)
+  const isBoss = authority.bossmanParticipantId === currentParticipantId
   const isCaptain = authority.captainParticipantIds.includes(currentParticipantId)
   const captainLabels = authority.captainParticipantIds
     .map((id) => {
@@ -470,13 +473,15 @@ function formatAuthorityLines(
     })
     .join(', ')
   return [
-    isAuthority
+    isBoss
       ? `- Authority rule: you are one of the configured Lead/Boss/manager seats (${labels}). Coordinate and verify before assigning broad execution.`
-      : `- Authority rule: configured Lead/Boss/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`,
+      : isCaptain
+        ? `- Captain rule: you are a configured Captain (${captainLabels}). Captain authority is additive to your assigned role and stage: keep performing that scheduled work, and do not become a standby or advisory-only seat while Boss is available. You share all configured fan-out powers with Boss, including while Boss is available. While Boss is available, defer only non-fan-out control decisions to Boss; when Boss is unavailable, only the first available Captain in this listed roster order acts with the same permission ceilings.`
+        : `- Authority rule: configured Lead/Boss/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`,
     authority.captainParticipantIds.length > 0
-      ? isCaptain
-        ? `- Captain rule: you are a configured Captain (${captainLabels}) and share all configured fan-out powers with Boss, including while Boss is available. For non-fan-out authority every Captain remains standby while Boss is available; when Boss is unavailable, only the first available Captain in this listed roster order acts with the same permission ceilings.`
-        : `- Captain rule: configured Captains are ${captainLabels}. They may all use configured fan-out powers, but only the first available Captain in this listed roster order becomes controlling authority while Boss is unavailable.`
+      ? !isCaptain
+        ? `- Captain rule: configured Captains are ${captainLabels}. They may all use configured fan-out powers, but only the first available Captain in this listed roster order becomes controlling authority while Boss is unavailable.`
+        : ''
       : ''
   ].filter(Boolean)
 }
@@ -573,6 +578,15 @@ function isCoordinatorLike(participant: EnsembleParticipant): boolean {
 
 type AdvisorySeatKind = 'review' | 'recon'
 
+function isConfiguredCaptain(config: EnsembleConfig, participantId: string): boolean {
+  return normalizeEnsembleAuthority({
+    participants: config.participants,
+    bossmanParticipantId: config.bossmanParticipantId,
+    captainParticipantIds: config.captainParticipantIds,
+    secondInCommandParticipantId: config.secondInCommandParticipantId
+  }).captainParticipantIds.includes(participantId)
+}
+
 function advisorySeatKind(participant: EnsembleParticipant): AdvisorySeatKind | null {
   if (participant.stageRole === 'reviewer') return 'review'
   if (participant.stageRole === 'scout') return 'recon'
@@ -603,6 +617,7 @@ function isReviewOrReconLike(participant: EnsembleParticipant): boolean {
 }
 
 function isWorkerLike(participant: EnsembleParticipant): boolean {
+  if (participant.stageRole === 'worker') return true
   const text = `${participant.role} ${participant.instructions}`.toLowerCase()
   return /\b(worker|implement|implementer|render|main|edit|patch|build|fix)\b/.test(text)
 }
@@ -612,6 +627,10 @@ function formatAdvisoryTurnBoundary(
   participant: EnsembleParticipant,
   orderedParticipants: EnsembleParticipant[]
 ): string | null {
+  // Captain is authority added to a seat, not an advisory replacement for its
+  // role. Scout/reviewer wording still comes from the role/stage contract,
+  // but it must not erase Captain fan-out or acting-authority powers.
+  if (isConfiguredCaptain(config, participant.id)) return null
   const kind = advisorySeatKind(participant)
   if (!kind) return null
 
@@ -622,7 +641,7 @@ function formatAdvisoryTurnBoundary(
     (candidate) =>
       candidate.id !== participant.id &&
       candidate.stageRole !== 'background' &&
-      advisorySeatKind(candidate) === null
+      (advisorySeatKind(candidate) === null || isConfiguredCaptain(config, candidate.id))
   )
   const fallbackTakeoverAvailable =
     config.activeRound?.status === 'running' &&
