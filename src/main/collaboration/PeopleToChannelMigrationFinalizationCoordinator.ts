@@ -2,14 +2,11 @@ import type { HumanCollaborationShare } from './HumanCollaborationStore'
 import { PeopleToChannelMigrationLegacyWriteGate } from './PeopleToChannelMigrationLegacyWriteGate'
 import type { PeopleToChannelMigrationExecution } from './PeopleToChannelMigrationExecutionStore'
 import type { PeopleToChannelMigrationFinalizationExecution } from './PeopleToChannelMigrationFinalizationExecutionStore'
+import type { PeopleToChannelMigrationFinalizationAdmissionsResult } from './PeopleToChannelMigrationFinalizationAdmissions'
 import type { PeopleToChannelMigrationHistoryMaterialization } from './PeopleToChannelMigrationHistory'
 import type { PeopleToChannelMigrationLogWriter } from './PeopleToChannelMigrationLogWriter'
-import type {
-  PeopleToChannelMigrationMaterialization,
-  PeopleToChannelPendingAdmissionReissue
-} from './PeopleToChannelMigrationMaterializer'
+import type { PeopleToChannelReissuedAdmission } from './PeopleToChannelMigrationAdmissionReissue'
 import type { PeopleToChannelMigrationRecoveryRecord } from './PeopleToChannelMigrationRecoveryStore'
-import type { ChannelStore, ChannelStoreMigrationMutation } from './ChannelStore'
 
 export const PEOPLE_TO_CHANNEL_FINALIZATION_COORDINATOR_VERSION = 1
 
@@ -18,7 +15,8 @@ export type PeopleToChannelMigrationFinalizationCoordinatorStage =
   | 'finalization_execution_durable'
   | 'recovery_fenced'
   | 'logs_durable'
-  | 'metadata_durable'
+  | 'policies_durable'
+  | 'admissions_durable'
   | 'legacy_retired'
   | 'receipt_durable'
 
@@ -53,13 +51,42 @@ export interface PeopleToChannelMigrationFinalizationPeoplePort {
   retireSharesForChannelMigration(shareIds: readonly string[]): number
 }
 
+export interface PeopleToChannelMigrationFinalizationInitialAdmissionsPort {
+  recoverEscrow(input: {
+    base: PeopleToChannelMigrationExecution['base']
+    history: PeopleToChannelMigrationExecution['history']
+  }): { invitations: PeopleToChannelReissuedAdmission[] }
+}
+
+export interface PeopleToChannelMigrationFinalizationPolicyPort {
+  apply(input: {
+    initial: PeopleToChannelMigrationExecution
+    finalization: PeopleToChannelMigrationFinalizationExecution
+  }): unknown
+}
+
+export interface PeopleToChannelMigrationFinalizationAdmissionsPort {
+  apply(input: {
+    initial: PeopleToChannelMigrationExecution
+    finalization: PeopleToChannelMigrationFinalizationExecution
+    initialInvitations: readonly PeopleToChannelReissuedAdmission[]
+  }): PeopleToChannelMigrationFinalizationAdmissionsResult
+  recover(input: {
+    initial: PeopleToChannelMigrationExecution
+    finalization: PeopleToChannelMigrationFinalizationExecution
+    initialInvitations: readonly PeopleToChannelReissuedAdmission[]
+  }): PeopleToChannelMigrationFinalizationAdmissionsResult
+}
+
 export interface PeopleToChannelMigrationFinalizationCoordinatorOptions {
   recovery: PeopleToChannelMigrationFinalizationRecoveryPort
   initialExecution: PeopleToChannelMigrationInitialExecutionPort
   finalizationExecution: PeopleToChannelMigrationFinalizationExecutionPort
   legacyWriteGate: PeopleToChannelMigrationLegacyWriteGate
   logs: Pick<PeopleToChannelMigrationLogWriter, 'apply'>
-  channels: Pick<ChannelStore, 'applyMigrationBatch'>
+  policies: PeopleToChannelMigrationFinalizationPolicyPort
+  initialAdmissions: PeopleToChannelMigrationFinalizationInitialAdmissionsPort
+  admissions: PeopleToChannelMigrationFinalizationAdmissionsPort
   people: PeopleToChannelMigrationFinalizationPeoplePort
   now?: () => number
   /** Test/observability seam invoked only after the named side effect is complete. */
@@ -73,6 +100,8 @@ export interface PeopleToChannelMigrationFinalizationCoordinatorResult {
   finalizationDigest: string
   retireShareIds: string[]
   retainedWorkspaceBootstrapShareIds: string[]
+  terminalAdmissionEscrowDigest: string | null
+  terminalInvitationCount: number
   recovery: PeopleToChannelMigrationRecoveryRecord
 }
 
@@ -142,64 +171,39 @@ function sameIds(left: readonly string[], right: readonly string[]): boolean {
   return canonicalJson(left) === canonicalJson(right)
 }
 
-function stablePolicyAuthority(
-  policy: PeopleToChannelMigrationMaterialization['policies'][number]
-): unknown {
-  return {
-    channelId: policy.channelId,
-    memberId: policy.memberId,
-    sourceShareId: policy.sourceShareId,
-    sourceCollaboratorId: policy.sourceCollaboratorId,
-    rules: policy.rules,
-    requiresHostApproval: policy.requiresHostApproval,
-    fullHistory: policy.fullHistory
-  }
-}
-
-function stablePendingAuthority(policy: PeopleToChannelPendingAdmissionReissue): unknown {
-  return {
-    sourceShareId: policy.sourceShareId,
-    channelId: policy.channelId,
-    pendingCollaboratorIds: policy.pendingCollaboratorIds,
-    pendingCollaboratorLabels: policy.pendingCollaboratorLabels,
-    pendingMemberPresentations: policy.pendingMemberPresentations,
-    openInviteCount: policy.openInviteCount,
-    policy: {
-      rules: policy.policy.rules,
-      requiresHostApproval: policy.policy.requiresHostApproval,
-      fullHistory: policy.policy.fullHistory
-    }
-  }
-}
-
-function stableAuthorities(base: PeopleToChannelMigrationMaterialization): unknown {
-  return {
-    policies: base.policies
-      .map(stablePolicyAuthority)
-      .sort((left, right) => compareText(canonicalJson(left), canonicalJson(right))),
-    pendingAdmissions: base.pendingAdmissionReissues
-      .map(stablePendingAuthority)
-      .sort((left, right) => compareText(canonicalJson(left), canonicalJson(right)))
-  }
-}
-
 /**
- * This first terminal writer intentionally carries only history and metadata
- * deltas. Existing policy and admission authorities remain valid while their
- * semantic source shape is unchanged; a changed/new policy or pending
- * admission fails closed until its own terminal reconciler is installed.
+ * The two terminal writers own changed/new policy and pending-admission
+ * authority. Capture must nevertheless reject policy removal and a P5 source
+ * before it fences an execution that no writer can safely complete.
  */
 function assertSupportedDeltaAuthority(args: {
   initial: PeopleToChannelMigrationExecution
   finalization: PeopleToChannelMigrationFinalizationExecution
 }): void {
-  if (
-    canonicalJson(stableAuthorities(args.initial.base)) !==
-    canonicalJson(stableAuthorities(args.finalization.delta.base))
-  ) {
-    blocked(
-      'People migration finalization has a policy or pending-admission state delta requiring reconciliation'
+  const priorPolicyKeys = new Set(
+    args.initial.base.policies.map((policy) => `${policy.channelId}\u0000${policy.memberId}`)
+  )
+  const finalPolicyKeys = new Set(
+    args.finalization.delta.base.policies.map(
+      (policy) => `${policy.channelId}\u0000${policy.memberId}`
     )
+  )
+  if (
+    finalPolicyKeys.size !== args.finalization.delta.base.policies.length ||
+    [...priorPolicyKeys].some((key) => !finalPolicyKeys.has(key))
+  ) {
+    blocked('People migration terminal policy removal requires member retirement reconciliation')
+  }
+  const retiredShareIds = new Set(args.finalization.scope.retireShareIds)
+  for (const policy of args.finalization.delta.base.policies) {
+    if (!retiredShareIds.has(policy.sourceShareId)) {
+      blocked('People migration terminal policy belongs to the retained P5 scope')
+    }
+  }
+  for (const pending of args.finalization.delta.base.pendingAdmissionReissues) {
+    if (!retiredShareIds.has(pending.sourceShareId)) {
+      blocked('People migration terminal admission belongs to the retained P5 scope')
+    }
   }
 }
 
@@ -226,12 +230,6 @@ function finalizationHistory(
   execution: PeopleToChannelMigrationFinalizationExecution
 ): PeopleToChannelMigrationHistoryMaterialization {
   return execution.delta.history
-}
-
-function finalizationMetadata(
-  execution: PeopleToChannelMigrationFinalizationExecution
-): ChannelStoreMigrationMutation[] {
-  return execution.delta.history.metadataMutations
 }
 
 /**
@@ -311,8 +309,18 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
       })
       this.options.afterStage?.('write_gate_quiesced')
       if (recovery.phase === 'committed') {
+        const initialInvitations = this.options.initialAdmissions.recoverEscrow({
+          base: initial.base,
+          history: initial.history
+        }).invitations
+        this.options.policies.apply({ initial, finalization: execution })
+        const admissions = this.options.admissions.recover({
+          initial,
+          finalization: execution,
+          initialInvitations
+        })
         this.assertFrozenScope(execution, 'retired')
-        return this.result(execution, recovery)
+        return this.result(execution, recovery, admissions)
       }
     } else {
       blocked('People migration finalization phase is out of order')
@@ -321,10 +329,20 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
     // Never replay a terminal delta against a source generation that is half
     // retired (or has gained an unsealed ordinary share) after a crash.
     this.assertFrozenScope(execution)
+    const initialInvitations = this.options.initialAdmissions.recoverEscrow({
+      base: initial.base,
+      history: initial.history
+    }).invitations
     this.options.logs.apply(finalizationHistory(execution))
     this.options.afterStage?.('logs_durable')
-    this.options.channels.applyMigrationBatch(finalizationMetadata(execution))
-    this.options.afterStage?.('metadata_durable')
+    this.options.policies.apply({ initial, finalization: execution })
+    this.options.afterStage?.('policies_durable')
+    const admissions = this.options.admissions.apply({
+      initial,
+      finalization: execution,
+      initialInvitations
+    })
+    this.options.afterStage?.('admissions_durable')
 
     if (this.assertFrozenScope(execution) === 'awaiting_retirement') {
       const removed = this.options.people.retireSharesForChannelMigration(
@@ -345,7 +363,7 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
       blocked('People migration finalization receipt did not become durable')
     }
     this.options.afterStage?.('receipt_durable')
-    return this.result(execution, recovery)
+    return this.result(execution, recovery, admissions)
   }
 
   private assertFrozenScope(
@@ -371,7 +389,8 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
 
   private result(
     execution: PeopleToChannelMigrationFinalizationExecution,
-    recovery: PeopleToChannelMigrationRecoveryRecord
+    recovery: PeopleToChannelMigrationRecoveryRecord,
+    admissions: PeopleToChannelMigrationFinalizationAdmissionsResult
   ): PeopleToChannelMigrationFinalizationCoordinatorResult {
     return {
       schemaVersion: PEOPLE_TO_CHANNEL_FINALIZATION_COORDINATOR_VERSION,
@@ -380,6 +399,8 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
       finalizationDigest: execution.finalizationDigest,
       retireShareIds: [...execution.scope.retireShareIds],
       retainedWorkspaceBootstrapShareIds: [...execution.scope.retainedWorkspaceBootstrapShareIds],
+      terminalAdmissionEscrowDigest: admissions.terminalEscrowDigest,
+      terminalInvitationCount: admissions.invitations.length,
       recovery: clone(recovery)
     }
   }

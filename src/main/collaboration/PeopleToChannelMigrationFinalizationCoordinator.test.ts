@@ -68,6 +68,7 @@ function harness(
   args: {
     recoveryPhase?: 'cutover_applied' | 'finalizing' | 'committed'
     execution?: PeopleToChannelMigrationFinalizationExecution
+    initial?: PeopleToChannelMigrationExecution
     shareIds?: string[]
     crashAt?: string
   } = {}
@@ -99,7 +100,7 @@ function harness(
         return clone(currentRecovery)
       }
     },
-    initialExecution: { load: () => initialExecution() },
+    initialExecution: { load: () => clone(args.initial ?? initialExecution()) },
     finalizationExecution: {
       prepareBeforeRecoveryFence: (execution) => {
         storedExecution = clone(execution)
@@ -121,10 +122,32 @@ function harness(
         return { writtenChannelIds: [], alreadyAppliedChannelIds: [] }
       }
     },
-    channels: {
-      applyMigrationBatch: () => {
-        calls.push('metadata.apply')
-        return { applied: false, channelIds: [] }
+    policies: {
+      apply: () => {
+        calls.push('policies.apply')
+        return {} as never
+      }
+    },
+    initialAdmissions: {
+      recoverEscrow: () => {
+        calls.push('initial-admissions.recover')
+        return { invitations: [] }
+      }
+    },
+    admissions: {
+      apply: () => {
+        calls.push('admissions.apply')
+        return {
+          terminalEscrowDigest: null,
+          invitations: []
+        } as never
+      },
+      recover: () => {
+        calls.push('admissions.recover')
+        return {
+          terminalEscrowDigest: null,
+          invitations: []
+        } as never
       }
     },
     people: {
@@ -149,7 +172,7 @@ function harness(
 }
 
 describe('PeopleToChannelMigrationFinalizationCoordinator', () => {
-  it('quiesces, fences, converges terminal history/metadata, retires ordinary People, and receipts', () => {
+  it('quiesces, fences, converges terminal authority, retires ordinary People, and receipts', () => {
     const active = harness()
     const captured = finalization()
 
@@ -172,10 +195,13 @@ describe('PeopleToChannelMigrationFinalizationCoordinator', () => {
       'finalization_execution_durable',
       'recovery.begin',
       'recovery_fenced',
+      'initial-admissions.recover',
       'logs.apply',
       'logs_durable',
-      'metadata.apply',
-      'metadata_durable',
+      'policies.apply',
+      'policies_durable',
+      'admissions.apply',
+      'admissions_durable',
       'people.retire:ordinary_one,ordinary_two',
       'legacy_retired',
       'recovery.complete',
@@ -214,10 +240,13 @@ describe('PeopleToChannelMigrationFinalizationCoordinator', () => {
     expect(resumed.calls).toEqual([
       'execution.load',
       'write_gate_quiesced',
+      'initial-admissions.recover',
       'logs.apply',
       'logs_durable',
-      'metadata.apply',
-      'metadata_durable',
+      'policies.apply',
+      'policies_durable',
+      'admissions.apply',
+      'admissions_durable',
       'people.retire:ordinary_one,ordinary_two',
       'legacy_retired',
       'recovery.complete',
@@ -226,7 +255,7 @@ describe('PeopleToChannelMigrationFinalizationCoordinator', () => {
     expect(resumed.shareIds()).toEqual(['p5_bootstrap'])
   })
 
-  it('blocks an unsupported policy or pending-admission state delta before it fences or retires', () => {
+  it('activates changed policy and pending-admission state through the terminal writers', () => {
     const active = harness()
     const changed = finalization({
       delta: {
@@ -248,15 +277,37 @@ describe('PeopleToChannelMigrationFinalizationCoordinator', () => {
       } as unknown as PeopleToChannelMigrationExecution
     })
 
-    expect(() =>
+    expect(
       active.coordinator.run({
         retainedWorkspaceBootstrapShareIds: ['p5_bootstrap'],
         capture: () => changed
       })
+    ).toMatchObject({ phase: 'committed' })
+    expect(active.calls).toContain('policies.apply')
+    expect(active.calls).toContain('admissions.apply')
+    expect(active.shareIds()).toEqual(['p5_bootstrap'])
+  })
+
+  it('blocks terminal policy removal before it fences an unrecoverable execution', () => {
+    const initial = initialExecution()
+    ;(initial.base as { policies: unknown[] }).policies = [
+      {
+        channelId: 'channel_one',
+        memberId: 'member_one',
+        sourceShareId: 'ordinary_one',
+        sourceCollaboratorId: 'person_one'
+      }
+    ]
+    const active = harness({ initial })
+
+    expect(() =>
+      active.coordinator.run({
+        retainedWorkspaceBootstrapShareIds: ['p5_bootstrap'],
+        capture: () => finalization()
+      })
     ).toThrow(PeopleToChannelMigrationFinalizationCoordinatorError)
     expect(active.calls).toEqual(['write_gate_quiesced'])
     expect(active.recovery().phase).toBe('cutover_applied')
-    expect(active.shareIds()).toEqual(['ordinary_one', 'ordinary_two', 'p5_bootstrap'])
   })
 
   it('fails closed rather than treating a partial legacy retirement as recovered', () => {
