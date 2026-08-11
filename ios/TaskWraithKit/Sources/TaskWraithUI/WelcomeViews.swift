@@ -58,6 +58,8 @@ struct TaskCompleteCard: View {
     /// Tombstoned File Changes rows from the close-out (desktop epic stack).
     /// Used when `run.fileChanges` / legacy diff are empty.
     var closeoutFileChanges: [RemoteThreadSnapshot.Row.CloseoutFileChange]? = nil
+    /// Tombstoned Sub-threads rows from the close-out (desktop epic stack).
+    var closeoutSubThreads: [RemoteThreadSnapshot.Row.CloseoutSubThread]? = nil
     /// Whether the transcript above actually carries this run's failure
     /// explanation (`twRunHasFailureExplanation`). A failed run used to be able
     /// to reach the phone with an empty tail — a bridge run that finalized with
@@ -70,6 +72,7 @@ struct TaskCompleteCard: View {
         (closeoutParticipantTable?.rows?.isEmpty == false)
             || (closeoutCommits?.isEmpty == false)
             || (closeoutFileChanges?.isEmpty == false)
+            || (closeoutSubThreads?.isEmpty == false)
     }
 
     private var failed: Bool { run.status == "failed" || run.status == "error" }
@@ -547,7 +550,8 @@ struct TaskCompleteCard: View {
             if usesEpicStack {
                 RunCompleteEpicStack(
                     participantTable: closeoutParticipantTable,
-                    commits: closeoutCommits
+                    commits: closeoutCommits,
+                    subThreads: closeoutSubThreads
                 ) {
                     fileChangesSection
                 }

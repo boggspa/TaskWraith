@@ -1548,25 +1548,33 @@ struct ThreadDetailView: View {
     private func closeoutEpicTables(for summary: RemoteThreadSnapshot.RunSummary) -> (
         RemoteThreadSnapshot.Row.CloseoutParticipantTable?,
         [RemoteThreadSnapshot.Row.CloseoutCommit]?,
-        [RemoteThreadSnapshot.Row.CloseoutFileChange]?
+        [RemoteThreadSnapshot.Row.CloseoutFileChange]?,
+        [RemoteThreadSnapshot.Row.CloseoutSubThread]?
     ) {
         let rows = snapshot?.rows ?? []
         func hasEpicTables(_ row: RemoteThreadSnapshot.Row) -> Bool {
             (row.closeoutParticipantTable?.rows?.isEmpty == false)
                 || (row.closeoutCommits?.isEmpty == false)
                 || (row.closeoutFileChanges?.isEmpty == false)
+                || (row.closeoutSubThreads?.isEmpty == false)
         }
         if let roundId = summary.ensembleRoundId, !roundId.isEmpty,
             let row = rows.last(where: { $0.ensembleRoundId == roundId && hasEpicTables($0) })
         {
-            return (row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges)
+            return (
+                row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges,
+                row.closeoutSubThreads
+            )
         }
         if let runId = summary.runId, !runId.isEmpty,
             let row = rows.last(where: { $0.runId == runId && hasEpicTables($0) })
         {
-            return (row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges)
+            return (
+                row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges,
+                row.closeoutSubThreads
+            )
         }
-        return (nil, nil, nil)
+        return (nil, nil, nil, nil)
     }
 
     /// The terminal summary to show after this row, if it's a run's last row.
@@ -1840,6 +1848,7 @@ struct ThreadDetailView: View {
                             closeoutParticipantTable: epic.0,
                             closeoutCommits: epic.1,
                             closeoutFileChanges: epic.2,
+                            closeoutSubThreads: epic.3,
                             hasFailureDetail: runCardHasFailureDetail(runCard)
                         )
                         .listRowInsets(
@@ -1897,6 +1906,7 @@ struct ThreadDetailView: View {
                                 closeoutParticipantTable: epic.0,
                                 closeoutCommits: epic.1,
                                 closeoutFileChanges: epic.2,
+                                closeoutSubThreads: epic.3,
                                 hasFailureDetail: runCardHasFailureDetail(runCard)
                             )
                             .listRowInsets(
@@ -3866,9 +3876,14 @@ struct SubThreadReturnSummaryCard: View {
     var onOpenExistingChild: ((String) -> Void)?
 
     private var provider: String { summary.provider ?? "unknown" }
+    /// "Side-chat" when the Mac says so; absent (older Macs / sub-threads)
+    /// reads as a sub-thread — the desktop's own default.
+    private var relationNoun: String {
+        summary.linkedChildRelation == "sideChat" ? "Side-chat" : "Sub-thread"
+    }
     private var title: String {
         let value = summary.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return value.isEmpty ? "Untitled sub-thread" : value
+        return value.isEmpty ? "Untitled \(relationNoun.lowercased())" : value
     }
     private var accent: Color { TWTheme.providerAccent(provider) }
     private var displayBody: String {
@@ -3932,7 +3947,7 @@ struct SubThreadReturnSummaryCard: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(TWTheme.textTertiary)
                     .lineLimit(1)
-                Text("TaskWraith Sub-thread")
+                Text("TaskWraith \(relationNoun)")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(TWTheme.textSecondary)
                     .lineLimit(1)
@@ -4675,15 +4690,33 @@ struct ThreadRowView: View, Equatable {
                     && !hasFanoutResultCard && !hasRunFailureCard && !hasTrustAwareCard
                     && !hasSeatChangeCard && !hasSeatRosterCard
                 {
-                    HStack(spacing: 0) {
-                        Text(label)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(labelColor)
-                        if let modelChip = settledRowModelChip {
-                            Text(" · \(modelChip)")
-                                .font(.caption2.weight(.regular))
-                                .foregroundStyle(labelColor.opacity(0.72))
-                                .monospacedDigit()
+                    HStack(spacing: 4) {
+                        HStack(spacing: 0) {
+                            Text(label)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(labelColor)
+                            if let modelChip = settledRowModelChip {
+                                Text(" · \(modelChip)")
+                                    .font(.caption2.weight(.regular))
+                                    .foregroundStyle(labelColor.opacity(0.72))
+                                    .monospacedDigit()
+                            }
+                        }
+                        // The desktop frames a mirrored guest reply in its own
+                        // card; the phone's provider-tinted bubble needs at
+                        // least the guest framing or the reply reads as the
+                        // main seat's own words.
+                        if row.guestReply != nil {
+                            Text("Guest")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(TWTheme.textSecondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(TWTheme.surface3, in: Capsule())
+                                .overlay(
+                                    Capsule().strokeBorder(TWTheme.border, lineWidth: 0.5)
+                                )
+                                .accessibilityLabel("Guest participant reply")
                         }
                     }
                 }

@@ -798,6 +798,70 @@ describe('RemoteThreadProjection', () => {
       ])
     })
 
+    it('projects the close-out Sub-threads table (the last desktop-only epic section)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'closeout-sub',
+          role: 'system',
+          content: 'Close-out.',
+          metadata: {
+            kind: 'taskWraithCloseout',
+            closeoutSubagentDelegations: [
+              {
+                subThreadId: 'sub-1',
+                identitySeed: 'seed-1',
+                title: 'Audit the projection',
+                provider: 'claude',
+                parentProvider: 'codex',
+                status: 'returned'
+              },
+              { subThreadId: 'sub-2', provider: 'grok', status: 'someFutureStatus' },
+              { title: 'no id — dropped' }
+            ]
+          }
+        })
+      ])
+      expect(snap.rows[0].closeoutSubThreads).toEqual([
+        {
+          subThreadId: 'sub-1',
+          identitySeed: 'seed-1',
+          title: 'Audit the projection',
+          provider: 'claude',
+          parentProvider: 'codex',
+          status: 'returned'
+        },
+        // Unknown status passes through — the phone maps it to the neutral
+        // glyph rather than this build deciding what a future Mac meant.
+        { subThreadId: 'sub-2', provider: 'grok', status: 'someFutureStatus' }
+      ])
+    })
+
+    it('carries linkedChildRelation so the return card can say Side-chat', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'return-side',
+          role: 'tool',
+          content: '↩ Result from side chat\n\nDone.',
+          metadata: {
+            kind: 'subThreadReturn',
+            subThreadId: 'side-1',
+            subThreadTitle: 'Quick check',
+            linkedChildRelation: 'sideChat'
+          }
+        })
+      ])
+      expect(snap.rows[0].subThreadReturn?.linkedChildRelation).toBe('sideChat')
+      const plain = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'return-sub',
+          role: 'tool',
+          content: '↩ Result from sub-thread\n\nDone.',
+          metadata: { kind: 'subThreadReturn', subThreadId: 'sub-9' }
+        })
+      ])
+      expect(plain.rows[0].subThreadReturn?.linkedChildRelation).toBeUndefined()
+    })
+
     it('leaves a run-scoped close-out untagged by any round', () => {
       const snap = project(
         { kind: 'latestN', n: 50 },

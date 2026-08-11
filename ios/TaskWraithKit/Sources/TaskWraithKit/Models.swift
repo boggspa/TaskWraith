@@ -1670,6 +1670,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let subThreadId: String?
             public let provider: String?
             public let title: String?
+            /// "sideChat" when the returned child was a side-chat; absent
+            /// (older Macs / sub-threads) reads as a sub-thread.
+            public let linkedChildRelation: String?
         }
         public let subThreadReturn: SubThreadReturn?
         /// Structured TaskWraith Agent Invocation metadata. Lifecycle is
@@ -1884,6 +1887,30 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public var id: String { path ?? "file" }
         }
         public let closeoutFileChanges: [CloseoutFileChange]?
+
+        /// One close-out Sub-threads row — the last epic-stack section that
+        /// was desktop-only. `status` stays a plain String so a value a newer
+        /// Mac invents maps to the neutral glyph instead of failing decode.
+        public struct CloseoutSubThread: Codable, Sendable, Equatable, Identifiable {
+            public let subThreadId: String?
+            public let identitySeed: String?
+            public let title: String?
+            public let provider: String?
+            public let parentProvider: String?
+            public let status: String?
+            public var id: String { subThreadId ?? title ?? "sub-thread" }
+        }
+        public let closeoutSubThreads: [CloseoutSubThread]?
+
+        /// Mirrored guest-participant reply identity (desktop guest card
+        /// parity). The body stays in `preview`; this names who answered.
+        public struct GuestReply: Codable, Sendable, Equatable {
+            public let provider: String?
+            public let role: String?
+            public let model: String?
+            public let guestChatId: String?
+        }
+        public let guestReply: GuestReply?
 
         /// Structural context-compaction marker (phase "started" /
         /// "completed" / "failed"). Older Macs omit it — the card's

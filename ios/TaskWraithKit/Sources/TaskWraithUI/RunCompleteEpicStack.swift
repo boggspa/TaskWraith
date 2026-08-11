@@ -8,10 +8,13 @@ import TaskWraithKit
 struct RunCompleteEpicStack<FileChanges: View>: View {
     let participantTable: RemoteThreadSnapshot.Row.CloseoutParticipantTable?
     let commits: [RemoteThreadSnapshot.Row.CloseoutCommit]?
+    var subThreads: [RemoteThreadSnapshot.Row.CloseoutSubThread]? = nil
     @ViewBuilder var fileChanges: () -> FileChanges
 
     /// Matches desktop CLOSEOUT_COMMIT_TABLE_LIMIT / Mac projection cap.
     private var commitLimit: Int { 8 }
+    /// Display cap for Sub-threads rows; the wire already bounds at 24.
+    private var subThreadLimit: Int { 8 }
 
     private var participantRows: [RemoteThreadSnapshot.Row.CloseoutParticipantTable.CloseoutParticipantRow] {
         participantTable?.rows ?? []
@@ -28,11 +31,26 @@ struct RunCompleteEpicStack<FileChanges: View>: View {
     private var hasParticipants: Bool { !participantRows.isEmpty }
     private var hasCommits: Bool { !commitRows.isEmpty }
 
+    private var subThreadRows: [RemoteThreadSnapshot.Row.CloseoutSubThread] {
+        Array((subThreads ?? []).prefix(subThreadLimit))
+    }
+
+    private var subThreadOverflow: Int {
+        max(0, (subThreads?.count ?? 0) - subThreadRows.count)
+    }
+
+    private var hasSubThreads: Bool { !subThreadRows.isEmpty }
+
     var body: some View {
-        if hasParticipants || hasCommits {
+        if hasParticipants || hasCommits || hasSubThreads {
             VStack(spacing: 8) {
                 if hasParticipants {
                     participantsCard
+                }
+                // Desktop order: Participants → Sub-threads → File changes →
+                // Commits.
+                if hasSubThreads {
+                    subThreadsCard
                 }
                 fileChanges()
                 if hasCommits {
@@ -42,6 +60,76 @@ struct RunCompleteEpicStack<FileChanges: View>: View {
         } else {
             fileChanges()
         }
+    }
+
+    private var subThreadsCard: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Sub-threads")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Spacer()
+                Text("\(subThreads?.count ?? 0) sub-thread\((subThreads?.count ?? 0) == 1 ? "" : "s")")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+
+            epicHeader(left: "Agent", right: "Route & Status")
+
+            ForEach(subThreadRows) { row in
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.title?.isEmpty == false ? (row.title ?? "") : "Sub-thread")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(TWTheme.textPrimary)
+                            .lineLimit(1)
+                        if let provider = row.provider, !provider.isEmpty {
+                            Text(TWTheme.providerLabel(provider))
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.providerAccent(provider))
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    HStack(spacing: 5) {
+                        if let parent = row.parentProvider, !parent.isEmpty,
+                            let provider = row.provider, !provider.isEmpty
+                        {
+                            Text("\(TWTheme.providerLabel(parent)) → \(TWTheme.providerLabel(provider))")
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.textSecondary)
+                                .lineLimit(1)
+                        }
+                        Circle()
+                            .fill(subThreadStatusTint(row.status))
+                            .frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
+                        Text(subThreadStatusLabel(row.status))
+                            .font(.caption2)
+                            .foregroundStyle(TWTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(epicRowFill)
+            }
+
+            if subThreadOverflow > 0 {
+                Text("\(subThreadOverflow) more sub-thread\(subThreadOverflow == 1 ? "" : "s") not shown.")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(epicRowFill)
+            }
+        }
+        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
     }
 
     private var participantsCard: some View {
@@ -204,6 +292,22 @@ struct RunCompleteEpicStack<FileChanges: View>: View {
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Sub-thread lifecycle tint. A status a newer Mac invents reads neutral —
+    /// unknown is not evidence of success OR failure.
+    private func subThreadStatusTint(_ status: String?) -> Color {
+        switch status {
+        case "completed", "returned": return TWTheme.statusSuccess
+        case "failed", "cancelled": return TWTheme.statusFailed
+        case "running": return TWTheme.chroma1
+        default: return TWTheme.textMuted
+        }
+    }
+
+    private func subThreadStatusLabel(_ status: String?) -> String {
+        guard let status, !status.isEmpty else { return "Unknown" }
+        return status.prefix(1).uppercased() + status.dropFirst()
     }
 
     private func shortHash(_ hash: String?) -> String {

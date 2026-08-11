@@ -538,6 +538,10 @@ export interface RemoteSubThreadReturnSummary {
   subThreadId?: string
   provider?: ProviderId
   title?: string
+  /** 'sideChat' when the returned child was a side-chat — the card then says
+   * "Side-chat" instead of "Sub-thread". Absent (older Macs / sub-threads)
+   * reads as sub-thread, the desktop's own default. */
+  linkedChildRelation?: string
 }
 
 /** Structured TaskWraith sub-thread invocation metadata. Lifecycle is resolved
@@ -701,8 +705,23 @@ export interface RemoteCloseoutFileChange {
   }>
 }
 
+/** One close-out Sub-threads row (desktop `closeoutSubagentDelegations`).
+ * `status` is a plain string — a value a newer Mac invents degrades to the
+ * neutral glyph on the phone rather than failing the decode. */
+export interface RemoteCloseoutSubThread {
+  subThreadId: string
+  identitySeed?: string
+  title?: string
+  provider?: string
+  parentProvider?: string
+  status?: string
+}
+
 /** Cap matches desktop CLOSEOUT_COMMIT_TABLE_LIMIT. */
 const REMOTE_CLOSEOUT_COMMIT_LIMIT = 8
+
+/** Sub-threads rows per close-out; the desktop caps its display the same way. */
+const REMOTE_CLOSEOUT_SUBTHREAD_LIMIT = 24
 
 /** Cap matches desktop CLOSEOUT_FILE_CHANGES_LIMIT. */
 const REMOTE_CLOSEOUT_FILE_CHANGES_LIMIT = 40
@@ -1022,6 +1041,9 @@ export interface RemoteThreadRow {
    * Absent on older Macs and non-close-out rows; never carries diffText.
    */
   closeoutFileChanges?: RemoteCloseoutFileChange[]
+  /** TaskWraith close-out Sub-threads rows — the last epic-stack section that
+   * was desktop-only. Bounded at 24 (the desktop caps its own display). */
+  closeoutSubThreads?: RemoteCloseoutSubThread[]
   /** Present on an ask_user_question asking message — drives the inline question
    * card (the same prompt the top attention banner shows) so remote clients can
    * answer it in place, matching the desktop AgentQuestionCard. */
@@ -1858,6 +1880,8 @@ function buildSubThreadReturn(
   if (provider) summary.provider = provider
   const title = stringField(metadata.subThreadTitle, 160)
   if (title) summary.title = title
+  const linkedChildRelation = stringField(metadata.linkedChildRelation, 40)
+  if (linkedChildRelation) summary.linkedChildRelation = linkedChildRelation
   return { summary, body: subThreadReturnBody(message.content || '') }
 }
 
@@ -2316,6 +2340,33 @@ function buildCloseoutParticipantTable(
   }
 }
 
+function buildCloseoutSubThreads(
+  metadata: Record<string, unknown> | undefined
+): RemoteCloseoutSubThread[] | undefined {
+  const raw = metadata?.closeoutSubagentDelegations
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const rows: RemoteCloseoutSubThread[] = []
+  for (const entry of raw.slice(0, REMOTE_CLOSEOUT_SUBTHREAD_LIMIT)) {
+    if (!entry || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    const subThreadId = stringField(record.subThreadId, 120)
+    if (!subThreadId) continue
+    const row: RemoteCloseoutSubThread = { subThreadId }
+    const identitySeed = stringField(record.identitySeed, 120)
+    if (identitySeed) row.identitySeed = identitySeed
+    const title = stringField(record.title, 160)
+    if (title) row.title = title
+    const provider = stringField(record.provider, 40)
+    if (provider) row.provider = provider
+    const parentProvider = stringField(record.parentProvider, 40)
+    if (parentProvider) row.parentProvider = parentProvider
+    const status = stringField(record.status, 24)
+    if (status) row.status = status
+    rows.push(row)
+  }
+  return rows.length ? rows : undefined
+}
+
 function buildCloseoutCommits(
   metadata: Record<string, unknown> | undefined
 ): RemoteCloseoutCommit[] | undefined {
@@ -2756,6 +2807,8 @@ function buildRow(
     if (fileChanges) row.closeoutFileChanges = fileChanges
     const commits = buildCloseoutCommits(metadata)
     if (commits) row.closeoutCommits = commits
+    const subThreads = buildCloseoutSubThreads(metadata)
+    if (subThreads) row.closeoutSubThreads = subThreads
   }
   const rowMedia = [...buildRowMedia(metadata), ...buildToolActivityMedia(message)].slice(
     0,
