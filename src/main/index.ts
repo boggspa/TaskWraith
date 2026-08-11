@@ -475,6 +475,7 @@ import {
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
 import { RemoteBridgeRuntime, relayHttpBase } from './remote/RemoteBridgeRuntime'
+import { RemoteTerminalService } from './remote/RemoteTerminalService'
 import { PairedHostProjectionGateway } from './remote/PairedHostProjectionGateway'
 import {
   assertRemoteProviderGrant,
@@ -43217,6 +43218,7 @@ if (isGeminiMcpBridgeProcess) {
       // or duplicate its user row — the same invariant the desktop path
       // carries. Solo only: ensembles already have the absorb-capable
       // runEnsembleRound mode:'steer' path via the ensembleSteer action.
+      const remoteTerminalService = new RemoteTerminalService()
       const steerRemoteThreadLive = async (action: {
         workspaceId: string
         threadId: string
@@ -46825,6 +46827,80 @@ if (isGeminiMcpBridgeProcess) {
         composerQueuePromptFn: queueRemoteComposerPrompt,
         composerQueueItemFn: updateRemoteComposerQueueItem,
         composerSteerLiveFn: steerRemoteThreadLive,
+        // Remote workspace terminal — a REAL shell in the workspace cwd, so
+        // three independent gates: (1) the workspace's remote fileWrite
+        // capability (granted in the Mac's own allowlist UI), (2) the
+        // STANDARD shellCommands approval — the same identity the desktop
+        // Trust Assistant terminal rides, so policy and the durable approval
+        // ledger treat both terminals as one surface (and the approval card
+        // itself projects to the phone), and (3) the phone's elevation-sheet
+        // acknowledgement on the frame. The workspace resolves by ID —
+        // a phone can never supply a path.
+        terminalFn: async (action) => {
+          const workspace = AppStore.getWorkspaces().find(
+            (candidate) => candidate.id === action.workspaceId
+          )
+          if (!workspace?.path) return { ok: false, reason: 'Workspace is not registered' }
+          const capabilities = remoteTaskCapabilitiesForWorkspace(action.workspaceId)
+          if (!capabilities?.fileWrite) {
+            return {
+              ok: false,
+              reason: 'Grant this workspace remote write access to open a terminal.'
+            }
+          }
+          if (action.kind === 'terminalOpen') {
+            if (action.elevationAcknowledged !== true) {
+              return { ok: false, reason: 'Elevation was not acknowledged.' }
+            }
+            const approved = await requestAgenticServiceApproval(
+              null,
+              'gemini',
+              'shellCommands',
+              workspace.path,
+              {
+                method: 'pty/start',
+                title: 'Approve paired-device terminal',
+                body: `${workspace.path}\n${process.env.SHELL || 'bash'} (from a paired device)`,
+                preview: {
+                  kind: 'terminal',
+                  workspacePath: workspace.path,
+                  sessionId: 'paired-device'
+                }
+              }
+            )
+            if (!approved) return { ok: false, reason: 'Terminal was not approved.' }
+            const opened = remoteTerminalService.open({
+              workspaceId: action.workspaceId,
+              workspacePath: workspace.path,
+              cols: action.cols,
+              rows: action.rows
+            })
+            return opened.ok
+              ? { ok: true, data: { terminalId: opened.terminalId } }
+              : { ok: false, reason: opened.reason }
+          }
+          if (action.kind === 'terminalInput') {
+            return remoteTerminalService.input(action.terminalId, action.dataBase64)
+          }
+          if (action.kind === 'terminalResize') {
+            return remoteTerminalService.resize(action.terminalId, action.cols, action.rows)
+          }
+          if (action.kind === 'terminalRead') {
+            const read = remoteTerminalService.read(action.terminalId, action.afterSeq ?? 0)
+            return read.ok
+              ? {
+                  ok: true,
+                  data: {
+                    terminalChunks: read.chunks,
+                    terminalLatestSeq: read.latestSeq,
+                    terminalExited: read.exited
+                  }
+                }
+              : { ok: false, reason: read.reason }
+          }
+          remoteTerminalService.close(action.terminalId)
+          return { ok: true }
+        },
         // Read-only ledger projection. BOUNDED on purpose: params/preview can
         // carry command lines and file paths, so the wire gets identity,
         // outcome, and clocks — the audit trail, never the payloads.

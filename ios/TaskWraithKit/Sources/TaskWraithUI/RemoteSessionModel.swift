@@ -5052,6 +5052,62 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Local branches + linked worktrees for the branch picker.
+    // MARK: Remote workspace terminal
+
+    /// Open a workspace terminal. The Mac gates on the workspace's remote
+    /// write capability AND its standard shellCommands approval — expect this
+    /// to suspend until the approval is answered (possibly on this device).
+    public func openTerminal(
+        workspaceId: String, cols: Int, rows: Int
+    ) async throws -> String {
+        let ack = try await requestFileAction(
+            BridgeAction.terminalOpen(workspaceId: workspaceId, cols: cols, rows: rows),
+            timeoutMs: 120_000)
+        guard let terminalId = ack.data?.terminalId, !terminalId.isEmpty else {
+            throw RemoteFileActionError.denied(ack.message ?? "Terminal did not open.")
+        }
+        return terminalId
+    }
+
+    public func sendTerminalInput(
+        workspaceId: String, terminalId: String, data: Data
+    ) async throws {
+        _ = try await requestFileAction(
+            BridgeAction.terminalInput(
+                workspaceId: workspaceId, terminalId: terminalId,
+                dataBase64: data.base64EncodedString()),
+            timeoutMs: 15_000)
+    }
+
+    public func readTerminal(
+        workspaceId: String, terminalId: String, afterSeq: Int
+    ) async throws -> (chunks: [TerminalChunk], latestSeq: Int, exited: Bool) {
+        let ack = try await requestFileAction(
+            BridgeAction.terminalRead(
+                workspaceId: workspaceId, terminalId: terminalId, afterSeq: afterSeq),
+            timeoutMs: 15_000)
+        return (
+            ack.data?.terminalChunks ?? [],
+            ack.data?.terminalLatestSeq ?? afterSeq,
+            ack.data?.terminalExited ?? false
+        )
+    }
+
+    public func resizeTerminal(
+        workspaceId: String, terminalId: String, cols: Int, rows: Int
+    ) async {
+        _ = try? await requestFileAction(
+            BridgeAction.terminalResize(
+                workspaceId: workspaceId, terminalId: terminalId, cols: cols, rows: rows),
+            timeoutMs: 10_000)
+    }
+
+    public func closeTerminal(workspaceId: String, terminalId: String) async {
+        _ = try? await requestFileAction(
+            BridgeAction.terminalClose(workspaceId: workspaceId, terminalId: terminalId),
+            timeoutMs: 10_000)
+    }
+
     /// Read the Mac's durable approval ledger (bounded rows). The phone user
     /// is exactly the one who wasn't watching when something auto-denied at
     /// 02:14 — this is the audit read for that question.

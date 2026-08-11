@@ -210,6 +210,50 @@ export type BridgeComposerQueuedPromptAction =
   | BridgeComposerQueuePromptAction
   | BridgeComposerSchedulePromptAction
 
+/** Open an interactive PTY in a registered workspace's cwd — the paired
+ * device's workspace terminal. TRIPLE-gated at execution: the workspace's
+ * remote fileWrite capability, the standard shellCommands approval (Mac-
+ * authoritative, phone-answerable, ledger-recorded), and the phone's own
+ * elevation sheet whose acknowledgement must ride the frame. The phone
+ * addresses the workspace by ID only — it can never supply a path. */
+export interface BridgeTerminalOpenAction extends BridgeActionMetadata {
+  kind: 'terminalOpen'
+  workspaceId: string
+  cols?: number
+  rows?: number
+  /** Must be literal true: the elevation sheet's receipt. */
+  elevationAcknowledged: boolean
+}
+
+export interface BridgeTerminalInputAction extends BridgeActionMetadata {
+  kind: 'terminalInput'
+  workspaceId: string
+  terminalId: string
+  /** Raw keystroke bytes, base64. Bounded Mac-side (8KB). */
+  dataBase64: string
+}
+
+export interface BridgeTerminalResizeAction extends BridgeActionMetadata {
+  kind: 'terminalResize'
+  workspaceId: string
+  terminalId: string
+  cols?: number
+  rows?: number
+}
+
+export interface BridgeTerminalReadAction extends BridgeActionMetadata {
+  kind: 'terminalRead'
+  workspaceId: string
+  terminalId: string
+  afterSeq?: number
+}
+
+export interface BridgeTerminalCloseAction extends BridgeActionMetadata {
+  kind: 'terminalClose'
+  workspaceId: string
+  terminalId: string
+}
+
 /** Read the durable approval ledger — the "why did this auto-deny at 02:14"
  * surface. Read-only; the Mac projects a BOUNDED record (no params/preview
  * blobs — those can carry command lines and paths) and the phone renders it.
@@ -1094,6 +1138,11 @@ export type BridgeActionPayload =
   | BridgeComposerSchedulePromptAction
   | BridgeComposerSteerLiveAction
   | BridgeApprovalLedgerListAction
+  | BridgeTerminalOpenAction
+  | BridgeTerminalInputAction
+  | BridgeTerminalResizeAction
+  | BridgeTerminalReadAction
+  | BridgeTerminalCloseAction
   | BridgeComposerQueueItemAction
   | BridgeCreateThreadAction
   | BridgeThreadRowExpandAction
@@ -1247,6 +1296,11 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'composerSchedulePrompt':
     case 'composerSteerLive':
     case 'approvalLedgerList':
+    case 'terminalOpen':
+    case 'terminalInput':
+    case 'terminalResize':
+    case 'terminalRead':
+    case 'terminalClose':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
@@ -1340,6 +1394,11 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
     case 'composerSteerLive':
+    case 'terminalOpen':
+    case 'terminalInput':
+    case 'terminalResize':
+    case 'terminalRead':
+    case 'terminalClose':
     case 'approvalLedgerList':
     case 'composerQueueItem':
     case 'createThread':
@@ -1459,6 +1518,10 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
     case 'composerSteerLive':
+    case 'terminalOpen':
+    case 'terminalInput':
+    case 'terminalResize':
+    case 'terminalClose':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadMessage':
@@ -1528,6 +1591,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'chatMarkdownTranscript':
     case 'chatMessageTranscript':
     case 'approvalLedgerList':
+    case 'terminalRead':
       return false
     case 'unknown':
       return true
@@ -1569,6 +1633,26 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isComposerSteerLive(parsed)
         ? (parsed as unknown as BridgeComposerSteerLiveAction)
         : { kind: 'unknown', rawKind: 'composerSteerLive', raw: parsed }
+    case 'terminalOpen':
+      return isTerminalOpen(parsed)
+        ? (parsed as unknown as BridgeTerminalOpenAction)
+        : { kind: 'unknown', rawKind: 'terminalOpen', raw: parsed }
+    case 'terminalInput':
+      return isTerminalInput(parsed)
+        ? (parsed as unknown as BridgeTerminalInputAction)
+        : { kind: 'unknown', rawKind: 'terminalInput', raw: parsed }
+    case 'terminalResize':
+      return isTerminalResize(parsed)
+        ? (parsed as unknown as BridgeTerminalResizeAction)
+        : { kind: 'unknown', rawKind: 'terminalResize', raw: parsed }
+    case 'terminalRead':
+      return isTerminalRead(parsed)
+        ? (parsed as unknown as BridgeTerminalReadAction)
+        : { kind: 'unknown', rawKind: 'terminalRead', raw: parsed }
+    case 'terminalClose':
+      return isTerminalClose(parsed)
+        ? (parsed as unknown as BridgeTerminalCloseAction)
+        : { kind: 'unknown', rawKind: 'terminalClose', raw: parsed }
     case 'approvalLedgerList':
       return isApprovalLedgerList(parsed)
         ? (parsed as unknown as BridgeApprovalLedgerListAction)
@@ -1971,6 +2055,56 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
       (isScheduled && typeof v.scheduledRunAt === 'string')) &&
     (!isScheduled ||
       (typeof v.scheduledRunAt === 'string' && v.scheduledRunAt.trim().length > 0))
+  )
+}
+
+function isTerminalId(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0 && v.length <= 120
+}
+
+function isTerminalOpen(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    v.elevationAcknowledged === true &&
+    (v.cols === undefined || typeof v.cols === 'number') &&
+    (v.rows === undefined || typeof v.rows === 'number')
+  )
+}
+
+function isTerminalInput(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    isTerminalId(v.terminalId) &&
+    typeof v.dataBase64 === 'string' &&
+    v.dataBase64.length > 0 &&
+    v.dataBase64.length <= 16_000
+  )
+}
+
+function isTerminalResize(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    isTerminalId(v.terminalId) &&
+    (v.cols === undefined || typeof v.cols === 'number') &&
+    (v.rows === undefined || typeof v.rows === 'number')
+  )
+}
+
+function isTerminalRead(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    isTerminalId(v.terminalId) &&
+    (v.afterSeq === undefined || typeof v.afterSeq === 'number')
+  )
+}
+
+function isTerminalClose(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) && typeof v.workspaceId === 'string' && isTerminalId(v.terminalId)
   )
 }
 

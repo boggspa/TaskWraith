@@ -7511,6 +7511,13 @@ public struct AppSettingsSheet: View {
     @State private var searchText = ""
     /// Non-nil presents the read-only approval ledger for that workspace.
     @State private var approvalLedgerWorkspaceId: String? = nil
+    /// Per-device master switch for the workspace terminal (same key the
+    /// GitWorkspaceSurface entry reads).
+    @AppStorage("tw.terminal.enabled") private var terminalEnabledOnDevice = false
+
+    private var terminalEnabledBinding: Binding<Bool> {
+        Binding(get: { terminalEnabledOnDevice }, set: { terminalEnabledOnDevice = $0 })
+    }
     private let onOpenFirstLaunchGuide: (() -> Void)?
 
     public init(model: RemoteSessionModel, onOpenFirstLaunchGuide: (() -> Void)? = nil) {
@@ -8017,6 +8024,22 @@ public struct AppSettingsSheet: View {
 
     private var workspacesSection: some View {
         VStack(spacing: 12) {
+            SettingsCard(title: "Workspace terminal", systemImage: "terminal") {
+                Toggle(isOn: terminalEnabledBinding) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable terminal on this device")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(TWTheme.textPrimary)
+                        Text(
+                            "A real shell in a workspace's folder — beyond every agent posture. Each session also needs the Mac's own approval, and it is recorded in the approval ledger."
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .tint(TWTheme.statusAttention)
+            }
             SettingsCard(title: "Workspace access", systemImage: "folder") {
                 SettingsValueRow(title: "Visible", value: "\(model.workspaces.count)")
                 SettingsValueRow(

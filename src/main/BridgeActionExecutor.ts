@@ -5,6 +5,11 @@ import type {
   BridgeComposerQueuedPromptAction,
   BridgeApprovalLedgerListAction,
   BridgeBlackboardPollVoteAction,
+  BridgeTerminalCloseAction,
+  BridgeTerminalInputAction,
+  BridgeTerminalOpenAction,
+  BridgeTerminalReadAction,
+  BridgeTerminalResizeAction,
   BridgeComposerQueueItemAction,
   BridgeComposerSteerLiveAction,
   BridgeCreateThreadAction,
@@ -149,6 +154,13 @@ export interface BridgeActionExecutor {
   executeApprovalLedgerList(
     action: BridgeApprovalLedgerListAction
   ): Promise<BridgeActionExecutionResult>
+  executeTerminalOpen(action: BridgeTerminalOpenAction): Promise<BridgeActionExecutionResult>
+  executeTerminalInput(action: BridgeTerminalInputAction): Promise<BridgeActionExecutionResult>
+  executeTerminalResize(
+    action: BridgeTerminalResizeAction
+  ): Promise<BridgeActionExecutionResult>
+  executeTerminalRead(action: BridgeTerminalReadAction): Promise<BridgeActionExecutionResult>
+  executeTerminalClose(action: BridgeTerminalCloseAction): Promise<BridgeActionExecutionResult>
   executeCreateThread(action: BridgeCreateThreadAction): Promise<BridgeActionExecutionResult>
   executeThreadRowExpand(
     action: BridgeThreadRowExpandAction
@@ -342,6 +354,31 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeApprovalLedgerListAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('approvalLedgerList', action.workspaceId)
+  }
+  async executeTerminalOpen(
+    action: BridgeTerminalOpenAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('terminalOpen', action.workspaceId)
+  }
+  async executeTerminalInput(
+    action: BridgeTerminalInputAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('terminalInput', action.terminalId)
+  }
+  async executeTerminalResize(
+    action: BridgeTerminalResizeAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('terminalResize', action.terminalId)
+  }
+  async executeTerminalRead(
+    action: BridgeTerminalReadAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('terminalRead', action.terminalId)
+  }
+  async executeTerminalClose(
+    action: BridgeTerminalCloseAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('terminalClose', action.terminalId)
   }
   async executeCreateThread(
     action: BridgeCreateThreadAction
@@ -755,6 +792,15 @@ export interface MainProcessActionExecutorDependencies {
     delivery?: string
     reason?: string
   }>
+  /** Remote workspace terminal (triple-gated in main). */
+  terminalFn?: (
+    action:
+      | BridgeTerminalOpenAction
+      | BridgeTerminalInputAction
+      | BridgeTerminalResizeAction
+      | BridgeTerminalReadAction
+      | BridgeTerminalCloseAction
+  ) => Promise<{ ok: boolean; reason?: string; data?: Record<string, unknown> }>
   /** Bounded approval-ledger read — entries carry NO params/preview blobs. */
   approvalLedgerListFn?: (action: BridgeApprovalLedgerListAction) => Promise<{
     ok: boolean
@@ -1922,6 +1968,58 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         message: `Queued prompt update failed: ${errMessage}`
       }
     }
+  }
+
+  private async runTerminalAction(
+    action:
+      | BridgeTerminalOpenAction
+      | BridgeTerminalInputAction
+      | BridgeTerminalResizeAction
+      | BridgeTerminalReadAction
+      | BridgeTerminalCloseAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.terminalFn) return notWired(action.kind, action.workspaceId)
+    try {
+      const result = await this.deps.terminalFn(action)
+      return {
+        executed: Boolean(result.ok),
+        message: result.ok ? 'Terminal action applied.' : (result.reason ?? 'Terminal refused.'),
+        ...(result.data ? { data: result.data } : {})
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Terminal action failed: ${errMessage}` }
+    }
+  }
+
+  async executeTerminalOpen(
+    action: BridgeTerminalOpenAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.runTerminalAction(action)
+  }
+
+  async executeTerminalInput(
+    action: BridgeTerminalInputAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.runTerminalAction(action)
+  }
+
+  async executeTerminalResize(
+    action: BridgeTerminalResizeAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.runTerminalAction(action)
+  }
+
+  async executeTerminalRead(
+    action: BridgeTerminalReadAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.runTerminalAction(action)
+  }
+
+  async executeTerminalClose(
+    action: BridgeTerminalCloseAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.runTerminalAction(action)
   }
 
   async executeApprovalLedgerList(

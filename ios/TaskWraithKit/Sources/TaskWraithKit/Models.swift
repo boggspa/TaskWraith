@@ -910,6 +910,16 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let deleteMessage: Bool?
 }
 
+/// One remote-terminal output chunk (raw shell bytes, base64).
+public struct TerminalChunk: Codable, Sendable, Equatable {
+    public let seq: Int
+    public let dataBase64: String
+    public init(seq: Int, dataBase64: String) {
+        self.seq = seq
+        self.dataBase64 = dataBase64
+    }
+}
+
 /// One bounded approval-ledger row (the "why did this auto-deny at 02:14"
 /// audit surface). Every field optional + plain String so a value a newer
 /// Mac invents degrades instead of failing the decode.
@@ -969,6 +979,13 @@ public struct BridgeActionAckData: Codable, Sendable {
     /// Bounded approval-ledger rows (`approvalLedgerList` ack). Identity,
     /// outcome, clocks — never params/preview payloads.
     public let approvalLedgerEntries: [ApprovalLedgerEntry]?
+    /// Remote terminal session id (`terminalOpen` ack).
+    public let terminalId: String?
+    /// Ring-buffer output chunks (`terminalRead` ack), base64 bytes in
+    /// sequence order.
+    public let terminalChunks: [TerminalChunk]?
+    public let terminalLatestSeq: Int?
+    public let terminalExited: Bool?
     /// Mac-final watch state (`githubWatchPr` ack) — authoritative over the
     /// phone's optimistic toggle, since the Mac may refuse (no open PR).
     public let watching: Bool?
@@ -2905,6 +2922,65 @@ public enum BridgeAction {
             payload["imageAttachments"] = imageAttachments
         }
         return encode(payload)
+    }
+
+    /// Open an interactive workspace terminal. `elevationAcknowledged` is the
+    /// elevation sheet's receipt and must be literal true; the Mac ALSO
+    /// raises its standard shellCommands approval before any shell starts.
+    public static func terminalOpen(
+        workspaceId: String, cols: Int? = nil, rows: Int? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "terminalOpen", "actionId": actionId,
+            "workspaceId": workspaceId, "elevationAcknowledged": true,
+        ]
+        if let cols { payload["cols"] = cols }
+        if let rows { payload["rows"] = rows }
+        return encode(payload)
+    }
+
+    public static func terminalInput(
+        workspaceId: String, terminalId: String, dataBase64: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "terminalInput", "actionId": actionId,
+            "workspaceId": workspaceId, "terminalId": terminalId,
+            "dataBase64": dataBase64,
+        ])
+    }
+
+    public static func terminalResize(
+        workspaceId: String, terminalId: String, cols: Int, rows: Int,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "terminalResize", "actionId": actionId,
+            "workspaceId": workspaceId, "terminalId": terminalId,
+            "cols": cols, "rows": rows,
+        ])
+    }
+
+    public static func terminalRead(
+        workspaceId: String, terminalId: String, afterSeq: Int,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "terminalRead", "actionId": actionId,
+            "workspaceId": workspaceId, "terminalId": terminalId,
+            "afterSeq": afterSeq,
+        ])
+    }
+
+    public static func terminalClose(
+        workspaceId: String, terminalId: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "terminalClose", "actionId": actionId,
+            "workspaceId": workspaceId, "terminalId": terminalId,
+        ])
     }
 
     /// Read the durable approval ledger (bounded rows — identity, outcome,

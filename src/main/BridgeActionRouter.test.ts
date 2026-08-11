@@ -160,6 +160,17 @@ function makeStubExecutor(
       executed: true,
       message: 'blackboardPollVote done'
     }),
+    executeTerminalOpen: make('executeTerminalOpen', { executed: true, message: 'open done' }),
+    executeTerminalInput: make('executeTerminalInput', { executed: true, message: 'in done' }),
+    executeTerminalResize: make('executeTerminalResize', {
+      executed: true,
+      message: 'resize done'
+    }),
+    executeTerminalRead: make('executeTerminalRead', { executed: true, message: 'read done' }),
+    executeTerminalClose: make('executeTerminalClose', {
+      executed: true,
+      message: 'close done'
+    }),
     executeCreateThread: make('executeCreateThread', {
       executed: true,
       message: 'createThread done'

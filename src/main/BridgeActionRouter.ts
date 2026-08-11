@@ -818,6 +818,16 @@ export class BridgeActionRouter {
         return this.executor.executeBlackboardPost(payload)
       case 'blackboardPollVote':
         return this.executor.executeBlackboardPollVote(payload)
+      case 'terminalOpen':
+        return this.executor.executeTerminalOpen(payload)
+      case 'terminalInput':
+        return this.executor.executeTerminalInput(payload)
+      case 'terminalResize':
+        return this.executor.executeTerminalResize(payload)
+      case 'terminalRead':
+        return this.executor.executeTerminalRead(payload)
+      case 'terminalClose':
+        return this.executor.executeTerminalClose(payload)
       case 'toggleMessagePin':
         return this.executor.executeToggleMessagePin(payload)
       case 'toggleMessageFeedback':
@@ -1429,6 +1439,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'threadRowExpand':
     case 'threadMediaFetch':
     case 'approvalLedgerList':
+    case 'terminalRead':
     case 'chatMarkdownTranscript':
     case 'chatMessageTranscript':
       return 'monitor'
@@ -1494,6 +1505,10 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'goalUpdate':
     case 'blackboardPost':
     case 'blackboardPollVote':
+    case 'terminalOpen':
+    case 'terminalInput':
+    case 'terminalResize':
+    case 'terminalClose':
     case 'toggleMessagePin':
     case 'toggleMessageFeedback':
     case 'promoteCollaboratorComment':

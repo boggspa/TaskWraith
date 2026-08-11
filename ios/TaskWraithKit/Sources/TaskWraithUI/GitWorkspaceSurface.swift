@@ -24,6 +24,10 @@ public struct GitWorkspaceSurface: View {
     /// hides the watch section rather than guessing a chat.
     let chatId: String?
     let onDismiss: () -> Void
+    /// Per-device master switch for the workspace terminal: OFF hides the
+    /// entry entirely. The Mac holds its own two gates regardless.
+    @AppStorage("tw.terminal.enabled") private var terminalEnabled = false
+    @State private var terminalPresented = false
 
     public init(
         model: RemoteSessionModel,
@@ -59,6 +63,34 @@ public struct GitWorkspaceSurface: View {
                     if let chatId, model.workspaceCanReviewDiffs(workspaceId) {
                         Divider().overlay(TWTheme.border)
                         GitPrWatchSection(model: model, workspaceId: workspaceId, chatId: chatId)
+                    }
+                    if terminalEnabled {
+                        Divider().overlay(TWTheme.border)
+                        Button {
+                            terminalPresented = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "terminal")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Terminal")
+                                    .font(.caption.weight(.semibold))
+                                Spacer(minLength: 4)
+                                Text("Elevated")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(TWTheme.statusAttention)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(TWTheme.textMuted)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(TWTheme.textPrimary)
+                        .sheet(isPresented: $terminalPresented) {
+                            TerminalSheet(
+                                model: model, workspaceId: workspaceId,
+                                workspaceName: repoName)
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
