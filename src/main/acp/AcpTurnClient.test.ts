@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { runAcpTurn, type AcpChildProcess, type AcpTurnOptions } from './AcpTurnClient'
 import type { AcpPermissionRequest, AcpRunEvent } from './AcpProtocol'
 
@@ -1165,7 +1165,9 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     driveToInFlightPrompt(child)
     expect(promptsSent(child)).toHaveLength(1)
 
-    expect(handle.steer('please also update the tests')).toBe(true)
+    const onDelivered = vi.fn()
+    expect(handle.steer('please also update the tests', { onDelivered })).toBe(true)
+    expect(onDelivered).not.toHaveBeenCalled()
     // session/cancel rides as a notification against the live session.
     expect(child.sent().at(-1)).toEqual({
       jsonrpc: '2.0',
@@ -1184,6 +1186,7 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
         prompt: [{ type: 'text', text: 'please also update the tests' }]
       }
     })
+    expect(onDelivered).toHaveBeenCalledTimes(1)
     // The turn is still alive: no completion, no kill, no close.
     expect(closes).toEqual([])
     expect(child.killed).toBe(false)

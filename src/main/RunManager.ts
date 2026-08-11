@@ -16,8 +16,17 @@ export interface AbortableController {
 }
 
 export interface LiveSteerTransport {
-  sendSteer(text: string): boolean
+  sendSteer(text: string, hooks?: LiveSteerDeliveryHooks): boolean
   cancel(): void
+  /** Optional consume seam for broker transports. Draining is delivery evidence. */
+  drain?(): string | null
+}
+
+export interface LiveSteerDeliveryHooks {
+  /** Registry identity of the exact durable transcript entry being delivered. */
+  entryId: string
+  /** The provider transport accepted the steering text into its live context. */
+  onDelivered: () => void
 }
 
 export interface RunSession<TState = unknown> {

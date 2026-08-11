@@ -10,7 +10,7 @@
  * matrix and the fallback-to-boundary contract.
  */
 
-import type { LiveSteerTransport, RunManager } from '../RunManager'
+import type { LiveSteerDeliveryHooks, LiveSteerTransport, RunManager } from '../RunManager'
 import type {
   MidRunSteeringAuthorKind,
   MidRunSteeringEntry,
@@ -22,27 +22,21 @@ import {
 } from '../run/MidRunSteering'
 import { createBrokerSteerTransport } from './BrokerSteerTransport'
 import type { ProviderId } from '../store/types'
+import type {
+  LiveSteeringDeliveryStatus,
+  LiveSteeringInjectionResult
+} from '../../shared/liveSteering'
 
-export type SteeringDeliveryStatus =
-  | 'injected'
-  | 'interrupting'
-  | 'boundary'
-  | 'broker-pending'
-  | 'failed'
+export type SteeringDeliveryStatus = LiveSteeringDeliveryStatus
 
-export interface SteeringAttemptResult {
-  status: SteeringDeliveryStatus
-  strategy: string
-  entryId: string
-  reason?: string
-}
+export interface SteeringAttemptResult extends LiveSteeringInjectionResult {}
 
 export interface SteeringOrchestratorDeps {
   runManager: RunManager
   registry: MidRunSteeringRegistry
-  /** Opt-in gate. Off means every provider falls back to boundary delivery. */
+  /** Production gate. Off means every provider falls back to boundary delivery. */
   midTurnSteeringEnabled: boolean
-  /** Pi has its own env gate; keep it until the other strategies are proven. */
+  /** Pi retains its own emergency kill switch. */
   piLiveSteerEnabled: boolean
 }
 
@@ -54,6 +48,8 @@ export interface RouteSteerDeliveryInput {
   provider: ProviderId
   /** If true, the assistant is currently inside a tool call (for strategy C). */
   midTool?: boolean
+  /** Called only when the transport has concrete provider delivery evidence. */
+  deliveryHooks?: LiveSteerDeliveryHooks
 }
 
 /**
@@ -122,7 +118,7 @@ export function routeSteerDelivery(
           reason: 'No live transport registered for pi session.'
         }
       }
-      const sent = transport.sendSteer(entry.text)
+      const sent = sendThroughTransport(transport, entry.text, input.deliveryHooks)
       if (!sent) {
         return {
           status: 'boundary',
@@ -144,12 +140,11 @@ export function routeSteerDelivery(
       // steering text is delivered into the SAME session — session/cancel
       // closes the in-flight prompt and the provider is re-prompted with the
       // steering text as the user's next message. Without a transport (turn
-      // still in startup) arm the interrupt flag so the launch seam can pick
-      // it up, and report 'interrupting' either way: delivery evidence is the
-      // provider streaming again, which the caller observes on the transcript.
+      // still in startup), there is no consumer for a deferred interrupt. Be
+      // honest and keep the durable message on the boundary queue.
       const transport = session.liveSteerTransport
       if (transport) {
-        const sent = transport.sendSteer(entry.text)
+        const sent = sendThroughTransport(transport, entry.text, input.deliveryHooks)
         if (!sent) {
           return {
             status: 'boundary',
@@ -164,27 +159,27 @@ export function routeSteerDelivery(
           entryId: entry.id
         }
       }
-      runManager.requestInterrupt(runId)
       return {
-        status: 'interrupting',
+        status: 'boundary',
         strategy: 'acp-interrupt',
-        entryId: entry.id
+        entryId: entry.id,
+        reason: 'ACP session has no live steer transport yet.'
       }
     }
 
     case 'cooperative-cancel-resume': {
-      // Never interrupt a tool's filesystem mutation. If we are mid-tool,
-      // arm a kill that fires on the next tool_result boundary; otherwise it
-      // is safe to request an immediate cooperative interrupt.
-      if (midTool) {
-        runManager.armKillAfterToolResult(runId)
-      } else {
-        runManager.requestInterrupt(runId)
-      }
+      // No production provider adapter consumes the historical interrupt
+      // flags. Claiming "interrupting" here stranded the durable queue row in
+      // steer_promoting. Until a provider registers an evidence-producing
+      // transport, preserve the current run and release the message at its
+      // natural boundary.
       return {
-        status: 'interrupting',
+        status: 'boundary',
         strategy: 'cooperative-cancel-resume',
-        entryId: entry.id
+        entryId: entry.id,
+        reason: midTool
+          ? 'Provider is inside a tool call and has no safe live steer transport.'
+          : 'Provider has no evidence-producing live steer transport.'
       }
     }
 
@@ -203,7 +198,19 @@ export function routeSteerDelivery(
         session.liveSteerTransport = transport as LiveSteerTransport
       }
       // Sending through the broker transport arms the injection.
-      session.liveSteerTransport.sendSteer(entry.text)
+      const sent = sendThroughTransport(
+        session.liveSteerTransport,
+        entry.text,
+        input.deliveryHooks
+      )
+      if (!sent) {
+        return {
+          status: 'boundary',
+          strategy: 'broker-injection',
+          entryId: entry.id,
+          reason: 'Broker transport refused the steering text.'
+        }
+      }
       return {
         status: 'broker-pending',
         strategy: 'broker-injection',
@@ -225,15 +232,16 @@ export function cancelPendingSteer(
   deps: SteeringOrchestratorDeps,
   runId: string
 ): { cancelled: boolean; hadPending: boolean } {
+  const session = deps.runManager.get(runId)
   const state = deps.runManager.getInterruptState(runId)
-  if (!state.interruptRequestedAt && !state.killAfterToolResult) {
+  const hasTransportPending = Boolean(session?.pendingSteerText)
+  if (!state.interruptRequestedAt && !state.killAfterToolResult && !hasTransportPending) {
     return { cancelled: false, hadPending: false }
   }
-  const session = deps.runManager.get(runId)
   if (session?.liveSteerTransport?.cancel) {
     session.liveSteerTransport.cancel()
   }
-  deps.runManager.unregisterLiveSteerTransport(runId)
+  if (session) session.pendingSteerText = undefined
   // Note: we deliberately do NOT cancel the running turn here. Cancelling a
   // steer request means "stop trying to inject mid-turn"; the ordinary turn
   // continues and the appended transcript row will be delivered at the next
@@ -243,6 +251,14 @@ export function cancelPendingSteer(
 
 function isActiveStatus(status: string): boolean {
   return status === 'starting' || status === 'running'
+}
+
+function sendThroughTransport(
+  transport: LiveSteerTransport,
+  text: string,
+  hooks: LiveSteerDeliveryHooks | undefined
+): boolean {
+  return hooks ? transport.sendSteer(text, hooks) : transport.sendSteer(text)
 }
 
 /** Convenience lookup exported for tests and telemetry. */

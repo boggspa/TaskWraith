@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createBrokerSteerTransport,
   formatSteeringInjection,
@@ -48,17 +48,24 @@ describe('BrokerSteerTransport', () => {
   })
 
   it('drain returns and clears pending text', () => {
-    const { transport, readPending } = makeTransport('hello')
+    const { transport, readPending } = makeTransport()
+    const onDelivered = vi.fn()
+    transport.sendSteer('hello', { entryId: 'entry-1', onDelivered })
     expect(transport.drain()).toBe('hello')
     expect(readPending()).toBeNull()
+    expect(onDelivered).toHaveBeenCalledTimes(1)
     expect(transport.drain()).toBeNull()
+    expect(onDelivered).toHaveBeenCalledTimes(1)
   })
 
   it('cancel clears pending text', () => {
-    const { transport, readPending } = makeTransport('hello')
+    const { transport, readPending } = makeTransport()
+    const onDelivered = vi.fn()
+    transport.sendSteer('hello', { entryId: 'entry-1', onDelivered })
     transport.cancel()
     expect(readPending()).toBeNull()
     expect(transport.peek()).toBeNull()
+    expect(onDelivered).not.toHaveBeenCalled()
   })
 
   it('cancel is a no-op when nothing is pending', () => {

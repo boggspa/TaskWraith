@@ -124,7 +124,7 @@ describe('routeSteerDelivery', () => {
     expect(result.status).toBe('boundary')
   })
 
-  it('acp-interrupt: without a transport it arms the interrupt flag', () => {
+  it('acp-interrupt: without a transport falls back instead of arming an unconsumed flag', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'grok')
     const result = routeSteerDelivery(deps, {
@@ -133,11 +133,11 @@ describe('routeSteerDelivery', () => {
       entry,
       provider: 'grok'
     })
-    expect(result.status).toBe('interrupting')
-    expect(runManager.getInterruptState('run-1').interruptRequestedAt).toBeTypeOf('number')
+    expect(result.status).toBe('boundary')
+    expect(runManager.getInterruptState('run-1').interruptRequestedAt).toBeUndefined()
   })
 
-  it('cooperative-cancel-resume: mid-tool arms kill-after-tool-result, never an immediate kill', () => {
+  it('cooperative-cancel-resume: mid-tool stays on the durable boundary path', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'claude')
     const result = routeSteerDelivery(deps, {
@@ -147,12 +147,12 @@ describe('routeSteerDelivery', () => {
       provider: 'claude',
       midTool: true
     })
-    expect(result.status).toBe('interrupting')
-    expect(runManager.getInterruptState('run-1').killAfterToolResult).toBe(true)
+    expect(result.status).toBe('boundary')
+    expect(runManager.getInterruptState('run-1').killAfterToolResult).toBeUndefined()
     expect(runManager.get('run-1')?.status).toBe('running')
   })
 
-  it('cooperative-cancel-resume: outside a tool it requests the interrupt directly', () => {
+  it('cooperative-cancel-resume: outside a tool does not claim a nonexistent interrupt consumer', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'codex')
     const result = routeSteerDelivery(deps, {
@@ -162,8 +162,8 @@ describe('routeSteerDelivery', () => {
       provider: 'codex',
       midTool: false
     })
-    expect(result.status).toBe('interrupting')
-    expect(runManager.getInterruptState('run-1').interruptRequestedAt).toBeTypeOf('number')
+    expect(result.status).toBe('boundary')
+    expect(runManager.getInterruptState('run-1').interruptRequestedAt).toBeUndefined()
     expect(runManager.getInterruptState('run-1').killAfterToolResult).toBeUndefined()
   })
 
@@ -219,23 +219,22 @@ describe('cancelPendingSteer', () => {
   it('cancels the live transport and unregisters it without touching the run', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'kimi')
-    // Register a transport so cancelPendingSteer can exercise its cancel+unregister
-    // path. Use cooperative-cancel-resume which always arms interruptRequestedAt
-    // regardless of transport presence, so cancelPendingSteer sees pending state.
-    const transport = steerTransport()
-    runManager.registerLiveSteerTransport('run-1', transport)
+    // Broker injection exposes concrete pending state on the session.
     routeSteerDelivery(deps, {
       chatId: 'chat-1',
       runId: 'run-1',
       entry,
-      provider: 'claude' // cooperative-cancel-resume — arms interruptRequestedAt
+      provider: 'cursor'
     })
-    expect(runManager.getInterruptState('run-1').interruptRequestedAt).toBeTypeOf('number')
+    expect(runManager.get('run-1')?.pendingSteerText).toBe('steer this')
+    const transport = runManager.get('run-1')?.liveSteerTransport
+    expect(transport).toBeDefined()
+    const cancel = vi.spyOn(transport!, 'cancel')
 
     const result = cancelPendingSteer(deps, 'run-1')
     expect(result).toEqual({ cancelled: true, hadPending: true })
-    expect(transport.cancel).toHaveBeenCalled()
-    expect(runManager.get('run-1')?.liveSteerTransport).toBeUndefined()
+    expect(cancel).toHaveBeenCalled()
+    expect(runManager.get('run-1')?.liveSteerTransport).toBeDefined()
     // The run itself is untouched: it keeps running to its natural boundary.
     expect(runManager.get('run-1')?.status).toBe('running')
   })

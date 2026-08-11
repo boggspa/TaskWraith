@@ -102,11 +102,12 @@ describe('PiLiveSteerTracker', () => {
 })
 
 describe('piLiveSteerEnabled', () => {
-  it('is OFF by default', () => {
-    expect(piLiveSteerEnabled({})).toBe(false)
-    expect(piLiveSteerEnabled({ TASKWRAITH_PI_LIVE_STEER: '' })).toBe(false)
-    expect(piLiveSteerEnabled({ TASKWRAITH_PI_LIVE_STEER: '0' })).toBe(false)
-    expect(piLiveSteerEnabled({ TASKWRAITH_PI_LIVE_STEER: 'off' })).toBe(false)
+  it('is ON by default with explicit false kill-switch values', () => {
+    expect(piLiveSteerEnabled({})).toBe(true)
+    expect(piLiveSteerEnabled({ TASKWRAITH_PI_LIVE_STEER: '' })).toBe(true)
+    for (const value of ['0', 'false', 'FALSE', ' no ', 'off']) {
+      expect(piLiveSteerEnabled({ TASKWRAITH_PI_LIVE_STEER: value })).toBe(false)
+    }
   })
 
   it('enables on recognized true values', () => {

@@ -149,12 +149,12 @@ export class PiLiveSteerTracker {
 }
 
 /**
- * Opt-in gate. Live steering changes what a RUNNING turn is asked to do, so it
- * stays off until it has been exercised end-to-end in the real app; the
- * turn-boundary path remains the default and is never worse than before.
- * Recognized true values enable it; anything else (including unset) does not.
+ * Production gate. Live steering is enabled by default after end-to-end
+ * delivery-evidence coverage; an explicit false value remains an emergency
+ * kill switch. Every refused or unconfirmed attempt still falls back to the
+ * durable turn-boundary path.
  */
 export function piLiveSteerEnabled(env: Record<string, string | undefined> = process.env): boolean {
   const value = env.TASKWRAITH_PI_LIVE_STEER?.trim().toLowerCase()
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on'
+  return value !== '0' && value !== 'false' && value !== 'no' && value !== 'off'
 }

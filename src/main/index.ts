@@ -371,6 +371,10 @@ import {
   type ContextCompactionTelemetry
 } from '../shared/contextCompaction'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
+import {
+  SOLO_STEER_TRANSCRIPT_PREPARATION,
+  midRunQueuedMessageId
+} from '../shared/midRunSteeringQueue'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import { buildEstimatedStreamUsage, visiblePayloadChars } from '../shared/tokenEstimate'
 import {
@@ -666,7 +670,8 @@ import {
   scheduledSteeringMessageId,
   shouldAppendScheduledSteeringOnBusy
 } from './run/MidRunSteering'
-import { cancelPendingSteer, routeSteerDelivery } from './steering/SteeringOrchestrator'
+import { LiveSteeringCoordinator } from './steering/LiveSteeringCoordinator'
+import { midTurnSteerEnabled } from './steering/SteeringFeatureGate'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
 import {
@@ -1470,7 +1475,8 @@ import {
   RunManager,
   canStartRunTransport,
   isActiveRunSessionStatus,
-  isTerminalRunSessionStatus
+  isTerminalRunSessionStatus,
+  type LiveSteerDeliveryHooks
 } from './RunManager'
 import { decideClaudeSdkFailure } from './ClaudeSdkFallbackDecision'
 import {
@@ -3122,7 +3128,10 @@ const mcpBridgeRuntime = createMcpBridgeRuntime({
   resolveBrokerParentProviderFromRunId: (appRunId) => runManager.get(appRunId)?.provider,
   drainPendingSteerText: (appRunId: string) => {
     const session = runManager.get(appRunId)
-    if (!session || !session.pendingSteerText) return null
+    if (!session) return null
+    const transportText = session.liveSteerTransport?.drain?.()
+    if (transportText) return transportText
+    if (!session.pendingSteerText) return null
     const text = session.pendingSteerText
     session.pendingSteerText = null
     return text
@@ -8440,6 +8449,7 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 }
 
 runManager.onChange((event) => {
+  liveSteeringCoordinator.handleRunSessionChange(event)
   if (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status)) {
     // Work-lock cleanup is the first terminal side effect. It must run even
     // when later persistence-authority checks return early.
@@ -15625,6 +15635,30 @@ async function dispatchDueScheduledLoopHeadless(
 // consumer degrades gracefully when the registry is empty (restart).
 const midRunSteeringRegistry = new MidRunSteeringRegistry()
 
+const liveSteeringCoordinator = new LiveSteeringCoordinator({
+  runManager,
+  registry: midRunSteeringRegistry,
+  steering: {
+    midTurnSteeringEnabled: midTurnSteerEnabled(),
+    piLiveSteerEnabled: piLiveSteerEnabled()
+  },
+  completeQueuedRun: (runId, reason) =>
+    Boolean(
+      runQueueServiceRef?.transitionJob(runId, 'completed', {
+        statusReason: reason
+      })
+    ),
+  fallbackQueuedRun: ({ runId, ownerToken, reason }) =>
+    Boolean(
+      runQueueServiceRef?.fallbackPromotedSteerJob({
+        runId,
+        ownerToken,
+        reason,
+        fallbackStatus: 'queued'
+      })
+    )
+})
+
 /** Append a steering user message to the chat and make it visible on every
  * surface immediately (renderer via chat-updated, paired devices via the
  * bridge thread snapshot — the same pair `seedScheduledSoloTranscript`
@@ -18375,7 +18409,12 @@ function maybeLogCursorRawEvent(event: unknown): void {
 const piRunSteerWriters = new Map<string, (line: string) => boolean>()
 const piRunSteerBindings = new Map<
   string,
-  { chatId: string; participantId?: string; tracker: PiLiveSteerTracker }
+  {
+    chatId: string
+    participantId?: string
+    tracker: PiLiveSteerTracker
+    deliveryHooksByEntryId: Map<string, LiveSteerDeliveryHooks>
+  }
 >()
 
 /**
@@ -18393,6 +18432,11 @@ function observePiLiveSteerQueueUpdate(appRunId: string | undefined, event: unkn
   if (!snapshot) return
   const delivered = binding.tracker.observeQueueUpdate(snapshot)
   if (delivered.length === 0) return
+  for (const entryId of delivered) {
+    const hooks = binding.deliveryHooksByEntryId.get(entryId)
+    binding.deliveryHooksByEntryId.delete(entryId)
+    hooks?.onDelivered()
+  }
   if (binding.participantId) {
     // Ensemble: this seat has now genuinely seen the interjection, so the
     // same-round boundary fallback need not dispatch another seat for it.
@@ -18424,6 +18468,7 @@ function releasePiLiveSteerBinding(appRunId: string | undefined): void {
   const binding = piRunSteerBindings.get(appRunId)
   if (!binding) return
   piRunSteerBindings.delete(appRunId)
+  binding.deliveryHooksByEntryId.clear()
   const stranded = binding.tracker.takeUndelivered()
   if (stranded.length > 0) {
     console.warn(
@@ -18471,7 +18516,8 @@ function attemptPiLiveSteerDelivery(chatId: string, entry: MidRunSteeringEntry):
         ...(state?.ensembleRun?.participantId
           ? { participantId: state.ensembleRun.participantId }
           : {}),
-        tracker: new PiLiveSteerTracker()
+        tracker: new PiLiveSteerTracker(),
+        deliveryHooksByEntryId: new Map()
       }
       binding.tracker.registerPending(entryId, text)
       piRunSteerBindings.set(appRunId, binding)
@@ -19808,6 +19854,28 @@ async function runCliProviderProcess(
             return true
           } catch {
             return false
+          }
+        })
+        runManager.registerLiveSteerTransport(appRunId, {
+          sendSteer: (text, hooks) => {
+            if (!hooks || !piLiveSteerEnabled()) return false
+            const writer = piRunSteerWriters.get(appRunId)
+            if (!writer?.(piSteerCommand(text))) return false
+            const binding = piRunSteerBindings.get(appRunId) || {
+              chatId: route.appChatId || '',
+              tracker: new PiLiveSteerTracker(),
+              deliveryHooksByEntryId: new Map<string, LiveSteerDeliveryHooks>()
+            }
+            binding.tracker.registerPending(hooks.entryId, text)
+            binding.deliveryHooksByEntryId.set(hooks.entryId, hooks)
+            piRunSteerBindings.set(appRunId, binding)
+            return true
+          },
+          cancel: () => {
+            const binding = piRunSteerBindings.get(appRunId)
+            if (!binding) return
+            binding.tracker.takeUndelivered()
+            binding.deliveryHooksByEntryId.clear()
           }
         })
       }
@@ -22785,7 +22853,7 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
   // First-class mid-turn steering (Strategy A): the ACP handle can interrupt
   // its in-flight prompt and re-prompt the same session with the steer text.
   runManager.registerLiveSteerTransport(route.appRunId!, {
-    sendSteer: (text) => grokAcpHandle.steer(text),
+    sendSteer: (text, hooks) => grokAcpHandle.steer(text, hooks),
     cancel: () => grokAcpHandle.cancelSteer()
   })
   // Keep the adapter invocation itself live from dispatch registration through
@@ -23718,7 +23786,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // First-class mid-turn steering (Strategy A): the ACP handle can interrupt
   // its in-flight prompt and re-prompt the same session with the steer text.
   runManager.registerLiveSteerTransport(route.appRunId!, {
-    sendSteer: (text) => mistralAcpHandle.steer(text),
+    sendSteer: (text, hooks) => mistralAcpHandle.steer(text, hooks),
     cancel: () => mistralAcpHandle.cancelSteer()
   })
   // Keep the adapter invocation itself live from dispatch registration through
@@ -24495,7 +24563,7 @@ async function runKimiAcpProvider(
       // First-class mid-turn steering (Strategy A): the ACP handle can
       // interrupt its in-flight prompt and re-prompt the same session.
       runManager.registerLiveSteerTransport(route.appRunId!, {
-        sendSteer: (text) => handle.steer(text),
+        sendSteer: (text, hooks) => handle.steer(text, hooks),
         cancel: () => handle.cancelSteer()
       })
       // This adapter invocation and the registered transport operation remain
@@ -52419,6 +52487,14 @@ if (isGeminiMcpBridgeProcess) {
     const graphIdentityForRendererMutation = (value: unknown): boolean =>
       typeof value === 'string' && executionGraphOwnsOrAnchorsRunId(value.trim())
     const authorizeRendererRunQueueMutation = (mutation: RendererRunQueueMutation): void => {
+      if (
+        mutation.operation === 'fallback-promoted-steer' &&
+        liveSteeringCoordinator.hasPendingQueuedRun(mutation.input.runId)
+      ) {
+        throw new Error(
+          'Main owns this live steering attempt until provider delivery or boundary fallback.'
+        )
+      }
       if (mutation.operation === 'request') {
         if (isRecord(mutation.job)) {
           if (Object.prototype.hasOwnProperty.call(mutation.job, 'executionGraph')) {
@@ -55594,41 +55670,44 @@ if (isGeminiMcpBridgeProcess) {
 
 
     // ── First-class mid-turn steering (SteeringOrchestrator) ────────────────
-    // steering:inject appends the user's row immediately (durable, canonical
-    // source of truth) and then attempts an in-turn delivery through the
+    // steering:inject takes ownership of the renderer's already-persisted,
+    // main-minted solo-steer barrier and attempts an in-turn delivery through the
     // provider's registered live transport: ACP session/cancel + re-prompt for
     // kimi/mistral/grok, broker injection for cursor, pi stdin frame for pi.
-    // Every failure returns `boundary`, telling the caller to fall back to the
-    // ordinary append-now / deliver-at-boundary queue path — the appended row
-    // is the record either way, so a failed live attempt never loses the steer.
-    //
-    // Opt-in gate, same posture as pi's live-steer flag: with the env flag
-    // unset the orchestrator always plans `boundary`, keeping today's behavior
-    // until each strategy has been exercised end-to-end in the real app.
-    const midTurnSteerEnabled = (env: Record<string, string | undefined> = process.env): boolean => {
-      const value = env.TASKWRAITH_MID_TURN_STEER?.trim().toLowerCase()
-      return value === '1' || value === 'true' || value === 'yes' || value === 'on'
-    }
+    // Every refusal, timeout, cancellation, or active-run terminal event
+    // releases that exact job to queued. Only provider delivery evidence marks
+    // it completed, so no live attempt can strand or duplicate the user row.
 
     ipcMain.handle(
       'steering:inject',
       async (
         event,
-        payload: { chatId?: string; runId?: string; text?: string }
+        payload: {
+          chatId?: string
+          activeRunId?: string
+          queuedRunId?: string
+          ownerToken?: string
+        }
       ): Promise<import('./steering/SteeringOrchestrator').SteeringAttemptResult> => {
         const chatId = requireNonEmptyString(payload?.chatId, 'Steering chat id')
-        const runId = requireNonEmptyString(payload?.runId, 'Steering run id')
+        const activeRunId = requireNonEmptyString(payload?.activeRunId, 'Steering active run id')
+        const queuedRunId = requireNonEmptyString(payload?.queuedRunId, 'Steering queued run id')
+        const ownerToken = requireNonEmptyString(payload?.ownerToken, 'Steering owner token')
         assertRendererChatScope(event, chatId)
-        const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
-        if (!text) throw new Error('Steering text is required.')
         const chat = AppStore.getChat(chatId)
         if (!chat) throw new Error('Steering target chat not found.')
-        const session = runManager.get(runId)
+        const session = runManager.get(activeRunId)
         if (
           !session ||
           session.appChatId !== chatId ||
           !isActiveRunSessionStatus(session.status)
         ) {
+          runQueueServiceRef?.fallbackPromotedSteerJob({
+            runId: queuedRunId,
+            ownerToken,
+            reason: 'No matching active run; queued for natural-boundary delivery.',
+            fallbackStatus: 'queued'
+          })
           return {
             status: 'boundary',
             strategy: 'boundary',
@@ -55636,34 +55715,65 @@ if (isGeminiMcpBridgeProcess) {
             reason: 'No matching active run; use the queued boundary path.'
           }
         }
-        const nowIso = new Date().toISOString()
-        const messageId = `midrun-steer-${randomUUID()}`
-        appendMidRunSteeringMessage(
-          chat,
-          buildMidRunSteeringMessage({
-            id: messageId,
-            content: text,
-            timestampIso: nowIso,
-            author: HOST_MIDRUN_STEERING_AUTHOR
-          })
+        const queuedJob = AppStore.getRunQueueJob(queuedRunId)
+        const expectedMessageId = midRunQueuedMessageId(queuedRunId)
+        const prepared = Boolean(
+          queuedJob &&
+            queuedJob.chatId === chatId &&
+            queuedJob.provider === session.provider &&
+            queuedJob.status === 'steer_promoting' &&
+            queuedJob.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION &&
+            queuedJob.queueMessageId === expectedMessageId &&
+            queuedJob.promotionOwnerToken === ownerToken &&
+            queuedJob.promotionToken === ownerToken
         )
+        if (!prepared) {
+          throw new Error('Steering request does not own a valid solo-steer transcript barrier.')
+        }
+        const message = (chat.messages || []).find(
+          (candidate) => candidate.id === expectedMessageId && candidate.role === 'user'
+        )
+        const text = message?.content?.trim() || ''
+        if (!text) throw new Error('Steering transcript row is missing or empty.')
+        const request = queuedJob?.request
+        const hasShapeChangingContent = Boolean(
+          request?.imageAttachments?.length ||
+            request?.discordContextSelection ||
+            request?.projectReferenceContextSelection?.referenceIds?.length ||
+            request?.dmTargetParticipantId ||
+            request?.exactPickerParticipantId
+        )
+        const nowIso = new Date().toISOString()
         const entry = midRunSteeringRegistry.register({
           chatId,
-          messageId,
+          messageId: expectedMessageId,
           text,
           source: 'liveSteer',
           authorKind: 'host',
           createdAtIso: nowIso
         })
-        return routeSteerDelivery(
-          {
-            runManager,
-            registry: midRunSteeringRegistry,
-            midTurnSteeringEnabled: midTurnSteerEnabled(),
-            piLiveSteerEnabled: piLiveSteerEnabled()
-          },
-          { chatId, runId, entry, provider: session.provider }
-        )
+        if (hasShapeChangingContent) {
+          runQueueServiceRef?.fallbackPromotedSteerJob({
+            runId: queuedRunId,
+            ownerToken,
+            reason: 'Attachments or directed context require natural-boundary delivery.',
+            fallbackStatus: 'queued'
+          })
+          return {
+            status: 'boundary',
+            strategy: 'boundary',
+            entryId: entry.id,
+            reason: 'This steering request requires the queued boundary path.'
+          }
+        }
+        return liveSteeringCoordinator.start({
+          chatId,
+          activeRunId,
+          queuedRunId,
+          ownerToken,
+          provider: session.provider,
+          entry
+        })
       }
     )
 
@@ -55679,15 +55789,7 @@ if (isGeminiMcpBridgeProcess) {
         if (!session || session.appChatId !== chatId) {
           return { cancelled: false, hadPending: false }
         }
-        return cancelPendingSteer(
-          {
-            runManager,
-            registry: midRunSteeringRegistry,
-            midTurnSteeringEnabled: midTurnSteerEnabled(),
-            piLiveSteerEnabled: false
-          },
-          runId
-        )
+        return liveSteeringCoordinator.cancel(runId)
       }
     )
     ipcMain.handle(

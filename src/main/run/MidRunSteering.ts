@@ -437,9 +437,8 @@ export function planSteeringContext(input: {
  * unnecessary for an interjection the panel has already seen.
  *
  * Deliberately conservative:
- *  - `enabled` is an explicit opt-in (default OFF) until this is exercised
- *    end-to-end in the real app. Off, behavior is exactly the pre-existing
- *    boundary delivery.
+ *  - `enabled` is production-on with an explicit emergency kill switch. Off,
+ *    behavior is exactly the pre-existing boundary delivery.
  *  - A settled run is refused. Pi acks a post-settle steer `success:true` and
  *    then never delivers it, so attempting one would look like a success and
  *    strand the message.
@@ -563,7 +562,9 @@ export function midTurnSteeringCapabilityForProvider(provider: ProviderId): MidT
     case 'antigravity':
     case 'muse':
     case 'ollama':
-      return { strategy: 'cooperative-cancel-resume', live: true }
+      // Boundary-only until a provider adapter can emit concrete delivery
+      // evidence. RunManager interrupt flags alone have no execution consumer.
+      return { strategy: 'cooperative-cancel-resume', live: false }
     default:
       return { strategy: 'boundary', live: false }
   }
@@ -583,10 +584,14 @@ export function planMidTurnSteeringDelivery(input: {
   if (input.runSettled) return { kind: 'boundary' }
 
   const cap = midTurnSteeringCapabilityForProvider(input.provider)
+  if (!cap.live) return { kind: 'boundary' }
   if (cap.strategy === 'pi-live-frame') {
     // Pi requires an active stdin transport; others are transport-agnostic.
     if (!input.hasLiveTransport) return { kind: 'boundary' }
     return { kind: 'pi-live-frame' }
+  }
+  if (cap.strategy === 'acp-interrupt' && !input.hasLiveTransport) {
+    return { kind: 'boundary' }
   }
   return { kind: cap.strategy }
 }

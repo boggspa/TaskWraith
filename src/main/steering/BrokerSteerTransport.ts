@@ -17,7 +17,7 @@
  * purely opportunistic.
  */
 
-import type { LiveSteerTransport } from '../RunManager'
+import type { LiveSteerDeliveryHooks, LiveSteerTransport } from '../RunManager'
 
 export interface BrokerSteerTransport extends LiveSteerTransport {
   /** Read the currently pending steering text without consuming it. */
@@ -37,16 +37,19 @@ export function createBrokerSteerTransport(
   setPending: (text: string | null) => void,
   getPending: () => string | null
 ): BrokerSteerTransport {
+  let pendingHooks: LiveSteerDeliveryHooks | undefined
   return {
-    sendSteer(text: string): boolean {
+    sendSteer(text: string, hooks?: LiveSteerDeliveryHooks): boolean {
       if (!text.trim()) return false
       // Replace any existing pending steer — the newest one wins.
       setPending(text)
+      pendingHooks = hooks
       return true
     },
 
     cancel(): void {
       setPending(null)
+      pendingHooks = undefined
     },
 
     peek(): string | null {
@@ -57,6 +60,9 @@ export function createBrokerSteerTransport(
       const text = getPending()
       if (text !== null) {
         setPending(null)
+        const hooks = pendingHooks
+        pendingHooks = undefined
+        hooks?.onDelivered()
       }
       return text
     }
