@@ -87,6 +87,12 @@ import {
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
+  LiveSteeringCancelRequest,
+  LiveSteeringCancelResult,
+  LiveSteeringInjectionRequest,
+  LiveSteeringInjectionResult
+} from '../shared/liveSteering'
+import type {
   HostCommand,
   HostCommandReceipt,
   HostCursorPosition,
@@ -2514,6 +2520,10 @@ declare global {
       fallbackPromotedSteerJob: (
         input: FallbackPromotedSteerInput
       ) => Promise<FallbackPromotedSteerJobResult>
+      injectSteering: (
+        input: LiveSteeringInjectionRequest
+      ) => Promise<LiveSteeringInjectionResult>
+      cancelSteering: (input: LiveSteeringCancelRequest) => Promise<LiveSteeringCancelResult>
       transitionRunQueueJob: (
         runIdOrId: string,
         status: RunQueueJob['status'],

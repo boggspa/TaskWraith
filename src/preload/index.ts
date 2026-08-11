@@ -49,6 +49,12 @@ import type {
 } from '../main/services/GitSnapshotPublisher'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
+  LiveSteeringCancelRequest,
+  LiveSteeringCancelResult,
+  LiveSteeringInjectionRequest,
+  LiveSteeringInjectionResult
+} from '../shared/liveSteering'
+import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
   LeasePromotedSteerInput,
@@ -2410,6 +2416,10 @@ const api = {
     input: FallbackPromotedSteerInput
   ): Promise<FallbackPromotedSteerJobResult> =>
     ipcRenderer.invoke('fallback-promoted-steer-job', input),
+  injectSteering: (input: LiveSteeringInjectionRequest): Promise<LiveSteeringInjectionResult> =>
+    ipcRenderer.invoke('steering:inject', input),
+  cancelSteering: (input: LiveSteeringCancelRequest): Promise<LiveSteeringCancelResult> =>
+    ipcRenderer.invoke('steering:cancel', input),
   transitionRunQueueJob: (runIdOrId: string, status: string, partial: any = {}) =>
     ipcRenderer.invoke('transition-run-queue-job', runIdOrId, status, partial),
   getRunRecoveryRecords: (filter: any = {}) =>

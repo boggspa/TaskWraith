@@ -638,6 +638,7 @@ import {
   isSteerInFlight,
   type SteerState
 } from './lib/steerState'
+import { attemptLiveSteering } from './lib/liveSteering'
 import {
   captureChatScrollState,
   normalizeChatScrollState,
@@ -17370,15 +17371,40 @@ function App(): React.JSX.Element {
         arrivedAtIso,
         { persistImmediately: true }
       )
-      const released = steeringMessage
-        ? await invokeFallbackPromotedSteerJob({
-            runId: steerRunId,
-            ownerToken: barrierOwnerToken!,
-            reason: preparationReason,
-            fallbackStatus: 'queued'
-          })
-        : null
-      if (released?.ok !== true || released.jobStatus !== 'queued') {
+      const activeRunId =
+        resolveActiveRunContextForChat(targetChatId)?.runId ||
+        (activeRunChatIdRef.current === targetChatId
+          ? activeRunIdRef.current || undefined
+          : undefined)
+      const liveOutcome =
+        steeringMessage && activeRunId
+          ? await attemptLiveSteering(window.api, {
+              chatId: targetChatId,
+              activeRunId,
+              queuedRunId: steerRunId,
+              ownerToken: barrierOwnerToken!
+            })
+          : ({ kind: 'unavailable' } as const)
+      // Main owns both accepted live attempts and explicit boundary results.
+      // Missing/old preload or IPC failure is the only case where renderer
+      // must release the exact barrier itself.
+      const released =
+        liveOutcome.kind === 'unavailable' && steeringMessage
+          ? await invokeFallbackPromotedSteerJob({
+              runId: steerRunId,
+              ownerToken: barrierOwnerToken!,
+              reason: preparationReason,
+              fallbackStatus: 'queued'
+            })
+          : liveOutcome.kind === 'boundary'
+            ? { ok: true, jobStatus: 'queued' as const }
+            : liveOutcome.kind === 'accepted'
+              ? { ok: true, jobStatus: 'steer_promoting' as const }
+              : null
+      const deliveryOwned =
+        released?.ok === true &&
+        (released.jobStatus === 'queued' || released.jobStatus === 'steer_promoting')
+      if (!deliveryOwned) {
         setQueuedRuns((prev) =>
           prev.filter((candidate) => candidate.appRunId !== steerRunId)
         )
@@ -17403,9 +17429,12 @@ function App(): React.JSX.Element {
       }
       appendThreadRawLog(targetChatId, {
         type: 'info',
-        content: `Steer appended to the transcript; the active ${getProviderLabel(
-          request.provider
-        )} turn continues uninterrupted.`
+        content:
+          liveOutcome.kind === 'accepted'
+            ? `Steer accepted for live ${liveOutcome.result.strategy} delivery; its durable boundary fallback remains reserved until delivery is confirmed.`
+            : `Steer appended to the transcript; the active ${getProviderLabel(
+                request.provider
+              )} turn continues and the message is queued for its natural boundary.`
       })
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
