@@ -20,6 +20,67 @@ struct HostMissionControlViewTests {
     #expect(projection.participantGroups[0].participants.map(\.order) == Array(0..<15))
   }
 
+  @Test("settled questions with receipts project newest-first, capped at ten")
+  func questionReceipts() {
+    var snapshot = createEmptyHostSnapshot(
+      generation: 1, cursor: 1, freshness: .live, generatedAt: "2026-08-11T20:00:00Z")
+    var questions: [HostQuestionProjection] = [
+      // Open — excluded regardless of receipt.
+      HostQuestionProjection(
+        questionId: "q-open", threadId: "t", status: .open,
+        promptPreview: "Still open", askedAt: 950, receiptId: "r-open"),
+      // Settled without a receipt — excluded (nothing to audit).
+      HostQuestionProjection(
+        questionId: "q-noreceipt", threadId: "t", status: .answered,
+        promptPreview: "No receipt", askedAt: 940, answeredAt: 960),
+      // Dismissed WITH a receipt — included: a receipt is a receipt.
+      HostQuestionProjection(
+        questionId: "q-dismissed", threadId: "t", status: .dismissed,
+        promptPreview: "Dismissed", askedAt: 900, receiptId: "r-d"),
+    ]
+    for index in 0..<11 {
+      questions.append(
+        HostQuestionProjection(
+          questionId: "q-\(index)", threadId: "t", status: .answered,
+          promptPreview: "Q\(index)", askedAt: 100,
+          answeredAt: 200 + index, receiptId: "r-\(index)"))
+    }
+    snapshot.questions = questions
+    let projection = HostMissionControlProjection(snapshot: snapshot)
+
+    #expect(projection.questionReceipts.count == 10)
+    // Newest settle leads (dismissed one has the highest askedAt fallback).
+    #expect(projection.questionReceipts.first?.questionId == "q-dismissed")
+    #expect(!projection.questionReceipts.contains { $0.status == .open })
+    #expect(!projection.questionReceipts.contains { $0.receiptId == nil })
+    // The overflow victim is the OLDEST settle.
+    #expect(!projection.questionReceipts.contains { $0.questionId == "q-0" })
+  }
+
+  @Test("round rows carry per-provider run outcomes, skipping unknown run ids")
+  func roundRunOutcomes() {
+    var snapshot = createEmptyHostSnapshot(
+      generation: 1, cursor: 1, freshness: .live, generatedAt: "2026-08-11T20:00:00Z")
+    let round = HostRoundProjection(
+      roundId: "round-x", threadId: "t", status: .running,
+      startedAt: 100, participantIds: [],
+      providerRunIds: ["run-1", "run-2", "run-ghost"])
+    snapshot.rounds = [round]
+    snapshot.runs = [
+      HostRunProjection(
+        runId: "run-1", threadId: "t", providerId: "claude", providerOutcome: .completed),
+      HostRunProjection(
+        runId: "run-2", threadId: "t", providerId: "grok", providerOutcome: .failed),
+    ]
+    let projection = HostMissionControlProjection(snapshot: snapshot)
+
+    #expect(projection.runOutcomes(for: round) == "claude: completed · grok: failed")
+    let bare = HostRoundProjection(
+      roundId: "round-empty", threadId: "t", status: .completed,
+      participantIds: [], providerRunIds: [])
+    #expect(projection.runOutcomes(for: bare) == "")
+  }
+
   @Test("missing snapshots render an honest empty projection")
   func unavailableProjection() {
     let projection = HostMissionControlProjection(snapshot: nil)

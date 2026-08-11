@@ -13,12 +13,20 @@ struct HostMissionControlProjection: Equatable {
   let missions: [HostMissionProjection]
   let rounds: [HostRoundProjection]
   let participantGroups: [ParticipantGroup]
+  /// Settled questions that hold an audit receipt, newest settle first,
+  /// capped at ten (desktop projectHostMissionControl parity). Open
+  /// questions and receipt-less settles are excluded — this section is the
+  /// audit trail, not the inbox.
+  let questionReceipts: [HostQuestionProjection]
+  private let runsById: [String: HostRunProjection]
 
   init(snapshot: HostSnapshot?) {
     guard let snapshot else {
       missions = []
       rounds = []
       participantGroups = []
+      questionReceipts = []
+      runsById = [:]
       return
     }
 
@@ -55,10 +63,36 @@ struct HostMissionControlProjection: Equatable {
         if titleOrder != .orderedSame { return titleOrder == .orderedAscending }
         return $0.threadId < $1.threadId
       }
+
+    // uniquingKeysWith rather than uniqueKeysWithValues: a snapshot with a
+    // duplicated runId is malformed, but malformed must degrade, not trap.
+    runsById = Dictionary(
+      snapshot.runs.map { ($0.runId, $0) }, uniquingKeysWith: { _, last in last })
+    questionReceipts = Array(
+      snapshot.questions
+        .filter { $0.status != .open && $0.receiptId != nil }
+        .sorted {
+          let leftAt = $0.answeredAt ?? $0.askedAt
+          let rightAt = $1.answeredAt ?? $1.askedAt
+          if leftAt != rightAt { return leftAt > rightAt }
+          return $0.questionId < $1.questionId
+        }
+        .prefix(10))
   }
 
   var activeMissionCount: Int { missions.filter { $0.status == .active }.count }
   var participantCount: Int { participantGroups.reduce(0) { $0 + $1.participants.count } }
+
+  /// Per-provider terminal outcomes for one round's runs, in the round's own
+  /// run order ("claude: completed · grok: failed") — desktop
+  /// roundProviderOutcomes parity. Run ids the snapshot no longer carries are
+  /// skipped, never rendered as holes.
+  func runOutcomes(for round: HostRoundProjection) -> String {
+    round.providerRunIds
+      .compactMap { runsById[$0] }
+      .map { "\($0.providerId): \($0.providerOutcome.rawValue)" }
+      .joined(separator: " · ")
+  }
 
   private static func missionPriority(_ status: HostMissionOutcome) -> Int {
     status == .active ? 0 : 1
@@ -191,6 +225,7 @@ struct HostMissionControlView: View {
         statusSection
         missionSection
         roundSection
+        receiptsSection
         participantSections
       }
       .scrollContentBackground(.hidden)
@@ -314,10 +349,53 @@ struct HostMissionControlView: View {
                 .font(.caption)
                 .foregroundStyle(TWTheme.textSecondary)
             }
+            // The runs family, joined per round (desktop parity): which
+            // provider ended how. Decoded since the protocol port; never
+            // rendered until now.
+            let outcomes = projection.runOutcomes(for: round)
+            if !outcomes.isEmpty {
+              Text(outcomes)
+                .font(.caption)
+                .foregroundStyle(TWTheme.textSecondary)
+                .lineLimit(2)
+            }
           }
           .accessibilityElement(children: .combine)
           .accessibilityLabel("Round \(HostMissionControlCopy.round(round.status))")
           .accessibilityValue("\(round.participantIds.count) participants")
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var receiptsSection: some View {
+    if !projection.questionReceipts.isEmpty {
+      Section("Recent question receipts") {
+        ForEach(projection.questionReceipts, id: \.questionId) { question in
+          VStack(alignment: .leading, spacing: 3) {
+            Text(question.promptPreview)
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(TWTheme.textPrimary)
+              .lineLimit(2)
+            HStack(spacing: 8) {
+              Text(question.status.rawValue.capitalized)
+                .foregroundStyle(
+                  question.status == .answered
+                    ? TWTheme.statusSuccess : TWTheme.textSecondary)
+              if let receiptId = question.receiptId {
+                Text("Receipt \(receiptId)")
+                  .font(.caption.monospaced())
+                  .foregroundStyle(TWTheme.textMuted)
+                  .lineLimit(1)
+              }
+            }
+            .font(.caption)
+          }
+          .accessibilityElement(children: .combine)
+          .accessibilityLabel(question.promptPreview)
+          .accessibilityValue(
+            "\(question.status.rawValue), receipt \(question.receiptId ?? "unknown")")
         }
       }
     }
