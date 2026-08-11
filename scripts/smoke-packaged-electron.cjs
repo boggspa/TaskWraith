@@ -620,6 +620,11 @@ function validateMacAppPermissionMetadata(packageRoot) {
   const infoPlistPath = path.join(packageRoot, 'Contents', 'Info.plist')
   assertFile(infoPlistPath, 'packaged app Info.plist')
   const info = readPlistAsJson(infoPlistPath, 'packaged app Info.plist')
+  for (const key of ['CFBundleName', 'CFBundleDisplayName']) {
+    if (info[key] !== 'TaskWraith') {
+      fail(`Packaged app Info.plist ${key} must be exactly TaskWraith.`)
+    }
+  }
   for (const key of ['NSScreenCaptureUsageDescription', 'NSAppleEventsUsageDescription']) {
     if (typeof info[key] !== 'string' || info[key].trim().length === 0) {
       fail(`Packaged app Info.plist is missing a non-empty ${key}.`)
@@ -627,6 +632,12 @@ function validateMacAppPermissionMetadata(packageRoot) {
   }
   if (Object.hasOwn(info, 'NSAccessibilityUsageDescription')) {
     fail('Packaged app Info.plist contains unsupported NSAccessibilityUsageDescription.')
+  }
+  if (
+    typeof info.NSLocalNetworkUsageDescription !== 'string' ||
+    !info.NSLocalNetworkUsageDescription.trim().startsWith('TaskWraith ')
+  ) {
+    fail('Packaged app Info.plist must carry the TaskWraith local-network usage identity.')
   }
   console.log('validated packaged macOS permission metadata')
 }
