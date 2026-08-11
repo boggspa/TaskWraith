@@ -1505,6 +1505,13 @@ export interface BlackboardEntry {
   seenBy?: string[]
   /** Present when this entry is an interactive durable poll. */
   poll?: BlackboardPoll
+  /**
+   * Chat-owned raster images attached to this entry. The host stores original
+   * bytes in the content-addressed transcript media store and persists only a
+   * bounded thumbnail on the entry. Raw renderer/model paths are never part of
+   * this record; `ref.id` is the current-chat attachment alias agents inspect.
+   */
+  mediaRefs?: TranscriptMediaRef[]
 }
 
 /** Wave 2 — tombstone left when a blackboard entry is evicted under the 60-entry cap. */

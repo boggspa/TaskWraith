@@ -1,4 +1,6 @@
+import { isDeepStrictEqual } from 'util'
 import type { ChatRecord, TranscriptMediaRef } from '../store/types'
+import { sanitizeBlackboardMediaRefs } from '../blackboard/BlackboardMedia'
 
 export interface TranscriptMediaOwnershipLookup {
   owns(input: { sha256: string; mimeType: string; appChatId: string }): boolean
@@ -39,7 +41,13 @@ export function sanitizeTranscriptMediaOwnershipClaims(
   chat: ChatRecord,
   ownership: TranscriptMediaOwnershipLookup
 ): ChatRecord {
-  if (!Array.isArray(chat.messages) || chat.messages.length === 0) return chat
+  const blackboard = chat.ensemble?.blackboard
+  if (
+    (!Array.isArray(chat.messages) || chat.messages.length === 0) &&
+    (!Array.isArray(blackboard) || blackboard.length === 0)
+  ) {
+    return chat
+  }
 
   let changed = false
   const messages = chat.messages.map((message) => {
@@ -77,5 +85,37 @@ export function sanitizeTranscriptMediaOwnershipClaims(
     }
   })
 
-  return changed ? { ...chat, messages } : chat
+  let ensemble = chat.ensemble
+  if (ensemble && Array.isArray(blackboard) && blackboard.length > 0) {
+    const nextBlackboard = blackboard.map((entry) => {
+      if (!Array.isArray(entry.mediaRefs) || entry.mediaRefs.length === 0) return entry
+      const structurallySafe = sanitizeBlackboardMediaRefs(entry.mediaRefs)
+      let refsChanged = !isDeepStrictEqual(structurallySafe, entry.mediaRefs)
+      const nextRefs = structurallySafe.map((ref) => {
+        if (!isStoreBackedRef(ref)) return ref
+        const owned =
+          typeof ref.sha256 === 'string' &&
+          ref.sha256.length > 0 &&
+          ownership.owns({
+            sha256: ref.sha256,
+            mimeType: ref.mimeType,
+            appChatId: chat.appChatId
+          })
+        if (owned) return ref
+        refsChanged = true
+        return redactUnownedAssetClaim(ref)
+      })
+      if (!refsChanged) return entry
+      changed = true
+      const nextEntry = { ...entry }
+      if (nextRefs.length > 0) nextEntry.mediaRefs = nextRefs
+      else delete nextEntry.mediaRefs
+      return nextEntry
+    })
+    if (nextBlackboard.some((entry, index) => entry !== blackboard[index])) {
+      ensemble = { ...ensemble, blackboard: nextBlackboard }
+    }
+  }
+
+  return changed ? { ...chat, messages, ...(ensemble ? { ensemble } : {}) } : chat
 }

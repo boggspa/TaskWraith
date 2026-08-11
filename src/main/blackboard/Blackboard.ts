@@ -16,8 +16,14 @@ import type {
   BlackboardEntry,
   BlackboardEvictionTombstone,
   BlackboardPoll,
-  BlackboardScope
+  BlackboardScope,
+  TranscriptMediaRef
 } from '../store/types'
+import {
+  blackboardMediaRefsForAgent,
+  formatBlackboardMediaForPrompt,
+  sanitizeBlackboardMediaRefs
+} from './BlackboardMedia'
 import {
   validateBlackboardPollOptions,
   validateBlackboardPollRecord
@@ -342,6 +348,7 @@ export interface MakeBlackboardEntryInput {
   derivedFrom?: string
   pollOptions?: unknown
   pollEligibleParticipantIds?: string[]
+  mediaRefs?: TranscriptMediaRef[]
   ttlMinutes?: unknown
   createdAt: string
 }
@@ -378,6 +385,7 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
         updatedAt: input.createdAt
       }
     : undefined
+  const mediaRefs = sanitizeBlackboardMediaRefs(input.mediaRefs)
   return {
     id: input.id,
     chatId: input.chatId,
@@ -394,7 +402,8 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
     // entry object, so a rewritten key resets to author-only — the fresh
     // content is correctly "unseen" for everyone else.
     seenBy: [participantId],
-    ...(poll ? { poll } : {})
+    ...(poll ? { poll } : {}),
+    ...(mediaRefs.length > 0 ? { mediaRefs } : {})
   }
 }
 
@@ -403,6 +412,18 @@ export interface UpsertBlackboardOptions {
   tombstones?: BlackboardEvictionTombstone[]
   /** ISO timestamp stamped on eviction tombstones (tests pass a fixed value). */
   prunedAt?: string
+}
+
+/** Agent-facing entry projection: keep the durable note and opaque attachment
+ * aliases, but never copy thumbnail bytes or content-addressed store locators
+ * into a text tool result. */
+export function projectBlackboardEntryForAgent(entry: BlackboardEntry): Record<string, unknown> {
+  const { mediaRefs: _mediaRefs, ...record } = entry
+  const images = blackboardMediaRefsForAgent(entry.mediaRefs)
+  return {
+    ...record,
+    ...(images.length > 0 ? { images } : {})
+  }
 }
 
 /**
@@ -769,7 +790,8 @@ export function isExternalBlackboardEntry(entry: BlackboardEntry): boolean {
 function formatBlackboardEntryLine(entry: BlackboardEntry): string {
   const value = formatPromptBlackboardValue(entry.value, entry.key)
   const pollSuffix = formatBlackboardPollForPrompt(entry)
-  return `    - ${entry.key}: ${value}${pollSuffix} (—${entry.participantId})`
+  const mediaSuffix = formatBlackboardMediaForPrompt(entry.mediaRefs)
+  return `    - ${entry.key}: ${value}${pollSuffix}${mediaSuffix} (—${entry.participantId})`
 }
 
 export function formatBlackboardForPrompt(

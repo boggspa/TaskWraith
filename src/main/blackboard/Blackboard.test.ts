@@ -47,7 +47,8 @@ function entry(overrides: Partial<BlackboardEntry> = {}): BlackboardEntry {
     createdAt: overrides.createdAt ?? '2026-05-31T00:00:00.000Z',
     ...(overrides.expiresAt ? { expiresAt: overrides.expiresAt } : {}),
     ...(overrides.seenBy ? { seenBy: overrides.seenBy } : {}),
-    ...(overrides.poll ? { poll: overrides.poll } : {})
+    ...(overrides.poll ? { poll: overrides.poll } : {}),
+    ...(overrides.mediaRefs ? { mediaRefs: overrides.mediaRefs } : {})
   }
 }
 
@@ -676,6 +677,34 @@ describe('formatBlackboardForPrompt', () => {
     expect(out).toContain('Verified facts:')
     expect(out).not.toContain('Decisions:')
     expect(out).not.toContain('Open risks:')
+  })
+
+  it('renders attachment aliases without inlining thumbnail bytes into the prompt', () => {
+    const thumbnailBase64 = Buffer.from('private preview bytes').toString('base64')
+    const out = formatBlackboardForPrompt([
+      entry({
+        key: 'login-failure',
+        value: 'The submit button remains disabled.',
+        mediaRefs: [
+          {
+            id: 'blackboard:entry-1:image:0:abc',
+            kind: 'image',
+            format: 'raster',
+            source: 'upload',
+            name: 'login-error.png',
+            mimeType: 'image/png',
+            sha256: 'a'.repeat(43),
+            thumbnail: { dataBase64: thumbnailBase64, mimeType: 'image/jpeg' },
+            status: 'available'
+          }
+        ]
+      })
+    ])
+
+    expect(out).toContain('login-error.png')
+    expect(out).toContain('blackboard:entry-1:image:0:abc')
+    expect(out).toContain('inspect_chat_attachment')
+    expect(out).not.toContain(thumbnailBase64)
   })
 
   it('warns participants when a full board can only make room by evicting round notes', () => {

@@ -89,6 +89,8 @@ export interface WorkspaceImageValidationOptions {
   workspacePath: string
   candidatePath: string
   externalPathGrants?: readonly ExternalPathGrant[]
+  /** Exact realpaths authorized by a renderer-local OS file capability. */
+  authorizedFilePaths?: readonly string[]
   maxBytes?: number
 }
 
@@ -987,12 +989,14 @@ export function validateWorkspaceImagePath({
   workspacePath,
   candidatePath,
   externalPathGrants = [],
+  authorizedFilePaths = [],
   maxBytes = TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 }: WorkspaceImageValidationOptions): WorkspaceImageValidationResult {
   const opened = openAuthorizedWorkspaceFile({
     workspacePath,
     candidatePath,
     externalPathGrants,
+    authorizedFilePaths,
     maxBytes
   })
   if (!opened.ok) return opened

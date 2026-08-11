@@ -53,6 +53,42 @@ function generatedRef(sha256: string): TranscriptMediaRef {
   }
 }
 
+function blackboardRef(sha256: string): TranscriptMediaRef {
+  return {
+    ...generatedRef(sha256),
+    id: 'blackboard:entry-1:image:0:owned',
+    source: 'upload',
+    thumbnail: {
+      dataBase64: Buffer.from('bounded-preview').toString('base64'),
+      mimeType: 'image/jpeg'
+    }
+  }
+}
+
+function withBlackboardRef(chat: ChatRecord, ref: TranscriptMediaRef): ChatRecord {
+  return {
+    ...chat,
+    ensemble: {
+      participants: [],
+      blackboard: [
+        {
+          id: 'entry-1',
+          chatId: chat.appChatId,
+          roundId: 'manual',
+          participantId: 'user',
+          key: 'screenshot',
+          value: 'Failure state',
+          category: 'note',
+          scope: 'session',
+          createdAt: '2026-08-11T00:00:00.000Z',
+          mediaRefs: [ref]
+        }
+      ],
+      updatedAt: '2026-08-11T00:00:00.000Z'
+    } as unknown as ChatRecord['ensemble']
+  }
+}
+
 afterEach(() => {
   while (roots.length) {
     const root = roots.pop()
@@ -124,5 +160,29 @@ describe('sanitizeTranscriptMediaOwnershipClaims', () => {
         appChatId: 'canonical-chat'
       })
     ).toBe(true)
+  })
+
+  it('keeps Blackboard presentation bytes but strips unowned store locators', () => {
+    const ref = blackboardRef('a'.repeat(43))
+    const input = withBlackboardRef(chatWithRef('chat-1', generatedRef('b'.repeat(43))), ref)
+
+    const sanitized = sanitizeTranscriptMediaOwnershipClaims(input, { owns: () => false })
+    const mediaRef = sanitized.ensemble?.blackboard?.[0].mediaRefs?.[0]
+    expect(mediaRef?.status).toBe('denied')
+    expect(mediaRef?.thumbnail).toEqual(ref.thumbnail)
+    expect(mediaRef?.sha256).toBeUndefined()
+    expect(mediaRef?.assetId).toBeUndefined()
+    expect(mediaRef?.path).toBeUndefined()
+  })
+
+  it('preserves owned Blackboard locators but still strips renderer-authored paths', () => {
+    const ref = blackboardRef('a'.repeat(43))
+    const input = withBlackboardRef(chatWithRef('chat-1', generatedRef('b'.repeat(43))), ref)
+
+    const sanitized = sanitizeTranscriptMediaOwnershipClaims(input, { owns: () => true })
+    const mediaRef = sanitized.ensemble?.blackboard?.[0].mediaRefs?.[0]
+    expect(mediaRef?.sha256).toBe(ref.sha256)
+    expect(mediaRef?.assetId).toBe(ref.assetId)
+    expect(mediaRef?.path).toBeUndefined()
   })
 })

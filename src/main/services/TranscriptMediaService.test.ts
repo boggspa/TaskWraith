@@ -469,6 +469,29 @@ describe('TranscriptMediaService', () => {
     ).toEqual({ ok: false, reason: 'outside_allowed_roots' })
   })
 
+  it('allows one exact renderer-authorized image path without broadening its directory', () => {
+    const root = makeTempRoot()
+    const selected = path.join(root, 'selected.png')
+    const sibling = path.join(root, 'sibling.png')
+    fs.writeFileSync(selected, PNG_BUFFER)
+    fs.writeFileSync(sibling, PNG_BUFFER)
+
+    expect(
+      validateWorkspaceImagePath({
+        workspacePath: '',
+        candidatePath: selected,
+        authorizedFilePaths: [fs.realpathSync.native(selected)]
+      }).ok
+    ).toBe(true)
+    expect(
+      validateWorkspaceImagePath({
+        workspacePath: '',
+        candidatePath: sibling,
+        authorizedFilePaths: [fs.realpathSync.native(selected)]
+      })
+    ).toEqual({ ok: false, reason: 'outside_allowed_roots' })
+  })
+
   it('anchors external media authority to the signed path and signed filesystem kind', () => {
     const root = makeTempRoot()
     const workspace = path.join(root, 'workspace')
