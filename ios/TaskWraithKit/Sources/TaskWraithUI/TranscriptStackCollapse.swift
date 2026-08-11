@@ -52,11 +52,17 @@ public struct TWCollapsedStackSummary: Equatable, Sendable {
 /// change joins them because it is a plain SYSTEM row: without this it folds
 /// into "System · Authoritative seat change applied." and the whole seat — what
 /// the model, tier and grants moved to — collapses into a sentence that says a
-/// change happened without saying what it was.
+/// change happened without saying what it was. A People contribution is a
+/// person's words, not app chrome (desktop parity: `plainSystemNoticeMessage`
+/// excludes delivered contributions by name) — folded, it reads "System · …"
+/// and its trust framing vanishes; the transport skeleton preserves the field
+/// under byte pressure for exactly that framing, so the fold must not undo it.
+/// A peer thread message keeps its card for the same reason.
 private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
     row.agentQuestion != nil || row.proposedPlan != nil || row.participantHealth != nil
         || row.subThreadReturn != nil || row.subThreadDelegation != nil
         || row.fanoutResult != nil || row.runFailure != nil || row.seatChange != nil
+        || row.peopleContribution != nil || row.threadMessage != nil
 }
 
 /// True when the transcript window carries a row that explains why `runId`

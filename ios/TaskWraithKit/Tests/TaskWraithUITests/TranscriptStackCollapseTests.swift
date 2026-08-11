@@ -109,6 +109,32 @@ struct TranscriptStackCollapseTests {
         let assistant = try row(#"{"id":"a1","role":"assistant","preview":"hello"}"#)
         #expect(!twIsPlainSystemNoticeRow(assistant))
     }
+
+    @Test func peopleContributionsNeverFoldToAnonymousSystemNotices() throws {
+        // Desktop parity (TranscriptPanel `plainSystemNoticeMessage`): a
+        // DELIVERED contribution is a person's words, not app chrome. Folded,
+        // it reads "System · …" and can disappear entirely behind
+        // "System · 2 system notices" — with its trust framing.
+        let delivered = try row(
+            #"{"id":"pc1","role":"system","preview":"Looks good — ship the auth branch.","peopleContribution":{"collaboratorDisplayName":"Ana","delivery":"delivered","sourceTrust":"external"}}"#
+        )
+        #expect(!twIsPlainSystemNoticeRow(delivered))
+        #expect(!twCanCollapseIntoStack(delivered))
+
+        let queued = try row(
+            #"{"id":"pc2","role":"system","preview":"Consider the retry path too.","peopleContribution":{"collaboratorDisplayName":"Ana","delivery":"queued","insertedAsDraft":false}}"#
+        )
+        #expect(!twIsPlainSystemNoticeRow(queued))
+
+        // A peer thread message is a card surface for the same reason. Today
+        // its rows arrive role:"tool" without activities (unfoldable only by
+        // accident); this pins the card against any future role/activity
+        // change rather than leaning on that coincidence.
+        let peerMessage = try row(
+            #"{"id":"tm1","role":"system","preview":"Handing off: auth branch is yours.","threadMessage":{"threadMessageId":"m1","fromChatTitle":"Planning","trust":"peer"}}"#
+        )
+        #expect(!twIsPlainSystemNoticeRow(peerMessage))
+    }
 }
 
 extension TranscriptStackCollapseTests {
