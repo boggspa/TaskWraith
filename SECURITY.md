@@ -77,7 +77,17 @@ affected component and contact request.
   an existing identity cannot be read, protected, or persisted. Silent identity
   replacement breaks paired-device trust and should remain release-blocking.
 - Pairing records store public-key metadata and routing state; APNs device
-  tokens are local routing identifiers stored on the user's Mac.
+  tokens are local routing identifiers stored on the user's Mac — except under
+  the opt-in Tier-2 push gateway, where the PROJECT-OPERATED relay also holds a
+  routing-only token table (pair hash, token, environment, opt-out, clocks).
+  That relay newly observes device tokens, the phone↔Mac reachability graph,
+  and turn-completion timing; notification CONTENT stays sealed end-to-end and
+  the gateway's alert bodies are generic and content-free by construction.
+  "Preserves E2EE blindness" is deliberately NOT claimed for that deployment.
+  The gateway exists only on the standalone relay (`relay/src/cli.ts`); a
+  shipped app cannot construct one — enforced in CI by
+  `scripts/guard-no-bundled-secrets.cjs`, and the signing key reaches the
+  relay only as a runtime-mounted secret (see `relay/DEPLOY.md`).
 - Ordinary alert/wake APNs bodies must remain generic and routing-only: reason,
   pair/device, and thread/run identifiers are acceptable, and any richer
   notification content must stay inside the existing per-device encrypted

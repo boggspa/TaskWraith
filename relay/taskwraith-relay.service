@@ -1,0 +1,43 @@
+# TaskWraith relay + Tier-2 APNs gateway — systemd unit.
+#
+# The APNs .p8 travels via LoadCredential (never Environment= — environment
+# is world-readable through /proc/<pid>/environ, and never an image COPY):
+# systemd mounts the file read-only for this service only and exposes it at
+# $CREDENTIALS_DIRECTORY/apns-key.
+#
+# Install:
+#   install -m 600 AuthKey_XXXXXXXXXX.p8 /etc/taskwraith/apns-key.p8
+#   cp relay/taskwraith-relay.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now taskwraith-relay
+
+[Unit]
+Description=TaskWraith relay (Tier-2 APNs gateway)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Checkout of the taskwraith repo (relay/ + src/shared are all it reads).
+WorkingDirectory=/opt/taskwraith
+ExecStart=/usr/bin/npx tsx relay/src/cli.ts
+Restart=on-failure
+RestartSec=5
+
+LoadCredential=apns-key:/etc/taskwraith/apns-key.p8
+Environment=TASKWRAITH_RELAY_APNS_GATEWAY=1
+Environment=TASKWRAITH_RELAY_APNS_KEY_PATH=%d/apns-key
+# Fill in from the Apple Developer portal entry for the key:
+Environment=TASKWRAITH_RELAY_APNS_KEY_ID=CHANGEME
+Environment=TASKWRAITH_RELAY_APNS_TEAM_ID=8CZML8FK2D
+Environment=TASKWRAITH_RELAY_APNS_TOKENS_PATH=/var/lib/taskwraith-relay/apns-tokens.json
+Environment=PORT=8787
+
+DynamicUser=yes
+StateDirectory=taskwraith-relay
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
