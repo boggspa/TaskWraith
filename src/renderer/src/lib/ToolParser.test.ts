@@ -198,6 +198,17 @@ describe('ToolParser', () => {
       expect(getToolCategory('readfile')).toBe('read')
       expect(getToolCategory('ReadFile')).toBe('read')
     })
+    it('maps AntiGravity native read/write/shell names to summary families', () => {
+      expect(getToolCategory('view_file')).toBe('read')
+      expect(getToolCategory('write_to_file')).toBe('write')
+      expect(getToolCategory('run_command')).toBe('shell')
+    })
+    it('keeps Muse native coding names on the shared summary families', () => {
+      expect(getToolCategory('edit_file')).toBe('write')
+      expect(getToolCategory('apply_patch')).toBe('write')
+      expect(getToolCategory('delete_file')).toBe('write')
+      expect(getToolCategory('exec_command')).toBe('shell')
+    })
     it('maps no-separator listdirectory + list_dir variants to read', () => {
       expect(getToolCategory('listdirectory')).toBe('read')
       expect(getToolCategory('list_dir')).toBe('read')
@@ -476,6 +487,19 @@ describe('ToolParser', () => {
       expect(activity.parameters).toEqual({ file_path: 'README.md' })
       expect(activity.filePath).toBe('README.md')
       expect(activity.rawUseEvent).toBeDefined()
+    })
+    it('preserves AntiGravity provider attribution on one-line activity stacks', () => {
+      const activity = createToolActivity({
+        type: 'tool_use',
+        provider: 'antigravity',
+        tool_name: 'view_file',
+        tool_id: 'agy-view-1',
+        parameters: { path: '/repo/src/App.tsx' }
+      })
+
+      expect(activity.category).toBe('read')
+      expect(activity.displayName).toBe('Read /repo/src/App.tsx')
+      expect(activity.metadata).toEqual({ provider: 'antigravity' })
     })
     // The Grok ACP transport labels tool calls with a freeform human title
     // (toolName) plus a canonical `tool_kind`. The kind must drive the category

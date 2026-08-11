@@ -94,6 +94,7 @@ const TOOL_ACTIVITY_PROVIDER_IDS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
+  'antigravity',
   'pi',
   'mistral',
   'muse'
@@ -371,6 +372,10 @@ const READ_LIKE_TOOL_NAMES = new Set([
   'read_file',
   'readfile',
   'read',
+  // AntiGravity's durable brain transcript uses VIEW_FILE rather than the
+  // read_file spelling used by the other provider adapters.
+  'view_file',
+  'viewfile',
   'list_directory',
   'listdirectory',
   'list_dir',
@@ -474,7 +479,14 @@ export function getToolCategory(toolName: string): ToolCategory {
   if (operationCategory === 'search') return 'search'
   if (operationCategory === 'shell') return 'shell'
   if (READ_LIKE_TOOL_NAMES.has(unqualifiedName)) return 'read'
-  if (isWriteLikeToolName(unqualifiedName)) return 'write'
+  if (
+    isWriteLikeToolName(unqualifiedName) ||
+    // Observed AntiGravity PreToolUse hook spelling. This is display-only
+    // categorisation; execution authority remains in AntigravityHookBridge.
+    unqualifiedName === 'write_to_file' ||
+    unqualifiedName === 'writetofile'
+  )
+    return 'write'
   if (SEARCH_LIKE_TOOL_NAMES.has(unqualifiedName) || SEARCH_LIKE_TOOL_NAMES.has(name))
     return 'search'
   if (
