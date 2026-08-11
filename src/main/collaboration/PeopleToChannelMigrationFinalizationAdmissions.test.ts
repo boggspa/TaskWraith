@@ -419,6 +419,56 @@ describe('PeopleToChannelMigrationFinalizationAdmissions', () => {
     ).toBe(true)
   })
 
+  it('recovers a committed escrow across live drift but refuses a usable additive credential', () => {
+    const built = fixture()
+    const applied = new PeopleToChannelMigrationFinalizationAdmissions(built.options).apply({
+      initial: built.initial,
+      finalization: built.terminal,
+      initialInvitations: built.initialInvitations
+    })
+
+    const channelId = applied.channelIds[0]!
+    const channel = built.store.getChannel(channelId)!
+    built.store.recordCommittedMessage(channelId, channel.messageCount + 1, 9_000)
+
+    const drifted = new PeopleToChannelMigrationFinalizationAdmissions(built.options)
+    expect(() =>
+      drifted.recover({
+        initial: built.initial,
+        finalization: built.terminal,
+        initialInvitations: built.initialInvitations
+      })
+    ).toThrow(/not recoverable/)
+    expect(
+      drifted.recoverCommitted({
+        initial: built.initial,
+        finalization: built.terminal,
+        initialInvitations: built.initialInvitations
+      }).invitations
+    ).toEqual(applied.invitations)
+
+    const unretired = fixture()
+    expect(() =>
+      new PeopleToChannelMigrationFinalizationAdmissions({
+        ...unretired.options,
+        afterStage: (stage) => {
+          if (stage === 'terminal_escrow_durable') throw new Error('injected crash')
+        }
+      }).apply({
+        initial: unretired.initial,
+        finalization: unretired.terminal,
+        initialInvitations: unretired.initialInvitations
+      })
+    ).toThrow(/injected crash/)
+    expect(() =>
+      new PeopleToChannelMigrationFinalizationAdmissions(unretired.options).recoverCommitted({
+        initial: unretired.initial,
+        finalization: unretired.terminal,
+        initialInvitations: unretired.initialInvitations
+      })
+    ).toThrow(/remains usable|in-flight/)
+  })
+
   it('blocks an in-flight additive credential before it mints a terminal replacement', () => {
     const built = fixture()
     const source = initialByPurpose(built.initialInvitations, 'pending-collaborator')

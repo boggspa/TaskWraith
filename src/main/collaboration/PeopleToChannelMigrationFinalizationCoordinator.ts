@@ -71,7 +71,7 @@ export interface PeopleToChannelMigrationFinalizationAdmissionsPort {
     finalization: PeopleToChannelMigrationFinalizationExecution
     initialInvitations: readonly PeopleToChannelReissuedAdmission[]
   }): PeopleToChannelMigrationFinalizationAdmissionsResult
-  recover(input: {
+  recoverCommitted(input: {
     initial: PeopleToChannelMigrationExecution
     finalization: PeopleToChannelMigrationFinalizationExecution
     initialInvitations: readonly PeopleToChannelReissuedAdmission[]
@@ -312,17 +312,19 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
       })
       this.options.afterStage?.('write_gate_quiesced')
       if (recovery.phase === 'committed') {
+        // The durable receipt is the terminal authority. Ordinary post-commit
+        // product activity keeps evolving Channel metadata, policies, and the
+        // People store (P5 writes, history erasure), so recovery here must not
+        // measure the live world against the frozen migration snapshot.
         const initialInvitations = this.options.initialAdmissions.recoverEscrow({
           base: initial.base,
           history: initial.history
         }).invitations
-        this.options.policies.apply({ initial, finalization: execution })
-        const admissions = this.options.admissions.recover({
+        const admissions = this.options.admissions.recoverCommitted({
           initial,
           finalization: execution,
           initialInvitations
         })
-        this.assertFrozenScope(execution, 'retired')
         return this.result(execution, recovery, admissions)
       }
     } else {

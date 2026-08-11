@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -165,7 +165,7 @@ interface Fixture {
   }
 }
 
-function fixture(args: { empty?: boolean; includeP5?: boolean } = {}): Fixture {
+function fixture(args: { empty?: boolean; noShares?: boolean; includeP5?: boolean } = {}): Fixture {
   const userDataPath = directory()
   const identity = generateIdentityKeyPair()
   const sourcePath = join(userDataPath, 'human-collaboration.json')
@@ -178,7 +178,7 @@ function fixture(args: { empty?: boolean; includeP5?: boolean } = {}): Fixture {
   writeFileSync(
     sourcePath,
     JSON.stringify(
-      args.empty
+      args.empty || args.noShares
         ? { shares: [] }
         : peopleSource({ activeKey, pendingKey, includeP5: args.includeP5 })
     ),
@@ -390,5 +390,84 @@ describe('PeopleToChannelMigrationFinalizationProductionRunner', () => {
         .people.listShares()
         .map((share) => share.shareId)
     ).toEqual(['share_one'])
+  })
+
+  it('commits a chats-present zero-share upgrade profile and stays committed', () => {
+    const built = fixture({ noShares: true })
+    const completed = runner(built).runToCompletion()
+
+    expect(completed).toMatchObject({
+      migration: { phase: 'committed', recovery: { phase: 'committed' } },
+      finalization: {
+        phase: 'committed',
+        retireShareIds: [],
+        retainedWorkspaceBootstrapShareIds: []
+      }
+    })
+    expect(completed.migration.routes).toHaveLength(1)
+    expect(completed.legacyWriteGate.isQuiesced()).toBe(true)
+    expect(durableState(built).people.listShares()).toEqual([])
+    expect(runner(built).runToCompletion().terminalPlanId).toBe(completed.terminalPlanId)
+  })
+
+  it('boots after a post-commit message append instead of demanding a frozen world', () => {
+    const built = fixture()
+    const completed = runner(built).runToCompletion()
+    const durable = durableState(built)
+    const channel = durable.channels.listChannels()[0]!
+    durable.channels.recordCommittedMessage(channel.channelId, channel.messageCount + 1, 900_000)
+
+    const rebooted = runner(built).runToCompletion()
+    expect(rebooted.terminalPlanId).toBe(completed.terminalPlanId)
+    expect(rebooted.migration).toMatchObject({
+      phase: 'committed',
+      planId: completed.migration.planId
+    })
+    expect(rebooted.migration.routes).toEqual(completed.migration.routes)
+    expect(rebooted.legacyWriteGate.isQuiesced()).toBe(true)
+  })
+
+  it('boots after a migrated channel closes post-commit and keeps the durable routes', () => {
+    const built = fixture()
+    const completed = runner(built).runToCompletion()
+    const durable = durableState(built)
+    durable.channels.closeChannel({
+      channelId: completed.migration.routes[0]!.channelId,
+      now: 900_000
+    })
+
+    const rebooted = runner(built).runToCompletion()
+    expect(rebooted.terminalPlanId).toBe(completed.terminalPlanId)
+    expect(rebooted.migration.routes).toEqual(completed.migration.routes)
+  })
+
+  it('boots after post-commit history deletion purges every channel', () => {
+    const built = fixture()
+    const completed = runner(built).runToCompletion()
+    durableState(built).channels.purgeAllChannels()
+
+    const rebooted = runner(built).runToCompletion()
+    expect(rebooted.terminalPlanId).toBe(completed.terminalPlanId)
+    expect(rebooted.migration.phase).toBe('committed')
+  })
+
+  it('deletes the plaintext People source backup once the receipt commits', () => {
+    const built = fixture()
+    const completed = runner(built).runToCompletion()
+
+    const backups = peopleToChannelMigrationRecoveryPaths(built.userDataPath).backups
+    expect(readdirSync(backups)).toEqual([])
+    expect(runner(built).runToCompletion().terminalPlanId).toBe(completed.terminalPlanId)
+  })
+
+  it('converges an empty profile across a crash at the recovery fence', () => {
+    const built = fixture({ empty: true })
+    expect(() => runner(built, { crashAt: 'recovery_fenced' }).runToCompletion()).toThrow(
+      /injected crash/
+    )
+
+    const completed = runner(built).runToCompletion()
+    expect(completed.migration.phase).toBe('committed')
+    expect(completed.finalization.retireShareIds).toEqual([])
   })
 })

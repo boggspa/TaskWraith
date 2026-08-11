@@ -40,6 +40,10 @@ import {
   readPeopleToChannelMigrationInventory,
   type PeopleToChannelInventoryChat
 } from './PeopleToChannelMigrationInventory'
+import {
+  loadPeopleToChannelCutoverManifest,
+  peopleToChannelCutoverManifestDigest
+} from './PeopleToChannelMigrationCutoverCoordinator'
 import { PeopleToChannelMigrationLegacyWriteGate } from './PeopleToChannelMigrationLegacyWriteGate'
 import { PeopleToChannelMigrationLogWriter } from './PeopleToChannelMigrationLogWriter'
 import { materializePeopleToChannels } from './PeopleToChannelMigrationMaterializer'
@@ -221,6 +225,9 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
   }
 
   runToCompletion(): PeopleToChannelMigrationFinalizationProductionRunResult {
+    const committed = this.recoverCommitted()
+    if (committed) return committed
+
     const additive = this.additiveRunner.runToSoak()
     const runtime = this.runtime()
     const initial = runtime.initialExecution.load()
@@ -234,24 +241,7 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       blocked('People migration terminal runtime does not match its additive checkpoint')
     }
 
-    const coordinator = new PeopleToChannelMigrationFinalizationCoordinator({
-      recovery: runtime.recovery,
-      initialExecution: runtime.initialExecution,
-      finalizationExecution: runtime.finalizationExecution,
-      legacyWriteGate: this.legacyWriteGate,
-      logs: new PeopleToChannelMigrationLogWriter(runtime.messageLog),
-      policies: new PeopleToChannelMigrationFinalizationPolicyWriter({
-        policies: new ChannelHumanPolicyStore(
-          channelProductionDataPaths(this.options.userDataPath).humanPolicies
-        ),
-        now: this.now
-      }),
-      initialAdmissions: runtime.initialAdmissions,
-      admissions: runtime.finalizationAdmissions,
-      people: runtime.people,
-      now: this.now,
-      afterStage: (stage) => this.options.afterStage?.(stage)
-    })
+    const coordinator = this.coordinator(runtime)
     const finalization = coordinator.run(
       recovery.phase === 'cutover_applied'
         ? {
@@ -290,6 +280,87 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       finalization: clone(finalization),
       legacyWriteGate: this.legacyWriteGate
     }
+  }
+
+  /**
+   * Fast recovery for startups whose receipt is already durable. The additive
+   * runner re-derives its manifest from live Channel metadata, which is only
+   * frozen until the receipt commits — after that, ordinary product activity
+   * (messages, members, closures, history deletion) must not re-open the
+   * migration, so this path verifies the immutable receipt chain instead and
+   * rebuilds the startup projection from the durable manifest and escrow.
+   */
+  private recoverCommitted(): PeopleToChannelMigrationFinalizationProductionRunResult | null {
+    const runtime = this.runtime()
+    const recovery = runtime.recovery.load()
+    if (!recovery || recovery.phase !== 'committed') return null
+    const initial = runtime.initialExecution.load()
+    if (!initial || recovery.planId !== initial.plan.planId) {
+      blocked('People migration terminal runtime does not match its committed receipt')
+    }
+    const manifest = loadPeopleToChannelCutoverManifest(this.options.userDataPath)
+    if (
+      !manifest ||
+      manifest.planId !== initial.plan.planId ||
+      recovery.cutoverStateDigest !== peopleToChannelCutoverManifestDigest(manifest)
+    ) {
+      blocked('People migration cutover manifest does not match its committed receipt')
+    }
+
+    const finalization = this.coordinator(runtime).run()
+    const sealed = runtime.finalizationExecution.loadForRecoveryFence({
+      initialPlanId: initial.plan.planId,
+      initialPlanDigest: initial.planDigest,
+      finalizationDigest: finalization.finalizationDigest
+    })
+    const initialInvitations = runtime.initialAdmissions.recoverEscrow({
+      base: initial.base,
+      history: initial.history
+    }).invitations
+    const terminal = runtime.finalizationAdmissions.recoverCommitted({
+      initial,
+      finalization: sealed,
+      initialInvitations
+    })
+    this.assertTerminalResult({ finalization, terminal, sealed })
+    runtime.recovery.deleteBackupAfterCommit()
+
+    return {
+      schemaVersion: PEOPLE_TO_CHANNEL_FINALIZATION_PRODUCTION_RUNNER_VERSION,
+      migration: {
+        schemaVersion: PEOPLE_TO_CHANNEL_PRODUCTION_RUNNER_VERSION,
+        planId: initial.plan.planId,
+        phase: 'committed',
+        executionCreatedThisRun: false,
+        routes: manifest.routes.map(clone),
+        invitations: terminal.invitations.map(clone),
+        recovery: clone(finalization.recovery)
+      },
+      terminalPlanId: sealed.delta.base.planId,
+      finalization: clone(finalization),
+      legacyWriteGate: this.legacyWriteGate
+    }
+  }
+
+  private coordinator(runtime: Runtime): PeopleToChannelMigrationFinalizationCoordinator {
+    return new PeopleToChannelMigrationFinalizationCoordinator({
+      recovery: runtime.recovery,
+      initialExecution: runtime.initialExecution,
+      finalizationExecution: runtime.finalizationExecution,
+      legacyWriteGate: this.legacyWriteGate,
+      logs: new PeopleToChannelMigrationLogWriter(runtime.messageLog),
+      policies: new PeopleToChannelMigrationFinalizationPolicyWriter({
+        policies: new ChannelHumanPolicyStore(
+          channelProductionDataPaths(this.options.userDataPath).humanPolicies
+        ),
+        now: this.now
+      }),
+      initialAdmissions: runtime.initialAdmissions,
+      admissions: runtime.finalizationAdmissions,
+      people: runtime.people,
+      now: this.now,
+      afterStage: (stage) => this.options.afterStage?.(stage)
+    })
   }
 
   private runtime(): Runtime {

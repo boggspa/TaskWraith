@@ -366,6 +366,13 @@ export function peopleToChannelCutoverManifestPath(userDataPath: string): string
   return join(recoveryRoot, PEOPLE_TO_CHANNEL_CUTOVER_MANIFEST_FILENAME)
 }
 
+/** Digest binding a durable cutover manifest to its recovery intent. */
+export function peopleToChannelCutoverManifestDigest(
+  manifest: PeopleToChannelCutoverManifest
+): string {
+  return sha256(canonicalJson(manifest))
+}
+
 export function loadPeopleToChannelCutoverManifest(
   userDataPath: string
 ): PeopleToChannelCutoverManifest | null {

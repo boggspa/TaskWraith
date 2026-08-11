@@ -496,6 +496,46 @@ export class PeopleToChannelMigrationFinalizationAdmissions {
     }
   }
 
+  /**
+   * Post-receipt recovery for ordinary startups. The committed receipt is the
+   * durable authority, so this rebuilds terminal admission state from the
+   * sealed escrow alone and never measures live Channel metadata against the
+   * frozen migration snapshot — post-commit product activity (messages,
+   * members, invites, closures, history deletion) must not re-open recovery.
+   * Initial additive invitations must still be unusable wherever they survive.
+   */
+  recoverCommitted(args: {
+    initial: PeopleToChannelMigrationExecution
+    finalization: PeopleToChannelMigrationFinalizationExecution
+    initialInvitations: readonly PeopleToChannelReissuedAdmission[]
+  }): PeopleToChannelMigrationFinalizationAdmissionsResult {
+    assertAuthorityBinding(args)
+    const escrow = this.reissue(args.finalization).recoverEscrow({
+      base: args.finalization.delta.base,
+      history: args.finalization.delta.history
+    })
+    const desired = terminalMetadataAfterInitialRetirement({
+      history: args.finalization.delta.history,
+      invitations: escrow.invitations,
+      initialInvitations: args.initialInvitations,
+      at: terminalTime(args.finalization)
+    })
+    assertInitialAdmissionsRetired({
+      channels: this.options.channels,
+      initialInvitations: args.initialInvitations
+    })
+    return {
+      schemaVersion: PEOPLE_TO_CHANNEL_FINALIZATION_ADMISSIONS_VERSION,
+      initialPlanId: args.initial.plan.planId,
+      planId: args.finalization.delta.base.planId,
+      invitations: escrow.invitations.map(clone),
+      terminalEscrowDigest: escrow.escrowDigest,
+      metadataApplied: false,
+      retiredInvitationCount: 0,
+      channelIds: desired.map((mutation) => mutation.channel.channelId).sort()
+    }
+  }
+
   private reissue(
     finalization: PeopleToChannelMigrationFinalizationExecution
   ): PeopleToChannelMigrationAdmissionReissue {

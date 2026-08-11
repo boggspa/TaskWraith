@@ -142,8 +142,8 @@ function harness(
           invitations: []
         } as never
       },
-      recover: () => {
-        calls.push('admissions.recover')
+      recoverCommitted: () => {
+        calls.push('admissions.recoverCommitted')
         return {
           terminalEscrowDigest: null,
           invitations: []
@@ -344,5 +344,28 @@ describe('PeopleToChannelMigrationFinalizationCoordinator', () => {
 
     expect(() => active.coordinator.run()).toThrow(/legacy scope is partial or changed/)
     expect(active.calls).toEqual(['execution.load', 'write_gate_quiesced'])
+  })
+
+  it('recovers a committed receipt without measuring the drifted live world', () => {
+    const active = harness({
+      recoveryPhase: 'committed',
+      shareIds: ['post_commit_p5_share']
+    })
+
+    expect(active.coordinator.run()).toMatchObject({
+      phase: 'committed',
+      planId: PLAN_ID,
+      finalizationDigest: FINALIZATION_DIGEST,
+      recovery: { phase: 'committed' }
+    })
+    expect(active.calls).toEqual([
+      'execution.load',
+      'write_gate_quiesced',
+      'initial-admissions.recover',
+      'admissions.recoverCommitted'
+    ])
+    expect(active.calls).not.toContain('policies.apply')
+    expect(() => active.gate.assertOrdinaryWriteAllowed('p5_bootstrap')).not.toThrow()
+    expect(() => active.gate.assertOrdinaryWriteAllowed('ordinary_one')).toThrow()
   })
 })
