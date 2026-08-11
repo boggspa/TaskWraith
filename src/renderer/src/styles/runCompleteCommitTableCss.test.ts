@@ -17,6 +17,15 @@ const cssBlockStartingAt = (source: string, selector: string): string => {
 }
 
 describe('run-complete commit table CSS', () => {
+  it('moves roughly seven characters of Seat width into the Changes column', () => {
+    const css = readCss('04-settings-controls.css')
+    const row = cssBlockStartingAt(css, '.run-complete-epic-row.is-commits {')
+
+    expect(row).toContain(
+      'grid-template-columns: minmax(0, 1.1fr) minmax(8rem, 0.9fr) minmax(0, 1.2fr) 5.5rem'
+    )
+  })
+
   it('renders commit hashes as bold primary-theme text', () => {
     const css = readCss('04-settings-controls.css')
     const hash = cssBlockStartingAt(css, '.run-complete-epic-hash code {')
