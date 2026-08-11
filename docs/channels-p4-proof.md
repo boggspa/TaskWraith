@@ -122,3 +122,23 @@ typechecks were rerun green on the fixed tree.
    commits (and on the next committed startup for profiles that committed
    before deletion existed), and a committed record tolerates its absence. The
    backup only ever served the prepare-to-commit crash window.
+
+Two hardening follow-ups landed the same day: the People store now fsyncs its
+snapshot writes (file and directory) and fails closed with a typed error when
+an existing store file is unreadable, instead of silently serving an empty
+share set that the migration would classify as already retired; and the
+recovery store clamps a wall-clock step backward to the last durable timestamp
+during migration-window writes instead of blocking startup until the clock
+catches up.
+
+Live launch verification on the fixed tree (isolated instance, profile seeded
+from a real legacy install): first launch migrated and committed with the
+backup deleted, the window opened, and a relaunch on the committed profile
+opened the window in about two seconds through the committed fast-path with
+the same plan id and no channel errors.
+
+Known accepted dependency: every committed startup still decrypts the sealed
+finalization execution and escrow via safeStorage. This is not separately
+fixable at the migration seam — the Channel host identity store hard-requires
+safeStorage, so an unavailable OS keychain takes down the channels subsystem
+as a whole; graceful subsystem-wide degradation would be its own feature.
