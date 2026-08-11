@@ -9,7 +9,10 @@ import type {
   PeopleToChannelMigrationStartupBootstrap,
   PeopleToChannelMigrationStartupBootstrapDependencies
 } from './PeopleToChannelMigrationStartup'
-import { startPeopleToChannelMigrationBootstrap } from './PeopleToChannelMigrationStartup'
+import {
+  degradePeopleToChannelMigrationStartup,
+  startPeopleToChannelMigrationBootstrap
+} from './PeopleToChannelMigrationStartup'
 import {
   PEOPLE_TO_CHANNEL_PRODUCTION_RUNNER_VERSION,
   type PeopleToChannelMigrationProductionRunResult
@@ -204,5 +207,28 @@ describe('startPeopleToChannelMigrationBootstrap', () => {
     expect(built.start).toHaveBeenCalledOnce()
     expect(built.stop).toHaveBeenCalledOnce()
     expect(events).toEqual(['channels:start', 'channels:stop'])
+  })
+
+  it('degrades to a quiesced gate that blocks every People write', () => {
+    const degraded = degradePeopleToChannelMigrationStartup(
+      new Error('channel identity unavailable')
+    )
+
+    expect(degraded.degraded).toBe(true)
+    expect(degraded.error.message).toBe('channel identity unavailable')
+    expect(degraded.legacyWriteGate.isQuiesced()).toBe(true)
+    expect(() => degraded.legacyWriteGate.assertOrdinaryWriteAllowed('ordinary_share')).toThrow(
+      /quiesced/
+    )
+    expect(() =>
+      degraded.legacyWriteGate.assertOrdinaryWriteAllowed('p5_workspace_bootstrap')
+    ).toThrow(/quiesced/)
+    expect(() => degraded.legacyWriteGate.assertOrdinaryWriteAllowed()).toThrow(/quiesced/)
+  })
+
+  it('wraps a non-Error degrade cause so the log line carries it', () => {
+    const degraded = degradePeopleToChannelMigrationStartup('string failure')
+    expect(degraded.error).toBeInstanceOf(Error)
+    expect(degraded.error.message).toContain('string failure')
   })
 })

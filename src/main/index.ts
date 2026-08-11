@@ -601,7 +601,10 @@ import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAu
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { PeopleToChannelMigrationFinalizationProductionRunner } from './collaboration/PeopleToChannelMigrationFinalizationProductionRunner'
 import { PeopleToChannelMigrationLegacyWriteGate } from './collaboration/PeopleToChannelMigrationLegacyWriteGate'
-import { startPeopleToChannelMigrationBootstrap } from './collaboration/PeopleToChannelMigrationStartup'
+import {
+  degradePeopleToChannelMigrationStartup,
+  startPeopleToChannelMigrationBootstrap
+} from './collaboration/PeopleToChannelMigrationStartup'
 import {
   createChannelProductionBootstrap,
   createChannelProductionRelayPort,
@@ -48312,8 +48315,17 @@ if (isGeminiMcpBridgeProcess) {
       const failedBootstrap = channelProductionBootstrap
       channelProductionBootstrap = null
       void failedBootstrap?.stop().catch(() => undefined)
-      console.error('[channels] production bootstrap failed', error)
-      throw error
+      // Channels fail closed; the app fails open. A dead launch with no window
+      // is strictly worse than a launch without channels (soaked live: an
+      // undecryptable pinned identity key killed startup before the first
+      // durable write). The degraded gate keeps every People write quiesced,
+      // so neither runtime serves collaboration state this launch.
+      const degraded = degradePeopleToChannelMigrationStartup(error)
+      channelMigrationLegacyWriteGate = degraded.legacyWriteGate
+      console.error(
+        '[channels] production bootstrap failed — continuing without channels this launch',
+        degraded.error
+      )
     }
 
     let channelMemberProductionBootstrap: ReturnType<

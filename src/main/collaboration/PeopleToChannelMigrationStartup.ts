@@ -1,6 +1,6 @@
 import type { ChannelProductionService, ChannelProductionStatus } from './ChannelProductionService'
 import { PeopleToChannelMigrationAdmissionAuthority } from './PeopleToChannelMigrationAdmissionAuthority'
-import type { PeopleToChannelMigrationLegacyWriteGate } from './PeopleToChannelMigrationLegacyWriteGate'
+import { PeopleToChannelMigrationLegacyWriteGate } from './PeopleToChannelMigrationLegacyWriteGate'
 import { PeopleToChannelMigrationHandoffService } from './PeopleToChannelMigrationHandoffService'
 import type {
   PeopleToChannelMigrationFinalizationProductionRunResult,
@@ -142,5 +142,35 @@ export function startPeopleToChannelMigrationBootstrap<
   } catch (error) {
     void bootstrap.stop().catch(() => undefined)
     throw error
+  }
+}
+
+export interface PeopleToChannelMigrationDegradedStartup {
+  degraded: true
+  error: Error
+  legacyWriteGate: PeopleToChannelMigrationLegacyWriteGate
+}
+
+/**
+ * Channels fail closed; the app fails open. When the migration bootstrap
+ * cannot run — an undecryptable pinned identity key, unavailable safeStorage,
+ * or a blocked recovery — startup must still produce a window instead of a
+ * silently dead app: no Channel IPC serves, and this gate keeps every People
+ * write (ordinary AND P5 workspace-bootstrap, whose retained scope is unknown
+ * in a launch that could not read its durable state) quiesced until a launch
+ * where the bootstrap succeeds.
+ */
+export function degradePeopleToChannelMigrationStartup(
+  error: unknown
+): PeopleToChannelMigrationDegradedStartup {
+  const legacyWriteGate = new PeopleToChannelMigrationLegacyWriteGate()
+  legacyWriteGate.quiesce({ retainedWorkspaceBootstrapShareIds: [] })
+  return {
+    degraded: true,
+    error:
+      error instanceof Error
+        ? error
+        : new Error(`Channels startup failed with a non-Error value: ${String(error)}`),
+    legacyWriteGate
   }
 }
