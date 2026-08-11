@@ -22,6 +22,8 @@ describe('Blackboard quota and poll MCP schema', () => {
           items?: { type?: string; minLength?: number; maxLength?: number }
         }
         ttlMinutes?: { type?: string; minimum?: number; maximum?: number }
+        attachmentIds?: { type?: string; maxItems?: number }
+        workspaceImagePaths?: { type?: string; maxItems?: number }
       }
     }
 
@@ -41,6 +43,8 @@ describe('Blackboard quota and poll MCP schema', () => {
     })
     expect(tool('blackboard_post').description).toMatch(/ensemble_poll_response/i)
     expect(tool('blackboard_post').description).toMatch(/replaced, retired, or expired/i)
+    expect(schema.properties?.attachmentIds).toMatchObject({ type: 'array', maxItems: 4 })
+    expect(schema.properties?.workspaceImagePaths).toMatchObject({ type: 'array', maxItems: 4 })
   })
 
   it('reuses the existing ensemble response tool with the Blackboard entry id', () => {

@@ -1101,6 +1101,110 @@ describe('chat attachment workspace tools', () => {
     ])
   })
 
+  it('lists and inspects a Blackboard image through its opaque entry alias', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-blackboard-attachment-'))
+    const sha256 = 'blackboardAsset_abcdefghijklmnopqrstuvwxyz0123456789'
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Blackboard attachment chat',
+        scope: 'workspace',
+        workspacePath: workspace,
+        messages: [
+          {
+            id: 'msg-original',
+            role: 'assistant',
+            content: 'Original image',
+            timestamp: '2026-08-11T00:00:00.000Z',
+            metadata: {
+              mediaRefs: [
+                {
+                  id: 'original-media',
+                  kind: 'image',
+                  format: 'raster',
+                  source: 'tool_result',
+                  name: 'capture.png',
+                  mimeType: 'image/png',
+                  sha256,
+                  status: 'available'
+                }
+              ]
+            }
+          }
+        ],
+        ensemble: {
+          blackboard: [
+            {
+              id: 'entry-1',
+              chatId,
+              roundId: 'manual',
+              participantId: 'user',
+              key: 'failure-shot',
+              value: 'Observed failure',
+              category: 'note',
+              scope: 'session',
+              createdAt: '2026-08-11T00:01:00.000Z',
+              mediaRefs: [
+                {
+                  id: 'blackboard:entry-1:image:0:abc',
+                  kind: 'image',
+                  format: 'raster',
+                  source: 'upload',
+                  name: 'capture.png',
+                  mimeType: 'image/png',
+                  sha256,
+                  assetId: `blackboard-image:${sha256}`,
+                  byteLength: PNG_1X1.length,
+                  thumbnail: {
+                    dataBase64: PNG_1X1.toString('base64'),
+                    mimeType: 'image/png'
+                  },
+                  status: 'available'
+                }
+              ]
+            }
+          ]
+        },
+        runs: []
+      }) as any
+    deps.media = {
+      readTranscriptMediaAsset: () => ({
+        ok: true,
+        buffer: PNG_1X1,
+        byteLength: PNG_1X1.length
+      })
+    }
+
+    const context = {
+      scope: 'workspace' as const,
+      cwd: workspace,
+      workspacePath: workspace,
+      appChatId: 'chat-1'
+    }
+    const listed = executeListChatAttachments(deps, {}, context) as any
+    expect(listed.attachments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attachmentId: 'blackboard:entry-1:image:0:abc',
+          source: 'blackboard_media_ref',
+          blackboardEntryId: 'entry-1',
+          blackboardKey: 'failure-shot'
+        })
+      ])
+    )
+
+    const inspected = await executeInspectChatAttachment(
+      deps,
+      { attachmentId: 'blackboard:entry-1:image:0:abc' },
+      context
+    )
+    expect(inspected.structuredContent).toMatchObject({ ok: true, imageReturned: true })
+    expect(inspected.content).toEqual([
+      { type: 'image', mimeType: 'image/png', data: PNG_1X1.toString('base64') }
+    ])
+  })
+
   it('passes the canonical active chat id to the host-authorized transcript-media read', async () => {
     const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-owned-media-'))
     const reads: Array<{

@@ -1954,6 +1954,7 @@ const api = {
     category?: string
     scope?: string
     ttlMinutes?: number
+    imagePaths?: string[]
   }) =>
     ipcRenderer.invoke('post-blackboard-entry', payload) as Promise<{
       ok: true

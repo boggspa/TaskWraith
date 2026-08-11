@@ -2063,6 +2063,7 @@ declare global {
         category?: string
         scope?: string
         ttlMinutes?: number
+        imagePaths?: string[]
       }) => Promise<{ ok: true; entry: BlackboardEntry }>
       deleteBlackboardEntry: (payload: {
         chatId: string

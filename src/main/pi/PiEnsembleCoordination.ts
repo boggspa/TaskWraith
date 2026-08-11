@@ -360,7 +360,7 @@ function descriptionFor(name) {
     ensemble_fanout: 'Ask eligible Ensemble peers to run scoped parallel lanes. Required: prompt; optional targets, reason, mode, targetStage, writeScopes, isolation.',
     ensemble_poll_response: 'Vote on an active Ensemble poll. Required: pollId and choice; optional rationale.',
     scout_brief: 'Emit structured findings from a parallel scout lane. Required: findings and confidence; optional blockers, recommendations, tags.',
-    blackboard_post: 'Post a shared Ensemble entry. Required: key and value; optional pollOptions, category, scope, ttlMinutes (whole minutes; omit for durable).',
+    blackboard_post: 'Post a shared Ensemble entry. Required: key and value; optional attachmentIds, workspaceImagePaths, pollOptions, category, scope, ttlMinutes (whole minutes; omit for durable).',
     blackboard_read: 'Read bounded shared Ensemble blackboard entries. All filters are optional.',
     blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
     write_file: 'Write one exact workspace file through TaskWraith mutation locking. Required: path and content.',
@@ -422,6 +422,8 @@ function parametersFor(name) {
         key: Type.String(),
         value: Type.String(),
         pollOptions: optionalTextArray(),
+        attachmentIds: optionalTextArray(),
+        workspaceImagePaths: optionalTextArray(),
         category: optionalText(),
         scope: optionalText(),
         ttlMinutes: Type.Optional(Type.Number())

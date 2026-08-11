@@ -4114,7 +4114,9 @@ describe('ollamaNativeToolDefinitions', () => {
       key: { type: 'string', minLength: 1 },
       value: { type: 'string', minLength: 1 },
       category: { type: 'string', enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note'] },
-      scope: { type: 'string', enum: ['round', 'session', 'chat'] }
+      scope: { type: 'string', enum: ['round', 'session', 'chat'] },
+      attachmentIds: { type: 'array', maxItems: 4 },
+      workspaceImagePaths: { type: 'array', maxItems: 4 }
     })
     expect(read?.function.parameters.required).toBeUndefined()
     expect(read?.function.parameters.properties).toMatchObject({

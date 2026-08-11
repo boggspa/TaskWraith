@@ -3680,7 +3680,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'blackboard_post',
       description:
-        'Post a Blackboard entry/poll. Optional ttlMinutes makes it self-delete after 1 minute–7 days; otherwise it is durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.',
+        'Post a Blackboard entry/poll with up to 4 raster images. Reuse current-chat attachmentIds or attach workspaceImagePaths (workspace-confined); agents should inspect image aliases from blackboard_read with inspect_chat_attachment. Optional ttlMinutes makes it self-delete after 1 minute–7 days; otherwise it is durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3713,6 +3713,20 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             minimum: BLACKBOARD_MIN_TTL_MINUTES,
             maximum: BLACKBOARD_MAX_TTL_MINUTES,
             description: 'Optional self-delete delay in whole minutes. Omit for no time expiry.'
+          },
+          attachmentIds: {
+            type: 'array',
+            maxItems: 4,
+            items: { type: 'string', minLength: 1 },
+            description:
+              'Optional current-chat attachment ids returned by list_chat_attachments. Images are copied into chat-owned Blackboard storage.'
+          },
+          workspaceImagePaths: {
+            type: 'array',
+            maxItems: 4,
+            items: { type: 'string', minLength: 1 },
+            description:
+              'Optional workspace-relative raster screenshot paths. Absolute paths are accepted only when they remain inside the active workspace.'
           }
         },
         required: ['key', 'value']

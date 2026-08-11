@@ -1921,7 +1921,7 @@ function ollamaNativeToolParameters(
       return {
         description: compact
           ? 'Post a shared Ensemble blackboard entry.'
-          : 'Post a shared Ensemble blackboard entry. key and value must be non-empty.',
+          : 'Post a shared Ensemble blackboard entry. key and value must be non-empty; optional attachmentIds or workspaceImagePaths attach up to four raster images.',
         properties: {
           key: {
             ...STRING,
@@ -1954,6 +1954,18 @@ function ollamaNativeToolParameters(
             minItems: 2,
             maxItems: 6,
             description: 'Optional 2–6 plain-text poll choices.'
+          },
+          attachmentIds: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: 4,
+            description: 'Optional current-chat attachment ids.'
+          },
+          workspaceImagePaths: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: 4,
+            description: 'Optional active-workspace raster image paths.'
           }
         },
         required: ['key', 'value']
@@ -2849,7 +2861,12 @@ const OLLAMA_ARG_TYPE_CHECKS: Partial<Record<OllamaToolName, Record<string, 'str
     run_shell_command: { command: 'string' },
     workspace_search: { query: 'string' },
     todo_write: { todos: 'array' },
-    blackboard_post: { key: 'string', value: 'string' },
+    blackboard_post: {
+      key: 'string',
+      value: 'string',
+      attachmentIds: 'array',
+      workspaceImagePaths: 'array'
+    },
     blackboard_read: { ids: 'array', keys: 'array' },
     blackboard_delete: { ids: 'array', keys: 'array' }
   }

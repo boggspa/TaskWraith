@@ -2089,6 +2089,7 @@ import {
   formatBlackboardCapacityNotice,
   makeBlackboardEntry,
   markBlackboardEntriesSeen,
+  projectBlackboardEntryForAgent,
   removeBlackboardEntries,
   resolveBlackboardExpiry,
   resolveBlackboardPostRound,
@@ -2098,6 +2099,7 @@ import {
   validateBlackboardPollOptions,
   validateBlackboardPostFields
 } from './blackboard/Blackboard'
+import { ingestBlackboardPostImages } from './blackboard/BlackboardPostAttachments'
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
 import { BlackboardExpiryService } from './blackboard/BlackboardExpiryService'
 import { WorkspaceLockRuntime, workspaceLockAuthorityRootForHome } from './WorkspaceLockRuntime'
@@ -38305,10 +38307,11 @@ async function executeGeminiMcpTool(
             ...(pollOptions.maxItems ? { maxItems: pollOptions.maxItems } : {})
           })
         } else {
-          const entry = makeBlackboardEntry({
-            id: `blackboard-${context.appRunId || 'run'}-${Date.now()}-${Math.random()
-              .toString(36)
-              .slice(2, 8)}`,
+          const entryId = `blackboard-${context.appRunId || 'run'}-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`
+          const entryInput = {
+            id: entryId,
             chatId: chat.appChatId,
             roundId: roundResolution.roundId,
             participantId,
@@ -38322,8 +38325,9 @@ async function executeGeminiMcpTool(
               .map((participant) => participant.id),
             ttlMinutes,
             createdAt
-          })
-          if (!entry) {
+          }
+          const preflightEntry = makeBlackboardEntry(entryInput)
+          if (!preflightEntry) {
             toolIsError = true
             text = mcpJson({
               ok: false,
@@ -38331,21 +38335,72 @@ async function executeGeminiMcpTool(
               error: 'blackboard_post requires non-empty key and value.'
             })
           } else {
-            const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
-              currentRoundId: activeRound?.roundId || roundResolution.roundId,
-              tombstones: chat.ensemble.blackboardTombstones,
-              prunedAt: createdAt
-            })
-            if (!upsert.ok) {
+            const preflightUpsert = upsertBlackboardEntry(
+              chat.ensemble.blackboard || [],
+              preflightEntry,
+              {
+                currentRoundId: activeRound?.roundId || roundResolution.roundId,
+                tombstones: chat.ensemble.blackboardTombstones,
+                prunedAt: createdAt
+              }
+            )
+            if (!preflightUpsert.ok) {
               toolIsError = true
               text = mcpJson({
                 ok: false,
                 tool: 'blackboard_post',
-                code: upsert.code,
-                counts: upsert.counts,
+                code: preflightUpsert.code,
+                counts: preflightUpsert.counts,
                 error: formatBlackboardCapacityNotice(chat.ensemble.blackboard || [])
               })
-            } else {
+            }
+            const persistedImages = toolIsError
+              ? null
+              : await ingestBlackboardPostImages({
+                  appChatId: chat.appChatId,
+                  entryId,
+                  attachmentIds: args.attachmentIds ?? args.attachment_ids,
+                  workspaceImagePaths: args.workspaceImagePaths ?? args.workspace_image_paths,
+                  workspacePath: workspaceExecutionContext.workspacePath,
+                  inspectAttachmentTool: (attachmentId, maxBytes) =>
+                    workspaceToolExecutors.executeInspectChatAttachment(
+                      {
+                        attachmentId,
+                        includeImage: true,
+                        maxBytes
+                      },
+                      workspaceExecutionContext
+                    ),
+                  store: getTranscriptMediaAssetStore()
+                })
+            if (persistedImages && !persistedImages.ok) {
+              toolIsError = true
+              text = mcpJson({
+                ok: false,
+                tool: 'blackboard_post',
+                code: persistedImages.code,
+                error: persistedImages.error
+              })
+            }
+            const entry =
+              !toolIsError && persistedImages?.ok
+                ? makeBlackboardEntry({ ...entryInput, mediaRefs: persistedImages.mediaRefs })
+                : null
+            const upsert = entry
+              ? upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
+                  currentRoundId: activeRound?.roundId || roundResolution.roundId,
+                  tombstones: chat.ensemble.blackboardTombstones,
+                  prunedAt: createdAt
+                })
+              : null
+            if (!toolIsError && (!entry || !upsert || !upsert.ok)) {
+              toolIsError = true
+              text = mcpJson({
+                ok: false,
+                tool: 'blackboard_post',
+                error: 'Blackboard entry could not be finalized after image ingestion.'
+              })
+            } else if (!toolIsError && entry && upsert?.ok) {
               const updated: ChatRecord = {
                 ...chat,
                 ensemble: {
@@ -38366,7 +38421,7 @@ async function executeGeminiMcpTool(
               text = mcpJson({
                 ok: true,
                 tool: 'blackboard_post',
-                entry
+                entry: projectBlackboardEntryForAgent(entry)
               })
             }
           }
@@ -38424,7 +38479,7 @@ async function executeGeminiMcpTool(
         text = mcpJson({
           ok: true,
           tool: 'blackboard_read',
-          entries: result.selected,
+          entries: result.selected.map(projectBlackboardEntryForAgent),
           count: result.selected.length,
           omitted: result.omitted,
           visibleCount: visible.length,
@@ -55899,6 +55954,7 @@ if (isGeminiMcpBridgeProcess) {
           category?: string
           scope?: string
           ttlMinutes?: unknown
+          imagePaths?: string[]
         }
       ) => {
         if (AppStore.getSettings().ensembleModeEnabled === false) {
@@ -55927,8 +55983,9 @@ if (isGeminiMcpBridgeProcess) {
         }
         const expiry = resolveBlackboardExpiry(createdAt, payload?.ttlMinutes)
         if (!expiry.ok) throw new Error(`${expiry.code}: ${expiry.message}`)
-        const entry = makeBlackboardEntry({
-          id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        const entryId = `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const entryInput = {
+          id: entryId,
           chatId: chat.appChatId,
           roundId: roundResolution.roundId,
           participantId: 'user',
@@ -55938,8 +55995,44 @@ if (isGeminiMcpBridgeProcess) {
           scope: roundResolution.scope,
           ttlMinutes: payload?.ttlMinutes,
           createdAt
+        }
+        const preflightEntry = makeBlackboardEntry(entryInput)
+        if (!preflightEntry) throw new Error('Blackboard entry requires non-empty key and value.')
+        const preflightUpsert = upsertBlackboardEntry(
+          chat.ensemble.blackboard || [],
+          preflightEntry,
+          {
+            currentRoundId: chat.ensemble.activeRound?.roundId || roundResolution.roundId,
+            tombstones: chat.ensemble.blackboardTombstones,
+            prunedAt: createdAt
+          }
+        )
+        if (!preflightUpsert.ok) {
+          throw new Error(
+            `${preflightUpsert.code}: ${formatBlackboardCapacityNotice(chat.ensemble.blackboard || []) || 'Retire stale notes before posting again.'}`
+          )
+        }
+        const requestedImagePaths = stringArray(payload?.imagePaths)
+        const authorizedImagePaths = resolveRendererAttachmentPaths(event, requestedImagePaths)
+        if (authorizedImagePaths.length !== requestedImagePaths.length) {
+          throw new Error('One or more Blackboard image paths were not selected by this window.')
+        }
+        const persistedImages = await ingestBlackboardPostImages({
+          appChatId: chat.appChatId,
+          entryId,
+          workspaceImagePaths: authorizedImagePaths,
+          workspacePath: chat.workspacePath,
+          authorizedFilePaths: authorizedImagePaths,
+          store: getTranscriptMediaAssetStore()
         })
-        if (!entry) throw new Error('Blackboard entry requires non-empty key and value.')
+        if (!persistedImages.ok) {
+          throw new Error(`${persistedImages.code}: ${persistedImages.error}`)
+        }
+        const entry = makeBlackboardEntry({
+          ...entryInput,
+          mediaRefs: persistedImages.mediaRefs
+        })
+        if (!entry) throw new Error('Blackboard entry could not be finalized.')
         const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
           currentRoundId: chat.ensemble.activeRound?.roundId || roundResolution.roundId,
           tombstones: chat.ensemble.blackboardTombstones,

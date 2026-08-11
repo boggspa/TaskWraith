@@ -23,6 +23,7 @@ import type {
   TranscriptMediaRef,
   TranscriptMediaThumbnail
 } from '../store/types'
+import { sanitizeBlackboardMediaRefs } from '../blackboard/BlackboardMedia'
 import {
   isTranscriptRasterImageMime,
   isTranscriptThumbnailMime,
@@ -403,6 +404,7 @@ type ChatAttachmentSource =
   | 'message_image_path'
   | 'message_attachment'
   | 'message_media_ref'
+  | 'blackboard_media_ref'
   | 'run_attachment'
 type ChatAttachmentPathScope =
   | 'workspace'
@@ -421,6 +423,8 @@ interface ChatAttachmentEntry {
   role?: ChatMessage['role']
   timestamp?: string
   runId?: string
+  blackboardEntryId?: string
+  blackboardKey?: string
   mimeType?: string
   status?: string
   path?: string
@@ -3223,11 +3227,12 @@ function collectChatAttachmentEntries(
   const workspacePath = canonicalChatAttachmentWorkspace(chat, context)
   const entries: ChatAttachmentEntry[] = []
   const seen = new Set<string>()
-  const pushEntry = (entry: ChatAttachmentEntry) => {
-    const key =
-      entry.sha256 ||
-      entry.assetId ||
-      (entry.path ? `${entry.source}:${entry.path}` : entry.attachmentId)
+  const pushEntry = (entry: ChatAttachmentEntry, aliasScoped = false) => {
+    const key = aliasScoped
+      ? `alias:${entry.attachmentId}`
+      : entry.sha256 ||
+        entry.assetId ||
+        (entry.path ? `${entry.source}:${entry.path}` : entry.attachmentId)
     if (seen.has(key)) return
     seen.add(key)
     entries.push(entry)
@@ -3335,6 +3340,32 @@ function collectChatAttachmentEntries(
     })
   })
 
+  ;(chat.ensemble?.blackboard || []).forEach((blackboardEntry) => {
+    sanitizeBlackboardMediaRefs(blackboardEntry.mediaRefs).forEach((ref) => {
+      pushEntry(
+        {
+          attachmentId: ref.id,
+          kind: 'image',
+          source: 'blackboard_media_ref',
+          name: ref.name,
+          blackboardEntryId: blackboardEntry.id,
+          blackboardKey: blackboardEntry.key,
+          timestamp: blackboardEntry.createdAt,
+          mimeType: ref.mimeType,
+          status: ref.status,
+          pathScope: ref.sha256 || ref.assetId ? 'transcript_asset' : 'thumbnail_only',
+          byteLength: ref.byteLength,
+          sha256: ref.sha256,
+          assetId: ref.assetId,
+          hasThumbnail: Boolean(ref.thumbnail),
+          thumbnail: ref.thumbnail,
+          mediaRef: ref
+        },
+        true
+      )
+    })
+  })
+
   ;(chat.runs || []).forEach((run, runIndex) => {
     for (const candidate of runAttachmentCandidates(run)) {
       const attachments = Array.isArray(candidate?.imageAttachments)
@@ -3374,6 +3405,8 @@ function summarizeChatAttachmentEntry(entry: ChatAttachmentEntry, includePath: b
     role: entry.role,
     timestamp: entry.timestamp,
     runId: entry.runId,
+    blackboardEntryId: entry.blackboardEntryId,
+    blackboardKey: entry.blackboardKey,
     mimeType: entry.mimeType,
     status: entry.status,
     pathScope: entry.pathScope,
