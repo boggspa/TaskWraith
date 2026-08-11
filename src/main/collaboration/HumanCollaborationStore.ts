@@ -342,9 +342,14 @@ export class HumanCollaborationStore {
     return removed
   }
 
-  /** Global history clear: remove every share record. */
+  /**
+   * Global history clear: remove every share record. Asserts per share so a
+   * post-migration clear still erases retained P5 shares and an empty store
+   * settles instead of wedging the surrounding deletion transaction; a
+   * quiesced gate keeps blocking only when an ordinary share is still present.
+   */
   purgeAllShares(): number {
-    this.assertOrdinaryWriteAllowed()
+    this.memory.shares.forEach((share) => this.assertOrdinaryWriteAllowed(share.shareId))
     const removed = this.memory.shares.length
     if (removed === 0) return 0
     this.memory.shares = []

@@ -115,6 +115,21 @@ describe('HumanCollaborationStore', () => {
     expect(store.getShare(ordinary.share.shareId)).toMatchObject({ enabled: true })
   })
 
+  it('settles a global history clear after terminal quiescence', () => {
+    const emptyGate = new PeopleToChannelMigrationLegacyWriteGate()
+    const emptyStore = new HumanCollaborationStore(undefined, { legacyWriteGate: emptyGate })
+    emptyGate.quiesce({ retainedWorkspaceBootstrapShareIds: [] })
+    expect(emptyStore.purgeAllShares()).toBe(0)
+
+    const gate = new PeopleToChannelMigrationLegacyWriteGate()
+    const store = new HumanCollaborationStore(undefined, { legacyWriteGate: gate })
+    const p5 = store.createShare({ chatId: 'workspace-bootstrap', mode: 'comments', now: 100 })
+    gate.quiesce({ retainedWorkspaceBootstrapShareIds: [p5.share.shareId] })
+
+    expect(store.purgeAllShares()).toBe(1)
+    expect(store.listShares()).toEqual([])
+  })
+
   it('creates single-use high-entropy invites and pins collaborator identity', () => {
     const store = new HumanCollaborationStore()
     const created = store.createShare({
