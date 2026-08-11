@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import type * as http2 from 'http2'
 import { ApnsClient } from '../shared/apns/apnsSendCore'
+import { sharedApnsCollapseId } from '../shared/e2ee/push'
 import { buildLiveActivityApsBody } from '../shared/apns/liveActivityPayload'
 import type { LiveActivityPushPayload } from '../shared/apns/liveActivityPayload'
 import type {
@@ -214,7 +215,20 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
       priority: 10,
       body,
       expirationSeconds: nowSec + 3600,
-      collapseId: payload.approvalId || payload.questionId || payload.threadId
+      // Approvals/questions keep their actionable identity; FINISH events
+      // use the cross-tier derivation (design §7.3) so a Tier-2 gateway
+      // trigger and this direct push — or two Macs reporting one terminal
+      // event — collapse to a single banner. The old threadId fallback made
+      // every event in a thread collapse into one banner AND leaked the
+      // thread id into an APNs header; the hash does neither.
+      collapseId:
+        payload.approvalId ||
+        payload.questionId ||
+        sharedApnsCollapseId({
+          reason: payload.reason,
+          threadId: payload.threadId,
+          runId: payload.runId
+        })
     })
   }
 

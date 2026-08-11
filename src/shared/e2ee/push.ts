@@ -357,6 +357,43 @@ export function pairIdFromIdentityPubKey(iphoneIdentityPubKey: string): string {
 }
 
 /**
+ * One signed trigger per target device — the Mac-side P6 helper. Pure so the
+ * XOR site's frames are unit-testable without a bridge runtime; the collapse
+ * id is derived ONCE (all targets share it, which is exactly what lets two
+ * devices' banners collapse against each other's Macs too).
+ */
+export function signTriggerRequestsForTargets(
+  macIdentity: KeyPair,
+  targetIphoneIdentityPubKeys: readonly string[],
+  input: {
+    reason: TriggerReason
+    threadId?: string
+    runId?: string
+    taskId?: string
+    issuedAt: number
+    makeNonce: () => string
+  }
+): TriggerRequest[] {
+  const collapseId = sharedApnsCollapseId({
+    reason: input.reason,
+    threadId: input.threadId,
+    runId: input.runId
+  })
+  return targetIphoneIdentityPubKeys.map((target) =>
+    signTriggerRequest(macIdentity, {
+      targetIphoneIdentityPubKey: target,
+      reason: input.reason,
+      threadId: input.threadId,
+      runId: input.runId,
+      taskId: input.taskId,
+      collapseId,
+      issuedAt: input.issuedAt,
+      nonce: input.makeNonce()
+    })
+  )
+}
+
+/**
  * The cross-tier collapse id (design §7.3): byte-identical on Tier-1
  * (direct APNs), Tier-2 (relay trigger), and the relay's coalesce key, so
  * two Macs or two tiers reporting the same terminal event collapse to one

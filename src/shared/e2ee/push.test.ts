@@ -9,6 +9,7 @@ import {
   signApnsDeregisterRequest,
   signApnsRegisterRequest,
   signTriggerRequest,
+  signTriggerRequestsForTargets,
   verifyApnsDeregisterRequest,
   verifyApnsRegisterRequest,
   verifyTriggerRequest
@@ -84,6 +85,27 @@ describe('push gateway protocol (P3)', () => {
     expect(isTriggerRequest({ ...good, nonce: b64.encode(Buffer.alloc(4)) })).toBe(false)
     expect(isTriggerRequest({ ...good, issuedAt: Number.NaN })).toBe(false)
     expect(isApnsRegisterRequest({ ...good })).toBe(false)
+  })
+
+  it('signs one trigger per target with ONE shared collapse id', () => {
+    const other = generateIdentityKeyPair()
+    const otherKey = b64.encode(exportRawEd25519PublicKey(other.publicKey))
+    const triggers = signTriggerRequestsForTargets(mac, [phoneKey, otherKey], {
+      reason: 'runComplete',
+      threadId: 't-1',
+      runId: 'r-1',
+      issuedAt: 1_700_000_000_000,
+      makeNonce: nonce
+    })
+    expect(triggers).toHaveLength(2)
+    expect(triggers.map((t) => t.targetIphoneIdentityPubKey)).toEqual([phoneKey, otherKey])
+    // One collapse id across every target — that is what lets two devices'
+    // banners collapse against each other's Macs.
+    expect(new Set(triggers.map((t) => t.collapseId)).size).toBe(1)
+    // Every frame independently verifiable.
+    expect(triggers.every((t) => verifyTriggerRequest(t))).toBe(true)
+    // But nonces are per-frame, never shared.
+    expect(new Set(triggers.map((t) => t.nonce)).size).toBe(2)
   })
 
   it('derives the bridge-identical pairID and a header-safe collapse id', () => {

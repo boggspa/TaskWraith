@@ -29,7 +29,7 @@
  * can drive the real runtime + real relay without booting Electron.
  */
 
-import { createHash, randomUUID } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import {
   BridgeBroadcaster,
   type BridgeBroadcasterAllowlist,
@@ -41,6 +41,11 @@ import type { RunEvent, RunEventSink } from '../RunEventBus'
 import { E2EE_PROTOCOL, type PairingBootstrapPayload } from '../../shared/e2ee/protocol'
 import { b64, exportRawEd25519PublicKey, type KeyPair } from '../../shared/e2ee/keys'
 import { signRegisterRequest, type RegisterRequest } from '../../shared/e2ee/resolve'
+import {
+  signTriggerRequestsForTargets,
+  type TriggerReason,
+  type TriggerRequest
+} from '../../shared/e2ee/push'
 import {
   PAIRED_HOST_PROJECTION_METHODS,
   type PairedHostProjectionAttachment
@@ -296,6 +301,28 @@ export class RemoteBridgeRuntime {
    * secret (trust is still the 6-digit SAS); deriving the pubkey + relayUrls the
    * exact same way `beginPairing` does keeps the advertisement from drifting from
    * the bootstrap. Pure read — never mints a session. */
+  /**
+   * One Mac-signed Tier-2 push trigger per KNOWN paired device (the
+   * `established` map's keys are the phones' identity pubkeys — the pairID
+   * hashes in the token store are one-way and cannot address a device). The
+   * identity private key never leaves this class; callers get finished
+   * frames. Empty when nothing is paired.
+   */
+  signedPushTriggers(input: {
+    reason: TriggerReason
+    threadId?: string
+    runId?: string
+    taskId?: string
+  }): TriggerRequest[] {
+    const targets = [...this.established.keys()]
+    if (targets.length === 0) return []
+    return signTriggerRequestsForTargets(this.opts.identity, targets, {
+      ...input,
+      issuedAt: Date.now(),
+      makeNonce: () => b64.encode(randomBytes(16))
+    })
+  }
+
   describeHost(): {
     protocol: string
     macIdentityPubKey: string

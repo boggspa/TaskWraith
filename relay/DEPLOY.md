@@ -57,6 +57,16 @@ Compromise path: revoke FIRST in the portal (Apple-side kill), then rotate
 as above. The token table contains no secrets — routing hashes and device
 tokens only — and does not need to be purged on key rotation.
 
+## Mac-side wiring (P6)
+
+A Mac WITHOUT its own APNs credentials becomes Tier-2 by setting
+`TASKWRAITH_PUSH_GATEWAY_URL` to this relay's base URL (ws:// and http://
+forms both accepted). The XOR is strict and global: a Mac with a live
+`.p8` never fires the gateway, so one finish never lands twice. Tier-2
+inherits Tier-1's suppressions — nothing is sent while the user is at the
+Mac, and `TASKWRAITH_BRIDGE_APNS_DRY_RUN` suppresses Tier-2 as well (a
+dry-run pusher is a simulation, not an absence of credentials).
+
 ## The P7 gate (not this document's job)
 
 Before any broad rollout, the design's P7 single-device end-to-end test

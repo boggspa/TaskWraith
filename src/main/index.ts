@@ -474,7 +474,7 @@ import {
   GLOBAL_REMOTE_SCOPE_CAPABILITIES,
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
-import { RemoteBridgeRuntime } from './remote/RemoteBridgeRuntime'
+import { RemoteBridgeRuntime, relayHttpBase } from './remote/RemoteBridgeRuntime'
 import { PairedHostProjectionGateway } from './remote/PairedHostProjectionGateway'
 import {
   assertRemoteProviderGrant,
@@ -2621,6 +2621,18 @@ const remoteTaskCompletionNotificationTracker = new RemoteTaskCompletionNotifica
  */
 function maybeNotifyRemoteTaskCompletion(taskCard: RemoteTaskCard): void {
   if (!remoteTaskCompletionNotificationTracker.shouldNotify(taskCard)) return
+  // Tier XOR (design §5.4): a Mac with its own APNs credentials is Tier-1
+  // and the project gateway must stay silent for it, or every finish lands
+  // twice. `isNoop` is the LIVE discriminator (the persisted `configured`
+  // flag misses a safeStorage decrypt failure). The XOR is a single global
+  // Mac state, never per-pairing.
+  const pusherIsNoop = Boolean(
+    bridgeApnsPusherRef === null || (bridgeApnsPusherRef as { isNoop?: boolean }).isNoop
+  )
+  if (pusherIsNoop) {
+    tier2CompletionTriggerRef?.(taskCard)
+    return
+  }
   remoteAttentionApnsFanoutRef?.notify({
     reason: 'runComplete',
     workspaceId: taskCard.workspaceId,
@@ -3208,6 +3220,15 @@ function taskwraithMcpBridgeStaticRegistrationArgs(): string[] {
 // `getApnsTokenStore` deps it's constructed with.
 let bridgeApnsTokenStoreRef: BridgeApnsTokenStore | null = null
 let bridgeApnsPusherRef: BridgeApnsPusher | null = null
+/**
+ * Tier-2 completion trigger — set after the remote bridge runtime exists
+ * (its `let` lives inside app.whenReady, so the notify site below can never
+ * reference it lexically; the ref is the same late-bind pattern as the
+ * fanout). Null means "no Tier-2 path", and the XOR in
+ * maybeNotifyRemoteTaskCompletion then simply does nothing for a noop
+ * pusher — today's behavior.
+ */
+let tier2CompletionTriggerRef: ((taskCard: RemoteTaskCard) => void) | null = null
 
 /** Live Activity push tokens + the fanout that keeps a lock-screen card fresh
  *  once the phone can no longer update it itself. Module-level for the same
@@ -48001,6 +48022,40 @@ if (isGeminiMcpBridgeProcess) {
         log: (line) => console.log(line)
       })
       iosRemoteRuntime = runtime
+      // Tier-2 completion trigger (design P6). Only reachable through the
+      // XOR at maybeNotifyRemoteTaskCompletion — a Mac with live APNs
+      // credentials never fires it. Suppressions deliberately mirror the
+      // Tier-1 fanout: the at-desktop check (a phone banner while the user
+      // sits at the Mac is noise), and the dry-run env — a dry-run Mac's
+      // noop pusher is a SIMULATION, not an absence, and must not flip real
+      // deliveries onto the project gateway.
+      tier2CompletionTriggerRef = (completionCard) => {
+        const gatewayUrl = (process.env.TASKWRAITH_PUSH_GATEWAY_URL || '').trim()
+        if (!gatewayUrl) return
+        if (
+          process.env.TASKWRAITH_BRIDGE_APNS_DRY_RUN === '1' ||
+          process.env.TASKWRAITH_BRIDGE_APNS_DRY_RUN === 'true'
+        ) {
+          return
+        }
+        if (userIsAtDesktop()) return
+        const triggers =
+          iosRemoteRuntime?.signedPushTriggers({
+            reason: 'runComplete',
+            threadId: completionCard.threadId,
+            runId: completionCard.runId || completionCard.latestRunId,
+            taskId: completionCard.id
+          }) ?? []
+        // Fire-and-forget from inside the broadcast rebuild loop — this
+        // must never become async-blocking.
+        for (const trigger of triggers) {
+          void fetch(`${relayHttpBase(gatewayUrl)}/v1/push/trigger`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(trigger)
+          }).catch(() => {})
+        }
+      }
       // Trusted reconnect (T5): resume the persisted pairing at startup —
       // the phone finds this session via the resolve directory, no QR.
       if (runtime.startListening()) {
