@@ -684,6 +684,10 @@ public struct RemoteTaskCard: Codable, Sendable, Equatable {
     public var permissionPresetId: String? = nil
     public var runtimeProfileId: String? = nil
     public var trustedSessionEnabled: Bool? = nil
+    /// Executable external-path grants on the ACTIVE run (absent = none).
+    /// Feeds the Safety tab: a device that can approve postures must be able
+    /// to see what standing grants are in force.
+    public var externalGrantsCount: Int? = nil
     /// Slice B: a provider (and optional model/reasoning) switch queued by the
     /// Mac while a run is active (`readPendingProviderChange`). PRESENT only
     /// while a switch is pending, ABSENT otherwise — the composer reflects it as

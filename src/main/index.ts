@@ -47137,6 +47137,15 @@ if (isGeminiMcpBridgeProcess) {
           trustedSessionEnabled,
           trustedSessionParticipantIds,
           openCanvases: canvasService.list({ chatId: canonicalChat.appChatId }),
+          externalGrantsCount: (() => {
+            const session = runManager.resolve(
+              (canonicalChat.provider as ProviderId) || DEFAULT_PROVIDER,
+              { appChatId: canonicalChat.appChatId }
+            )
+            return session && isActiveRunSessionStatus(session.status)
+              ? executableExternalPathGrantsForRun(canonicalChat, session.runId).length
+              : 0
+          })(),
           isShared: activeChannelChatIds.has(canonicalChat.appChatId) ||
             Boolean(collaborationShare),
           sharedMode: activeChannelChatIds.has(canonicalChat.appChatId) ? 'channel'

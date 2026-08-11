@@ -4,6 +4,20 @@
 import Foundation
 import Testing
 
+@Suite("Safety projection decode")
+struct SafetyProjectionDecodeTests {
+    @Test func externalGrantsCountDecodesAndDefaultsAbsent() throws {
+        let with = try JSONDecoder().decode(
+            RemoteTaskCard.self,
+            from: Data(
+                #"{"id":"t1","capabilities":{"approve":true},"externalGrantsCount":3}"#.utf8))
+        #expect(with.externalGrantsCount == 3)
+        let without = try JSONDecoder().decode(
+            RemoteTaskCard.self, from: Data(#"{"id":"t2"}"#.utf8))
+        #expect(without.externalGrantsCount == nil)
+    }
+}
+
 @testable import TaskWraithKit
 
 @Suite("Shared task-card decode")

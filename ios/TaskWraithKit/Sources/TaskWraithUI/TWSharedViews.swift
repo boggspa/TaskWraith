@@ -5508,10 +5508,26 @@ public struct ThreadInspector: View {
                 Text("Notes").tag(3)
                 Text("Usage").tag(4)
                 Text(peersSegmentLabel).tag(5)
+                Text("Safety").tag(6)
             }
             .pickerStyle(.segmented)
             .padding(12)
-            if tab == 2 {
+            if tab == 6 {
+                ScrollView {
+                    if let card = model.taskCards.first(where: {
+                        $0.id == threadId || $0.threadId == threadId
+                    }) {
+                        SafetyCapabilitiesPanel(card: card)
+                    } else {
+                        Text("No task card projected for this thread yet.")
+                            .font(.caption)
+                            .foregroundStyle(TWTheme.textSecondary)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if tab == 2 {
                 SideChatsPanel(
                     model: model, threadId: threadId,
                     onOpenThread: onOpenThread)

@@ -299,6 +299,8 @@ export interface RemoteTaskCard {
    * section from this flag; invite creation remains Mac-only. */
   isShared?: boolean
   sharedMode?: string
+  /** Executable external-path grants on the ACTIVE run (0 / absent = none). */
+  externalGrantsCount?: number
   /** Mirrors ChatRecord.archived. Electron's sidebar hides archived chats from
    * its lists and counts; remote clients must do the same so the iOS thread
    * count matches the desktop sidebar. */
@@ -725,6 +727,11 @@ export interface BuildRemoteTaskCardOptions {
   runtimeProfileId?: string
   trustedSessionEnabled?: boolean
   trustedSessionParticipantIds?: ReadonlySet<string>
+  /** Executable external-path grants for the chat's ACTIVE run (0 when
+   * idle — grants are run-scoped by construction). Feeds the phone's
+   * Safety tab; a paired device that can APPROVE postures must be able to
+   * SEE what standing grants are in force. */
+  externalGrantsCount?: number
 }
 
 export interface BuildRemoteTaskFeedSnapshotInput {
@@ -1199,6 +1206,9 @@ export function buildRemoteTaskCard(
     ...(draftVariant ? { draftVariant } : {}),
     ...(options.isShared ? { isShared: true } : {}),
     ...(isString(options.sharedMode) ? { sharedMode: options.sharedMode } : {}),
+    ...(typeof options.externalGrantsCount === 'number' && options.externalGrantsCount > 0
+      ? { externalGrantsCount: options.externalGrantsCount }
+      : {}),
     ...(chat.archived ? { archived: true } : {}),
     workspaceId: chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null,
     provider: chat.provider ?? 'gemini',
