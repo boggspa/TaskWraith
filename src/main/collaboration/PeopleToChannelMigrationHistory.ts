@@ -309,12 +309,16 @@ function importedDrafts(args: {
   entry: PeopleToChannelMigrationEntry
   mutation: PeopleToChannelChannelMutation
   chat: PeopleToChannelInventoryChat
+  importAcceptedAfter?: number
 }): ImportedDraft[] {
-  const { plan, base, entry, mutation, chat } = args
-  return selectedDonorRows(donorRows(chat, entry.source.shareId, entry.source.history)).map(
+  const { plan, base, entry, mutation, chat, importAcceptedAfter } = args
+  return selectedDonorRows(donorRows(chat, entry.source.shareId, entry.source.history)).flatMap(
     (row) => {
       if (row.evidence.acceptedAt > base.migrationAt) {
         blocked('Legacy People contribution timestamp is after the migration boundary')
+      }
+      if (importAcceptedAfter !== undefined && row.evidence.acceptedAt <= importAcceptedAfter) {
+        return []
       }
       const member = targetHumanMember(entry, mutation, row)
       const content = redactChannelContent(row.message.content).trim()
@@ -331,17 +335,19 @@ function importedDrafts(args: {
         row.evidence.clientMessageId,
         row.evidence.messageId
       ].join('\u0000')
-      return {
-        sourceKind: row.evidence.kind,
-        sourceMessageId: row.evidence.messageId,
-        sourceSequence: row.evidence.sequence,
-        messageId: `migration_${fingerprint('people-to-channel-history-message', identity).slice(0, 40)}`,
-        authorMemberId: member.memberId,
-        clientMessageId: `migration_${fingerprint('people-to-channel-history-client', identity)}`,
-        content,
-        acceptedAt: row.evidence.acceptedAt,
-        contentHash: sha256(content)
-      }
+      return [
+        {
+          sourceKind: row.evidence.kind,
+          sourceMessageId: row.evidence.messageId,
+          sourceSequence: row.evidence.sequence,
+          messageId: `migration_${fingerprint('people-to-channel-history-message', identity).slice(0, 40)}`,
+          authorMemberId: member.memberId,
+          clientMessageId: `migration_${fingerprint('people-to-channel-history-client', identity)}`,
+          content,
+          acceptedAt: row.evidence.acceptedAt,
+          contentHash: sha256(content)
+        }
+      ]
     }
   )
 }
@@ -454,6 +460,8 @@ export function materializePeopleToChannelMigrationHistory(input: {
   donorChats: readonly PeopleToChannelInventoryChat[]
   existingLogs: readonly PeopleToChannelExistingLogSnapshot[]
   legacyProjectionHistory: 'import-then-reset'
+  /** Excludes rows at/before a prior durable migration boundary for terminal soak deltas. */
+  importAcceptedAfter?: number
 }): PeopleToChannelMigrationHistoryMaterialization {
   if (input.legacyProjectionHistory !== 'import-then-reset') {
     blocked('People migration history decision is not executable')
@@ -466,6 +474,10 @@ export function materializePeopleToChannelMigrationHistory(input: {
     !SHA256_PATTERN.test(input.plan.sourceDigest) ||
     !Number.isSafeInteger(input.base.migrationAt) ||
     input.base.migrationAt < 0 ||
+    (input.importAcceptedAfter !== undefined &&
+      (!Number.isSafeInteger(input.importAcceptedAfter) ||
+        input.importAcceptedAfter < 0 ||
+        input.importAcceptedAfter > input.base.migrationAt)) ||
     input.base.planId !== input.plan.planId ||
     input.base.sourceDigest !== input.plan.sourceDigest
   ) {
@@ -532,7 +544,10 @@ export function materializePeopleToChannelMigrationHistory(input: {
       base: input.base,
       entry,
       mutation,
-      chat: chats[0]
+      chat: chats[0],
+      ...(input.importAcceptedAfter === undefined
+        ? {}
+        : { importAcceptedAfter: input.importAcceptedAfter })
     })
     const snapshot = logsByChannel.get(channelId)
     if (mutation.mode === 'merge' && !snapshot) {

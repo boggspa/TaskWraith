@@ -259,6 +259,7 @@ function materialize(
     built?: ReturnType<typeof fixture>
     donorChats?: PeopleToChannelInventoryChat[]
     existingLogs?: PeopleToChannelExistingLogSnapshot[]
+    importAcceptedAfter?: number
   } = {}
 ) {
   const built = args.built ?? fixture()
@@ -267,7 +268,10 @@ function materialize(
     base: built.base,
     donorChats: args.donorChats ?? [built.donor],
     existingLogs: args.existingLogs ?? [],
-    legacyProjectionHistory: 'import-then-reset'
+    legacyProjectionHistory: 'import-then-reset',
+    ...(args.importAcceptedAfter === undefined
+      ? {}
+      : { importAcceptedAfter: args.importAcceptedAfter })
   })
 }
 
@@ -314,6 +318,37 @@ describe('PeopleToChannelMigrationHistory', () => {
       expect(message.clientMessageId).not.toMatch(/^client_/)
       expect(message.contentHash).toBe(sha256(message.content))
     }
+  })
+
+  it('can materialize only the rows after a prior durable migration boundary', () => {
+    const messages = [
+      contribution({
+        id: 'before_boundary',
+        kind: HUMAN_COLLABORATOR_COMMENT_KIND,
+        sequence: 1,
+        acceptedAt: 120,
+        content: 'already imported'
+      }),
+      contribution({
+        id: 'after_boundary',
+        kind: HUMAN_COLLABORATOR_COMMENT_KIND,
+        sequence: 2,
+        acceptedAt: 220,
+        content: 'terminal delta'
+      })
+    ]
+    const built = fixture({ messages, peopleShare: share({ nextSequence: 3 }) })
+
+    const result = materialize({ built, importAcceptedAfter: 120 })
+
+    expect(result.importedContributionCount).toBe(1)
+    expect(result.logMutations[0]).toMatchObject({
+      importedCount: 1,
+      messages: [expect.objectContaining({ acceptedAt: 220, content: 'terminal delta' })]
+    })
+    expect(() => materialize({ built, importAcceptedAfter: MIGRATION_AT + 1 })).toThrow(
+      /Base migration materialization does not match/
+    )
   })
 
   it('preserves a merge prefix and regenerates the exact result after the desired suffix exists', () => {
