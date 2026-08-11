@@ -418,7 +418,7 @@ function formatRoleBoundaryContract(
 
   if (isReviewOrReconLike(participant)) {
     lines.push(
-      '- Review/Recon rule: produce findings, evidence, risks, and acceptance criteria. Do not implement unless the user or Lead/Boss explicitly assigns implementation to you.'
+      '- Review/Recon/Scout rule: produce findings, evidence, risks, and acceptance criteria. Do not implement or independently complete the active goal unless the user or Lead/Boss explicitly assigns that work, or the host marks fallback takeover available.'
     )
   } else if (isWorkerLike(participant)) {
     lines.push(
@@ -571,16 +571,75 @@ function isCoordinatorLike(participant: EnsembleParticipant): boolean {
   return /\b(lead|bossman|manager|orchestrator|coordinator|planner|architect|chair)\b/.test(text)
 }
 
+type AdvisorySeatKind = 'review' | 'recon'
+
+function advisorySeatKind(participant: EnsembleParticipant): AdvisorySeatKind | null {
+  if (participant.stageRole === 'reviewer') return 'review'
+  if (participant.stageRole === 'scout') return 'recon'
+
+  const role = String(participant.role || '').toLowerCase()
+  if (/\b(review|reviewer|adv|adversarial|snitch|typecheck|auditor|qa)\b/.test(role)) {
+    return 'review'
+  }
+  if (/\b(recon|research|researcher|scout|explorer|investigator)\b/.test(role)) {
+    return 'recon'
+  }
+
+  const instructions = String(participant.instructions || '').toLowerCase()
+  if (/\b(review|reviewer|adv|adversarial|snitch|typecheck|auditor|qa)\b/.test(instructions)) {
+    return 'review'
+  }
+  if (
+    /\b(recon|research|researcher)\b/.test(instructions) ||
+    /^\s*(explore|investigate|scout)\b/.test(instructions)
+  ) {
+    return 'recon'
+  }
+  return null
+}
+
 function isReviewOrReconLike(participant: EnsembleParticipant): boolean {
-  const text = `${participant.role} ${participant.instructions}`.toLowerCase()
-  return /\b(review|reviewer|adv|adversarial|recon|research|researcher|snitch|typecheck|auditor|qa)\b/.test(
-    text
-  )
+  return advisorySeatKind(participant) !== null
 }
 
 function isWorkerLike(participant: EnsembleParticipant): boolean {
   const text = `${participant.role} ${participant.instructions}`.toLowerCase()
   return /\b(worker|implement|implementer|render|main|edit|patch|build|fix)\b/.test(text)
+}
+
+function formatAdvisoryTurnBoundary(
+  config: EnsembleConfig,
+  participant: EnsembleParticipant,
+  orderedParticipants: EnsembleParticipant[]
+): string | null {
+  const kind = advisorySeatKind(participant)
+  if (!kind) return null
+
+  const roundStates = new Map(
+    (config.activeRound?.participants || []).map((state) => [state.participantId, state.status])
+  )
+  const actionOwners = orderedParticipants.filter(
+    (candidate) =>
+      candidate.id !== participant.id &&
+      candidate.stageRole !== 'background' &&
+      advisorySeatKind(candidate) === null
+  )
+  const fallbackTakeoverAvailable =
+    config.activeRound?.status === 'running' &&
+    actionOwners.length > 0 &&
+    actionOwners.every((candidate) => {
+      const status = roundStates.get(candidate.id)
+      return status === 'failed' || status === 'unreachable'
+    })
+  const roleLabel = kind === 'review' ? 'Review' : 'Scout/Recon'
+
+  return [
+    `Advisory turn boundary (${roleLabel}; host guidance):`,
+    '- Investigate or review, report evidence/findings/risks, and hand off. Do not edit files, run mutating commands, or call a goal-completion lifecycle tool merely because the tool is available.',
+    fallbackTakeoverAvailable
+      ? '- Fallback takeover is AVAILABLE: every non-advisory foreground action owner is recorded failed or unreachable. You may announce a fallback takeover and perform only the smallest necessary recovery slice; verify the result before completing the goal.'
+      : '- Fallback takeover is NOT AVAILABLE. Leave implementation and goal completion to the assigned action owners unless the user or Lead/Boss explicitly assigns that work to you.'
+  ].join('\n')
 }
 
 function formatBossmanControlStanza(
@@ -1094,6 +1153,11 @@ export function buildEnsembleParticipantPromptProjection(
     positionOneIndexed,
     totalParticipants
   )
+  const advisoryTurnBoundary = formatAdvisoryTurnBoundary(
+    input.config,
+    input.participant,
+    orderedParticipants
+  )
   const planOwnerLines = formatEnsemblePlanOwnerLines(input.chat, input.config, input.participant)
   // Recon-aware ollama workflow hint: the local-scout hint used to say
   // "draft a short implementation plan… ask the user", directly
@@ -1343,6 +1407,7 @@ export function buildEnsembleParticipantPromptProjection(
       '',
       input.currentPromptLabel || 'Current user request:',
       sanitizeText(input.currentPrompt),
+      ...(advisoryTurnBoundary ? ['', advisoryTurnBoundary] : []),
       '',
       yieldExecutionCheck,
       '',
@@ -1370,7 +1435,11 @@ export function buildEnsembleParticipantPromptProjection(
     `Round id: ${input.roundId}`,
     `Round policy: ${
       orchestrationMode === 'continuous'
-        ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) when that lifecycle tool is listed — restating "done" WITHOUT completing the goal just loops another pass.`
+        ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. ${
+            advisoryTurnBoundary
+              ? 'As an advisory seat, report your bounded result and hand off; do not end the round or complete the active goal unless the advisory fallback boundary below explicitly permits takeover.'
+              : 'To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) when that lifecycle tool is listed — restating "done" WITHOUT completing the goal just loops another pass.'
+          }`
         : 'Turn-bound. Each participant speaks at most once; unique @Role/@Model mentions reorder participants who have not spoken yet. Use ensemble_yield(target) only when that tool is listed.'
     }`,
     ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
@@ -1469,7 +1538,9 @@ export function buildEnsembleParticipantPromptProjection(
     '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants / ensemble_roster_edit / ensemble_brief_update only when those tools are listed. If they are absent, do not attempt a hidden seat mutation: state the requested provider/model/brief change for the user or the next managed participant.',
     '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may use the listed roster tools to inspect and import a task-specific TaskWraith roster export. If those tools are absent, propose the roster in visible text; do not invent a roster-management tool.',
     '- When blackboard_post/read or ensemble_poll_response are listed, use them only for durable shared facts, decisions, risks, do-not-repeat notes, and polls — not conversational side messages. If those tools are absent, place concise durable findings in your response for the later participants instead.',
-    '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, use a listed goal-completion tool if available; otherwise report completion clearly and use a unique mention only to route a specific next actor.',
+    advisoryTurnBoundary
+      ? '- In Continuous mode, finish this advisory turn by reporting your evidence and routing the appropriate action owner. Do not use a goal-completion tool unless fallback takeover is available or the user/Lead/Boss explicitly assigned completion to you.'
+      : '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, use a listed goal-completion tool if available; otherwise report completion clearly and use a unique mention only to route a specific next actor.',
     permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
@@ -1638,6 +1709,7 @@ export function buildEnsembleParticipantPromptProjection(
     '',
     input.currentPromptLabel || 'Current user request:',
     sanitizeText(input.currentPrompt),
+    ...(advisoryTurnBoundary ? ['', advisoryTurnBoundary] : []),
     '',
     yieldExecutionCheck,
     '',

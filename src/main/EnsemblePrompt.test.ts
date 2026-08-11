@@ -31,6 +31,7 @@ import type {
   EnsembleBossmanReviewGate,
   EnsembleConfig,
   EnsembleParticipant,
+  EnsembleParticipantStatus,
   ToolActivity
 } from './store/types'
 import { createActiveGoal } from './GoalState'
@@ -97,6 +98,30 @@ function chat(): ChatRecord {
     ],
     runs: [],
     ensemble
+  }
+}
+
+function withActiveRoundStatuses(
+  config: EnsembleConfig,
+  statuses: Partial<Record<string, EnsembleParticipantStatus>>
+): EnsembleConfig {
+  return {
+    ...config,
+    activeRound: {
+      roundId: 'round-advisory',
+      status: 'running',
+      prompt: 'Handle the request as a panel.',
+      startedAt: '2026-08-11T00:00:00.000Z',
+      participants: config.participants
+        .filter((participant) => participant.enabled)
+        .map((participant) => ({
+          participantId: participant.id,
+          provider: participant.provider,
+          role: participant.role,
+          order: participant.order,
+          status: statuses[participant.id] || 'idle'
+        }))
+    }
   }
 }
 
@@ -2256,6 +2281,129 @@ describe('since-last-turn transcript widening', () => {
     // Codex's own last turn (peer-9) is inside the default window already,
     // so the early claude message stays out — no unconditional widening.
     expect(prompt).not.toContain('MY-EARLIER-ANALYSIS')
+  })
+})
+
+describe('advisory seat soft boundary', () => {
+  it.each(['Scout', 'Explorer'] as const)(
+    'recognizes an unstaged %s role and places the boundary after the current request',
+    (role) => {
+      const advisoryParticipant: EnsembleParticipant = {
+        ...ensemble.participants[0],
+        role,
+        instructions: 'Map the relevant code and report useful evidence.'
+      }
+      const config = withActiveRoundStatuses(
+        {
+          ...ensemble,
+          orchestrationMode: 'continuous',
+          participants: [advisoryParticipant, ...ensemble.participants.slice(1)]
+        },
+        { claude: 'running', codex: 'idle', gemini: 'idle' }
+      )
+      const prompt = buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config,
+        participant: advisoryParticipant,
+        currentPrompt: 'Please fix the whole issue now.',
+        roundId: 'round-advisory'
+      })
+
+      const requestIndex = prompt.lastIndexOf('Current user request:')
+      const boundaryIndex = prompt.lastIndexOf('Advisory turn boundary (Scout/Recon')
+      const responseIndex = prompt.lastIndexOf('Respond now as')
+      expect(requestIndex).toBeGreaterThanOrEqual(0)
+      expect(boundaryIndex).toBeGreaterThan(requestIndex)
+      expect(responseIndex).toBeGreaterThan(boundaryIndex)
+      expect(prompt).toContain('Do not edit files, run mutating commands')
+      expect(prompt).toContain('Fallback takeover is NOT AVAILABLE')
+      expect(prompt).not.toContain('To END the round, finish the work')
+      expect(prompt).toContain('do not end the round or complete the active goal')
+    }
+  )
+
+  it('keeps skipped or cancelled action owners from authorizing fallback takeover', () => {
+    const reviewer = { ...ensemble.participants[0], stageRole: 'reviewer' as const }
+    const config = withActiveRoundStatuses(
+      { ...ensemble, participants: [reviewer, ...ensemble.participants.slice(1)] },
+      { claude: 'running', codex: 'skipped', gemini: 'cancelled' }
+    )
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: reviewer,
+      currentPrompt: 'Review and close this out.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).toContain('Advisory turn boundary (Review')
+    expect(prompt).toContain('Fallback takeover is NOT AVAILABLE')
+    expect(prompt).not.toContain('Fallback takeover is AVAILABLE')
+  })
+
+  it('offers the smallest-slice fallback only after every action owner failed', () => {
+    const reviewer = { ...ensemble.participants[0], stageRole: 'reviewer' as const }
+    const config = withActiveRoundStatuses(
+      { ...ensemble, participants: [reviewer, ...ensemble.participants.slice(1)] },
+      { claude: 'running', codex: 'failed', gemini: 'answered' }
+    )
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: reviewer,
+      currentPrompt: 'Review the failed implementation attempt.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).toContain('Fallback takeover is AVAILABLE')
+    expect(prompt).toContain('every non-advisory foreground action owner')
+    expect(prompt).toContain('perform only the smallest necessary recovery slice')
+  })
+
+  it('repeats the current fallback state on slim resumed advisory turns', () => {
+    const scout = {
+      ...ensemble.participants[0],
+      role: 'Scout',
+      instructions: 'Investigate and report.',
+      stageRole: 'scout' as const
+    }
+    const config = withActiveRoundStatuses(
+      { ...ensemble, participants: [scout, ...ensemble.participants.slice(1)] },
+      { claude: 'running', codex: 'unreachable', gemini: 'answered' }
+    )
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: scout,
+      currentPrompt: 'Continue after the worker failure.',
+      roundId: 'round-advisory',
+      slimTurn: true
+    })
+
+    expect(prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+    expect(prompt).toContain('Advisory turn boundary (Scout/Recon')
+    expect(prompt).toContain('Fallback takeover is AVAILABLE')
+  })
+
+  it('leaves the ordinary worker completion guidance unchanged', () => {
+    const config = withActiveRoundStatuses(
+      { ...ensemble, orchestrationMode: 'continuous' },
+      { claude: 'answered', codex: 'running', gemini: 'answered' }
+    )
+    const worker = config.participants[1]
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Implement and verify the fix.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).not.toContain('Advisory turn boundary')
+    expect(prompt).toContain('To END the round, finish the work')
+    expect(prompt).toContain(
+      'when the work is genuinely finished, use a listed goal-completion tool'
+    )
   })
 })
 
