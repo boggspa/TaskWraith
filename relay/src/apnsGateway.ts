@@ -293,7 +293,7 @@ export function createApnsGateway(config: ApnsGatewayConfig = {}): ApnsGateway {
       return
     }
     const pairID = pairIdFromIdentityPubKey(body.targetIphoneIdentityPubKey)
-    const coalesceKey = [pairID, body.threadId ?? '', body.reason].join(' ')
+    const coalesceKey = [pairID, body.threadId ?? '', body.reason].join('\u0000')
     const held = coalesce.get(coalesceKey)
     if (held && held > now()) {
       // 200 so a buggy Mac does not retry-storm; the banner already exists.
