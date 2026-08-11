@@ -13,6 +13,7 @@ import {
 } from './ChannelHumanPolicyStore'
 
 const PLAN_ID = 'a'.repeat(64)
+const TERMINAL_PLAN_ID = 'c'.repeat(64)
 const SOURCE_DIGEST = 'b'.repeat(64)
 
 function policy(
@@ -239,6 +240,78 @@ describe('ChannelHumanPolicyStore', () => {
         })
       ).toThrow(/conflicts/)
       expect(readFileSync(path)).toEqual(before)
+    })
+  })
+
+  it('reconciles a terminal policy only for the same durable member/source binding', () => {
+    withStore((store, path) => {
+      const initial = store.applyMigrationPolicies({
+        migrationPlanId: PLAN_ID,
+        policies: [policy()],
+        now: 1_000
+      })[0]
+      const terminal = policy({
+        sourceDigest: 'd'.repeat(64),
+        rules: contributionRulesForPreset('readOnly'),
+        requiresHostApproval: true,
+        fullHistory: true
+      })
+
+      const reconciled = store.reconcileMigrationPolicies({
+        initialMigrationPlanId: PLAN_ID,
+        migrationPlanId: TERMINAL_PLAN_ID,
+        policies: [terminal],
+        now: 2_000
+      })
+      expect(reconciled).toEqual([
+        expect.objectContaining({
+          migrationPlanId: TERMINAL_PLAN_ID,
+          sourceDigest: terminal.sourceDigest,
+          rules: terminal.rules,
+          requiresHostApproval: true,
+          fullHistory: true,
+          createdAt: initial.createdAt,
+          updatedAt: 2_000
+        })
+      ])
+      expect(
+        store.evaluate({
+          channelId: terminal.channelId,
+          memberId: terminal.memberId,
+          intent: 'comment',
+          contentBytes: 10
+        })
+      ).toMatchObject({ outcome: 'deny', code: 'read_only' })
+
+      const beforeRerun = readFileSync(path)
+      expect(
+        store.reconcileMigrationPolicies({
+          initialMigrationPlanId: PLAN_ID,
+          migrationPlanId: TERMINAL_PLAN_ID,
+          policies: [terminal],
+          now: 3_000
+        })
+      ).toEqual(reconciled)
+      expect(readFileSync(path)).toEqual(beforeRerun)
+
+      const beforeConflict = readFileSync(path)
+      expect(() =>
+        store.reconcileMigrationPolicies({
+          initialMigrationPlanId: PLAN_ID,
+          migrationPlanId: 'e'.repeat(64),
+          policies: [terminal],
+          now: 4_000
+        })
+      ).toThrow(/conflicts/)
+      expect(() =>
+        store.reconcileMigrationPolicies({
+          initialMigrationPlanId: PLAN_ID,
+          migrationPlanId: TERMINAL_PLAN_ID,
+          policies: [policy({ sourceCollaboratorId: 'different_collaborator' })],
+          now: 4_000
+        })
+      ).toThrow(/conflicts/)
+      expect(readFileSync(path)).toEqual(beforeConflict)
     })
   })
 

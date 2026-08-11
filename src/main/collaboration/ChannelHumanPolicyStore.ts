@@ -353,6 +353,107 @@ export class ChannelHumanPolicyStore {
     return applied.map(clone)
   }
 
+  /**
+   * Terminal P4 authority may refine a frozen People policy after the additive
+   * soak, but only for the exact same Channel member and legacy subject. This
+   * deliberately does not remove records: revocation/removal needs to be
+   * coordinated with Channel metadata so a live member can never become an
+   * ordinary, widened member in between durable writes.
+   */
+  reconcileMigrationPolicies(input: {
+    initialMigrationPlanId: string
+    migrationPlanId: string
+    policies: readonly ChannelHumanMigrationPolicyInput[]
+    now?: number
+  }): ChannelHumanPolicyRecord[] {
+    this.assertHealthy()
+    if (
+      !digest(input.initialMigrationPlanId) ||
+      !digest(input.migrationPlanId) ||
+      !Array.isArray(input.policies)
+    ) {
+      blocked('Channel human terminal migration policy batch is invalid')
+    }
+    input.policies.forEach(validateInput)
+    const requestedKeys = input.policies.map((policy) =>
+      policyKey(policy.channelId, policy.memberId)
+    )
+    if (new Set(requestedKeys).size !== requestedKeys.length) {
+      blocked('Channel human terminal migration policy batch contains duplicates')
+    }
+
+    const at = safeNow(input.now ?? Date.now())
+    const next = clone(this.snapshot)
+    const applied: ChannelHumanPolicyRecord[] = []
+    let changed = false
+    for (const policy of input.policies) {
+      const existing = next.policies.find(
+        (record) => record.channelId === policy.channelId && record.memberId === policy.memberId
+      )
+      if (!existing) {
+        const record: ChannelHumanPolicyRecord = {
+          schemaVersion: CHANNEL_HUMAN_POLICY_SCHEMA_VERSION,
+          migrationPlanId: input.migrationPlanId,
+          ...clone(policy),
+          createdAt: at,
+          updatedAt: at
+        }
+        next.policies.push(record)
+        applied.push(record)
+        changed = true
+        continue
+      }
+
+      const sameBinding =
+        existing.sourceShareId === policy.sourceShareId &&
+        existing.sourceCollaboratorId === policy.sourceCollaboratorId
+      if (
+        !sameBinding ||
+        (existing.migrationPlanId !== input.initialMigrationPlanId &&
+          existing.migrationPlanId !== input.migrationPlanId)
+      ) {
+        blocked('Channel human terminal migration policy conflicts with durable authority')
+      }
+
+      const samePolicy =
+        canonicalJson(policyIdentity(existing)) === canonicalJson(policyIdentity(policy))
+      if (existing.migrationPlanId === input.migrationPlanId) {
+        if (!samePolicy) {
+          blocked('Channel human terminal migration policy conflicts with durable authority')
+        }
+        applied.push(existing)
+        continue
+      }
+
+      if (input.initialMigrationPlanId === input.migrationPlanId && !samePolicy) {
+        blocked('Channel human terminal migration policy conflicts with durable authority')
+      }
+
+      const record: ChannelHumanPolicyRecord = {
+        schemaVersion: CHANNEL_HUMAN_POLICY_SCHEMA_VERSION,
+        migrationPlanId: input.migrationPlanId,
+        ...clone(policy),
+        createdAt: existing.createdAt,
+        updatedAt: at
+      }
+      const index = next.policies.indexOf(existing)
+      next.policies[index] = record
+      applied.push(record)
+      changed = true
+    }
+
+    if (changed) {
+      next.policies.sort((left, right) =>
+        policyKey(left.channelId, left.memberId).localeCompare(
+          policyKey(right.channelId, right.memberId)
+        )
+      )
+      this.persist(next)
+      this.snapshot = next
+    }
+    return applied.map(clone)
+  }
+
   evaluate(input: {
     channelId: string
     memberId: string
