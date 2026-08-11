@@ -33,6 +33,12 @@ interface MigratedAdmissionRule {
 
 export interface PeopleToChannelMigrationAdmissionAuthorityOptions {
   migrationPlanId: string
+  /**
+   * Present only for a fenced P4 terminal replay. It permits the exact
+   * initial policy record to become the terminal plan's record for the same
+   * invite-bound member/source identity; it never permits a foreign record.
+   */
+  initialMigrationPlanId?: string
   invitations: readonly PeopleToChannelReissuedAdmission[]
 }
 
@@ -134,6 +140,8 @@ export class PeopleToChannelMigrationAdmissionAuthority {
     if (
       !options ||
       !SHA256_PATTERN.test(options.migrationPlanId) ||
+      (options.initialMigrationPlanId !== undefined &&
+        !SHA256_PATTERN.test(options.initialMigrationPlanId)) ||
       !Array.isArray(options.invitations) ||
       options.invitations.length > MAX_PEOPLE_TO_CHANNEL_REISSUES
     ) {
@@ -206,10 +214,7 @@ export class PeopleToChannelMigrationAdmissionAuthority {
       inputs.push(inputFrom(rule, member.memberId))
     }
     if (inputs.length > 0) {
-      args.policies.applyMigrationPolicies({
-        migrationPlanId: this.options.migrationPlanId,
-        policies: inputs
-      })
+      this.applyPolicies(args.policies, inputs)
     }
     return inputs.length
   }
@@ -242,11 +247,26 @@ export class PeopleToChannelMigrationAdmissionAuthority {
     ) {
       throw new ChannelError('recovery_blocked', 'Migrated Channel admission is not durably bound')
     }
-    args.policies.applyMigrationPolicies({
-      migrationPlanId: this.options.migrationPlanId,
-      policies: [inputFrom(rule, member.memberId)]
-    })
+    this.applyPolicies(args.policies, [inputFrom(rule, member.memberId)])
     return true
+  }
+
+  private applyPolicies(
+    policies: ChannelHumanPolicyStore,
+    inputs: readonly ChannelHumanMigrationPolicyInput[]
+  ): void {
+    if (this.options.initialMigrationPlanId !== undefined) {
+      policies.reconcileMigrationPolicies({
+        initialMigrationPlanId: this.options.initialMigrationPlanId,
+        migrationPlanId: this.options.migrationPlanId,
+        policies: inputs
+      })
+      return
+    }
+    policies.applyMigrationPolicies({
+      migrationPlanId: this.options.migrationPlanId,
+      policies: inputs
+    })
   }
 
   private resolveDurableBinding(

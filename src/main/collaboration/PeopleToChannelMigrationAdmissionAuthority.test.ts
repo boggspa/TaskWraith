@@ -139,6 +139,71 @@ describe('PeopleToChannelMigrationAdmissionAuthority', () => {
     })
   })
 
+  it('moves an already-bound invitation onto the fenced terminal policy authority', () => {
+    const built = fixture()
+    const initial = invitation(built.channel.channelId, built.issued)
+    const admitted = built.store.beginMemberAdmission({
+      channelId: built.channel.channelId,
+      inviteId: built.issued.invite.inviteId,
+      inviteToken: built.issued.inviteToken,
+      roomId: built.issued.invite.roomId,
+      displayName: 'Alex',
+      identityPublicKey: 'alex_identity',
+      now: 2_100
+    })
+    const initialAuthority = new PeopleToChannelMigrationAdmissionAuthority({
+      migrationPlanId: 'f'.repeat(64),
+      invitations: [initial]
+    })
+    initialAuthority.bind({
+      store: built.store,
+      policies: built.policies,
+      channelId: built.channel.channelId,
+      inviteId: built.issued.invite.inviteId,
+      memberId: admitted.member.memberId,
+      roomId: admitted.invite.roomId,
+      tokenHash: admitted.invite.tokenHash,
+      expiresAt: admitted.invite.expiresAt
+    })
+
+    const terminal = invitation(built.channel.channelId, built.issued, {
+      policy: {
+        sourceDigest: 'b'.repeat(64),
+        rules: contributionRulesForPreset('readOnly'),
+        requiresHostApproval: false,
+        fullHistory: true
+      }
+    })
+    const terminalAuthority = new PeopleToChannelMigrationAdmissionAuthority({
+      initialMigrationPlanId: 'f'.repeat(64),
+      migrationPlanId: 'e'.repeat(64),
+      invitations: [terminal]
+    })
+
+    expect(terminalAuthority.reconcile({ store: built.store, policies: built.policies })).toBe(1)
+    expect(built.policies.get(built.channel.channelId, admitted.member.memberId)).toMatchObject({
+      migrationPlanId: 'e'.repeat(64),
+      sourceDigest: 'b'.repeat(64),
+      rules: contributionRulesForPreset('readOnly'),
+      fullHistory: true
+    })
+    expect(
+      built.policies.evaluate({
+        channelId: built.channel.channelId,
+        memberId: admitted.member.memberId,
+        intent: 'comment',
+        contentBytes: 10
+      })
+    ).toMatchObject({ outcome: 'deny', code: 'read_only' })
+
+    const restarted = new PeopleToChannelMigrationAdmissionAuthority({
+      initialMigrationPlanId: 'f'.repeat(64),
+      migrationPlanId: 'e'.repeat(64),
+      invitations: [terminal]
+    })
+    expect(restarted.reconcile({ store: built.store, policies: built.policies })).toBe(1)
+  })
+
   it('maps an open invite to a synthetic subject so a legacy allow-list cannot widen', () => {
     const built = fixture()
     const source = invitation(built.channel.channelId, built.issued, {
