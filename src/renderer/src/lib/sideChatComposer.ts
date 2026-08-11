@@ -77,7 +77,10 @@ export function buildSideChatComposerProps<T extends Record<string, unknown>>(
     handleGroundImportedPlanFiles: NOOP_SIDE_CHAT_COMPOSER_ACTION,
     handlePermissionRetry: NOOP_SIDE_CHAT_COMPOSER_ACTION,
     handleRunImportedPlan: NOOP_SIDE_CHAT_COMPOSER_ACTION,
-    handleSteer: NOOP_SIDE_CHAT_COMPOSER_ACTION,
+    // Deliberately absent, not a no-op: the composer only renders its Steer
+    // button when a real handler exists, so a detached side chat gets no
+    // dead control (same pattern as handleReviewCurrentDiff above).
+    handleSteer: undefined,
     handleSelectMultiviewLayout: NOOP_SIDE_CHAT_COMPOSER_ACTION,
     handleToggleWelcomeEnsemble: NOOP_SIDE_CHAT_COMPOSER_ACTION,
     handleCollapseEnsembleToSolo: NOOP_SIDE_CHAT_COMPOSER_ACTION,

@@ -24,7 +24,7 @@ import type {
   HumanCollaborationInviteHealth
 } from '../lib/humanCollaborationInviteHealth'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type {
@@ -724,6 +724,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleSelectMultiviewLayout,
     handleSelectParticipant,
     handleSelectWorkspace,
+    handleSteer,
     handleSteerToQueuedMessage,
     handleToggleWelcomeEnsemble,
     handleTrustWorkspaceClick,
@@ -733,6 +734,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     interfaceStyle,
     isAttachingWindow,
     openSlashCommandsRequestId,
+    isCurrentChatBusyForSteer,
     isCurrentChatRunning,
     isCurrentChatLinkedChild,
     isCurrentComposerLocked,
@@ -4862,16 +4864,43 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             />
                           )}
                           {isCurrentChatRunning ? (
-                            <button
-                              className="composer-action-btn stop-btn"
-                              onClick={handleCancel}
-                              title="Stop run"
-                              aria-label="Stop run"
-                              type="button"
-                              disabled={isSteerBusyForCurrentChat}
-                            >
-                              <StopSymbolIcon />
-                            </button>
+                            <>
+                              {/*
+                                Phase J3 (steer): the live-capable gesture. This is
+                                the ONLY control that reaches `handleSteer` — the
+                                queued-row Steer is boundary-only — so hiding it
+                                turns solo live injection dark for every provider.
+                                Pinned by composerSteerButton.test.ts. Only offered
+                                when a handler exists (detached side chats omit it)
+                                and the draft has text to deliver.
+                              */}
+                              {isCurrentChatBusyForSteer &&
+                                typeof handleSteer === 'function' &&
+                                prompt.trim() && (
+                                  <button
+                                    className="composer-action-btn steer-btn"
+                                    onClick={() => {
+                                      void handleSteer()
+                                    }}
+                                    title="Steer the active run — deliver this message without stopping it"
+                                    aria-label="Steer the active run"
+                                    type="button"
+                                    disabled={isSteerBusyForCurrentChat}
+                                  >
+                                    <SteerSymbolIcon />
+                                  </button>
+                                )}
+                              <button
+                                className="composer-action-btn stop-btn"
+                                onClick={handleCancel}
+                                title="Stop run"
+                                aria-label="Stop run"
+                                type="button"
+                                disabled={isSteerBusyForCurrentChat}
+                              >
+                                <StopSymbolIcon />
+                              </button>
+                            </>
                           ) : (
                             <button
                               className={`composer-action-btn run-btn ${isSendConfirming ? 'send-confirming' : ''}`}
