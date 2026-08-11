@@ -20,6 +20,10 @@ import {
 } from './AppChromeSymbols'
 import { WorkspaceStatsPopover } from './WorkspaceStatsPopover'
 import type { WorkspaceStatsContext } from './workspaceStatsContext'
+import {
+  resolveWorkspaceStatsPopoverPosition,
+  type WorkspaceStatsPopoverPosition
+} from '../lib/workspaceStatsPopoverPosition'
 
 type MainPaneMenu = 'fx' | 'info' | 'workspace-stats' | null
 
@@ -42,50 +46,6 @@ export const INFO_MENU_ITEMS = [
 ] as const
 export const MAIN_PANE_GLASS_POPOVER_CLASS =
   'side-chat-layout-menu composer-combined-picker-popover'
-
-const WORKSPACE_STATS_POPOVER_GAP = 8
-const WORKSPACE_STATS_VIEWPORT_GUTTER = 16
-const WORKSPACE_STATS_MULTIVIEW_GUTTER = 12
-const WORKSPACE_STATS_MAX_WIDTH = 527
-const WORKSPACE_STATS_MULTIVIEW_MAX_WIDTH = 442
-
-export interface WorkspaceStatsPopoverPosition {
-  left: number
-  top: number
-  width: number
-}
-
-export function resolveWorkspaceStatsPopoverPosition({
-  anchorRect,
-  viewportWidth,
-  multiviewBounds
-}: {
-  anchorRect: Pick<DOMRect, 'right' | 'bottom'>
-  viewportWidth: number
-  multiviewBounds?: Pick<DOMRect, 'left' | 'right'>
-}): WorkspaceStatsPopoverPosition {
-  const leftBoundary = Math.max(
-    WORKSPACE_STATS_VIEWPORT_GUTTER,
-    multiviewBounds
-      ? multiviewBounds.left + WORKSPACE_STATS_MULTIVIEW_GUTTER
-      : WORKSPACE_STATS_VIEWPORT_GUTTER
-  )
-  const rightBoundary = Math.min(
-    Math.max(WORKSPACE_STATS_VIEWPORT_GUTTER, viewportWidth - WORKSPACE_STATS_VIEWPORT_GUTTER),
-    multiviewBounds
-      ? multiviewBounds.right - WORKSPACE_STATS_MULTIVIEW_GUTTER
-      : viewportWidth - WORKSPACE_STATS_VIEWPORT_GUTTER
-  )
-  const maxWidth = multiviewBounds ? WORKSPACE_STATS_MULTIVIEW_MAX_WIDTH : WORKSPACE_STATS_MAX_WIDTH
-  const width = Math.max(0, Math.min(maxWidth, rightBoundary - leftBoundary))
-  const maxLeft = Math.max(leftBoundary, rightBoundary - width)
-
-  return {
-    left: Math.round(Math.min(Math.max(anchorRect.right - width, leftBoundary), maxLeft)),
-    top: Math.round(anchorRect.bottom + WORKSPACE_STATS_POPOVER_GAP),
-    width: Math.round(width)
-  }
-}
 
 export interface MainPaneActionPillProps {
   /** Stable DOM-id scope. Multiview supplies one per pane to avoid duplicate

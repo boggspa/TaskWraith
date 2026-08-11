@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createRef } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -113,6 +115,23 @@ describe('MainPaneActionPill', () => {
       'side-chat-layout-menu',
       'composer-combined-picker-popover'
     ])
+  })
+
+  it('portals Workspace Stats beyond the pill backdrop root without replacing its material', () => {
+    const componentRoot = join(process.cwd(), 'src/renderer/src/components')
+    const component = readFileSync(join(componentRoot, 'MainPaneActionPill.tsx'), 'utf8')
+    const popover = readFileSync(join(componentRoot, 'WorkspaceStatsPopover.tsx'), 'utf8')
+    const css = readFileSync(
+      join(process.cwd(), 'src/renderer/src/assets/css/31-workspace-stats.css'),
+      'utf8'
+    )
+
+    expect(component).toContain('createPortal(workspaceStatsPopover, document.body)')
+    expect(popover).toContain(
+      'side-chat-layout-menu composer-combined-picker-popover workspace-stats-popover'
+    )
+    expect(css).toMatch(/\.workspace-stats-popover-host\s*\{[^}]*position: fixed;/s)
+    expect(css).not.toContain('.chat-corner-controls > .workspace-stats-popover-host')
   })
 
   it('scopes trigger and menu ids when several pane pills are mounted', () => {

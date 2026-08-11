@@ -750,11 +750,6 @@
 }
 
 @media (max-width: 560px) {
-  .chat-corner-controls > .workspace-stats-popover-host {
-    width: calc(100vw - 20px);
-    max-width: calc(100vw - 20px);
-  }
-
   .workspace-stats-observation {
     display: grid;
   }
