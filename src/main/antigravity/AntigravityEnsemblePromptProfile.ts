@@ -27,6 +27,8 @@ export interface AntigravityOfficialAgyPromptCapsuleInput {
   roster: string
   authorityLines: readonly string[]
   roleBoundaryLines: readonly string[]
+  /** Late, host-derived advisory-seat mutation/completion nudge. */
+  turnBoundary?: string
   roundPolicy: string
   parallelPolicy: string
   dynamicState: string
@@ -238,6 +240,7 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
     {
       text: '- If the required outside-workspace read is not granted, report the exact path and wait for the user rather than bypassing the boundary.'
     },
+    ...(input.turnBoundary ? [{ text: '' }, { text: boundedText(input.turnBoundary, 1_000) }] : []),
     { text: '' },
     { text: boundedText(input.yieldExecutionCheck, 700) },
     { text: `Respond now as [${boundedText(input.participantLabel, 320)}].` }

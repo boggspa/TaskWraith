@@ -88,6 +88,33 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(projection.suppliedMessageIds).not.toContain('current-too-long')
   })
 
+  it('places the advisory boundary immediately before the lifecycle response tail', () => {
+    const prompt = buildAntigravityOfficialAgyPromptCapsule({
+      participantLabel: 'AntiGravity / Reviewer #p7',
+      roundId: 'round-advisory',
+      stageRole: 'reviewer',
+      roleInstructions: 'Review and report evidence.',
+      currentPrompt: 'Review the current implementation.',
+      roster: '1. AntiGravity / Reviewer\n2. Codex / Worker',
+      authorityLines: [],
+      roleBoundaryLines: [],
+      turnBoundary:
+        'Advisory turn boundary (Review; host guidance): Do not edit files or complete the goal. Fallback takeover is NOT AVAILABLE.',
+      roundPolicy: 'Turn-bound round.',
+      parallelPolicy: 'Use normal panel rotation.',
+      dynamicState: 'Active goal: verify the implementation.',
+      transcript: '[Codex / Worker]\nImplementation landed.',
+      permissionRule: 'Use only the tools listed by this run.',
+      yieldExecutionCheck: 'Lifecycle handoff check: use only a listed tool.'
+    })
+
+    const boundaryAt = prompt.indexOf('Advisory turn boundary')
+    const lifecycleAt = prompt.indexOf('Lifecycle handoff check')
+    expect(boundaryAt).toBeGreaterThan(prompt.indexOf('Current assignment:'))
+    expect(lifecycleAt).toBeGreaterThan(boundaryAt)
+    expect(prompt).toContain('Fallback takeover is NOT AVAILABLE')
+  })
+
   it('drops evidence for a row cut by the outer capsule budget', () => {
     const row = '[User]\nLATEST STEER AT TRANSCRIPT TAIL'
     const transcript = `${'old transcript '.repeat(400)}\n\n${row}`

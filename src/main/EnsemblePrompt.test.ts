@@ -2385,6 +2385,59 @@ describe('advisory seat soft boundary', () => {
     expect(prompt).toContain('Fallback takeover is AVAILABLE')
   })
 
+  it('carries the boundary into the request-first Ollama capsule', () => {
+    const scout: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      provider: 'ollama',
+      model: 'gpt-oss:20b',
+      role: 'Scout',
+      instructions: 'Investigate and report evidence.',
+      stageRole: 'scout'
+    }
+    const config = withActiveRoundStatuses(
+      { ...ensemble, participants: [scout, ...ensemble.participants.slice(1)] },
+      { claude: 'running', codex: 'idle', gemini: 'idle' }
+    )
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: scout,
+      currentPrompt: 'Fix the issue end to end.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).toContain('Ollama context capsule')
+    expect(prompt).toContain('Advisory turn boundary (Scout/Recon')
+    expect(prompt).toContain('Prefer one concrete read/search check')
+    expect(prompt).not.toContain('small edit, or shell')
+  })
+
+  it('carries the boundary into the official AntiGravity capsule', () => {
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      provider: 'antigravity',
+      model: 'gemini-3.1-pro-high',
+      role: 'Reviewer',
+      instructions: 'Review and report evidence.',
+      stageRole: 'reviewer'
+    }
+    const config = withActiveRoundStatuses(
+      { ...ensemble, participants: [reviewer, ...ensemble.participants.slice(1)] },
+      { claude: 'running', codex: 'idle', gemini: 'idle' }
+    )
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: reviewer,
+      currentPrompt: 'Fix and finish the whole request.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).toContain('AntiGravity official agy context capsule')
+    expect(prompt).toContain('Advisory turn boundary (Review')
+    expect(prompt).toContain('Fallback takeover is NOT AVAILABLE')
+  })
+
   it('leaves the ordinary worker completion guidance unchanged', () => {
     const config = withActiveRoundStatuses(
       { ...ensemble, orchestrationMode: 'continuous' },

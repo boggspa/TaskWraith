@@ -72,4 +72,20 @@ describe('Ollama ensemble prompt capsule', () => {
     expect(projection.suppliedMessageIds).toContain('newer-identical')
     expect(projection.suppliedMessageIds).not.toContain('older-identical')
   })
+
+  it('replaces the generic edit nudge with a late advisory-seat boundary', () => {
+    const prompt = buildOllamaEnsemblePromptCapsule({
+      ...BASE,
+      stageRole: 'scout',
+      roleInstructions: 'Investigate and report evidence.',
+      turnBoundary:
+        'Advisory turn boundary (Scout/Recon; host guidance): Do not edit files or complete the goal. Fallback takeover is NOT AVAILABLE.'
+    })
+
+    expect(prompt.indexOf('Advisory turn boundary')).toBeGreaterThan(
+      prompt.indexOf('Do this turn:')
+    )
+    expect(prompt).toContain('Prefer one concrete read/search check')
+    expect(prompt).not.toContain('small edit, or shell')
+  })
 })

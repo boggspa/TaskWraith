@@ -29,6 +29,8 @@ export interface OllamaEnsemblePromptCapsuleInput {
   roster: string
   authorityLines: readonly string[]
   roleBoundaryLines: readonly string[]
+  /** Late, host-derived advisory-seat mutation/completion nudge. */
+  turnBoundary?: string
   roundPolicy: string
   parallelPolicy: string
   dynamicState?: string
@@ -230,8 +232,11 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
       : []),
     { text: '' },
     { text: 'Do this turn:' },
+    ...(input.turnBoundary ? [{ text: boundedText(input.turnBoundary, 900) }] : []),
     {
-      text: '- Act on the Current user request above as your role. Prefer one concrete workspace action (search, read, small edit, or shell) over long meta commentary.'
+      text: input.turnBoundary
+        ? '- Act on the Current user request as an advisory seat. Prefer one concrete read/search check and a crisp evidence handoff over implementation or long meta commentary.'
+        : '- Act on the Current user request above as your role. Prefer one concrete workspace action (search, read, small edit, or shell) over long meta commentary.'
     },
     {
       text: '- If a listed tool fails on bad or missing arguments, re-issue that same tool once with corrected args from the error; do not invent peers, tools, or a new task.'
