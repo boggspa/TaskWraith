@@ -246,6 +246,28 @@ describe('PeopleToChannelMigrationRecoveryStore', () => {
     })
   })
 
+  it('clamps a wall-clock step backward instead of blocking recovery writes', () => {
+    withFixture(({ userDataPath, source, plan }) => {
+      let now = 1_000
+      const store = new PeopleToChannelMigrationRecoveryStore({ userDataPath, now: () => now })
+      store.prepare({ plan, source, decisions: DECISIONS })
+
+      now = 400
+      const channels = store.markChannelsApplied({
+        planId: plan.planId,
+        channelStateDigest: CHANNEL_DIGEST
+      })
+      expect(channels).toMatchObject({ phase: 'channels_applied', updatedAt: 1_000 })
+
+      now = 2_000
+      const cutover = store.markCutoverApplied({
+        planId: plan.planId,
+        cutoverStateDigest: CUTOVER_DIGEST
+      })
+      expect(cutover.updatedAt).toBe(2_000)
+    })
+  })
+
   it('resumes after durable-write interruption at every finalization boundary', () => {
     withFixture(({ userDataPath, source, plan }) => {
       let crashAt: PeopleToChannelMigrationRecoveryWriteStage | null = 'backup'

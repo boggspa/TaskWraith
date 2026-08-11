@@ -433,8 +433,11 @@ function jsonBytes(value: unknown): Buffer {
 }
 
 function safeNow(value: number, minimum = 0): number {
-  if (!validTimestamp(value) || value < minimum) blocked('Migration recovery time is invalid')
-  return value
+  if (!validTimestamp(value)) blocked('Migration recovery time is invalid')
+  // A wall-clock step backward (NTP correction) must not block recovery
+  // writes during the migration window; clamp forward to the last durable
+  // timestamp so record monotonicity holds, mirroring terminalMigrationAt.
+  return value < minimum ? minimum : value
 }
 
 function validatePlan(plan: PeopleToChannelMigrationPlan): string {
