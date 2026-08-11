@@ -32,6 +32,10 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 
 - **Companion gRPC for gestures.** Uses pinned fb-idb gRPC schema to handle gestures natively.
 
+### Performance
+
+- **Transcript ACK performance.** Preserves metadata-only array identity, reuses chat update ACK baseline metadata, acks chat updates before frame merge, and narrows chat delivery metadata types.
+
 ### Review and usage polish
 
 - **Richer close-out commit review.** Historical commit files and per-file change summaries now load into close-out views, with clearer loading-failure feedback and more room for change totals.

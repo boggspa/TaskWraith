@@ -68,5 +68,3 @@ SESSION-IN-PROGRESS-*.md
 # Nested TaskWraith fan-out worktrees must never live inside the main checkout
 .taskwraith-worktrees/
 .tmp_vitest/
-SECURITY_ENGINEERING_LEDGER.md
-SECURITY_ENGINEERING_LEDGER.md
