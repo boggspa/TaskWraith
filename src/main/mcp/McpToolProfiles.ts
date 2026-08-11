@@ -742,11 +742,15 @@ const GATEWAY_V13_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   ensemble_fanout: 'Fan-out Ensemble lanes (concurrent; capped). Then await / lane_result.'
 } satisfies Partial<Record<TaskWraithMcpToolName, string>>)
 
-// v15-mesh adds three typed topology tools. Compact one pre-existing large
-// schema only on that new receipt so the transport returns below 40k without
-// changing any frozen v13/v14 wire catalogue.
+// v15-mesh adds three typed topology tools. Compact pre-existing large
+// schemas only on this receipt so the transport stays below 40k without
+// changing any frozen v13/v14 wire catalogue. blackboard_post joined after
+// its image posting/inspection guidance (1effe8c13) breached the mesh
+// transport; canonical prose is untouched for every other profile.
 const GATEWAY_V15_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
-  ensemble_roster_edit: 'Edit Ensemble roster participants/settings. Gated.'
+  ensemble_roster_edit: 'Edit Ensemble roster participants/settings. Gated.',
+  blackboard_post:
+    'Post a Blackboard entry/poll. ttlMinutes=self-delete, else durable. Poll: 2–6 pollOptions; vote via ensemble_poll_response. Images ≤4: attachmentIds (chat) or workspaceImagePaths (workspace-confined); readers inspect via inspect_chat_attachment.'
 } satisfies Partial<Record<TaskWraithMcpToolName, string>>)
 
 function stripSchemaDescriptionFields(value: unknown, inPropertyNameBag = false): unknown {

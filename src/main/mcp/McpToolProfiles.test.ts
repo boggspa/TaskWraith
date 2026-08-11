@@ -510,12 +510,18 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // select_participants guidance then adds +128 to the full catalogue and
     // immutable v1 gateway only; both fresh compact profiles are
     // byte-identical to the blackboard baseline.
+    // Re-measured 2026-08-11: blackboard_post joined the v15-mesh receipt
+    // compactor (the repair the breach note above called for). Mesh-only:
+    // full, immutable v1, and fresh v13 compact transports are byte-identical;
+    // the mesh transport returns under the ceiling (40,513 -> 39,805), takes
+    // back its <40,000 assertion, and leaves the over-ceiling inventory.
     expect(fullChars).toBe(145_229)
     expect(gatewayChars).toBe(42_578)
     expect(freshGatewayChars).toBe(38_692)
-    expect(freshMeshGatewayChars).toBe(40_513)
+    expect(freshMeshGatewayChars).toBe(39_805)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBeLessThan(40_000)
+    expect(freshMeshGatewayChars).toBeLessThan(40_000)
 
     // Transports currently over the hard 40,000-char transport ceiling. This
     // list may SHRINK, never grow — same ratchet the control-byte and
@@ -527,7 +533,7 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
       Object.entries({ gatewayChars, freshGatewayChars, freshMeshGatewayChars })
         .filter(([, chars]) => chars >= 40_000)
         .map(([name]) => name)
-    ).toEqual(['gatewayChars', 'freshMeshGatewayChars'])
+    ).toEqual(['gatewayChars'])
   })
 
   it('compacts only Mesh and Sketch prose for the combined v8 transport', () => {
@@ -584,18 +590,20 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     })
   })
 
-  it('compacts the large roster schema only on the new v15-mesh wire receipt', () => {
-    const original = createTaskWraithMcpToolDefinitions().find(
-      (definition) => definition.name === 'ensemble_roster_edit'
-    )
-    expect(original).toBeDefined()
-    const originalJson = JSON.stringify(original)
-    const [compacted] = compactGatewayV15MeshToolDefinitionsForTransport([original!])
-    expect(compacted.description?.length).toBeLessThan(original!.description?.length ?? 0)
-    expect(withoutDescriptionFields(compacted.inputSchema)).toEqual(
-      withoutDescriptionFields(original!.inputSchema)
-    )
-    expect(JSON.stringify(original)).toBe(originalJson)
+  it('compacts the large roster and blackboard schemas only on the v15-mesh wire receipt', () => {
+    for (const name of ['ensemble_roster_edit', 'blackboard_post'] as const) {
+      const original = createTaskWraithMcpToolDefinitions().find(
+        (definition) => definition.name === name
+      )
+      expect(original).toBeDefined()
+      const originalJson = JSON.stringify(original)
+      const [compacted] = compactGatewayV15MeshToolDefinitionsForTransport([original!])
+      expect(compacted.description?.length).toBeLessThan(original!.description?.length ?? 0)
+      expect(withoutDescriptionFields(compacted.inputSchema)).toEqual(
+        withoutDescriptionFields(original!.inputSchema)
+      )
+      expect(JSON.stringify(original)).toBe(originalJson)
+    }
   })
 })
 
