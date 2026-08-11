@@ -12,7 +12,7 @@ export type NormalizedEvent =
   | {
       type: 'run_started'
       session_id: string
-      model: string
+      model?: string
       modelLabel?: string
       timestamp: string
       fallback?: boolean
